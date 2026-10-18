@@ -211,6 +211,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
 
 /* diagnostics */
 .dx { display: grid; grid-template-columns: 240px 1fr; gap: 48px; }
+.dx aside input::placeholder { color: var(--mute); }
 .dx aside input { width: 100%; height: 42px; border: 1px solid var(--mute); border-radius: 8px; padding: 0 12px; font: 14px "JetBrains Mono", monospace; background: var(--surface); color: var(--ink); }
 .dx aside .dx-cats { font-size: 13px; color: var(--mute); margin: 22px 0 8px; font-weight: 700; }
 .dx aside ul { list-style: none; margin: 0; padding: 0; font-size: 15px; }

@@ -30,6 +30,8 @@
   });
 
   // Diagnostics index search: a code prefix, or a prefix of a title word for every word typed.
+  // Words are split at punctuation too, so `nan` finds "f64.nan".
+  const words = s => s.split(/[^\p{L}\p{N}_]+/u).filter(Boolean);
   const rows = [...document.querySelectorAll('li[data-code]')];
   const input = document.querySelector('.dx input[name="q"]');
   if (rows.length && input) {
@@ -37,16 +39,20 @@
     const filter = () => {
       const query = input.value.trim();
       const code = query.toUpperCase();
-      const typed = query.toLowerCase().split(/\s+/).filter(Boolean);
+      const typed = words(query.toLowerCase());
       let shown = 0;
       rows.forEach(li => {
-        const words = li.dataset.words.split(' ');
-        li.hidden = !(li.dataset.code.startsWith(code) || typed.every(t => words.some(w => w.startsWith(t))));
+        const title = words(li.dataset.words);
+        li.hidden = !(li.dataset.code.startsWith(code) || (typed.length && typed.every(t => title.some(w => w.startsWith(t)))));
         if (!li.hidden) shown++;
       });
       document.querySelectorAll('.dx-index ul.rows').forEach(ul => {
         ul.hidden = !ul.querySelector('li:not([hidden])');
-        ul.previousElementSibling.hidden = ul.hidden;
+        const heading = ul.previousElementSibling;
+        heading.hidden = ul.hidden;
+        // The sidebar link to a hidden section would jump to nothing.
+        const link = document.querySelector(`.dx aside a[href="#${heading.id}"]`);
+        if (link) link.parentElement.hidden = ul.hidden;
       });
       none.textContent = shown ? '' : `No diagnostic matches “${query}”.`;
     };
