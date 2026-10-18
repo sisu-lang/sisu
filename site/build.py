@@ -139,10 +139,16 @@ def status_areas() -> list[dict]:
         areas = tomllib.loads(read('data/status.toml'))['area']
     except (tomllib.TOMLDecodeError, KeyError) as e:
         raise BuildError(f'data/status.toml: {e!r}') from e
-    for area in areas:
+    for i, area in enumerate(areas, 1):
+        where = f'data/status.toml: area {area.get("id", i)!r}'
+        if missing := {'id', 'name', 'intro', 'note', 'feature'} - area.keys():
+            raise BuildError(f'{where} lacks {sorted(missing)}')
         for feature in area['feature']:
+            where_feature = f'{where}, feature {feature.get("text", "without text")!r}'
+            if missing := {'text', 'state', 'notes'} - feature.keys():
+                raise BuildError(f'{where_feature} lacks {sorted(missing)}')
             if feature['state'] not in STATES:
-                raise BuildError(f'data/status.toml: {feature["text"]!r} has state {feature["state"]!r}, not works or planned')
+                raise BuildError(f'{where_feature} has state {feature["state"]!r}, not works or planned')
     return areas
 
 
@@ -361,16 +367,16 @@ def css_problems(out: Path, base: Path, css: str):
 
 
 # A row of the Decisions page: the ADR's GitHub link around its number and title.
-ADR_ROW = re.compile(re.escape(BLOB) + r'(docs/adr/[^"#]+\.md)"[^>]*>\s*<span class="num">\d+</span>\s*<b>(.*?)</b>', re.S)
+ADR_ROW = re.compile(re.escape(BLOB) + r'(docs/adr/[^"#]+\.md)"[^>]*>\s*<span class="num">(\d+)</span>\s*<b>(.*?)</b>', re.S)
 # What follows a row's title in its <b>: a status note the ADR's heading does not hold.
 ADR_NOTE = re.compile(r'<(?:small>|span class="soon">)')
 
 
 def adr_problems(text: str):
     """Each ADR is listed once, by its GitHub link, under its heading rendered inline."""
-    rows: dict[str, list[str]] = {}
+    rows: dict[str, list[tuple[str, str]]] = {}
     for m in ADR_ROW.finditer(text):
-        rows.setdefault(m[1], []).append(html.unescape(ADR_NOTE.split(m[2])[0].strip()))
+        rows.setdefault(m[1], []).append((m[2], ADR_NOTE.split(m[3])[0].strip()))
     for file in adr_files():
         path = file.relative_to(ROOT).as_posix()
         if len(rows.get(path, [])) != 1:
@@ -380,9 +386,12 @@ def adr_problems(text: str):
         if heading is None:
             yield f'{path} has no "# " heading'
             continue
-        want = html.unescape(MarkdownIt().renderInline(heading.removeprefix('# ')))
-        if rows[path][0] != want:
-            yield f'titles {path} {rows[path][0]!r}, not its heading {want!r}'
+        num, title = rows[path][0]
+        if num != file.name[:4]:
+            yield f'numbers {path} {num!r}, not {file.name[:4]!r}'
+        want = MarkdownIt().renderInline(heading.removeprefix('# '))
+        if title != want:
+            yield f'titles {path} {title!r}, not its heading {want!r}'
 
 
 def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:

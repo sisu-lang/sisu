@@ -1,6 +1,6 @@
 # The status board and tables, one [[area]] per area in page order. See site/build.py (status_board, status_tables).
 
-# source: docs/roadmap.md ("What works today", "Decided in milestone 2/4/6/7", "Proposed milestones 8 to 12", "Modules (milestone 11)", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency (after milestone 12)"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024
+# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and "Modules", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024
 [[area]]
 id = "language"
 name = "Language"
@@ -107,7 +107,7 @@ text = "Concurrency"
 state = "planned"
 notes = [["ADR 0010", "docs/adr/0010-tasks-share-no-objects.md"], ["Roadmap: concurrency", "docs/roadmap.md"]]
 
-# source: docs/roadmap.md ("What works today", "Decided in milestone 5/6", "Proposed milestones 8 to 12" (Map, os.env, os.exit, io), "Open decisions" (substring views)); docs/adr/0009, 0014-0017
+# source: docs/roadmap.md ("What works today", the sections on decided and proposed work (Map, os.env, os.exit, io), "Open decisions" (substring views)); docs/adr/0009, 0014-0017
 [[area]]
 id = "stdlib"
 name = "Standard library"
@@ -248,7 +248,7 @@ text = "Packages from a path or Git"
 state = "planned"
 notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"], ["deliberately avoided", "docs/roadmap.md#deliberately-avoided"]]
 
-# source: docs/adr/0013; docs/diagnostics/README.md (142 codes; `sisuc --explain` accepts all 142, checked with target/release/sisuc); docs/roadmap.md ("Early tooling" (TextMate grammar, --leaks), "Later and stretch goals" (sisu fmt, sisu lsp, lints, parser error recovery, doc comments), "Gaps before production" (language reference, recovery inside a body))
+# source: docs/adr/0013; docs/diagnostics/README.md (the codes; `sisuc --explain` accepts each, checked with target/release/sisuc); docs/roadmap.md ("Early tooling" (TextMate grammar, --leaks), "Later and stretch goals" (sisu fmt, sisu lsp, lints, parser error recovery, doc comments), "Gaps before production" (language reference, recovery inside a body))
 [[area]]
 id = "dx"
 name = "Developer experience"

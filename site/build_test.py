@@ -116,8 +116,9 @@ def fake_site(test, pages, repo=None):
     return site
 
 
-def adr_row(num, slug, title):
-    return f'<li><a href="{build.BLOB}docs/adr/{num}-{slug}.md"><span class="num">{num}</span><b>{title}</b><span>x</span></a></li>'
+def adr_row(num, slug, title, shown=None):
+    """A Decisions row linking docs/adr/{num}-{slug}.md and showing the number `shown` (default `num`)."""
+    return f'<li><a href="{build.BLOB}docs/adr/{num}-{slug}.md"><span class="num">{shown or num}</span><b>{title}</b><span>x</span></a></li>'
 
 
 def problems(test, files, **kwargs):
@@ -338,6 +339,19 @@ class Build(unittest.TestCase):
         with self.assertRaisesRegex(build.BuildError, 'soon'):
             build.expand('{{status-tables}}', {})
 
+    def test_status_data_must_be_complete(self):
+        cases = [('area id', 'id = "one"\n', 'area 1'), ('area name', 'name = "One"\n', "'one'"), ('area intro', 'intro = "Second."\n', "'two'"),
+                 ('area note', 'note = "Careful."\n', "'one'"), ('feature text', 'text = "Beta"\n', "'one'"),
+                 ('feature state', 'state = "planned"\n', "'one'"), ('feature notes', 'notes = []\n', "'Beta'")]
+        for name, line, where in cases:
+            with self.subTest(name):
+                fake_site(self, {}, {'site/data/status.toml': STATUS.replace(line, '', 1)})
+                with self.assertRaisesRegex(build.BuildError, rf'status\.toml.*{where}'):
+                    build.expand('{{status-tables}}', {})
+        fake_site(self, {}, {'site/data/status.toml': '[[area]]\nid = "one"\nname = "One"\nintro = ""\nnote = ""\n'})
+        with self.assertRaisesRegex(build.BuildError, r"status\.toml.*'one'.*feature"):
+            build.expand('{{status-board}}', {})
+
     def test_status_note_paths_are_checked(self):
         page = 'Status\n\n<h1>Status</h1>\n{{status-tables}}\n'
         cases = [('docs/roadmap.md#what-works-today', True), ('docs/nope.md', False), ('docs/roadmap.md#nope', False)]
@@ -370,6 +384,8 @@ class Build(unittest.TestCase):
             ('twice', adr_row('0001', 'first', 'First <code>code</code> record') * 2 + adr_row('0002', 'second', 'Second'), False),
             ('different title', adr_row('0001', 'first', 'First code record') + adr_row('0002', 'second', 'Second'), False),
             ('longer title', adr_row('0001', 'first', 'First <code>code</code> record') + adr_row('0002', 'second', 'Second one'), False),
+            ('visible tags', adr_row('0001', 'first', 'First &lt;code&gt;code&lt;/code&gt; record') + adr_row('0002', 'second', 'Second'), False),
+            ('wrong number', adr_row('0001', 'first', 'First <code>code</code> record', shown='0012') + adr_row('0002', 'second', 'Second'), False),
         ]
         for name, rows, ok in cases:
             with self.subTest(name):
