@@ -386,6 +386,7 @@ These flags run the pipeline up to one stage and stop there.
 | `sisuc --emit ir file.sisu` | The LLVM IR, before and after `mem2reg` |
 | `sisuc -O2 --emit ir file.sisu` | The LLVM IR, before and after LLVM's `default<O2>` pipeline |
 | `sisuc --emit ir-raw file.sisu` | The LLVM IR before any pass, as one module that LLVM's `opt` reads |
+| `sisuc --rc-checks --emit ir-raw file.sisu` | The same, with the count checks of `--rc-checks` built in |
 | `sisuc --check file.sisu` | Only diagnostics; exits with code 1 if any is an error |
 | `sisuc --explain E0001` | The explanation of a diagnostic code, in any case; unknown codes exit with code 1 |
 
@@ -402,7 +403,8 @@ reference counts. Before each retain or release, it checks that the count is
 at least 1. At a normal exit, it checks that no object is still allocated.
 A failed check prints a line that starts with `sisu: rc check:` and exits
 with code 102. `--rc-checks` comes after `-O2`, if both are given, and works
-only when building an executable. A use after free often goes unseen: the
+only when building an executable or with `--emit ir` and `--emit ir-raw`,
+which then print the module with the checks built in. A use after free often goes unseen: the
 freed memory may still hold a count of 1 or more. Valgrind finds those.
 
 ## Add a diagnostic code

@@ -30,7 +30,7 @@ use tir::Program;
 
 pub use fuzz::front_end as fuzz_front_end;
 
-const USAGE: &str = "usage: sisuc [--format text|json] ([-O2] [--rc-checks] <input.sisu> <output> | [-O2] --emit ir <input.sisu> | --emit tokens|ast|tir|ir-raw <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
+const USAGE: &str = "usage: sisuc [--format text|json] ([-O2] [--rc-checks] <input.sisu> <output> | [-O2] [--rc-checks] --emit ir <input.sisu> | [--rc-checks] --emit ir-raw <input.sisu> | --emit tokens|ast|tir <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
 
 /// The reporter `cli` writes stderr through.
 type Report = Reporter<Stderr>;
@@ -41,6 +41,7 @@ enum Mode {
         stage: Stage,
         input: PathBuf,
         o2: bool,
+        rc_checks: bool,
     },
     Check {
         input: PathBuf,
@@ -81,7 +82,7 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
         [flag, rest @ ..] if flag == "-O2" => (true, rest),
         _ => (false, args),
     };
-    // `--rc-checks` is accepted only right after an optional `-O2`, and only for a build.
+    // `--rc-checks` is accepted only right after an optional `-O2`, and only for a build or IR.
     let (rc_checks, args) = match args {
         [flag, rest @ ..] if flag == "--rc-checks" => (true, rest),
         _ => (false, args),
@@ -106,6 +107,7 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
                 stage,
                 input: PathBuf::from(input),
                 o2,
+                rc_checks,
             })
         }
         [flag, input] if flag == "--check" => Ok(Mode::Check {
@@ -128,7 +130,16 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
         }
         _ => Err(USAGE.to_string()),
     }?;
-    if rc_checks && !matches!(mode, Mode::Build { .. }) {
+    if rc_checks
+        && !matches!(
+            mode,
+            Mode::Build { .. }
+                | Mode::Emit {
+                    stage: Stage::Ir | Stage::IrRaw,
+                    ..
+                }
+        )
+    {
         return Err(USAGE.to_string());
     }
     // `--explain` prints to stdout and takes no other flag.
@@ -180,7 +191,12 @@ pub fn cli() -> ExitCode {
 /// Does what `mode` asks for.
 fn run(reporter: &mut Report, mode: Mode) -> ExitCode {
     match mode {
-        Mode::Emit { stage, input, o2 } => emit(reporter, &stage, &input, o2),
+        Mode::Emit {
+            stage,
+            input,
+            o2,
+            rc_checks,
+        } => emit(reporter, &stage, &input, o2, rc_checks),
         Mode::Check { input } => run_check(reporter, &input),
         Mode::Explain { code } => explain(reporter, &code),
         Mode::Build {
@@ -247,8 +263,9 @@ fn read(reporter: &mut Report, input: &Path) -> Option<String> {
         .ok()
 }
 
-/// Prints one stage's output for `input` to stdout.
-fn emit(reporter: &mut Report, stage: &Stage, input: &Path, o2: bool) -> ExitCode {
+/// Prints one stage's output for `input` to stdout; the IR stages build in count checks with
+/// `rc_checks`.
+fn emit(reporter: &mut Report, stage: &Stage, input: &Path, o2: bool, rc_checks: bool) -> ExitCode {
     let path = input.to_string_lossy();
     let Some(source) = read(reporter, input) else {
         return ExitCode::FAILURE;
@@ -285,20 +302,20 @@ fn emit(reporter: &mut Report, stage: &Stage, input: &Path, o2: bool) -> ExitCod
             }
             None => ExitCode::FAILURE,
         },
-        Stage::Ir => emit_ir(reporter, &path, &source, o2),
-        Stage::IrRaw => emit_ir_raw(reporter, &path, &source),
+        Stage::Ir => emit_ir(reporter, &path, &source, o2, rc_checks),
+        Stage::IrRaw => emit_ir_raw(reporter, &path, &source, rc_checks),
     }
 }
 
 /// Prints the module for `source` before and after the pipeline, once it passes the checker.
-fn emit_ir(reporter: &mut Report, path: &str, source: &str, o2: bool) -> ExitCode {
+fn emit_ir(reporter: &mut Report, path: &str, source: &str, o2: bool, rc_checks: bool) -> ExitCode {
     let Some(program) = front_end(reporter, path, source) else {
         return ExitCode::FAILURE;
     };
     let context = Context::create();
     let pipeline = codegen::pipeline(o2);
     let printed = codegen::target_machine(o2).and_then(|machine| {
-        let module = codegen::compile(&context, &program, path, source, &machine, false);
+        let module = codegen::compile(&context, &program, path, source, &machine, rc_checks);
         // For the `o2-calls` check in the tests (`docs/development.md`); `--emit ir` only, so
         // no executable is affected, and not in the usage text.
         if let Ok(names) = std::env::var("SISU_KEEP_FUNCTIONS") {
@@ -330,7 +347,7 @@ fn print_or_report(reporter: &mut Report, text: Result<String, String>) -> ExitC
 }
 
 /// Prints the verified module for `source`, as codegen made it.
-fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str) -> ExitCode {
+fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str, rc_checks: bool) -> ExitCode {
     let Some(program) = front_end(reporter, path, source) else {
         return ExitCode::FAILURE;
     };
@@ -338,7 +355,7 @@ fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str) -> ExitCode {
     print_or_report(
         reporter,
         codegen::target_machine(false).and_then(|machine| {
-            let module = codegen::compile(&context, &program, path, source, &machine, false);
+            let module = codegen::compile(&context, &program, path, source, &machine, rc_checks);
             module.verify().map_err(|e| e.to_string())?;
             Ok(module.print_to_string().to_string())
         }),
