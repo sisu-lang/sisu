@@ -1045,11 +1045,23 @@ fn linker_lld_links_with_lld() {
     assert!(!bfd.windows(11).any(|w| w == b"Linker: LLD"));
 }
 
+/// A directory that holds only a link to `cc`, for a `PATH` with no linker on it.
+fn only_cc(name: &str) -> PathBuf {
+    let dir = empty_dir(name);
+    let cc = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("cc"))
+        .find(|cc| cc.is_file())
+        .expect("cc is on PATH");
+    std::os::unix::fs::symlink(cc, dir.join("cc")).expect("links cc");
+    dir
+}
+
 /// gcc finds a linker in `COMPILER_PATH` too, so `--linker` does not require it on `PATH`.
 #[test]
 fn linker_off_path_links_when_cc_finds_it() {
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("loops-compiler-path");
     let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "lld"])
+        .env("PATH", only_cc("only_cc_compiler_path"))
         .env(
             "COMPILER_PATH",
             Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin"),
@@ -1070,21 +1082,16 @@ fn linker_off_path_links_when_cc_finds_it() {
 #[test]
 fn a_missing_linker_is_named() {
     let empty = empty_dir("no_linker_on_path");
-    let only_cc = empty_dir("only_cc_on_path");
-    let cc = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|dir| dir.join("cc"))
-        .find(|cc| cc.is_file())
-        .expect("cc is on PATH");
-    std::os::unix::fs::symlink(cc, only_cc.join("cc")).expect("links cc");
     let exe = empty.join("loops");
     let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "mold"])
-        .env("PATH", &only_cc)
+        .env("PATH", only_cc("only_cc_on_path"))
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
+    // cc's own message follows on the next lines.
     assert_eq!(
-        String::from_utf8_lossy(&out.stderr),
-        "sisuc: linker ld.mold not found on PATH\n"
+        String::from_utf8_lossy(&out.stderr).lines().next(),
+        Some("sisuc: linker ld.mold not found on PATH; cc failed: exit status: 1")
     );
     assert_empty(&empty);
 }

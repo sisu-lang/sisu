@@ -25,14 +25,14 @@ pub(crate) fn link(object: &Path, output: &Path, linker: Option<&str>) -> Result
     if out.status.success() {
         return Ok(());
     }
+    let mut message = format!("cc failed: {}", out.status);
     // A missing `ld.lld` makes gcc say only "cannot find 'ld'", which names the wrong program.
     // `cc` also finds linkers off PATH, so the check waits until it has failed.
     if let Some(program) = linker.map(|linker| format!("ld.{linker}"))
         && !on_path(&program)
     {
-        return Err(format!("linker {program} not found on PATH"));
+        message = format!("linker {program} not found on PATH; {message}");
     }
-    let message = format!("cc failed: {}", out.status);
     match String::from_utf8_lossy(&out.stderr).trim() {
         "" => Err(message),
         detail => Err(format!("{message}\n{detail}")),
