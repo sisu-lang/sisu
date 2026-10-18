@@ -30,8 +30,8 @@
   });
 
   // Diagnostics index search: a code prefix, or a prefix of a title word for every word typed.
-  // Words are split at punctuation too, so `nan` finds "f64.nan".
-  const words = s => s.split(/[^\p{L}\p{N}_]+/u).filter(Boolean);
+  // The query splits at spaces only, so operators like `??` stay words. A title word also
+  // yields its letter-and-digit parts, so `nan` finds "f64.nan".
   const rows = [...document.querySelectorAll('li[data-code]')];
   const input = document.querySelector('.dx input[name="q"]');
   if (rows.length && input) {
@@ -39,11 +39,11 @@
     const filter = () => {
       const query = input.value.trim();
       const code = query.toUpperCase();
-      const typed = words(query.toLowerCase());
+      const typed = query.toLowerCase().split(/\s+/).filter(Boolean);
       let shown = 0;
       rows.forEach(li => {
-        const title = words(li.dataset.words);
-        li.hidden = !(li.dataset.code.startsWith(code) || (typed.length && typed.every(t => title.some(w => w.startsWith(t)))));
+        const title = li.dataset.words.split(' ').flatMap(w => [w, ...w.split(/[^\p{L}\p{N}_]+/u)]).filter(Boolean);
+        li.hidden = !(li.dataset.code.startsWith(code) || typed.every(t => title.some(w => w.startsWith(t))));
         if (!li.hidden) shown++;
       });
       document.querySelectorAll('.dx-index ul.rows').forEach(ul => {
