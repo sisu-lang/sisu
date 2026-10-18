@@ -16,7 +16,7 @@ small_sections=20
 
 cargo build --release --locked -p sisuc -p sisu-runtime
 rm -rf "$out"
-mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20}
+mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays}
 
 fail() {
     echo "codspeed-prep: $*" >&2
@@ -39,6 +39,10 @@ reduce quicksort 's/let n = 10_000_000/let n = 100_000/'
 reduce nbody 's/let steps = 5_000_000/let steps = 100_000/'
 reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
+# bench/features/ programs are sized for simulation and Sisu-only: no reduction.
+for b in strings enum_match shared_arrays; do
+    target/release/sisuc -O2 "bench/features/$b/main.sisu" "$out/$b/main" || fail "$b failed to compile"
+done
 
 # step0 returns its argument. stepi adds 1 through an array, a class and an
 # optional chain, and 0 through constants, an enum, f64 methods, a string built
@@ -167,6 +171,9 @@ expected() {
         nbody) printf '%s\n' -0.169075164 -0.169079859 ;;
         mandelbrot) echo 63528 ;;
         fannkuch_redux) printf '%s\n' 8629 'Pfannkuchen(9) = 30' ;;
+        strings) printf '%s\n' 186741 9800 10000 12073291 ;;
+        enum_match) printf '%s\n' 987548 816672 ;;
+        shared_arrays) printf '%s\n' 20000 519500 ;;
         *) return 1 ;;
     esac
 }

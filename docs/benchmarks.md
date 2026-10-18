@@ -287,6 +287,27 @@ runs (`taskset -c 2 hyperfine -N -w 5 -r 50 ...`):
 - `scripts/bench.sh` does not pin or warm up its builds, so its Build column
   reads higher.
 
+## Benchmarks for CodSpeed only
+
+`bench/features/` holds Sisu-only programs sized for CodSpeed's simulation.
+They have no ports to other languages and no place in the tables above. Each
+must print values that depend on all of its work, and must scale with its
+input. This table lists what CodSpeed covers and which benchmark measures it:
+
+| Feature or path | Benchmark |
+| --- | --- |
+| Calls, integer arithmetic | fib |
+| Array indexing in a loop | sieve |
+| Class allocation and release, `?.` and `??` | binary_trees |
+| Writes to an array with one holder, passed and returned | quicksort |
+| Copy on write of an array with a live copy | shared_arrays |
+| `f64` arithmetic | nbody, mandelbrot |
+| Short loops over small arrays | fannkuch_redux |
+| String `+=`, interpolation with format specs, `words`, `chars`, `bytes`, non-ASCII text | strings |
+| Enum payloads under `match`: inline in an array, and boxed in a recursive tree | enum_match |
+| The front end | check_binary_trees, check_large |
+| An `-O2` build | build_hello, build_binary_trees, build_large_20; build_large on `main` only |
+
 ## Running them
 
 ```sh

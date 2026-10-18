@@ -1,0 +1,20 @@
+// Each round writes into a copy of an array whose original stays live, so
+// every first write must copy; both arrays are read afterwards.
+fn bump(xs: [i64], i: i64) -> [i64] {
+    let mut ys = xs
+    ys[i % ys.len()] += 1
+    ys
+}
+
+fn main() {
+    let mut base = [0; 1_000]
+    for i in 0..1_000 { base[i] = i }
+    let mut total = 0
+    for r in 0..20_000 {
+        let saved = base
+        base = bump(base, r)
+        total += base[r % 1_000] - saved[r % 1_000]
+    }
+    print(total)
+    print(base.sum())
+}
