@@ -5,7 +5,7 @@
 
 use rustc_hash::FxHashMap;
 
-use super::{Checked, Checker, Declared, Poisoned, built_in_type, type_of};
+use super::{Body, Checked, Checker, Declared, Poisoned, built_in_type, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Panic, TypedLiteral};
 use crate::source::Span;
@@ -224,19 +224,22 @@ impl Checker<'_> {
         if !self.gate(&c.value, &c.name, order) {
             return (declared, None);
         }
-        // The locals a `string` chain binds belong to no function.
-        let locals = self.locals.len();
-        self.in_constant = Some(ConstantSite {
+        // The locals a `string` chain binds belong to no function, so the body is dropped.
+        let site = ConstantSite {
             value: c.value.span,
             name_end: c.name.span.end(),
             declared,
-        });
-        let checked = match declared {
-            Some(ty) => self.expect(&c.value, Some(ty)),
-            None => self.value(&c.value, None),
         };
-        self.in_constant = None;
-        self.locals.truncate(locals);
+        let (checked, _) = self.with_body(
+            Body {
+                in_constant: Some(site),
+                ..Body::default()
+            },
+            |this| match declared {
+                Some(ty) => this.expect(&c.value, Some(ty)),
+                None => this.value(&c.value, None),
+            },
+        );
         let ty = declared.or_else(|| type_of(&checked));
         let Ok(checked) = checked else {
             return (ty, None);

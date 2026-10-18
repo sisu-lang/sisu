@@ -3169,3 +3169,18 @@ fn suggestions_keep_to_their_kind() {
         (3, 11, "totl"),
     );
 }
+
+#[test]
+fn with_body_restores_the_outer_body() {
+    let src = "";
+    let program = parse_ok(src);
+    let mut checker = Checker::new(&program, src);
+    checker.body.ret = Some(Type::I64);
+    let (inner, finished) = checker.with_body(Body::default(), |c| {
+        c.body.ret = Some(Type::BOOL);
+        c.body.ret
+    });
+    assert_eq!(inner, Some(Type::BOOL));
+    assert_eq!(finished.ret, Some(Type::BOOL));
+    assert_eq!(checker.body.ret, Some(Type::I64));
+}

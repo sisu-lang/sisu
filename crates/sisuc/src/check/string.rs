@@ -158,7 +158,7 @@ impl Checker<'_> {
                 && self.source.quotes.binary_search(&e.span.start()).is_ok(),
         };
         let unsafe_fix =
-            !(compound || self.in_constant.is_some() || !printed || commented || lines);
+            !(compound || self.body.in_constant.is_some() || !printed || commented || lines);
         let other = if e.span == lhs.span {
             rhs.span
         } else {
@@ -353,8 +353,8 @@ impl Checker<'_> {
                 }
                 .into(),
             },
-            _ if fails && self.in_constant.is_some() => {
-                let fix = self.in_constant.as_ref().and_then(|site| {
+            _ if fails && self.body.in_constant.is_some() => {
+                let fix = self.body.in_constant.as_ref().and_then(|site| {
                     let arg = checked.as_ref().ok()?;
                     site.literal(span, to, arg)
                 });

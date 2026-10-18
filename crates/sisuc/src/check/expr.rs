@@ -25,13 +25,13 @@ impl Checker<'_> {
     pub(super) fn expr(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
         // An assignment target's chain runs only through field bases, method receivers and
         // indexed bases; any other expression inside it is an ordinary read.
-        let outer = self.in_target;
-        self.in_target &= matches!(
+        let outer = self.body.in_target;
+        self.body.in_target &= matches!(
             e.kind,
             ExprKind::Field { .. } | ExprKind::MethodCall { .. } | ExprKind::Index { .. }
         );
         let checked = self.expr_kind(e, expected);
-        self.in_target = outer;
+        self.body.in_target = outer;
         checked
     }
 
@@ -109,7 +109,7 @@ impl Checker<'_> {
             ExprKind::Call { callee, args } => self.call(e.span, callee, args),
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
             ExprKind::SelfValue => {
-                let Some(ty) = self.self_type else {
+                let Some(ty) = self.body.self_type else {
                     self.diagnostics
                         .push(DiagnosticKind::SelfOutsideMethod { at: e.span }.into());
                     return Err(Poisoned::error());
@@ -400,18 +400,18 @@ impl Checker<'_> {
         if !joins || literal_type(expected) == Type::I64 {
             return self.integers(operands, expected, operator);
         }
-        if self.joins.contains(&span) {
+        if self.body.joins.contains(&span) {
             return self.integers(operands, None, operator);
         }
-        let (diagnostics, locals) = (self.diagnostics.len(), self.locals.len());
+        let (diagnostics, locals) = (self.diagnostics.len(), self.body.locals.len());
         let result = self.integers(operands, expected, operator);
         if result.1 != Some(Type::STRING) {
             return result;
         }
         // The first check is dropped, and its locals with it, so none is left that nothing binds.
         self.diagnostics.truncate(diagnostics);
-        self.locals.truncate(locals);
-        self.joins.insert(span);
+        self.body.locals.truncate(locals);
+        self.body.joins.insert(span);
         self.integers(operands, None, operator)
     }
 
@@ -1248,7 +1248,7 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         // The arguments are not part of an assignment target's chain; `expr` restores the flag.
-        let target = std::mem::take(&mut self.in_target);
+        let target = std::mem::take(&mut self.body.in_target);
         match type_of(&receiver) {
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
                 return self.array_method(span, receiver, ty, method, args);
@@ -1466,7 +1466,7 @@ impl Checker<'_> {
             TypeKind::Array(_) if name.name.as_str() == "len" => {
                 method(self.type_name(ty), true).into()
             }
-            TypeKind::Optional(_) => may_be_none(receiver, name, !target && !self.in_target),
+            TypeKind::Optional(_) => may_be_none(receiver, name, !target && !self.body.in_target),
             _ => no_member(Definition::Field, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);

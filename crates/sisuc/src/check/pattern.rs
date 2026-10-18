@@ -127,7 +127,7 @@ impl Checker<'_> {
         let mut guards: Vec<_> = arms.iter().map(|_| None).collect();
         let (blocks, ty) = self.join(&sources, expected, |c, i, expected| {
             let arm = &arms[i];
-            c.scopes.push(FxHashMap::default());
+            c.body.scopes.push(FxHashMap::default());
             patterns[i] = c.pattern_in_scope(&arm.pattern, position, "match", Some(arm));
             guards[i] = arm
                 .guard
@@ -345,7 +345,7 @@ impl Checker<'_> {
                 (LetPattern::Some { bind }, block)
             }
             LetValue::Match { ty } => {
-                self.scopes.push(FxHashMap::default());
+                self.body.scopes.push(FxHashMap::default());
                 let pattern = self.pattern_in_scope(pattern, ty, keyword.word(), None);
                 // An optional takes only a name or `_`, which unwraps it: only an enum gets here.
                 if let (Some(ty), Some((pattern, _))) = (ty, &pattern)

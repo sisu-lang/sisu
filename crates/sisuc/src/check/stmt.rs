@@ -19,7 +19,7 @@ impl Checker<'_> {
     /// there is none). Warns "unreachable code" on the first statement after a `never` one.
     /// Every statement is checked, also after one fails. `expected` is for the block's value.
     pub(super) fn block(&mut self, block: &ast::Block, expected: Option<Type>) -> CheckedBlock {
-        self.scopes.push(FxHashMap::default());
+        self.body.scopes.push(FxHashMap::default());
         self.scoped_block(block, expected)
     }
 
@@ -38,11 +38,11 @@ impl Checker<'_> {
                 warned = true;
             }
             let last = i + 1 == block.stmts.len();
-            let outer_jump = std::mem::take(&mut self.invalid_jump);
+            let outer_jump = std::mem::take(&mut self.body.invalid_jump);
             let checked = self.stmt(stmt, expected.filter(|_| last));
-            let invalid_jump = self.invalid_jump;
+            let invalid_jump = self.body.invalid_jump;
             // Nested blocks leave their flag set, so an enclosing statement sees it too.
-            self.invalid_jump |= outer_jump;
+            self.body.invalid_jump |= outer_jump;
             let stmt_ty = match checked {
                 Ok(lowered) => {
                     if !last
@@ -540,7 +540,7 @@ impl Checker<'_> {
     ) -> Result<tir::Stmt, Poisoned> {
         let never = || Poisoned::typed(Type::NEVER);
         let value = match value {
-            None => match self.ret {
+            None => match self.body.ret {
                 Some(ret) if ret != Type::UNIT => {
                     let want = self.type_name(ret);
                     self.report(DiagnosticKind::ReturnNeedsValue { want, at: span });
@@ -548,14 +548,14 @@ impl Checker<'_> {
                 }
                 _ => None,
             },
-            Some(value) if self.ret == Some(Type::UNIT) => {
+            Some(value) if self.body.ret == Some(Type::UNIT) => {
                 if type_of(&self.value(value, None)).is_some() {
                     self.report(DiagnosticKind::UnexpectedReturnValue { at: value.span });
                 }
                 return Err(never());
             }
             Some(value) => {
-                let value = self.expect(value, self.ret).map_err(|_| never())?;
+                let value = self.expect(value, self.body.ret).map_err(|_| never())?;
                 Some(Box::new(value))
             }
         };
@@ -568,9 +568,9 @@ impl Checker<'_> {
 
     /// `f`, inside a loop's `context`.
     fn in_loop<T>(&mut self, context: LoopContext, f: impl FnOnce(&mut Self) -> T) -> T {
-        self.loops.push(context);
+        self.body.loops.push(context);
         let checked = f(self);
-        self.loops.pop();
+        self.body.loops.pop();
         checked
     }
 
@@ -582,7 +582,7 @@ impl Checker<'_> {
         keyword: &'static str,
         kind: ExprKind,
     ) -> Result<tir::Stmt, Poisoned> {
-        match self.loops.last() {
+        match self.body.loops.last() {
             Some(LoopContext::Body) => {}
             Some(&LoopContext::Header(loop_at)) => {
                 self.report(DiagnosticKind::JumpInLoopHeader {
@@ -594,7 +594,7 @@ impl Checker<'_> {
             }
             None => {
                 self.report(DiagnosticKind::JumpOutsideLoop { keyword, at: span });
-                self.invalid_jump = true;
+                self.body.invalid_jump = true;
                 return Err(Poisoned::typed(Type::NEVER));
             }
         }
@@ -616,7 +616,7 @@ impl Checker<'_> {
         block: &ast::Block,
         expected: Option<Type>,
     ) -> (tir::LocalId, CheckedBlock) {
-        self.scopes.push(FxHashMap::default());
+        self.body.scopes.push(FxHashMap::default());
         let bind = if name.name.as_str() == "_" {
             self.fresh(ty.unwrap_or(Type::UNIT))
         } else {
@@ -636,8 +636,8 @@ impl Checker<'_> {
     }
 
     fn fresh_local(&mut self, ty: Type, mutable: bool) -> tir::LocalId {
-        let local = tir::LocalId(self.locals.len());
-        self.locals.push(tir::Local {
+        let local = tir::LocalId(self.body.locals.len());
+        self.body.locals.push(tir::Local {
             name: None,
             ty,
             mutable,
@@ -705,8 +705,8 @@ impl Checker<'_> {
         kind: BindingKind,
         keyword: Option<Span>,
     ) -> tir::LocalId {
-        let local = tir::LocalId(self.locals.len());
-        self.locals.push(tir::Local {
+        let local = tir::LocalId(self.body.locals.len());
+        self.body.locals.push(tir::Local {
             name: Some(name.name.to_string()),
             // An `Error` local never reaches `tir`: the error behind it stops the program.
             ty: ty.unwrap_or(Type::UNIT),
@@ -714,6 +714,7 @@ impl Checker<'_> {
         });
         let shadows_mut = self.lookup(name.name).is_some_and(|b| b.keyword.is_some());
         let scope = self
+            .body
             .scopes
             .last_mut()
             .expect("a scope should be open while a block is checked");
@@ -755,6 +756,7 @@ impl Checker<'_> {
     /// Closes the innermost scope, warning about each `let mut` that was never reassigned.
     pub(super) fn pop_scope(&mut self) {
         let scope = self
+            .body
             .scopes
             .pop()
             .expect("a scope should be open while a block is checked");
@@ -778,7 +780,8 @@ impl Checker<'_> {
     }
 
     pub(super) fn lookup(&mut self, name: Symbol) -> Option<&mut Binding> {
-        self.scopes
+        self.body
+            .scopes
             .iter_mut()
             .rev()
             .find_map(|scope| scope.get_mut(&name))
