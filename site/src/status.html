@@ -22,7 +22,7 @@ Status
   <section class="ph"><div class="w">
     <h1>Where Sisu stands</h1>
     <p class="lede">Every feature of Sisu, whether it works today or is planned, with links to the design notes that explain it.</p>
-    <p class="meta">Checked against the repository at commit f372ddd.</p>
+    <p class="meta">Built from the repository at commit {{commit}}.</p>
     <div class="callout" style="margin-bottom:0"><p>Sisu makes no stability promise yet: any change may break programs. Planned work can change and has no promised date.</p></div>
   </div></section>
   <!-- source: docs/roadmap.md, docs/adr/, README.md (no stability promise), docs/roadmap.md "Beyond milestone 6" (nothing decided until it lands) -->
@@ -37,106 +37,7 @@ Status
     </ol></nav>
     <article class="prose">
 
-      <h2 id="language">Language</h2>
-      <p>What you can write in a Sisu program. Each link leads to the ADR or roadmap section that covers the feature.</p>
-      <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Feature</th><th>State</th><th>Design notes</th></tr></thead>
-        <tbody>
-          <tr><td>Nothing changes unless marked <code>mut</code></td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0011-let-mut-marks-what-can-change.md">ADR 0011</a></td></tr>
-          <tr><td>Functions, <code>if</code> as a value, loops</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#what-works-today">Roadmap: what works today</a></td></tr>
-          <tr><td>Classes with fields and methods</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0012-methods-borrow-self.md">ADR 0012 (proposed)</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: classes and optionals</a></td></tr>
-          <tr><td>Optionals instead of null</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: classes and optionals</a></td></tr>
-          <tr><td>Enums that carry data, including recursive ones</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0019-enums-are-values-named-through-their-enum.md">ADR 0019</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0020-labels-belong-to-the-declaration.md">ADR 0020</a></td></tr>
-          <tr><td><code>match</code> that must cover every case</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: enums and match</a></td></tr>
-          <tr><td>Integers that panic on overflow; IEEE 754 floats</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0003-arithmetic-panics.md">ADR 0003</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0017-floats-follow-ieee-754.md">ADR 0017</a></td></tr>
-          <tr><td>UTF-8 strings and formatting</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0014-strings-are-utf-8-values.md">ADR 0014</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: format specs</a></td></tr>
-          <tr><td>Arrays that behave like values</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0007-arrays-are-values.md">ADR 0007</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md">ADR 0021</a></td></tr>
-          <tr><td>Compile-time constants</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: strings and constants</a></td></tr>
-          <tr><td>Optionals that nest, such as <code>i64??</code></td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0024-optionals-nest.md">ADR 0024</a></td></tr>
-          <tr><td>Generics and interfaces</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md">ADR 0023</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: proposed next steps</a></td></tr>
-          <tr><td>Errors with <code>Result</code> and <code>?</code></td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: proposed next steps</a></td></tr>
-          <tr><td><code>weak</code> references</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0008-weak-references.md">ADR 0008</a></td></tr>
-          <tr><td>Closures and iterators</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: proposed next steps</a></td></tr>
-          <tr><td>Records, named and default arguments</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: proposed next steps</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0020-labels-belong-to-the-declaration.md">ADR 0020</a></td></tr>
-          <tr><td>Modules</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: modules</a></td></tr>
-          <tr><td>Tests in the source file</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#what-can-start-now">Roadmap: what can start now</a></td></tr>
-          <tr><td>More number types</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#gaps-before-production">Roadmap: gaps before production</a></td></tr>
-          <tr><td>Concurrency</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0010-tasks-share-no-objects.md">ADR 0010</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: concurrency</a></td></tr>
-        </tbody>
-      </table></div>
-      <!-- source: assets/site.js AREAS; docs/roadmap.md ("What works today", "Decided in milestone 2/4/6/7", "Proposed milestones 8 to 12", "Modules (milestone 11)", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency (after milestone 12)"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024 -->
-
-      <h2 id="stdlib">Standard library</h2>
-      <p>The functions and methods every program gets. The library is still small.</p>
-      <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Feature</th><th>State</th><th>Design notes</th></tr></thead>
-        <tbody>
-          <tr><td>Printing and reading lines</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0009-runtime-owns-io.md">ADR 0009</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md">ADR 0015</a></td></tr>
-          <tr><td>Program arguments</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: streams and arguments</a></td></tr>
-          <tr><td>Text as characters, bytes and words</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0014-strings-are-utf-8-values.md">ADR 0014</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0016-word-functions-trust-the-utf-8-invariant.md">ADR 0016</a></td></tr>
-          <tr><td>Float math</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0017-floats-follow-ieee-754.md">ADR 0017</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: floats</a></td></tr>
-          <tr><td><code>len</code>, <code>sum</code> and <code>contains</code> on arrays</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#what-works-today">Roadmap: what works today</a></td></tr>
-          <tr><td>Lists and maps</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: proposed next steps</a></td></tr>
-          <tr><td>Files, environment and exit codes</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md">Roadmap: proposed next steps</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0009-runtime-owns-io.md">ADR 0009</a></td></tr>
-        </tbody>
-      </table></div>
-      <!-- source: assets/site.js AREAS; docs/roadmap.md ("What works today", "Decided in milestone 5/6", "Proposed milestones 8 to 12" (Map, os.env, os.exit, io), "Open decisions" (substring views)); docs/adr/0009, 0014-0017 -->
-
-      <h2 id="compiler">Compiler</h2>
-      <p>How <code>sisuc</code> turns a source file into native code.</p>
-      <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Feature</th><th>State</th><th>Design notes</th></tr></thead>
-        <tbody>
-          <tr><td>Native x86-64 Linux code through LLVM</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/architecture.md">Architecture</a></td></tr>
-          <tr><td>Optimized builds with <code>-O2</code></td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#early-tooling">Roadmap: early tooling</a></td></tr>
-          <tr><td>Reference counting, no garbage collector</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0005-reference-counting.md">ADR 0005</a></td></tr>
-          <tr><td>Panics that name the source line</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0003-arithmetic-panics.md">ADR 0003</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#what-panics">Roadmap: what panics</a></td></tr>
-          <tr><td>Front end fuzzed nightly</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#fuzzing">Roadmap: fuzzing</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md#fuzz-the-front-end">Developing Sisu</a></td></tr>
-          <tr><td>MIR, to remove reference-count updates that cancel out</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a></td></tr>
-          <tr><td>Debug info for <code>gdb</code></td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a></td></tr>
-          <tr><td>ARM64 Linux, macOS, Windows</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#early-tooling">Roadmap: early tooling</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">later and stretch goals</a></td></tr>
-          <tr><td>Cross-compiling</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a></td></tr>
-          <tr><td>Calling C libraries</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a></td></tr>
-          <tr><td>Fuzzing for wrong answers</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#fuzzing">Roadmap: fuzzing</a></td></tr>
-          <tr><td>Lexer and parser in Sisu</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#the-growing-proof-program">Roadmap: the growing proof program</a></td></tr>
-        </tbody>
-      </table></div>
-      <!-- source: assets/site.js AREAS; docs/architecture.md; docs/roadmap.md ("Early tooling" (-O2, ARM64, macOS), "What panics", "Fuzzing", "Later and stretch goals" (mir, DWARF, Windows, --target, C FFI), "The growing proof program"); docs/development.md "Fuzz the front end"; docs/adr/0003, 0005 -->
-
-      <h2 id="toolchain">Toolchain</h2>
-      <p>The commands around the compiler.</p>
-      <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Feature</th><th>State</th><th>Design notes</th></tr></thead>
-        <tbody>
-          <tr><td><code>sisuc</code>: build, check, show IR</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md#look-inside-the-compiler">Developing Sisu</a></td></tr>
-          <tr><td>Benchmarks on every pull request that touches the code</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md#running-them">Benchmarks</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md#coverage-and-performance">Developing Sisu</a></td></tr>
-          <tr><td>One <code>sisu</code> command: build, run, test, fmt</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#early-tooling">Roadmap: early tooling</a></td></tr>
-          <tr><td>Install without cloning</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#gaps-before-production">Roadmap: gaps before production</a></td></tr>
-          <tr><td>Packages from a path or Git</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#gaps-before-production">Roadmap: gaps before production</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#deliberately-avoided">deliberately avoided</a></td></tr>
-        </tbody>
-      </table></div>
-      <!-- source: assets/site.js AREAS; docs/development.md ("Look inside the compiler", "Coverage and performance": CodSpeed runs on pull requests that touch the code); docs/benchmarks.md "Running them"; docs/roadmap.md ("Early tooling", "Gaps before production" (distributing sisuc, packages), "Deliberately avoided" (no registry)) -->
-
-      <h2 id="dx">Developer experience</h2>
-      <p>What helps you write and fix a program.</p>
-      <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Feature</th><th>State</th><th>Design notes</th></tr></thead>
-        <tbody>
-          <tr><td>Errors that point at your code</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md">ADR 0013</a></td></tr>
-          <tr><td><code>--explain</code> for all 142 codes</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md">ADR 0013</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/diagnostics/README.md">Diagnostic codes</a></td></tr>
-          <tr><td>Fixes marked safe or unsafe</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md">ADR 0013</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/diagnostics/README.md#applying-fixes">Applying fixes</a></td></tr>
-          <tr><td>JSON output for tools</td><td><span class="st ok">✓ Works today</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/diagnostics/README.md#json-output">JSON output</a></td></tr>
-          <tr><td>Formatter</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a></td></tr>
-          <tr><td>Language server</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a></td></tr>
-          <tr><td>VS Code highlighting</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#early-tooling">Roadmap: early tooling</a></td></tr>
-          <tr><td>More lints</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a></td></tr>
-          <tr><td>Recovery from syntax errors inside a function</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#gaps-before-production">gaps before production</a></td></tr>
-          <tr><td>Leak finder (<code>--leaks</code>)</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#early-tooling">Roadmap: early tooling</a>, <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0008-weak-references.md">ADR 0008</a></td></tr>
-          <tr><td>Doc comments</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#later-and-stretch-goals">Roadmap: later and stretch goals</a></td></tr>
-          <tr><td>A language reference</td><td><span class="st plan">○ Planned</span></td><td><a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#gaps-before-production">Roadmap: gaps before production</a></td></tr>
-        </tbody>
-      </table></div>
-      <!-- source: assets/site.js AREAS; docs/adr/0013; docs/diagnostics/README.md (142 codes; `sisuc --explain` accepts all 142, checked with target/release/sisuc); docs/roadmap.md ("Early tooling" (TextMate grammar, --leaks), "Later and stretch goals" (sisu fmt, sisu lsp, lints, parser error recovery, doc comments), "Gaps before production" (language reference, recovery inside a body)) -->
+      {{status-tables}}
 
       <p>Some things Sisu leaves out on purpose, such as a borrow checker, inheritance and macros. <a href="decisions.html">The design decisions</a> say why.</p>
       <!-- source: README.md ("Sisu leaves out lifetimes and a borrow checker, inheritance and macros"), docs/roadmap.md "Deliberately avoided" -->

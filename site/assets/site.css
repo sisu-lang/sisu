@@ -164,7 +164,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
 .area summary::-webkit-details-marker { display: none; }
 .area summary:hover { background: var(--hover); }
 .area summary:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
-.area h3 { margin: 0; font-size: 18px; font-weight: 700; }
+.area-name { margin: 0; font-size: 18px; font-weight: 700; }
 .bar { display: flex; height: 12px; border-radius: 99px; overflow: hidden; gap: 2px; }
 .bar i { display: block; }
 .bar .ok { background: var(--ok-fill); } .bar .plan { background: var(--plan-fill); box-shadow: inset 0 0 0 1.5px var(--plan); }
@@ -174,7 +174,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
 .chev { width: 20px; height: 20px; transition: transform .15s; color: var(--mute); }
 .area[open] .chev { transform: rotate(180deg); }
 .detail { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; padding: 4px 22px 24px; }
-.detail h4 { margin: 0 0 8px; font-size: 14px; font-weight: 700; color: var(--mute); }
+.detail h3 { margin: 0 0 8px; font-size: 14px; font-weight: 700; color: var(--mute); }
 .detail ul { list-style: none; margin: 0; padding: 0; }
 .detail li { position: relative; padding: 4px 0 4px 24px; font-size: 15.5px; line-height: 1.5; }
 .detail li::before { position: absolute; left: 0; font-weight: 800; }

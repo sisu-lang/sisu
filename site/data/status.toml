@@ -1,0 +1,316 @@
+# The status board and tables, one [[area]] per area in page order. See site/build.py (status_board, status_tables).
+
+# source: docs/roadmap.md ("What works today", "Decided in milestone 2/4/6/7", "Proposed milestones 8 to 12", "Modules (milestone 11)", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency (after milestone 12)"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024
+[[area]]
+id = "language"
+name = "Language"
+intro = "What you can write in a Sisu program. Each link leads to the ADR or roadmap section that covers the feature."
+note = "No stability promise yet: any change may break programs."
+
+[[area.feature]]
+text = "Nothing changes unless marked <code>mut</code>"
+state = "works"
+notes = [["ADR 0011", "docs/adr/0011-let-mut-marks-what-can-change.md"]]
+
+[[area.feature]]
+text = "Functions, <code>if</code> as a value, loops"
+state = "works"
+notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
+
+[[area.feature]]
+text = "Classes with fields and methods"
+state = "works"
+notes = [["ADR 0012 (proposed)", "docs/adr/0012-methods-borrow-self.md"], ["Roadmap: classes and optionals", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Optionals instead of null"
+state = "works"
+notes = [["Roadmap: classes and optionals", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Enums that carry data, including recursive ones"
+state = "works"
+notes = [["ADR 0019", "docs/adr/0019-enums-are-values-named-through-their-enum.md"], ["ADR 0020", "docs/adr/0020-labels-belong-to-the-declaration.md"]]
+
+[[area.feature]]
+text = "<code>match</code> that must cover every case"
+state = "works"
+notes = [["Roadmap: enums and match", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Integers that panic on overflow; IEEE 754 floats"
+state = "works"
+notes = [["ADR 0003", "docs/adr/0003-arithmetic-panics.md"], ["ADR 0017", "docs/adr/0017-floats-follow-ieee-754.md"]]
+
+[[area.feature]]
+text = "UTF-8 strings and formatting"
+state = "works"
+notes = [["ADR 0014", "docs/adr/0014-strings-are-utf-8-values.md"], ["Roadmap: format specs", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Arrays that behave like values"
+state = "works"
+notes = [["ADR 0007", "docs/adr/0007-arrays-are-values.md"], ["ADR 0021", "docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md"]]
+
+[[area.feature]]
+text = "Compile-time constants"
+state = "works"
+notes = [["Roadmap: strings and constants", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Optionals that nest, such as <code>i64??</code>"
+state = "planned"
+notes = [["ADR 0024", "docs/adr/0024-optionals-nest.md"]]
+
+[[area.feature]]
+text = "Generics and interfaces"
+state = "planned"
+notes = [["ADR 0023", "docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md"], ["Roadmap: proposed next steps", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Errors with <code>Result</code> and <code>?</code>"
+state = "planned"
+notes = [["Roadmap: proposed next steps", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "<code>weak</code> references"
+state = "planned"
+notes = [["ADR 0008", "docs/adr/0008-weak-references.md"]]
+
+[[area.feature]]
+text = "Closures and iterators"
+state = "planned"
+notes = [["Roadmap: proposed next steps", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Records, named and default arguments"
+state = "planned"
+notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0020", "docs/adr/0020-labels-belong-to-the-declaration.md"]]
+
+[[area.feature]]
+text = "Modules"
+state = "planned"
+notes = [["Roadmap: modules", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Tests in the source file"
+state = "planned"
+notes = [["Roadmap: what can start now", "docs/roadmap.md#what-can-start-now"]]
+
+[[area.feature]]
+text = "More number types"
+state = "planned"
+notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"]]
+
+[[area.feature]]
+text = "Concurrency"
+state = "planned"
+notes = [["ADR 0010", "docs/adr/0010-tasks-share-no-objects.md"], ["Roadmap: concurrency", "docs/roadmap.md"]]
+
+# source: docs/roadmap.md ("What works today", "Decided in milestone 5/6", "Proposed milestones 8 to 12" (Map, os.env, os.exit, io), "Open decisions" (substring views)); docs/adr/0009, 0014-0017
+[[area]]
+id = "stdlib"
+name = "Standard library"
+intro = "The functions and methods every program gets. The library is still small."
+note = "Still small: many everyday tools are missing."
+
+[[area.feature]]
+text = "Printing and reading lines"
+state = "works"
+notes = [["ADR 0009", "docs/adr/0009-runtime-owns-io.md"], ["ADR 0015", "docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md"]]
+
+[[area.feature]]
+text = "Program arguments"
+state = "works"
+notes = [["Roadmap: streams and arguments", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Text as characters, bytes and words"
+state = "works"
+notes = [["ADR 0014", "docs/adr/0014-strings-are-utf-8-values.md"], ["ADR 0016", "docs/adr/0016-word-functions-trust-the-utf-8-invariant.md"]]
+
+[[area.feature]]
+text = "Float math"
+state = "works"
+notes = [["ADR 0017", "docs/adr/0017-floats-follow-ieee-754.md"], ["Roadmap: floats", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "<code>len</code>, <code>sum</code> and <code>contains</code> on arrays"
+state = "works"
+notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
+
+[[area.feature]]
+text = "Lists and maps"
+state = "planned"
+notes = [["Roadmap: proposed next steps", "docs/roadmap.md"]]
+
+[[area.feature]]
+text = "Files, environment and exit codes"
+state = "planned"
+notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0009", "docs/adr/0009-runtime-owns-io.md"]]
+
+# source: docs/architecture.md; docs/roadmap.md ("Early tooling" (-O2, ARM64, macOS), "What panics", "Fuzzing", "Later and stretch goals" (mir, DWARF, Windows, --target, C FFI), "The growing proof program"); docs/development.md "Fuzz the front end"; docs/adr/0003, 0005
+[[area]]
+id = "compiler"
+name = "Compiler"
+intro = "How <code>sisuc</code> turns a source file into native code."
+note = ""
+
+[[area.feature]]
+text = "Native x86-64 Linux code through LLVM"
+state = "works"
+notes = [["Architecture", "docs/architecture.md"]]
+
+[[area.feature]]
+text = "Optimized builds with <code>-O2</code>"
+state = "works"
+notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"]]
+
+[[area.feature]]
+text = "Reference counting, no garbage collector"
+state = "works"
+notes = [["ADR 0005", "docs/adr/0005-reference-counting.md"]]
+
+[[area.feature]]
+text = "Panics that name the source line"
+state = "works"
+notes = [["ADR 0003", "docs/adr/0003-arithmetic-panics.md"], ["Roadmap: what panics", "docs/roadmap.md#what-panics"]]
+
+[[area.feature]]
+text = "Front end fuzzed nightly"
+state = "works"
+notes = [["Roadmap: fuzzing", "docs/roadmap.md#fuzzing"], ["Developing Sisu", "docs/development.md#fuzz-the-front-end"]]
+
+[[area.feature]]
+text = "MIR, to remove reference-count updates that cancel out"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "Debug info for <code>gdb</code>"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "ARM64 Linux, macOS, Windows"
+state = "planned"
+notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"], ["later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "Cross-compiling"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "Calling C libraries"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "Fuzzing for wrong answers"
+state = "planned"
+notes = [["Roadmap: fuzzing", "docs/roadmap.md#fuzzing"]]
+
+[[area.feature]]
+text = "Lexer and parser in Sisu"
+state = "planned"
+notes = [["Roadmap: the growing proof program", "docs/roadmap.md#the-growing-proof-program"]]
+
+# source: docs/development.md ("Look inside the compiler", "Coverage and performance": CodSpeed runs on pull requests that touch the code); docs/benchmarks.md "Running them"; docs/roadmap.md ("Early tooling", "Gaps before production" (distributing sisuc, packages), "Deliberately avoided" (no registry))
+[[area]]
+id = "toolchain"
+name = "Toolchain"
+intro = "The commands around the compiler."
+note = ""
+
+[[area.feature]]
+text = "<code>sisuc</code>: build, check, show IR"
+state = "works"
+notes = [["Developing Sisu", "docs/development.md#look-inside-the-compiler"]]
+
+[[area.feature]]
+text = "Benchmarks on every pull request that touches the code"
+state = "works"
+notes = [["Benchmarks", "docs/benchmarks.md#running-them"], ["Developing Sisu", "docs/development.md#coverage-and-performance"]]
+
+[[area.feature]]
+text = "One <code>sisu</code> command: build, run, test, fmt"
+state = "planned"
+notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"]]
+
+[[area.feature]]
+text = "Install without cloning"
+state = "planned"
+notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"]]
+
+[[area.feature]]
+text = "Packages from a path or Git"
+state = "planned"
+notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"], ["deliberately avoided", "docs/roadmap.md#deliberately-avoided"]]
+
+# source: docs/adr/0013; docs/diagnostics/README.md (142 codes; `sisuc --explain` accepts all 142, checked with target/release/sisuc); docs/roadmap.md ("Early tooling" (TextMate grammar, --leaks), "Later and stretch goals" (sisu fmt, sisu lsp, lints, parser error recovery, doc comments), "Gaps before production" (language reference, recovery inside a body))
+[[area]]
+id = "dx"
+name = "Developer experience"
+intro = "What helps you write and fix a program."
+note = ""
+
+[[area.feature]]
+text = "Errors that point at your code"
+state = "works"
+notes = [["ADR 0013", "docs/adr/0013-diagnostics-have-stable-codes.md"]]
+
+[[area.feature]]
+text = "<code>--explain</code> for all {{diagnostic-count}} codes"
+state = "works"
+notes = [["ADR 0013", "docs/adr/0013-diagnostics-have-stable-codes.md"], ["Diagnostic codes", "docs/diagnostics/README.md"]]
+
+[[area.feature]]
+text = "Fixes marked safe or unsafe"
+state = "works"
+notes = [["ADR 0013", "docs/adr/0013-diagnostics-have-stable-codes.md"], ["Applying fixes", "docs/diagnostics/README.md#applying-fixes"]]
+
+[[area.feature]]
+text = "JSON output for tools"
+state = "works"
+notes = [["JSON output", "docs/diagnostics/README.md#json-output"]]
+
+[[area.feature]]
+text = "Formatter"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "Language server"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "VS Code highlighting"
+state = "planned"
+notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"]]
+
+[[area.feature]]
+text = "More lints"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "Recovery from syntax errors inside a function"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"], ["gaps before production", "docs/roadmap.md#gaps-before-production"]]
+
+[[area.feature]]
+text = "Leak finder (<code>--leaks</code>)"
+state = "planned"
+notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"], ["ADR 0008", "docs/adr/0008-weak-references.md"]]
+
+[[area.feature]]
+text = "Doc comments"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
+text = "A language reference"
+state = "planned"
+notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"]]

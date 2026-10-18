@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 import unicodedata
 import unittest
 from bisect import bisect_left
@@ -26,6 +27,8 @@ from collections.abc import Callable
 from html.parser import HTMLParser
 from itertools import accumulate, groupby
 from pathlib import Path
+
+from markdown_it import MarkdownIt
 
 SITE = Path(__file__).resolve().parent
 ROOT = SITE.parent
@@ -118,13 +121,87 @@ def diag_html(text: str) -> str:
     return ''.join(out)
 
 
+BLOB = 'https://github.com/sisu-lang/sisu/blob/main/'
+STATES = {'works': ('ok', '✓ Works today'), 'planned': ('plan', '○ Planned')}
+
+
+def adr_files() -> list[Path]:
+    return sorted((ROOT / 'docs/adr').glob('[0-9][0-9][0-9][0-9]-*.md'))
+
+
+def diagnostic_count() -> str:
+    return str(len(list((ROOT / 'docs/diagnostics').glob('[EW][0-9][0-9][0-9][0-9].md'))))
+
+
+def status_areas() -> list[dict]:
+    """The areas of data/status.toml, each with its features."""
+    try:
+        areas = tomllib.loads(read('data/status.toml'))['area']
+    except (tomllib.TOMLDecodeError, KeyError) as e:
+        raise BuildError(f'data/status.toml: {e!r}') from e
+    for area in areas:
+        for feature in area['feature']:
+            if feature['state'] not in STATES:
+                raise BuildError(f'data/status.toml: {feature["text"]!r} has state {feature["state"]!r}, not works or planned')
+    return areas
+
+
+def status_board() -> str:
+    """The Home page's board: a bar, counts and the two lists for each area, the first open."""
+    def items(area, state):
+        return [expand(f['text'], {}) for f in area['feature'] if f['state'] == state]
+
+    def li(texts):
+        return ''.join(f'<li>{t}</li>' for t in texts)
+
+    out = []
+    for i, area in enumerate(status_areas()):
+        works, planned = items(area, 'works'), items(area, 'planned')
+        note = f'\n    <p class="note">{expand(area["note"], {})}</p>' if area['note'] else ''
+        out.append(f'''<details class="area"{' open' if i == 0 else ''}><summary>
+  <span class="area-name">{escape(area['name'])}</span>
+  <div class="bar" aria-hidden="true"><i class="ok" style="flex:{len(works)}"></i><i class="plan" style="flex:{len(planned)}"></i></div>
+  <span class="counts"><b class="ok">{len(works)}</b> work today · <b class="plan">{len(planned)}</b> planned</span>
+  <svg class="chev" aria-hidden="true"><use href="#chev"/></svg></summary>
+  <div class="detail">
+    <div class="wl"><h3>Works today</h3><ul>{li(works)}</ul></div>
+    <div><h3>Planned</h3><ul class="pl">{li(planned)}</ul></div>{note}
+  </div></details>''')
+    return '\n'.join(out)
+
+
+def status_tables() -> str:
+    """The Status page's sections: a heading, an introduction and a table for each area."""
+    out = []
+    for area in status_areas():
+        rows = []
+        for f in area['feature']:
+            cls, label = STATES[f['state']]
+            links = ', '.join(f'<a href="{BLOB}{html.escape(path)}">{escape(text)}</a>' for text, path in f['notes'])
+            rows.append(f'<tr><td>{expand(f["text"], {})}</td><td><span class="st {cls}">{label}</span></td><td>{links}</td></tr>')
+        body = '\n          '.join(rows)
+        out.append(f'''<h2 id="{area['id']}">{escape(area['name'])}</h2>
+<p>{expand(area['intro'], {})}</p>
+<div class="tbl-wrap"><table class="tbl">
+  <thead><tr><th>Feature</th><th>State</th><th>Design notes</th></tr></thead>
+  <tbody>
+    {body}
+  </tbody>
+</table></div>''')
+    return '\n\n'.join(out)
+
+
 DIRECTIVES: dict[str, Callable[..., str]] = {
     'commit': commit,
     'text': lambda path: escape(read(path)),
     'diag': lambda path: diag_html(read(path)),
     'help': help_line,
+    'status-board': status_board,
+    'status-tables': status_tables,
+    'adr-count': lambda: str(len(adr_files())),
+    'diagnostic-count': diagnostic_count,
 }
-DIRECTIVE = re.compile(r'\{\{(\w+)((?: [^\s{}]+)*)\}\}')
+DIRECTIVE = re.compile(r'\{\{([\w-]+)((?: [^\s{}]+)*)\}\}')
 
 
 def expand(text: str, context: dict[str, str]) -> str:
@@ -182,7 +259,6 @@ def build(out: Path) -> None:
 
 
 SCHEME = re.compile(r'[a-z][a-z0-9+.-]*:|//')
-BLOB = 'https://github.com/sisu-lang/sisu/blob/main/'
 FOREIGN = re.compile(r'(?:https?:)?//', re.I)
 CSS_URL = re.compile(r'url\(\s*([\'"]?)(.*?)\1\s*\)|@import\s+([\'"])(.*?)\3')
 HEADING = re.compile(r'<h([1-6])\b')
@@ -284,6 +360,31 @@ def css_problems(out: Path, base: Path, css: str):
             yield f'missing {target}'
 
 
+# A row of the Decisions page: the ADR's GitHub link around its number and title.
+ADR_ROW = re.compile(re.escape(BLOB) + r'(docs/adr/[^"#]+\.md)"[^>]*>\s*<span class="num">\d+</span>\s*<b>(.*?)</b>', re.S)
+# What follows a row's title in its <b>: a status note the ADR's heading does not hold.
+ADR_NOTE = re.compile(r'<(?:small>|span class="soon">)')
+
+
+def adr_problems(text: str):
+    """Each ADR is listed once, by its GitHub link, under its heading rendered inline."""
+    rows: dict[str, list[str]] = {}
+    for m in ADR_ROW.finditer(text):
+        rows.setdefault(m[1], []).append(html.unescape(ADR_NOTE.split(m[2])[0].strip()))
+    for file in adr_files():
+        path = file.relative_to(ROOT).as_posix()
+        if len(rows.get(path, [])) != 1:
+            yield f'lists {path} {len(rows.get(path, []))} times, not once'
+            continue
+        heading = next((line for line in file.read_text(encoding='utf-8').splitlines() if line.startswith('# ')), None)
+        if heading is None:
+            yield f'{path} has no "# " heading'
+            continue
+        want = html.unescape(MarkdownIt().renderInline(heading.removeprefix('# ')))
+        if rows[path][0] != want:
+            yield f'titles {path} {rows[path][0]!r}, not its heading {want!r}'
+
+
 def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:
     """Every problem in the built site, one string each naming the file."""
     texts = {page: page.read_text(encoding='utf-8') for page in sorted(out.rglob('*.html'))}
@@ -292,6 +393,8 @@ def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:
     found = []
     for page, text in texts.items():
         found += [f'{page.relative_to(out)}: {p}' for p in page_problems(out, page, text, tags[page], ids, forbid_tk)]
+        if page == out / 'decisions.html':
+            found += [f'decisions.html: {p}' for p in adr_problems(text)]
     for css in sorted(out.rglob('*.css')):
         found += [f'{css.relative_to(out)}: {p}' for p in css_problems(out, css.parent, css.read_text(encoding='utf-8'))]
     return found

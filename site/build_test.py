@@ -49,6 +49,43 @@ COLOURED = [
 
 PAGE = '<!doctype html><html><head></head><body><h1>Page</h1>{}</body></html>'
 
+REAL_ROOT = build.ROOT
+
+# Two areas: the first has a note, a counted directive, and two links, one with an anchor.
+STATUS = """
+[[area]]
+id = "one"
+name = "One"
+intro = "Intro <code>x</code>"
+note = "Careful."
+[[area.feature]]
+text = "Alpha for {{diagnostic-count}} codes"
+state = "works"
+notes = [["ADR 1", "docs/adr/0001-first.md"], ["Roadmap: here", "docs/roadmap.md#what-works-today"]]
+[[area.feature]]
+text = "Beta"
+state = "works"
+notes = []
+[[area.feature]]
+text = "Gamma"
+state = "planned"
+notes = [["Roadmap", "docs/roadmap.md"]]
+
+[[area]]
+id = "two"
+name = "Two"
+intro = "Second."
+note = ""
+[[area.feature]]
+text = "Delta"
+state = "works"
+notes = [["Roadmap", "docs/roadmap.md"]]
+[[area.feature]]
+text = "Epsilon"
+state = "planned"
+notes = [["Roadmap", "docs/roadmap.md"]]
+"""
+
 
 def temp_file(test, text):
     """A file holding `text`, removed when the test ends."""
@@ -59,8 +96,9 @@ def temp_file(test, text):
     return path
 
 
-def fake_site(test, pages):
-    """A repository whose site/src holds `pages`, standing in for build.ROOT and build.SITE."""
+def fake_site(test, pages, repo=None):
+    """A repository whose site/src holds `pages`, standing in for build.ROOT and build.SITE.
+    `repo` maps other repository paths to their text."""
     tmp = tempfile.TemporaryDirectory()
     test.addCleanup(tmp.cleanup)
     site = Path(tmp.name).resolve() / 'site'
@@ -70,9 +108,16 @@ def fake_site(test, pages):
         (site / name).write_text('', encoding='utf-8')
     for name, text in pages.items():
         (site / 'src' / name).write_text(text, encoding='utf-8')
+    for name, text in (repo or {}).items():
+        (site.parent / name).parent.mkdir(parents=True, exist_ok=True)
+        (site.parent / name).write_text(text, encoding='utf-8')
     test.enterContext(mock.patch.object(build, 'ROOT', site.parent))
     test.enterContext(mock.patch.object(build, 'SITE', site))
     return site
+
+
+def adr_row(num, slug, title):
+    return f'<li><a href="{build.BLOB}docs/adr/{num}-{slug}.md"><span class="num">{num}</span><b>{title}</b><span>x</span></a></li>'
 
 
 def problems(test, files, **kwargs):
@@ -263,6 +308,91 @@ class Build(unittest.TestCase):
         files = {'contribute.html': PAGE.format('<p>[TK: x]</p>')}
         self.assertEqual(problems(self, files), [])
         self.assert_fails('contribute.html', problems(self, files, forbid_tk=True))
+
+    def test_status_board(self):
+        fake_site(self, {}, {'site/data/status.toml': STATUS, 'docs/diagnostics/E0001.md': ''})
+        board = build.expand('{{status-board}}', {})
+        counts = [re.sub('<[^>]*>', '', c) for c in re.findall(r'<span class="counts">(.*?)</span>', board)]
+        self.assertEqual(counts, ['2 work today · 1 planned', '1 work today · 1 planned'])
+        self.assertEqual(re.findall(r'style="flex:(\d+)"', board), ['2', '1', '1', '1'])
+        self.assertEqual(re.findall(r'<details class="area"( open)?>', board), [' open', ''])
+        self.assertEqual(re.findall(r'<span class="area-name">(.*?)</span>', board), ['One', 'Two'])
+        self.assertEqual(re.findall(r'<p class="note">(.*?)</p>', board), ['Careful.'])
+        self.assertIn('<li>Alpha for 1 codes</li>', board)
+
+    def test_status_tables(self):
+        fake_site(self, {}, {'site/data/status.toml': STATUS, 'docs/diagnostics/E0001.md': ''})
+        tables = build.expand('{{status-tables}}', {})
+        self.assertEqual(re.findall(r'<h2 id="(\w+)">(\w+)</h2>\s*<p>(.*?)</p>', tables),
+                         [('one', 'One', 'Intro <code>x</code>'), ('two', 'Two', 'Second.')])
+        rows = re.findall(r'<tr><td>(.*?)</td><td><span class="st (\w+)">(.*?)</span></td><td>(.*?)</td></tr>', tables)
+        self.assertEqual([row[:3] for row in rows], [
+            ('Alpha for 1 codes', 'ok', '✓ Works today'), ('Beta', 'ok', '✓ Works today'), ('Gamma', 'plan', '○ Planned'),
+            ('Delta', 'ok', '✓ Works today'), ('Epsilon', 'plan', '○ Planned')])
+        self.assertEqual([re.findall(r'<a href="(.*?)">(.*?)</a>', row[3]) for row in rows[:3]], [
+            [(build.BLOB + 'docs/adr/0001-first.md', 'ADR 1'), (build.BLOB + 'docs/roadmap.md#what-works-today', 'Roadmap: here')],
+            [], [(build.BLOB + 'docs/roadmap.md', 'Roadmap')]])
+
+    def test_status_state_must_be_known(self):
+        fake_site(self, {}, {'site/data/status.toml': STATUS.replace('"planned"', '"soon"', 1)})
+        with self.assertRaisesRegex(build.BuildError, 'soon'):
+            build.expand('{{status-tables}}', {})
+
+    def test_status_note_paths_are_checked(self):
+        page = 'Status\n\n<h1>Status</h1>\n{{status-tables}}\n'
+        cases = [('docs/roadmap.md#what-works-today', True), ('docs/nope.md', False), ('docs/roadmap.md#nope', False)]
+        for path, ok in cases:
+            with self.subTest(path):
+                toml = STATUS.replace('docs/roadmap.md#what-works-today', path)
+                site = fake_site(self, {'status.html': page}, {'site/data/status.toml': toml, 'docs/adr/0001-first.md': ''})
+                self.enterContext(mock.patch.object(build, 'ROOT', REAL_ROOT))  # the anchors are read from a real file
+                self.enterContext(mock.patch.object(build.check_links, 'TRACKED', build.check_links.TRACKED | {'docs/adr/0001-first.md'}))
+                build.build(site / '_site')
+                found = build.check_site(site / '_site')
+                if ok:
+                    self.assertEqual(found, [])
+                else:
+                    self.assertTrue(all(path in problem for problem in found) and found, found)
+
+    def test_counts(self):
+        fake_site(self, {}, {f'docs/adr/{name}.md': '# T' for name in ('0001-a', '0002-b')}
+                  | {f'docs/diagnostics/{name}.md': '' for name in ('E0001', 'W0002', 'README')})
+        self.assertEqual(build.expand('{{adr-count}} {{diagnostic-count}}', {}), '2 2')
+
+    def test_adr_list(self):
+        fake_site(self, {}, {'docs/adr/0001-first.md': '# First `code` record\n\nBody.\n', 'docs/adr/0002-second.md': '# Second\n'})
+        self.enterContext(mock.patch.object(build.check_links, 'TRACKED', {'docs/adr/0001-first.md', 'docs/adr/0002-second.md'}))
+        cases = [
+            ('both', adr_row('0001', 'first', 'First <code>code</code> record') + adr_row('0002', 'second', 'Second'), True),
+            ('small note', adr_row('0001', 'first', 'First <code>code</code> record<small>proposed</small>') + adr_row('0002', 'second', 'Second'), True),
+            ('soon note', adr_row('0001', 'first', 'First <code>code</code> record') + adr_row('0002', 'second', 'Second <span class="soon">planned</span>'), True),
+            ('missing', adr_row('0001', 'first', 'First <code>code</code> record'), False),
+            ('twice', adr_row('0001', 'first', 'First <code>code</code> record') * 2 + adr_row('0002', 'second', 'Second'), False),
+            ('different title', adr_row('0001', 'first', 'First code record') + adr_row('0002', 'second', 'Second'), False),
+            ('longer title', adr_row('0001', 'first', 'First <code>code</code> record') + adr_row('0002', 'second', 'Second one'), False),
+        ]
+        for name, rows, ok in cases:
+            with self.subTest(name):
+                found = problems(self, {'decisions.html': PAGE.format(f'<ul>{rows}</ul>')})
+                if ok:
+                    self.assertEqual(found, [])
+                else:
+                    self.assert_fails('decisions.html', found)
+
+    def test_adr_needs_a_heading(self):
+        fake_site(self, {}, {'docs/adr/0001-first.md': 'No heading.\n'})
+        self.enterContext(mock.patch.object(build.check_links, 'TRACKED', {'docs/adr/0001-first.md'}))
+        found = problems(self, {'decisions.html': PAGE.format('<ul>' + adr_row('0001', 'first', 'First') + '</ul>')})
+        self.assert_fails('decisions.html', found)
+        self.assertIn('no "# " heading', found[0])
+
+    def test_status_board_headings(self):
+        fake_site(self, {}, {'site/data/status.toml': STATUS})
+        board = build.expand('{{status-board}}', {})
+        self.assertNotRegex(board, r'<summary>(?:(?!</summary>).)*<h\d')
+        self.assertEqual(re.findall(r'<h(\d)>(.*?)</h', board), [('3', 'Works today'), ('3', 'Planned')] * 2)
+        page = f'<h1>Home</h1><svg><symbol id="chev"></symbol></svg><section><h2>Where Sisu stands</h2>{board}</section>'
+        self.assertEqual(problems(self, {'index.html': PAGE.replace('<h1>Page</h1>{}', '{}').format(page)}), [])
 
 
 if __name__ == '__main__':
