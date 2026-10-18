@@ -4,6 +4,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import build
 
@@ -32,6 +33,20 @@ E0032_SPANS = [
     '<span class="ln"><span class="g">4 |</span>     print(<span class="add">f64(</span>n<span class="add">)</span> * x)\n</span>',
 ]
 
+# Lines that colour other ways: each input line, then the span diag_html must give it.
+COLOURED = [
+    # The header of site/programs/explanations/W0002.err.
+    ('warning[W0002]: `count` is never reassigned\n',
+     '<span class="ln"><span class="h">warning[W0002]</span>: `count` is never reassigned\n</span>'),
+    # Line 7 of crates/sisuc/tests/diagnostics/W0004-branch.err.
+    ('  = help: use it, or write `let _ =` to drop it on purpose\n',
+     '<span class="ln">  <span class="g">=</span> <span class="h">help</span>: use it, or write `let _ =` to drop it on purpose\n</span>'),
+    # From `sisuc --check` on a program whose `let n` follows two wide characters: the `+` markers
+    # count display columns, where 界 takes two.
+    ('2 |     if "界" == "界" { let mut n = 1\n  |                           +++\n',
+     '<span class="ln"><span class="g">2 |</span>     if "界" == "界" { let <span class="add">mut</span> n = 1\n</span>'),
+]
+
 PAGE = '<!doctype html><html><head></head><body><h1>Page</h1>{}</body></html>'
 
 
@@ -42,6 +57,22 @@ def temp_file(test, text):
     path = Path(tmp.name) / 'f'
     path.write_text(text, encoding='utf-8')
     return path
+
+
+def fake_site(test, pages):
+    """A repository whose site/src holds `pages`, standing in for build.ROOT and build.SITE."""
+    tmp = tempfile.TemporaryDirectory()
+    test.addCleanup(tmp.cleanup)
+    site = Path(tmp.name).resolve() / 'site'
+    (site / 'assets').mkdir(parents=True)
+    (site / 'src').mkdir()
+    for name in ('_head.html', '_foot.html'):
+        (site / name).write_text('', encoding='utf-8')
+    for name, text in pages.items():
+        (site / 'src' / name).write_text(text, encoding='utf-8')
+    test.enterContext(mock.patch.object(build, 'ROOT', site.parent))
+    test.enterContext(mock.patch.object(build, 'SITE', site))
+    return site
 
 
 def problems(test, files, **kwargs):
@@ -73,9 +104,19 @@ class Build(unittest.TestCase):
         for span in E0032_SPANS:
             self.assertIn(span, shown)
 
+    def test_diag_html_colours_warnings_help_and_wide_text(self):
+        for text, span in COLOURED:
+            with self.subTest(text):
+                self.assertIn(span, build.diag_html(text))
+
     def test_unknown_directive_fails(self):
         with self.assertRaisesRegex(build.BuildError, 'nope'):
             build.expand('{{nope}}', {})
+
+    def test_directive_arguments_are_counted(self):
+        for text in ('{{text}}', '{{text a b}}'):
+            with self.subTest(text), self.assertRaisesRegex(build.BuildError, re.escape(f'expected {{{{text path}}}}, found {text}')):
+                build.expand(text, {})
 
     def test_substitution_is_not_expanded_again(self):
         path = temp_file(self, '{{root}}')
@@ -118,6 +159,9 @@ class Build(unittest.TestCase):
             ('<a href="https://github.com/sisu-lang/sisu/blob/main/docs/nope.md">x</a>', False),
             ('<a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md#nope">x</a>', False),
             ('<script src="https://cdn.example/x.js"></script>', False),
+            ("<a href='missing.html'>x</a>", False),
+            ("<script src='https://cdn.example/x.js'></script>", False),
+            ('<pre>href="missing.html"</pre>', True),
         ]
         for body, ok in cases:
             with self.subTest(body):
@@ -150,6 +194,20 @@ class Build(unittest.TestCase):
                     self.assertEqual(found, [])
                 else:
                     self.assert_fails('assets/site.css', found)
+        # A page's own <style> and style="" are checked too, resolved from the page's directory.
+        styles = [
+            ('<style>body { background: url(https://cdn.example/bg.png); }</style>', False),
+            ('<p style="background: url(https://cdn.example/bg.png)">x</p>', False),
+            ('<style>@font-face { src: url(assets/fonts/f.woff2); }</style>', False),
+            ('<style>@font-face { src: url(../assets/fonts/f.woff2); }</style>', True),
+        ]
+        for body, ok in styles:
+            with self.subTest(body):
+                found = problems(self, page | {'diagnostics/X.html': PAGE.format(body), 'assets/fonts/f.woff2': ''})
+                if ok:
+                    self.assertEqual(found, [])
+                else:
+                    self.assert_fails('diagnostics/X.html', found)
 
     def test_copy_words(self):
         cases = [
@@ -180,6 +238,26 @@ class Build(unittest.TestCase):
                     self.assertEqual(found, [])
                 else:
                     self.assert_fails('tour.html', found)
+
+    def test_build_replaces_only_its_own_output(self):
+        site = fake_site(self, {'index.html': 'Home\n\n<h1>Home</h1>\n'})
+        out = site / '_site'
+        build.build(out)
+        build.build(out)  # the first build marked the directory as its own
+        self.assertTrue((out / 'index.html').is_file())
+        notes = site.parent / 'notes'
+        notes.mkdir()
+        (notes / 'keep.txt').write_text('x', encoding='utf-8')
+        for dest, refusal in [(site / 'src', 'is a build input'), (site.parent, 'is a build input'), (notes, 'not built by')]:
+            with self.subTest(dest), self.assertRaisesRegex(build.BuildError, refusal):
+                build.build(dest)
+        self.assertTrue((site / 'src' / 'index.html').is_file())
+        self.assertTrue((notes / 'keep.txt').is_file())
+
+    def test_page_needs_its_title_and_description_lines(self):
+        fake_site(self, {'short.html': 'Title\n'})
+        with self.assertRaisesRegex(build.BuildError, re.escape('site/src/short.html')):
+            build.build(build.SITE / '_site')
 
     def test_forbid_tk(self):
         files = {'contribute.html': PAGE.format('<p>[TK: x]</p>')}

@@ -14,13 +14,17 @@ context or from DIRECTIVES. The build then checks the output and prints each pro
 import argparse
 import html
 import importlib.util
+import inspect
 import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 import unittest
+from bisect import bisect_left
 from collections.abc import Callable
-from itertools import groupby
+from html.parser import HTMLParser
+from itertools import accumulate, groupby
 from pathlib import Path
 
 SITE = Path(__file__).resolve().parent
@@ -91,8 +95,11 @@ def colours(line: str, below: str) -> list[str]:
                 paint(mark.start(1), mark.end(1), {'^': 'e', '-': 'g', '+': 'add'}[mark[1][0]])
                 pos = mark.end()
         elif m[1].endswith('|') and PLUS_LINE.fullmatch(below):
+            # The markers count display columns, as annotate-snippets does: a wide character takes two.
+            # shortcut: zero-width characters count as one column; upgrade when an output holds one.
+            starts = list(accumulate((2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1 for ch in line), initial=0))
             for run in re.finditer(r'\++', below):
-                paint(run.start(), run.end(), 'add')
+                paint(bisect_left(starts, run.start()), bisect_left(starts, run.end()), 'add')
     return cls
 
 
@@ -127,7 +134,11 @@ def expand(text: str, context: dict[str, str]) -> str:
         if name in context:
             return context[name]
         if name in DIRECTIVES:
-            return DIRECTIVES[name](*m[2].split())
+            directive, args = DIRECTIVES[name], m[2].split()
+            params = inspect.signature(directive).parameters
+            if len(args) != len(params):
+                raise BuildError(f'expected {{{{{" ".join([name, *params])}}}}}, found {m[0]}')
+            return directive(*args)
         raise BuildError(f'unknown {{{{{name}}}}}')
     return DIRECTIVE.sub(one, text)
 
@@ -143,37 +154,74 @@ def assemble(body: str, *, title: str, description: str, page: str, depth: int, 
 
 
 COMMENT_LINE = re.compile(r' *<!--.*-->')
+# The file each build writes into its output, so that the next one knows the directory is its own.
+MARKER = '.built-by-build-py'
 
 
 def build(out: Path) -> None:
+    dest = out.resolve()
+    if SITE.is_relative_to(dest) or (dest.is_relative_to(SITE) and not dest.is_relative_to(SITE / '_site')):
+        raise BuildError(f'{out} is a build input; choose another --out')
     if out.exists():
-        if any(out.iterdir()) and not (out / 'index.html').is_file():
-            raise BuildError(f'{out} holds files but no built site; remove it or choose another --out')
+        if any(out.iterdir()) and not (out / MARKER).is_file():
+            raise BuildError(f'{out} holds files not built by site/build.py; remove it or choose another --out')
         shutil.rmtree(out)
     shutil.copytree(SITE / 'assets', out / 'assets')
+    (out / MARKER).write_text('site/build.py built this directory and replaces it on the next build.\n', encoding='utf-8')
     for src in sorted((SITE / 'src').glob('*.html')):
-        title, description, body = src.read_text(encoding='utf-8').split('\n', 2)
-        body = '\n'.join(line for line in body.split('\n') if not COMMENT_LINE.fullmatch(line))
+        text = src.read_text(encoding='utf-8')
         try:
+            if text.count('\n') < 2:
+                raise BuildError('needs a title line, a description line and the body')
+            title, description, body = text.split('\n', 2)
+            body = '\n'.join(line for line in body.split('\n') if not COMMENT_LINE.fullmatch(line))
             page = assemble(body, title=title, description=description, page=src.name, depth=0, context={})
         except BuildError as e:
             raise BuildError(f'{src.relative_to(ROOT)}: {e}') from e
         (out / src.name).write_text(page, encoding='utf-8')
 
 
-ATTR = re.compile(r'\b(?:href|src)="([^"]*)"')
-ID = re.compile(r'(?<![\w-])id="([^"]*)"')
 SCHEME = re.compile(r'[a-z][a-z0-9+.-]*:|//')
 BLOB = 'https://github.com/sisu-lang/sisu/blob/main/'
-FOREIGN = re.compile(r'<(?:link|script|img)\b[^>]*?\b(?:href|src)="((?:https?:)?//[^"]*)"', re.I)
+FOREIGN = re.compile(r'(?:https?:)?//', re.I)
 CSS_URL = re.compile(r'url\(\s*([\'"]?)(.*?)\1\s*\)|@import\s+([\'"])(.*?)\3')
 HEADING = re.compile(r'<h([1-6])\b')
 # A <pre> with no data-lang holds diag_html output, which shows what sisuc prints.
 UNTAGGED_PRE = re.compile(r'<pre\b(?![^>]*\bdata-lang=)[^>]*>.*?</pre>', re.S)
 
 
-def link_problems(out: Path, page: Path, text: str, ids: dict[Path, set[str]]):
-    for target in ATTR.findall(text):
+class Tags(HTMLParser):
+    """A page's `href` and `src` values with their tags, its ids, and its inline CSS."""
+
+    def __init__(self, text: str):
+        super().__init__()
+        self.links: list[tuple[str, str]] = []
+        self.ids: set[str] = set()
+        self.styles: list[str] = []
+        self.in_style = False
+        self.feed(text)
+        self.close()
+
+    def handle_starttag(self, tag, attrs):
+        for name, value in attrs:
+            if name in ('href', 'src') and value is not None:
+                self.links.append((tag, value))
+            elif name == 'id' and value is not None:
+                self.ids.add(value)
+            elif name == 'style' and value:
+                self.styles.append(value)
+        self.in_style = tag == 'style'
+
+    def handle_endtag(self, tag):
+        self.in_style = False
+
+    def handle_data(self, data):
+        if self.in_style:
+            self.styles.append(data)
+
+
+def link_problems(out: Path, page: Path, links: list[tuple[str, str]], ids: dict[Path, set[str]]):
+    for _, target in links:
         if target.startswith(BLOB):
             path, _, anchor = target.removeprefix(BLOB).partition('#')
             if path not in check_links.TRACKED:
@@ -199,10 +247,13 @@ def link_problems(out: Path, page: Path, text: str, ids: dict[Path, set[str]]):
             yield f'missing anchor {target}'
 
 
-def page_problems(out: Path, page: Path, text: str, ids: dict[Path, set[str]], forbid_tk: bool):
-    yield from link_problems(out, page, text, ids)
-    for url in FOREIGN.findall(text):
-        yield f'loads {url} from another host'
+def page_problems(out: Path, page: Path, text: str, tags: Tags, ids: dict[Path, set[str]], forbid_tk: bool):
+    yield from link_problems(out, page, tags.links, ids)
+    for tag, url in tags.links:
+        if tag in ('link', 'script', 'img') and FOREIGN.match(url):
+            yield f'loads {url} from another host'
+    for style in tags.styles:
+        yield from css_problems(out, page.parent, style)
     levels = [int(level) for level in HEADING.findall(text)]
     if levels.count(1) != 1:
         yield f'has {levels.count(1)} <h1>, not one'
@@ -219,15 +270,16 @@ def page_problems(out: Path, page: Path, text: str, ids: dict[Path, set[str]], f
         yield 'holds a [TK] marker'
 
 
-def css_problems(out: Path, css: Path):
-    for m in CSS_URL.finditer(css.read_text(encoding='utf-8')):
+def css_problems(out: Path, base: Path, css: str):
+    """The problems of the CSS text `css`, whose relative URLs resolve from the directory `base`."""
+    for m in CSS_URL.finditer(css):
         target = m[2] if m[2] is not None else m[4]
         if target.startswith('data:'):
             continue
         if SCHEME.match(target):
             yield f'loads {target} from another host'
             continue
-        dest = (css.parent / re.split('[?#]', target)[0]).resolve()
+        dest = (base / re.split('[?#]', target)[0]).resolve()
         if not dest.is_file() or not dest.is_relative_to(out.resolve()):
             yield f'missing {target}'
 
@@ -235,12 +287,13 @@ def css_problems(out: Path, css: Path):
 def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:
     """Every problem in the built site, one string each naming the file."""
     texts = {page: page.read_text(encoding='utf-8') for page in sorted(out.rglob('*.html'))}
-    ids = {page.resolve(): set(ID.findall(text)) for page, text in texts.items()}
+    tags = {page: Tags(text) for page, text in texts.items()}
+    ids = {page.resolve(): tags[page].ids for page in texts}
     found = []
     for page, text in texts.items():
-        found += [f'{page.relative_to(out)}: {p}' for p in page_problems(out, page, text, ids, forbid_tk)]
+        found += [f'{page.relative_to(out)}: {p}' for p in page_problems(out, page, text, tags[page], ids, forbid_tk)]
     for css in sorted(out.rglob('*.css')):
-        found += [f'{css.relative_to(out)}: {p}' for p in css_problems(out, css)]
+        found += [f'{css.relative_to(out)}: {p}' for p in css_problems(out, css.parent, css.read_text(encoding='utf-8'))]
     return found
 
 
