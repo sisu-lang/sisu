@@ -1096,7 +1096,7 @@ impl Checker<'_> {
         if let Some(to @ (Type::I64 | Type::U8 | Type::F64 | Type::CHAR | Type::STRING)) =
             built_in_type(callee.name.as_str())
         {
-            return self.convert(span, to, args);
+            return self.convert(span, callee.span, to, args);
         }
         match declared {
             (Some(Declared::Known(class)), _) => self.construct_class(span, class, args),

@@ -266,6 +266,13 @@ mod tests {
         }
     }
 
+    /// The `0` that fixes `.9223372036854775809` leaves every lexer report of another code: the
+    /// lexer reports none for digits after a `.`.
+    #[test]
+    fn a_leading_dot_float_fix_keeps_the_lexer_reports() {
+        on_stack(b"fn main() {\n    let x = .9223372036854775809\n}\n");
+    }
+
     #[test]
     fn every_seed_passes() {
         let mut found = Vec::new();
