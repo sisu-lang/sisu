@@ -1,0 +1,8 @@
+error[E0102]: an exponent needs digits
+ --> E0102.sisu:2:14
+  |
+2 |     let x = 1e
+  |              ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0102

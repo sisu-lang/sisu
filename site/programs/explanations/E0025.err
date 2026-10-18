@@ -1,0 +1,8 @@
+error[E0025]: a comparison chain must go in one direction
+ --> E0025.sisu:5:17
+  |
+5 |     print(a < b > c)
+  |                 ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0025

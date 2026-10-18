@@ -1,0 +1,13 @@
+error[E0010]: unexpected character `&`
+ --> E0010.sisu:2:19
+  |
+2 |     let ok = true & false
+  |                   ^
+  |
+help: if you meant logical and, use `&&`
+  |
+2 |     let ok = true && false
+  |                    +
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0010

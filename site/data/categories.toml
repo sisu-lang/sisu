@@ -1,0 +1,43 @@
+# Each diagnostic code in docs/diagnostics/ belongs to exactly one category; the site build fails
+# otherwise. The categories group the diagnostics index, in this order.
+
+[[category]]
+id = "variables"
+name = "Variables and change"
+codes = ["E0001", "E0013", "E0019", "E0021", "E0022", "E0074", "E0078", "E0084", "E0085", "E0086",
+         "E0087", "E0088", "E0100", "W0002"]
+
+[[category]]
+id = "types"
+name = "Types and conversions"
+codes = ["E0009", "E0014", "E0030", "E0031", "E0032", "E0035", "E0036", "E0037", "E0040", "E0042",
+         "E0043", "E0044", "E0045", "E0047", "E0048", "E0049", "E0050", "E0054", "E0059", "E0060",
+         "E0061", "E0062", "E0068", "E0069", "E0094", "E0098", "E0103", "E0104", "E0105", "E0111",
+         "W0005"]
+
+[[category]]
+id = "names"
+name = "Names and scope"
+codes = ["E0026", "E0028", "E0029", "E0033", "E0034", "E0038", "E0039", "E0052", "E0053", "E0055",
+         "E0079", "E0080", "E0082", "E0106", "W0001", "W0004"]
+
+[[category]]
+id = "classes"
+name = "Classes and fields"
+codes = ["E0016", "E0017", "E0018", "E0020", "E0027", "E0041", "E0046", "E0056", "E0057", "E0058",
+         "E0063", "E0064", "E0065", "E0066", "E0067", "E0070", "E0073"]
+
+[[category]]
+id = "enums"
+name = "Enums and match"
+codes = ["E0051", "E0112", "E0113", "E0114", "E0115", "E0116", "E0117", "E0118", "E0119", "E0120",
+         "E0121", "E0122", "E0123", "E0124", "E0125", "E0126", "E0127", "E0128", "E0129", "E0130",
+         "E0131", "E0133", "E0134", "E0135", "E0136", "W0006"]
+
+[[category]]
+id = "syntax"
+name = "Syntax"
+codes = ["E0002", "E0003", "E0004", "E0005", "E0006", "E0007", "E0008", "E0010", "E0011", "E0012",
+         "E0015", "E0023", "E0024", "E0025", "E0071", "E0072", "E0075", "E0076", "E0077", "E0081",
+         "E0083", "E0089", "E0090", "E0091", "E0092", "E0093", "E0095", "E0096", "E0097", "E0099",
+         "E0101", "E0102", "E0107", "E0108", "E0109", "E0110", "E0132", "W0003"]

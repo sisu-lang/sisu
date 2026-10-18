@@ -1,0 +1,11 @@
+error[E0034]: function `double` is defined twice
+ --> E0034.sisu:5:4
+  |
+1 | fn double(n: i64) -> i64 {
+  |    ------ first defined here
+...
+5 | fn double(n: i64) -> i64 {
+  |    ^^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0034

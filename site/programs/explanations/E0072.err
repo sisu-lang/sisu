@@ -1,0 +1,10 @@
+error[E0072]: source is not valid UTF-8
+ --> E0072.sisu:2:11
+  |
+2 |     // caf�
+  |           ^
+  |
+  = help: save the file as UTF-8
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0072

@@ -25,6 +25,7 @@ running the same checks as CI. Sisu builds and runs on x86-64 Linux.
   and memory errors.
 - For `make miri`, a nightly toolchain with Miri:
   `rustup toolchain install nightly --component miri --component rust-src`.
+- [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
 
 LLVM 22 lives inside the repository. `scripts/install-llvm.sh` downloads the
 official release (1.9 GB) and keeps only what the build needs in `.llvm/22`
@@ -373,6 +374,18 @@ A pipe with no reader is the exception, as in C: writing to it kills the
 program with SIGPIPE. A panic ignores SIGPIPE on its way out, so it exits with
 code 101 even when nothing reads standard error.
 
+## Build the site
+
+The website is built from `site/` and the docs by one script. Its one
+prerequisite is [uv](https://docs.astral.sh/uv/); it needs no Rust and no LLVM.
+
+```console
+$ make site   # tests the build, then builds site/_site
+```
+
+CI runs the same target. The `Pages` workflow deploys the site to GitHub Pages
+and runs only when you start it by hand.
+
 ## Look inside the compiler
 
 These flags run the pipeline up to one stage and stop there.
@@ -454,4 +467,5 @@ must accept any syntax those programs use.
 | `fuzz` | The front-end fuzz target, its own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
 | `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, and `check-expect-messages.sh`, which a prek hook runs. |
+| `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |

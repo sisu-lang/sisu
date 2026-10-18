@@ -1,0 +1,46 @@
+Status
+Every Sisu feature, grouped by area, marked as working today or planned.
+<main class="status">
+  <style>
+    main.status .tbl th:nth-child(2), main.status .tbl td:nth-child(2) { white-space: nowrap; }
+    main.status .tbl td:first-child { min-width: 200px; }
+    main.status .st { font-weight: 700; }
+    main.status .st.ok { color: var(--ok); }
+    main.status .st.plan { color: var(--plan); }
+    main.status .tbl td:last-child a { white-space: nowrap; }
+    @media (max-width: 600px) {
+      main.status .tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      main.status .tbl tr { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 14px; border-top: 1px solid var(--rule); }
+      main.status .tbl tbody tr:first-child { border-top: 0; }
+      main.status .tbl td { border: 0; padding: 0; }
+      main.status .tbl td:first-child { min-width: 0; }
+      main.status .tbl td:last-child { grid-column: 1 / -1; font-size: 14px; }
+      main.status .tbl td:last-child a { white-space: normal; }
+    }
+  </style>
+
+  <section class="ph"><div class="w">
+    <h1>Where Sisu stands</h1>
+    <p class="lede">Every feature of Sisu, whether it works today or is planned, with links to the design notes that explain it.</p>
+    <p class="meta">Built from the repository at commit {{commit}}.</p>
+    <div class="callout" style="margin-bottom:0"><p>Sisu makes no stability promise yet: any change may break programs. Planned work can change and has no promised date.</p></div>
+  </div></section>
+  <!-- source: docs/roadmap.md, docs/adr/, README.md (no stability promise), docs/roadmap.md "Beyond milestone 6" (nothing decided until it lands) -->
+
+  <div class="w doc">
+    <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
+      <li><a href="#language">Language</a></li>
+      <li><a href="#stdlib">Standard library</a></li>
+      <li><a href="#compiler">Compiler</a></li>
+      <li><a href="#toolchain">Toolchain</a></li>
+      <li><a href="#dx">Developer experience</a></li>
+    </ol></nav>
+    <article class="prose">
+
+      {{status-tables}}
+
+      <p>Some things Sisu leaves out on purpose, such as a borrow checker, inheritance and macros. <a href="decisions.html">The design decisions</a> say why.</p>
+      <!-- source: README.md ("Sisu leaves out lifetimes and a borrow checker, inheritance and macros"), docs/roadmap.md "Deliberately avoided" -->
+    </article>
+  </div>
+</main>

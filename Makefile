@@ -7,7 +7,7 @@ SECS =
 BENCH =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build test bless lint deny miri check coverage mutants verify fuzz bench callgrind
+.PHONY: help setup build test bless lint deny miri check coverage mutants verify fuzz bench callgrind site
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z]+:.*## / { printf "  %-10s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -28,7 +28,7 @@ build: ## Build sisuc and the runtime library
 test: ## Run every test with nextest, whose setup script builds the runtime
 	cargo nextest run --workspace --locked
 
-bless: ## Fill the expected .out/.err/.json files of the end-to-end cases
+bless: ## Fill the expected .out/.err/.json files of the end-to-end cases and the site's programs
 	SISU_BLESS=1 cargo nextest run -E 'binary(cases)'
 
 lint: ## The hooks CI runs: fmt, clippy, typos, shellcheck and the rest
@@ -60,3 +60,6 @@ bench: ## Time the benchmarks in bench/ (BENCH='fib sieve' picks some)
 callgrind: ## Count the instructions of sisuc --check, as CodSpeed does
 	scripts/codspeed-prep.sh
 	valgrind --tool=callgrind --callgrind-out-file=/dev/null target/release/sisuc --check target/codspeed/large/main.sisu
+
+site: ## Build the site into site/_site and check it
+	uv run --locked --script site/build.py --test && uv run --locked --script site/build.py

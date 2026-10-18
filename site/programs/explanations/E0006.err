@@ -1,0 +1,13 @@
+error[E0006]: `else` must be on the same line as the closing `}`
+ --> E0006.sisu:6:5
+  |
+6 |     else {
+  |     ^^^^
+  |
+help: move `else` after the `}`
+  |
+5 |     } else {
+  |      +
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0006

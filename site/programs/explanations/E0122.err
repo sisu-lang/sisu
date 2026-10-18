@@ -1,0 +1,14 @@
+error[E0122]: Sisu writes `match`
+ --> E0122.sisu:8:13
+  |
+8 |     let n = switch s {
+  |             ^^^^^^
+  |
+help: write `match`
+  |
+8 -     let n = switch s {
+8 +     let n = match s {
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0122

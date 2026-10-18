@@ -1,0 +1,13 @@
+error[E0117]: `Num` is a variant of `Expr`; write `Expr.Num`
+ --> E0117.sisu:6:13
+  |
+6 |     let _ = Num(2)
+  |             ^^^
+  |
+help: write `Expr.Num`
+  |
+6 |     let _ = Expr.Num(2)
+  |             +++++
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0117

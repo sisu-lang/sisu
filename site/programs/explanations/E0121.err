@@ -1,0 +1,8 @@
+error[E0121]: `Shape` has no fields; take it apart with `match`
+ --> E0121.sisu:6:7
+  |
+6 |     s.w
+  |       ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0121

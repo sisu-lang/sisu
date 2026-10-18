@@ -1,0 +1,8 @@
+error[E0044]: `n` is not optional, so it is never `None`
+ --> E0044.sisu:3:11
+  |
+3 |     print(n == None)
+  |           ^^^^^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0044

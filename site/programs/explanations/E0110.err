@@ -1,0 +1,8 @@
+error[E0110]: a precision is at most 30
+ --> E0110.sisu:3:14
+  |
+3 |     print("{x:.31}")
+  |              ^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0110

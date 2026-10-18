@@ -1,0 +1,14 @@
+error[E0084]: `const` is declared at the top level
+ --> E0084.sisu:2:5
+  |
+2 |     const limit = 100
+  |     ^^^^^
+  |
+help: use `let`
+  |
+2 -     const limit = 100
+2 +     let limit = 100
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0084

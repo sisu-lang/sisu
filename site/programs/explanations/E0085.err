@@ -1,0 +1,8 @@
+error[E0085]: a constant is `i64`, `u8`, `f64`, `bool`, `char` or `string`
+ --> E0085.sisu:1:15
+  |
+1 | const PRIMES: [i64] = [2, 3, 5]
+  |               ^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0085

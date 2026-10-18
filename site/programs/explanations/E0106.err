@@ -1,0 +1,14 @@
+error[E0106]: math in Sisu is methods and constants on `f64`
+ --> E0106.sisu:3:11
+  |
+3 |     print(math.sqrt(x))
+  |           ^^^^^^^^^
+  |
+help: write `x.sqrt()`
+  |
+3 -     print(math.sqrt(x))
+3 +     print(x.sqrt())
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0106

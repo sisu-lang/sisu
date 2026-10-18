@@ -1,0 +1,145 @@
+Tour
+A tour of the Sisu language as it works today, one small program at a time.
+<main>
+  <section class="ph"><div class="w">
+    <h1>A tour of Sisu</h1>
+    <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
+    <p class="meta">The working programs on this page compile with sisuc today. Every output and error shown is what sisuc really prints. Checked against the repository at commit 18b6be6.</p>
+  </div></section>
+
+  <div class="w doc">
+    <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
+      <li><a href="#hello">Hello and printing</a></li>
+      <li><a href="#values">let and let mut</a></li>
+      <li><a href="#functions">Functions and if</a></li>
+      <li><a href="#loops">Loops</a></li>
+      <li><a href="#optionals">Optionals instead of null</a></li>
+      <li><a href="#classes">Classes</a></li>
+      <li><a href="#enums">Enums and match</a></li>
+      <li><a href="#arrays">Arrays are values</a></li>
+      <li><a href="#overflow">Integers panic on overflow</a></li>
+      <li><a href="#strings">Strings</a></li>
+      <li><a href="#not-yet">What is not here yet</a></li>
+    </ol></nav>
+
+    <article class="prose">
+      <h2 id="hello">Hello and printing</h2>
+      <p>A program starts at <code>main</code>. <code>print</code> writes one value and a line break. Statements end at the end of the line, with no semicolons.</p>
+      <figure class="code"><figcaption class="cap">hello.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/hello.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/hello.out}}</pre></figure>
+      <p>Braces inside a string insert a value. After a colon comes a format spec: an alignment (<code>&lt;</code>, <code>&gt;</code>, <code>^</code>), a width in characters and a number of decimals. Compile with <code>target/debug/sisuc hello.sisu hello</code>, then run <code>./hello</code>.</p>
+      <!-- source: docs/roadmap.md ("What works today": format specs, interpolation), docs/adr/0001-newline-terminated-statements.md, crates/sisuc/tests/run/format_width.sisu -->
+
+      <h2 id="values">let and let mut</h2>
+      <p><code>let</code> binds a name that cannot be reassigned. <code>let mut</code> binds one that can. Types are inferred.</p>
+      <figure class="code"><figcaption class="cap">rounds.sisu</figcaption><pre data-lang="sisu">
+{{text programs/diagnostics/rounds.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">sisuc rounds.sisu rounds</figcaption><pre>{{diag programs/diagnostics/rounds.err}}</pre></figure>
+      <p>A class object works differently. Its fields can change only if the field itself is declared <code>mut</code>, whatever binding holds the object. Objects are shared, so the field decides, not the binding.</p>
+      <figure class="code"><figcaption class="cap">player.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/player.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/player.out}}</pre></figure>
+      <p>Writing <code>p.name = "Eino"</code> in the same program is the same error, E0001, with the help line <code>{{help ../crates/sisuc/tests/diagnostics/E0001-field.err}}</code>.</p>
+      <!-- source: docs/adr/0011-let-mut-marks-what-can-change.md, docs/roadmap.md ("What works today"); diagnostics are real sisuc output -->
+
+      <h2 id="functions">Functions and if</h2>
+      <p>A function names the type of each parameter and of its result. The last expression in a body is its value. <code>if</code> is an expression too, so it can be a function's result or the right side of a <code>let</code>.</p>
+      <figure class="code"><figcaption class="cap">functions.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/functions.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/functions.out}}</pre></figure>
+      <!-- source: docs/roadmap.md ("What works today": functions and recursion, if as an expression), crates/sisuc/tests/run/fib.sisu -->
+
+      <h2 id="loops">Loops</h2>
+      <p><code>for</code> walks a range or an array. <code>0..3</code> leaves out its end and <code>0..=3</code> includes it. <code>while</code> loops on a condition, and <code>break</code> and <code>continue</code> work in both.</p>
+      <figure class="code"><figcaption class="cap">loops.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/loops.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/loops.out}}</pre></figure>
+      <!-- source: docs/roadmap.md ("What works today": while, break, continue, for x in xs, for i in 0..n, ..=), crates/sisuc/tests/run/loops.sisu, crates/sisuc/tests/run/for_inclusive.sisu -->
+
+      <h2 id="optionals">Optionals instead of null</h2>
+      <p>Sisu has no null. A value that may be missing has an optional type, such as <code>i64?</code>, and is either a value or <code>None</code>. An <code>i64?</code> is not an <code>i64</code>: <code>x + 1</code> on one does not compile, so you deal with <code>None</code> before you use the value.</p>
+      <figure class="code"><figcaption class="cap">find.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/find.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/find.out}}</pre></figure>
+      <p>You unwrap an optional in one of these ways:</p>
+      <ul>
+        <li><code>a ?? b</code> gives the value, or <code>b</code> when <code>a</code> is <code>None</code>. <code>b</code> may be <code>panic("why")</code>.</li>
+        <li><code>if let x = a</code> runs its block with the value bound to <code>x</code>; <code>while let</code> loops while there is one.</li>
+        <li><code>a?.field</code> and <code>a?.method()</code> reach through an optional and give an optional.</li>
+      </ul>
+      <p>A conversion that can fail returns an optional instead of panicking. <code>i64(41.5)</code> is <code>None</code>, because 41.5 is not a whole number.</p>
+      <!-- source: docs/roadmap.md ("What works today": optionals, ?. ?? if let while let, panic on the right of ??), docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md, crates/sisuc/tests/run/optionals.sisu, crates/sisuc/tests/run/unwrap.sisu -->
+
+      <h2 id="classes">Classes</h2>
+      <p>A class declares its fields one per line and its methods after them. A method takes <code>self</code> and may write any <code>mut</code> field. Objects are freed by reference counting when the last reference goes away.</p>
+      <figure class="code"><figcaption class="cap">counter.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/counter.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/counter.out}}</pre></figure>
+      <p><code>let b = a</code> does not copy the object: <code>a</code> and <code>b</code> hold the same counter, so both ticks count. <code>is</code> asks whether two references hold the same object.</p>
+      <div class="callout info"><p><span class="soon">planned</span> Today <code>==</code> on two objects compares their fields. A recorded decision changes that: a class will have <code>==</code> only when it asks for one, and <code>is</code> stays the identity test. Another proposed decision lets a method borrow <code>self</code>, so a call no longer counts it.</p></div>
+      <!-- source: docs/adr/0011-let-mut-marks-what-can-change.md, docs/adr/0005-reference-counting.md, docs/adr/0022-classes-compare-by-identity.md (accepted, not yet built), docs/adr/0012-methods-borrow-self.md (proposed), docs/roadmap.md ("What works today": == field by field, is tests identity) -->
+
+      <h2 id="enums">Enums and match</h2>
+      <p>An enum lists its variants, and each variant can carry data. <code>match</code> takes a value apart, one arm per line, and gives a value.</p>
+      <figure class="code"><figcaption class="cap">area.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/area.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/area.out}}</pre></figure>
+      <p>A <code>match</code> must cover every value. Leave out the <code>Point</code> arm and the program does not compile:</p>
+      <figure class="code"><figcaption class="cap">sisuc area.sisu area</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure>
+      <p>Patterns can also be literals, alternatives joined with <code>|</code>, and ranges. An arm can add a guard with <code>if</code>.</p>
+      <figure class="code"><figcaption class="cap">describe.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/describe.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/describe.out}}</pre></figure>
+      <!-- source: docs/roadmap.md ("What works today": enums, match, literal and range patterns, alternatives, guards, exhaustiveness), docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, crates/sisuc/tests/run/match_alternatives.sisu, crates/sisuc/tests/run/match_ranges.sisu; diagnostic is real sisuc output -->
+
+      <h2 id="arrays">Arrays are values</h2>
+      <p>Assigning an array, or passing it to a function, behaves as a copy. No other holder can change your array. The copy is made only when one holder writes, so reading or passing an array never copies it.</p>
+      <figure class="code"><figcaption class="cap">arrays.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/arrays.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/arrays.out}}</pre></figure>
+      <p>A function that changes an array returns the new one. Shared data that changes in place belongs in a class.</p>
+      <!-- source: docs/adr/0007-arrays-are-values.md, docs/roadmap.md ("What works today": copy-on-write arrays), crates/sisuc/tests/run/copies.sisu -->
+
+      <h2 id="overflow">Integers panic on overflow</h2>
+      <p>Integer arithmetic that overflows stops the program with a panic that names the line. A wrong answer is never silent. Division by zero panics the same way, and every panic exits with status 101.</p>
+      <figure class="code"><figcaption class="cap">factorial.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run-fail/factorial.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
+$ ./factorial
+{{text programs/run-fail/factorial.out}}{{text programs/run-fail/factorial.err}}$ echo $?
+101
+</pre></figure>
+      <!-- source: docs/adr/0003-arithmetic-panics.md, docs/roadmap.md ("What panics", exit code 101), crates/runtime/src/lib.rs (sisu_panic doc comment) -->
+
+      <h2 id="strings">Strings</h2>
+      <p>A <code>string</code> is always valid UTF-8, and it is a value like an array. <code>len()</code> counts bytes, and there is no <code>s[i]</code>. To work on text, take it apart with <code>chars()</code>, <code>bytes()</code> or <code>words()</code>, and build it back with <code>string(cs)</code>.</p>
+      <figure class="code"><figcaption class="cap">text.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/text.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/text.out}}</pre></figure>
+      <p>A <code>char</code> is one Unicode scalar value. The string has 10 of them in 14 bytes, because each <code>ä</code> and <code>ö</code> takes two bytes.</p>
+      <!-- source: docs/adr/0014-strings-are-utf-8-values.md, docs/roadmap.md ("What works today": char, string, text as arrays, words), crates/sisuc/tests/run/text.sisu, crates/sisuc/tests/run/words.sisu -->
+
+      <h2 id="not-yet">What is not here yet</h2>
+      <p>Sisu is early, and much of an everyday language is still missing. Some of what is planned:</p>
+      <ul>
+        <li>Generics and interfaces <span class="soon">planned</span></li>
+        <li>Closures and iterators <span class="soon">planned</span></li>
+        <li>Errors with <code>Result</code> and <code>?</code> <span class="soon">planned</span></li>
+        <li>Modules <span class="soon">planned</span></li>
+      </ul>
+      <p>Planned work can change and has no promised date. The <a href="status.html">status page</a> lists what works today and what is planned.</p>
+      <!-- source: docs/roadmap.md ("Proposed milestones 8 to 12"), site/assets/site.js AREAS -->
+    </article>
+  </div>
+</main>

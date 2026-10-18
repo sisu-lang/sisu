@@ -1,0 +1,8 @@
+error[E0040]: `300` does not fit in `u8`
+ --> E0040.sisu:2:17
+  |
+2 |     let b: u8 = 300
+  |                 ^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0040

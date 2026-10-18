@@ -1,0 +1,12 @@
+error[E0087]: `SIDE` is declared below `PERIMETER`
+ --> E0087.sisu:1:19
+  |
+1 | const PERIMETER = SIDE * 4
+  |                   ^^^^
+2 | const SIDE = 10
+  |       ---- declared here
+  |
+  = help: move `SIDE` above `PERIMETER`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0087

@@ -1,0 +1,8 @@
+error[E0083]: `record` is reserved for a later version of Sisu
+ --> E0083.sisu:2:9
+  |
+2 |     let record = 1
+  |         ^^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0083

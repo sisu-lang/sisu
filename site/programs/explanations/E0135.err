@@ -1,0 +1,8 @@
+error[E0135]: a range pattern takes `i64`, `u8` or `char`
+ --> E0135.sisu:3:9
+  |
+3 |         "a".."n" => true
+  |         ^^^^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0135

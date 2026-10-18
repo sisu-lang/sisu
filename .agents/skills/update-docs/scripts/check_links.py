@@ -68,26 +68,31 @@ def targets(text):
             yield value
 
 
-bad = 0
-for md in map(Path, sys.argv[1:]):
-    for target in targets(prose(md)):
-        if re.match(r'[a-z][a-z0-9+.-]*:', target):
-            continue
-        file, _, anchor = target.split('?')[0].partition('#')
-        dest = (md.parent / file).resolve() if file else md.resolve()
-        if not dest.exists():
-            print(f'{md}: missing {target}')
-            bad += 1
-        elif anchor and dest.suffix == '.md' and anchor.lower() not in set(anchors(dest)):
-            print(f'{md}: missing anchor {target}')
-            bad += 1
-    for path in REPO_PATH.findall(prose(md)):
-        if not in_repo(path):
-            print(f'{md}: missing path `{path}`')
-            bad += 1
-    for name in RUST_FILE.findall(prose(md)):
-        if not any(path == name or path.endswith('/' + name) for path in TRACKED):
-            print(f'{md}: no tracked file ends with `{name}`')
-            bad += 1
-print('broken:', bad)
-sys.exit(1 if bad else 0)
+def main():
+    bad = 0
+    for md in map(Path, sys.argv[1:]):
+        for target in targets(prose(md)):
+            if re.match(r'[a-z][a-z0-9+.-]*:', target):
+                continue
+            file, _, anchor = target.split('?')[0].partition('#')
+            dest = (md.parent / file).resolve() if file else md.resolve()
+            if not dest.exists():
+                print(f'{md}: missing {target}')
+                bad += 1
+            elif anchor and dest.suffix == '.md' and anchor.lower() not in set(anchors(dest)):
+                print(f'{md}: missing anchor {target}')
+                bad += 1
+        for path in REPO_PATH.findall(prose(md)):
+            if not in_repo(path):
+                print(f'{md}: missing path `{path}`')
+                bad += 1
+        for name in RUST_FILE.findall(prose(md)):
+            if not any(path == name or path.endswith('/' + name) for path in TRACKED):
+                print(f'{md}: no tracked file ends with `{name}`')
+                bad += 1
+    print('broken:', bad)
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == '__main__':
+    main()

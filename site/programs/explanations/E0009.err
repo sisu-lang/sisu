@@ -1,0 +1,8 @@
+error[E0009]: integer literal is too large for `i64`
+ --> E0009.sisu:2:13
+  |
+2 |     let n = 9223372036854775808
+  |             ^^^^^^^^^^^^^^^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0009

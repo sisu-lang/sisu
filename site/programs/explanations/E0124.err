@@ -1,0 +1,10 @@
+error[E0124]: cannot `match` on `Point`
+ --> E0124.sisu:8:19
+  |
+8 |     let n = match p {
+  |                   ^
+  |
+  = help: `match` takes enums, integers, `bool`, `char` and `string`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0124

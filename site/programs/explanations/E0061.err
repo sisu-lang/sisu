@@ -1,0 +1,8 @@
+error[E0061]: `print` never runs: its argument never finishes
+ --> E0061.sisu:2:11
+  |
+2 |     print(if ok { return } else { return })
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0061

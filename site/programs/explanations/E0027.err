@@ -1,0 +1,13 @@
+error[E0027]: `Node` can never be constructed: field `next` needs a value of type `Node`
+ --> E0027.sisu:2:5
+  |
+2 |     next: Node
+  |     ^^^^
+  |
+help: if the field can be absent, make it optional: `Node?`
+  |
+2 |     next: Node?
+  |               +
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0027

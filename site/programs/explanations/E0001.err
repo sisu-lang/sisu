@@ -1,0 +1,15 @@
+error[E0001]: cannot assign to `total`
+ --> E0001.sisu:3:5
+  |
+2 |     let total = 0
+  |         ----- declared with `let` here
+3 |     total = 5
+  |     ^^^^^^^^^ cannot assign twice
+  |
+help: declare it with `let mut`
+  |
+2 |     let mut total = 0
+  |         +++
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0001

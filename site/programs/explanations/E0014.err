@@ -1,0 +1,10 @@
+error[E0014]: `i64??` is not a type
+ --> E0014.sisu:2:12
+  |
+2 |     let x: i64?? = None
+  |            ^^^^^
+  |
+  = help: optionals do not nest
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0014

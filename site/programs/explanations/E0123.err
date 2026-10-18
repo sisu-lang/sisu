@@ -1,0 +1,14 @@
+error[E0123]: a pattern binds by position: `Rect(x, y)`
+ --> E0123.sisu:7:14
+  |
+7 |         Rect(w: x, h: y) => x * y
+  |              ^
+  |
+help: remove the labels
+  |
+7 -         Rect(w: x, h: y) => x * y
+7 +         Rect(x, y) => x * y
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0123

@@ -1,0 +1,14 @@
+error[E0119]: `State.Idle` holds nothing; write `State.Idle`
+ --> E0119.sisu:7:23
+  |
+7 |     let _ = State.Idle()
+  |                       ^^
+  |
+help: remove the parentheses
+  |
+7 -     let _ = State.Idle()
+7 +     let _ = State.Idle
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0119

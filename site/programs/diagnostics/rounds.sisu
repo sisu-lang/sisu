@@ -1,0 +1,5 @@
+fn main() {
+    let rounds = 0
+    rounds += 1
+    print(rounds)
+}

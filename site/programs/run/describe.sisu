@@ -1,0 +1,15 @@
+fn describe(n: i64) -> string {
+    match n {
+        0 => "none"
+        1 | 2 | 3 => "a few"
+        4..=9 => "several"
+        n if n < 0 => "below zero"
+        _ => "many"
+    }
+}
+
+fn main() {
+    for n in [0, 2, 7, -5, 40] {
+        print("{n}: {describe(n)}")
+    }
+}

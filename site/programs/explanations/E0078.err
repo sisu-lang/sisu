@@ -1,0 +1,14 @@
+error[E0078]: `_` binds nothing, so it cannot be `mut`
+ --> E0078.sisu:6:13
+  |
+6 |     let mut _ = make()
+  |             ^
+  |
+help: use `let _`
+  |
+6 -     let mut _ = make()
+6 +     let _ = make()
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0078

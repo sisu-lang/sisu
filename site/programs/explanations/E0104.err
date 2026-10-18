@@ -1,0 +1,14 @@
+error[E0104]: `9007199254740993` is not exactly an `f64`
+ --> E0104.sisu:2:18
+  |
+2 |     let x: f64 = 9007199254740993
+  |                  ^^^^^^^^^^^^^^^^
+  |
+help: write `9007199254740992.0`
+  |
+2 -     let x: f64 = 9007199254740993
+2 +     let x: f64 = 9007199254740992.0
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0104

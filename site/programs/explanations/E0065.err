@@ -1,0 +1,13 @@
+error[E0065]: this argument needs a label
+ --> E0065.sisu:6:19
+  |
+6 |     let p = Point(1)
+  |                   ^
+  |
+help: label it with its field
+  |
+6 |     let p = Point(x: 1)
+  |                   ++
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0065

@@ -1,0 +1,22 @@
+Diagnostics
+A page for each error and warning that sisuc reports, with an explanation and a search box.
+<main>
+  <section class="ph"><div class="w">
+    <h1>Diagnostics</h1>
+    <p class="lede">Each of the {{diagnostic-count}} codes that sisuc reports has a page here, with the explanation that <code>sisuc --explain</code> prints.</p>
+    <p class="meta">Built from the repository at commit {{commit}}.</p>
+  </div></section>
+  <!-- source: docs/diagnostics/<code>.md, site/data/categories.toml, site/programs/explanations/ -->
+
+  <section class="s"><div class="w dx">
+    <aside>
+      <form action="diagnostics.html" role="search"><input type="search" name="q" aria-label="Find a diagnostic by code or word" placeholder="E0032 or a word"></form>
+      <nav aria-labelledby="dx-cats"><p class="dx-cats" id="dx-cats">Categories</p>
+      <ul>{{diagnostic-categories}}</ul></nav>
+    </aside>
+    <div class="dx-index">
+      <p class="dx-none" role="status"></p>
+{{diagnostics-index}}
+    </div>
+  </div></section>
+</main>

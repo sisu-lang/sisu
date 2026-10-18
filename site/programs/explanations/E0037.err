@@ -1,0 +1,8 @@
+error[E0037]: this function returns no value
+ --> E0037.sisu:2:12
+  |
+2 |     return 5
+  |            ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0037

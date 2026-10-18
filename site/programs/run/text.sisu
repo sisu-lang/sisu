@@ -1,0 +1,16 @@
+fn main() {
+    let s = "Hyvää yötä"
+    print(s.len())
+    let cs = s.chars()
+    print(cs.len())
+    print(cs[3])
+    print(s.bytes()[3])
+    let mut back = [' '; cs.len()]
+    for i in 0..cs.len() {
+        back[cs.len() - 1 - i] = cs[i]
+    }
+    print(string(back))
+    for w in s.words() {
+        print("[{w}]")
+    }
+}

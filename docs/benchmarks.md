@@ -10,7 +10,9 @@ with no per-language tuning.
 fib and sieve ran at commit 9cbd44e and binary_trees at 7c8d29e (the change
 between them is the runtime's live count), on 2026-10-12. hello ran at
 commit 4690caa and quicksort at 3dbda29, on 2026-10-15; mandelbrot and
-fannkuch_redux at d8a9603, and nbody at 10bb08f, on 2026-10-16. All ran on an Intel Core i9-14900K under
+fannkuch_redux at d8a9603, and nbody at 10bb08f, on 2026-10-16.
+
+All ran on an Intel Core i9-14900K under
 Linux 7.0. Each figure is the median of 5 runs, pinned to one CPU. Each table
 runs from fastest to slowest wall time, with Sisu in bold.
 

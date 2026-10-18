@@ -1,0 +1,25 @@
+enum Status {
+    Paid
+    Pending
+    Refunded(reason: string)
+}
+
+class Order {
+    item: string
+    price: f64
+    status: Status
+}
+
+fn main() {
+    let orders = [
+        Order(item: "sauna stones", price: 39.0, status: Status.Paid),
+        Order(item: "birch whisk", price: 12.5,
+              status: Status.Refunded(reason: "too stiff")),
+        Order(item: "wool socks", price: 18.0, status: Status.Paid),
+    ]
+    let total = orders
+        .filter(o => o.status == Status.Paid)
+        .sum_of(o => o.price)
+    print("Paid: {total:.2} €")
+}
+// Paid: 57.00 €

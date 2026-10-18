@@ -1,0 +1,10 @@
+error[E0086]: a constant's value must be known at compile time
+ --> E0086.sisu:5:15
+  |
+5 | const LIMIT = limit()
+  |               ^^^^^^^
+  |
+  = help: use literals, operators and earlier constants
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0086

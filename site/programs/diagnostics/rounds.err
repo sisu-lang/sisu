@@ -1,0 +1,15 @@
+error[E0001]: cannot assign to `rounds`
+ --> rounds.sisu:3:5
+  |
+2 |     let rounds = 0
+  |         ------ declared with `let` here
+3 |     rounds += 1
+  |     ^^^^^^^^^^^ cannot assign twice
+  |
+help: declare it with `let mut`
+  |
+2 |     let mut rounds = 0
+  |         +++
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0001

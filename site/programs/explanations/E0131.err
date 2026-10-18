@@ -1,0 +1,10 @@
+error[E0131]: `if let` always matches here
+ --> E0131.sisu:7:12
+  |
+7 |     if let P(a, b) = p {
+  |            ^^^^^^^
+  |
+  = help: use `match`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0131
