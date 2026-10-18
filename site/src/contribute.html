@@ -1,0 +1,115 @@
+Contribute
+<main class="contribute">
+  <section class="ph"><div class="w">
+    <h1>Contribute to Sisu</h1>
+    <p class="lede">One person builds Sisu, in the open. It is a learning project at an early stage, so there is no team to hand work to yet. This page says what help fits, how to build the compiler, and which checks a change must pass.</p>
+    <p class="meta">Checked against the repository at commit f372ddd.</p>
+  </div></section>
+  <!-- source: CONTRIBUTING.md ("Sisu is a solo learning project"), README.md ("a passion project at an early stage") -->
+
+  <div class="w doc">
+    <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
+      <li><a href="#who">Who runs the project</a></li>
+      <li><a href="#help">What help fits</a></li>
+      <li><a href="#talk">Talk before you build</a></li>
+      <li><a href="#build">Build from source</a></li>
+      <li><a href="#checks">Checks before a pull request</a></li>
+      <li><a href="#standards">Code standards</a></li>
+      <li><a href="#review">How a change gets reviewed</a></li>
+      <li><a href="#license">License</a></li>
+    </ol></nav>
+    <article class="prose">
+
+      <h2 id="who">Who runs the project</h2>
+      <p>Mikko Leppänen builds and maintains Sisu, and writes most changes with an AI agent, under the same rules this page describes.</p>
+      <p><a href="https://github.com/sisu-lang/sisu/blob/main/AGENTS.md">AGENTS.md</a> holds the rules for changing the code, for people and agents alike. <a href="https://github.com/sisu-lang/sisu/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> is the route through them.</p>
+      <!-- source: git log at f372ddd (every commit not by dependabot is authored by Mikko Leppänen; README.md and Cargo.toml name no author), CONTRIBUTING.md -->
+
+      <h2 id="help">What help fits</h2>
+      <p>The project has no written policy on outside help yet. [TK: which kinds of outside help you want, and which you do not]</p>
+      <p>These kinds of input match what the project's own rules care about most:</p>
+      <ul>
+        <li><strong>A program that gives a wrong answer.</strong> Correctness comes first: a program must never give a silent wrong answer. Fuzzing catches compiler crashes today, but not wrong results, so a small program that shows one is valuable.</li>
+        <li><strong>A program that crashes the compiler or leaks memory.</strong> The smaller the program, the easier it is to turn into a test case.</li>
+        <li><strong>An error message that misleads.</strong> Diagnostics should be simple, clear and specific. Wording that is wrong, vague or full of compiler jargon counts as a bug.</li>
+        <li><strong>A benchmark that disagrees.</strong> <a href="benchmarks.html">The benchmarks</a> compare Sisu with other languages. A result you cannot reproduce, measured as <a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md#running-them">the benchmark guide</a> describes, is worth knowing.</li>
+        <li><strong>A document that is wrong.</strong> A doc that states what a program prints must match a real run.</li>
+      </ul>
+      <!-- source: README.md "What Sisu values" (correctness: no silent wrong answer); docs/roadmap.md "Fuzzing" (crash fuzzing done, wrong-code oracles open); docs/development.md (Valgrind catches leaks in tests); CODING_STANDARDS.md "Reviewing" (diagnostic wording blocks when it misleads; a comment's facts were observed); docs/benchmarks.md "Running them" -->
+
+      <h2 id="talk">Talk before you build</h2>
+      <p>Each step of work is designed before it is built. Its design is settled in a working spec, and the lasting decisions become ADRs. A proposal in the roadmap is not decided until it lands in a spec or an ADR.</p>
+      <p>So raise an idea before you write code for it. Read the <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#open-decisions">open decisions</a> first: your idea may already be one of them.</p>
+      <p>[TK: where contributors discuss ideas, e.g. GitHub issues or discussions]</p>
+      <p>The maintainer's own work is tracked as local Markdown files, not in a public issue tracker.</p>
+      <!-- source: docs/roadmap.md (intro: design settled in a working spec, lasting ones recorded as ADRs; "Beyond milestone 6": nothing decided until it lands in a spec or an ADR; "Open decisions"), CONTRIBUTING.md (local Markdown issues under .scratch/) -->
+
+      <h2 id="build">Build from source</h2>
+      <p>Sisu builds and runs on x86-64 Linux only. You need:</p>
+      <ul>
+        <li>The Rust toolchain pinned in <code>rust-toolchain.toml</code> (1.99.0). rustup installs it on first use.</li>
+        <li>GNU Make, which runs every command.</li>
+        <li>A C compiler on <code>PATH</code> as <code>cc</code>. <code>sisuc</code> uses it to link programs.</li>
+        <li>On Ubuntu: <code>libzstd-dev</code>, <code>libxml2-dev</code> and <code>zlib1g-dev</code>, which LLVM links against.</li>
+        <li><code>prek</code> for the Git hooks, with <code>typos</code> and <code>shellcheck</code>.</li>
+        <li><code>cargo-nextest</code> and <code>cargo-deny</code>, and Valgrind for the end-to-end tests.</li>
+        <li>For <code>make miri</code>, a nightly toolchain with Miri: <code>rustup toolchain install nightly --component miri --component rust-src</code>.</li>
+      </ul>
+      <p>You do not install LLVM yourself. <code>make setup</code> downloads the official LLVM 22 release and keeps what the build needs in <code>.llvm/22</code>, about 360 MB. The build uses that copy and leaves any system LLVM alone.</p>
+      <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
+$ git clone https://github.com/sisu-lang/sisu
+$ cd sisu
+$ make setup     # once per clone: LLVM 22 into .llvm/22, the pre-commit hook
+$ make build     # cargo build --workspace: sisuc and the runtime library
+$ target/debug/sisuc crates/sisuc/tests/run/fib.sisu fib
+$ ./fib
+832040
+</pre></figure>
+      <p>Build the whole workspace, not only <code>sisuc</code>. Every program links with the runtime library, which <code>sisuc</code> looks for next to its own executable; <code>cargo build -p sisuc</code> does not build it. <code>make help</code> lists every target.</p>
+      <p><a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md">Developing Sisu</a> has the full list of prerequisites and commands.</p>
+      <!-- source: docs/development.md ("Prerequisites", "Set up a clone", "Compile and run a program"), rust-toolchain.toml (channel 1.99.0), Makefile (setup, build), README.md (x86-64 Linux only); fib output checked with target/release/sisuc at f372ddd -->
+
+      <h2 id="checks">Checks before a pull request</h2>
+      <p>The pre-commit hook runs the same checks as CI. Before you open a pull request, run these:</p>
+      <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
+$ make check     # lint, test and deny, as CI requires
+$ make miri      # only when you change crates/runtime
+$ make verify    # coverage, then mutants, on your diff
+</pre></figure>
+      <ul>
+        <li><code>make test</code> runs the tests with nextest, not <code>cargo test</code>. Its setup script builds the runtime that the end-to-end tests link against. The end-to-end tests run each program under Valgrind.</li>
+        <li>Clippy and the compiler run with <code>-D warnings</code>, so one warning fails CI. Silence a single site with <code>#[expect(lint, reason = "...")]</code>, never a bare <code>#[allow]</code>.</li>
+        <li><code>make miri</code> runs the runtime's unit tests under Miri on nightly, which stops at undefined behaviour. CI runs it too.</li>
+        <li><code>make verify</code> ends with one line, <code>verify: PASS</code> or <code>verify: FAIL</code>. Cover or explain each uncovered region, and kill or explain each surviving mutant.</li>
+      </ul>
+      <!-- source: CONTRIBUTING.md (steps 1 and 5), Makefile (check, test, miri, verify), Cargo.toml (lint comments: CI and the pre-commit hook run clippy with -D warnings; #[expect] with a reason), .github/workflows/ci.yml (RUSTFLAGS="-D warnings"; jobs Lint, Test, Miri, Dependencies), docs/development.md ("Prerequisites": Valgrind; "Coverage and performance": verify's last line), AGENTS.md -->
+
+      <h2 id="standards">Code standards</h2>
+      <p>Clippy, rustfmt and the hooks enforce the mechanical rules. <a href="https://github.com/sisu-lang/sisu/blob/main/CODING_STANDARDS.md">CODING_STANDARDS.md</a> holds the judgement calls that no check can make. Four of them:</p>
+      <ul>
+        <li><strong>A test proves its name.</strong> It must fail when the contract it names breaks.</li>
+        <li><strong>An <code>expect</code> message states the invariant.</strong> It says what should hold and why, so a panic reads as a broken assumption.</li>
+        <li><strong>A cost claim is measured.</strong> A claimed speedup comes with instruction counts before and after. Without a measured gain, the simpler code wins.</li>
+        <li><strong>Wording lives in the registry.</strong> No call site writes diagnostic text.</li>
+      </ul>
+      <p>Use the words in the <a href="https://github.com/sisu-lang/sisu/blob/main/GLOSSARY.md">glossary</a>, and read the <a href="decisions.html">design decisions</a> that touch your change.</p>
+      <!-- source: CODING_STANDARDS.md (intro; "Tests"; "Code"; "Performance"; "Diagnostics"), CONTRIBUTING.md step 4 -->
+
+      <h2 id="review">How a change gets reviewed</h2>
+      <p>Every change arrives as a pull request. Its description says what changed and why. Then it says what a reviewer cannot see from the diff: which contract each new test proves, what was left out of scope, and what is known not to work yet.</p>
+      <p>Before you open it, bring the docs in line with the change, as the <a href="https://github.com/sisu-lang/sisu/blob/main/.agents/skills/update-docs/SKILL.md">update-docs guide</a> describes.</p>
+      <p>Reviewers apply <a href="https://github.com/sisu-lang/sisu/blob/main/CODING_STANDARDS.md">CODING_STANDARDS.md</a> to every diff:</p>
+      <ul>
+        <li>A change is approved when it meets its done condition and adds no wrong output, crash, leak or newly rejected valid program.</li>
+        <li>A defect the change introduces blocks it. A defect the old code had too is a nit, fixed in a separate task.</li>
+        <li>A nit never blocks.</li>
+      </ul>
+      <p>A diff can also get a review from a second AI model; <a href="https://github.com/sisu-lang/sisu/blob/main/AGENTS.md">AGENTS.md</a> says how.</p>
+      <!-- source: CONTRIBUTING.md "Pull requests"; CODING_STANDARDS.md "Reviewing" (approve against the done condition; block regressions, not old gaps; a nit never blocks); AGENTS.md "Reviews" (review-sisu skill) -->
+
+      <h2 id="license">License</h2>
+      <p>Sisu is released under the MIT license. See <a href="https://github.com/sisu-lang/sisu/blob/main/LICENSE">LICENSE</a>.</p>
+      <!-- source: LICENSE -->
+    </article>
+  </div>
+</main>

@@ -1,0 +1,122 @@
+Sisu
+<main>
+  <div class="w">
+    <section class="hero">
+      <div>
+        <span class="pill">Early and experimental · x86-64 Linux only</span>
+        <h1>Sisu learns from the languages we admire.</h1>
+        <p class="lede">Python shows that code can be simple and easy to read. Rust shows that a compiler can rule out whole kinds of bugs. Swift shows that memory can be safe without a garbage collector. Sisu brings these lessons together in one small, statically typed language that compiles to native code.</p>
+        <div class="acts"><a class="btn go" href="tour.html">Take the tour</a><a class="btn alt" href="status.html">See what works</a></div>
+      </div>
+      <figure class="code"><figcaption class="cap">orders.sisu</figcaption><pre data-lang="sisu">
+enum Status {
+    Paid
+    Pending
+    Refunded(reason: string)
+}
+
+class Order {
+    item: string
+    price: f64
+    status: Status
+}
+
+fn main() {
+    let orders = [
+        Order(item: "sauna stones", price: 39.0, status: Status.Paid),
+        Order(item: "birch whisk", price: 12.5,
+              status: Status.Refunded(reason: "too stiff")),
+        Order(item: "wool socks", price: 18.0, status: Status.Paid),
+    ]
+    let total = orders
+        .filter(o => o.status == Status.Paid)
+        .sum_of(o => o.price)
+    print("Paid: {total:.2} €")
+}
+// Paid: 57.00 €
+</pre></figure>
+    </section>
+  </div>
+
+  <section class="s tint" aria-labelledby="h-from"><div class="w">
+    <div class="s-h"><h2 id="h-from">What Sisu takes from each language</h2></div>
+    <div class="feats">
+      <div><p class="from">From Python</p><h3>Readability</h3><ul>
+        <li>Minimal syntax</li>
+        <li>One obvious way to do a thing</li>
+      </ul></div>
+      <div><p class="from">From Rust</p><h3>Correctness</h3><ul>
+        <li>Immutable by default</li>
+        <li>Invalid states are unrepresentable</li>
+        <li>No null: optionals instead</li>
+        <li>Error messages that help you fix the code</li>
+      </ul></div>
+      <div><p class="from">From Swift</p><h3>Memory safety, simply</h3><ul>
+        <li>Reference counting: no garbage collector, no borrow checker</li>
+      </ul></div>
+    </div>
+  </div></section>
+
+  <section class="s" aria-labelledby="h-values"><div class="w">
+    <div class="s-h"><h2 id="h-values">What Sisu values, in order</h2><p>When two values pull apart, the higher one wins.</p></div>
+    <ol class="values">
+      <li><b>Correctness</b><p>The language makes wrong programs hard to write. Mistakes are caught early, at compile time where possible.</p></li>
+      <li><b>Simplicity</b><p>Few concepts, rules without special cases, every effect visible where it happens.</p></li>
+      <li><b>Readability</b><p>Code that reads top to bottom. Errors in plain words.</p></li>
+      <li><b>Performance</b><p>Native code with predictable memory. Optimizations never change what a program means.</p></li>
+    </ol>
+    <p class="after"><a href="decisions.html#values">Why this order</a></p>
+  </div></section>
+  <!-- source: docs/adr/0006-values-correctness-simplicity-readability-performance.md, README.md "What Sisu values" -->
+
+  <section class="s tint" aria-labelledby="h-stand"><div class="w">
+    <div class="s-h"><h2 id="h-stand">Where Sisu stands</h2><p>Each row is one area of the project. The bar shows how much of it works today; open a row for the full list. Planned work can change and has no promised date.</p></div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="sw ok"></i>Works today</span>
+      <span><i class="sw plan"></i>Planned</span>
+    </div>
+    <div class="areas" id="areas"></div>
+    <p class="after">The <a href="status.html">status page</a> links each feature to its design notes.</p>
+  </div></section>
+
+  <section class="s" aria-labelledby="h-how"><div class="w">
+    <div class="s-h"><h2 id="h-how">How a program becomes native code</h2><p><code>sisuc</code> turns one source file into one executable. Each stage hands the next a simpler form of the program.</p></div>
+    <ol class="flow">
+      <li><b>Lexer</b><span class="io">text <em>→</em> tokens</span><span class="what">Splits the UTF-8 source into names, numbers and symbols.</span></li>
+      <li><b>Parser</b><span class="io">tokens <em>→</em> AST</span><span class="what">Builds the syntax tree: the program as you wrote it.</span></li>
+      <li><b>Checker</b><span class="io">AST <em>→</em> TIR</span><span class="what">Resolves every name and types every expression. Rewrites shorthand such as <code>for</code> and <code>??</code> into simpler forms, and reports every error in one run. Its output is the typed tree, TIR.</span></li>
+      <li><b>Last use</b><span class="io">TIR <em>→</em> TIR</span><span class="what">Finds the last read of each counted value and hands over its reference there, so an array can change in place without a copy.</span></li>
+      <li class="planned"><b>MIR</b><span class="io">TIR <em>→</em> MIR</span><span class="what"><span class="soon" style="margin-right:6px">planned</span>A mid-level form in which every reference-count change is its own statement, so the compiler can remove the pairs that cancel out and check the rest.</span></li>
+      <li><b>Codegen</b><span class="io">TIR <em>→</em> LLVM IR</span><span class="what">Writes the program in LLVM's language. Once MIR exists, codegen reads MIR instead.</span></li>
+      <li><b>LLVM</b><span class="io">LLVM IR <em>→</em> object</span><span class="what">Optimizes and writes x86-64 machine code.</span></li>
+      <li><b>Link</b><span class="io">object <em>→</em> executable</span><span class="what">The system C compiler, <code>cc</code>, links it with the Sisu runtime.</span></li>
+    </ol>
+    <p class="flow-note">All stages run in one process, with LLVM linked in as a library. Only the link step calls another program. <a class="more" href="architecture.html">More on the architecture</a></p>
+  </div></section>
+
+  <section class="s tint" aria-labelledby="h-try"><div class="w try">
+    <div><h2 id="h-try">Build it and run a program</h2><p>Sisu has no releases yet. You build the compiler from source, on x86-64 Linux. You need:</p>
+      <ul>
+        <li>The Rust toolchain; rustup installs the pinned version</li>
+        <li>GNU Make, and a C compiler on <code>PATH</code> as <code>cc</code></li>
+        <li>On Ubuntu: <code>libzstd-dev</code>, <code>libxml2-dev</code>, <code>zlib1g-dev</code></li>
+        <li><code>prek</code>, which <code>make setup</code> uses to install the Git hooks</li>
+      </ul>
+      <a class="more" href="contribute.html">Prerequisites and checks</a>
+    </div>
+    <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
+$ git clone https://github.com/sisu-lang/sisu
+$ cd sisu
+$ make setup     # once per clone: LLVM 22 into .llvm/22
+$ make build
+$ target/debug/sisuc crates/sisuc/tests/run/fib.sisu fib
+$ ./fib
+832040
+</pre></figure>
+  </div></section>
+
+  <section class="s" aria-labelledby="h-open"><div class="w cta">
+    <div style="max-width:60ch"><h2 id="h-open">Built in the open</h2><p style="margin:0">One person builds Sisu, in public, one reviewed pull request at a time. Every design choice is written down with its reasons.</p></div>
+    <div class="acts"><a class="btn go" href="contribute.html">How to contribute</a><a class="btn alt" href="decisions.html">Design decisions</a></div>
+  </div></section>
+</main>

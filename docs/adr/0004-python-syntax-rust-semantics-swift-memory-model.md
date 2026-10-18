@@ -1,17 +1,17 @@
-# Sisu combines Python, Rust and Swift/Kotlin
+# Python syntax, Rust semantics, Swift memory model
 
 Sisu takes the best parts of three language families and settles conflicts
 between them with one rule: the surface syntax follows Python's readability,
 the semantics follow Rust's correctness, and memory management and everyday
-ergonomics follow Swift and Kotlin. Where Python is the only outlier on a
-spelling the other three share, the familiar spelling wins: logical operators
+ergonomics follow Swift. Where Python is the only outlier on a
+spelling the other two share, the familiar spelling wins: logical operators
 are `&& || !`, not `and or not`.
 
 | From | Take | Leave behind |
 | --- | --- | --- |
 | Python | Little punctuation, comparison chains, `for x in xs`, string interpolation, a full standard library | Dynamic typing, indentation as syntax |
 | Rust | `if` and blocks as expressions, `let mut` (ADR 0011), enums with an exhaustive `match`, `Result` and `?`, overflow checks, diagnostics, trait-like interfaces | Lifetimes, the borrow checker, `;` deciding a block's value |
-| Swift/Kotlin | `let`, newline-terminated statements, `T?` with `?.` and `??`, reference counting, named and default arguments | Nothing yet |
+| Swift | `let`, newline-terminated statements, `T?` with `?.` and `??`, reference counting, named and default arguments | Nothing yet |
 
 Principles that every later syntax choice is checked against:
 
@@ -22,11 +22,11 @@ Principles that every later syntax choice is checked against:
 
 ## Considered options
 
-- **Follow one language (Swift or Kotlin)**: fewer decisions, but it would
+- **Follow one language (Swift)**: fewer decisions, but it would
   give up Rust's exhaustive `match` and `Result`, and Python's comparison
   chains and readable loops.
-- **`and or not` for logical operators**: reads closest to English, but Rust,
-  Swift and Kotlin all write `&& || !`, so most readers expect those.
+- **`and or not` for logical operators**: reads closest to English, but Rust and
+  Swift both write `&& || !`, so most readers expect those.
 
 ## Consequences
 

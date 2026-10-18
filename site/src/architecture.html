@@ -1,0 +1,173 @@
+Architecture
+<main class="arch">
+  <style>
+    main.arch .prose .files { margin: -4px 0 10px; font-size: 14.5px; color: var(--mute); }
+    main.arch .prose .flow { margin: 20px 0 24px; }
+    main.arch .prose .flow li { margin: 0; }
+    @media (min-width: 901px) {
+      main.arch .prose .flow li { grid-template-columns: 30px 110px minmax(0, 1fr); gap: 4px 18px; }
+      main.arch .prose .flow li::before { grid-row: 1 / span 2; align-self: start; }
+      main.arch .prose .flow .what { grid-column: 2 / -1; }
+    }
+  </style>
+
+  <section class="ph"><div class="w">
+    <h1>How the compiler works</h1>
+    <p class="lede"><code>sisuc</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit f372ddd · x86-64 Linux only</p>
+  </div></section>
+  <!-- source: docs/architecture.md (intro), README.md (x86-64 Linux only) -->
+
+  <div class="w doc">
+    <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
+      <li><a href="#crates">The two crates</a></li>
+      <li><a href="#pipeline">The pipeline</a></li>
+      <li><a href="#memory">Memory</a></li>
+      <li><a href="#runtime">The runtime</a></li>
+      <li><a href="#diagnostics">Diagnostics</a></li>
+      <li><a href="#testing">How it is tested</a></li>
+      <li><a href="#reading">Further reading</a></li>
+    </ol></nav>
+
+    <article class="prose">
+      <h2 id="crates">The two crates</h2>
+      <p>The repository is one Cargo workspace with two crates. Both are written in Rust.</p>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>Crate</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td><code>sisuc</code></td><td>In <code>crates/sisuc</code>. The compiler. A library that holds every stage, and a small binary that runs it.</td></tr>
+          <tr><td><code style="white-space:nowrap">sisu-runtime</code></td><td>In <code>crates/runtime</code>. A static library with a C ABI, linked into every compiled program.</td></tr>
+        </tbody>
+      </table></div>
+      <p>The driver, <code>crates/sisuc/src/lib.rs</code>, reads the command line, runs the stages in order and prints diagnostics. The <code>sisuc</code> binary, <code>main.rs</code>, runs the driver on a thread with a 64 MiB stack. The compiler reads at most 1 GiB of source, so every position in the file fits in 32 bits.</p>
+      <!-- source: AGENTS.md (crates), docs/architecture.md (Driver, Runtime), crates/sisuc/src/main.rs -->
+
+      <h2 id="pipeline">The pipeline</h2>
+      <p>All stages run in one process, with LLVM linked in as a library. Only the link step calls another program.</p>
+      <ol class="flow">
+        <li><b>Lexer</b><span class="io">text <em>→</em> tokens</span><span class="what">Splits the UTF-8 source into names, numbers and symbols.</span></li>
+        <li><b>Parser</b><span class="io">tokens <em>→</em> AST</span><span class="what">Builds the syntax tree: the program as you wrote it.</span></li>
+        <li><b>Checker</b><span class="io">AST <em>→</em> TIR</span><span class="what">Resolves every name and types every expression. Rewrites shorthand such as <code>for</code> and <code>??</code> into simpler forms, and reports every error in one run. Its output is the typed tree, TIR.</span></li>
+        <li><b>Last use</b><span class="io">TIR <em>→</em> TIR</span><span class="what">Finds the last read of each counted value and hands over its reference there, so an array can change in place without a copy.</span></li>
+        <li class="planned"><b>MIR</b><span class="io">TIR <em>→</em> MIR</span><span class="what"><span class="soon" style="margin-right:6px">planned</span>A mid-level form in which every reference-count change is its own statement, so the compiler can remove the pairs that cancel out and check the rest.</span></li>
+        <li><b>Codegen</b><span class="io">TIR <em>→</em> LLVM IR</span><span class="what">Writes the program in LLVM's language. Once MIR exists, codegen reads MIR instead.</span></li>
+        <li><b>LLVM</b><span class="io">LLVM IR <em>→</em> object</span><span class="what">Optimizes and writes x86-64 machine code.</span></li>
+        <li><b>Link</b><span class="io">object <em>→</em> executable</span><span class="what">The system C compiler, <code>cc</code>, links it with the Sisu runtime.</span></li>
+      </ol>
+      <p>The first four stages are the front end. <code>front_end.rs</code> runs them in order and returns the program with every diagnostic, sorted by position. <code>--check</code> stops there. <code>--emit</code> stops later and prints what a stage produced: tokens, the AST, TIR or LLVM IR.</p>
+
+      <h3>Lexer</h3>
+      <p class="files"><code>crates/sisuc/src/lexer/</code>, <code>symbol.rs</code></p>
+      <p>A line break that can end a statement becomes a <code>Newline</code> token: statements end at newlines, not semicolons. Escapes in a string or <code>char</code> literal are decoded here, so later stages never see them. A string with <code>{expr}</code> parts becomes a run of tokens around the expression's own tokens.</p>
+      <p>Each name is interned into a <code>Symbol</code>, so the parser and checker compare and hash names as integers. After most errors the lexer skips the bad text and goes on, so it records every error. An unclosed or mismatched bracket is the exception: the run reports one diagnostic and stops.</p>
+
+      <h3>Parser</h3>
+      <p class="files"><code>crates/sisuc/src/parser.rs</code>, <code>ast.rs</code></p>
+      <p>The parser reports one error per broken item, then resumes at the next item. A broken item keeps its name, so a use of it is not reported as missing. It rejects an item that nests deeper than 256 levels, because every later stage walks the tree recursively.</p>
+
+      <h3>Checker</h3>
+      <p class="files"><code>crates/sisuc/src/check/</code>, <code>tir.rs</code>, <code>types.rs</code></p>
+      <p>The checker resolves names, types every expression and lowers shorthand: <code>while</code> and <code>for</code> become loops, <code>?.</code> and <code>??</code> become <code>if let</code>, and <code>x += 1</code> becomes <code>x = x + 1</code>. It folds each <code>const</code> to a literal. <code>check/exhaust.rs</code> runs Maranget's usefulness algorithm over each <code>match</code>: a missed value is an error that names it as a pattern, and an arm no value reaches is a warning.</p>
+      <p>An expression that already failed gets a poison type, so one mistake produces one diagnostic. A program with no errors comes out as TIR, the typed tree, which is all codegen reads. A type in TIR is a 4-byte handle into one table, and equal types get the same handle.</p>
+
+      <h3>Last use</h3>
+      <p class="files"><code>crates/sisuc/src/last_use.rs</code></p>
+      <p>This pass walks each function backward and finds every read of a counted local that is its last. At that read, the local hands over its reference instead of sharing it. A later write to the array can then skip the copy. The pass reports nothing, and runs only when the checker found no errors.</p>
+
+      <h3>MIR <span class="soon">planned</span></h3>
+      <p>Today codegen lowers TIR straight to LLVM IR, and decides where to add and subtract counts as it goes. A planned mid-level form, MIR, would sit between them, as Rust's MIR and Swift's SIL do. In MIR, one pass would write every retain, release and move as a statement. The compiler could then remove the pairs that cancel out, and debug builds could check that each owned reference is moved or released once on every path. General optimization stays with LLVM. This is planned work, with no date, and it may change.</p>
+
+      <h3>Codegen</h3>
+      <p class="files"><code>crates/sisuc/src/codegen/</code></p>
+      <p>Codegen walks TIR and builds an LLVM module through the inkwell bindings. Each Sisu function becomes an LLVM function named <code>sisu.&lt;name&gt;</code>. Codegen also emits a C <code>main</code>, which runs <code>sisu.main</code>. Integer overflow and division by zero call the runtime's panic instead of wrapping.</p>
+      <p>Codegen lays out every value in memory:</p>
+      <ul>
+        <li>An object lives on the heap, with a reference count in front of its fields.</li>
+        <li>An array is one counted block: the count, the length, then the elements.</li>
+        <li>A string is one counted block: the count, the length, the capacity, then the UTF-8 bytes.</li>
+        <li>An enum value has no heap block of its own: it is a tag and its variant's payload, held inline. A field that would make an enum contain itself goes behind a counted box.</li>
+      </ul>
+      <p>For each type it emits the helpers that retain, release and compare it. It tags loads and stores with type-based alias information, so LLVM knows that writing a field or an element leaves every count and length alone. <code>codegen/matching.rs</code> compiles <code>match</code>: it tests the arms in order, and traps after the last one. The checker has proved that some arm matches, and a bug in the checker must not become undefined behaviour.</p>
+
+      <h3>LLVM</h3>
+      <p class="files">LLVM 22, linked as a library</p>
+      <p>A plain build runs only the <code>mem2reg</code> pass, which turns stack slots into registers. With <code>-O2</code> it runs LLVM's <code>default&lt;O2&gt;</code> pipeline. Then LLVM writes x86-64 object code for the machine <code>sisuc</code> runs on.</p>
+
+      <h3>Link</h3>
+      <p class="files"><code>crates/sisuc/src/link.rs</code></p>
+      <p>The link step writes the object code to a fresh temporary file and runs <code>cc</code> on it with <code>libsisu_runtime.a</code>. <code>cc</code> adds the C startup code and libc and writes the executable. The temporary file is removed whether or not the link succeeds.</p>
+      <!-- source: docs/architecture.md (The stages), docs/roadmap.md (mid-level IR, mir), src/index.html (flow), docs/development.md (Look inside the compiler), sisuc --help -->
+
+      <h2 id="memory">Memory</h2>
+      <p>Sisu manages memory by reference counting. Every heap object carries a count of the references to it. Generated code adds 1 when a reference is copied and subtracts 1 when one is dropped, and the object is freed when its count reaches 0. Swift works the same way.</p>
+      <p>There is no garbage collector and no borrow checker. Objects are freed at a known point. Every count change is ordinary LLVM IR, which <code>--emit ir</code> shows, and Valgrind can check that a run frees everything.</p>
+      <p>The costs are known too. Every copy of a reference costs an add and a later subtract. Counts are not atomic. A cycle of objects leaks; weak references, which break cycles, are <span class="soon">planned</span>.</p>
+
+      <h3>Arrays are values</h3>
+      <p>Binding an array, passing it or storing it behaves as a copy: no other holder can change your array. The copy is made only when it is needed. A write to an element first checks the count. At 1 it writes in place; above 1 it copies the block, then writes. A read, a binding, an argument and a loop over an array never copy.</p>
+      <p>A function cannot change its caller's array. A function that changes an array returns the new one, and the caller writes <code>xs = f(xs)</code>.</p>
+
+      <h3>What last use buys</h3>
+      <p>When a local is read for the last time, its reference moves instead of being shared. So in <code>xs = f(xs)</code>, when nothing else holds the array, <code>f</code> holds the only reference and its writes happen in place. This is a language rule, not an optimizer pass, and it never causes an error. The quicksort benchmark shows it: Sisu holds 77.6 MiB, as C does for its one array of 10 000 000 integers.</p>
+      <p>A loop goes one step further. When it writes a local array that nothing in the loop shares, codegen makes the array unique once, before the first iteration. The writes inside the loop then skip the count check.</p>
+      <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0008-weak-references.md (status planned per site.js AREAS / roadmap), docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/benchmarks.md (quicksort on an array value), GLOSSARY.md (Last use, Copy-on-write) -->
+
+      <h2 id="runtime">The runtime</h2>
+      <p><code>sisu-runtime</code> is a Rust static library with a C ABI. Generated code calls it for many things, among them these three:</p>
+      <ul>
+        <li><strong>Input and output.</strong> Sisu code reaches the operating system only through the runtime. Standard output goes through a buffer the runtime owns, and <code>main</code> flushes it before it returns. Text crosses the boundary as a pointer and a length. The runtime never builds or reads a Sisu object, so an object's layout lives in one place: codegen.</li>
+        <li><strong>Memory.</strong> <code>sisu_alloc</code>, <code>sisu_realloc</code> and <code>sisu_free</code> allocate and free objects, arrays and strings.</li>
+        <li><strong>Panics.</strong> A panic prints the file, line and column where it happened to standard error, and exits with code 101. A failed read or write has no location to print.</li>
+      </ul>
+      <figure class="code"><figcaption class="cap">div_zero.sisu</figcaption><pre data-lang="sisu">
+fn div(a: i64, b: i64) -> i64 {
+    a / b
+}
+
+fn main() {
+    print(div(7, 0))
+}
+</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+sisu: panic at div_zero.sisu:2:5: division by zero
+</pre></figure>
+      <p>The runtime also counts the blocks that are allocated and not yet freed. A program built with <code>--rc-checks</code> checks each count before it changes, and fails at exit, with code 102, if any block is still allocated.</p>
+      <!-- source: docs/adr/0009-runtime-owns-io.md, docs/architecture.md (Runtime), GLOSSARY.md (Panic, RC check), crates/sisuc/tests/run-fail/div_zero.sisu; output from target/release/sisuc, exit code 101 observed -->
+
+      <h2 id="diagnostics">Diagnostics</h2>
+      <p>The lexer, parser and checker report problems as diagnostics. Every diagnostic has a stable code: <code>E0001</code> and up for errors, <code>W0001</code> and up for warnings. A code is never reused or renumbered.</p>
+      <ul>
+        <li><strong>One registry.</strong> <code>diagnostic/registry.rs</code> holds every message, label, help and fix. A stage names what happened and where, and writes no text, so the same code always has the same wording.</li>
+        <li><strong>An explanation per code.</strong> <code>sisuc --explain E0001</code> prints what the code means, an example that triggers it, and the fix. The explanations live in <code>docs/diagnostics/</code>.</li>
+        <li><strong>No cascades.</strong> A broken item is reported once. Nothing that depends on it adds a second report.</li>
+        <li><strong>Fixes marked safe or unsafe.</strong> A safe fix always removes its diagnostic and leaves source that still lexes and parses, so a tool may apply it without asking. An unsafe fix is applied only when you pick it. Before a fix is reported, the compiler applies it and drops it if the result lexes or parses worse.</li>
+        <li><strong>JSON output.</strong> <code>sisuc --format json</code> writes each diagnostic as one JSON object per line, with the code, severity, spans and fixes, for editors, scripts and agents.</li>
+      </ul>
+      <p>The <a href="diagnostics.html">diagnostics page</a> shows them in use.</p>
+      <!-- source: docs/adr/0013-diagnostics-have-stable-codes.md, docs/diagnostics/README.md (JSON output), docs/architecture.md (Diagnostics) -->
+
+      <h2 id="testing">How it is tested</h2>
+      <p><code>make test</code> runs the unit tests and the end-to-end cases with cargo-nextest. CI runs them on every pull request and every push to <code>main</code>.</p>
+      <ul>
+        <li><strong>Test programs.</strong> Each end-to-end case is a <code>.sisu</code> file with its expected output beside it, under <code>crates/sisuc/tests</code>. A program in <code>run/</code> must pass in a plain and an <code>-O2</code> build, both again under Valgrind, and in a <code>--rc-checks</code> build. A program in <code>run-fail/</code> must panic with exit code 101. A case in <code>diagnostics/</code> pins the text and the JSON of what <code>sisuc --check</code> reports.</li>
+        <li><strong>Explanations.</strong> A test compiles the broken and fixed example of every diagnostic code, and applies each safe fix to the broken one.</li>
+        <li><strong>Fuzzing.</strong> A cargo-fuzz target feeds arbitrary bytes to the front end and checks every span and fix edit. It also applies each safe fix alone and checks the result. It runs every night for 30 minutes.</li>
+        <li><strong>Miri.</strong> The runtime's unit tests run under Miri in CI, which stops at undefined behaviour.</li>
+        <li><strong>Coverage and mutation testing.</strong> <code>make verify</code> measures the coverage of a change with cargo-llvm-cov, then runs cargo-mutants on the changed code. It ends with <code>verify: PASS</code> only when no uncovered region touches the change and no mutant survives.</li>
+        <li><strong>Performance.</strong> CodSpeed counts instructions on the benchmarks and the compiler, on pushes to <code>main</code> and on pull requests that touch the code. See <a href="benchmarks.html">Benchmarks</a>.</li>
+      </ul>
+      <!-- source: docs/development.md (Build and test, Coverage and performance, Fuzz the front end, The nightly job), docs/diagnostics/README.md (Explanations), .github/workflows/ci.yml (test, miri jobs; on push main, pull_request), .github/workflows/fuzz.yml, .github/workflows/codspeed.yml -->
+
+      <h2 id="reading">Further reading</h2>
+      <ul class="rows">
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/architecture.md"><span class="num">doc</span><b>Architecture</b><span>Every stage in full, with the data between them.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0005-reference-counting.md"><span class="num">0005</span><b>Memory is managed by reference counting</b><span>Why counting, and what else was considered.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0007-arrays-are-values.md"><span class="num">0007</span><b>Arrays are values, shared until written</b><span>Copy on write, and the last-use rule.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0009-runtime-owns-io.md"><span class="num">0009</span><b>The runtime owns I/O; Sisu builds its own objects</b><span>Where the line between generated code and the runtime sits.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md"><span class="num">0013</span><b>Diagnostics have stable codes</b><span>Codes, one registry, explanations and fixes.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md"><span class="num">0021</span><b>A loop makes its written arrays unique before it starts</b><span>Moving the count check out of the loop.</span></a></li>
+      </ul>
+      <!-- source: docs/architecture.md, docs/adr/0005, 0007, 0009, 0013, 0021 (titles) -->
+    </article>
+  </div>
+</main>

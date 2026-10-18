@@ -7,7 +7,7 @@ yanked = "deny"
 [licenses]
 # Unicode-3.0: unicode-ident (via syn, a build-time dependency of inkwell).
 allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
-# Workspace crates are `publish = false` and carry no license.
+# Workspace crates are `publish = false`; cargo-deny does not check their own license.
 private = { ignore = true }
 
 [bans]

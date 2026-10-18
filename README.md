@@ -4,13 +4,13 @@
 
 # Sisu
 
-[![CI](https://github.com/mikeleppane/sisu/actions/workflows/ci.yml/badge.svg)](https://github.com/mikeleppane/sisu/actions/workflows/ci.yml)
+[![CI](https://github.com/sisu-lang/sisu/actions/workflows/ci.yml/badge.svg)](https://github.com/sisu-lang/sisu/actions/workflows/ci.yml)
 
 Sisu is a small, statically typed programming language that compiles to native
 x86-64 Linux code. Sisu is Finnish for grit.
 
 Sisu takes its readable syntax from Python, its strict checks from Rust, and
-reference counting and optionals from Swift and Kotlin. Programs read top to
+reference counting and optionals from Swift. Programs read top to
 bottom, the compiler catches mistakes before a program runs, and memory is
 freed without a garbage collector.
 

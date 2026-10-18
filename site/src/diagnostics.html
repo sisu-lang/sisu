@@ -1,0 +1,29 @@
+Diagnostics
+<main>
+  <section class="s"><div class="w dx">
+    <aside>
+      <input type="search" value="E0032" aria-label="Find a diagnostic by code or word">
+      <nav aria-labelledby="dx-cats"><p class="dx-cats" id="dx-cats">Categories</p>
+      <ul><li><a href="#">Variables and change</a></li><li><a href="#" aria-current="page">Types and conversions</a></li><li><a href="#">Names and scope</a></li><li><a href="#">Classes and fields</a></li><li><a href="#">Enums and match</a></li><li><a href="#">Syntax</a></li></ul></nav>
+    </aside>
+    <article class="case">
+      <div class="case-h"><span class="id">E0032</span><h1>Value of the wrong type</h1><span class="badge">Unsafe fix</span></div>
+      <p>An <code>i64</code> meets an <code>f64</code> in arithmetic. The compiler can convert the <code>i64</code> to <code>f64</code>, but only you know whether the types themselves are right, so this fix is unsafe.</p>
+      <h2>Your code</h2><figure class="code"><pre data-lang="sisu">
+fn main() {
+    let n = 3
+    let x = 1.5
+    print(n * x)
+}
+</pre></figure>
+      <h2>What sisuc says</h2><figure class="code"><pre><span class="ln"><span class="e">error[E0032]</span>: expected `f64`, found `i64`</span><span class="ln"> <span class="g">--&gt;</span> main.sisu:4:11</span><span class="ln">  <span class="g">|</span></span><span class="ln"><span class="g">4 |</span>     print(n * x)</span><span class="ln">  <span class="g">|</span>           <span class="e">^</span></span><span class="ln">  <span class="g">|</span></span><span class="ln"><span class="h">help</span>: if the types are right, convert it with `f64(...)`</span><span class="ln">  <span class="g">|</span></span><span class="ln"><span class="g">4 |</span>     print(<span class="add">f64(</span>n<span class="add">)</span> * x)</span><span class="ln">  <span class="g">|</span>           <span class="add">++++ +</span></span><span class="ln"> </span><span class="ln">sisuc: 1 error</span><span class="ln">sisuc: for more on a code, run `sisuc --explain &lt;code&gt;`: E0032</span></pre></figure>
+      <h2>After the fix</h2><figure class="code"><pre data-lang="sisu">
+fn main() {
+    let n = 3
+    let x = 1.5
+    print(f64(n) * x)
+}
+</pre></figure>
+    </article>
+  </div></section>
+</main>

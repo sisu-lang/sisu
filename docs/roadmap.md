@@ -305,7 +305,7 @@ choice is checked against them:
 - Memory is managed for you (reference counting, ADR 0005).
 
 Sisu takes its syntax's readability from Python, its correctness from Rust,
-and its memory model and everyday ergonomics from Swift and Kotlin (ADR 0004).
+and its memory model and everyday ergonomics from Swift (ADR 0004).
 
 ### Target sample
 
