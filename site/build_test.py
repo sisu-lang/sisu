@@ -89,7 +89,7 @@ notes = [["Roadmap", "docs/roadmap.md"]]
 BENCH_HEADER = '| Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |\n| --- | ---: | ---: | ---: | ---: | ---: |\n'
 
 
-def bench_table(program, walls, builds=None):
+def md_table(program, walls, builds=None):
     """A `### <program>` table: `walls` maps each language to its Wall cell, `builds` to its Build cell.
     By default every build takes 0.05 and Python has none."""
     builds = builds or {lang: '-' if lang == 'Python' else '0.05' for lang in walls}
@@ -473,33 +473,40 @@ class Build(unittest.TestCase):
                     self.assertIn(code, found[0])
 
     def test_benchmark_table_shape(self):
-        tables = build.benchmark_tables(bench_md(bench_table('fib', FIB)))
+        tables = build.benchmark_tables(bench_md(md_table('fib', FIB)))
         self.assertEqual(tables['fib']['Sisu'], {'Wall (s)': '0.26', 'CPU (s)': '0.1', 'Peak RSS (MiB)': '1.0',
                                                  'Binary (KiB)': '9', 'Build (s)': '0.05'})
         self.assertEqual(list(tables['fib']), list(FIB))
-        fib = bench_table('fib', FIB)
+        fib = md_table('fib', FIB)
         cases = [
             ('a renamed column', fib.replace('CPU (s)', 'CPU'), 'fib'),
-            ('a new language', bench_table('fib', FIB | {'Zig': '0.2'}), 'fib'),
-            ('a missing language', bench_table('fib', {k: v for k, v in FIB.items() if k != 'Go'}), 'fib'),
+            ('a new language', md_table('fib', FIB | {'Zig': '0.2'}), 'fib'),
+            ('a missing language', md_table('fib', {k: v for k, v in FIB.items() if k != 'Go'}), 'fib'),
             ('a program without a table', fib + '### sieve\n\nNo table yet.\n\n', 'sieve'),
         ]
         for name, table, program in cases:
             with self.subTest(name):
                 with self.assertRaisesRegex(build.BuildError, rf'docs/benchmarks\.md.*{program}'):
                     build.benchmark_tables(bench_md(table))
+        expected = ['fib', 'sieve']
+        with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\], extra \[\]"):
+            build.benchmark_tables(bench_md(fib), expected)
+        with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*missing \[\], extra \['zig'\]"):
+            build.benchmark_tables(bench_md(fib, md_table('sieve', FIB), md_table('zig', FIB)), expected)
+        self.assertEqual(build.benchmark_tables(bench_md(md_table('sieve', FIB), fib), expected).keys(), {'fib', 'sieve'})
         other = f'## The programs\n\n{BENCH_HEADER}| Zig | 1 | 1 | 1 | 1 | 1 |\n\n### Extra\n\nNo table.\n'
         self.assertEqual(build.benchmark_tables(bench_md(fib) + other).keys(), {'fib'})
 
     def test_chart_cells_must_be_drawable(self):
-        hello = bench_table('hello', HELLO, HELLO_BUILDS)
+        hello = md_table('hello', HELLO, HELLO_BUILDS)
         cases = [
-            ('a Wall cell', bench_table('fib', FIB | {'Go': '-'}), hello, 'fib'),
-            ("Python's Wall cell", bench_table('fib', FIB | {'Python': '-'}), hello, 'fib'),
-            ('a hello Wall cell', bench_table('fib', FIB), bench_table('hello', HELLO | {'Go': '-'}, HELLO_BUILDS), 'hello'),
-            ('a hello Build cell', bench_table('fib', FIB), bench_table('hello', HELLO, HELLO_BUILDS | {'Go': '-'}), 'hello'),
-            ('no hello', bench_table('fib', FIB), '', 'hello'),
-            ('only zeros', bench_table('fib', {lang: '0.00' for lang in FIB}), hello, 'fib'),
+            ('a Wall cell', md_table('fib', FIB | {'Go': '-'}), hello, 'fib'),
+            ("Python's Wall cell", md_table('fib', FIB | {'Python': '-'}), hello, 'fib'),
+            ('a hello Wall cell', md_table('fib', FIB), md_table('hello', HELLO | {'Go': '-'}, HELLO_BUILDS), 'hello'),
+            ('a hello Build cell', md_table('fib', FIB), md_table('hello', HELLO, HELLO_BUILDS | {'Go': '-'}), 'hello'),
+            ('a hello Python Build cell', md_table('fib', FIB), md_table('hello', HELLO, HELLO_BUILDS | {'Python': '0.5'}), 'hello'),
+            ('no hello', md_table('fib', FIB), '', 'hello'),
+            ('only zeros', md_table('fib', {lang: '0.00' for lang in FIB}), hello, 'fib'),
         ]
         for name, fib, hello, program in cases:
             with self.subTest(name):
@@ -507,7 +514,7 @@ class Build(unittest.TestCase):
                     build.bench_charts(bench_md(fib, hello))
 
     def test_chart_widths(self):
-        charts = build.bench_charts(bench_md(bench_table('hello', HELLO, HELLO_BUILDS), bench_table('fib', FIB)))
+        charts = build.bench_charts(bench_md(md_table('hello', HELLO, HELLO_BUILDS), md_table('fib', FIB)))
         self.assertEqual(re.findall(r'<h3>(.*?)</h3><p class="unit">(.*?)</p>', charts),
                          [('fib', 'wall time, seconds'), ('hello', 'build time, seconds: compile one file and link it')])
         fib, hello = charts.split('<figure class="chart">')[1:]
@@ -522,27 +529,28 @@ class Build(unittest.TestCase):
 
     def test_chart_ties_keep_the_document_order(self):
         walls = {'C': '0.14', 'Sisu': '0.14', 'Go': '0.23', 'Java': '0.20', 'Rust': '0.12', 'Python': '12.16'}
-        charts = build.bench_charts(bench_md(bench_table('nbody', walls), bench_table('hello', HELLO, HELLO_BUILDS)))
+        charts = build.bench_charts(bench_md(md_table('nbody', walls), md_table('hello', HELLO, HELLO_BUILDS)))
         self.assertEqual(re.findall(r'<span>(\w+)</span>', charts.split('<figure class="chart">')[1]),
                          ['Rust', 'C', 'Sisu', 'Java', 'Go', 'Python'])
 
     def test_hello_foot_note(self):
         cases = [
             ('one differs', HELLO | {'Java': '0.01'}, "Every hello program runs in 0.00 s of wall time except Java's, 0.01 s. The build is what differs."),
+            ('spelled differently', HELLO | {'Java': '0.0'}, 'Every hello program runs in 0.00 s of wall time. The build is what differs.'),
             ('all equal', HELLO, 'Every hello program runs in 0.00 s of wall time. The build is what differs.'),
         ]
         for name, walls, note in cases:
             with self.subTest(name):
-                charts = build.bench_charts(bench_md(bench_table('fib', FIB), bench_table('hello', walls, HELLO_BUILDS)))
+                charts = build.bench_charts(bench_md(md_table('fib', FIB), md_table('hello', walls, HELLO_BUILDS)))
                 self.assertEqual(re.findall(r'<p class="foot">(.*?)</p>', charts), [note])
         for name, walls in [('two differ', HELLO | {'Java': '0.01', 'Go': '0.01'}), ('a split', {k: '0.01' if k in ('C', 'Go', 'Java') else '0.00' for k in HELLO})]:
             with self.subTest(name):
                 with self.assertRaisesRegex(build.BuildError, r'docs/benchmarks\.md.*hello'):
-                    build.bench_charts(bench_md(bench_table('hello', walls, HELLO_BUILDS)))
+                    build.bench_charts(bench_md(md_table('hello', walls, HELLO_BUILDS)))
 
     def test_bench_table(self):
-        table = build.bench_table(bench_md(bench_table('fib', FIB), bench_table('hello', HELLO | {'Java': '0.01'}, HELLO_BUILDS),
-                                           bench_table('sieve', FIB)))
+        table = build.bench_table(bench_md(md_table('fib', FIB), md_table('hello', HELLO | {'Java': '0.01'}, HELLO_BUILDS),
+                                           md_table('sieve', FIB)))
         self.assertEqual(re.findall(r'<th(?: [^>]*)?>(.*?)</th>', table), ['Benchmark', 'Sisu', 'C', 'Rust', 'Go', 'Java', 'Python'])
         rows = [re.findall(r'<td[^>]*>(.*?)</td>', row) for row in re.findall(r'<tr><td>.*?</tr>', table)]
         self.assertEqual(rows, [
@@ -563,7 +571,13 @@ class Build(unittest.TestCase):
                     build.results_note(text)
 
     def test_bench_directives_read_the_document(self):
-        fake_site(self, {}, {'docs/benchmarks.md': bench_md(bench_table('fib', FIB), bench_table('hello', HELLO, HELLO_BUILDS))})
+        fake_site(self, {}, {'docs/benchmarks.md': bench_md(md_table('fib', FIB), md_table('hello', HELLO, HELLO_BUILDS)),
+                             'bench/fib/main.c': '', 'bench/hello/main.c': '', 'bench/sieve/main.c': ''})
+        for directive in ('bench-charts', 'bench-table'):
+            with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\]"):
+                build.expand('{{%s}}' % directive, {})
+        (build.ROOT / 'bench/sieve/main.c').unlink()
+        (build.ROOT / 'bench/sieve').rmdir()
         self.assertEqual(build.expand('{{bench-charts}}', {}).count('<figure class="chart">'), 2)
         self.assertIn('<td><code>fib</code></td>', build.expand('{{bench-table}}', {}))
         self.assertIn('Commit abc1234', build.expand('{{bench-results-note}}', {}))

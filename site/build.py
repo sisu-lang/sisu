@@ -355,8 +355,14 @@ def benchmarks_md() -> str:
     return read(f'../{BENCHMARKS}')
 
 
-def benchmark_tables(markdown: str) -> dict[str, dict[str, dict[str, str]]]:
-    """Program -> language -> column -> cell text, from each `### <program>` table under `## Results`."""
+def bench_programs() -> list[str]:
+    """The programs scripts/bench.sh runs: a directory under bench/ each."""
+    return sorted(p.name for p in (ROOT / 'bench').iterdir() if p.is_dir())
+
+
+def benchmark_tables(markdown: str, expected: list[str] | None = None) -> dict[str, dict[str, dict[str, str]]]:
+    """Program -> language -> column -> cell text, from each `### <program>` table under `## Results`.
+    With `expected`, the programs must be exactly those."""
     tables, programs = {}, []
     section = tag = ''
     rows = None
@@ -382,6 +388,9 @@ def benchmark_tables(markdown: str) -> dict[str, dict[str, dict[str, str]]]:
     for program in programs:
         if program not in tables:
             raise BuildError(f'{BENCHMARKS}: table {program!r} is missing')
+    if expected is not None and sorted(tables) != sorted(expected):
+        missing, extra = sorted(set(expected) - set(tables)), sorted(set(tables) - set(expected))
+        raise BuildError(f'{BENCHMARKS}: the programs differ from the directories under bench/: missing {missing}, extra {extra}')
     return tables
 
 
@@ -405,13 +414,15 @@ def seconds(program: str, language: str, column: str, cell: str) -> Decimal:
 def hello_note(table: dict[str, dict[str, str]]) -> str:
     """The foot of the hello chart: the one Wall time all its programs share, or all but one."""
     cells = {language: row['Wall (s)'] for language, row in table.items()}
-    for language, cell in cells.items():
-        seconds('hello', language, 'Wall (s)', cell)
-    (common, _), *rest = Counter(cells.values()).most_common()
+    # Decimals, so that 0.0 and 0.00 are one time; the note shows the first spelling.
+    times = {language: seconds('hello', language, 'Wall (s)', cell) for language, cell in cells.items()}
+    (common, _), *rest = Counter(times.values()).most_common()
+    common = next(cells[l] for l, t in times.items() if t == common)
     if not rest:
         odd = ''
     elif len(rest) == 1 and rest[0][1] == 1:
-        odd = f" except {next(l for l, c in cells.items() if c == rest[0][0])}'s, {rest[0][0]} s"
+        language = next(l for l, t in times.items() if t == rest[0][0])
+        odd = f" except {language}'s, {cells[language]} s"
     else:
         raise BuildError(f"{BENCHMARKS}: table 'hello': the Wall cells {cells} do not agree but for one language")
     return f'Every hello program runs in {common} s of wall time{odd}. The build is what differs.'
@@ -432,6 +443,8 @@ def chart(program: str, table: dict[str, dict[str, str]]) -> str:
                 f'<span class="val">{table[language][column]} s</span></li>')
 
     python = table['Python'][column]
+    if program == 'hello' and python != '-':
+        raise BuildError(f"{BENCHMARKS}: table 'hello': Python's {column} is {python!r}, not -")
     track, val = ('no build step', '-') if python == '-' and program == 'hello' else ('off the scale', f'{seconds(program, "Python", column, python)} s')
     items = [li(language) for language in sorted(values, key=values.__getitem__)]
     items.append(f'<li class="off"><span>Python</span><span class="track">{track}</span><span class="val">{val}</span></li>')
@@ -441,22 +454,22 @@ def chart(program: str, table: dict[str, dict[str, str]]) -> str:
     return f'<figure class="chart"><h3>{escape(program)}</h3><p class="unit">{unit}</p><ol>\n        {body}\n      </ol>{foot}</figure>'
 
 
-def bench_charts(markdown: str) -> str:
+def bench_charts(markdown: str, expected: list[str] | None = None) -> str:
     """A chart for each program, in the document's order with hello last."""
-    tables = benchmark_tables(markdown)
+    tables = benchmark_tables(markdown, expected)
     if 'hello' not in tables:
         raise BuildError(f"{BENCHMARKS}: no table for 'hello'")
     return '\n      '.join(chart(p, tables[p]) for p in [*(p for p in tables if p != 'hello'), 'hello'])
 
 
-def bench_table(markdown: str) -> str:
+def bench_table(markdown: str, expected: list[str] | None = None) -> str:
     """The results table: a row for each program's Wall time, and for hello's Build time after hello's."""
     def row(label, table, column):
         cells = [f'<b>{escape(table[l][column])}</b>' if l == 'Sisu' else escape(table[l][column]) for l in BENCH_LANGUAGES]
         return f'<tr><td>{label}</td>' + ''.join(f'<td class="n">{c}</td>' for c in cells) + '</tr>'
 
     rows = []
-    for program, table in benchmark_tables(markdown).items():
+    for program, table in benchmark_tables(markdown, expected).items():
         rows.append(row(f'<code>{escape(program)}</code>', table, 'Wall (s)'))
         if program == 'hello':
             rows.append(row('<code>hello</code>, build', table, 'Build (s)'))
@@ -494,8 +507,8 @@ DIRECTIVES: dict[str, Callable[..., str]] = {
     'diagnostic-count': diagnostic_count,
     'diagnostics-index': diagnostics_index,
     'diagnostic-categories': lambda: category_links(''),
-    'bench-charts': lambda: bench_charts(benchmarks_md()),
-    'bench-table': lambda: bench_table(benchmarks_md()),
+    'bench-charts': lambda: bench_charts(benchmarks_md(), bench_programs()),
+    'bench-table': lambda: bench_table(benchmarks_md(), bench_programs()),
     'bench-results-note': lambda: results_note(benchmarks_md()),
 }
 DIRECTIVE = re.compile(r'\{\{([\w-]+)((?: [^\s{}]+)*)\}\}')
