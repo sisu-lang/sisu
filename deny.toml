@@ -17,3 +17,6 @@ wildcards = "deny"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# inkwell's master, pinned to a commit in crates/sisuc/Cargo.toml, until a
+# release has llvm23-1 (docs/llvm.md).
+allow-git = ["https://github.com/TheDan64/inkwell"]

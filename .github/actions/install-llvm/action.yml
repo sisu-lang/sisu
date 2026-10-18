@@ -1,5 +1,5 @@
 name: Install LLVM
-description: Restores or installs the project-local LLVM in .llvm/22 that llvm-sys builds against.
+description: Restores or installs the project-local LLVM in .llvm/23 that llvm-sys builds against.
 runs:
   using: composite
   steps:
@@ -12,7 +12,7 @@ runs:
     # The script pins the LLVM version and checksum, so a version bump changes the key.
     - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: .llvm/22
+        path: .llvm/23
         key: llvm-${{ runner.os }}-${{ hashFiles('scripts/install-llvm.sh') }}
     # Does nothing on a cache hit.
     - name: Install LLVM

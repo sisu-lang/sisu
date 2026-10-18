@@ -36,7 +36,7 @@ Severity: <severity>
 Repro:
 
 ```console
-$ S=<repo>/target/debug/sisuc L=<repo>/.llvm/22/bin D=<a fresh directory>; mkdir -p $D
+$ S=<repo>/target/debug/sisuc L=<repo>/.llvm/23/bin D=<a fresh directory>; mkdir -p $D
 $ cat > $D/p.sisu <<'EOF'
 <the shrunk program>
 EOF

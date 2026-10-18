@@ -2,5 +2,5 @@
 test_tool = "nextest"
 # Skip ignored files when copying the tree, above all the 12G `.llvm/`.
 # The copy then lacks `.llvm/`, so the command sets an absolute
-# LLVM_SYS_221_PREFIX.
+# LLVM_SYS_231_PREFIX.
 gitignore = true

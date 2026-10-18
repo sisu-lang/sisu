@@ -1,5 +1,5 @@
 # llvm-sys (under inkwell) finds LLVM through this prefix. It points at the
-# project-local LLVM 22 that scripts/install-llvm.sh installs, so the system
-# LLVM is never used. An LLVM_SYS_221_PREFIX already set in the shell wins.
+# project-local LLVM 23 that scripts/install-llvm.sh installs, so the system
+# LLVM is never used. An LLVM_SYS_231_PREFIX already set in the shell wins.
 [env]
-LLVM_SYS_221_PREFIX = { value = ".llvm/22", relative = true }
+LLVM_SYS_231_PREFIX = { value = ".llvm/23", relative = true }

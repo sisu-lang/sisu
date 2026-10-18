@@ -27,9 +27,9 @@ running the same checks as CI. Sisu builds and runs on x86-64 Linux.
   `rustup toolchain install nightly --component miri --component rust-src`.
 - [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
 
-LLVM 22 lives inside the repository. `scripts/install-llvm.sh` downloads the
-official release (1.9 GB) and keeps only what the build needs in `.llvm/22`
-(about 360 MB). `.cargo/config.toml` points the build at it, and any system
+LLVM 23 lives inside the repository. `scripts/install-llvm.sh` downloads the
+official release (2.0 GB) and keeps only what the build needs in `.llvm/23`
+(about 570 MB). `.cargo/config.toml` points the build at it, and any system
 LLVM is left alone. [Upgrading LLVM](llvm.md) covers moving to a new major.
 
 ## Set up a clone
@@ -37,7 +37,7 @@ LLVM is left alone. [Upgrading LLVM](llvm.md) covers moving to a new major.
 Run this once per clone:
 
 ```console
-$ make setup   # LLVM 22 into .llvm/22, the pre-commit hook, cargo-mutants, cargo-llvm-cov, cargo-fuzz
+$ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-mutants, cargo-llvm-cov, cargo-fuzz
 ```
 
 ## Build and test
@@ -404,6 +404,7 @@ These flags run the pipeline up to one stage and stop there.
 | `sisuc --emit tir file.sisu` | The checker's typed tree, `tir` |
 | `sisuc --emit ir file.sisu` | The LLVM IR, before and after `mem2reg` |
 | `sisuc -O2 --emit ir file.sisu` | The LLVM IR, before and after LLVM's `default<O2>` pipeline |
+| `sisuc -O3 --emit ir file.sisu` | The same, with the `default<O3>` pipeline |
 | `sisuc --emit ir-raw file.sisu` | The LLVM IR before any pass, as one module that LLVM's `opt` reads |
 | `sisuc --rc-checks --emit ir-raw file.sisu` | The same, with the count checks of `--rc-checks` built in |
 | `sisuc --check file.sisu` | Only diagnostics; exits with code 1 if any is an error |
@@ -414,14 +415,22 @@ stderr as JSON Lines. It must be the first argument, and `--explain` does not
 take it. [Diagnostic codes](diagnostics/README.md#json-output) describes the
 objects.
 
-`-O2` must come first, or right after `--format`. It also works when building
-an executable: `sisuc -O2 file.sisu out`.
+`-O2` or `-O3` must come first, or right after `--format`. It also works when
+building an executable: `sisuc -O2 file.sisu out`.
+
+`sisuc --linker lld file.sisu out` links with `ld.lld` instead of `cc`'s
+default linker; `bfd`, `gold` and `mold` work the same way. `sisuc` passes the
+name to `cc -fuse-ld=`. When the link fails and `ld.<name>` is not on `PATH`,
+the error names `ld.<name>`, where gcc names only `ld`. `--linker` comes after
+`-O2`, `-O3` and `--rc-checks`, and works only when building an executable.
+`scripts/install-llvm.sh` puts `ld.lld` in `.llvm/23/bin`; the tests put that
+directory on `PATH`, or in gcc's `COMPILER_PATH`, for the `--linker lld` tests.
 
 `sisuc --rc-checks file.sisu out` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is
 at least 1. At a normal exit, it checks that no object is still allocated.
 A failed check prints a line that starts with `sisu: rc check:` and exits
-with code 102. `--rc-checks` comes after `-O2`, if both are given, and works
+with code 102. `--rc-checks` comes after `-O2` or `-O3`, if given, and works
 only when building an executable or with `--emit ir` and `--emit ir-raw`,
 which then print the module with the checks built in. A use after free often goes unseen: the
 freed memory may still hold a count of 1 or more. Valgrind finds those.

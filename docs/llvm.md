@@ -31,18 +31,27 @@ once that release is out, in one pull request. Use an inkwell git dependency
 pinned to a commit only when a newer LLVM gives us something we need, and go
 back to crates.io when inkwell releases.
 
+LLVM 23 is such a case. The pinned Rust toolchain's `rustc` is on LLVM 23.1,
+so with LLVM 23 `sisuc` can read the bitcode that toolchain writes, which
+linking the runtime as bitcode needs (Link-time optimization with the runtime
+in [Later and stretch goals](roadmap.md#later-and-stretch-goals)). inkwell's
+`master` has `llvm23-1`, so `crates/sisuc/Cargo.toml` pins a commit of it, and
+`deny.toml` allows the repository. Both go back to a crates.io version once an
+inkwell release has `llvm23-1`.
+
 ## Status
 
-Checked on 2026-10-11:
+Checked on 2026-10-18:
 
 | Component | Newest | Notes |
 | --- | --- | --- |
-| LLVM release | 23.1.x | `main` is `24.0.0git` |
+| LLVM release | 23.1.3 | `main` is `24.0.0git` |
 | llvm-sys | `231.0.1` | no `241` yet |
-| inkwell on crates.io | `0.10.0`, up to `llvm22-1` | what Sisu uses |
-| inkwell `master` | adds `llvm23-1` | unreleased |
+| inkwell on crates.io | `0.10.0`, up to `llvm22-1` | |
+| inkwell `master` | adds `llvm23-1` | unreleased; what Sisu uses |
 
-Sisu is on LLVM 22.1.8, `inkwell 0.10.0` with `llvm22-1`, and `llvm-sys 221`.
+Sisu is on LLVM 23.1.3, inkwell `master` at `c9d9734a` with `llvm23-1`, and
+`llvm-sys 231`.
 
 ## Checking for a new version
 
@@ -66,8 +75,9 @@ this table.
 
 Every file that names the LLVM major:
 
-- `crates/sisuc/Cargo.toml`: the inkwell version and its `llvm<major>-1`
-  feature, and the comment above it.
+- `crates/sisuc/Cargo.toml`: the inkwell version (or git commit) and its
+  `llvm<major>-1` feature, and the comment above it.
+- `deny.toml`: the `allow-git` entry, while inkwell is a git dependency.
 - `.cargo/config.toml`: the `LLVM_SYS_<major><minor>_PREFIX` name and the
   `.llvm/<major>` path.
 - `scripts/install-llvm.sh`: `version`, `sha256` (of the release's

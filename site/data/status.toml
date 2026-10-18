@@ -149,7 +149,7 @@ text = "Files, environment and exit codes"
 state = "planned"
 notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0009", "docs/adr/0009-runtime-owns-io.md"]]
 
-# source: docs/architecture.md; docs/roadmap.md ("Early tooling" (-O2, ARM64, macOS), "What panics", "Fuzzing", "Later and stretch goals" (mir, DWARF, Windows, --target, C FFI), "The growing proof program"); docs/development.md "Fuzz the front end"; docs/adr/0003, 0005
+# source: docs/architecture.md; docs/roadmap.md ("Early tooling" (-O2, -O3, --linker, ARM64, macOS), "What panics", "Fuzzing", "Later and stretch goals" (mir, DWARF, Windows, --target, C FFI), "The growing proof program"); docs/development.md "Fuzz the front end"; docs/adr/0003, 0005
 [[area]]
 id = "compiler"
 name = "Compiler"
@@ -162,7 +162,7 @@ state = "works"
 notes = [["Architecture", "docs/architecture.md"]]
 
 [[area.feature]]
-text = "Optimized builds with <code>-O2</code>"
+text = "Optimized builds with <code>-O2</code> and <code>-O3</code>"
 state = "works"
 notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"]]
 

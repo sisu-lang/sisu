@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use codegen::OptLevel;
 use diagnostic::{Code, Diagnostic};
 use inkwell::context::Context;
 use report::{Format, Reporter};
@@ -30,7 +31,7 @@ use tir::Program;
 
 pub use fuzz::front_end as fuzz_front_end;
 
-const USAGE: &str = "usage: sisuc [--format text|json] ([-O2] [--rc-checks] <input.sisu> <output> | [-O2] [--rc-checks] --emit ir <input.sisu> | [--rc-checks] --emit ir-raw <input.sisu> | --emit tokens|ast|tir <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
+const USAGE: &str = "usage: sisuc [--format text|json] ([-O2|-O3] [--rc-checks] [--linker bfd|gold|lld|mold] <input.sisu> <output> | [-O2|-O3] [--rc-checks] --emit ir <input.sisu> | [--rc-checks] --emit ir-raw <input.sisu> | --emit tokens|ast|tir <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
 
 /// The reporter `cli` writes stderr through.
 type Report = Reporter<Stderr>;
@@ -40,7 +41,7 @@ enum Mode {
     Emit {
         stage: Stage,
         input: PathBuf,
-        o2: bool,
+        level: OptLevel,
         rc_checks: bool,
     },
     Check {
@@ -53,8 +54,10 @@ enum Mode {
     Build {
         input: PathBuf,
         output: PathBuf,
-        o2: bool,
+        level: OptLevel,
         rc_checks: bool,
+        /// The `-fuse-ld` name `cc` links with; `cc`'s default without one.
+        linker: Option<&'static str>,
     },
 }
 
@@ -77,20 +80,32 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
         },
         _ => (None, args),
     };
-    // `-O2` is accepted only as the first argument after `--format`.
-    let (o2, args) = match args {
-        [flag, rest @ ..] if flag == "-O2" => (true, rest),
-        _ => (false, args),
+    // `-O2` or `-O3` is accepted only as the first argument after `--format`.
+    let (level, args) = match args {
+        [flag, rest @ ..] if flag == "-O2" => (OptLevel::O2, rest),
+        [flag, rest @ ..] if flag == "-O3" => (OptLevel::O3, rest),
+        _ => (OptLevel::O0, args),
     };
-    // `--rc-checks` is accepted only right after an optional `-O2`, and only for a build or IR.
+    // `--rc-checks` is accepted only right after an optional `-O2` or `-O3`, and only for a build
+    // or IR.
     let (rc_checks, args) = match args {
         [flag, rest @ ..] if flag == "--rc-checks" => (true, rest),
         _ => (false, args),
     };
-    if args
-        .iter()
-        .any(|a| a == "-O2" || a == "--rc-checks" || a == "--format")
-    {
+    // `--linker` is accepted only right after an optional `--rc-checks`, and only for a build;
+    // the names are those `cc -fuse-ld` takes.
+    let (linker, args) = match args {
+        [flag, name, rest @ ..] if flag == "--linker" => {
+            let name = ["bfd", "gold", "lld", "mold"]
+                .into_iter()
+                .find(|&n| *name == n);
+            (Some(name.ok_or_else(|| USAGE.to_string())?), rest)
+        }
+        _ => (None, args),
+    };
+    if args.iter().any(|a| {
+        a == "-O2" || a == "-O3" || a == "--rc-checks" || a == "--linker" || a == "--format"
+    }) {
         return Err(USAGE.to_string());
     }
     let mode = match args {
@@ -106,7 +121,7 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
             Ok(Mode::Emit {
                 stage,
                 input: PathBuf::from(input),
-                o2,
+                level,
                 rc_checks,
             })
         }
@@ -124,8 +139,9 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
             Ok(Mode::Build {
                 input: PathBuf::from(input),
                 output: PathBuf::from(output),
-                o2,
+                level,
                 rc_checks,
+                linker,
             })
         }
         _ => Err(USAGE.to_string()),
@@ -146,8 +162,11 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
     if format.is_some() && matches!(mode, Mode::Explain { .. }) {
         return Err(USAGE.to_string());
     }
+    if linker.is_some() && !matches!(mode, Mode::Build { .. }) {
+        return Err(USAGE.to_string());
+    }
     // The other modes run no optimizer.
-    if o2
+    if level != OptLevel::O0
         && !matches!(
             mode,
             Mode::Build { .. }
@@ -194,17 +213,18 @@ fn run(reporter: &mut Report, mode: Mode) -> ExitCode {
         Mode::Emit {
             stage,
             input,
-            o2,
+            level,
             rc_checks,
-        } => emit(reporter, &stage, &input, o2, rc_checks),
+        } => emit(reporter, &stage, &input, level, rc_checks),
         Mode::Check { input } => run_check(reporter, &input),
         Mode::Explain { code } => explain(reporter, &code),
         Mode::Build {
             input,
             output,
-            o2,
+            level,
             rc_checks,
-        } => build(reporter, &input, &output, o2, rc_checks),
+            linker,
+        } => build(reporter, &input, &output, level, rc_checks, linker),
     }
 }
 
@@ -265,7 +285,13 @@ fn read(reporter: &mut Report, input: &Path) -> Option<String> {
 
 /// Prints one stage's output for `input` to stdout; the IR stages build in count checks with
 /// `rc_checks`.
-fn emit(reporter: &mut Report, stage: &Stage, input: &Path, o2: bool, rc_checks: bool) -> ExitCode {
+fn emit(
+    reporter: &mut Report,
+    stage: &Stage,
+    input: &Path,
+    level: OptLevel,
+    rc_checks: bool,
+) -> ExitCode {
     let path = input.to_string_lossy();
     let Some(source) = read(reporter, input) else {
         return ExitCode::FAILURE;
@@ -302,19 +328,25 @@ fn emit(reporter: &mut Report, stage: &Stage, input: &Path, o2: bool, rc_checks:
             }
             None => ExitCode::FAILURE,
         },
-        Stage::Ir => emit_ir(reporter, &path, &source, o2, rc_checks),
+        Stage::Ir => emit_ir(reporter, &path, &source, level, rc_checks),
         Stage::IrRaw => emit_ir_raw(reporter, &path, &source, rc_checks),
     }
 }
 
 /// Prints the module for `source` before and after the pipeline, once it passes the checker.
-fn emit_ir(reporter: &mut Report, path: &str, source: &str, o2: bool, rc_checks: bool) -> ExitCode {
+fn emit_ir(
+    reporter: &mut Report,
+    path: &str,
+    source: &str,
+    level: OptLevel,
+    rc_checks: bool,
+) -> ExitCode {
     let Some(program) = front_end(reporter, path, source) else {
         return ExitCode::FAILURE;
     };
     let context = Context::create();
-    let pipeline = codegen::pipeline(o2);
-    let printed = codegen::target_machine(o2).and_then(|machine| {
+    let pipeline = codegen::pipeline(level);
+    let printed = codegen::target_machine(level).and_then(|machine| {
         let module = codegen::compile(&context, &program, path, source, &machine, rc_checks);
         // For the `o2-calls` check in the tests (`docs/development.md`); `--emit ir` only, so
         // no executable is affected, and not in the usage text.
@@ -323,7 +355,7 @@ fn emit_ir(reporter: &mut Report, path: &str, source: &str, o2: bool, rc_checks:
         }
         // `LLVMString`'s `Display` quotes and escapes the text; `to_string` does not.
         let before = module.print_to_string().to_string();
-        codegen::optimize(&module, &machine, o2)?;
+        codegen::optimize(&module, &machine, level)?;
         Ok(format!(
             "; before {pipeline}\n{before}\n; after {pipeline}\n{}",
             module.print_to_string().to_string()
@@ -354,7 +386,7 @@ fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str, rc_checks: bool)
     let context = Context::create();
     print_or_report(
         reporter,
-        codegen::target_machine(false).and_then(|machine| {
+        codegen::target_machine(OptLevel::O0).and_then(|machine| {
             let module = codegen::compile(&context, &program, path, source, &machine, rc_checks);
             module.verify().map_err(|e| e.to_string())?;
             Ok(module.print_to_string().to_string())
@@ -420,8 +452,9 @@ fn build(
     reporter: &mut Report,
     input: &Path,
     output: &Path,
-    o2: bool,
+    level: OptLevel,
     rc_checks: bool,
+    linker: Option<&str>,
 ) -> ExitCode {
     // `cc -o` would replace the source with the executable.
     let overwrites_input = match (fs::canonicalize(input), fs::canonicalize(output)) {
@@ -442,7 +475,7 @@ fn build(
     let Some(program) = front_end(reporter, &path, &source) else {
         return ExitCode::FAILURE;
     };
-    match compile(&program, &path, &source, output, o2, rc_checks) {
+    match compile(&program, &path, &source, output, level, rc_checks, linker) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             reporter.tool_error(&message);
@@ -466,13 +499,14 @@ fn compile(
     path: &str,
     source: &str,
     output: &Path,
-    o2: bool,
+    level: OptLevel,
     rc_checks: bool,
+    linker: Option<&str>,
 ) -> Result<(), String> {
     let context = Context::create();
-    let machine = codegen::target_machine(o2)?;
+    let machine = codegen::target_machine(level)?;
     let module = codegen::compile(&context, program, path, source, &machine, rc_checks);
-    codegen::optimize(&module, &machine, o2)?;
+    codegen::optimize(&module, &machine, level)?;
     let code = codegen::object_code(&module, &machine)?;
     // A name of its own, so a user's `<output>.o` is left alone; the nanoseconds pick a
     // fresh name when one is taken.
@@ -485,10 +519,10 @@ fn compile(
     });
     let object = create_object(&std::env::temp_dir(), code.as_slice(), names)?;
     // Remove the object file whether or not the link worked; a link error wins.
-    let linked = link::link(&object, output);
+    let link_result = link::link(&object, output, linker);
     let removed =
         fs::remove_file(&object).map_err(|e| format!("cannot remove {}: {e}", object.display()));
-    linked.and(removed)
+    link_result.and(removed)
 }
 
 /// Writes `bytes` to a new file in `dir`, under the first of `names` that is free, and

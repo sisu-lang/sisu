@@ -14,7 +14,7 @@ fn compiled_with<'ctx>(context: &'ctx Context, src: &str, rc_checks: bool) -> Mo
     let (program, diagnostics) = check(&program, src);
     let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     crate::last_use::mark(&mut program);
-    let machine = target_machine(false).expect("the host is a target");
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let module = compile(context, &program, "test.sisu", src, &machine, rc_checks);
     if let Err(e) = module.verify() {
         panic!("{e}\n{}", module.print_to_string());
@@ -1359,15 +1359,18 @@ fn many_panic_sites_compile_in_linear_time() {
 /// No float instruction carries a fast-math flag, so `-O2` keeps every result exact to IEEE
 /// 754. The operands come from the arguments' count, so `-O2` cannot fold the operations away,
 /// and each comparison is printed alone: together, `s <= b || s >= b || s != b` folds to true.
+/// `a` is a quotient, NaN when the count is 0: from LLVM 23, the `instcombine` pass adds `nnan`
+/// or `ninf` where it proves no operand or result is NaN or infinite, as for the product of two
+/// counts.
 #[test]
 fn float_ops_have_no_fast_math() {
     let context = Context::create();
     let module = compiled(
         &context,
-        "fn ops(a: f64, b: f64) -> bool {\n    let s = -(a + b - a * b / a % b)\n    print(s < a)\n    print(s <= b)\n    print(s > a)\n    print(s >= b)\n    print(s == a)\n    s != b\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    print(ops(f64(n), f64(n + 1)))\n}",
+        "fn ops(a: f64, b: f64) -> bool {\n    let s = -(a + b - a * b / a % b)\n    print(s < a)\n    print(s <= b)\n    print(s > a)\n    print(s >= b)\n    print(s == a)\n    s != b\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    print(ops(f64(n) / f64(n), f64(n + 1)))\n}",
     );
-    let machine = target_machine(true).expect("the host is a target");
-    optimize(&module, &machine, true).expect("the module should optimize");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     for wanted in ["fadd", "frem", "fcmp une"] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
@@ -1494,11 +1497,11 @@ fn classification_is_float_compares() {
     let finite = function_body(&ir, "define internal i1 @sisu.finite(");
     assert!(finite.contains("@llvm.fabs.f64"), "{finite}");
     assert!(finite.contains("fcmp olt double"), "{finite}"); // spellchecker:disable-line
-    assert!(finite.contains("0x7FF0000000000000"), "{finite}");
+    assert!(finite.contains("+inf"), "{finite}");
     let infinite = function_body(&ir, "define internal i1 @sisu.infinite(");
     assert!(infinite.contains("@llvm.fabs.f64"), "{infinite}");
     assert!(infinite.contains("fcmp oeq double"), "{infinite}");
-    assert!(infinite.contains("0x7FF0000000000000"), "{infinite}");
+    assert!(infinite.contains("+inf"), "{infinite}");
 }
 
 /// `i64` `min`, `max` and `clamp` are `select`s over signed compares, with no call.
@@ -1542,8 +1545,8 @@ fn partition_makes_its_array_unique_once() {
         "fn partition(xs: [i64], pivot: i64) -> [i64] {\n    let mut a = xs\n    let mut i = 0\n    for j in 0..a.len() {\n        if a[j] < pivot {\n            let t = a[i]\n            a[i] = a[j]\n            a[j] = t\n            i += 1\n        }\n    }\n    a\n}\n\nfn main() {\n    print(partition([3, 1, 2], 2).sum())\n}",
     );
     keep_functions(&module, "partition");
-    let machine = target_machine(true).expect("the host is a target");
-    optimize(&module, &machine, true).expect("the module should optimize");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let partition = function_body(&ir, "@sisu.partition(");
     assert_eq!(
@@ -1566,8 +1569,8 @@ fn a_barred_partition_makes_its_array_unique_once() {
         "fn partition(xs: [i64], pivot: i64, stop: i64) -> [i64] {\n    let mut a = xs\n    let mut i = 0\n    for j in 0..a.len() {\n        if j == stop {\n            return a\n        }\n        if a[j] < pivot {\n            let t = a[i]\n            a[i] = a[j]\n            a[j] = t\n            i += 1\n        }\n    }\n    a\n}\n\nfn main() {\n    print(partition([3, 1, 2], 2, 5).sum())\n}",
     );
     keep_functions(&module, "partition");
-    let machine = target_machine(true).expect("the host is a target");
-    optimize(&module, &machine, true).expect("the module should optimize");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
     let partition = function_body(&ir, "@sisu.partition(");
     assert_eq!(

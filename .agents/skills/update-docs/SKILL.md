@@ -75,7 +75,7 @@ gitignored, and the docs do not link to it.
 - Every command and output in the docs comes from a run of the commit you
   document. Before a pull request, that is the branch's checkout. After a
   merge, make a worktree with `git worktree add $TMPDIR/sisu-main <merge-sha>`
-  and set `LLVM_SYS_221_PREFIX` to an existing `.llvm/22`, because a new
+  and set `LLVM_SYS_231_PREFIX` to an existing `.llvm/23`, because a new
   worktree has none. Build with `cargo build --workspace` and run that
   checkout's `target/debug/sisuc`; a binary from another checkout may come
   from another branch. Never write output from memory or from the diff.
