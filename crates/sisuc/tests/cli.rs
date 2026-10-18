@@ -196,13 +196,13 @@ fn assert_usage_errors(cases: &[&[&str]]) {
     }
 }
 
-/// `--rc-checks` is accepted only right after an optional `-O2`, and only for a build.
+/// `--rc-checks` is accepted only right after an optional `-O2`, and only for a build or IR.
 #[test]
-fn rc_checks_is_build_only() {
+fn rc_checks_is_build_or_ir_only() {
     let cases: [&[&str]; 8] = [
         &["--rc-checks", "--explain", "E0001"],
-        &["--rc-checks", "--emit", "ir", "f.sisu"],
-        &["-O2", "--rc-checks", "--emit", "ir", "f.sisu"],
+        &["--rc-checks", "--emit", "tir", "f.sisu"],
+        &["--rc-checks", "--emit", "tokens", "f.sisu"],
         &["--rc-checks", "--check", "f.sisu"],
         &["--rc-checks", "-O2", "f.sisu", "out"],
         &["--emit", "ir", "--rc-checks"],
@@ -210,6 +210,36 @@ fn rc_checks_is_build_only() {
         &["--rc-checks", "--rc-checks", "f.sisu"],
     ];
     assert_usage_errors(&cases);
+}
+
+/// `--rc-checks` with `--emit ir-raw` and `--emit ir` prints the module with the count checks
+/// built in, so a refactor can compare that IR too; without it, the module has none.
+#[test]
+fn emit_ir_with_rc_checks() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join("emit_rc.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    let ir = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(dir)
+            .args(args)
+            .arg("emit_rc.sisu")
+            .output()
+            .expect("sisuc starts");
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    for args in [
+        &["--rc-checks", "--emit", "ir-raw"][..],
+        &["--rc-checks", "--emit", "ir"],
+        &["-O2", "--rc-checks", "--emit", "ir"],
+    ] {
+        assert!(ir(args).contains("@sisu_rc_check_exit"), "{args:?}");
+    }
+    assert!(!ir(&["--emit", "ir-raw"]).contains("@sisu_rc_check_exit"));
 }
 
 #[test]

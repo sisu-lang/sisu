@@ -12,10 +12,22 @@ base=${1:-$(git merge-base main HEAD)}
 [[ $# -gt 0 ]] && shift
 
 diff=$(mktemp)
-trap 'rm -f "$diff"' EXIT
+# cargo mutants copies the tree into $TMPDIR and removes the copy only when it
+# exits normally, so a killed run leaks gigabytes. Each run gets a directory it
+# holds a lock on until it exits; a free lock marks a leaked one.
+scratch=${TMPDIR:-/tmp}/sisu-mutants
+mkdir -p "$scratch"
+for lock in "$scratch"/*.lock; do
+  [[ -e $lock ]] || continue
+  if flock -n "$lock" true; then rm -rf "${lock%.lock}" "$lock"; fi
+done
+run=$(mktemp -d "$scratch/run.XXXXXX")
+exec {held}>"$run.lock"
+flock "$held"
+trap 'rm -rf "$diff" "$run" "$run.lock"' EXIT
 git diff "$base" >"$diff"
 
 # .cargo/mutants.toml leaves .llvm/ out of the copied tree, so point the
 # build at the original.
-CARGO_MUTANTS_JOBS=${CARGO_MUTANTS_JOBS:-4} \
+TMPDIR=$run CARGO_MUTANTS_JOBS=${CARGO_MUTANTS_JOBS:-4} \
   LLVM_SYS_221_PREFIX="$PWD/.llvm/22" cargo mutants --in-diff "$diff" "$@"
