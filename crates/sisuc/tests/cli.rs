@@ -832,16 +832,34 @@ fn emit_ir_o2() {
     }
 }
 
+/// A loop that branches on a flag it never changes, which comes from input so that it does not
+/// fold away.
+const UNSWITCH: &str = "fn main() {\n    let loud = (read_line() ?? \"\") == \"loud\"\n\
+                        let mut total = 0\n    for i in 0..1000 {\n\
+                        if loud { print(i) } else { total += i }\n    }\n    print(total)\n}\n";
+
+/// Only `default<O3>` unswitches a loop whose branch does work on both sides: it copies the
+/// loop, and the copy's blocks end in `.us`. `default<O2>` keeps one loop.
 #[test]
 fn emit_ir_o3_runs_the_o3_pipeline() {
-    let out = run_on("emit_ir_o3", SQUARE, &["-O3", "--emit", "ir"]);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "{stdout}");
-    assert!(stdout.starts_with("; before default<O3>\n"), "{stdout}");
-    let (_, after) = stdout
-        .split_once("\n; after default<O3>\n")
-        .unwrap_or_else(|| panic!("{stdout}"));
-    assert!(after.contains("@sisu_print_int(i64 13)"), "{after}");
+    let unswitched = |level: &str| {
+        let out = run_on("emit_ir_o3", UNSWITCH, &[level, "--emit", "ir"]);
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert_eq!(out.status.code(), Some(0), "{stdout}");
+        assert!(
+            stdout.starts_with(&format!("; before default<{}>\n", &level[1..])),
+            "{stdout}"
+        );
+        let (_, after) = stdout
+            .split_once(&format!("\n; after default<{}>\n", &level[1..]))
+            .unwrap_or_else(|| panic!("{stdout}"));
+        after.lines().any(|line| {
+            line.split_once(':')
+                .is_some_and(|(label, _)| label.ends_with(".us.i"))
+        })
+    };
+    assert!(unswitched("-O3"));
+    assert!(!unswitched("-O2"));
 }
 
 /// A `print` that may never run does not make the loop reload the array's length: the

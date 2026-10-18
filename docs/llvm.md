@@ -32,7 +32,9 @@ pinned to a commit only when a newer LLVM gives us something we need, and go
 back to crates.io when inkwell releases.
 
 LLVM 23 is such a case. The pinned Rust toolchain's `rustc` is on LLVM 23.1,
-so `sisuc` and the runtime it links share an LLVM major again. inkwell's
+so with LLVM 23 `sisuc` can read the bitcode that toolchain writes, which
+linking the runtime as bitcode needs (Link-time optimization with the runtime
+in [Later and stretch goals](roadmap.md#later-and-stretch-goals)). inkwell's
 `master` has `llvm23-1`, so `crates/sisuc/Cargo.toml` pins a commit of it, and
 `deny.toml` allows the repository. Both go back to a crates.io version once an
 inkwell release has `llvm23-1`.

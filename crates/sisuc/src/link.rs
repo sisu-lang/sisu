@@ -9,11 +9,6 @@ pub(crate) fn link(object: &Path, output: &Path, linker: Option<&str>) -> Result
     let runtime = runtime_library()?;
     let mut cc = Command::new("cc");
     if let Some(linker) = linker {
-        // A missing `ld.lld` makes gcc say only "cannot find 'ld'", which names the wrong program.
-        let program = format!("ld.{linker}");
-        if !on_path(&program) {
-            return Err(format!("linker {program} not found on PATH"));
-        }
         cc.arg(format!("-fuse-ld={linker}"));
     }
     // `output`, not `status`: cc's messages go into the tool error, so stderr stays one format.
@@ -30,6 +25,13 @@ pub(crate) fn link(object: &Path, output: &Path, linker: Option<&str>) -> Result
     if out.status.success() {
         return Ok(());
     }
+    // A missing `ld.lld` makes gcc say only "cannot find 'ld'", which names the wrong program.
+    // `cc` also finds linkers off PATH, so the check waits until it has failed.
+    if let Some(program) = linker.map(|linker| format!("ld.{linker}"))
+        && !on_path(&program)
+    {
+        return Err(format!("linker {program} not found on PATH"));
+    }
     let message = format!("cc failed: {}", out.status);
     match String::from_utf8_lossy(&out.stderr).trim() {
         "" => Err(message),
@@ -38,7 +40,6 @@ pub(crate) fn link(object: &Path, output: &Path, linker: Option<&str>) -> Result
 }
 
 /// Whether a directory on PATH holds `program`.
-// shortcut: gcc also searches its own install directories; check those too if a linker lives only there.
 fn on_path(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))

@@ -420,11 +420,11 @@ building an executable: `sisuc -O2 file.sisu out`.
 
 `sisuc --linker lld file.sisu out` links with `ld.lld` instead of `cc`'s
 default linker; `bfd`, `gold` and `mold` work the same way. `sisuc` passes the
-name to `cc -fuse-ld=` and stops with an error when `ld.<name>` is not on
-`PATH`. `--linker` comes after `-O2`, `-O3` and `--rc-checks`, and works only
-when building an executable. `scripts/install-llvm.sh` puts `ld.lld` in
-`.llvm/23/bin`; the tests put that directory on `PATH` for the `--linker lld`
-test.
+name to `cc -fuse-ld=`. When the link fails and `ld.<name>` is not on `PATH`,
+the error names `ld.<name>`, where gcc names only `ld`. `--linker` comes after
+`-O2`, `-O3` and `--rc-checks`, and works only when building an executable.
+`scripts/install-llvm.sh` puts `ld.lld` in `.llvm/23/bin`; the tests put that
+directory on `PATH`, or in gcc's `COMPILER_PATH`, for the `--linker lld` tests.
 
 `sisuc --rc-checks file.sisu out` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is

@@ -1009,6 +1009,12 @@ fn build_loops(exe: &str, flags: &[&str], path: &OsStr) -> Vec<u8> {
     );
     let run = Command::new(&exe).output().expect("the program starts");
     assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
         String::from_utf8_lossy(&run.stdout),
         fs::read_to_string(Path::new(RUN).join("loops.out")).expect("reads the expected output")
     );
@@ -1025,7 +1031,8 @@ fn o3_builds_a_program_that_runs() {
 }
 
 /// `--linker lld` links with LLVM's `ld.lld`, which records itself in the `.comment` section;
-/// the default linker, GNU ld, does not.
+/// GNU ld, which `--linker bfd` picks, does not. `cc`'s default linker varies by host, so the
+/// test names both.
 #[test]
 fn linker_lld_links_with_lld() {
     let bin = Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin");
@@ -1034,16 +1041,44 @@ fn linker_lld_links_with_lld() {
         .expect("PATH joins");
     let lld = build_loops("loops-lld", &["--linker", "lld"], &path);
     assert!(lld.windows(11).any(|w| w == b"Linker: LLD"));
-    let default = build_loops("loops-ld", &[], &path);
-    assert!(!default.windows(11).any(|w| w == b"Linker: LLD"));
+    let bfd = build_loops("loops-bfd", &["--linker", "bfd"], &path);
+    assert!(!bfd.windows(11).any(|w| w == b"Linker: LLD"));
 }
 
+/// gcc finds a linker in `COMPILER_PATH` too, so `--linker` does not require it on `PATH`.
+#[test]
+fn linker_off_path_links_when_cc_finds_it() {
+    let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("loops-compiler-path");
+    let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "lld"])
+        .env(
+            "COMPILER_PATH",
+            Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin"),
+        )
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let executable = fs::read(&exe).expect("reads the executable");
+    assert!(executable.windows(11).any(|w| w == b"Linker: LLD"));
+}
+
+/// With only `cc` on `PATH`, `cc` runs and fails to find `ld.mold`; `sisuc` names it.
 #[test]
 fn a_missing_linker_is_named() {
     let empty = empty_dir("no_linker_on_path");
+    let only_cc = empty_dir("only_cc_on_path");
+    let cc = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("cc"))
+        .find(|cc| cc.is_file())
+        .expect("cc is on PATH");
+    std::os::unix::fs::symlink(cc, only_cc.join("cc")).expect("links cc");
     let exe = empty.join("loops");
     let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "mold"])
-        .env("PATH", &empty)
+        .env("PATH", &only_cc)
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));

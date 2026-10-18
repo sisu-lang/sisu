@@ -401,7 +401,8 @@ so it does not wait for the later goals:
   Comparing the IR with and without the flag shows what the optimizer
   removes.
 
-  `-O3` takes the same place and runs `default<O3>`. It adds non-trivial
+  `-O3` takes the same place and runs `default<O3>`, to try LLVM's extra
+  passes on a program and to compare with clang's `-O3`. It adds non-trivial
   loop unswitching, argument promotion, call-site splitting and a higher
   inlining threshold to O2; vectorization already runs at O2. The extra
   passes cost compile time and code size and often gain nothing, so the
