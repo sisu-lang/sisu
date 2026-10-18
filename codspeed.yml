@@ -21,6 +21,15 @@ benchmarks:
   - name: fannkuch_redux
     id: fannkuch_redux
     exec: target/codspeed/fannkuch_redux/main
+  - name: strings
+    id: strings
+    exec: target/codspeed/strings/main
+  - name: enum_match
+    id: enum_match
+    exec: target/codspeed/enum_match/main
+  - name: shared_arrays
+    id: shared_arrays
+    exec: target/codspeed/shared_arrays/main
   - name: build_hello
     id: build_hello
     exec: target/release/sisuc -O2 bench/hello/main.sisu target/codspeed/build_hello/main
@@ -33,6 +42,6 @@ benchmarks:
   - name: check_large
     id: check_large
     exec: target/release/sisuc --check target/codspeed/large/main.sisu
-  - name: build_large
-    id: build_large
-    exec: target/release/sisuc -O2 target/codspeed/large/main.sisu target/codspeed/build_large/main
+  - name: build_large_20
+    id: build_large_20
+    exec: target/release/sisuc -O2 target/codspeed/large_20/main.sisu target/codspeed/build_large_20/main

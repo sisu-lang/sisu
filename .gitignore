@@ -11,3 +11,5 @@
 # cargo-mutants reports.
 /mutants.out*/
 __pycache__/
+# Written by scripts/codspeed-prep.sh: the merged CodSpeed config for pushes to main.
+/.codspeed-main-merged.yml

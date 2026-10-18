@@ -491,6 +491,32 @@ Order matters in these places:
   (ADR 0009). Opening, reading and writing files waits for `Result` in
   milestone 12, so no I/O signature changes later.
 
+### Benchmarks keep up
+
+A milestone that adds a feature with a run-time cost adds a program under
+`bench/features/`, or extends one, and adds its row to "What CodSpeed
+covers" in [Benchmarks](benchmarks.md#what-codspeed-covers).
+Otherwise its spec says why the feature needs none.
+
+Each milestone also adds its new syntax to the generator of the large input
+in `scripts/codspeed-prep.sh`, so that `check_large` and the builds see it.
+A change to the generator shows as a step in `check_large`,
+`build_large_20` and `build_large`, and the pull request says so.
+
+The bench step of a pull request stays under 3 minutes, read from the job
+log (see [Coverage and performance](development.md#coverage-and-performance)).
+A benchmark that would push it over shrinks its input, or moves to
+`codspeed-main.yml`, which runs only on pushes to `main`.
+
+The first candidates:
+
+- 8: a generic container used at two types, and a call through an interface.
+- 9: an iterator chain next to the same loop written by hand, with both
+  printing the same result, so the cost of the chain shows.
+- 10: comparing and printing records.
+- 11: word frequency with `Map`; `strings` grows into it.
+- 12: `?` on a path that runs often.
+
 ### The growing proof program
 
 Status: agreed 2026-10-14; it starts in milestone 8, not 7 (the user's
@@ -516,6 +542,12 @@ stretch goal into steps.
   `--emit ast` the same way.
 - Milestone 8's spec settles where the program lives and how the tests run
   it.
+
+Once the lexer exists, CodSpeed gets two benchmarks from it: one runs the
+lexer on a fixed corpus of `.sisu` files, whose output prep checks against
+`sisuc --emit tokens`, and one builds the lexer at `-O2`. The focused
+benchmarks stay, because the program changes in every milestone, and its
+numbers compare only between commits that leave it unchanged.
 
 ## Dependencies and parallel work
 

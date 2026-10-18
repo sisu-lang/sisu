@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
-# Prepares the CodSpeed benchmarks listed in codspeed.yml: builds release sisuc,
-# compiles reduced copies of the bench/ programs, generates a large compiler
-# input, then runs every benchmark once and checks what it prints. Exits
-# non-zero, naming the benchmark, when a reduction no longer applies or a
-# benchmark misbehaves.
+# Prepares the CodSpeed benchmarks listed in codspeed.yml and codspeed-main.yml:
+# builds release sisuc, compiles reduced copies of the bench/ programs,
+# generates a 200-section and a 20-section compiler input, then runs every
+# benchmark once and checks what it prints. Writes .codspeed-main-merged.yml,
+# the entries of both files, which pushes to main run. Exits non-zero, naming
+# the benchmark or file, when a reduction no longer applies or a benchmark
+# misbehaves.
 #   scripts/codspeed-prep.sh
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 out=target/codspeed
-sections=200
+large_sections=200
+small_sections=20
 
 cargo build --release --locked -p sisuc -p sisu-runtime
 rm -rf "$out"
-mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,build_hello,build_binary_trees,build_large}
+mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays}
 
 fail() {
     echo "codspeed-prep: $*" >&2
@@ -36,11 +39,17 @@ reduce quicksort 's/let n = 10_000_000/let n = 100_000/'
 reduce nbody 's/let steps = 5_000_000/let steps = 100_000/'
 reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
+# bench/features/ programs are sized for simulation and Sisu-only: no reduction.
+for b in strings enum_match shared_arrays; do
+    target/release/sisuc -O2 "bench/features/$b/main.sisu" "$out/$b/main" || fail "$b failed to compile"
+done
 
 # step0 returns its argument. stepi adds 1 through an array, a class and an
 # optional chain, and 0 through constants, an enum, f64 methods, a string built
 # with += and format specs, while let, u8 and char; then it calls step(i-1).
 # main prints step(N-1)(0) = N-1. Not fi: f64 is a built-in type.
+large_input() {
+    local sections=$1 dir=$2
 {
     echo 'fn step0(x: i64) -> i64 { x }'
     for ((i = 1; i < sections; i++)); do
@@ -92,37 +101,64 @@ fn step$i(x: i64) -> i64 {
 SISU
     done
     printf '\nfn main() {\n    print(step%d(0))\n}\n' $((sections - 1))
-} >"$out/large/main.sisu"
+} >"$dir/main.sisu"
+}
+large_input "$large_sections" "$out/large"
+large_input "$small_sections" "$out/large_20"
 
-# Reads codspeed.yml strictly: a "benchmarks:" line, then per entry the lines
+# Reads a config file strictly: a "benchmarks:" line, then per entry the lines
 # "  - name: X", "    id: X" (same X) and "    exec: plain words", in that
 # order. Anything else fails, so no entry can escape the check below.
 names=()
 execs=()
-state=start
-while IFS= read -r line; do
-    [[ -z $line || $line == \#* ]] && continue
-    case $state:$line in
-        start:"benchmarks:") state=name ;;
-        name:"  - name: "?* | id:"  - name: "?*)
-            [[ $state == name ]] || fail "codspeed.yml: entry lacks id/exec before: $line"
-            names+=("${line#  - name: }")
-            state=id
-            ;;
-        id:"    id: "?*)
-            [[ ${line#    id: } == "${names[-1]}" ]] || fail "codspeed.yml: id differs from name: $line"
-            state=run
-            ;;
-        run:"    exec: "?*)
-            e=${line#    exec: }
-            [[ $e != *[\"\'\\#]* ]] || fail "codspeed.yml: exec must be plain words: $line"
-            execs+=("$e")
-            state=name
-            ;;
-        *) fail "codspeed.yml: unexpected line: $line" ;;
-    esac
-done <codspeed.yml
-[[ $state == name && ${#names[@]} -gt 0 ]] || fail "codspeed.yml: no complete benchmarks found"
+read_config() {
+    local file=$1 line e state=start
+    [[ -f $file ]] || fail "$file: missing"
+    local before=${#names[@]}
+    while IFS= read -r line; do
+        [[ -z $line || $line == \#* ]] && continue
+        case $state:$line in
+            start:"benchmarks:") state=name ;;
+            name:"  - name: "?* | id:"  - name: "?*)
+                [[ $state == name ]] || fail "$file: entry lacks id/exec before: $line"
+                names+=("${line#  - name: }")
+                state=id
+                ;;
+            id:"    id: "?*)
+                [[ ${line#    id: } == "${names[-1]}" ]] || fail "$file: id differs from name: $line"
+                state=run
+                ;;
+            run:"    exec: "?*)
+                e=${line#    exec: }
+                [[ $e != *[\"\'\\#]* ]] || fail "$file: exec must be plain words: $line"
+                execs+=("$e")
+                state=name
+                ;;
+            *) fail "$file: unexpected line: $line" ;;
+        esac
+    done <"$file"
+    [[ $state == name && ${#names[@]} -gt $before ]] || fail "$file: no complete benchmarks found"
+}
+read_config codspeed.yml
+read_config codspeed-main.yml
+
+for i in "${!names[@]}"; do
+    for ((j = i + 1; j < ${#names[@]}; j++)); do
+        [[ ${names[i]} != "${names[j]}" ]] || fail "benchmark ${names[i]} is listed twice"
+    done
+done
+
+# Pushes to main run the entries of both files. Written from the parsed arrays,
+# so CodSpeed reads only entries checked above. It sits at the repository root
+# because CodSpeed runs a config's commands from the config's own directory.
+merged=.codspeed-main-merged.yml
+{
+    echo "# Written by scripts/codspeed-prep.sh from codspeed.yml and codspeed-main.yml; do not edit."
+    echo "benchmarks:"
+    for i in "${!names[@]}"; do
+        printf '  - name: %s\n    id: %s\n    exec: %s\n' "${names[i]}" "${names[i]}" "${execs[i]}"
+    done
+} >"$merged"
 
 # Runs the exec line of every entry once. check_* and build_* must print
 # nothing; a program must print its expected output and nothing on stderr.
@@ -135,6 +171,9 @@ expected() {
         nbody) printf '%s\n' -0.169075164 -0.169079859 ;;
         mandelbrot) echo 63528 ;;
         fannkuch_redux) printf '%s\n' 8629 'Pfannkuchen(9) = 30' ;;
+        strings) printf '%s\n' 186741 9800 10000 12073291 ;;
+        enum_match) printf '%s\n' 987548 816672 ;;
+        shared_arrays) printf '%s\n' 20000 519500 ;;
         *) return 1 ;;
     esac
 }
@@ -153,7 +192,14 @@ for i in "${!names[@]}"; do
             ;;
     esac
 done
-"$out/build_large/main" >"$out/stdout" 2>"$out/stderr" || fail "build_large's program exited non-zero"
-[[ ! -s $out/stderr ]] || fail "build_large's program printed to stderr"
-printf '%d\n' $((sections - 1)) | cmp -s - "$out/stdout" || fail "build_large's program printed something other than $((sections - 1))"
+
+# Runs the program a build_* benchmark compiled: it prints sections - 1.
+large_program() {
+    local name=$1 sections=$2
+    "$out/$name/main" >"$out/stdout" 2>"$out/stderr" || fail "$name's program exited non-zero"
+    [[ ! -s $out/stderr ]] || fail "$name's program printed to stderr"
+    printf '%d\n' $((sections - 1)) | cmp -s - "$out/stdout" || fail "$name's program printed something other than $((sections - 1))"
+}
+large_program build_large "$large_sections"
+large_program build_large_20 "$small_sections"
 echo "codspeed-prep: ok"

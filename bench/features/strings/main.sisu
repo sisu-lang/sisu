@@ -1,0 +1,23 @@
+// Builds a text with interpolation and format specs, then reads it back
+// through words(), chars() and bytes().
+fn main() {
+    let n = 10_000
+    let mut text = ""
+    for i in 0..n {
+        text += "w{i % 97} ä{i:>5} {f64(i) * 0.5:.1} "
+    }
+    let mut long = 0
+    for w in text.words() {
+        if w.len() > 4 { long += 1 }
+    }
+    let mut umlauts = 0
+    for c in text.chars() {
+        if c == 'ä' { umlauts += 1 }
+    }
+    let mut sum = 0
+    for b in text.bytes() { sum += i64(b) }
+    print(text.len())
+    print(long)
+    print(umlauts)
+    print(sum)
+}

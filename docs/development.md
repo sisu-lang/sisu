@@ -175,23 +175,35 @@ red.
 
 CodSpeed measures Sisu against itself in simulation mode. The benchmarks are
 in `codspeed.yml`: the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`,
-`mandelbrot` and `fannkuch_redux` programs at reduced inputs, and the
+`mandelbrot` and `fannkuch_redux` programs at reduced inputs, the `strings`,
+`enum_match` and `shared_arrays` programs from `bench/features/`, and the
 compiler on `bench/hello` (an `-O2` build), on `bench/binary_trees`
 (`--check` and an `-O2` build) and on a generated 200-section input that
-uses most of the language.
+uses most of the language. The `-O2` build of that input comes in two sizes:
+20 sections on every run (`build_large_20`) and 200 sections on pushes to
+`main` only (`build_large`, in `codspeed-main.yml`). Pull request reports show
+`build_large` as skipped, with its result from the baseline run.
+`check_large` and `make callgrind` keep the 200-section input.
 `scripts/codspeed-prep.sh` builds them and checks every program's output
 first. The `CodSpeed` workflow runs on pushes to `main` and on pull requests
 that touch the code, the benchmarks or their tooling. It never turns a pull
 request's check red. On a push to `main`, a step that fails, such as a prep
 that no longer builds, fails the run, so the benchmarks cannot stop running
-unnoticed. Agents read results through the CodSpeed MCP tools and do not run
-CodSpeed locally. To compare a change before pushing, count the instructions
-of `target/release/sisuc --check target/codspeed/large/main.sisu` under
-callgrind, as `make callgrind` does.
+unnoticed. The bench step's time is its duration in the GitHub Actions run of
+the `CodSpeed` workflow, or in its job log. Agents read results through the
+CodSpeed MCP tools and do not run CodSpeed locally. To compare a change before
+pushing, count the instructions of
+`target/release/sisuc --check target/codspeed/large/main.sisu` under callgrind,
+as `make callgrind` does.
 
 Set these once in the CodSpeed UI: "Informational Status Checks on Failure"
 on, PR comment mode "On Change", threshold 10%. Do not make the check
 required.
+
+CodSpeed comments on a pull request only when a change passes the threshold.
+A pull request that changes `codegen`, the runtime or ownership is merged
+only after someone has read its CodSpeed report, including changes below the
+threshold. Any regression that is kept is explained in the description.
 
 ## Fuzz the front end
 
@@ -435,6 +447,8 @@ must accept any syntax those programs use.
 | `crates/sisuc/tests/run`, `run-fail`, `diagnostics` | End-to-end cases, each with the output it must print. |
 | `crates/sisuc/tests/programs` | The programs the small-stack tests run. |
 | `crates/runtime` | `sisu-runtime`, a static library with a C ABI linked into every compiled program. |
+| `bench` | The benchmark programs, and under `features/` the Sisu-only ones for CodSpeed. |
+| `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The front-end fuzz target, its own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
 | `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, and `check-expect-messages.sh`, which a prek hook runs. |
