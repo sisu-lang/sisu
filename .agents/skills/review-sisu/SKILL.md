@@ -25,7 +25,7 @@ The caller names one target. Infer its kind; ask when it is unclear.
 ### 1. Set up
 
 1. The repository root is `git rev-parse --show-toplevel` in the checkout that holds the target, which may be a worktree.
-2. `mktemp -d "${TMPDIR:-/tmp}/sisu-review-XXXXXXXX"` makes the run directory, `RUN`. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
+2. `mktemp -d "${TMPDIR:-/tmp}/sisu-review-XXXXXXXX"` makes the run directory, `RUN`, and `mkdir RUN/opus-scratch` makes the Opus reviewer's scratch directory. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
 3. Find the two skills the brief cites: `test-audit` at `~/.claude/skills/test-audit/SKILL.md` and `codebase-design` at `~/.agents/skills/codebase-design/SKILL.md`. When one is not there, `find ~/.claude ~/.agents -path '*/<name>/SKILL.md'`. When neither place has it, delete its line from the brief and tell the user in the report.
 4. For the final diff of a branch, review what will merge. Run `git fetch origin`. When `git merge-base --is-ancestor origin/main <head>` fails, `main` has moved: rebase the branch onto `origin/main`, run `make test` and `make site`, and review the rebased range.
 
@@ -55,7 +55,7 @@ The user or the caller's plan may change an effort or add a reviewer.
 Launch the reviewers together.
 
 - **Sol:** `sol-review <effort> RUN/brief.md RUN/sol.md <repository root>`, through Bash with `run_in_background` and the sandbox off: codex needs the network and writes under `~/.codex`. The completion notification ends the wait; do not poll. When it exits 1, show the user the error it prints and ask how to go on. Do not put another model in Sol's place without asking.
-- **Opus:** the Agent tool with `subagent_type: opus-high`, and the prompt `Read RUN/brief.md and follow it. Write your report to RUN/opus.md; your final reply is that report.` with `RUN` written out. Pass no `model` or `effort`.
+- **Opus:** the Agent tool with `subagent_type: opus-high`, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Write your report to RUN/opus.md; your final reply is that report.` with `RUN` written out. Pass no `model` or `effort`.
 
 ### 4. Rule on each finding
 

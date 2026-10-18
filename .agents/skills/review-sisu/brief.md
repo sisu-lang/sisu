@@ -2,8 +2,8 @@ You review a <spec | plan | diff> of Sisu, a statically typed language that
 compiles to native code through LLVM 22. Target: <path, or base..head>.
 Repository: <repository root>.
 
-You only read. Do not edit any file in the repository. You may build, run
-and probe in a scratch directory of your own.
+You only read. Do not edit any file in the repository. Build, run and
+probe only inside the scratch directory your launch names.
 
 # Read first
 
