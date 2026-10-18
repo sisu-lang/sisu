@@ -15,7 +15,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisuc</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit 18b6be6 · x86-64 Linux only</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit ade4c3b · x86-64 Linux only</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 Linux only) -->
 
@@ -92,11 +92,11 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
       <h3>LLVM</h3>
       <p class="files">LLVM 23, linked as a library</p>
-      <p>A plain build runs only the <code>mem2reg</code> pass, which turns stack slots into registers. With <code>-O2</code> it runs LLVM's <code>default&lt;O2&gt;</code> pipeline. Then LLVM writes x86-64 object code for the machine <code>sisuc</code> runs on.</p>
+      <p>A plain build runs only the <code>mem2reg</code> pass, which turns stack slots into registers. With <code>-O2</code> or <code>-O3</code> it runs LLVM's <code>default&lt;O2&gt;</code> or <code>default&lt;O3&gt;</code> pipeline. Then LLVM writes x86-64 object code for the machine <code>sisuc</code> runs on.</p>
 
       <h3>Link</h3>
       <p class="files"><code>crates/sisuc/src/link.rs</code></p>
-      <p>The link step writes the object code to a fresh temporary file and runs <code>cc</code> on it with <code>libsisu_runtime.a</code>. <code>cc</code> adds the C startup code and libc and writes the executable. The temporary file is removed whether or not the link succeeds.</p>
+      <p>The link step writes the object code to a fresh temporary file and runs <code>cc</code> on it with <code>libsisu_runtime.a</code>. <code>cc</code> adds the C startup code and libc and writes the executable, through its default linker or the one <code>--linker</code> names. The temporary file is removed whether or not the link succeeds.</p>
       <!-- source: docs/architecture.md (The stages), docs/roadmap.md (mid-level IR, mir), src/index.html (flow), docs/development.md (Look inside the compiler), sisuc --help -->
 
       <h2 id="memory">Memory</h2>
