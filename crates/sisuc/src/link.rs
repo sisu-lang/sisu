@@ -4,10 +4,20 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub(crate) fn link(object: &Path, output: &Path) -> Result<(), String> {
+/// Links with `cc`'s default linker, or with `ld.<linker>` through `cc -fuse-ld=<linker>`.
+pub(crate) fn link(object: &Path, output: &Path, linker: Option<&str>) -> Result<(), String> {
     let runtime = runtime_library()?;
+    let mut cc = Command::new("cc");
+    if let Some(linker) = linker {
+        // A missing `ld.lld` makes gcc say only "cannot find 'ld'", which names the wrong program.
+        let program = format!("ld.{linker}");
+        if !on_path(&program) {
+            return Err(format!("linker {program} not found on PATH"));
+        }
+        cc.arg(format!("-fuse-ld={linker}"));
+    }
     // `output`, not `status`: cc's messages go into the tool error, so stderr stays one format.
-    let out = Command::new("cc")
+    let out = cc
         .arg(object)
         .arg(&runtime)
         // libm, after the runtime, for the C math functions. Not for `fmod`, which `frem`
@@ -25,6 +35,13 @@ pub(crate) fn link(object: &Path, output: &Path) -> Result<(), String> {
         "" => Err(message),
         detail => Err(format!("{message}\n{detail}")),
     }
+}
+
+/// Whether a directory on PATH holds `program`.
+// shortcut: gcc also searches its own install directories; check those too if a linker lives only there.
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
 /// Cargo builds `libsisu_runtime.a` into the same directory as `sisuc`.

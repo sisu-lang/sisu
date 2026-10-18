@@ -749,6 +749,26 @@ fn o2_combinations_are_usage_errors() {
     assert_usage_errors(&cases);
 }
 
+/// `-O3` takes `-O2`'s place, and `--linker` follows an optional `--rc-checks`, for a build only.
+#[test]
+fn o3_and_linker_combinations_are_usage_errors() {
+    let cases: [&[&str]; 12] = [
+        &["-O2", "-O3", "f.sisu", "out"],
+        &["-O3", "-O2", "f.sisu", "out"],
+        &["-O3", "--check", "f.sisu"],
+        &["-O3", "--emit", "ir-raw", "f.sisu"],
+        &["--rc-checks", "-O3", "f.sisu", "out"],
+        &["--linker", "lld", "--emit", "ir", "f.sisu"],
+        &["--linker", "lld", "--check", "f.sisu"],
+        &["--linker", "lld", "--rc-checks", "f.sisu", "out"],
+        &["--linker", "lld", "--linker", "lld", "f.sisu", "out"],
+        &["--linker", "ld.lld", "f.sisu", "out"],
+        &["f.sisu", "out", "--linker", "lld"],
+        &["--linker"],
+    ];
+    assert_usage_errors(&cases);
+}
+
 #[test]
 fn emit_ir_raw_parses_back() {
     let out = run_on("emit_ir_raw_parses_back", FIB, &["--emit", "ir-raw"]);
@@ -810,6 +830,18 @@ fn emit_ir_o2() {
     for wanted in ["\ntarget datalayout = \"", "\ntarget triple = \""] {
         assert!(after.contains(wanted), "missing {wanted:?} in\n{after}");
     }
+}
+
+#[test]
+fn emit_ir_o3_runs_the_o3_pipeline() {
+    let out = run_on("emit_ir_o3", SQUARE, &["-O3", "--emit", "ir"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.starts_with("; before default<O3>\n"), "{stdout}");
+    let (_, after) = stdout
+        .split_once("\n; after default<O3>\n")
+        .unwrap_or_else(|| panic!("{stdout}"));
+    assert!(after.contains("@sisu_print_int(i64 13)"), "{after}");
 }
 
 /// A `print` that may never run does not make the loop reload the array's length: the

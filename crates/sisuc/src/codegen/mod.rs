@@ -1173,8 +1173,16 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 }
 
+/// How hard LLVM optimizes: not at all (`mem2reg` only), `-O2` or `-O3`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OptLevel {
+    O0,
+    O2,
+    O3,
+}
+
 /// A target machine for the host `sisuc` runs on.
-pub(crate) fn target_machine(o2: bool) -> Result<TargetMachine, String> {
+pub(crate) fn target_machine(level: OptLevel) -> Result<TargetMachine, String> {
     Target::initialize_native(&InitializationConfig::default())?;
     let triple = TargetMachine::get_default_triple();
     let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
@@ -1184,10 +1192,10 @@ pub(crate) fn target_machine(o2: bool) -> Result<TargetMachine, String> {
             &triple,
             "generic",
             "",
-            if o2 {
-                OptimizationLevel::Default
-            } else {
-                OptimizationLevel::None
+            match level {
+                OptLevel::O0 => OptimizationLevel::None,
+                OptLevel::O2 => OptimizationLevel::Default,
+                OptLevel::O3 => OptimizationLevel::Aggressive,
             },
             RelocMode::PIC,
             CodeModel::Default,
@@ -1195,10 +1203,14 @@ pub(crate) fn target_machine(o2: bool) -> Result<TargetMachine, String> {
         .ok_or_else(|| "LLVM cannot create a target machine for this host".to_string())
 }
 
-/// The pass pipeline: `default<O2>` with `-O2`, else `mem2reg`, which turns each variable's
-/// `alloca` into SSA values.
-pub(crate) fn pipeline(o2: bool) -> &'static str {
-    if o2 { "default<O2>" } else { "mem2reg" }
+/// The pass pipeline: `default<O2>` or `default<O3>`, else `mem2reg`, which turns each
+/// variable's `alloca` into SSA values.
+pub(crate) fn pipeline(level: OptLevel) -> &'static str {
+    match level {
+        OptLevel::O0 => "mem2reg",
+        OptLevel::O2 => "default<O2>",
+        OptLevel::O3 => "default<O3>",
+    }
 }
 
 /// Marks each Sisu function in `names`, comma separated, `noinline` so that the optimizer keeps
@@ -1219,11 +1231,11 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,
-    o2: bool,
+    level: OptLevel,
 ) -> Result<(), String> {
     module.verify().map_err(|e| e.to_string())?;
     module
-        .run_passes(pipeline(o2), machine, PassBuilderOptions::create())
+        .run_passes(pipeline(level), machine, PassBuilderOptions::create())
         .map_err(|e| e.to_string())
 }
 

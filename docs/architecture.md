@@ -188,12 +188,13 @@ of each padded part, then writes the parts into it, padding each part in place. 
 change it, and `main` calls `sisu_rc_check_exit` before it returns.
 
 **LLVM 22**. Runs the `mem2reg` pass, which turns stack slots into registers,
-or with `-O2` the `default<O2>` pipeline. Then it emits x86-64 object code for
+or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it emits x86-64 object code for
 the machine `sisuc` runs on.
 
 **Link step** (`link.rs`). Writes the object code to a fresh temporary file
 and runs `cc` on it together with `libsisu_runtime.a`. `cc` adds the C
-startup code and libc and writes the executable. The temporary file is
+startup code and libc and writes the executable, through its default linker
+or the one `--linker` names. The temporary file is
 removed whether or not the link succeeds.
 
 **Runtime** (`crates/runtime`). A Rust static library with a C ABI, linked

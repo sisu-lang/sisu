@@ -43,7 +43,7 @@ pub fn front_end(data: &[u8]) -> String {
 fn assert_compiles(program: &Program, source: &str) {
     // The printer's only check is that it does not panic.
     drop(program.to_string());
-    let machine = codegen::target_machine(false)
+    let machine = codegen::target_machine(codegen::OptLevel::O0)
         .expect("LLVM should have a target machine for the host sisuc runs on");
     for rc_checks in [false, true] {
         let context = Context::create();

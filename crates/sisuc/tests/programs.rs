@@ -993,6 +993,67 @@ fn output_naming_the_input_is_refused() {
     }
 }
 
+/// Builds the `tests/run` case `loops` with `flags` and `PATH`, runs it, and checks its output.
+/// Returns the executable's bytes.
+fn build_loops(exe: &str, flags: &[&str], path: &OsStr) -> Vec<u8> {
+    let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join(exe);
+    let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, flags)
+        .env("PATH", path)
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&exe).output().expect("the program starts");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        fs::read_to_string(Path::new(RUN).join("loops.out")).expect("reads the expected output")
+    );
+    fs::read(&exe).expect("reads the executable")
+}
+
+#[test]
+fn o3_builds_a_program_that_runs() {
+    build_loops(
+        "loops-O3",
+        &["-O3"],
+        &std::env::var_os("PATH").unwrap_or_default(),
+    );
+}
+
+/// `--linker lld` links with LLVM's `ld.lld`, which records itself in the `.comment` section;
+/// the default linker, GNU ld, does not.
+#[test]
+fn linker_lld_links_with_lld() {
+    let bin = Path::new(env!("LLVM_SYS_221_PREFIX")).join("bin");
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&path)))
+        .expect("PATH joins");
+    let lld = build_loops("loops-lld", &["--linker", "lld"], &path);
+    assert!(lld.windows(11).any(|w| w == b"Linker: LLD"));
+    let default = build_loops("loops-ld", &[], &path);
+    assert!(!default.windows(11).any(|w| w == b"Linker: LLD"));
+}
+
+#[test]
+fn a_missing_linker_is_named() {
+    let empty = empty_dir("no_linker_on_path");
+    let exe = empty.join("loops");
+    let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "mold"])
+        .env("PATH", &empty)
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "sisuc: linker ld.mold not found on PATH\n"
+    );
+    assert_empty(&empty);
+}
+
 /// An empty directory under the target tmp dir, for `sisuc` to use as `TMPDIR`.
 fn empty_dir(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);

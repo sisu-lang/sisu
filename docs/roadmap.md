@@ -401,12 +401,11 @@ so it does not wait for the later goals:
   Comparing the IR with and without the flag shows what the optimizer
   removes.
 
-  `-O3` waits for a benchmark that it speeds up. In LLVM 22 it adds
-  non-trivial loop unswitching, argument promotion, call-site splitting and
-  a higher inlining threshold to O2; vectorization already runs at O2. The
-  extra passes cost compile time and code size and often gain nothing.
-  Until then, `opt -S -passes='default<O3>'` on `--emit ir-raw` output
-  shows the difference with no compiler change.
+  `-O3` takes the same place and runs `default<O3>`. It adds non-trivial
+  loop unswitching, argument promotion, call-site splitting and a higher
+  inlining threshold to O2; vectorization already runs at O2. The extra
+  passes cost compile time and code size and often gain nothing, so the
+  tests and benchmarks stay at `-O2`.
 - `--emit ir-raw`, added in milestone 2. It prints one module before any pass
   runs, so the output is a valid `.ll` file for LLVM's `opt` tool. (`--emit ir`
   prints two modules, before and after the pass pipeline.) With `opt` you can watch
@@ -924,7 +923,8 @@ These do not make code nicer to write, so they wait:
     declared order. That choice serves the FFI and costs the padding back,
     the cost ADR 0006 asks a language-level choice to name.
 - Linking with `lld` (`-fuse-ld=lld`) when it is installed, because linking
-  time grows with the program.
+  time grows with the program. `--linker lld` (or `bfd`, `gold`, `mold`)
+  chooses the linker by hand; the default is still `cc`'s.
 - Parser error recovery, so a syntax error does not hide the next one.
 - A fixed-size inline array: its length is part of its type, and it is stored
   inline (on the stack, or inside the object that holds it) with no header,
