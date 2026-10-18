@@ -50,6 +50,13 @@ Read each target below before you decide it needs no edit.
 | Diagnostic or panic text, or an exit code | The sample outputs and exit codes in `docs/development.md` |
 | The toolchain or a prerequisite (`rust-toolchain.toml`, `scripts/`, `.cargo/`), a command, how tests run (`crates/sisuc/tests/*.rs`), CI (`.github/workflows/`, `prek.toml`), dependency policy (`deny.toml`) or lint policy (`[workspace.lints]` in `Cargo.toml`) | "Prerequisites" and "Build and test" in `docs/development.md`; "Commands" and "Code rules" in `AGENTS.md`; step 5 of `CONTRIBUTING.md` |
 | A top-level directory or crate | "Repository layout" in `docs/development.md`; the crate list in `AGENTS.md` |
+| What `sisuc` prints, or the text of an explanation in `docs/diagnostics/` (each `.json` summary embeds it) | `make bless`, then read the diff under `site/programs/` |
+| The build steps, prerequisites or compiler stages | "Build it" and the pipeline section on Home (`site/src/index.html`) |
+| `docs/roadmap.md` | `site/data/status.toml` |
+| A diagnostic code added or removed | `site/data/categories.toml` |
+| An ADR added | A row on `site/src/decisions.html` |
+| Closures landing | Move `site/programs/pending/orders.sisu` to `site/programs/run/`; the pending case says so |
+| You reviewed a hand-written page: Home's hand-written sections, Tour, Architecture, Decisions, Contribute, or Benchmarks prose | The commit written on it: "checked against the repository at commit" at the end of Home's "Built in the open" section and in the meta lines of Tour and Contribute; "Prose checked against the repository at commit" in the Benchmarks meta line; "at commit" in the meta lines of Architecture and Decisions. Generated pages and blocks show `{{commit}}` and need no update. |
 | `run/tree_sum.sisu`, `run/shared_arrays.sisu`, `run-fail/overflow.sisu` or `diagnostics/counter.sisu` under `crates/sisuc/tests`, or their expected output | The examples in `README.md`, which must stay identical to them |
 
 If no row matches, report "no doc changes needed" and why. Do not edit to
@@ -103,6 +110,7 @@ $ python3 .agents/skills/update-docs/scripts/check_links.py README.md CONTRIBUTI
 broken: 0
 $ for case in 1:run/tree_sum.sisu 3:run/shared_arrays.sisu 5:run-fail/overflow.sisu 9:diagnostics/counter.sisu; do awk -v k="${case%%:*}" '/^```/{n++;next} n==k' README.md | diff - "crates/sisuc/tests/${case#*:}"; done
 $ awk '/^```/{n++;next} n==11' README.md | tail -n +2 | diff - crates/sisuc/tests/diagnostics/counter.err
+$ make site
 $ prek run --files <each changed file>
 ```
 

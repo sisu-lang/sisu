@@ -54,6 +54,7 @@ How to help with Sisu, a one-person learning project at an early stage.
         <li>On Ubuntu: <code>libzstd-dev</code>, <code>libxml2-dev</code> and <code>zlib1g-dev</code>, which LLVM links against.</li>
         <li><code>prek</code> for the Git hooks, with <code>typos</code> and <code>shellcheck</code>.</li>
         <li><code>cargo-nextest</code> and <code>cargo-deny</code>, and Valgrind for the end-to-end tests.</li>
+        <li><code>uv</code>, to build the site.</li>
         <li>For <code>make miri</code>, a nightly toolchain with Miri: <code>rustup toolchain install nightly --component miri --component rust-src</code>.</li>
       </ul>
       <p>You do not install LLVM yourself. <code>make setup</code> downloads the official LLVM 22 release and keeps what the build needs in <code>.llvm/22</code>, about 360 MB. The build uses that copy and leaves any system LLVM alone.</p>
