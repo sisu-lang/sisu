@@ -1,60 +1,25 @@
 //! Strings at run time. A string is a pointer to one block: a header of three `i64`s, the count,
 //! the length and the capacity, then `cap` bytes. A literal's block is a writable global that
-//! holds a reference of its own, so it is never freed and never reused in place. This module is the only one that reads a string
-//! header: it owns the layout, the string nodes and the bodies of the string helpers, which
-//! `define_helpers` reaches through `define_string_helper`.
+//! holds a reference of its own, so it is never freed and never reused in place. This module is the
+//! only one that reads a string header; `layout.rs` owns the layout. This module owns the string
+//! nodes and the bodies of the string helpers, which `define_helpers` reaches through
+//! `define_string_helper`.
 
 use inkwell::attributes::AttributeLoc;
 use inkwell::module::Linkage;
-use inkwell::types::StructType;
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue,
 };
 use inkwell::{AddressSpace, IntPredicate};
 
 use super::abi::{PAD_CENTER, PAD_LEFT, PAD_RIGHT};
+use super::layout::{BYTES, CAP, HeapBlock, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::source::Span;
 use crate::tir::{Align, CompareOp, Expr, Format, Pad, Place, Stream, Type};
 
-/// A string block's header, from the target's data layout. A block with capacity `cap` is
-/// `size + cap` bytes, aligned to `align`.
-struct StringLayout<'ctx> {
-    /// `{ i64 count, i64 len, i64 cap, [0 x i8] bytes }`: the bytes start where the header ends.
-    header: StructType<'ctx>,
-    /// The header's ABI size.
-    size: u64,
-    /// The header's ABI alignment, which is the block's.
-    align: u32,
-}
-
-/// The header's fields, by index.
-const LEN: u32 = 1;
-const CAP: u32 = 2;
-const BYTES: u32 = 3;
-
 impl<'ctx> Codegen<'ctx, '_> {
-    fn string_layout(&self) -> StringLayout<'ctx> {
-        let i64_type = self.context.i64_type().into();
-        let bytes = self.context.i8_type().array_type(0).into();
-        let header = self
-            .context
-            .struct_type(&[i64_type, i64_type, i64_type, bytes], false);
-        StringLayout {
-            header,
-            size: self.target_data.get_abi_size(&header),
-            align: self.target_data.get_abi_alignment(&header),
-        }
-    }
-
-    /// The address of header field `index` of `string`.
-    fn string_field(&self, string: PointerValue<'ctx>, index: u32) -> PointerValue<'ctx> {
-        self.builder
-            .build_struct_gep(self.string_layout().header, string, index, "field")
-            .expect("the string header should have the length, capacity and bytes at 1, 2 and 3")
-    }
-
     /// The `i64` header field `index` of `string`.
     fn load_string_field(&self, string: PointerValue<'ctx>, index: u32) -> IntValue<'ctx> {
         self.builder
@@ -175,15 +140,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         lhs: PointerValue<'ctx>,
         rhs: PointerValue<'ctx>,
     ) -> PointerValue<'ctx> {
-        let layout = self.string_layout();
         let i64_type = self.context.i64_type();
-        let header = i64_type.const_int(layout.size, false);
-        let align = i64_type.const_int(u64::from(layout.align), false);
-        let block_size = |cap| {
-            self.builder
-                .build_int_nuw_add(header, cap, "size")
-                .expect(POSITIONED)
-        };
         let (len, rhs_len) = (self.string_len(lhs), self.string_len(rhs));
         // Both strings exist in memory, which on x86-64 is below 2^47 bytes, so no length,
         // capacity or block size here can overflow.
@@ -195,11 +152,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let block = |name| self.context.append_basic_block(function, name);
         let (owned, grow, copy, join) =
             (block("owned"), block("grow"), block("copy"), block("join"));
-        let count = self
-            .builder
-            .build_load(i64_type, lhs, "count")
-            .expect(POSITIONED)
-            .into_int_value();
+        let count = self.load_count(lhs, "count");
         let one = self.int_compare(IntPredicate::EQ, count, i64_type.const_int(1, false));
         self.builder
             .build_conditional_branch(one, owned, copy)
@@ -225,16 +178,13 @@ impl<'ctx> Codegen<'ctx, '_> {
             .build_select(more, needed, double, "cap")
             .expect(POSITIONED)
             .into_int_value();
+        let (old_size, align) = self.heap_size(&HeapBlock::String { cap });
+        let (new_size, _) = self.heap_size(&HeapBlock::String { cap: new_cap });
         let grown = self
             .builder
             .build_call(
                 self.realloc(),
-                &[
-                    lhs.into(),
-                    block_size(cap).into(),
-                    align.into(),
-                    block_size(new_cap).into(),
-                ],
+                &[lhs.into(), old_size.into(), align.into(), new_size.into()],
                 "grown",
             )
             .expect(POSITIONED)
@@ -281,13 +231,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// A new block with count 1 and capacity `cap`, whose length is not yet stored.
     fn new_string(&self, cap: IntValue<'ctx>) -> PointerValue<'ctx> {
-        let layout = self.string_layout();
-        let i64_type = self.context.i64_type();
-        let size = self
-            .builder
-            .build_int_nuw_add(i64_type.const_int(layout.size, false), cap, "size")
-            .expect(POSITIONED);
-        let align = i64_type.const_int(u64::from(layout.align), false);
+        let (size, align) = self.heap_size(&HeapBlock::String { cap });
         let string = self
             .builder
             .build_call(self.alloc, &[size.into(), align.into()], "string")
@@ -296,7 +240,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        self.store(string, i64_type.const_int(1, false).into());
+        self.init_count(string);
         self.store(self.string_field(string, CAP), cap.into());
         string
     }
@@ -692,24 +636,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .position_at_end(self.context.append_basic_block(function, "entry"));
         let string = param(function);
-        let layout = self.string_layout();
-        let i64_type = self.context.i64_type();
-        let size = self
-            .builder
-            .build_int_nuw_add(
-                self.load_string_field(string, CAP),
-                i64_type.const_int(layout.size, false),
-                "size",
-            )
-            .expect(POSITIONED);
-        self.call(
-            self.free,
-            &[
-                string.into(),
-                size.into(),
-                i64_type.const_int(u64::from(layout.align), false).into(),
-            ],
-        );
+        let cap = self.load_string_field(string, CAP);
+        let (size, align) = self.heap_size(&HeapBlock::String { cap });
+        self.call(self.free, &[string.into(), size.into(), align.into()]);
         self.builder.build_return(None).expect(POSITIONED);
     }
 

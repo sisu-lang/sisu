@@ -22,6 +22,7 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue,
 };
 
+use super::layout::HeapBlock;
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED};
 use crate::tir::{Enum, EnumId, Expr, Payload, Type, TypeKind};
@@ -102,7 +103,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             .collect();
         let ptr_type = context.ptr_type(AddressSpace::default());
         let i64_type = context.i64_type();
-        // A box on a pending list holds the next box's address in its count word.
+        // A box on a pending list holds the next box's address in the word `load_count` reads as
+        // its count.
         assert!(
             self.target_data.get_abi_size(&ptr_type) <= self.target_data.get_abi_size(&i64_type),
             "a pointer should fit the 8-byte count word that links a box into a pending list"
@@ -303,10 +305,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             .builder
             .build_load(inner_ty, self.box_value(boxed_enum(ty), boxed), "boxed")
             .expect(POSITIONED);
-        let present = self.pair(ty, self.context.bool_type().const_int(1, false), value);
+        let present = self.optional(ty, self.context.bool_type().const_int(1, false), value);
         self.branch_to(done);
         self.builder.position_at_end(done);
-        self.phi(llvm_ty, &[(llvm_ty.const_zero(), absent), (present, some)])
+        self.phi(llvm_ty, &[(self.empty(ty), absent), (present, some)])
     }
 
     /// `Variant`: each argument, left to right, then the value: the tag and each field stored
@@ -347,55 +349,32 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn store_boxed(&self, place: PointerValue<'ctx>, value: BasicValueEnum<'ctx>, ty: Type) {
         let (value, present) = match ty.kind() {
             TypeKind::Optional(_) => {
-                let pair = value.into_struct_value();
-                let part = |index, name| {
-                    self.builder
-                        .build_extract_value(pair, index, name)
-                        .expect("an enum optional should be lowered to a `{ flag, value }` pair")
-                };
                 let function = self.current_function();
                 let some = self.context.append_basic_block(function, "box.some");
                 let done = self.context.append_basic_block(function, "box.done");
-                self.branch_on(part(0, "flag").into_int_value(), some, done);
+                self.branch_on(self.has_value(ty, value, "flag"), some, done);
                 self.builder.position_at_end(some);
-                (part(1, "payload"), Some(done))
+                (self.optional_value(ty, value, "payload"), Some(done))
             }
             _ => (value, None),
         };
         let inner = boxed_enum(ty);
+        let (size, align) = self.heap_size(&HeapBlock::Box(inner));
         let boxed = self
             .builder
-            .build_call(self.alloc, &self.box_layout(inner), "box")
+            .build_call(self.alloc, &[size.into(), align.into()], "box")
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        self.store(boxed, self.context.i64_type().const_int(1, false).into());
+        self.init_count(boxed);
         self.store(self.box_value(inner, boxed), value);
         self.store(place, boxed.into());
         if let Some(done) = present {
             self.branch_to(done);
             self.builder.position_at_end(done);
         }
-    }
-
-    /// The ABI size and alignment of a box of the enum `inner`, as `sisu_alloc` and `sisu_free`
-    /// take them.
-    fn box_layout(&self, inner: EnumId) -> [BasicMetadataValueEnum<'ctx>; 2] {
-        let box_type = self.enums[inner.0].boxed;
-        let i64_type = self.context.i64_type();
-        [
-            i64_type
-                .const_int(self.target_data.get_abi_size(&box_type), false)
-                .into(),
-            i64_type
-                .const_int(
-                    u64::from(self.target_data.get_abi_alignment(&box_type)),
-                    false,
-                )
-                .into(),
-        ]
     }
 
     /// A scratch slot holding the enum `value`, for a helper that takes its address.
@@ -513,9 +492,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_rc.walk.<F>(value, heads)`: switches on the tag of the value at `value`, and
     /// releases each counted field of its variant. A boxed field that is not `null` loses 1
     /// from its box's count, and at zero the box becomes the head of its enum's list in
-    /// `heads`, linked to the old head through its count word. Nothing else reaches a listed
-    /// box, so no RC check reads that word. Every other counted field goes through `release`,
-    /// which may drain another component's lists in a frame of its own.
+    /// `heads`, linked to the old head through its count word, the word `load_count` reads.
+    /// Nothing else reaches a listed box, so no RC check reads that word. Every other counted
+    /// field goes through `release`, which may drain another component's lists in a frame of
+    /// its own.
     fn define_walk(&self, id: EnumId, function: FunctionValue<'ctx>) {
         let (value, done) = self.enum_entry(function);
         let heads = function
@@ -555,8 +535,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `@sisu_rc.drain.<F0>(heads)`, for the component whose first member is `F0`: while some
     /// list in `heads` is not empty, takes the head box of the first such list, makes the box
-    /// its count word links to the new head, walks the box's value, which may list more boxes,
-    /// and frees the box. It runs in one frame, however many boxes it frees.
+    /// its count word (the word `load_count` reads) links to the new head, walks the box's
+    /// value, which may list more boxes, and frees the box. It runs in one frame, however many
+    /// boxes it frees.
     fn define_drain(&self, first: EnumId, function: FunctionValue<'ctx>) {
         let members = self
             .component(first)
@@ -587,8 +568,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.store(head, following);
             let walk = self.helper(Helper::Walk, Type::intern(TypeKind::Enum(member)));
             self.call(walk, &[self.box_value(member, boxed).into(), heads.into()]);
-            let [size, align] = self.box_layout(member);
-            self.call(self.free, &[boxed.into(), size, align]);
+            let (size, align) = self.heap_size(&HeapBlock::Box(member));
+            self.call(self.free, &[boxed.into(), size.into(), align.into()]);
             self.branch_to(next);
             self.builder.position_at_end(empty);
         }

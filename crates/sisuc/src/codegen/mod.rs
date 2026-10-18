@@ -6,6 +6,7 @@ mod array;
 mod enums;
 mod hoist;
 mod io;
+mod layout;
 mod matching;
 mod math;
 mod rc;
@@ -13,7 +14,6 @@ mod string;
 
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::cmp::Reverse;
 
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
@@ -25,7 +25,7 @@ use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetData, TargetMachine,
 };
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
     MetadataValue, PointerValue,
@@ -33,11 +33,12 @@ use inkwell::values::{
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use self::enums::EnumLayout;
-use self::rc::{Helper, counted_core};
+use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
+use self::rc::Helper;
 use crate::source::{LineIndex, Span};
 use crate::tir::{
-    Block, Class, ClassId, CompareOp, Expr, ExprKind, Function, LocalId, Place, Program, Stmt,
-    Stream, Type, TypeKind, UnaryOp,
+    Block, ClassId, CompareOp, Expr, ExprKind, Function, LocalId, Place, Program, Stmt, Stream,
+    Type, TypeKind, UnaryOp,
 };
 
 /// The `expect` message for a builder call: codegen positions the builder before it emits code.
@@ -141,19 +142,6 @@ pub(crate) fn compile<'ctx>(
     codegen.module
 }
 
-/// The tag of a TBAA type `name` under `root`. Every type sits directly under the root, so LLVM
-/// assumes that an access tagged with one never touches memory that an access tagged with
-/// another does; codegen must keep that true.
-fn tbaa_tag<'ctx>(
-    context: &'ctx Context,
-    root: MetadataValue<'ctx>,
-    name: &str,
-) -> MetadataValue<'ctx> {
-    let offset = context.i64_type().const_zero().into();
-    let ty = context.metadata_node(&[context.metadata_string(name).into(), root.into(), offset]);
-    context.metadata_node(&[ty.into(), ty.into(), offset])
-}
-
 /// The runtime's print functions for one stream, by operand type.
 #[derive(Clone, Copy)]
 struct Printers<'ctx> {
@@ -210,15 +198,6 @@ struct LoopFrame<'ctx> {
     depth: usize,
 }
 
-/// A class's LLVM type, and where its fields sit in it.
-struct ClassLayout<'ctx> {
-    ty: StructType<'ctx>,
-    /// `element[i]` is the struct element of declared field `i`; element 0 is the count.
-    element: Box<[u32]>,
-    /// `field_tag[i]` is the TBAA tag of declared field `i`, named `<class>.<field>`.
-    field_tag: Box<[MetadataValue<'ctx>]>,
-}
-
 struct Codegen<'ctx, 'src> {
     context: &'ctx Context,
     module: Module<'ctx>,
@@ -237,8 +216,8 @@ struct Codegen<'ctx, 'src> {
     rc_fault: Option<FunctionValue<'ctx>>,
     /// The kind id of `!tbaa` metadata.
     tbaa_kind: u32,
-    /// The TBAA tag of an array's count and length, and of the count in `add_to_count`,
-    /// `check_count` and `unique`. An array element's loads and stores carry `element_tag`, so
+    /// The TBAA tag of an array's length, and of every count that `load_count` and `store_count`
+    /// read and write. An array element's loads and stores carry `element_tag`, so
     /// that LLVM knows a store to an element leaves those counts and lengths as they were. An
     /// enum element is loaded and stored whole with `element_tag` too. A tag describes only the
     /// bytes the access itself touches, and an element's bytes never hold a count or a length:
@@ -285,112 +264,6 @@ struct Codegen<'ctx, 'src> {
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
-    /// The LLVM type of a value of `ty`; `None` for `unit` and `never`, which have no value.
-    fn llvm_type(&self, ty: Type) -> Option<BasicTypeEnum<'ctx>> {
-        match ty.kind() {
-            TypeKind::I64 => Some(self.context.i64_type().into()),
-            TypeKind::U8 => Some(self.context.i8_type().into()),
-            TypeKind::F64 => Some(self.context.f64_type().into()),
-            TypeKind::Bool => Some(self.context.bool_type().into()),
-            TypeKind::Char => Some(self.context.i32_type().into()),
-            TypeKind::Unit | TypeKind::Never => None,
-            // An object, an array or a string is a pointer to its block.
-            TypeKind::String | TypeKind::Class(_) | TypeKind::Array(_) => {
-                Some(self.context.ptr_type(AddressSpace::default()).into())
-            }
-            TypeKind::Enum(id) => Some(self.enum_layout(id).ty.into()),
-            TypeKind::Optional(payload) => match self
-                .llvm_type(payload)
-                .expect("the checker should reject an optional of `unit` or `never`, so its payload has a value type")
-            {
-                // A class optional is the object's pointer, `null` for `None`.
-                ptr @ BasicTypeEnum::PointerType(_) => Some(ptr),
-                // A scalar or enum optional is `{ i1, T }`: whether it holds a value, then the
-                // value.
-                value => {
-                    let flag = self.context.bool_type().into();
-                    Some(self.context.struct_type(&[flag, value], false).into())
-                }
-            },
-        }
-    }
-
-    /// Lays out every enum, then every class: a class's layout needs the sizes of its enum
-    /// fields, while an enum's payload holds a class as a pointer. A class is
-    /// `{ i64 count, fields... }`, its fields sorted by alignment.
-    fn lay_out_types(&mut self) {
-        self.lay_out_enums();
-        // Every class type exists before any body is set, so a field can name any class.
-        let types: Vec<StructType> = self
-            .program
-            .classes
-            .iter()
-            .map(|class| {
-                self.context
-                    .opaque_struct_type(&format!("sisu.{}", class.name))
-            })
-            .collect();
-        let layouts: Vec<_> = self
-            .program
-            .classes
-            .iter()
-            .map(|class| self.class_body(class))
-            .collect();
-        for ((ty, (body, element)), class) in
-            types.into_iter().zip(layouts).zip(&self.program.classes)
-        {
-            ty.set_body(&body, false);
-            let field_tag = class
-                .fields
-                .iter()
-                .map(|field| {
-                    let name = format!("{}.{}", class.name, field.name);
-                    tbaa_tag(self.context, self.tbaa_root, &name)
-                })
-                .collect();
-            self.classes.push(ClassLayout {
-                ty,
-                element,
-                field_tag,
-            });
-        }
-    }
-
-    /// The body of `class`, the count and then its fields, and the struct element of each
-    /// declared field. Fields go largest alignment first, so that less padding sits between them.
-    fn class_body(&self, class: &Class) -> (Vec<BasicTypeEnum<'ctx>>, Box<[u32]>) {
-        let fields: Vec<BasicTypeEnum> = class
-            .fields
-            .iter()
-            .map(|field| {
-                self.llvm_type(field.ty)
-                    .expect("the checker should give every class field a value type, never `unit` or `never`")
-            })
-            .collect();
-        // Largest alignment first; `sort_by_key` is stable, so ties keep declared order.
-        let mut order: Vec<usize> = (0..fields.len()).collect();
-        order.sort_by_key(|&i| Reverse(self.target_data.get_abi_alignment(&fields[i])));
-        let body = std::iter::once(self.context.i64_type().into())
-            .chain(order.iter().map(|&i| fields[i]))
-            .collect();
-        let mut element = vec![0; fields.len()].into_boxed_slice();
-        for (k, &i) in order.iter().enumerate() {
-            element[i] = u32::try_from(k + 1).expect(
-                "a class should have fewer than 2^32 fields, since field indexes are `u32` in LLVM",
-            );
-        }
-        (body, element)
-    }
-
-    /// The ABI size and alignment of an object of class `id`, from the target's data layout.
-    fn class_layout(&self, id: ClassId) -> (u64, u32) {
-        let ty = &self.classes[id.0].ty;
-        (
-            self.target_data.get_abi_size(ty),
-            self.target_data.get_abi_alignment(ty),
-        )
-    }
-
     /// A pointer to field `index` of `object`, an object of class `id`.
     fn field_ptr(
         &self,
@@ -511,24 +384,16 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .map(|a| self.expr(a).expect("the checker should reject a `unit` or `never` argument, so each argument has a value"))
             .collect();
-        let i64_type = self.context.i64_type();
-        let (size, align) = self.class_layout(class);
+        let (size, align) = self.heap_size(&HeapBlock::Class(class));
         let object = self
             .builder
-            .build_call(
-                self.alloc,
-                &[
-                    i64_type.const_int(size, false).into(),
-                    i64_type.const_int(u64::from(align), false).into(),
-                ],
-                "object",
-            )
+            .build_call(self.alloc, &[size.into(), align.into()], "object")
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        self.store(object, i64_type.const_int(1, false).into());
+        self.init_count(object);
         for (index, arg) in args.into_iter().enumerate() {
             let field = self.field_ptr(class, object, index);
             self.store(field, arg);
@@ -931,7 +796,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             ExprKind::Block(block) => return self.block(block, None),
             ExprKind::Convert(_) => return Some(self.convert(e)),
             ExprKind::None | ExprKind::Wrap(_) | ExprKind::IfSome { .. } => {
-                return self.optional(e);
+                return self.optional_expr(e);
             }
             ExprKind::Return(value) => {
                 self.return_expr(value.as_deref());
@@ -963,45 +828,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// The scalar optional `ty` as its `{ i1, T }` pair: the flag `some`, and `value`.
-    fn pair(
-        &self,
-        ty: Type,
-        some: IntValue<'ctx>,
-        value: BasicValueEnum<'ctx>,
-    ) -> BasicValueEnum<'ctx> {
-        let pair = self
-            .llvm_type(ty)
-            .expect("the checker should type a scalar or enum optional, which has an LLVM type")
-            .into_struct_type();
-        let pair = self
-            .builder
-            .build_insert_value(pair.const_zero(), some, 0, "some")
-            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair");
-        let pair = self
-            .builder
-            .build_insert_value(pair, value, 1, "wrap")
-            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair");
-        pair.as_basic_value_enum()
-    }
-
-    /// `None`, `Wrap` and `IfSome`: a class optional is a pointer, a scalar one a `{ i1, T }`.
-    fn optional(&mut self, e: &Expr) -> Option<BasicValueEnum<'ctx>> {
+    /// `None`, `Wrap` and `IfSome`, through the optional accessors in `layout.rs`.
+    fn optional_expr(&mut self, e: &Expr) -> Option<BasicValueEnum<'ctx>> {
         match &e.kind {
-            // `null`, or `{ false, 0 }`.
-            ExprKind::None => Some(
-                self.llvm_type(e.ty)
-                    .expect("the checker should type `None` as an optional, which has an LLVM type")
-                    .const_zero(),
-            ),
+            ExprKind::None => Some(self.empty(e.ty)),
             ExprKind::Wrap(operand) => {
                 let value = self.expr(operand)?;
-                // A string, class or array needs no wrapping: its pointer is never `null`.
-                if counted_core(e.ty).is_some() {
-                    return Some(value);
-                }
                 let some = self.context.bool_type().const_int(1, false);
-                Some(self.pair(e.ty, some, value))
+                Some(self.optional(e.ty, some, value))
             }
             ExprKind::IfSome {
                 bind,
@@ -1015,26 +849,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let value = self
                     .expr(scrutinee)
                     .expect("the checker should reject an `if let` scrutinee that is not an optional, so it has a value");
-                let (some, bound) = if counted_core(scrutinee.ty).is_some() {
-                    let some = self
-                        .builder
-                        .build_is_not_null(value.into_pointer_value(), "some")
-                        .expect(POSITIONED);
-                    (some, value)
-                } else {
-                    let part = |index, name| {
-                        self.builder
-                            .build_extract_value(value.into_struct_value(), index, name)
-                            .expect(
-                                "a scalar or enum optional should be lowered to a `{ flag, value }` pair",
-                            )
-                    };
-                    (part(0, "some").into_int_value(), part(1, "value"))
-                };
+                let some = self.has_value(scrutinee.ty, value, "some");
+                let bound = self.optional_value(scrutinee.ty, value, "value");
                 let bind = Some((*bind, bound));
                 self.if_expr(some, then_block, bind, else_block.as_ref(), e.ty)
             }
-            _ => unreachable!("`expr` should pass `optional` only optional nodes"),
+            _ => unreachable!("`expr` should pass `optional_expr` only optional nodes"),
         }
     }
 
@@ -1060,36 +880,6 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     fn store(&self, ptr: PointerValue<'ctx>, value: BasicValueEnum<'ctx>) {
         self.builder.build_store(ptr, value).expect(POSITIONED);
-    }
-
-    /// `load`, tagged with `tag`: `header_tag`, `element_tag` or a field's tag.
-    fn load_tagged(
-        &self,
-        ty: BasicTypeEnum<'ctx>,
-        ptr: PointerValue<'ctx>,
-        name: &str,
-        tag: MetadataValue<'ctx>,
-    ) -> BasicValueEnum<'ctx> {
-        let value = self.builder.build_load(ty, ptr, name).expect(POSITIONED);
-        let load = value
-            .as_instruction_value()
-            .expect("a load should be an instruction");
-        load.set_metadata(tag, self.tbaa_kind)
-            .expect("a TBAA tag should be a metadata node");
-        value
-    }
-
-    /// `store`, tagged with `tag`: `header_tag`, `element_tag` or a field's tag.
-    fn store_tagged(
-        &self,
-        ptr: PointerValue<'ctx>,
-        value: BasicValueEnum<'ctx>,
-        tag: MetadataValue<'ctx>,
-    ) {
-        let store = self.builder.build_store(ptr, value).expect(POSITIONED);
-        store
-            .set_metadata(tag, self.tbaa_kind)
-            .expect("a TBAA tag should be a metadata node");
     }
 
     /// `loop`: the body block runs until a `Break` branches to the end block, where codegen

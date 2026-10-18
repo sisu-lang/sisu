@@ -1,29 +1,17 @@
 //! Arrays at run time. An array is one heap block: a header of two `i64`s, the count and
-//! the length, then the elements. This module owns the layout, the array nodes and the
-//! bodies of the array helpers, which `define_helpers` reaches through `define_array_helper`.
+//! the length, then the elements. `layout.rs` owns the layout; this module owns the array nodes
+//! and the bodies of the array helpers, which `define_helpers` reaches through
+//! `define_array_helper`.
 
-use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
 use super::abi::{RC_FAULT_RELEASE, RC_FAULT_RETAIN};
+use super::layout::HeapBlock;
 use super::rc::{Helper, counted_core, param};
 use super::{Codegen, POSITIONED, Slot, class_of};
 use crate::source::Span;
 use crate::tir::{Expr, ExprKind, LocalId, Place, Type, TypeKind};
-
-/// Where an array's elements sit in its block, from the target's data layout.
-pub(super) struct ArrayLayout<'ctx> {
-    /// The LLVM type of one element.
-    pub(super) element: BasicTypeEnum<'ctx>,
-    /// The first element's byte offset: the header's size rounded up to the element's
-    /// alignment.
-    pub(super) offset: u64,
-    /// The ABI size of one element, which is also the distance between two elements.
-    pub(super) size: u64,
-    /// The block's alignment: the larger of the header's and the element's.
-    pub(super) align: u64,
-}
 
 /// A field or element place with its own operands evaluated.
 pub(super) struct PlaceOperands<'p, 'ctx> {
@@ -89,29 +77,6 @@ pub(super) fn borrowed_index_base(base: &Expr, index: &Expr) -> Option<LocalId> 
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
-    /// The header: the count, then the length.
-    fn header(&self) -> StructType<'ctx> {
-        let i64_type = self.context.i64_type().into();
-        self.context.struct_type(&[i64_type, i64_type], false)
-    }
-
-    pub(super) fn array_layout(&self, element: Type) -> ArrayLayout<'ctx> {
-        let header = self.header();
-        let ty = self
-            .llvm_type(element)
-            .expect("the checker should reject an array of `unit` or `never`, so its element has a value type");
-        let align = u64::from(self.target_data.get_abi_alignment(&ty));
-        ArrayLayout {
-            element: ty,
-            offset: self
-                .target_data
-                .get_abi_size(&header)
-                .next_multiple_of(align),
-            size: self.target_data.get_abi_size(&ty),
-            align: u64::from(self.target_data.get_abi_alignment(&header)).max(align),
-        }
-    }
-
     /// A block with count 1 and length `len`. A literal passes a constant length, and `unique`
     /// a run-time length that already passed the checks; `[v; n]` gets them at `span`. A length
     /// taken from an existing string, as `chars()` and `bytes()` do, needs no check.
@@ -121,65 +86,26 @@ impl<'ctx> Codegen<'ctx, '_> {
         len: IntValue<'ctx>,
         span: Option<Span>,
     ) -> PointerValue<'ctx> {
-        let i64_type = self.context.i64_type();
         let layout = self.array_layout(element);
-        let (size, offset) = (
-            i64_type.const_int(layout.size, false),
-            i64_type.const_int(layout.offset, false),
-        );
-        let total = if let Some(span) = span {
-            let negative = self.int_compare(IntPredicate::SLT, len, i64_type.const_zero());
-            self.panic_if(negative, span, "array length is negative");
-            let (elements, wrapped) = self.overflowing("llvm.umul.with.overflow", len, size);
-            let (total, carried) = self.overflowing("llvm.uadd.with.overflow", elements, offset);
-            // `Layout::from_size_align` needs the size rounded up to the alignment to fit in
-            // an `isize`.
-            let largest = i64_type.const_int(i64::MAX.cast_unsigned() - layout.align + 1, false);
-            let above = self.int_compare(IntPredicate::UGT, total, largest);
-            let too_large = [wrapped, carried, above]
-                .into_iter()
-                .reduce(|a, b| self.builder.build_or(a, b, "too_large").expect(POSITIONED))
-                .expect("the size checks should have three flags");
-            self.panic_if(too_large, span, "array is too large");
-            total
-        } else {
-            self.block_size(&layout, len)
+        let (size, align) = match span {
+            Some(span) => self.checked_array_size(&layout, len, span),
+            None => self.heap_size(&HeapBlock::Array {
+                layout: &layout,
+                len,
+            }),
         };
         let array = self
             .builder
-            .build_call(
-                self.alloc,
-                &[total.into(), i64_type.const_int(layout.align, false).into()],
-                "array",
-            )
+            .build_call(self.alloc, &[size.into(), align.into()], "array")
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        self.store_tagged(array, i64_type.const_int(1, false).into(), self.header_tag);
+        // Tagged like every array count and length (see `header_tag`).
+        self.store_count(array, self.context.i64_type().const_int(1, false));
         self.store_tagged(self.len_ptr(array), len.into(), self.header_tag);
         array
-    }
-
-    /// `offset + len * size`: the size of a block whose length `len` passed the size checks,
-    /// or is a literal's.
-    fn block_size(&self, layout: &ArrayLayout<'ctx>, len: IntValue<'ctx>) -> IntValue<'ctx> {
-        let i64_type = self.context.i64_type();
-        let elements = self
-            .builder
-            .build_int_nuw_mul(len, i64_type.const_int(layout.size, false), "elements")
-            .expect(POSITIONED);
-        self.builder
-            .build_int_nuw_add(elements, i64_type.const_int(layout.offset, false), "size")
-            .expect(POSITIONED)
-    }
-
-    /// The address of the header's length.
-    fn len_ptr(&self, array: PointerValue<'ctx>) -> PointerValue<'ctx> {
-        self.builder
-            .build_struct_gep(self.header(), array, 1, "len")
-            .expect("the array header should have the length at index 1")
     }
 
     pub(super) fn array_len(&self, array: PointerValue<'ctx>) -> IntValue<'ctx> {
@@ -667,15 +593,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             });
         }
         let layout = self.array_layout(element);
-        let i64_type = self.context.i64_type();
-        self.call(
-            self.free,
-            &[
-                array.into(),
-                self.block_size(&layout, len).into(),
-                i64_type.const_int(layout.align, false).into(),
-            ],
-        );
+        let (size, align) = self.heap_size(&HeapBlock::Array {
+            layout: &layout,
+            len,
+        });
+        self.call(self.free, &[array.into(), size.into(), align.into()]);
         self.builder.build_return(None).expect(POSITIONED);
     }
 
@@ -727,9 +649,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_pointer_value();
         // A dead block, count below 1, would otherwise pass for a shared one and be copied.
         self.check_count(array, RC_FAULT_RELEASE);
-        let count = self
-            .load_tagged(i64_type.into(), array, "count", self.header_tag)
-            .into_int_value();
+        let count = self.load_count(array, "count");
         let one = self.int_compare(IntPredicate::EQ, count, i64_type.const_int(1, false));
         self.builder
             .build_conditional_branch(one, only, shared)
