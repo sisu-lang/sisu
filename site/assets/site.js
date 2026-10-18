@@ -1,4 +1,4 @@
-// Shared behaviour: theme toggle, code highlighting.
+// Shared behaviour: theme toggle, code highlighting, diagnostics search.
 (() => {
   const root = document.documentElement;
 
@@ -28,4 +28,35 @@
     const f = { sisu: hl, sh, out: esc }[pre.dataset.lang] || esc;
     pre.innerHTML = pre.textContent.replace(/^\n|\n$/g, '').split('\n').map(l => `<span class="ln">${f(l)}</span>`).join('');
   });
+
+  // Diagnostics index search: a code prefix, or a prefix of a title word for every word typed.
+  const rows = [...document.querySelectorAll('li[data-code]')];
+  const input = document.querySelector('.dx input[name="q"]');
+  if (rows.length && input) {
+    const none = document.querySelector('.dx-none');
+    const filter = () => {
+      const query = input.value.trim();
+      const code = query.toUpperCase();
+      const typed = query.toLowerCase().split(/\s+/).filter(Boolean);
+      let shown = 0;
+      rows.forEach(li => {
+        const words = li.dataset.words.split(' ');
+        li.hidden = !(li.dataset.code.startsWith(code) || typed.every(t => words.some(w => w.startsWith(t))));
+        if (!li.hidden) shown++;
+      });
+      document.querySelectorAll('.dx-index ul.rows').forEach(ul => {
+        ul.hidden = !ul.querySelector('li:not([hidden])');
+        ul.previousElementSibling.hidden = ul.hidden;
+      });
+      none.textContent = shown ? '' : `No diagnostic matches “${query}”.`;
+    };
+    input.value = new URLSearchParams(location.search).get('q') || '';
+    input.addEventListener('input', filter);
+    input.form.addEventListener('submit', e => {
+      e.preventDefault();
+      const li = rows.find(li => li.dataset.code === input.value.trim().toUpperCase());
+      if (li) location.href = li.querySelector('a').href;
+    });
+    filter();
+  }
 })();

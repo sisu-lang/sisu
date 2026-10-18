@@ -7,7 +7,8 @@
 Usage: uv run --locked --script site/build.py [--out DIR] [--forbid-tk] [--test]
 
 Each site/src/<page>.html gives <page>.html: line 1 is its title, line 2 its meta description,
-the rest its body, filled in between _head.html and _foot.html. Whole-line `<!-- -->` comments
+the rest its body, filled in between _head.html and _foot.html. Each docs/diagnostics/<code>.md
+gives diagnostics/<code>.html, filled into _code.html. Whole-line `<!-- -->` comments
 are notes for editors and are left out. `{{name arg…}}` is replaced once, from the page's
 context or from DIRECTIVES. The build then checks the output and prints each problem.
 """
@@ -15,6 +16,8 @@ import argparse
 import html
 import importlib.util
 import inspect
+import json
+import posixpath
 import re
 import shutil
 import subprocess
@@ -23,7 +26,9 @@ import tomllib
 import unicodedata
 import unittest
 from bisect import bisect_left
+from collections import Counter
 from collections.abc import Callable
+from functools import cache
 from html.parser import HTMLParser
 from itertools import accumulate, groupby
 from pathlib import Path
@@ -54,6 +59,7 @@ def read(path: str) -> str:
         raise BuildError(f'cannot read {path}: {e.strerror}') from e
 
 
+@cache
 def commit() -> str:
     return subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--short=7', 'HEAD'],
                           capture_output=True, text=True, check=True).stdout.strip()
@@ -129,8 +135,13 @@ def adr_files() -> list[Path]:
     return sorted((ROOT / 'docs/adr').glob('[0-9][0-9][0-9][0-9]-*.md'))
 
 
+def explanation_codes() -> list[str]:
+    """The codes that docs/diagnostics/ explains."""
+    return sorted(path.stem for path in (ROOT / 'docs/diagnostics').glob('[EW][0-9][0-9][0-9][0-9].md'))
+
+
 def diagnostic_count() -> str:
-    return str(len(list((ROOT / 'docs/diagnostics').glob('[EW][0-9][0-9][0-9][0-9].md'))))
+    return str(len(explanation_codes()))
 
 
 def status_areas() -> list[dict]:
@@ -197,6 +208,142 @@ def status_tables() -> str:
     return '\n\n'.join(out)
 
 
+def code_fence(renderer, tokens, idx, options, env) -> str:
+    token = tokens[idx]
+    return f'<figure class="code"><pre data-lang="{html.escape(token.info.strip())}">{escape(token.content)}</pre></figure>\n'
+
+
+MD = MarkdownIt('commonmark').enable('table')
+MD.add_render_rule('fence', code_fence)
+CODE_LINK = re.compile(r'([EW]\d{4})\.md(#.*)?')
+
+
+def plain(inline) -> str:
+    """The text of an `inline` token, without its markup."""
+    return ''.join(' ' if child.type in ('softbreak', 'hardbreak') else child.content for child in inline.children)
+
+
+def explanation_link(href: str) -> str:
+    """Where a link in docs/diagnostics/ goes on the site: another code's page, or the file on GitHub."""
+    if m := CODE_LINK.fullmatch(href):
+        return f'{m[1]}.html{m[2] or ""}'
+    if SCHEME.match(href) or href.startswith(('#', '/')):
+        return href
+    path, hash_, anchor = href.partition('#')
+    return BLOB + posixpath.normpath(f'docs/diagnostics/{path}') + hash_ + anchor
+
+
+def explanation_html(code: str, markdown: str, err: str) -> str:
+    """The explanation without its heading, with what sisuc says about Broken placed before Fixed."""
+    tokens = MD.parse(markdown)
+    if tokens and tokens[0].tag == 'h1':
+        tokens = tokens[3:]
+    for token in tokens:
+        for child in token.children or []:
+            if child.type == 'link_open':
+                child.attrSet('href', explanation_link(str(child.attrGet('href'))))
+    before, fixed, after = MD.renderer.render(tokens, MD.options, {}).partition('<h2>Fixed</h2>')
+    if not fixed:
+        raise BuildError(f'{code} has no "## Fixed"')
+    return f'{before}<h2>What sisuc says</h2><figure class="code"><pre>{diag_html(err)}</pre></figure>\n{fixed}{after}'
+
+
+def diagnostics_of(json_text: str, code: str) -> list[dict]:
+    """The diagnostics with code `code` in sisuc's JSON output, one object per line."""
+    records = [json.loads(line) for line in json_text.splitlines() if line.strip()]
+    return [r for r in records if r.get('kind') == 'diagnostic' and r.get('code') == code]
+
+
+def fixes(json_text: str, code: str) -> list[bool]:
+    """Whether each fix of each `code` diagnostic is safe, in order."""
+    return [fix['safe'] for d in diagnostics_of(json_text, code) for fix in d['fixes']]
+
+
+def explanation(code: str) -> str:
+    return (ROOT / f'docs/diagnostics/{code}.md').read_text(encoding='utf-8')
+
+
+def title(code: str, markdown: str) -> str:
+    """The Markdown of the explanation's title, the heading after `CODE: `, its first letter upper-cased."""
+    heading = markdown.partition('\n')[0]
+    if not heading.startswith(f'# {code}: '):
+        raise BuildError(f'{code} does not start with "# {code}: "')
+    text = heading.removeprefix(f'# {code}: ')
+    return text[0].upper() + text[1:] if text[:1].isalpha() else text
+
+
+def categories() -> list[dict]:
+    """The categories of data/categories.toml, in order."""
+    try:
+        found = tomllib.loads(read('data/categories.toml'))['category']
+    except (tomllib.TOMLDecodeError, KeyError) as e:
+        raise BuildError(f'data/categories.toml: {e!r}') from e
+    for i, category in enumerate(found, 1):
+        if missing := {'id', 'name', 'codes'} - category.keys():
+            raise BuildError(f'data/categories.toml: category {category.get("id", i)!r} lacks {sorted(missing)}')
+    return found
+
+
+def category_problems():
+    """Each explained code is in exactly one category, and each listed code is explained."""
+    explained = set(explanation_codes())
+    listed = Counter(code for category in categories() for code in category['codes'])
+    for code in sorted(explained | listed.keys()):
+        if code not in explained:
+            yield f'{code} has no explanation in docs/diagnostics/'
+        elif listed[code] != 1:
+            yield f'{code} is in {listed[code]} categories, not one'
+
+
+def category_links(page: str, code: str | None = None) -> str:
+    """The aside's category list, linking `page#<id>`, with `code`'s category marked."""
+    out = []
+    for category in categories():
+        current = ' aria-current="page"' if code in category['codes'] else ''
+        out.append(f'<li><a href="{page}#{category["id"]}"{current}>{escape(category["name"])}</a></li>')
+    return ''.join(out)
+
+
+def diagnostics_index() -> str:
+    """For each category, its heading and a row per explained code it lists."""
+    explained = set(explanation_codes())
+    out = []
+    for category in categories():
+        rows = []
+        for code in category['codes']:
+            if code in explained:  # category_problems reports the others
+                name = title(code, explanation(code))
+                words = html.escape(plain(MD.parseInline(name)[0]).lower())
+                rows.append(f'<li data-code="{code}" data-words="{words}"><a href="diagnostics/{code}.html">'
+                            f'<span class="num">{code}</span><b>{MD.renderInline(name)}</b></a></li>')
+        out.append(f'<h2 id="{category["id"]}">{escape(category["name"])}</h2>\n<ul class="rows">{"".join(rows)}</ul>')
+    return '\n'.join(out)
+
+
+def code_page(code: str) -> str:
+    """The page diagnostics/<code>.html."""
+    markdown = explanation(code)
+    name = title(code, markdown)
+    json_text = read(f'programs/explanations/{code}.json')
+    found = diagnostics_of(json_text, code)
+    if not found:
+        raise BuildError(f'programs/explanations/{code}.json reports no {code}')
+    tokens = MD.parse(markdown)
+    rule = next((tokens[i + 1] for i, t in enumerate(tokens) if t.type == 'paragraph_open'), None)
+    if rule is None:
+        raise BuildError(f'{code} has no paragraph')
+    context = {
+        'code': code,
+        'heading': MD.renderInline(name),
+        'severity': escape(found[0]['severity'].capitalize()),
+        'badges': ''.join(f'<span class="badge">{"Safe" if safe else "Unsafe"} fix</span>' for safe in fixes(json_text, code)),
+        'categories': category_links('../diagnostics.html', code),
+        'explanation': explanation_html(code, markdown, read(f'programs/explanations/{code}.err')),
+    }
+    return assemble(read('_code.html'), title=f'{code}: {plain(MD.parseInline(name)[0])}', description=plain(rule),
+                    page='diagnostics.html', depth=1, context=context)
+
+
 DIRECTIVES: dict[str, Callable[..., str]] = {
     'commit': commit,
     'text': lambda path: escape(read(path)),
@@ -206,6 +353,8 @@ DIRECTIVES: dict[str, Callable[..., str]] = {
     'status-tables': status_tables,
     'adr-count': lambda: str(len(adr_files())),
     'diagnostic-count': diagnostic_count,
+    'diagnostics-index': diagnostics_index,
+    'diagnostic-categories': lambda: category_links(''),
 }
 DIRECTIVE = re.compile(r'\{\{([\w-]+)((?: [^\s{}]+)*)\}\}')
 
@@ -262,6 +411,13 @@ def build(out: Path) -> None:
         except BuildError as e:
             raise BuildError(f'{src.relative_to(ROOT)}: {e}') from e
         (out / src.name).write_text(page, encoding='utf-8')
+    (out / 'diagnostics').mkdir()
+    for code in explanation_codes():
+        try:
+            page = code_page(code)
+        except BuildError as e:
+            raise BuildError(f'docs/diagnostics/{code}.md: {e}') from e
+        (out / 'diagnostics' / f'{code}.html').write_text(page, encoding='utf-8')
 
 
 SCHEME = re.compile(r'[a-z][a-z0-9+.-]*:|//')
@@ -404,6 +560,7 @@ def check_site(out: Path, *, forbid_tk: bool = False) -> list[str]:
         found += [f'{page.relative_to(out)}: {p}' for p in page_problems(out, page, text, tags[page], ids, forbid_tk)]
         if page == out / 'decisions.html':
             found += [f'decisions.html: {p}' for p in adr_problems(text)]
+    found += [f'data/categories.toml: {p}' for p in category_problems()]
     for css in sorted(out.rglob('*.css')):
         found += [f'{css.relative_to(out)}: {p}' for p in css_problems(out, css.parent, css.read_text(encoding='utf-8'))]
     return found

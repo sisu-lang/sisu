@@ -214,6 +214,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
 .case-h h1 { margin: 0; font-size: 30px; max-width: none; }
 .badge { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: var(--warn-bg); color: var(--warn-ink); border: 1px solid var(--warn-line); }
 .case h2 { font-size: 16px; margin: 28px 0 10px; letter-spacing: 0; }
+.case-h .sev { font-size: 14px; font-weight: 700; color: var(--mute); }
+.case .meta { margin: 0; font-size: 14.5px; color: var(--mute); }
+.dx-none { margin: 0; font-weight: 700; }
+.dx-index h2 { font-size: 22px; margin: 36px 0 12px; scroll-margin-top: 24px; }
+.dx-index h2:first-of-type { margin-top: 0; }
 
 footer { border-top: 1px solid var(--rule); padding: 32px 0 56px; font-size: 14px; color: var(--mute); }
 footer .w { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }

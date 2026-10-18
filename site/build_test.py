@@ -3,6 +3,7 @@ import html
 import re
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 
@@ -48,8 +49,6 @@ COLOURED = [
 ]
 
 PAGE = '<!doctype html><html><head></head><body><h1>Page</h1>{}</body></html>'
-
-REAL_ROOT = build.ROOT
 
 # Two areas: the first has a note, a counted directive, and two links, one with an anchor.
 STATUS = """
@@ -106,6 +105,8 @@ def fake_site(test, pages, repo=None):
     (site / 'src').mkdir()
     for name in ('_head.html', '_foot.html'):
         (site / name).write_text('', encoding='utf-8')
+    (site / 'data').mkdir()
+    (site / 'data/categories.toml').write_text('category = []\n', encoding='utf-8')
     for name, text in pages.items():
         (site / 'src' / name).write_text(text, encoding='utf-8')
     for name, text in (repo or {}).items():
@@ -358,8 +359,8 @@ class Build(unittest.TestCase):
         for path, ok in cases:
             with self.subTest(path):
                 toml = STATUS.replace('docs/roadmap.md#what-works-today', path)
-                site = fake_site(self, {'status.html': page}, {'site/data/status.toml': toml, 'docs/adr/0001-first.md': ''})
-                self.enterContext(mock.patch.object(build, 'ROOT', REAL_ROOT))  # the anchors are read from a real file
+                site = fake_site(self, {'status.html': page}, {'site/data/status.toml': toml, 'docs/adr/0001-first.md': '',
+                                                                'docs/roadmap.md': '# Roadmap\n\n## What works today\n'})
                 self.enterContext(mock.patch.object(build.check_links, 'TRACKED', build.check_links.TRACKED | {'docs/adr/0001-first.md'}))
                 build.build(site / '_site')
                 found = build.check_site(site / '_site')
@@ -409,6 +410,118 @@ class Build(unittest.TestCase):
         self.assertEqual(re.findall(r'<h(\d)>(.*?)</h', board), [('3', 'Works today'), ('3', 'Planned')] * 2)
         page = f'<h1>Home</h1><svg><symbol id="chev"></symbol></svg><section><h2>Where Sisu stands</h2>{board}</section>'
         self.assertEqual(problems(self, {'index.html': PAGE.replace('<h1>Page</h1>{}', '{}').format(page)}), [])
+
+    def test_explanation_links(self):
+        adr = '../adr/0019-enums-are-values-named-through-their-enum.md'
+        cases = [('#considered-options', True), ('#nope', False)]
+        for anchor, ok in cases:
+            with self.subTest(anchor):
+                text = f'# X0001: t\n\nSee [W0002](W0002.md) and [ADR 19]({adr}{anchor}).\n\n## Fixed\n'
+                shown = build.explanation_html('X0001', text, '')
+                self.assertIn('<a href="W0002.html">W0002</a>', shown)
+                url = f'{build.BLOB}docs/adr/0019-enums-are-values-named-through-their-enum.md{anchor}'
+                self.assertIn(f'<a href="{url}">ADR 19</a>', shown)
+                found = problems(self, {'diagnostics/X0001.html': PAGE.format(shown), 'diagnostics/W0002.html': PAGE.format('')})
+                if ok:
+                    self.assertEqual(found, [])
+                else:
+                    self.assert_fails('diagnostics/X0001.html', found)
+                    self.assertIn(url, found[0])
+
+    def test_categories_complete(self):
+        explained = {f'docs/diagnostics/{name}.md': '' for name in ('E0001', 'W0002', 'README')}
+        cases = [
+            ('complete', '["E0001"]', '["W0002"]', None),
+            ('missing', '["E0001"]', '[]', 'W0002'),
+            ('no explanation', '["E0001", "E0003"]', '["W0002"]', 'E0003'),
+            ('twice', '["E0001"]', '["W0002", "E0001"]', 'E0001'),
+        ]
+        for name, one, two, code in cases:
+            with self.subTest(name):
+                toml = f'[[category]]\nid = "a"\nname = "A"\ncodes = {one}\n\n[[category]]\nid = "b"\nname = "B"\ncodes = {two}\n'
+                fake_site(self, {}, explained | {'site/data/categories.toml': toml})
+                found = problems(self, {})
+                if code is None:
+                    self.assertEqual(found, [])
+                else:
+                    self.assert_fails('categories.toml', found)
+                    self.assertIn(code, found[0])
+
+
+class Pages(unittest.TestCase):
+    """The real site, built once."""
+
+    @classmethod
+    def setUpClass(cls):
+        tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(tmp.cleanup)
+        cls.out = Path(tmp.name) / 'site'
+        build.build(cls.out)
+
+    def page(self, name):
+        return (self.out / name).read_text(encoding='utf-8')
+
+    def test_diagnostic_pages(self):
+        built = {p.stem for p in (self.out / 'diagnostics').glob('*.html')}
+        explained = {p.stem for p in (build.ROOT / 'docs/diagnostics').glob('*.md')} - {'README'}
+        self.assertTrue(explained)
+        self.assertEqual(built, explained)
+        self.assertTrue((self.out / 'diagnostics.html').is_file())
+        self.assertIn('href="/sisu/diagnostics.html"', self.page('404.html'))
+        # The first paragraph of E0130 quotes the error, so the description escapes a `"`.
+        rule = (build.ROOT / 'docs/diagnostics/E0130.md').read_text(encoding='utf-8').split('\n\n')[1].replace('`', '')
+        self.assertIn('"', rule)
+        metas = Metas(self.page('diagnostics/E0130.html')).descriptions
+        self.assertEqual(metas, [rule])
+
+    def test_explanation_order(self):
+        page = self.page('diagnostics/E0032.html')
+        parts = ['A value must have the type its position expects', '<h2>Why</h2>', '<h2>Broken</h2>',
+                 '<h2>What sisuc says</h2>', 'error[E0032]', '<h2>Fixed</h2>']
+        places = [page.find(part) for part in parts]
+        self.assertNotIn(-1, places, parts)
+        self.assertEqual(places, sorted(places))
+        self.assertNotIn('Your code', page)
+        self.assertNotIn('After the fix', page)
+
+    def test_fix_badges(self):
+        cases = [('E0130', ['Unsafe fix']), ('E0001', ['Safe fix']), ('E0032', [])]
+        for code, badges in cases:
+            with self.subTest(code):
+                page = self.page(f'diagnostics/{code}.html')
+                self.assertIn(f'<span class="id">{code}</span>', page)
+                self.assertEqual(re.findall(r'<span class="badge">(.*?)</span>', page), badges)
+
+    def test_search_terms(self):
+        self.assertIn('<li data-code="E0032" data-words="value of the wrong type"><a href="diagnostics/E0032.html">'
+                      '<span class="num">E0032</span><b>Value of the wrong type</b></a></li>', self.page('diagnostics.html'))
+
+    def test_titles(self):
+        index = self.page('diagnostics.html')
+        cases = [('E0032', 'Value of the wrong type', 'Value of the wrong type'),
+                 ('E0006', '<code>else</code> on a line of its own', 'else on a line of its own')]
+        for code, heading, plain in cases:
+            with self.subTest(code):
+                page = self.page(f'diagnostics/{code}.html')
+                self.assertIn(f'<h1>{heading}</h1>', page)
+                self.assertIn(f'<b>{heading}</b>', index)
+                title = re.search('<title>(.*?)</title>', page)[1]
+                self.assertEqual(title, f'{code}: {plain}')
+                self.assertNotIn('`', title + heading)
+
+
+class Metas(HTMLParser):
+    """The `content` of each `<meta name="description">` of a page."""
+
+    def __init__(self, text):
+        super().__init__()
+        self.descriptions = []
+        self.feed(text)
+        self.close()
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'meta' and dict(attrs).get('name') == 'description':
+            self.descriptions.append(dict(attrs).get('content'))
 
 
 if __name__ == '__main__':

@@ -1,0 +1,14 @@
+<main>
+  <section class="s"><div class="w dx">
+    <aside>
+      <form action="{{root}}diagnostics.html" role="search"><input type="search" name="q" aria-label="Find a diagnostic by code or word"></form>
+      <nav aria-labelledby="dx-cats"><p class="dx-cats" id="dx-cats">Categories</p>
+      <ul>{{categories}}</ul></nav>
+    </aside>
+    <article class="case">
+      <div class="case-h"><span class="id">{{code}}</span><h1>{{heading}}</h1><span class="sev">{{severity}}</span>{{badges}}</div>
+      <p class="meta">Built from the repository at commit {{commit}}.</p>
+{{explanation}}
+    </article>
+  </div></section>
+</main>
