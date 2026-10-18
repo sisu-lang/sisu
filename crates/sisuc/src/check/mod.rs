@@ -155,6 +155,7 @@ struct Source<'src> {
 }
 
 struct Checker<'src> {
+    /// The program's text and the positions found in it.
     source: Source<'src>,
     /// The first function of each name, and every broken one.
     function_ids: FxHashMap<Symbol, Declared<tir::FuncId>>,

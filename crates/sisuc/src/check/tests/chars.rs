@@ -130,7 +130,9 @@ fn char_arithmetic_reports_once() {
         &with_main("fn f(c: char) {\n    print(c + 1 + 2)\n}"),
         &[(Code::ArithmeticOnChar, (2, 13))],
     );
-    // A float sum or a float block beside the `char` is its own mistake, and the only one.
+    // A float sum or a float block beside the `char` is one diagnostic, at the float. This row
+    // pins today's output: the first reads "expected `i64`" at `1.0`, which is misleading; see
+    // `.scratch/diagnostic-wording/issues/01-char-plus-float-says-i64.md`.
     codes(
         &with_main(
             "fn f(c: char) {\n    print(c + (1.0 + 2.0))\n    print(c + { let k = 1.5\n k })\n}",

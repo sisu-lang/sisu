@@ -403,16 +403,7 @@ impl Checker<'_> {
             .comments
             .iter()
             .any(|c| deleted.iter().any(|d| d.contains(c)));
-        let next = self
-            .source
-            .breaks
-            .partition_point(|&b| b < arg.span.start());
-        let lines = self
-            .source
-            .breaks
-            .get(next)
-            .is_some_and(|&b| b < arg.span.end());
-        if !printed || commented || lines {
+        if !printed || commented || !self.one_line(arg.span) {
             return self.mismatch(arg.span, Some(arg), want, got);
         }
         DiagnosticKind::Mismatch {
