@@ -83,6 +83,17 @@ entry = "python3 -m unittest discover -s scripts -p 'test_*.py'"
 files = '^scripts/.*\.py$'
 pass_filenames = false
 
+# Reads the report of the last local nextest run and warns about tests over their time budget;
+# it never fails a commit. With no report, as in CI's lint job, it prints nothing.
+[[repos.hooks]]
+id = "slow-tests"
+name = "tests within their time budget (warns only)"
+language = "system"
+entry = "python3 scripts/slow_tests.py target/nextest/default/junit.xml"
+always_run = true
+pass_filenames = false
+verbose = true
+
 # Preinstalled on GitHub's Ubuntu runners.
 [[repos.hooks]]
 id = "shellcheck"

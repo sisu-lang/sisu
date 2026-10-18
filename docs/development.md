@@ -52,6 +52,12 @@ $ make miri    # the runtime's unit tests under Miri, which stops at undefined b
 $ make check   # lint, test and deny; CI also runs make miri
 ```
 
+Every nextest run writes its JUnit report to
+`target/nextest/<profile>/junit.xml`. `scripts/slow_tests.py` reads it and
+warns about each test over its time budget: 1 s for a unit test and 4 s for an
+end-to-end test, on a GitHub-hosted runner. CI runs it after the tests, and the
+pre-commit hook runs it on the report of your last `make test`. It only warns.
+
 Each target is one line in the `Makefile`, a script in `scripts/` or a cargo
 command. Run a script directly for the flags no target passes, such as
 `scripts/fuzz.sh --replay`.
@@ -466,6 +472,6 @@ must accept any syntax those programs use.
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The front-end fuzz target, its own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, and `check-expect-messages.sh`, which a prek hook runs. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |

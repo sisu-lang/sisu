@@ -3,6 +3,10 @@ experimental = ["setup-scripts"]
 [scripts.setup.build-runtime]
 command = "scripts/build-runtime.sh"
 
+# Every run writes target/nextest/<profile>/junit.xml, which scripts/slow_tests.py reads.
+[profile.default.junit]
+path = "junit.xml"
+
 [profile.ci]
 # Report every failure, not just the first.
 fail-fast = false
