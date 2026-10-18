@@ -1,8 +1,8 @@
 //! Arrays at run time. An array is one heap block: a header of two `i64`s, the count and
-//! the length, then the elements. This module owns the layout, the array nodes and the
-//! bodies of the array helpers, which `define_helpers` reaches through `define_array_helper`.
+//! the length, then the elements. `layout.rs` owns the layout; this module owns the array nodes
+//! and the bodies of the array helpers, which `define_helpers` reaches through
+//! `define_array_helper`.
 
-use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -11,19 +11,6 @@ use super::rc::{Helper, counted_core, param};
 use super::{Codegen, POSITIONED, Slot, class_of};
 use crate::source::Span;
 use crate::tir::{Expr, ExprKind, LocalId, Place, Type, TypeKind};
-
-/// Where an array's elements sit in its block, from the target's data layout.
-pub(super) struct ArrayLayout<'ctx> {
-    /// The LLVM type of one element.
-    pub(super) element: BasicTypeEnum<'ctx>,
-    /// The first element's byte offset: the header's size rounded up to the element's
-    /// alignment.
-    pub(super) offset: u64,
-    /// The ABI size of one element, which is also the distance between two elements.
-    pub(super) size: u64,
-    /// The block's alignment: the larger of the header's and the element's.
-    pub(super) align: u64,
-}
 
 /// A field or element place with its own operands evaluated.
 pub(super) struct PlaceOperands<'p, 'ctx> {
@@ -89,29 +76,6 @@ pub(super) fn borrowed_index_base(base: &Expr, index: &Expr) -> Option<LocalId> 
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
-    /// The header: the count, then the length.
-    fn header(&self) -> StructType<'ctx> {
-        let i64_type = self.context.i64_type().into();
-        self.context.struct_type(&[i64_type, i64_type], false)
-    }
-
-    pub(super) fn array_layout(&self, element: Type) -> ArrayLayout<'ctx> {
-        let header = self.header();
-        let ty = self
-            .llvm_type(element)
-            .expect("the checker should reject an array of `unit` or `never`, so its element has a value type");
-        let align = u64::from(self.target_data.get_abi_alignment(&ty));
-        ArrayLayout {
-            element: ty,
-            offset: self
-                .target_data
-                .get_abi_size(&header)
-                .next_multiple_of(align),
-            size: self.target_data.get_abi_size(&ty),
-            align: u64::from(self.target_data.get_abi_alignment(&header)).max(align),
-        }
-    }
-
     /// A block with count 1 and length `len`. A literal passes a constant length, and `unique`
     /// a run-time length that already passed the checks; `[v; n]` gets them at `span`. A length
     /// taken from an existing string, as `chars()` and `bytes()` do, needs no check.
@@ -160,26 +124,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.store_tagged(array, i64_type.const_int(1, false).into(), self.header_tag);
         self.store_tagged(self.len_ptr(array), len.into(), self.header_tag);
         array
-    }
-
-    /// `offset + len * size`: the size of a block whose length `len` passed the size checks,
-    /// or is a literal's.
-    fn block_size(&self, layout: &ArrayLayout<'ctx>, len: IntValue<'ctx>) -> IntValue<'ctx> {
-        let i64_type = self.context.i64_type();
-        let elements = self
-            .builder
-            .build_int_nuw_mul(len, i64_type.const_int(layout.size, false), "elements")
-            .expect(POSITIONED);
-        self.builder
-            .build_int_nuw_add(elements, i64_type.const_int(layout.offset, false), "size")
-            .expect(POSITIONED)
-    }
-
-    /// The address of the header's length.
-    fn len_ptr(&self, array: PointerValue<'ctx>) -> PointerValue<'ctx> {
-        self.builder
-            .build_struct_gep(self.header(), array, 1, "len")
-            .expect("the array header should have the length at index 1")
     }
 
     pub(super) fn array_len(&self, array: PointerValue<'ctx>) -> IntValue<'ctx> {

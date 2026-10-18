@@ -1,60 +1,25 @@
 //! Strings at run time. A string is a pointer to one block: a header of three `i64`s, the count,
 //! the length and the capacity, then `cap` bytes. A literal's block is a writable global that
-//! holds a reference of its own, so it is never freed and never reused in place. This module is the only one that reads a string
-//! header: it owns the layout, the string nodes and the bodies of the string helpers, which
-//! `define_helpers` reaches through `define_string_helper`.
+//! holds a reference of its own, so it is never freed and never reused in place. This module is the
+//! only one that reads a string header; `layout.rs` owns the layout. This module owns the string
+//! nodes and the bodies of the string helpers, which `define_helpers` reaches through
+//! `define_string_helper`.
 
 use inkwell::attributes::AttributeLoc;
 use inkwell::module::Linkage;
-use inkwell::types::StructType;
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue,
 };
 use inkwell::{AddressSpace, IntPredicate};
 
 use super::abi::{PAD_CENTER, PAD_LEFT, PAD_RIGHT};
+use super::layout::{BYTES, CAP, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::source::Span;
 use crate::tir::{Align, CompareOp, Expr, Format, Pad, Place, Stream, Type};
 
-/// A string block's header, from the target's data layout. A block with capacity `cap` is
-/// `size + cap` bytes, aligned to `align`.
-struct StringLayout<'ctx> {
-    /// `{ i64 count, i64 len, i64 cap, [0 x i8] bytes }`: the bytes start where the header ends.
-    header: StructType<'ctx>,
-    /// The header's ABI size.
-    size: u64,
-    /// The header's ABI alignment, which is the block's.
-    align: u32,
-}
-
-/// The header's fields, by index.
-const LEN: u32 = 1;
-const CAP: u32 = 2;
-const BYTES: u32 = 3;
-
 impl<'ctx> Codegen<'ctx, '_> {
-    fn string_layout(&self) -> StringLayout<'ctx> {
-        let i64_type = self.context.i64_type().into();
-        let bytes = self.context.i8_type().array_type(0).into();
-        let header = self
-            .context
-            .struct_type(&[i64_type, i64_type, i64_type, bytes], false);
-        StringLayout {
-            header,
-            size: self.target_data.get_abi_size(&header),
-            align: self.target_data.get_abi_alignment(&header),
-        }
-    }
-
-    /// The address of header field `index` of `string`.
-    fn string_field(&self, string: PointerValue<'ctx>, index: u32) -> PointerValue<'ctx> {
-        self.builder
-            .build_struct_gep(self.string_layout().header, string, index, "field")
-            .expect("the string header should have the length, capacity and bytes at 1, 2 and 3")
-    }
-
     /// The `i64` header field `index` of `string`.
     fn load_string_field(&self, string: PointerValue<'ctx>, index: u32) -> IntValue<'ctx> {
         self.builder
