@@ -199,6 +199,28 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect("a TBAA tag should be a metadata node");
     }
 
+    /// The count of the counted block `object`: the `i64` at offset 0, tagged with `header_tag`.
+    pub(super) fn load_count(&self, object: PointerValue<'ctx>, name: &str) -> IntValue<'ctx> {
+        self.load_tagged(
+            self.context.i64_type().into(),
+            object,
+            name,
+            self.header_tag,
+        )
+        .into_int_value()
+    }
+
+    /// Stores `count` as the count of the counted block `object`, tagged with `header_tag`.
+    pub(super) fn store_count(&self, object: PointerValue<'ctx>, count: IntValue<'ctx>) {
+        self.store_tagged(object, count.into(), self.header_tag);
+    }
+
+    /// Gives the block `sisu_alloc` just returned a count of 1, untagged: nothing has read the
+    /// block yet.
+    pub(super) fn init_count(&self, object: PointerValue<'ctx>) {
+        self.store(object, self.context.i64_type().const_int(1, false).into());
+    }
+
     /// The header: the count, then the length.
     fn header(&self) -> StructType<'ctx> {
         let i64_type = self.context.i64_type().into();

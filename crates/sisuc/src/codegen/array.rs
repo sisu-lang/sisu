@@ -121,7 +121,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        self.store_tagged(array, i64_type.const_int(1, false).into(), self.header_tag);
+        // Tagged, unlike the other blocks' inits, so -O2 knows it cannot alias an element.
+        self.store_count(array, i64_type.const_int(1, false));
         self.store_tagged(self.len_ptr(array), len.into(), self.header_tag);
         array
     }
@@ -671,9 +672,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_pointer_value();
         // A dead block, count below 1, would otherwise pass for a shared one and be copied.
         self.check_count(array, RC_FAULT_RELEASE);
-        let count = self
-            .load_tagged(i64_type.into(), array, "count", self.header_tag)
-            .into_int_value();
+        let count = self.load_count(array, "count");
         let one = self.int_compare(IntPredicate::EQ, count, i64_type.const_int(1, false));
         self.builder
             .build_conditional_branch(one, only, shared)

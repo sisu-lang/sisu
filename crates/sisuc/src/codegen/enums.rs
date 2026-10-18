@@ -102,7 +102,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             .collect();
         let ptr_type = context.ptr_type(AddressSpace::default());
         let i64_type = context.i64_type();
-        // A box on a pending list holds the next box's address in its count word.
+        // A box on a pending list holds the next box's address in the word `load_count` reads as
+        // its count.
         assert!(
             self.target_data.get_abi_size(&ptr_type) <= self.target_data.get_abi_size(&i64_type),
             "a pointer should fit the 8-byte count word that links a box into a pending list"
@@ -371,7 +372,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        self.store(boxed, self.context.i64_type().const_int(1, false).into());
+        self.init_count(boxed);
         self.store(self.box_value(inner, boxed), value);
         self.store(place, boxed.into());
         if let Some(done) = present {
@@ -513,9 +514,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_rc.walk.<F>(value, heads)`: switches on the tag of the value at `value`, and
     /// releases each counted field of its variant. A boxed field that is not `null` loses 1
     /// from its box's count, and at zero the box becomes the head of its enum's list in
-    /// `heads`, linked to the old head through its count word. Nothing else reaches a listed
-    /// box, so no RC check reads that word. Every other counted field goes through `release`,
-    /// which may drain another component's lists in a frame of its own.
+    /// `heads`, linked to the old head through its count word, the word `load_count` reads.
+    /// Nothing else reaches a listed box, so no RC check reads that word. Every other counted
+    /// field goes through `release`, which may drain another component's lists in a frame of
+    /// its own.
     fn define_walk(&self, id: EnumId, function: FunctionValue<'ctx>) {
         let (value, done) = self.enum_entry(function);
         let heads = function
@@ -555,8 +557,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `@sisu_rc.drain.<F0>(heads)`, for the component whose first member is `F0`: while some
     /// list in `heads` is not empty, takes the head box of the first such list, makes the box
-    /// its count word links to the new head, walks the box's value, which may list more boxes,
-    /// and frees the box. It runs in one frame, however many boxes it frees.
+    /// its count word (the word `load_count` reads) links to the new head, walks the box's
+    /// value, which may list more boxes, and frees the box. It runs in one frame, however many
+    /// boxes it frees.
     fn define_drain(&self, first: EnumId, function: FunctionValue<'ctx>) {
         let members = self
             .component(first)

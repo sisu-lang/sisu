@@ -160,11 +160,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let block = |name| self.context.append_basic_block(function, name);
         let (owned, grow, copy, join) =
             (block("owned"), block("grow"), block("copy"), block("join"));
-        let count = self
-            .builder
-            .build_load(i64_type, lhs, "count")
-            .expect(POSITIONED)
-            .into_int_value();
+        let count = self.load_count(lhs, "count");
         let one = self.int_compare(IntPredicate::EQ, count, i64_type.const_int(1, false));
         self.builder
             .build_conditional_branch(one, owned, copy)
@@ -261,7 +257,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        self.store(string, i64_type.const_int(1, false).into());
+        self.init_count(string);
         self.store(self.string_field(string, CAP), cap.into());
         string
     }

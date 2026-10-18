@@ -401,7 +401,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        self.store(object, i64_type.const_int(1, false).into());
+        self.init_count(object);
         for (index, arg) in args.into_iter().enumerate() {
             let field = self.field_ptr(class, object, index);
             self.store(field, arg);
