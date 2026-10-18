@@ -304,10 +304,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             .builder
             .build_load(inner_ty, self.box_value(boxed_enum(ty), boxed), "boxed")
             .expect(POSITIONED);
-        let present = self.pair(ty, self.context.bool_type().const_int(1, false), value);
+        let present = self.optional(ty, self.context.bool_type().const_int(1, false), value);
         self.branch_to(done);
         self.builder.position_at_end(done);
-        self.phi(llvm_ty, &[(llvm_ty.const_zero(), absent), (present, some)])
+        self.phi(llvm_ty, &[(self.empty(ty), absent), (present, some)])
     }
 
     /// `Variant`: each argument, left to right, then the value: the tag and each field stored
@@ -348,18 +348,12 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn store_boxed(&self, place: PointerValue<'ctx>, value: BasicValueEnum<'ctx>, ty: Type) {
         let (value, present) = match ty.kind() {
             TypeKind::Optional(_) => {
-                let pair = value.into_struct_value();
-                let part = |index, name| {
-                    self.builder
-                        .build_extract_value(pair, index, name)
-                        .expect("an enum optional should be lowered to a `{ flag, value }` pair")
-                };
                 let function = self.current_function();
                 let some = self.context.append_basic_block(function, "box.some");
                 let done = self.context.append_basic_block(function, "box.done");
-                self.branch_on(part(0, "flag").into_int_value(), some, done);
+                self.branch_on(self.has_value(ty, value, "flag"), some, done);
                 self.builder.position_at_end(some);
-                (part(1, "payload"), Some(done))
+                (self.optional_value(ty, value, "payload"), Some(done))
             }
             _ => (value, None),
         };

@@ -430,12 +430,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Optional(payload) => payload,
             _ => return self.scalar_equal(lhs, rhs),
         };
-        let part = |pair: BasicValueEnum<'ctx>, index| {
-            self.builder
-                .build_extract_value(pair.into_struct_value(), index, "part")
-                .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair")
-        };
-        let (fa, fb) = (part(lhs, 0).into_int_value(), part(rhs, 0).into_int_value());
+        let value = |optional| self.optional_value(ty, optional, "part");
+        let (fa, fb) = (
+            self.has_value(ty, lhs, "part"),
+            self.has_value(ty, rhs, "part"),
+        );
         let flags = self.int_compare(IntPredicate::EQ, fa, fb);
         if let TypeKind::Enum(_) = payload.kind() {
             // Equal flags decide, unless both are set: a `None`'s payload is never read.
@@ -450,7 +449,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .build_conditional_branch(both, compare, done)
                 .expect(POSITIONED);
             self.builder.position_at_end(compare);
-            let values = self.equal(payload, part(lhs, 1), part(rhs, 1));
+            let values = self.equal(payload, value(lhs), value(rhs));
             let compared = self.current_block();
             self.branch_to(done);
             self.builder.position_at_end(done);
@@ -462,7 +461,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .into_int_value();
         }
         // `fa == fb && (!fa || va == vb)` on flags `f` and values `v`, with no branch.
-        let values = self.scalar_equal(part(lhs, 1), part(rhs, 1));
+        let values = self.scalar_equal(value(lhs), value(rhs));
         let none = self.builder.build_not(fa, "none").expect(POSITIONED);
         let values = self
             .builder
@@ -627,20 +626,15 @@ impl<'ctx> Codegen<'ctx, '_> {
         match ty.kind() {
             TypeKind::Enum(_) => self.call(self.helper(kind, ty), &[self.enum_slot(value).into()]),
             TypeKind::Optional(payload) => {
-                let pair = value.into_struct_value();
-                let part = |index, name| {
-                    self.builder
-                        .build_extract_value(pair, index, name)
-                        .expect("an enum optional should be lowered to a `{ flag, value }` pair")
-                };
                 let function = self.current_function();
                 let some = self.context.append_basic_block(function, "some");
                 let done = self.context.append_basic_block(function, "some.done");
                 self.builder
-                    .build_conditional_branch(part(0, "flag").into_int_value(), some, done)
+                    .build_conditional_branch(self.has_value(ty, value, "flag"), some, done)
                     .expect(POSITIONED);
                 self.builder.position_at_end(some);
-                self.retain_or_release(kind, part(1, "payload"), payload);
+                let value = self.optional_value(ty, value, "payload");
+                self.retain_or_release(kind, value, payload);
                 self.branch_to(done);
                 self.builder.position_at_end(done);
             }

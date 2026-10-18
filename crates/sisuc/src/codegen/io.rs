@@ -1,7 +1,6 @@
 //! Standard input and the program's arguments: `read_line`, through the runtime's
 //! `sisu_read_line`, and `main`'s `args`, through `sisu_args_len` and `sisu_arg`.
 
-use inkwell::AddressSpace;
 use inkwell::values::{FunctionValue, IntValue, PointerValue};
 
 use super::{Codegen, POSITIONED};
@@ -50,8 +49,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         let string = self.string_from_bytes(bytes, len);
         self.branch_to(join);
         self.builder.position_at_end(join);
-        let null = self.context.ptr_type(AddressSpace::default()).const_null();
-        self.phi(null.get_type(), &[(null, ended), (string, copy)])
+        let ty = Type::optional(Type::STRING);
+        let absent = self.empty(ty);
+        let some = self.context.bool_type().const_int(1, false);
+        let line = self.optional(ty, some, string.into());
+        self.phi(absent.get_type(), &[(absent, ended), (line, copy)])
             .into_pointer_value()
     }
 

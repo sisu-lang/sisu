@@ -34,7 +34,7 @@ use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use self::enums::EnumLayout;
 use self::layout::{ClassLayout, tbaa_tag};
-use self::rc::{Helper, counted_core};
+use self::rc::Helper;
 use crate::source::{LineIndex, Span};
 use crate::tir::{
     Block, ClassId, CompareOp, Expr, ExprKind, Function, LocalId, Place, Program, Stmt, Stream,
@@ -804,7 +804,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             ExprKind::Block(block) => return self.block(block, None),
             ExprKind::Convert(_) => return Some(self.convert(e)),
             ExprKind::None | ExprKind::Wrap(_) | ExprKind::IfSome { .. } => {
-                return self.optional(e);
+                return self.optional_expr(e);
             }
             ExprKind::Return(value) => {
                 self.return_expr(value.as_deref());
@@ -836,45 +836,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// The scalar optional `ty` as its `{ i1, T }` pair: the flag `some`, and `value`.
-    fn pair(
-        &self,
-        ty: Type,
-        some: IntValue<'ctx>,
-        value: BasicValueEnum<'ctx>,
-    ) -> BasicValueEnum<'ctx> {
-        let pair = self
-            .llvm_type(ty)
-            .expect("the checker should type a scalar or enum optional, which has an LLVM type")
-            .into_struct_type();
-        let pair = self
-            .builder
-            .build_insert_value(pair.const_zero(), some, 0, "some")
-            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair");
-        let pair = self
-            .builder
-            .build_insert_value(pair, value, 1, "wrap")
-            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair");
-        pair.as_basic_value_enum()
-    }
-
-    /// `None`, `Wrap` and `IfSome`: a class optional is a pointer, a scalar one a `{ i1, T }`.
-    fn optional(&mut self, e: &Expr) -> Option<BasicValueEnum<'ctx>> {
+    /// `None`, `Wrap` and `IfSome`, through the optional accessors in `layout.rs`.
+    fn optional_expr(&mut self, e: &Expr) -> Option<BasicValueEnum<'ctx>> {
         match &e.kind {
-            // `null`, or `{ false, 0 }`.
-            ExprKind::None => Some(
-                self.llvm_type(e.ty)
-                    .expect("the checker should type `None` as an optional, which has an LLVM type")
-                    .const_zero(),
-            ),
+            ExprKind::None => Some(self.empty(e.ty)),
             ExprKind::Wrap(operand) => {
                 let value = self.expr(operand)?;
-                // A string, class or array needs no wrapping: its pointer is never `null`.
-                if counted_core(e.ty).is_some() {
-                    return Some(value);
-                }
                 let some = self.context.bool_type().const_int(1, false);
-                Some(self.pair(e.ty, some, value))
+                Some(self.optional(e.ty, some, value))
             }
             ExprKind::IfSome {
                 bind,
@@ -888,26 +857,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let value = self
                     .expr(scrutinee)
                     .expect("the checker should reject an `if let` scrutinee that is not an optional, so it has a value");
-                let (some, bound) = if counted_core(scrutinee.ty).is_some() {
-                    let some = self
-                        .builder
-                        .build_is_not_null(value.into_pointer_value(), "some")
-                        .expect(POSITIONED);
-                    (some, value)
-                } else {
-                    let part = |index, name| {
-                        self.builder
-                            .build_extract_value(value.into_struct_value(), index, name)
-                            .expect(
-                                "a scalar or enum optional should be lowered to a `{ flag, value }` pair",
-                            )
-                    };
-                    (part(0, "some").into_int_value(), part(1, "value"))
-                };
+                let some = self.has_value(scrutinee.ty, value, "some");
+                let bound = self.optional_value(scrutinee.ty, value, "value");
                 let bind = Some((*bind, bound));
                 self.if_expr(some, then_block, bind, else_block.as_ref(), e.ty)
             }
-            _ => unreachable!("`expr` should pass `optional` only optional nodes"),
+            _ => unreachable!("`expr` should pass `optional_expr` only optional nodes"),
         }
     }
 

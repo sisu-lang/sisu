@@ -220,7 +220,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         if kind == TypeKind::Optional(Type::I64) {
             let x = self.float(operand);
             let (fits, n) = self.float_to_int(x);
-            return self.pair(e.ty, fits, n.into());
+            return self.optional(e.ty, fits, n.into());
         }
         let value = self.value(operand);
         let (fits, payload) = match kind {
@@ -255,7 +255,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .builder
             .build_int_truncate(value, payload, "narrowed")
             .expect(POSITIONED);
-        self.pair(e.ty, fits, narrowed.into())
+        self.optional(e.ty, fits, narrowed.into())
     }
 
     /// Whether `x` is a whole number in `i64`'s range, and that number, with no branch.

@@ -81,7 +81,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .llvm_type(payload)
                 .expect("the checker should reject an optional of `unit` or `never`, so its payload has a value type")
             {
-                // A class optional is the object's pointer, `null` for `None`.
+                // A string, class or array optional is the block's pointer, `null` for `None`.
                 ptr @ BasicTypeEnum::PointerType(_) => Some(ptr),
                 // A scalar or enum optional is `{ i1, T }`: whether it holds a value, then the
                 // value.
@@ -91,6 +91,81 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
             },
         }
+    }
+
+    /// The `{ i1, T }` type of the optional `ty`, or `None` when `ty` is a pointer optional.
+    fn optional_pair(&self, ty: Type) -> Option<StructType<'ctx>> {
+        match self.llvm_type(ty) {
+            Some(BasicTypeEnum::StructType(pair)) => Some(pair),
+            _ => None,
+        }
+    }
+
+    /// The `None` of the optional `ty`: `null`, or `{ false, 0 }`.
+    pub(super) fn empty(&self, ty: Type) -> BasicValueEnum<'ctx> {
+        self.llvm_type(ty)
+            .expect("the checker should reject an optional of `unit` or `never`, so it has an LLVM type")
+            .const_zero()
+    }
+
+    /// Whether `value`, of the optional `ty`, holds a value: a pointer that is not `null`, or a
+    /// pair's flag.
+    pub(super) fn has_value(
+        &self,
+        ty: Type,
+        value: BasicValueEnum<'ctx>,
+        name: &str,
+    ) -> IntValue<'ctx> {
+        if self.optional_pair(ty).is_none() {
+            return self
+                .builder
+                .build_is_not_null(value.into_pointer_value(), name)
+                .expect(POSITIONED);
+        }
+        self.builder
+            .build_extract_value(value.into_struct_value(), 0, name)
+            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair")
+            .into_int_value()
+    }
+
+    /// The optional `ty` that holds `value` when `flag` is set. A pointer optional is the
+    /// pointer itself, which is never `null`, so only a constant `true` flag can build one.
+    pub(super) fn optional(
+        &self,
+        ty: Type,
+        flag: IntValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        let Some(pair) = self.optional_pair(ty) else {
+            if flag.get_zero_extended_constant() != Some(1) {
+                unreachable!("no site builds a pointer optional from a run-time flag");
+            }
+            return value;
+        };
+        let pair = self
+            .builder
+            .build_insert_value(pair.const_zero(), flag, 0, "some")
+            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair");
+        let pair = self
+            .builder
+            .build_insert_value(pair, value, 1, "wrap")
+            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair");
+        pair.as_basic_value_enum()
+    }
+
+    /// The value that `value`, of the optional `ty`, holds; meaningful only when `has_value`.
+    pub(super) fn optional_value(
+        &self,
+        ty: Type,
+        value: BasicValueEnum<'ctx>,
+        name: &str,
+    ) -> BasicValueEnum<'ctx> {
+        if self.optional_pair(ty).is_none() {
+            return value;
+        }
+        self.builder
+            .build_extract_value(value.into_struct_value(), 1, name)
+            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair")
     }
 
     /// Lays out every enum, then every class: a class's layout needs the sizes of its enum
