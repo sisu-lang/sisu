@@ -4,7 +4,7 @@
 
 use rustc_hash::FxHashMap;
 use std::fmt;
-use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use crate::tir::{ClassId, EnumId};
 
@@ -48,7 +48,8 @@ const SEEDS: [TypeKind; 8] = [
 
 struct Interner {
     ids: FxHashMap<TypeKind, Type>,
-    kinds: Vec<TypeKind>,
+    /// How many types are interned: the index of the next handle.
+    len: usize,
 }
 
 /// Every type interned in this process. A kind holds only ids and handles, never a program's
@@ -60,7 +61,7 @@ static TYPES: LazyLock<Mutex<Interner>> = LazyLock::new(|| {
             .zip(0..)
             .map(|(kind, i)| (kind, Type(i)))
             .collect(),
-        kinds: SEEDS.to_vec(),
+        len: SEEDS.len(),
     })
 });
 
@@ -68,6 +69,26 @@ fn types() -> MutexGuard<'static, Interner> {
     // `intern` changes the table only after its last fallible step, so a poisoned lock still
     // guards a consistent table.
     TYPES.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The slots in the first segment of `KINDS`; segment `s` holds `FIRST << s`.
+const FIRST: usize = 64;
+
+/// Segments for every `u32` handle: together they hold `FIRST * (2^SEGMENTS - 1)` kinds.
+const SEGMENTS: usize = 27;
+
+const _: () = assert!(FIRST * ((1 << SEGMENTS) - 1) > u32::MAX as usize);
+
+/// The kind of each interned handle past `SEEDS`, at its index. `intern` sets a slot under the
+/// lock before it hands out the handle, and segments never move, so `kind` reads without the
+/// lock: `Type::kind` is the hottest read of the checker and codegen.
+static KINDS: [OnceLock<Box<[OnceLock<TypeKind>]>>; SEGMENTS] =
+    [const { OnceLock::new() }; SEGMENTS];
+
+/// The segment of `KINDS` that holds handle index `i`, and `i`'s slot in it.
+fn slot(i: usize) -> (usize, usize) {
+    let segment = (i / FIRST + 1).ilog2() as usize;
+    (segment, i - FIRST * ((1 << segment) - 1))
 }
 
 impl Type {
@@ -85,18 +106,31 @@ impl Type {
         if let Some(&ty) = types.ids.get(&kind) {
             return ty;
         }
-        let ty = Type(
-            u32::try_from(types.kinds.len())
-                .expect("a process should intern fewer than 2^32 types"),
-        );
-        types.kinds.push(kind);
+        let ty =
+            Type(u32::try_from(types.len).expect("a process should intern fewer than 2^32 types"));
+        let (segment, at) = slot(types.len);
+        let slots =
+            KINDS[segment].get_or_init(|| (0..FIRST << segment).map(|_| OnceLock::new()).collect());
+        slots[at]
+            .set(kind)
+            .expect("only `intern` should set a slot, under the lock, at the next index");
+        types.len += 1;
         types.ids.insert(kind, ty);
         ty
     }
 
-    /// The structure; the lock is released before it returns.
+    /// The structure, read without the lock.
     pub(crate) fn kind(self) -> TypeKind {
-        types().kinds[self.0 as usize]
+        let i = self.0 as usize;
+        // A constant is read before anything is interned, so its kind is not in `KINDS`.
+        if let Some(&kind) = SEEDS.get(i) {
+            return kind;
+        }
+        let (segment, at) = slot(i);
+        *KINDS[segment]
+            .get()
+            .and_then(|slots| slots[at].get())
+            .expect("`intern` should set a handle's slot before it returns the handle")
     }
 
     /// `[element]`.
@@ -153,6 +187,17 @@ mod tests {
     }
 
     #[test]
+    fn slots_fill_each_segment_in_order() {
+        assert_eq!(slot(0), (0, 0));
+        assert_eq!(slot(FIRST - 1), (0, FIRST - 1));
+        assert_eq!(slot(FIRST), (1, 0));
+        assert_eq!(slot(3 * FIRST - 1), (1, 2 * FIRST - 1));
+        assert_eq!(slot(3 * FIRST), (2, 0));
+        let last = slot(u32::MAX as usize);
+        assert!(last.0 < SEGMENTS && last.1 < FIRST << last.0, "{last:?}");
+    }
+
+    #[test]
     fn threads_share_handles() {
         // Thread k interns the 64 structures starting at k * 8, so a per-thread table, which
         // numbers them in its own order, gives each thread different handles.
@@ -163,6 +208,11 @@ mod tests {
                 handles[n] = Some(Type::array(Type::intern(TypeKind::Class(ClassId(
                     1000 + n,
                 )))));
+            }
+            // Another thread may have interned a handle first, so this reads its kind unlocked.
+            for (n, ty) in handles.iter().enumerate() {
+                let class = Type::intern(TypeKind::Class(ClassId(1000 + n)));
+                assert_eq!(ty.map(Type::kind), Some(TypeKind::Array(class)));
             }
             handles
         };
