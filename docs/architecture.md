@@ -93,8 +93,8 @@ always matches. `check/operator.rs` checks operators (arithmetic, comparison,
 equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
 their branch types, `check/call.rs` calls, method calls and constructors, and
 `check/member.rs` fields and methods found through `.` and `?.`. The checker
-reports every error in one run: an expression that already failed gets the poison type, so one
-mistake produces one diagnostic. A program with no errors comes out as the
+reports every error in one run: an expression that already failed gets the
+poison type, so one mistake produces one diagnostic. A program with no errors comes out as the
 typed tree, `tir`, which is all that codegen reads. A type in `tir` is a
 4-byte `Type` handle into one table (`types.rs`), as a name is a `Symbol`;
 its `kind()` gives the structure, and equal structures get the same handle.
