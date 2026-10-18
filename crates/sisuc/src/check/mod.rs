@@ -138,9 +138,20 @@ enum LoopContext {
     Header(Span),
 }
 
-struct Checker<'src> {
+/// The program's text and the positions the lexer and parser found in it; never changes.
+struct Source<'src> {
     /// The text the program's spans index.
-    source: &'src str,
+    text: &'src str,
+    /// Where each comment starts.
+    comments: &'src [usize],
+    /// Where each string literal starts, in order.
+    quotes: &'src [usize],
+    /// Where each line break is, in order.
+    breaks: &'src [usize],
+}
+
+struct Checker<'src> {
+    source: Source<'src>,
     /// The first function of each name, and every broken one.
     function_ids: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// Indexed by `FuncId`, so a duplicate function has a signature of its own.
@@ -173,12 +184,6 @@ struct Checker<'src> {
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
-    /// Where each comment starts.
-    comments: Vec<usize>,
-    /// Where each string literal starts, in order.
-    quotes: Vec<usize>,
-    /// Where each line break is, in order.
-    breaks: Vec<usize>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,
@@ -188,12 +193,17 @@ struct Checker<'src> {
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error.
-pub(crate) fn check(
-    program: &ast::Program,
-    source: &str,
+pub(crate) fn check<'src>(
+    program: &'src ast::Program,
+    source: &'src str,
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let mut checker = Checker {
-        source,
+        source: Source {
+            text: source,
+            comments: &program.comments,
+            quotes: &program.quotes,
+            breaks: &program.breaks,
+        },
         function_ids: FxHashMap::default(),
         signatures: Vec::new(),
         classes: Vec::new(),
@@ -210,9 +220,6 @@ pub(crate) fn check(
         loops: Vec::new(),
         invalid_jump: false,
         in_target: false,
-        comments: program.comments.clone(),
-        quotes: program.quotes.clone(),
-        breaks: program.breaks.clone(),
         in_constant: None,
         joins: FxHashSet::default(),
     };

@@ -49,7 +49,7 @@ impl Checker<'_> {
             let (x, exact) = (value as f64, (value as f64) as i128 == i128::from(value));
             if !exact {
                 self.report(DiagnosticKind::NotExactlyF64 {
-                    text: self.source[literal.range()].to_string(),
+                    text: self.source.text[literal.range()].to_string(),
                     nearest: format!("{x:?}"),
                     at,
                 });
@@ -67,7 +67,7 @@ impl Checker<'_> {
                 DiagnosticKind::NegatedU8 { at }.into()
             } else {
                 DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source[literal.range()].to_string(),
+                    text: self.source.text[literal.range()].to_string(),
                     at,
                 }
                 .into()
@@ -1186,7 +1186,8 @@ impl Checker<'_> {
 
     /// Whether a comment starts in one of the byte ranges `deleted`.
     pub(super) fn comment_in(&self, deleted: &[Range<usize>]) -> bool {
-        self.comments
+        self.source
+            .comments
             .iter()
             .any(|c| deleted.iter().any(|d| d.contains(c)))
     }

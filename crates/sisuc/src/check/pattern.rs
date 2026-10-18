@@ -204,7 +204,7 @@ impl Checker<'_> {
     /// Reports what `report` found on the `arms` of the `match` whose keyword is at `keyword`
     /// and `}` at `close`.
     fn report_coverage(&mut self, keyword: Span, close: Span, arms: &[ast::Arm], report: Report) {
-        let source = self.source;
+        let source = self.source.text;
         let line_start = |at: usize| source[..at].rfind('\n').map_or(0, |n| n + 1);
         // Each entry is an arm's pattern or an alternative in it, in arm order.
         let mut rest = arms.iter();
@@ -627,7 +627,7 @@ impl Checker<'_> {
             }
             if value > i64::from(u8::MAX) {
                 self.report(DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source[text.range()].to_string(),
+                    text: self.source.text[text.range()].to_string(),
                     at: text,
                 });
                 return None;
@@ -723,7 +723,7 @@ impl Checker<'_> {
         let want = self.type_name(ty);
         self.report(DiagnosticKind::PatternMismatch {
             want,
-            found: self.source[at.range()].to_string(),
+            found: self.source.text[at.range()].to_string(),
             at,
         });
     }
@@ -811,7 +811,7 @@ impl Checker<'_> {
         mut candidates: impl Iterator<Item = String>,
     ) -> Option<(String, String)> {
         let arm = bound.arm?;
-        let source = self.source;
+        let source = self.source.text;
         let read = iter::once(arm.pattern.span)
             .chain(arm.guard.iter().map(|guard| guard.span))
             .chain([arm.body.span]);
@@ -948,7 +948,7 @@ impl Checker<'_> {
                 Some(GuardHelp::InWords)
             } else {
                 self.guard_help(bound, candidates).map(|(fresh, own)| {
-                    let pattern = &self.source[bound.top.range()];
+                    let pattern = &self.source.text[bound.top.range()];
                     let start = name.span.start() - bound.top.start();
                     let end = name.span.end() - bound.top.start();
                     GuardHelp::Rewritten(format!(
