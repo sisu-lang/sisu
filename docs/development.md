@@ -197,6 +197,11 @@ Set these once in the CodSpeed UI: "Informational Status Checks on Failure"
 on, PR comment mode "On Change", threshold 10%. Do not make the check
 required.
 
+CodSpeed comments on a pull request only when a change passes the threshold.
+A pull request that changes `codegen`, the runtime or ownership is merged
+only after someone has read its CodSpeed report, including changes below the
+threshold. Any regression that is kept is explained in the description.
+
 ## Fuzz the front end
 
 The fuzz target, `fuzz/fuzz_targets/front_end.rs`, feeds arbitrary bytes to
@@ -438,6 +443,8 @@ must accept any syntax those programs use.
 | `crates/sisuc/tests/run`, `run-fail`, `diagnostics` | End-to-end cases, each with the output it must print. |
 | `crates/sisuc/tests/programs` | The programs the small-stack tests run. |
 | `crates/runtime` | `sisu-runtime`, a static library with a C ABI linked into every compiled program. |
+| `bench` | The benchmark programs, and under `features/` the Sisu-only ones for CodSpeed. |
+| `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The front-end fuzz target, its own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
 | `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, and `check-expect-messages.sh`, which a prek hook runs. |
