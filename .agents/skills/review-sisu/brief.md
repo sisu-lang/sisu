@@ -47,10 +47,9 @@ languages do, not by what Sisu did before.
    No option, layer, abstraction or generality that nothing needs yet.
    Each invariant lives in the module that owns it. Names match
    `GLOSSARY.md`.
-5. **Performance.** Of `sisuc`: no clone or allocation without a reason, and on a
-   per-token, per-node or per-lookup path no repeat pass either, and a
-   clone's reason is measured or obvious. Of the
-   generated code: the IR after `-O2` does no avoidable work. A claim that
+5. **Performance.** Of `sisuc`: no clone, allocation or repeat pass
+   without a reason, anywhere. On a per-token, per-node or per-lookup
+   path, that reason is also measured or obvious. Of the generated code: the IR after `-O2` does no avoidable work. A claim that
    something is faster, or costs nothing, needs callgrind counts.
 6. **Tests.** Judge them with `test-audit`. Unit tests and end-to-end
    cases (`crates/sisuc/tests/run`, and the fixture of each diagnostic
