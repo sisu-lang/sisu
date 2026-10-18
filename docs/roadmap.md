@@ -1138,7 +1138,7 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
 - **Platforms.** Sisu builds only for x86-64 Linux. ARM64 Linux and macOS
   are under "Early tooling", untested, and Windows is a stretch goal.
   WebAssembly with WASI (`wasm32-wasip1`), run by `wasmtime`, is the cheapest
-  new target: LLVM 22 in `.llvm/22` has the backend, and reference counting
+  new target: LLVM 23 in `.llvm/23` has the backend, and reference counting
   needs nothing from the host. It needs cross-compiling (`--target`, a
   stretch goal above), a runtime built for the target without its Unix
   `SIGPIPE` handling, linking with `wasm-ld` in place of `cc`, and the test

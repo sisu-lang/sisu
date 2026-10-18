@@ -4,7 +4,7 @@ Commands every area uses. Shell variables do not survive between tool
 calls, so begin each command with the literal paths:
 
 ```console
-$ S=<repo>/target/debug/sisuc L=<repo>/.llvm/22/bin D=<RUN>/<area>/<probe>; mkdir -p $D
+$ S=<repo>/target/debug/sisuc L=<repo>/.llvm/23/bin D=<RUN>/<area>/<probe>; mkdir -p $D
 ```
 
 The commands below assume that line, with `p.sisu` written in `$D`. They
@@ -121,8 +121,8 @@ the LLVM prefix must be absolute, and `-o` keeps its output out of the
 repository:
 
 ```console
-$ LLVM_SYS_221_PREFIX=$PWD/.llvm/22 cargo mutants -f crates/sisuc/src/last_use.rs --list
-$ LLVM_SYS_221_PREFIX=$PWD/.llvm/22 cargo mutants -f crates/sisuc/src/last_use.rs -j 4 -o <RUN>/coverage/last_use
+$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/last_use.rs --list
+$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/last_use.rs -j 4 -o <RUN>/coverage/last_use
 ```
 
 Each mutant runs the whole test suite, Valgrind cases included, so a file

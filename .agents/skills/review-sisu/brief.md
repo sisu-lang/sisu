@@ -1,5 +1,5 @@
 You review a <spec | plan | diff> of Sisu, a statically typed language that
-compiles to native code through LLVM 22. Target: <path, or base..head>.
+compiles to native code through LLVM 23. Target: <path, or base..head>.
 Repository: <repository root>.
 
 You only read. Do not edit any file in the repository. Build, run and

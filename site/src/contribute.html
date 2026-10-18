@@ -57,11 +57,11 @@ How to help with Sisu, a one-person learning project at an early stage.
         <li><code>uv</code>, to build the site.</li>
         <li>For <code>make miri</code>, a nightly toolchain with Miri: <code>rustup toolchain install nightly --component miri --component rust-src</code>.</li>
       </ul>
-      <p>You do not install LLVM yourself. <code>make setup</code> downloads the official LLVM 22 release and keeps what the build needs in <code>.llvm/22</code>, about 360 MB. The build uses that copy and leaves any system LLVM alone.</p>
+      <p>You do not install LLVM yourself. <code>make setup</code> downloads the official LLVM 23 release and keeps what the build needs in <code>.llvm/23</code>, about 570 MB. The build uses that copy and leaves any system LLVM alone.</p>
       <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
 $ git clone https://github.com/sisu-lang/sisu
 $ cd sisu
-$ make setup     # once per clone: LLVM 22 into .llvm/22, the pre-commit hook
+$ make setup     # once per clone: LLVM 23 into .llvm/23, the pre-commit hook
 $ make build     # cargo build --workspace: sisuc and the runtime library
 $ target/debug/sisuc crates/sisuc/tests/run/fib.sisu fib
 $ ./fib

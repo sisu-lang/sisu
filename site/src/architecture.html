@@ -91,7 +91,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <p>For each type it emits the helpers that retain, release and compare it. It tags loads and stores with type-based alias information, so LLVM knows that writing a field or an element leaves every count and length alone. <code>codegen/matching.rs</code> compiles <code>match</code>: it tests the arms in order, and traps after the last one. The checker has proved that some arm matches, and a bug in the checker must not become undefined behaviour.</p>
 
       <h3>LLVM</h3>
-      <p class="files">LLVM 22, linked as a library</p>
+      <p class="files">LLVM 23, linked as a library</p>
       <p>A plain build runs only the <code>mem2reg</code> pass, which turns stack slots into registers. With <code>-O2</code> it runs LLVM's <code>default&lt;O2&gt;</code> pipeline. Then LLVM writes x86-64 object code for the machine <code>sisuc</code> runs on.</p>
 
       <h3>Link</h3>

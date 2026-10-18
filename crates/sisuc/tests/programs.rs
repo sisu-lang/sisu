@@ -1028,7 +1028,7 @@ fn o3_builds_a_program_that_runs() {
 /// the default linker, GNU ld, does not.
 #[test]
 fn linker_lld_links_with_lld() {
-    let bin = Path::new(env!("LLVM_SYS_221_PREFIX")).join("bin");
+    let bin = Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin");
     let path = std::env::var_os("PATH").unwrap_or_default();
     let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&path)))
         .expect("PATH joins");

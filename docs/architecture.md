@@ -187,7 +187,7 @@ allocates one block sized for the most text each part can give, plus the width
 of each padded part, then writes the parts into it, padding each part in place. With `--rc-checks`, these helpers check each count before they
 change it, and `main` calls `sisu_rc_check_exit` before it returns.
 
-**LLVM 22**. Runs the `mem2reg` pass, which turns stack slots into registers,
+**LLVM 23**. Runs the `mem2reg` pass, which turns stack slots into registers,
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it emits x86-64 object code for
 the machine `sisuc` runs on.
 

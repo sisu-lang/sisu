@@ -36,7 +36,7 @@ impl Abi {
 }
 
 /// What LLVM may assume about a call, beyond its type. `memory` is an LLVM `memory` attribute
-/// value, in LLVM 22's `MemoryEffects` encoding (`llvm/Support/ModRef.h`): two bits per
+/// value, in LLVM 23's `MemoryEffects` encoding (`llvm/Support/ModRef.h`): two bits per
 /// location, `Ref` 1 and `Mod` 2, lowest first: `ArgMem`, `InaccessibleMem`, `ErrnoMem`, then
 /// everything else (`Other` and the target locations, globals included).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

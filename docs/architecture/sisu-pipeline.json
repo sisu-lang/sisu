@@ -22,7 +22,7 @@
     { "id": "checker", "type": "backend", "label": "Checker", "sublabel": "check/", "pos": [690, 200], "size": [130, 60] },
     { "id": "codegen", "type": "backend", "label": "Codegen", "sublabel": "codegen/, inkwell", "pos": [890, 200], "size": [130, 60] },
     { "id": "diagnostics", "type": "frontend", "label": "Diagnostics", "sublabel": "text or JSON on stderr", "pos": [490, 40], "size": [130, 60] },
-    { "id": "llvm", "type": "cloud", "label": "LLVM 22", "sublabel": "passes, x86-64 code", "pos": [890, 380], "size": [130, 60] },
+    { "id": "llvm", "type": "cloud", "label": "LLVM 23", "sublabel": "passes, x86-64 code", "pos": [890, 380], "size": [130, 60] },
     { "id": "link", "type": "cloud", "label": "cc", "sublabel": "linker, run by link.rs", "pos": [650, 380], "size": [130, 60] },
     { "id": "runtime", "type": "database", "label": "sisu-runtime", "sublabel": "libsisu_runtime.a", "pos": [650, 540], "size": [130, 60] },
     { "id": "binary", "type": "external", "label": "Executable", "sublabel": "native x86-64 Linux", "pos": [410, 380], "size": [130, 60] }

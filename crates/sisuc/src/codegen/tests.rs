@@ -1359,12 +1359,15 @@ fn many_panic_sites_compile_in_linear_time() {
 /// No float instruction carries a fast-math flag, so `-O2` keeps every result exact to IEEE
 /// 754. The operands come from the arguments' count, so `-O2` cannot fold the operations away,
 /// and each comparison is printed alone: together, `s <= b || s >= b || s != b` folds to true.
+/// `a` is a quotient, NaN when the count is 0: from LLVM 23, the `instcombine` pass adds `nnan`
+/// or `ninf` where it proves no operand or result is NaN or infinite, as for the product of two
+/// counts.
 #[test]
 fn float_ops_have_no_fast_math() {
     let context = Context::create();
     let module = compiled(
         &context,
-        "fn ops(a: f64, b: f64) -> bool {\n    let s = -(a + b - a * b / a % b)\n    print(s < a)\n    print(s <= b)\n    print(s > a)\n    print(s >= b)\n    print(s == a)\n    s != b\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    print(ops(f64(n), f64(n + 1)))\n}",
+        "fn ops(a: f64, b: f64) -> bool {\n    let s = -(a + b - a * b / a % b)\n    print(s < a)\n    print(s <= b)\n    print(s > a)\n    print(s >= b)\n    print(s == a)\n    s != b\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    print(ops(f64(n) / f64(n), f64(n + 1)))\n}",
     );
     let machine = target_machine(OptLevel::O2).expect("the host is a target");
     optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
@@ -1494,11 +1497,11 @@ fn classification_is_float_compares() {
     let finite = function_body(&ir, "define internal i1 @sisu.finite(");
     assert!(finite.contains("@llvm.fabs.f64"), "{finite}");
     assert!(finite.contains("fcmp olt double"), "{finite}"); // spellchecker:disable-line
-    assert!(finite.contains("0x7FF0000000000000"), "{finite}");
+    assert!(finite.contains("+inf"), "{finite}");
     let infinite = function_body(&ir, "define internal i1 @sisu.infinite(");
     assert!(infinite.contains("@llvm.fabs.f64"), "{infinite}");
     assert!(infinite.contains("fcmp oeq double"), "{infinite}");
-    assert!(infinite.contains("0x7FF0000000000000"), "{infinite}");
+    assert!(infinite.contains("+inf"), "{infinite}");
 }
 
 /// `i64` `min`, `max` and `clamp` are `select`s over signed compares, with no call.

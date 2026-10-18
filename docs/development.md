@@ -27,9 +27,9 @@ running the same checks as CI. Sisu builds and runs on x86-64 Linux.
   `rustup toolchain install nightly --component miri --component rust-src`.
 - [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
 
-LLVM 22 lives inside the repository. `scripts/install-llvm.sh` downloads the
-official release (1.9 GB) and keeps only what the build needs in `.llvm/22`
-(about 360 MB). `.cargo/config.toml` points the build at it, and any system
+LLVM 23 lives inside the repository. `scripts/install-llvm.sh` downloads the
+official release (2.0 GB) and keeps only what the build needs in `.llvm/23`
+(about 570 MB). `.cargo/config.toml` points the build at it, and any system
 LLVM is left alone. [Upgrading LLVM](llvm.md) covers moving to a new major.
 
 ## Set up a clone
@@ -37,7 +37,7 @@ LLVM is left alone. [Upgrading LLVM](llvm.md) covers moving to a new major.
 Run this once per clone:
 
 ```console
-$ make setup   # LLVM 22 into .llvm/22, the pre-commit hook, cargo-mutants, cargo-llvm-cov, cargo-fuzz
+$ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-mutants, cargo-llvm-cov, cargo-fuzz
 ```
 
 ## Build and test
@@ -423,7 +423,7 @@ default linker; `bfd`, `gold` and `mold` work the same way. `sisuc` passes the
 name to `cc -fuse-ld=` and stops with an error when `ld.<name>` is not on
 `PATH`. `--linker` comes after `-O2`, `-O3` and `--rc-checks`, and works only
 when building an executable. `scripts/install-llvm.sh` puts `ld.lld` in
-`.llvm/22/bin`; the tests put that directory on `PATH` for the `--linker lld`
+`.llvm/23/bin`; the tests put that directory on `PATH` for the `--linker lld`
 test.
 
 `sisuc --rc-checks file.sisu out` builds an executable that checks its

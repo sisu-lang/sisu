@@ -30,4 +30,4 @@ git diff "$base" >"$diff"
 # .cargo/mutants.toml leaves .llvm/ out of the copied tree, so point the
 # build at the original.
 TMPDIR=$run CARGO_MUTANTS_JOBS=${CARGO_MUTANTS_JOBS:-4} \
-  LLVM_SYS_221_PREFIX="$PWD/.llvm/22" cargo mutants --in-diff "$diff" "$@"
+  LLVM_SYS_231_PREFIX="$PWD/.llvm/23" cargo mutants --in-diff "$diff" "$@"

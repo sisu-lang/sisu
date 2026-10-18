@@ -98,7 +98,7 @@ done
 
 echo
 echo "Toolchains:"
-echo "- sisuc -O2 (LLVM 22)"
+echo "- sisuc -O2 (LLVM 23)"
 have clang && echo "- $(clang --version | head -1), -O2"
 have rustc && echo "- $(rustc --version), -C opt-level=3"
 have go && echo "- $(go version)"
