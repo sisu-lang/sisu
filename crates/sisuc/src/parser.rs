@@ -2700,6 +2700,17 @@ mod tests {
         }
     }
 
+    /// Digits after a field access's `.` are not a name, however many there are.
+    #[test]
+    fn digits_after_a_field_dot_are_not_a_name() {
+        for src in [
+            "fn main() {\n    x.5\n}",
+            "fn main() {\n    x.99999999999999999999\n}",
+        ] {
+            assert_eq!(parse_err(src), (Code::Expected, 2, 7), "{src}");
+        }
+    }
+
     /// Anything else after a leading `.` is an expression that is missing.
     #[test]
     fn leading_dot_without_a_decimal_integer_is_not_a_float() {

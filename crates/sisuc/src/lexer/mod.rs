@@ -1628,6 +1628,22 @@ mod tests {
         assert_eq!(kinds("0 x"), [int(0), ident("x"), TokenKind::Eof]);
     }
 
+    /// Digits right after a `.` or `?.` are a float's fraction or a field name, never an
+    /// integer's value, so a run of them too large for one is the parser's to report.
+    #[test]
+    fn digits_after_a_dot_are_never_too_large() {
+        for src in [
+            ".9223372036854775809",
+            "t.99999999999999999999999",
+            "a?.9223372036854775809",
+        ] {
+            assert!(
+                matches!(kinds(src)[..], [.., TokenKind::Int(_), TokenKind::Eof]),
+                "{src}"
+            );
+        }
+    }
+
     #[test]
     fn literal_too_large() {
         assert_eq!(err("9223372036854775809"), (Code::IntegerTooLarge, 1, 1));

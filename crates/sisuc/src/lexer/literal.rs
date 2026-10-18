@@ -98,8 +98,15 @@ fn number(
     let digits = &source[digits_at..end];
     let value = u64::from_str_radix(&digits.replace('_', ""), radix)
         .ok()
-        .filter(|&n| n <= MIN_MAGNITUDE)
-        .ok_or_else(|| literal_too_large(whole))?;
+        .filter(|&n| n <= MIN_MAGNITUDE);
+    // Digits right after a `.` are a float's fraction or a field name, never an integer's value,
+    // and the parser reports both, so a run too large for one is no error here.
+    // shortcut: the token holds 0, so element access (`t.0`) must report a too-large index itself.
+    let value = match value {
+        Some(n) => n,
+        None if after_dot => return Ok(TokenKind::Int(0)),
+        None => return Err(literal_too_large(whole)),
+    };
     // Reported last, so that its fix leaves a literal that lexes. A bare 2^63 still fails to
     // parse; only a `-` before it makes it valid, which the lexer cannot see.
     if let Some((_, p)) = prefix.filter(|(_, p)| p.is_ascii_uppercase()) {
