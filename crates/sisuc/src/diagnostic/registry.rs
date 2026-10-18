@@ -444,8 +444,9 @@ pub(crate) enum DiagnosticKind {
         at: Span,
     },
     /// A conversion to `ty` of the value at `at`, which already has that type. `value` is its
-    /// path as written, when it has one, and `conversion` is the whole call. `grouped` is set
-    /// when the value is more than one term, so removing the conversion keeps its parentheses.
+    /// path as written, when it has one, `conversion` is the whole call, with any parentheses
+    /// around it, and `name` the type's name that starts the call. `grouped` is set when the
+    /// value is more than one term, so removing the conversion keeps its parentheses.
     /// `labeled` is set when the argument has a label, which the removal would delete along with
     /// its own error, so there is no fix. `commented` is set when the removal would delete a
     /// comment, which makes it unsafe.
@@ -454,6 +455,7 @@ pub(crate) enum DiagnosticKind {
         ty: String,
         at: Span,
         conversion: Span,
+        name: Span,
         grouped: bool,
         labeled: bool,
         commented: bool,
@@ -1849,6 +1851,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 ty,
                 at,
                 conversion,
+                name,
                 grouped,
                 labeled,
                 commented,
@@ -1857,12 +1860,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     span,
                     replacement: replacement.to_string(),
                 };
-                // The head, `T(` and what sits before the value, then the `)` after it.
-                let head = Span::new(conversion.start(), at.start());
+                // A grouped value keeps the `)` after it, so only `T(` and what sits before the
+                // value becomes its `(`: parentheses around the call stay paired. Otherwise the
+                // head and the tail go, with those parentheses, in pairs.
                 let edits = if grouped {
-                    vec![edit(head, "(")]
+                    vec![edit(Span::new(name.start(), at.start()), "(")]
                 } else {
-                    vec![edit(head, ""), edit(Span::new(at.end(), conversion.end()), "")]
+                    vec![
+                        edit(Span::new(conversion.start(), at.start()), ""),
+                        edit(Span::new(at.end(), conversion.end()), ""),
+                    ]
                 };
                 let d = Diagnostic::coded(code, at, format!("{} is already `{ty}`", named(value)));
                 if labeled {

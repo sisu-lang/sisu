@@ -230,6 +230,9 @@ fn already_converted_groups_what_is_not_one_term() {
         ("print(i64((n + 1)))", "print((n + 1))"),
         ("print(i64((n) + (1)) * 2)", "print(((n) + (1)) * 2)"),
         ("print(i64(-n))", "print((-n))"),
+        // The parentheses around the conversion are in its span, and stay.
+        ("print((i64(n)))", "print(n)"),
+        ("print((i64(n + 1)))", "print(((n + 1)))"),
         ("print(i64(-(n)))", "print((-(n)))"),
         (
             "print(i64(if x { n } else { 1 }))",
@@ -275,6 +278,8 @@ fn already_converted_keeps_comments_it_does_not_delete() {
         "// before\n    print(i64(n))",
         // The grouped tail stays, with its comment.
         "print(i64(n + 1 // t\n    ) * 2)",
+        // So do the parentheses around a grouped conversion.
+        "print((\n        // c\n        i64(n + 1)))",
     ] {
         let src = scalars(body);
         let d = &diags(&src)[0];

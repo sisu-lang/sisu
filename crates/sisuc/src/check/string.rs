@@ -276,7 +276,13 @@ impl Checker<'_> {
     /// expects no type, so a literal one is an `i64`; `string([])` is the empty string. `u8(x)`,
     /// `char(x)` and `i64(x)` from an `f64` can fail, so they give an optional, and in a constant
     /// they are an error, typed as `to`.
-    pub(super) fn convert(&mut self, span: Span, to: Type, args: &[ast::Arg]) -> Checked {
+    pub(super) fn convert(
+        &mut self,
+        span: Span,
+        name: Span,
+        to: Type,
+        args: &[ast::Arg],
+    ) -> Checked {
         let labeled = self.labels(args);
         let [arg] = args else {
             self.report(DiagnosticKind::ArgumentCount {
@@ -303,16 +309,23 @@ impl Checker<'_> {
         let d = match type_of(&checked) {
             Some(ty) if ty == to => {
                 let grouped = !single_term(&arg.value);
-                // The removal deletes the head, and the tail unless the value stays grouped.
+                // The removal deletes the head, from the name when the value stays grouped, and
+                // the tail unless it does.
+                let deleted = if grouped {
+                    name.start()..head.end
+                } else {
+                    head.clone()
+                };
                 let commented = self
                     .comments
                     .iter()
-                    .any(|c| head.contains(c) || (!grouped && tail.contains(c)));
+                    .any(|c| deleted.contains(c) || (!grouped && tail.contains(c)));
                 DiagnosticKind::AlreadyConverted {
                     value: path(&arg.value).or_else(|| literal(&arg.value)),
                     ty: self.type_name(to),
                     at: arg.value.span,
                     conversion: span,
+                    name,
                     grouped,
                     labeled,
                     commented,
