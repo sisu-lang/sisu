@@ -13,3 +13,5 @@
 __pycache__/
 # Written by scripts/codspeed-prep.sh: the merged CodSpeed config for pushes to main.
 /.codspeed-main-merged.yml
+# The built site, from make site.
+/site/_site/

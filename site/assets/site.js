@@ -1,4 +1,4 @@
-// Shared behaviour: theme toggle, current nav link, code highlighting, status board.
+// Shared behaviour: theme toggle, code highlighting, status board.
 (() => {
   const root = document.documentElement;
 
@@ -14,12 +14,6 @@
       label();
     });
   }
-
-  // Current page in the header nav.
-  const page = location.pathname.split('/').pop() || 'index.html';
-  document.querySelectorAll('header.site nav a').forEach(a => {
-    if (a.getAttribute('href') === page) a.setAttribute('aria-current', 'page');
-  });
 
   // Highlighting. Write code as plain escaped text in <pre data-lang="sisu|sh|out">.
   const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

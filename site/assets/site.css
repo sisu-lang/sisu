@@ -47,10 +47,6 @@ code { font-family: "JetBrains Mono", monospace; font-size: .86em; background: v
 a { color: var(--accent-ink); }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
-/* mock chrome, not part of the design */
-.mock { background: #1a1a1a; color: #ddd; font: 500 13px/1.3 system-ui, sans-serif; padding: 7px 16px; }
-.mock b { color: #fff; font-weight: 600; }
-
 .w { max-width: 1160px; margin: 0 auto; padding: 0 32px; }
 
 /* header */

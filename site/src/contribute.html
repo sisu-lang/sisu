@@ -1,4 +1,5 @@
 Contribute
+
 <main class="contribute">
   <section class="ph"><div class="w">
     <h1>Contribute to Sisu</h1>
@@ -63,8 +64,7 @@ $ make setup     # once per clone: LLVM 22 into .llvm/22, the pre-commit hook
 $ make build     # cargo build --workspace: sisuc and the runtime library
 $ target/debug/sisuc crates/sisuc/tests/run/fib.sisu fib
 $ ./fib
-832040
-</pre></figure>
+{{text ../crates/sisuc/tests/run/fib.out}}</pre></figure>
       <p>Build the whole workspace, not only <code>sisuc</code>. Every program links with the runtime library, which <code>sisuc</code> looks for next to its own executable; <code>cargo build -p sisuc</code> does not build it. <code>make help</code> lists every target.</p>
       <p><a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md">Developing Sisu</a> has the full list of prerequisites and commands.</p>
       <!-- source: docs/development.md ("Prerequisites", "Set up a clone", "Compile and run a program"), rust-toolchain.toml (channel 1.99.0), Makefile (setup, build), README.md (x86-64 Linux only); fib output checked with target/release/sisuc at f372ddd -->

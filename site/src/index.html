@@ -1,4 +1,5 @@
 Sisu
+
 <main>
   <div class="w">
     <section class="hero">
@@ -9,32 +10,7 @@ Sisu
         <div class="acts"><a class="btn go" href="tour.html">Take the tour</a><a class="btn alt" href="status.html">See what works</a></div>
       </div>
       <figure class="code"><figcaption class="cap">orders.sisu</figcaption><pre data-lang="sisu">
-enum Status {
-    Paid
-    Pending
-    Refunded(reason: string)
-}
-
-class Order {
-    item: string
-    price: f64
-    status: Status
-}
-
-fn main() {
-    let orders = [
-        Order(item: "sauna stones", price: 39.0, status: Status.Paid),
-        Order(item: "birch whisk", price: 12.5,
-              status: Status.Refunded(reason: "too stiff")),
-        Order(item: "wool socks", price: 18.0, status: Status.Paid),
-    ]
-    let total = orders
-        .filter(o => o.status == Status.Paid)
-        .sum_of(o => o.price)
-    print("Paid: {total:.2} €")
-}
-// Paid: 57.00 €
-</pre></figure>
+{{text programs/pending/orders.sisu}}</pre></figure>
     </section>
   </div>
 
@@ -111,12 +87,11 @@ $ make setup     # once per clone: LLVM 22 into .llvm/22
 $ make build
 $ target/debug/sisuc crates/sisuc/tests/run/fib.sisu fib
 $ ./fib
-832040
-</pre></figure>
+{{text ../crates/sisuc/tests/run/fib.out}}</pre></figure>
   </div></section>
 
   <section class="s" aria-labelledby="h-open"><div class="w cta">
-    <div style="max-width:60ch"><h2 id="h-open">Built in the open</h2><p style="margin:0">One person builds Sisu, in public, one reviewed pull request at a time. Every design choice is written down with its reasons.</p></div>
+    <div style="max-width:60ch"><h2 id="h-open">Built in the open</h2><p style="margin:0">One person builds Sisu, in public, one reviewed pull request at a time. Every design choice is written down with its reasons.</p><p class="after">The text on this page was checked against the repository at commit d55fe2d.</p></div>
     <div class="acts"><a class="btn go" href="contribute.html">How to contribute</a><a class="btn alt" href="decisions.html">Design decisions</a></div>
   </div></section>
 </main>

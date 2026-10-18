@@ -1,4 +1,5 @@
 Architecture
+
 <main class="arch">
   <style>
     main.arch .prose .files { margin: -4px 0 10px; font-size: 14.5px; color: var(--mute); }
@@ -120,17 +121,9 @@ Architecture
         <li><strong>Panics.</strong> A panic prints the file, line and column where it happened to standard error, and exits with code 101. A failed read or write has no location to print.</li>
       </ul>
       <figure class="code"><figcaption class="cap">div_zero.sisu</figcaption><pre data-lang="sisu">
-fn div(a: i64, b: i64) -> i64 {
-    a / b
-}
-
-fn main() {
-    print(div(7, 0))
-}
-</pre></figure>
+{{text ../crates/sisuc/tests/run-fail/div_zero.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
-sisu: panic at div_zero.sisu:2:5: division by zero
-</pre></figure>
+{{text ../crates/sisuc/tests/run-fail/div_zero.out}}{{text ../crates/sisuc/tests/run-fail/div_zero.err}}</pre></figure>
       <p>The runtime also counts the blocks that are allocated and not yet freed. A program built with <code>--rc-checks</code> checks each count before it changes, and fails at exit, with code 102, if any block is still allocated.</p>
       <!-- source: docs/adr/0009-runtime-owns-io.md, docs/architecture.md (Runtime), GLOSSARY.md (Panic, RC check), crates/sisuc/tests/run-fail/div_zero.sisu; output from target/release/sisuc, exit code 101 observed -->
 
