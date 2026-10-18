@@ -47,12 +47,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
             .into_int_value();
         let string = self.string_from_bytes(bytes, len);
-        self.branch_to(join);
-        self.builder.position_at_end(join);
         let ty = Type::optional(Type::STRING);
-        let absent = self.empty(ty);
         let some = self.context.bool_type().const_int(1, false);
         let line = self.optional(ty, some, string.into());
+        self.branch_to(join);
+        self.builder.position_at_end(join);
+        let absent = self.empty(ty);
         self.phi(absent.get_type(), &[(absent, ended), (line, copy)])
             .into_pointer_value()
     }

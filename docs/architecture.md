@@ -123,8 +123,11 @@ of names, types and attributes. A unit test reads the runtime's source and
 fails when an export has no row, or a row's types differ from its signature.
 
 `codegen/layout.rs` holds how a value sits in memory: the LLVM type of each
-Sisu type, the layouts of an object, an array block and a string block, and the
-TBAA tags with the tagged loads and stores that use them.
+Sisu type, the layouts of an object, an array block and a string block, the
+count word (`load_count`, `store_count`, `init_count`), the optional accessors
+(`empty`, `has_value`, `optional`, `optional_value`), the size of every heap
+block (`heap_size`), and the TBAA tags with the tagged loads and stores that
+use them.
 
 Objects live on the heap, with a reference count in front of their fields
 ([ADR 0005](adr/0005-reference-counting.md)). Codegen lays the fields out

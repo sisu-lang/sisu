@@ -1,6 +1,7 @@
 //! How a Sisu value sits in memory: the LLVM type of each Sisu type, the layouts of classes,
-//! array blocks and string blocks, the size of every heap block, and the TBAA tags that
-//! describe them.
+//! array blocks and string blocks, the count word (`load_count`, `store_count`, `init_count`),
+//! the optional accessors (`empty`, `has_value`, `optional`, `optional_value`), the size of
+//! every heap block (`heap_size`), and the TBAA tags that describe them.
 
 use std::cmp::Reverse;
 
@@ -54,10 +55,15 @@ pub(super) struct StringLayout<'ctx> {
     /// `{ i64 count, i64 len, i64 cap, [0 x i8] bytes }`: the bytes start where the header ends.
     header: StructType<'ctx>,
     /// The header's ABI size.
-    pub(super) size: u64,
+    size: u64,
     /// The header's ABI alignment, which is the block's.
     pub(super) align: u32,
 }
+
+/// The string header's fields, by index.
+pub(super) const LEN: u32 = 1;
+pub(super) const CAP: u32 = 2;
+pub(super) const BYTES: u32 = 3;
 
 /// A heap block, named by what its size depends on. `heap_size` gives its size and alignment.
 pub(super) enum HeapBlock<'a, 'ctx> {
@@ -73,11 +79,6 @@ pub(super) enum HeapBlock<'a, 'ctx> {
     /// A box of the enum.
     Box(EnumId),
 }
-
-/// The header's fields, by index.
-pub(super) const LEN: u32 = 1;
-pub(super) const CAP: u32 = 2;
-pub(super) const BYTES: u32 = 3;
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// The LLVM type of a value of `ty`; `None` for `unit` and `never`, which have no value.
@@ -111,6 +112,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The `{ i1, T }` type of the optional `ty`, or `None` when `ty` is a pointer optional.
+    /// It classifies by LLVM shape, which a niche enum optional (its own named struct) would
+    /// break; milestone 8 part 3 replaces it, and the readers' `ty` parameter is for that.
     fn optional_pair(&self, ty: Type) -> Option<StructType<'ctx>> {
         match self.llvm_type(ty) {
             Some(BasicTypeEnum::StructType(pair)) => Some(pair),
@@ -126,18 +129,15 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Whether `value`, of the optional `ty`, holds a value: a pointer that is not `null`, or a
-    /// pair's flag.
+    /// pair's flag. It reads the representation off `value`, so it builds no LLVM type.
     pub(super) fn has_value(
         &self,
-        ty: Type,
+        _ty: Type,
         value: BasicValueEnum<'ctx>,
         name: &str,
     ) -> IntValue<'ctx> {
-        if self.optional_pair(ty).is_none() {
-            return self
-                .builder
-                .build_is_not_null(value.into_pointer_value(), name)
-                .expect(POSITIONED);
+        if let BasicValueEnum::PointerValue(ptr) = value {
+            return self.builder.build_is_not_null(ptr, name).expect(POSITIONED);
         }
         self.builder
             .build_extract_value(value.into_struct_value(), 0, name)
@@ -171,17 +171,18 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The value that `value`, of the optional `ty`, holds; meaningful only when `has_value`.
+    /// Like `has_value`, it reads the representation off `value`.
     pub(super) fn optional_value(
         &self,
-        ty: Type,
+        _ty: Type,
         value: BasicValueEnum<'ctx>,
         name: &str,
     ) -> BasicValueEnum<'ctx> {
-        if self.optional_pair(ty).is_none() {
+        let BasicValueEnum::StructValue(pair) = value else {
             return value;
-        }
+        };
         self.builder
-            .build_extract_value(value.into_struct_value(), 1, name)
+            .build_extract_value(pair, 1, name)
             .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair")
     }
 
@@ -304,7 +305,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.store(object, self.context.i64_type().const_int(1, false).into());
     }
 
-    /// The header: the count, then the length.
+    /// The array header: the count, then the length.
     fn header(&self) -> StructType<'ctx> {
         let i64_type = self.context.i64_type().into();
         self.context.struct_type(&[i64_type, i64_type], false)
@@ -329,7 +330,8 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The size and alignment of `block`, as the `i64`s that `sisu_alloc`, `sisu_realloc` and
     /// `sisu_free` take. Every one of those calls takes them from here, so a block is freed
-    /// with the layout it was allocated with.
+    /// with the layout it was allocated with; only `[v; n]`'s alloc takes its size from
+    /// `checked_array_size`, the same formula with checks.
     pub(super) fn heap_size(
         &self,
         block: &HeapBlock<'_, 'ctx>,

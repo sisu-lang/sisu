@@ -102,7 +102,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
-        // Tagged, unlike the other blocks' inits, so -O2 knows it cannot alias an element.
+        // Tagged like every array count and length (see `header_tag`).
         self.store_count(array, self.context.i64_type().const_int(1, false));
         self.store_tagged(self.len_ptr(array), len.into(), self.header_tag);
         array
