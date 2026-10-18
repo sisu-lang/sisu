@@ -38,6 +38,11 @@ the target does not say: a task's done condition, a risk, a question to
 answer, earlier rulings. Write "none" when there is nothing. Do not
 summarize the target; the reviewer reads it.
 
+For a diff, including one task's diff in a plan run, write the Focus to
+`RUN/focus.md` and let the script fill the rest:
+`python3 .agents/skills/review-sisu/scripts/diff_brief.py <repository root> <base>..<head> RUN/brief.md --doc <spec or plan> --focus RUN/focus.md`.
+Repeat `--doc` for each document; leave it out when there is none.
+
 ### 3. Launch the reviewers
 
 | Review | Reviewers |

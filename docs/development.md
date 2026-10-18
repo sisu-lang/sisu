@@ -158,7 +158,8 @@ coverage. Agents run it before the mutants. Commit new files, or
 `make verify [BASE=<base>]` runs coverage, then mutants, and always ends with
 one line: `verify: PASS`, or `verify: FAIL` and why. PASS needs no uncovered
 region touching the changes and no surviving mutant. A region you explain
-rather than cover still fails it, so read the reasons, not only the word.
+rather than cover still fails it, so read the reasons, not only the word. A
+diff that changes no `.rs` file passes at once, with nothing run.
 
 Programs that the tests compile link an uninstrumented runtime, built in
 `target/llvm-cov-runtime` and copied next to the instrumented `sisuc`. Runtime
