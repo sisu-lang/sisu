@@ -190,7 +190,7 @@ impl Checker<'_> {
         let checked = self.value(base, None);
         let element = self.element(base, type_of(&checked));
         // The index is not part of an assignment target's chain; `expr` restores the flag.
-        self.in_target = false;
+        self.body.in_target = false;
         let (index, mismatched) = self.operand(index, Some(Type::I64));
         match (checked, index, element) {
             (Ok(base), Ok(index), Some(element)) => {

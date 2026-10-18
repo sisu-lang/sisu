@@ -31,6 +31,20 @@ fn chain_binds_each_operand() {
     );
 }
 
+/// A `+` that an `i64` context wants and that has a `string` operand reports the nested `f64`
+/// sum against `i64`, at the sum's own operands, not the `string` at the sum.
+#[test]
+fn plus_wanting_i64_blames_the_nested_float() {
+    codes(
+        "fn main() {\n    let n: i64 = (1.0 + 2.0) + \"a\"\n    print(n)\n}",
+        &[(Code::Mismatch, (2, 19))],
+    );
+    codes(
+        "fn main() {\n    let n: i64 = if true { 2.5 } else { 1 } + \"x\"\n    print(n)\n}",
+        &[(Code::Mismatch, (2, 28))],
+    );
+}
+
 /// Asserts that `src`, whose `f` takes `c: bool, a: string`, binds `a` to one temporary and
 /// then the `if` over `c` to another, and applies `op` to the two in that order.
 fn spills(src: &str, op: &str) {

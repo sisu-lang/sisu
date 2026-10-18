@@ -141,7 +141,7 @@ impl Checker<'_> {
                 .map(|init| {
                     // Nothing can reassign an immutable local, so it is read twice.
                     if let ExprKind::Local(l) = init.kind
-                        && !self.locals[l.0].mutable
+                        && !self.body.locals[l.0].mutable
                     {
                         return (l, init.ty, init.span);
                     }
@@ -236,7 +236,8 @@ impl Checker<'_> {
                         self.diagnostics.push(d);
                         // The name may have meant any open binding; none of them warns as
                         // unassigned.
-                        for b in self.scopes.iter_mut().flat_map(|scope| scope.values_mut()) {
+                        let scopes = &mut self.body.scopes;
+                        for b in scopes.iter_mut().flat_map(|scope| scope.values_mut()) {
                             b.reassigned = true;
                         }
                     }
@@ -275,9 +276,9 @@ impl Checker<'_> {
             }
             ast::ExprKind::Field { base, name, .. } => {
                 // A `?.` anywhere in the target's chain would not parse.
-                let outer = std::mem::replace(&mut self.in_target, true);
+                let outer = std::mem::replace(&mut self.body.in_target, true);
                 let checked = self.value(base, None);
-                self.in_target = outer;
+                self.body.in_target = outer;
                 let Some((class, index)) = self.find_field(type_of(&checked), base, name, true)
                 else {
                     return CheckedPlace::failed();
@@ -360,7 +361,7 @@ impl Checker<'_> {
     /// The value `place` holds, read at `span`.
     fn read(&self, place: tir::Place, span: Span) -> tir::Expr {
         let (kind, ty) = match place {
-            tir::Place::Local(id) => (ExprKind::Local(id), self.locals[id.0].ty),
+            tir::Place::Local(id) => (ExprKind::Local(id), self.body.locals[id.0].ty),
             tir::Place::Field { base, index } => {
                 let TypeKind::Class(class) = base.ty.kind() else {
                     panic!(

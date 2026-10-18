@@ -2,8 +2,8 @@ You review a <spec | plan | diff> of Sisu, a statically typed language that
 compiles to native code through LLVM 22. Target: <path, or base..head>.
 Repository: <repository root>.
 
-You only read. Do not edit any file in the repository. You may build, run
-and probe in a scratch directory of your own.
+You only read. Do not edit any file in the repository. Build, run and
+probe only inside the scratch directory your launch names.
 
 # Read first
 
@@ -47,9 +47,9 @@ languages do, not by what Sisu did before.
    No option, layer, abstraction or generality that nothing needs yet.
    Each invariant lives in the module that owns it. Names match
    `GLOSSARY.md`.
-5. **Performance.** Of `sisuc`: no clone, allocation or repeat pass on a
-   per-token, per-node or per-lookup path without a reason. Of the
-   generated code: the IR after `-O2` does no avoidable work. A claim that
+5. **Performance.** Of `sisuc`: no clone, allocation or repeat pass
+   without a reason, anywhere. On a per-token, per-node or per-lookup
+   path, that reason is also measured or obvious. Of the generated code: the IR after `-O2` does no avoidable work. A claim that
    something is faster, or costs nothing, needs callgrind counts.
 6. **Tests.** Judge them with `test-audit`. Unit tests and end-to-end
    cases (`crates/sisuc/tests/run`, and the fixture of each diagnostic

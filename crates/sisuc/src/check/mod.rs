@@ -2,11 +2,15 @@
 //! checks, and records every error instead of stopping at the first.
 
 mod array;
+mod branch;
+mod call;
 mod constant;
 mod enums;
 mod exhaust;
 mod expr;
+mod member;
 mod number;
+mod operator;
 mod pattern;
 mod place;
 mod prelude;
@@ -138,9 +142,21 @@ enum LoopContext {
     Header(Span),
 }
 
-struct Checker<'src> {
+/// The program's text and the positions the lexer and parser found in it; never changes.
+struct Source<'src> {
     /// The text the program's spans index.
-    source: &'src str,
+    text: &'src str,
+    /// Where each comment starts.
+    comments: &'src [usize],
+    /// Where each string literal starts, in order.
+    quotes: &'src [usize],
+    /// Where each line break is, in order.
+    breaks: &'src [usize],
+}
+
+struct Checker<'src> {
+    /// The program's text and the positions found in it.
+    source: Source<'src>,
     /// The first function of each name, and every broken one.
     function_ids: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// Indexed by `FuncId`, so a duplicate function has a signature of its own.
@@ -159,7 +175,13 @@ struct Checker<'src> {
     /// The first constant of each name, and every broken one.
     constants: FxHashMap<Symbol, Declared<ConstInfo>>,
     diagnostics: Vec<Diagnostic>,
-    // The rest is per body.
+    /// The body being checked.
+    body: Body,
+}
+
+/// What checking one body needs: a function's, a method's, or a constant's initialiser.
+#[derive(Default)]
+struct Body {
     scopes: Vec<FxHashMap<Symbol, Binding>>,
     locals: Vec<tir::Local>,
     /// `None` is `Error`.
@@ -173,12 +195,6 @@ struct Checker<'src> {
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
-    /// Where each comment starts.
-    comments: Vec<usize>,
-    /// Where each string literal starts, in order.
-    quotes: Vec<usize>,
-    /// Where each line break is, in order.
-    breaks: Vec<usize>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,
@@ -188,34 +204,11 @@ struct Checker<'src> {
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error.
-pub(crate) fn check(
-    program: &ast::Program,
-    source: &str,
+pub(crate) fn check<'src>(
+    program: &'src ast::Program,
+    source: &'src str,
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let mut checker = Checker {
-        source,
-        function_ids: FxHashMap::default(),
-        signatures: Vec::new(),
-        classes: Vec::new(),
-        class_ids: FxHashMap::default(),
-        enums: Vec::new(),
-        enum_ids: FxHashMap::default(),
-        lowered_enums: Vec::new(),
-        constants: FxHashMap::default(),
-        diagnostics: Vec::new(),
-        scopes: Vec::new(),
-        locals: Vec::new(),
-        ret: None,
-        self_type: None,
-        loops: Vec::new(),
-        invalid_jump: false,
-        in_target: false,
-        comments: program.comments.clone(),
-        quotes: program.quotes.clone(),
-        breaks: program.breaks.clone(),
-        in_constant: None,
-        joins: FxHashSet::default(),
-    };
+    let mut checker = Checker::new(program, source);
     checker.collect_names(program);
     let declared = checker.collect_signatures(program);
     checker.fold_constants(program);
@@ -289,6 +282,38 @@ fn block_type(checked: &CheckedBlock) -> Option<Type> {
     match checked {
         Ok(b) => Some(b.ty),
         Err(p) => p.ty,
+    }
+}
+
+impl<'src> Checker<'src> {
+    /// The one way to build a checker; `check` and the tests call it.
+    fn new(program: &'src ast::Program, source: &'src str) -> Checker<'src> {
+        Checker {
+            source: Source {
+                text: source,
+                comments: &program.comments,
+                quotes: &program.quotes,
+                breaks: &program.breaks,
+            },
+            function_ids: FxHashMap::default(),
+            signatures: Vec::new(),
+            classes: Vec::new(),
+            class_ids: FxHashMap::default(),
+            enums: Vec::new(),
+            enum_ids: FxHashMap::default(),
+            lowered_enums: Vec::new(),
+            constants: FxHashMap::default(),
+            diagnostics: Vec::new(),
+            body: Body::default(),
+        }
+    }
+
+    /// Checks with `body` as the current body, then restores the one before it, and returns
+    /// `f`'s result with the finished body (its `locals` become the function's).
+    fn with_body<R>(&mut self, body: Body, f: impl FnOnce(&mut Self) -> R) -> (R, Body) {
+        let outer = std::mem::replace(&mut self.body, body);
+        let result = f(self);
+        (result, std::mem::replace(&mut self.body, outer))
     }
 }
 
@@ -663,45 +688,51 @@ impl Checker<'_> {
     ) -> Option<tir::Function> {
         let sig = &self.signatures[id.0];
         let (name, param_types, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        self.ret.clone_from(&ret);
-        self.self_type.clone_from(&owner);
-        self.scopes.push(FxHashMap::default());
-        // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.
-        let receiver = owner.map(|ty| {
-            self.locals.push(tir::Local {
-                name: Some("self".into()),
-                ty,
-                mutable: false,
-            });
-            tir::LocalId(0)
-        });
-        let params = receiver
-            .into_iter()
-            .chain(
-                f.params
-                    .iter()
-                    .zip(param_types)
-                    .map(|(p, ty)| self.declare(&p.name, ty, BindingKind::Param, None)),
-            )
-            .collect();
-        // A `unit` function discards its body's value, so it expects none.
-        let expected = match ret {
-            None => Some(UNKNOWN),
-            Some(Type::UNIT) => None,
-            Some(ret) => Some(ret),
+        let fresh = Body {
+            ret,
+            self_type: owner,
+            ..Body::default()
         };
-        let mut body = self.block(&f.body, expected);
-        if let (Some(Type::UNIT), Ok(checked)) = (ret, &body) {
-            self.discard_tail(&f.body, checked);
-        }
-        if let Some(want) = ret
-            && let TypeKind::Optional(payload) = want.kind()
-            && block_type(&body) == Some(payload)
-        {
-            wrap_block(&mut body, want);
-        }
-        self.pop_scope();
-        let locals = std::mem::take(&mut self.locals);
+        let ((params, body), state) = self.with_body(fresh, |c| {
+            c.body.scopes.push(FxHashMap::default());
+            // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.
+            let receiver = owner.map(|ty| {
+                c.body.locals.push(tir::Local {
+                    name: Some("self".into()),
+                    ty,
+                    mutable: false,
+                });
+                tir::LocalId(0)
+            });
+            let params = receiver
+                .into_iter()
+                .chain(
+                    f.params
+                        .iter()
+                        .zip(param_types)
+                        .map(|(p, ty)| c.declare(&p.name, ty, BindingKind::Param, None)),
+                )
+                .collect();
+            // A `unit` function discards its body's value, so it expects none.
+            let expected = match ret {
+                None => Some(UNKNOWN),
+                Some(Type::UNIT) => None,
+                Some(ret) => Some(ret),
+            };
+            let mut body = c.block(&f.body, expected);
+            if let (Some(Type::UNIT), Ok(checked)) = (ret, &body) {
+                c.discard_tail(&f.body, checked);
+            }
+            if let Some(want) = ret
+                && let TypeKind::Optional(payload) = want.kind()
+                && block_type(&body) == Some(payload)
+            {
+                wrap_block(&mut body, want);
+            }
+            c.pop_scope();
+            (params, body)
+        });
+        let locals = state.locals;
         match (ret, block_type(&body)) {
             (Some(want), Some(got)) if want != Type::UNIT && got != Type::NEVER && got != want => {
                 let d = if got == Type::UNIT {
@@ -738,7 +769,11 @@ impl Checker<'_> {
     /// The variant `name`, at `span`, written without its enum: `None` when a binding or an item
     /// takes the name, or no enum has such a variant.
     fn bare_variant(&self, name: Symbol, span: Span) -> Option<Diagnostic> {
-        let item = self.scopes.iter().any(|scope| scope.contains_key(&name))
+        let item = self
+            .body
+            .scopes
+            .iter()
+            .any(|scope| scope.contains_key(&name))
             || self.class_ids.contains_key(&name)
             || self.function_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
@@ -769,6 +804,7 @@ impl Checker<'_> {
             .into();
         }
         let bindings = self
+            .body
             .scopes
             .iter()
             .flat_map(|scope| scope.keys())

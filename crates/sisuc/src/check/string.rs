@@ -149,16 +149,16 @@ impl Checker<'_> {
             unreachable!("`+` should have two operands");
         };
         let between = lhs.span.end()..rhs.span.start();
-        let commented = self.comments.iter().any(|c| between.contains(c));
+        let commented = self.source.comments.iter().any(|c| between.contains(c));
         let lines = operands.iter().any(|e| !self.one_line(e.span));
         // A literal in parentheses starts at its `(`, and is wrapped whole like any other value.
         let operand = |e: &ast::Expr| Operand {
             span: e.span,
             literal: matches!(e.kind, ExprKind::Str(_) | ExprKind::Interpolate(_))
-                && self.quotes.binary_search(&e.span.start()).is_ok(),
+                && self.source.quotes.binary_search(&e.span.start()).is_ok(),
         };
         let unsafe_fix =
-            !(compound || self.in_constant.is_some() || !printed || commented || lines);
+            !(compound || self.body.in_constant.is_some() || !printed || commented || lines);
         let other = if e.span == lhs.span {
             rhs.span
         } else {
@@ -181,8 +181,11 @@ impl Checker<'_> {
     /// Whether `span` holds no line break, which a string literal cannot hold. A comment inside
     /// it would end at one, so it holds no comment either, and fits inside `{}`.
     pub(super) fn one_line(&self, span: Span) -> bool {
-        let next = self.breaks.partition_point(|&b| b < span.start());
-        self.breaks.get(next).is_none_or(|&b| b >= span.end())
+        let next = self.source.breaks.partition_point(|&b| b < span.start());
+        self.source
+            .breaks
+            .get(next)
+            .is_none_or(|&b| b >= span.end())
     }
 
     /// A chain over the `string`s `operands`, which codegen compares two at a time. Two make
@@ -317,6 +320,7 @@ impl Checker<'_> {
                     head.clone()
                 };
                 let commented = self
+                    .source
                     .comments
                     .iter()
                     .any(|c| deleted.contains(c) || (!grouped && tail.contains(c)));
@@ -349,8 +353,8 @@ impl Checker<'_> {
                 }
                 .into(),
             },
-            _ if fails && self.in_constant.is_some() => {
-                let fix = self.in_constant.as_ref().and_then(|site| {
+            _ if fails && self.body.in_constant.is_some() => {
+                let fix = self.body.in_constant.as_ref().and_then(|site| {
                     let arg = checked.as_ref().ok()?;
                     site.literal(span, to, arg)
                 });
@@ -395,12 +399,11 @@ impl Checker<'_> {
             Type::I64 | Type::U8 | Type::F64 | Type::BOOL | Type::CHAR
         );
         let commented = self
+            .source
             .comments
             .iter()
             .any(|c| deleted.iter().any(|d| d.contains(c)));
-        let next = self.breaks.partition_point(|&b| b < arg.span.start());
-        let lines = self.breaks.get(next).is_some_and(|&b| b < arg.span.end());
-        if !printed || commented || lines {
+        if !printed || commented || !self.one_line(arg.span) {
             return self.mismatch(arg.span, Some(arg), want, got);
         }
         DiagnosticKind::Mismatch {
