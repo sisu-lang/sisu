@@ -133,62 +133,65 @@ fn allocs_in_panics_without_the_summary_line() {
     allocs_in("==1== All heap blocks were freed -- no leaks are possible");
 }
 
-/// Program, stdout at k = 1000, stdout at k = 0, extra allocations.
-const ALLOCATIONS: [(&str, &str, &str, i64); 19] = [
+/// One test per row, `allocation_counts::<program>`: (program, stdout at k = 1000, stdout at
+/// k = 0, extra allocations), checked against `extra_allocs` at both optimization levels.
+macro_rules! allocation_counts {
+    ($(($name:ident, $stdout:expr, $base_stdout:expr, $extra:expr),)*) => {
+        mod allocation_counts {
+            $(
+                #[test]
+                fn $name() {
+                    for o2 in [false, true] {
+                        assert_eq!(
+                            super::extra_allocs(stringify!($name), o2),
+                            ($stdout.to_string(), $base_stdout.to_string(), $extra),
+                            "o2: {o2}"
+                        );
+                    }
+                }
+            )*
+        }
+    };
+}
+
+// The `ALLOCATIONS` table.
+allocation_counts! {
     // `big = fill(big, i, i % 2 + 1)` writes in place.
-    ("handover", "999\n", "0\n", 0),
+    (handover, "999\n", "0\n", 0),
     // `saved` is live across each write, so each `fill` copies once.
-    ("copies", "499500\n1000\n", "0\n0\n", 1000),
+    (copies, "499500\n1000\n", "0\n0\n", 1000),
     // `for` over an array copies nothing.
-    ("walk", "10000000\n", "0\n", 0),
+    (walk, "10000000\n", "0\n", 0),
     // A literal lives in the program image: evaluating it allocates nothing.
-    ("literal", "3000\n", "0\n", 0),
+    (literal, "3000\n", "0\n", 0),
     // One copy of the literal to capacity 2, then reallocations to 4, 8, ..., 1024. Valgrind
     // counts each `realloc` as an allocation.
-    ("append_local", "1001\nx\n", "1\na\n", 10),
-    ("append_assign", "1001\nx\n", "1\na\n", 10),
+    (append_local, "1001\nx\n", "1\na\n", 10),
+    (append_assign, "1001\nx\n", "1\na\n", 10),
     // `saved` is live across each append, so each append copies once.
-    ("append_shared", "1001\n1000\nx\nx\n", "1\n1\na\na\n", 1000),
-    ("append_grow", "1001\nx\n", "1\na\n", 10),
+    (append_shared, "1001\n1000\nx\nx\n", "1\n1\na\na\n", 1000),
+    (append_grow, "1001\nx\n", "1\na\n", 10),
     // A field or element append is in place too: one copy, then a reallocation per doubling.
-    ("append_field", "1001\nx\n", "1\na\n", 10),
-    ("append_field_assign", "1001\nx\n", "1\na\n", 10),
-    ("append_element", "1001\nx\n", "1\na\n", 10),
+    (append_field, "1001\nx\n", "1\na\n", 10),
+    (append_field_assign, "1001\nx\n", "1\na\n", 10),
+    (append_element, "1001\nx\n", "1\na\n", 10),
     // Each interpolation allocates its result and nothing else.
-    ("interp", "9\ne\n", "1\n-\n", 1000),
+    (interp, "9\ne\n", "1\n-\n", 1000),
     // Formatting and padding write into that result too: no buffer of their own.
-    ("interp_format", "    2.67| 日本  |7\n", "-\n", 1000),
+    (interp_format, "    2.67| 日本  |7\n", "-\n", 1000),
     // An enum is held inline: building one whose payloads hold no object allocates nothing.
-    ("enum_alloc_plain", "1000\n", "0\n", 0),
+    (enum_alloc_plain, "1000\n", "0\n", 0),
     // Copying an enum retains its string payload or its boxes and never copies them.
-    (
-        "enum_alloc_copy",
-        "1000\ntrue\ntrue\n",
-        "0\ntrue\ntrue\n",
-        0,
-    ),
+    (enum_alloc_copy, "1000\ntrue\ntrue\n", "0\ntrue\ntrue\n", 0),
     // `Add(Num(1), Num(2))` allocates one box for each of its two fields, and nothing else.
-    ("enum_alloc_boxes", "1000\n", "0\n", 2000),
+    (enum_alloc_boxes, "1000\n", "0\n", 2000),
     // `match` hands the payload of a scrutinee in its last use to its binding: no array copy.
-    ("enum_alloc_handover", "1000\n", "0\n", 0),
+    (enum_alloc_handover, "1000\n", "0\n", 0),
     // The same through a box with count one: one new box per step, no array copy. Reusing the
     // old box in `match` would make it 0.
-    ("enum_alloc_handover_box", "1000\n", "0\n", 1000),
+    (enum_alloc_handover_box, "1000\n", "0\n", 1000),
     // Through a shared box: one new box and one array copy per step.
-    ("enum_alloc_shared_box", "1000\n499500\n", "0\n0\n", 2000),
-];
-
-#[test]
-fn allocation_counts() {
-    for o2 in [false, true] {
-        for (name, stdout, base_stdout, extra) in ALLOCATIONS {
-            assert_eq!(
-                extra_allocs(name, o2),
-                (stdout.to_string(), base_stdout.to_string(), extra),
-                "{name} (o2: {o2})"
-            );
-        }
-    }
+    (enum_alloc_shared_box, "1000\n499500\n", "0\n0\n", 2000),
 }
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.
@@ -292,96 +295,90 @@ fn compile_tmp(name: &str, source: &str, o2: bool) -> PathBuf {
     compile_to_tmp(dir, name, o2)
 }
 
-#[test]
-fn panic_cases() {
-    let cases = [
-        (
-            "sub_overflow",
-            format!("fn main() {{\n{MIN}\n    print(min - 1)\n}}\n"),
-            "3:11: integer overflow".to_string(),
-        ),
-        (
-            "mul_overflow",
-            format!("fn main() {{\n{MAX}\n    print(big * 2)\n}}\n"),
-            "3:11: integer overflow".to_string(),
-        ),
-        (
-            "neg_overflow",
-            format!("fn main() {{\n{MIN}\n    print(-min)\n}}\n"),
-            "3:11: integer overflow".to_string(),
-        ),
-        (
-            "rem_zero",
-            "fn main() {\n    let z = 0\n    print(7 % z)\n}\n".to_string(),
-            "3:11: division by zero".to_string(),
-        ),
-        (
-            "rem_overflow",
-            format!("fn main() {{\n{MIN}\n    print(min % -1)\n}}\n"),
-            "3:11: integer overflow".to_string(),
-        ),
-        (
-            "compound_overflow",
-            "fn main() {\n    let mut x = 9_223_372_036_854_775_807\n    x += 1\n    print(x)\n}\n"
-                .to_string(),
-            "3:5: integer overflow".to_string(),
-        ),
-        print_case("u8_add", "let a: u8 = 255", "a + 1", "integer overflow"),
-        print_case("u8_sub", "let a: u8 = 0", "a - 1", "integer overflow"),
-        print_case("u8_mul", "let a: u8 = 16", "a * a", "integer overflow"),
-        print_case("u8_div_zero", "let a: u8 = 0", "7 / a", "division by zero"),
-        sum_case("sum_overflow", "9_223_372_036_854_775_807, 1"),
-        // The total fits, but the running sum overflows at the second element.
-        sum_case("sum_overflow_midway", "9_223_372_036_854_775_807, 1, -1"),
-        bounds_case(
-            "bounds_at_length",
-            "5",
-            "index 5 out of bounds for length 5",
-        ),
-        bounds_case("bounds_above", "7", "index 7 out of bounds for length 5"),
-        bounds_case(
-            "bounds_negative",
-            "-1",
-            "index -1 out of bounds for length 5",
-        ),
-        write_bounds_case(),
-        append_bounds_case(),
-        (
-            "length_negative",
-            "fn main() {\n    let n = -1\n    let xs = [0; n]\n    print(xs.len())\n}\n"
-                .to_string(),
-            "3:18: array length is negative".to_string(),
-        ),
-        // 16 + 9_223_372_036_854_775_791 bytes is exactly `i64::MAX`, above the largest
-        // size that rounds up to the alignment of 8 within it.
-        fill_case("length_too_large", "false", "9_223_372_036_854_775_791", 22),
-        // The smallest length past `largest_array_reaches_the_allocator`'s: 16 +
-        // 9_223_372_036_854_775_785 is `i64::MAX - 6`, which rounds up to 2^63.
-        fill_case("one_too_large", "false", "9_223_372_036_854_775_785", 22),
-        // 2^62 * 8 bytes overflows the multiply.
-        fill_case("length_overflows", "0", "4_611_686_018_427_387_904", 18),
-        // (2^61 - 1) * 8 bytes is 2^64 - 8, which fits; adding the 16-byte header wraps.
-        fill_case("header_overflows", "0", "2_305_843_009_213_693_951", 18),
-    ];
-    for (name, source, position_and_message) in cases {
-        for o2 in [false, true] {
-            let out = Command::new(compile_tmp(name, &source, o2))
-                .output()
-                .expect("the program starts");
-            assert_panics(
-                &out,
-                "",
-                &format!("sisu: panic at {name}.sisu:{position_and_message}\n"),
-            );
+/// One test per row, `panic_cases::<name>`: `name => (source, position and message)`. The program
+/// `source`, built as `<name>.sisu` at both optimization levels, prints nothing and panics there.
+macro_rules! panic_cases {
+    ($($name:ident => $case:expr,)*) => {
+        mod panic_cases {
+            use super::*;
+            $(
+                #[test]
+                fn $name() {
+                    let name = stringify!($name);
+                    let (source, position_and_message) = $case;
+                    for o2 in [false, true] {
+                        let out = Command::new(compile_tmp(name, &source, o2))
+                            .output()
+                            .expect("the program starts");
+                        assert_panics(
+                            &out,
+                            "",
+                            &format!("sisu: panic at {name}.sisu:{position_and_message}\n"),
+                        );
+                    }
+                }
+            )*
         }
-    }
+    };
+}
+
+panic_cases! {
+    sub_overflow => (
+        format!("fn main() {{\n{MIN}\n    print(min - 1)\n}}\n"),
+        "3:11: integer overflow",
+    ),
+    mul_overflow => (
+        format!("fn main() {{\n{MAX}\n    print(big * 2)\n}}\n"),
+        "3:11: integer overflow",
+    ),
+    neg_overflow => (
+        format!("fn main() {{\n{MIN}\n    print(-min)\n}}\n"),
+        "3:11: integer overflow",
+    ),
+    rem_zero => (
+        "fn main() {\n    let z = 0\n    print(7 % z)\n}\n",
+        "3:11: division by zero",
+    ),
+    rem_overflow => (
+        format!("fn main() {{\n{MIN}\n    print(min % -1)\n}}\n"),
+        "3:11: integer overflow",
+    ),
+    compound_overflow => (
+        "fn main() {\n    let mut x = 9_223_372_036_854_775_807\n    x += 1\n    print(x)\n}\n",
+        "3:5: integer overflow",
+    ),
+    u8_add => print_case("let a: u8 = 255", "a + 1", "integer overflow"),
+    u8_sub => print_case("let a: u8 = 0", "a - 1", "integer overflow"),
+    u8_mul => print_case("let a: u8 = 16", "a * a", "integer overflow"),
+    u8_div_zero => print_case("let a: u8 = 0", "7 / a", "division by zero"),
+    sum_overflow => sum_case("9_223_372_036_854_775_807, 1"),
+    // The total fits, but the running sum overflows at the second element.
+    sum_overflow_midway => sum_case("9_223_372_036_854_775_807, 1, -1"),
+    bounds_at_length => bounds_case("5", "index 5 out of bounds for length 5"),
+    bounds_above => bounds_case("7", "index 7 out of bounds for length 5"),
+    bounds_negative => bounds_case("-1", "index -1 out of bounds for length 5"),
+    write_bounds => write_bounds_case(),
+    append_bounds => append_bounds_case(),
+    length_negative => (
+        "fn main() {\n    let n = -1\n    let xs = [0; n]\n    print(xs.len())\n}\n",
+        "3:18: array length is negative",
+    ),
+    // 16 + 9_223_372_036_854_775_791 bytes is exactly `i64::MAX`, above the largest
+    // size that rounds up to the alignment of 8 within it.
+    length_too_large => fill_case("false", "9_223_372_036_854_775_791", 22),
+    // The smallest length past `largest_array_reaches_the_allocator`'s: 16 +
+    // 9_223_372_036_854_775_785 is `i64::MAX - 6`, which rounds up to 2^63.
+    one_too_large => fill_case("false", "9_223_372_036_854_775_785", 22),
+    // 2^62 * 8 bytes overflows the multiply.
+    length_overflows => fill_case("0", "4_611_686_018_427_387_904", 18),
+    // (2^61 - 1) * 8 bytes is 2^64 - 8, which fits; adding the 16-byte header wraps.
+    header_overflows => fill_case("0", "2_305_843_009_213_693_951", 18),
 }
 
 /// A `panic_cases` row for `grid[0][9] = true`: the inner index is checked at its own level,
 /// after the outer one.
-fn write_bounds_case() -> (&'static str, String, String) {
+fn write_bounds_case() -> (String, String) {
     (
-        "write_bounds",
         "fn main() {\n    let mut grid = [[false, false, false]]\n    grid[0][9] = true\n}\n"
             .to_string(),
         "3:13: index 9 out of bounds for length 3".to_string(),
@@ -391,9 +388,8 @@ fn write_bounds_case() -> (&'static str, String, String) {
 /// A `panic_cases` row for `names[i] += say()` with `i` past the end: the append reads the
 /// element's slot, bounds-checked, before `say()` runs. `say` would print, so the empty stdout
 /// `panic_cases` expects shows the panic comes first.
-fn append_bounds_case() -> (&'static str, String, String) {
+fn append_bounds_case() -> (String, String) {
     (
-        "append_bounds",
         "fn say() -> string {\n    print(\"said\")\n    \"x\"\n}\nfn main() {\n    let mut names = [\"a\", \"b\"]\n    let i = 3\n    names[i] += say()\n}\n"
             .to_string(),
         "8:11: index 3 out of bounds for length 2".to_string(),
@@ -401,23 +397,16 @@ fn append_bounds_case() -> (&'static str, String, String) {
 }
 
 /// A `panic_cases` row whose panic is at `print(<expr>)` on line 3, column 11.
-fn print_case(
-    name: &'static str,
-    binding: &str,
-    expr: &str,
-    message: &str,
-) -> (&'static str, String, String) {
+fn print_case(binding: &str, expr: &str, message: &str) -> (String, String) {
     (
-        name,
         format!("fn main() {{\n    {binding}\n    print({expr})\n}}\n"),
         format!("3:11: {message}"),
     )
 }
 
 /// A `panic_cases` row whose `xs.sum()`, over the elements `elements`, overflows.
-fn sum_case(name: &'static str, elements: &str) -> (&'static str, String, String) {
+fn sum_case(elements: &str) -> (String, String) {
     print_case(
-        name,
         &format!("let xs = [{elements}]"),
         "xs.sum()",
         "integer overflow",
@@ -425,14 +414,8 @@ fn sum_case(name: &'static str, elements: &str) -> (&'static str, String, String
 }
 
 /// A `panic_cases` row for `[value; len]` on line 2, whose panic is at `len`, in column `col`.
-fn fill_case(
-    name: &'static str,
-    value: &str,
-    len: &str,
-    col: usize,
-) -> (&'static str, String, String) {
+fn fill_case(value: &str, len: &str, col: usize) -> (String, String) {
     (
-        name,
         format!("fn main() {{\n    let xs = [{value}; {len}]\n    print(xs.len())\n}}\n"),
         format!("2:{col}: array is too large"),
     )
@@ -897,9 +880,8 @@ fn a_long_output_to_a_file_is_complete() {
 
 /// A `panic_cases` row that reads `xs[i]` from a 5-element `xs`, with `i` bound to `index`;
 /// the panic is at `i`, on line 4, column 14.
-fn bounds_case(name: &'static str, index: &str, message: &str) -> (&'static str, String, String) {
+fn bounds_case(index: &str, message: &str) -> (String, String) {
     (
-        name,
         format!(
             "fn main() {{\n    let xs = [1, 2, 3, 4, 5]\n    let i = {index}\n    print(xs[i])\n}}\n"
         ),

@@ -3,6 +3,10 @@ experimental = ["setup-scripts"]
 [scripts.setup.build-runtime]
 command = "scripts/build-runtime.sh"
 
+# Every run writes target/nextest/<profile>/junit.xml, which scripts/slow_tests.py reads.
+[profile.default.junit]
+path = "junit.xml"
+
 [profile.ci]
 # Report every failure, not just the first.
 fail-fast = false
@@ -130,9 +134,10 @@ setup = "build-runtime"
 [test-groups]
 valgrind = { max-threads = 4 }
 
-# The `bless_` and `same_name_in_two_modes` fixtures call `support::run`, which runs Valgrind.
+# The `bless_`, `same_name_in_two_modes` and `run_err_lifecycle` fixtures call `support::run`,
+# which runs Valgrind.
 [[profile.default.overrides]]
-filter = "binary(programs) & (test(allocation_counts) | test(valgrind_reports_a_cycle) | test(read_line_refills_its_buffer) | test(/^bless_/) | test(same_name_in_two_modes))"
+filter = "binary(programs) & (test(allocation_counts) | test(valgrind_reports_a_cycle) | test(read_line_refills_its_buffer) | test(/^bless_/) | test(same_name_in_two_modes) | test(run_err_lifecycle))"
 test-group = "valgrind"
 
 # Each case compiles twice and runs under Valgrind; a hang is killed after three minutes. The

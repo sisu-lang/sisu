@@ -50,6 +50,9 @@ jobs:
       - uses: ./.github/actions/install-llvm
       - run: sudo apt-get update && sudo apt-get install --yes valgrind
       - run: cargo nextest run --workspace --locked --profile ci
+      # Warns about tests over their time budget (CODING_STANDARDS.md, Tests); never fails.
+      - if: always()
+        run: python3 scripts/slow_tests.py target/nextest/ci/junit.xml
 
   # Miri runs the runtime's unit tests in an interpreter that stops at undefined
   # behaviour in its unsafe code; it needs nightly, which overrides rust-toolchain.toml.
