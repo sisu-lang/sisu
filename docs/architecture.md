@@ -89,7 +89,10 @@ breaks. `check/exhaust.rs` runs Maranget's usefulness algorithm over each
 `match`'s arms: a `match` that misses a value is an error that names one it
 misses as a pattern, such as `Mul(_, _)`, and an arm that no value reaches is
 a warning. The same check rejects an `if let` or `while let` whose pattern
-always matches. It reports
+always matches. `check/operator.rs` checks operators (arithmetic, comparison,
+equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
+their branch types, `check/call.rs` calls, method calls and constructors, and
+`check/member.rs` fields and methods found through `.` and `?.`. It reports
 every error
 in one run: an expression that already failed gets the poison type, so one
 mistake produces one diagnostic. A program with no errors comes out as the

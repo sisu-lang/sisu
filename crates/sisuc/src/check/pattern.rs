@@ -5,9 +5,9 @@ use std::iter;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::branch::Branch;
 use super::enums::reserved_name;
 use super::exhaust::{self, Report, Row};
-use super::expr::Branch;
 use super::{Checked, CheckedBlock, Checker, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{

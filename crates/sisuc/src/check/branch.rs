@@ -1,0 +1,280 @@
+//! Branches: `if`, `if let` and the join of branch types.
+
+use super::expr::{fits, rank};
+use super::pattern::LetPattern;
+use super::{
+    Checked, CheckedBlock, Checker, Poisoned, UNKNOWN, block_type, optional_of, tail, value_span,
+    wrap_block,
+};
+use crate::ast;
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
+use crate::source::Span;
+use crate::tir::{self, Type};
+
+impl Checker<'_> {
+    /// Without an `else`, `unit`. With one, the branches joined (see `branches`). A condition
+    /// that is not `bool` makes the `if` `Error`, or `Never` when its branches are.
+    pub(super) fn if_expr(
+        &mut self,
+        span: Span,
+        cond: &ast::Expr,
+        then_block: &ast::Block,
+        else_block: Option<&ast::Block>,
+        expected: Option<Type>,
+    ) -> Checked {
+        let (cond, mismatched) = self.operand(cond, Some(Type::BOOL));
+        let (then, other, ty) = self.branches(then_block, else_block, expected, |c, expected| {
+            c.block(then_block, expected)
+        });
+        // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
+        let ty = match ty {
+            Ok(Type::NEVER) if mismatched => Err(Poisoned::typed(Type::NEVER)),
+            Ok(_) if mismatched => Err(Poisoned::error()),
+            ty => ty,
+        };
+        match (cond, then, other.transpose(), ty) {
+            (Ok(cond), Ok(then_block), Ok(else_block), Ok(ty)) => Ok(tir::Expr {
+                kind: tir::ExprKind::If {
+                    cond: Box::new(cond),
+                    then_block,
+                    else_block,
+                },
+                ty,
+                span,
+            }),
+            (.., ty) => Err(ty.map_or_else(|poisoned| poisoned, Poisoned::typed)),
+        }
+    }
+
+    /// `if let pattern = value { ... }`, typed as `if`; what `pattern` binds is in scope in the
+    /// first block. On an optional it is an `IfSome`, on an enum a `Match` (`if_let_match`).
+    /// A `value` that is neither makes it `Error`, or `Never` when its branches are.
+    pub(super) fn if_let(
+        &mut self,
+        span: Span,
+        pattern: &ast::Pattern,
+        value: &ast::Expr,
+        then_block: &ast::Block,
+        else_block: Option<&ast::Block>,
+        expected: Option<Type>,
+    ) -> Checked {
+        let (scrutinee, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
+        let mut checked = None;
+        let (then, other, ty) = self.branches(then_block, else_block, expected, |c, expected| {
+            let (bound, block) = c.let_block(Unwrap::IfLet, form, pattern, then_block, expected);
+            checked = Some(bound);
+            block
+        });
+        let bound = checked.expect("`branches` should check the first block, which sets it");
+        // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
+        let ty = match ty {
+            Ok(Type::NEVER) if mismatched => Err(Poisoned::typed(Type::NEVER)),
+            Ok(_) if mismatched => Err(Poisoned::error()),
+            ty => ty,
+        };
+        let ty = ty?;
+        let kind = match (scrutinee, then, other.transpose(), bound) {
+            (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {
+                tir::ExprKind::IfSome {
+                    bind,
+                    scrutinee: Box::new(scrutinee),
+                    then_block,
+                    else_block,
+                }
+            }
+            (
+                Ok(scrutinee),
+                Ok(then_block),
+                Ok(else_block),
+                LetPattern::Match {
+                    pattern: Some(pattern),
+                },
+            ) => self.if_let_match(scrutinee, pattern, then_block, else_block),
+            _ => return Err(Poisoned::typed(ty)),
+        };
+        Ok(tir::Expr { kind, ty, span })
+    }
+
+    /// The blocks of an `if` or `if let`, `then` checking the first, and their type: `unit`
+    /// without an `else`; see `join`.
+    fn branches(
+        &mut self,
+        then_block: &ast::Block,
+        else_block: Option<&ast::Block>,
+        expected: Option<Type>,
+        then: impl FnOnce(&mut Self, Option<Type>) -> CheckedBlock,
+    ) -> (CheckedBlock, Option<CheckedBlock>, Result<Type, Poisoned>) {
+        let Some(else_block) = else_block else {
+            return (then(self, None), None, Ok(Type::UNIT));
+        };
+        let mut then = Some(then);
+        let sources = [Branch::of_block(then_block), Branch::of_block(else_block)];
+        let (blocks, ty) = self.join(&sources, expected, |c, i, expected| {
+            if i == 0 {
+                let then = then
+                    .take()
+                    .expect("`join` should check the `then` branch once");
+                then(c, expected)
+            } else {
+                c.block(else_block, expected)
+            }
+        });
+        let [first, other] =
+            <[_; 2]>::try_from(blocks).unwrap_or_else(|_| panic!("`join` should give two blocks"));
+        (first, Some(other), ty)
+    }
+
+    /// The `sources.len()` branches of an `if` or arms of a `match`, `check(i)` checking branch
+    /// `i`, and their type. With no `expected` type, the branch whose value is of lowest `rank`
+    /// is checked first, the first in source order on a tie, and each after it expects the type
+    /// of the first of a known type that is not `never`, made optional. A failed or `unit`
+    /// branch sets what the branches after it expect only until a branch of another known type
+    /// is checked. Then a `never` branch, and after it an `Error` one, takes the others' type; a
+    /// `T` and a `T?` join to `T?`, the `T` branches wrapped; other types that differ are
+    /// reported. A join that fails for a branch that rejected `expected` is a mismatch too.
+    /// With no branches, the type is `never`.
+    pub(super) fn join(
+        &mut self,
+        sources: &[Branch<'_>],
+        expected: Option<Type>,
+        mut check: impl FnMut(&mut Self, usize, Option<Type>) -> CheckedBlock,
+    ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
+        let mut order: Vec<usize> = (0..sources.len()).collect();
+        if expected.is_none() {
+            order.sort_by_key(|&i| sources[i].rank);
+        }
+        let mut checked: Vec<Option<CheckedBlock>> = sources.iter().map(|_| None).collect();
+        let mut anchor = None;
+        for i in order {
+            let after = anchor.and_then(after_branch);
+            let block = check(self, i, expected.or(after));
+            // The first branch of a known type anchors the rest; a failed or `unit` one only
+            // until then.
+            match block_type(&block) {
+                Some(Type::NEVER) => {}
+                Some(t) if matches!(anchor, None | Some(None | Some(Type::UNIT))) => {
+                    anchor = Some(Some(t));
+                }
+                None if anchor.is_none() => anchor = Some(None),
+                _ => {}
+            }
+            checked[i] = Some(block);
+        }
+        let mut blocks: Vec<CheckedBlock> = checked
+            .into_iter()
+            .map(|block| block.expect("`join` should check every branch"))
+            .collect();
+        // The type so far, and the branch it came from, folded in source order.
+        let (mut joined, mut error, mut failed) = (None::<(usize, Type)>, false, false);
+        for (i, block) in blocks.iter().enumerate() {
+            let Some(t) = block_type(block) else {
+                error = true;
+                continue;
+            };
+            match joined {
+                _ if t == Type::NEVER => {}
+                None => joined = Some((i, t)),
+                Some((_, j)) if j == t || after_branch(Some(t)) == Some(j) => {}
+                Some((k, j)) if after_branch(Some(j)) == Some(t) => {
+                    joined = Some((k, t));
+                }
+                Some((k, j)) => {
+                    let d = self.join_mismatch(sources, expected, (k, j), (i, t));
+                    self.diagnostics.push(d);
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        let ty = match joined {
+            _ if failed => None,
+            Some((_, ty)) => {
+                for block in &mut blocks {
+                    if block_type(block).is_some_and(|t| t != ty && t != Type::NEVER) {
+                        wrap_block(block, ty);
+                    }
+                }
+                Some(ty)
+            }
+            None if error => None,
+            None => Some(Type::NEVER),
+        };
+        let mismatch = blocks
+            .iter()
+            .any(|b| matches!(b, Err(Poisoned { mismatch: true, .. })));
+        let ty = ty.ok_or(Poisoned { ty: None, mismatch });
+        (blocks, ty)
+    }
+
+    /// The mistake when the branch `first`, of type `first_ty`, and the later branch `other`,
+    /// of type `other_ty`, do not join. With a type expected, the branch that fits it neither as
+    /// is nor as its payload is the mistake; without one, `other` is, against `first_ty`. A
+    /// branch with no value is that mistake, not a type mismatch.
+    fn join_mismatch(
+        &mut self,
+        sources: &[Branch<'_>],
+        expected: Option<Type>,
+        (first, first_ty): (usize, Type),
+        (other, other_ty): (usize, Type),
+    ) -> Diagnostic {
+        let (first, other) = (&sources[first], &sources[other]);
+        match expected.filter(|&want| want != UNKNOWN) {
+            _ if first_ty == Type::UNIT => DiagnosticKind::NoValue {
+                at: first.span,
+                never: false,
+            }
+            .into(),
+            _ if other_ty == Type::UNIT => DiagnosticKind::NoValue {
+                at: other.span,
+                never: false,
+            }
+            .into(),
+            Some(want) if fits(want, first_ty) => {
+                self.mismatch(other.span, other.tail, want, other_ty)
+            }
+            Some(want) => self.mismatch(first.span, first.tail, want, first_ty),
+            None => self.mismatch(other.span, other.tail, first_ty, other_ty),
+        }
+    }
+}
+
+/// The `rank` of `block`'s value; a block that ends in no expression is concrete.
+fn block_rank(block: &ast::Block) -> u8 {
+    tail(block).map_or(0, rank)
+}
+
+/// A branch of an `if` or an arm of a `match`, as `join` sees its source: the `rank` of its
+/// value, where the value is, and the expression it ends in, if any.
+pub(super) struct Branch<'a> {
+    rank: u8,
+    span: Span,
+    tail: Option<&'a ast::Expr>,
+}
+
+impl<'a> Branch<'a> {
+    pub(super) fn of_block(block: &'a ast::Block) -> Self {
+        Branch {
+            rank: block_rank(block),
+            span: value_span(block),
+            tail: tail(block),
+        }
+    }
+
+    pub(super) fn of_expr(e: &'a ast::Expr) -> Self {
+        Branch {
+            rank: rank(e),
+            span: e.span,
+            tail: Some(e),
+        }
+    }
+}
+
+/// What one branch of an `if` expects after the other, of type `ty`, when the `if` expects
+/// nothing: `ty` made optional; `Error` after `Error`; nothing after `unit` or `never`.
+fn after_branch(ty: Option<Type>) -> Option<Type> {
+    match ty {
+        None => Some(UNKNOWN),
+        Some(Type::UNIT | Type::NEVER) => None,
+        Some(ty) => Some(optional_of(ty)),
+    }
+}

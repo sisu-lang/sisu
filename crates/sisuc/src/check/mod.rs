@@ -2,11 +2,15 @@
 //! checks, and records every error instead of stopping at the first.
 
 mod array;
+mod branch;
+mod call;
 mod constant;
 mod enums;
 mod exhaust;
 mod expr;
+mod member;
 mod number;
+mod operator;
 mod pattern;
 mod place;
 mod prelude;
