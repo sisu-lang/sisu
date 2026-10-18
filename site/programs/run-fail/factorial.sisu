@@ -1,0 +1,12 @@
+fn factorial(n: i64) -> i64 {
+    let mut f = 1
+    for i in 1..=n {
+        f *= i
+    }
+    f
+}
+
+fn main() {
+    print(factorial(20))
+    print(factorial(21))
+}

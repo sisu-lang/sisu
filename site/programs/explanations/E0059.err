@@ -1,0 +1,10 @@
+error[E0059]: cannot print `Point`
+ --> E0059.sisu:7:11
+  |
+7 |     print(p)
+  |           ^
+  |
+  = help: `print` takes one `i64`, `u8`, `f64`, `bool`, `char` or `string`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0059

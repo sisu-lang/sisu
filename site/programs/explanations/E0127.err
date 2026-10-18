@@ -1,0 +1,8 @@
+error[E0127]: a `i64?` position takes only a name or `_`
+ --> E0127.sisu:8:14
+  |
+8 |         Full(None) => 0
+  |              ^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0127

@@ -1,0 +1,8 @@
+error[E0134]: a pattern takes no interpolation
+ --> E0134.sisu:3:16
+  |
+3 |         "hello {name}" => true
+  |                ^^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0134

@@ -1,0 +1,10 @@
+error[E0019]: a parameter cannot be `mut`
+ --> E0019.sisu:1:12
+  |
+1 | fn add_one(mut n: i64) -> i64 {
+  |            ^^^
+  |
+  = help: copy it into a variable: `let mut n = n`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0019

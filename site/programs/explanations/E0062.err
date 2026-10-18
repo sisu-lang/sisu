@@ -1,0 +1,14 @@
+error[E0062]: `n.next` may be `None`
+ --> E0062.sisu:7:5
+  |
+7 |     n.next.value
+  |     ^^^^^^
+  |
+  = help: to use the value only when it is present, unwrap it with `if let`
+help: if a `None` result is fine, use `?.`
+  |
+7 |     n.next?.value
+  |           +
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0062

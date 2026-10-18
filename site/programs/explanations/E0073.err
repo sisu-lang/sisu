@@ -1,0 +1,10 @@
+error[E0073]: cannot assign to `self`
+ --> E0073.sisu:5:9
+  |
+5 |         self = Point(x: 0)
+  |         ^^^^
+  |
+  = help: an object is shared: `self` can already write every `mut` field
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0073

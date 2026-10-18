@@ -1,0 +1,22 @@
+class Counter {
+    name: string
+    mut count: i64
+
+    fn tick(self) {
+        self.count += 1
+    }
+
+    fn report(self) -> string {
+        "{self.name}: {self.count}"
+    }
+}
+
+fn main() {
+    let a = Counter(name: "door", count: 0)
+    let b = a
+    b.tick()
+    a.tick()
+    print(a.report())
+    print(a is b)
+    print(a is Counter(name: "door", count: 2))
+}

@@ -1,0 +1,15 @@
+warning[W0005]: comparison with `f64.nan` is always false
+ --> W0005.sisu:3:11
+  |
+3 |     print(x == f64.nan)
+  |           ^^^^^^^^^^^^
+  |
+  = help: `nan` is not equal to any number, itself included; test for it with `is_nan()`
+help: test it with `is_nan()`
+  |
+3 -     print(x == f64.nan)
+3 +     print(x.is_nan())
+  |
+
+sisuc: 1 warning
+sisuc: for more on a code, run `sisuc --explain <code>`: W0005

@@ -1,0 +1,14 @@
+error[E0070]: `len` is a method, not a function
+ --> E0070.sisu:3:11
+  |
+3 |     print(len(xs))
+  |           ^^^
+  |
+help: call `len` as a method
+  |
+3 -     print(len(xs))
+3 +     print(xs.len())
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0070

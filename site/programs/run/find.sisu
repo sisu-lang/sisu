@@ -1,0 +1,20 @@
+fn find(names: [string], wanted: string) -> i64? {
+    for i in 0..names.len() {
+        if names[i] == wanted { return i }
+    }
+    None
+}
+
+fn main() {
+    let names = ["Aino", "Eino", "Kalle"]
+    print(find(names, "Eino") ?? -1)
+    print(find(names, "Ilmari") ?? -1)
+    if let i = find(names, "Kalle") {
+        print("Kalle is at {i}")
+    } else {
+        print("no Kalle")
+    }
+    let whole = i64(41.0) ?? panic("not a whole number")
+    print(whole)
+    print(i64(41.5) ?? 0)
+}

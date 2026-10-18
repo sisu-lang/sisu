@@ -1,0 +1,13 @@
+error[E0079]: `_` is not a value
+ --> E0079.sisu:6:5
+  |
+6 |     _ = make()
+  |     ^
+  |
+help: bind it with `let _`
+  |
+6 |     let _ = make()
+  |     +++
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0079

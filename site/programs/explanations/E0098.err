@@ -1,0 +1,10 @@
+error[E0098]: cannot interpolate `[i64]`
+ --> E0098.sisu:3:13
+  |
+3 |     print("{xs}")
+  |             ^^
+  |
+  = help: build the text in a `for` loop
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0098

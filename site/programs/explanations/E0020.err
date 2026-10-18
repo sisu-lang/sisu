@@ -1,0 +1,8 @@
+error[E0020]: `self` is only the first parameter of a method
+ --> E0020.sisu:4:21
+  |
+4 |     fn add(by: i64, self) {
+  |                     ^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0020

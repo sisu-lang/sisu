@@ -1,0 +1,14 @@
+error[E0049]: `p` is not optional
+ --> E0049.sisu:7:13
+  |
+7 |     let x = p?.x
+  |             ^
+  |
+help: replace `?.` with `.`
+  |
+7 -     let x = p?.x
+7 +     let x = p.x
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0049

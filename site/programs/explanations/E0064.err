@@ -1,0 +1,8 @@
+error[E0064]: too many arguments: `Point` has 1 field
+ --> E0064.sisu:6:25
+  |
+6 |     let p = Point(x: 1, y: 2)
+  |                         ^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0064

@@ -1,0 +1,19 @@
+enum Shape {
+    Circle(r: f64)
+    Rect(w: f64, h: f64)
+    Point
+}
+
+fn area(s: Shape) -> f64 {
+    match s {
+        Circle(r) => f64.pi * r * r
+        Rect(w, h) => w * h
+    }
+}
+
+fn main() {
+    let shapes = [Shape.Circle(r: 1.0), Shape.Rect(w: 2.0, h: 3.0), Shape.Point]
+    for s in shapes {
+        print("{area(s):.2}")
+    }
+}

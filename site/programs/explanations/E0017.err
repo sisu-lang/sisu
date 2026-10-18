@@ -1,0 +1,10 @@
+error[E0017]: a method needs `self` as its first parameter
+ --> E0017.sisu:4:8
+  |
+4 |     fn reset() {
+  |        ^^^^^
+  |
+  = help: static methods are not supported yet
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0017

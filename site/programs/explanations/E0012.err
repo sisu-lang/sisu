@@ -1,0 +1,14 @@
+error[E0012]: a statement ends at the end of its line, not with `;`
+ --> E0012.sisu:2:14
+  |
+2 |     let x = 1;
+  |              ^
+  |
+help: remove the `;`
+  |
+2 -     let x = 1;
+2 +     let x = 1
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0012

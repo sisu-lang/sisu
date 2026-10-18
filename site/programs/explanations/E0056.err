@@ -1,0 +1,10 @@
+error[E0056]: missing field `y`
+ --> E0056.sisu:7:13
+  |
+7 |     let p = Point(x: 1)
+  |             ^^^^^^^^^^^
+  |
+  = help: name the fields in declaration order: `x`, `y`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0056

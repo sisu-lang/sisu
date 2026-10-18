@@ -1,0 +1,8 @@
+error[E0011]: expected a binding name, found `=`
+ --> E0011.sisu:2:9
+  |
+2 |     let = 1
+  |         ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0011

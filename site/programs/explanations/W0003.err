@@ -1,0 +1,8 @@
+warning[W0003]: `todo` panics when it runs
+ --> W0003.sisu:2:5
+  |
+2 |     todo("multiply")
+  |     ^^^^
+
+sisuc: 1 warning
+sisuc: for more on a code, run `sisuc --explain <code>`: W0003

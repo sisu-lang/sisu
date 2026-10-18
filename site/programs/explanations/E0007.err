@@ -1,0 +1,8 @@
+error[E0007]: unexpected `}`
+ --> E0007.sisu:4:1
+  |
+4 | }
+  | ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0007

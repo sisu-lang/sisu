@@ -1,0 +1,10 @@
+error[E0066]: expected field `x` here, found `y`
+ --> E0066.sisu:7:19
+  |
+7 |     let p = Point(y: 2, x: 1)
+  |                   ^
+  |
+  = help: name the fields in declaration order: `x`, `y`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0066

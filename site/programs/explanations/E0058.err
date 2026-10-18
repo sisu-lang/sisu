@@ -1,0 +1,8 @@
+error[E0058]: `side` is a field of `Square`, not a method
+ --> E0058.sisu:7:13
+  |
+7 |     print(s.side())
+  |             ^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0058

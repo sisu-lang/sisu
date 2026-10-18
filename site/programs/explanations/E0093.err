@@ -1,0 +1,8 @@
+error[E0093]: `char` literal is not closed
+ --> E0093.sisu:2:13
+  |
+2 |     let c = 'a
+  |             ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0093

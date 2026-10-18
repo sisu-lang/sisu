@@ -1,0 +1,15 @@
+warning[W0006]: unreachable arm
+  --> W0006.sisu:9:9
+   |
+ 8 |         _ => false
+   |         - this arm covers it
+ 9 |         Green => true
+   |         ^^^^^
+   |
+help: remove the arm
+   |
+ 9 -         Green => true
+   |
+
+sisuc: 1 warning
+sisuc: for more on a code, run `sisuc --explain <code>`: W0006

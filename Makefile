@@ -28,7 +28,7 @@ build: ## Build sisuc and the runtime library
 test: ## Run every test with nextest, whose setup script builds the runtime
 	cargo nextest run --workspace --locked
 
-bless: ## Fill the expected .out/.err/.json files of the end-to-end cases
+bless: ## Fill the expected .out/.err/.json files of the end-to-end cases and the site's programs
 	SISU_BLESS=1 cargo nextest run -E 'binary(cases)'
 
 lint: ## The hooks CI runs: fmt, clippy, typos, shellcheck and the rest

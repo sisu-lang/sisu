@@ -1,0 +1,8 @@
+error[E0035]: `for` needs an array or a range; this is `i64`
+ --> E0035.sisu:2:14
+  |
+2 |     for n in 5 {
+  |              ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0035

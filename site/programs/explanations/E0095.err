@@ -1,0 +1,13 @@
+error[E0095]: a `}` in a string must be escaped
+ --> E0095.sisu:2:13
+  |
+2 |     print("a}b")
+  |             ^
+  |
+help: write `\}`
+  |
+2 |     print("a\}b")
+  |             +
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0095

@@ -1,0 +1,14 @@
+error[E0099]: `todo` takes one message in parentheses, or none
+ --> E0099.sisu:2:9
+  |
+2 |     todo!("multiply")
+  |         ^
+  |
+help: remove it
+  |
+2 -     todo!("multiply")
+2 +     todo("multiply")
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0099

@@ -1,0 +1,8 @@
+error[E0080]: `_` cannot be a name
+ --> E0080.sisu:1:4
+  |
+1 | fn _() {
+  |    ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0080

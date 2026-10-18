@@ -1,0 +1,7 @@
+fn main() {
+    print("Hello, sauna")
+    let name = "Väinö"
+    let temp = 81.456
+    print("{name} sets the sauna to {temp:.1} degrees")
+    print("[{name:>8}]")
+}

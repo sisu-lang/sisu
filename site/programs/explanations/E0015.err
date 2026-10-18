@@ -1,0 +1,15 @@
+error[E0015]: a field ends at the end of the line
+ --> E0015.sisu:2:11
+  |
+2 |     x: i64, y: i64
+  |           ^
+  |
+  = help: put each field on its own line
+help: remove the comma and break the line
+  |
+2 ~     x: i64
+3 ~     y: i64
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0015

@@ -1,0 +1,13 @@
+error[E0096]: empty interpolation
+ --> E0096.sisu:2:12
+  |
+2 |     print("{}")
+  |            ^^
+  |
+help: write `\{\}` for literal braces
+  |
+2 |     print("\{\}")
+  |            + +
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0096

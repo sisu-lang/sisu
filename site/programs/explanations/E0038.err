@@ -1,0 +1,8 @@
+error[E0038]: `break` outside a loop
+ --> E0038.sisu:2:5
+  |
+2 |     break
+  |     ^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0038

@@ -138,6 +138,6 @@ test-group = "valgrind"
 # Each case compiles twice and runs under Valgrind; a hang is killed after three minutes. The
 # orphan checks only read the directory, so they stay out of the group.
 [[profile.default.overrides]]
-filter = "binary(cases) & test(/^(run|run_fail)::/)"
+filter = "binary(cases) & test(/^(run|run_fail|site_run|site_run_fail)::/)"
 test-group = "valgrind"
 slow-timeout = { period = "60s", terminate-after = 3 }

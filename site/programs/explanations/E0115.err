@@ -1,0 +1,8 @@
+error[E0115]: `Empty` needs at least one variant
+ --> E0115.sisu:1:6
+  |
+1 | enum Empty {}
+  |      ^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0115

@@ -1,0 +1,15 @@
+error[E0107]: Sisu has no `**`
+ --> E0107.sisu:3:13
+  |
+3 |     print(x ** 2)
+  |             ^^
+  |
+  = help: use `x.pow(y)`
+help: try a `pow` call, which needs an `f64` on the left
+  |
+3 -     print(x ** 2)
+3 +     print(x.pow(2))
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0107

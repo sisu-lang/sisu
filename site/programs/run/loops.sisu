@@ -1,0 +1,16 @@
+fn main() {
+    for i in 0..3 {
+        print(i)
+    }
+    let names = ["Aino", "Eino", "Kalle"]
+    for name in names {
+        print(name)
+    }
+    let mut n = 1
+    while true {
+        n *= 3
+        if n == 9 { continue }
+        if n > 100 { break }
+        print(n)
+    }
+}

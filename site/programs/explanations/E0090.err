@@ -1,0 +1,10 @@
+error[E0090]: malformed `\u` escape
+ --> E0090.sisu:2:14
+  |
+2 |     let c = '\uE4'
+  |              ^^
+  |
+  = help: write `\u{` and 1 to 6 hex digits, then `}`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0090

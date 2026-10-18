@@ -1,0 +1,10 @@
+error[E0081]: a block cannot stand alone as a statement
+ --> E0081.sisu:2:5
+  |
+2 |     {
+  |     ^
+  |
+  = help: bind its value: `let x = { ... }`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0081

@@ -1,0 +1,10 @@
+error[E0060]: cannot print `[i64]`
+ --> E0060.sisu:3:11
+  |
+3 |     print(xs)
+  |           ^^
+  |
+  = help: print each element in a `for` loop
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0060

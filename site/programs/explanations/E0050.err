@@ -1,0 +1,10 @@
+error[E0050]: cannot infer the type of `None`
+ --> E0050.sisu:2:13
+  |
+2 |     let x = None
+  |             ^^^^
+  |
+  = help: write the type: `let x: Tree? = None`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0050

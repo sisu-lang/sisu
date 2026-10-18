@@ -1,0 +1,11 @@
+error[E0082]: `break` cannot appear in a loop header
+ --> E0082.sisu:6:13
+  |
+3 |     while {
+  |     ----- the header of this loop
+...
+6 |             break
+  |             ^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0082

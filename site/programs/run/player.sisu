@@ -1,0 +1,10 @@
+class Player {
+    name: string
+    mut hp: i64
+}
+
+fn main() {
+    let p = Player(name: "Aino", hp: 10)
+    p.hp -= 3
+    print("{p.name} has {p.hp} hp")
+}

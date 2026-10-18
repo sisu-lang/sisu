@@ -1,0 +1,8 @@
+error[E0042]: `u8` cannot be negative
+ --> E0042.sisu:3:13
+  |
+3 |     let n = -b
+  |             ^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0042

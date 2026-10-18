@@ -1,0 +1,10 @@
+error[E0013]: there is no `var` in Sisu
+ --> E0013.sisu:2:5
+  |
+2 |     var count = 0
+  |     ^^^
+  |
+  = help: Sisu declares a variable with `let mut`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0013

@@ -1,0 +1,10 @@
+error[E0067]: every element would be the same `Node` object
+ --> E0067.sisu:6:18
+  |
+6 |     let nodes = [Node(value: 0); 3]
+  |                  ^^^^^^^^^^^^^^
+  |
+  = help: start from `[None; n]` with type `[Node?]` and fill it in a loop
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0067

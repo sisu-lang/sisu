@@ -1,0 +1,10 @@
+error[E0126]: `LIMIT` is a constant; a pattern cannot compare with it
+ --> E0126.sisu:5:9
+  |
+5 |         LIMIT => 1
+  |         ^^^^^
+  |
+  = help: use a guard: `n if n == LIMIT`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0126

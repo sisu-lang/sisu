@@ -1,0 +1,8 @@
+error[E0109]: Sisu's format specs take only alignment, width and precision
+ --> E0109.sisu:3:14
+  |
+3 |     print("{n:03}")
+  |              ^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0109

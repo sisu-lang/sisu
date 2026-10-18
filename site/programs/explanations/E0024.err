@@ -1,0 +1,10 @@
+error[E0024]: `==`, `!=` and `is` do not chain
+ --> E0024.sisu:5:18
+  |
+5 |     print(a == b == c)
+  |                  ^^
+  |
+  = help: join the comparisons with `&&`
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0024

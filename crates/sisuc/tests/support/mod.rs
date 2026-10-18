@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 
@@ -242,15 +242,20 @@ pub(crate) fn run_fail(path: &Path, bless: bool) {
     );
 }
 
-/// Checks a `tests/diagnostics` case: `sisuc --check <name>.sisu`, run from the source's
-/// directory, reports at least one diagnostic, prints nothing on stdout, and exits 1 when a
-/// stderr line starts with `error`, else 0. A case named after a code (`E0001.sisu`,
-/// `E0001-field.sisu`) reports that code. `sisuc --format json --check` exits the same, and each
-/// of its stderr lines is a JSON object, the summary last. Then the two stderrs are `<name>.err`
-/// and `<name>.json`; with `bless`, rewrites both files instead.
+/// Checks a `tests/diagnostics` case; see `diagnose`.
 pub(crate) fn diagnostics(path: &Path, bless: bool) {
-    let dir = path.parent().expect("a case should sit in a directory");
-    let name = path.file_name().expect("a case should have a file name");
+    diagnose(path, path, bless);
+}
+
+/// Checks that `sisuc --check <name>.sisu` on `source`, run from its directory, reports at least
+/// one diagnostic, prints nothing on stdout, and exits 1 when a stderr line starts with `error`,
+/// else 0. A source named after a code (`E0001.sisu`, `E0001-field.sisu`) reports that code.
+/// `sisuc --format json --check` exits the same, and each of its stderr lines is a JSON object,
+/// the summary last. Then the two stderrs are `expected` with the extensions `err` and `json`;
+/// with `bless`, rewrites both files instead.
+pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
+    let dir = source.parent().expect("a case should sit in a directory");
+    let name = source.file_name().expect("a case should have a file name");
     let sisuc = Path::new(env!("CARGO_BIN_EXE_sisuc"));
     let out = Command::new(sisuc)
         .current_dir(dir)
@@ -259,7 +264,7 @@ pub(crate) fn diagnostics(path: &Path, bless: bool) {
         .output()
         .expect("sisuc starts");
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    let display = path.display();
+    let display = source.display();
     assert!(!stderr.is_empty(), "{display} reports no diagnostic");
     let failed = stderr.lines().any(|l| l.starts_with("error"));
     assert_eq!(
@@ -268,7 +273,7 @@ pub(crate) fn diagnostics(path: &Path, bless: bool) {
         "{display}: {stderr}"
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{display}");
-    let stem = path
+    let stem = source
         .file_stem()
         .and_then(OsStr::to_str)
         .expect("a case's name should be UTF-8");
@@ -305,15 +310,15 @@ pub(crate) fn diagnostics(path: &Path, bless: bool) {
     );
     expect_files(
         &[
-            (path.with_extension("err"), stderr),
-            (path.with_extension("json"), json),
+            (expected.with_extension("err"), stderr),
+            (expected.with_extension("json"), json),
         ],
         bless,
     );
 }
 
 /// Whether `text` is a diagnostic code: `E` or `W`, then four digits.
-fn is_code(text: &str) -> bool {
+pub(crate) fn is_code(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.len() == 5 && matches!(bytes[0], b'E' | b'W') && bytes[1..].iter().all(u8::is_ascii_digit)
 }
@@ -336,6 +341,12 @@ pub(crate) fn orphan_check(path: &Path, expectations: &[&str]) {
         "{} is neither a `.sisu` case nor the {expectations:?} file of one",
         path.display()
     );
+    no_hidden_sibling(path);
+}
+
+/// Panics, naming it, on any hidden entry beside `path`: the harness never lists one, so a stray
+/// `.ghost.out` would otherwise go unseen.
+pub(crate) fn no_hidden_sibling(path: &Path) {
     let dir = path
         .parent()
         .expect("a case file should sit in a directory");
@@ -376,11 +387,16 @@ fn build<const N: usize>(path: &Path, builds: [Build; N]) -> [PathBuf; N] {
 
 /// A fresh, empty `<CARGO_TARGET_TMPDIR>/cases/<source path>/`. The whole path, nested, keeps
 /// same-named cases in different directories apart.
-fn case_dir(source: &Path) -> PathBuf {
-    // An absolute path would replace the base in `join`, so it goes in without its leading `/`.
+pub(crate) fn case_dir(source: &Path) -> PathBuf {
+    // An absolute path would replace the base in `join`, and a leading `..`, as a case outside
+    // the crate has, would climb out of `cases/`, so both go in without those components.
+    let inside: PathBuf = source
+        .components()
+        .skip_while(|c| matches!(c, Component::RootDir | Component::ParentDir))
+        .collect();
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("cases")
-        .join(source.strip_prefix("/").unwrap_or(source));
+        .join(inside);
     // It is absent on the first run, so a failure here is expected and harmless.
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("creates the case directory");

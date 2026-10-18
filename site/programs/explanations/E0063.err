@@ -1,0 +1,14 @@
+error[E0063]: `Point` has no field `y`
+ --> E0063.sisu:7:13
+  |
+7 |     print(p.y)
+  |             ^
+  |
+help: a field with a similar name exists: `x`
+  |
+7 -     print(p.y)
+7 +     print(p.x)
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0063

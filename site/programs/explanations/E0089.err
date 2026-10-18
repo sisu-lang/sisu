@@ -1,0 +1,14 @@
+error[E0089]: unknown escape `\q`
+ --> E0089.sisu:2:14
+  |
+2 |     let c = '\q'
+  |              ^^
+  |
+  = help: the escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`, `\{`, `\}` and `\u{...}`
+help: if you meant a backslash, write `\\`
+  |
+2 |     let c = '\\q'
+  |              +
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0089

@@ -1,0 +1,13 @@
+error[E0057]: `area` is a method of `Square`, not a field
+  --> E0057.sisu:11:13
+   |
+11 |     print(s.area)
+   |             ^^^^
+   |
+help: call it: `area()`
+   |
+11 |     print(s.area())
+   |                 ++
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0057

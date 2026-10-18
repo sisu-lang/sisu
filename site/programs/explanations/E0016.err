@@ -1,0 +1,14 @@
+error[E0016]: a field takes no `let`
+ --> E0016.sisu:2:5
+  |
+2 |     let x: i64
+  |     ^^^
+  |
+help: remove the `let`
+  |
+2 -     let x: i64
+2 +     x: i64
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0016

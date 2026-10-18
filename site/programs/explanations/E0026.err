@@ -1,0 +1,8 @@
+error[E0026]: `u8` is a built-in type
+ --> E0026.sisu:1:7
+  |
+1 | class u8 {
+  |       ^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0026

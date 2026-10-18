@@ -1,0 +1,10 @@
+error[E0005]: `[` cannot start a line here
+ --> E0005.sisu:4:5
+  |
+4 |     [0][1])
+  |     ^
+  |
+  = help: add a comma, or put `[` on the line of its array
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0005

@@ -1,0 +1,10 @@
+error[E0112]: variants come before methods
+ --> E0112.sisu:4:5
+  |
+3 |     fn same(self) -> Light { self }
+  |     -- the first method
+4 |     Green
+  |     ^^^^^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0112

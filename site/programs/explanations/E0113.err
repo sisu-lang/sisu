@@ -1,0 +1,14 @@
+error[E0113]: a variant name starts with an upper-case letter: `North`
+ --> E0113.sisu:2:5
+  |
+2 |     north
+  |     ^^^^^
+  |
+help: capitalize it
+  |
+2 -     north
+2 +     North
+  |
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0113
