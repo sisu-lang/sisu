@@ -331,6 +331,13 @@ class Build(unittest.TestCase):
         with self.assertRaisesRegex(build.BuildError, re.escape('site/src/short.html')):
             build.build(build.SITE / '_site')
 
+    def test_every_page_has_a_description(self):
+        for src in sorted((build.SITE / 'src').glob('*.html')):
+            description = src.read_text(encoding='utf-8').split('\n', 2)[1]
+            with self.subTest(src.name):
+                self.assertTrue(description.strip(), 'description is empty')
+                self.assertLess(len(description), 160)
+
     def test_forbid_tk(self):
         files = {'contribute.html': PAGE.format('<p>[TK: x]</p>')}
         self.assertEqual(problems(self, files), [])
