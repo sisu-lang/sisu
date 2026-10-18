@@ -130,6 +130,13 @@ fn char_arithmetic_reports_once() {
         &with_main("fn f(c: char) {\n    print(c + 1 + 2)\n}"),
         &[(Code::ArithmeticOnChar, (2, 13))],
     );
+    // A float sum or a float block beside the `char` is its own mistake, and the only one.
+    codes(
+        &with_main(
+            "fn f(c: char) {\n    print(c + (1.0 + 2.0))\n    print(c + { let k = 1.5\n k })\n}",
+        ),
+        &[(Code::Mismatch, (2, 16)), (Code::Mismatch, (3, 11))],
+    );
     // A `u8` or an `i64` beside the `char` is not reported as well, on either side.
     codes(
         &with_main(
