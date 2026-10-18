@@ -4,6 +4,7 @@
 # PASS needs no uncovered region touching the changes and no surviving mutant.
 # A region you explain instead of covering still fails the verdict, so the
 # mutants run anyway: one job reports both. A failing test run stops it early.
+# A diff that changes no .rs file passes without running either.
 #   scripts/verify.sh [base]
 set -euo pipefail
 
@@ -14,6 +15,12 @@ trap 'rm -f "$report"; [[ -n $verdict ]] || echo "verify: FAIL: stopped early (s
 
 cd "$(git rev-parse --show-toplevel)"
 base=${1:-$(git merge-base main HEAD)}
+# Coverage and mutants measure Rust code only, so a diff without any has nothing to check.
+if git diff --quiet "$base" -- '*.rs'; then
+	verdict="verify: PASS: no Rust changes since $base"
+	echo "$verdict"
+	exit 0
+fi
 report=$(mktemp)
 
 if ! scripts/coverage.sh "$base" | tee "$report"; then
