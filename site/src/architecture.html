@@ -15,7 +15,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisuc</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit d2c991a · x86-64 Linux only</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit 18b6be6 · x86-64 Linux only</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 Linux only) -->
 
@@ -133,7 +133,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
         <li><strong>One registry.</strong> <code>diagnostic/registry.rs</code> holds every message, label, help and fix. A stage names what happened and where, and writes no text, so the same code always has the same wording.</li>
         <li><strong>An explanation per code.</strong> <code>sisuc --explain E0001</code> prints what the code means, an example that triggers it, and the fix. The explanations live in <code>docs/diagnostics/</code>.</li>
         <li><strong>No cascades.</strong> A broken item is reported once. Nothing that depends on it adds a second report.</li>
-        <li><strong>Fixes marked safe or unsafe.</strong> A safe fix always removes its diagnostic and leaves source that still lexes and parses, so a tool may apply it without asking. An unsafe fix is applied only when you pick it. Before a fix is reported, the compiler applies it and drops it if the result lexes or parses worse.</li>
+        <li><strong>Fixes marked safe or unsafe.</strong> A safe fix always removes its diagnostic and leaves source that still lexes and parses, so a tool may apply it without asking. An unsafe fix is applied only when you pick it. Before it reports a fix for a lexer or parser diagnostic, the compiler applies it and drops it if the result lexes or parses worse. The fuzz target checks that no fix shown makes the syntax worse.</li>
         <li><strong>JSON output.</strong> <code>sisuc --format json</code> writes each diagnostic as one JSON object per line, with the code, severity, spans and fixes, for editors, scripts and agents.</li>
       </ul>
       <p>The <a href="diagnostics.html">diagnostics page</a> shows them in use.</p>

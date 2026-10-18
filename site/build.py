@@ -359,8 +359,11 @@ def benchmarks_md() -> str:
 
 
 def bench_programs() -> list[str]:
-    """The programs scripts/bench.sh runs: a directory under bench/ each."""
-    return sorted(p.name for p in (ROOT / 'bench').iterdir() if p.is_dir())
+    """The programs scripts/bench.sh runs by default. bench/features/ holds CodSpeed-only programs."""
+    found = re.search(r'\|\| benchmarks=\(([^)]*)\)', read('../scripts/bench.sh'))
+    if not found:
+        raise BuildError('scripts/bench.sh: no default benchmarks=(...) list')
+    return sorted(found[1].split())
 
 
 def benchmark_tables(markdown: str, expected: list[str] | None = None) -> dict[str, dict[str, dict[str, str]]]:

@@ -30,7 +30,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
   <section class="ph"><div class="w">
     <h1>How fast is Sisu?</h1>
     <p class="lede">Eight small programs, each written with the same algorithm in Sisu, C, Rust, Go, Java and Python. The numbers show where Sisu stands today, not how fast it will be.</p>
-    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commits and dates are named below the table · Prose checked against the repository at commit d2c991a</p>
+    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commits and dates are named below the table · Prose checked against the repository at commit 18b6be6</p>
   </div></section>
   <!-- source: docs/benchmarks.md (intro, Results) -->
 
@@ -122,16 +122,16 @@ $ RUNS=10 BENCH_CPU=4 make bench
         <li><code>crates/**</code> and <code>bench/**</code></li>
         <li><code>Cargo.toml</code>, <code>Cargo.lock</code>, <code>rust-toolchain.toml</code> and <code>.cargo/config.toml</code></li>
         <li>the LLVM install: <code>.github/actions/install-llvm/**</code> and <code>scripts/install-llvm.sh</code></li>
-        <li>the benchmark setup: <code>codspeed.yml</code>, <code>scripts/codspeed-prep.sh</code> and the workflow file</li>
+        <li>the benchmark setup: <code>codspeed.yml</code>, <code>codspeed-main.yml</code>, <code>scripts/codspeed-prep.sh</code> and the workflow file</li>
       </ul>
       <p>It runs in CodSpeed's simulation mode, which counts instructions rather than timing the run. It measures two things:</p>
       <ul>
-        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs.</li>
-        <li>The compiler itself: an <code>-O2</code> build of <code>bench/hello</code>, a <code>--check</code> and an <code>-O2</code> build of <code>bench/binary_trees</code>, and the same two on a generated 200-section input that uses most of the language.</li>
+        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and three programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code> and <code>shared_arrays</code>.</li>
+        <li>The compiler itself: an <code>-O2</code> build of <code>bench/hello</code>, a <code>--check</code> and an <code>-O2</code> build of <code>bench/binary_trees</code>, a <code>--check</code> of a generated 200-section input that uses most of the language, and an <code>-O2</code> build of a 20-section one. Pushes to <code>main</code> also build the 200-section input, from <code>codspeed-main.yml</code>.</li>
       </ul>
       <p>Before it measures, <code>scripts/codspeed-prep.sh</code> builds every benchmark and checks what each one prints. CodSpeed comments on a pull request when a result changes.</p>
       <p>The check is informational: it never turns a pull request red. On a push to <code>main</code>, a failed step fails the run, so the benchmarks cannot stop running unnoticed. To compare a change before you push, <code>make callgrind</code> counts the instructions of <code>sisuc --check</code> on the large input, as CodSpeed does.</p>
     </div>
   </div></section>
-  <!-- source: .github/workflows/codspeed.yml (on: push branches [main], pull_request paths; continue-on-error; summary step), codspeed.yml, scripts/codspeed-prep.sh, docs/development.md (Coverage and performance), Makefile (callgrind) -->
+  <!-- source: .github/workflows/codspeed.yml (on: push branches [main], pull_request paths; continue-on-error; summary step), codspeed.yml, codspeed-main.yml, scripts/codspeed-prep.sh, docs/benchmarks.md (Benchmarks for CodSpeed only), docs/development.md (Coverage and performance), Makefile (callgrind) -->
 </main>

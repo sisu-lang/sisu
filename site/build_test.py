@@ -591,12 +591,12 @@ class Build(unittest.TestCase):
 
     def test_bench_directives_read_the_document(self):
         fake_site(self, {}, {'docs/benchmarks.md': bench_md(md_table('fib', FIB), md_table('hello', HELLO, HELLO_BUILDS)),
-                             'bench/fib/main.c': '', 'bench/hello/main.c': '', 'bench/sieve/main.c': ''})
+                             'scripts/bench.sh': '[[ $# -gt 0 ]] || benchmarks=(hello fib sieve)\n',
+                             'bench/features/strings/main.sisu': ''})
         for directive in ('bench-charts', 'bench-table'):
             with self.assertRaisesRegex(build.BuildError, r"docs/benchmarks\.md.*missing \['sieve'\]"):
                 build.expand('{{%s}}' % directive, {})
-        (build.ROOT / 'bench/sieve/main.c').unlink()
-        (build.ROOT / 'bench/sieve').rmdir()
+        (build.ROOT / 'scripts/bench.sh').write_text('[[ $# -gt 0 ]] || benchmarks=(hello fib)\n')
         self.assertEqual(build.expand('{{bench-charts}}', {}).count('<figure class="chart">'), 2)
         self.assertIn('<td><code>fib</code></td>', build.expand('{{bench-table}}', {}))
         self.assertIn('Commit abc1234', build.expand('{{bench-results-note}}', {}))
