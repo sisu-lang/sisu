@@ -29,6 +29,7 @@ pub fn front_end(data: &[u8]) -> String {
     json.finish();
     assert_spans(&checked.source, &checked.diagnostics);
     let shown = crate::front_end::sound_fixes(&checked.source, &checked.diagnostics);
+    assert_fixes_keep_syntax(&checked.source, &shown);
     assert_safe_fixes(&checked.source, &shown);
     if let Some(program) = &checked.program {
         assert_compiles(program, &checked.source);
@@ -183,6 +184,23 @@ fn assert_safe_fixes(source: &str, diagnostics: &[Diagnostic]) {
     }
 }
 
+/// Asserts that no fix shown leaves `source` lexing or parsing worse than it does:
+/// `sound_fixes` drops such a fix of a lexer or parser diagnostic, but shows the checker's
+/// unjudged.
+fn assert_fixes_keep_syntax(source: &str, diagnostics: &[Diagnostic]) {
+    let before = crate::front_end::syntax_errors(source);
+    for d in diagnostics {
+        for fix in d.fixes() {
+            let fixed = fix.apply(source);
+            assert!(
+                crate::front_end::syntax_errors(&fixed) <= before,
+                "{:?}: a fix breaks the syntax:\n{fixed}",
+                d.code()
+            );
+        }
+    }
+}
+
 /// The diagnostics the lexer reports for `source`, and where each comment starts.
 fn lexed(source: &str) -> (Vec<Diagnostic>, Vec<usize>) {
     match crate::lexer::lex(source) {
@@ -217,7 +235,10 @@ mod tests {
 
     use inkwell::context::Context;
 
-    use super::{VERIFIED, assert_safe_fixes, assert_spans, assert_verified, front_end};
+    use super::{
+        VERIFIED, assert_fixes_keep_syntax, assert_safe_fixes, assert_spans, assert_verified,
+        front_end,
+    };
     use crate::diagnostic::{Code, Diagnostic};
     use crate::source::Span;
 
@@ -543,6 +564,15 @@ mod tests {
             .clone()
             .with_safe_fix_for_test(&[(span(at, at + 1), ""), (span(end, end), " 1")]);
         assert_safe_fixes(src, &ds);
+    }
+
+    /// `sound_fixes` shows a checker fix unjudged, so the fuzz target judges it.
+    #[test]
+    #[should_panic(expected = "NeverReassigned: a fix breaks the syntax")]
+    fn rejects_a_checker_fix_that_breaks_the_syntax() {
+        let mut ds = crate::front_end::front_end(CHECKED).1;
+        ds[0] = ds[0].clone().with_safe_fix_for_test(&[(span(0, 0), "(")]);
+        assert_fixes_keep_syntax(CHECKED, &crate::front_end::sound_fixes(CHECKED, &ds));
     }
 
     #[test]

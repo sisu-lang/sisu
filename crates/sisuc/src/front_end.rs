@@ -1,6 +1,8 @@
 //! The front end: from source to the checked program.
 
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Severity};
+use rustc_hash::FxHashSet;
+
+use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Severity};
 use crate::source::Span;
 use crate::{check, last_use, lexer, parser, tir};
 
@@ -43,18 +45,29 @@ pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>)
     (program, diagnostics)
 }
 
-/// `diagnostics` without each fix that leaves `source` lexing or parsing worse than it does,
-/// and with each fix unsafe that edits over a comment or another lexer error: whatever the rule
-/// behind a fix, a fix that is shown never breaks the syntax, and a safe one never takes text it
-/// was not about.
+/// `diagnostics` without each fix of a lexer or parser diagnostic that leaves `source` lexing or
+/// parsing worse than it does, and with each fix unsafe that edits over a comment or another
+/// lexer error: a fix that is shown never breaks the syntax, and a safe one never takes text it
+/// was not about. A checker fix is not judged: the checker runs only on items that parse, and
+/// the fuzz target asserts that every fix shown keeps the syntax, the checker's included.
+/// Judging one lexes and parses the whole source again, so judging every checker fix made N
+/// warnings cost N parses.
 pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
     let mut sound = diagnostics.to_vec();
     // Judging a fix lexes and parses `source` again, so skip that when no diagnostic has one.
     if sound.iter().any(|d| !d.fixes().is_empty()) {
-        let before = syntax_errors(source);
+        let syntax = syntax(source);
+        let before = badness(&syntax);
+        // Past a bracket error, the worst there is, no fix is worse: only the parser's reports
+        // are judged.
+        let reported: FxHashSet<(Code, Span)> = (syntax.iter().flatten())
+            .map(|d| (d.code(), d.span()))
+            .collect();
         let marks = marks(source);
         for d in &mut sound {
-            d.retain_fixes(|fix| syntax_errors(&fix.apply(source)) <= before);
+            if reported.contains(&(d.code(), d.span())) {
+                d.retain_fixes(|fix| syntax_errors(&fix.apply(source)) <= before);
+            }
             let own = d.span().start();
             d.demote_fixes(|fix| {
                 let taken = |at: usize| fix.edits().iter().any(|e| e.span().range().contains(&at));
@@ -76,20 +89,29 @@ fn marks(source: &str) -> Vec<usize> {
     }
 }
 
-/// How badly `source` fails to lex or to parse: a lexer error, which stops the parser, is worse
-/// than any number of parser errors.
-fn syntax_errors(source: &str) -> (bool, usize) {
-    match lexer::lex(source) {
+/// What the lexer and the parser report about `source`; `Err` holds the bracket error that
+/// stops the lexer.
+fn syntax(source: &str) -> Result<Vec<Diagnostic>, Diagnostic> {
+    lexer::lex(source).map(|lexed| parser::parse(lexed).diagnostics)
+}
+
+/// How badly a source fails to lex or to parse, given its `syntax`: a lexer error, which stops
+/// the parser, is worse than any number of parser errors.
+fn badness(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> (bool, usize) {
+    match syntax {
         Err(_) => (true, 0),
-        Ok(lexed) => {
-            let parsed = parser::parse(lexed);
-            let errors = parsed.diagnostics.iter();
-            (
-                false,
-                errors.filter(|d| d.severity() == Severity::Error).count(),
-            )
-        }
+        Ok(ds) => (
+            false,
+            ds.iter()
+                .filter(|d| d.severity() == Severity::Error)
+                .count(),
+        ),
     }
+}
+
+/// How badly `source` fails to lex or to parse, as `badness` ranks it.
+pub(crate) fn syntax_errors(source: &str) -> (bool, usize) {
+    badness(&syntax(source))
 }
 
 #[cfg(test)]
@@ -115,24 +137,30 @@ mod tests {
         d.fixes().iter().map(|f| kept.contains(f)).collect()
     }
 
-    /// A fix that leaves the source lexing and parsing is shown; one that breaks either is not,
-    /// whatever its diagnostic. A fix of a syntax error is held only to not making things worse.
+    /// A lexer or parser diagnostic's fix that leaves the source lexing and parsing is shown; one
+    /// that breaks either is not. A fix of a syntax error is held only to not making things
+    /// worse. A checker fix is shown unjudged: the fuzz target holds the checker to its rules.
     #[test]
     fn a_fix_that_breaks_the_syntax_is_dropped() {
-        let src = "fn f(s: string, n: i64) {\n    print(s + n)\n}\nfn main() {}\n";
-        let [d] = <[Diagnostic; 1]>::try_from(front_end(src).1).expect("one diagnostic");
-        assert_eq!(kept(src, &d), [true]);
-        // A `\\` before the `(` of `print(` does not lex.
-        let at = Span::new(35, 36);
-        assert_eq!(&src[at.range()], "(");
-        assert_eq!(
-            kept(src, &DiagnosticKind::BraceInString { at }.into()),
-            [false]
-        );
+        // An unclosed `(` is a bracket error, which stops the lexer.
+        let unclosed = [(Span::new(0, 0), "(")];
         // Two lexer errors: the fix of the first leaves the second, which is no worse.
         let src = "fn main() {\n    print(\"}\")\n    print(\"}\")\n}\n";
         let [d] = <[Diagnostic; 1]>::try_from(front_end(src).1).expect("one diagnostic");
         assert_eq!(kept(src, &d), [true]);
+        assert_eq!(
+            kept(src, &d.clone().with_safe_fix_for_test(&unclosed)),
+            [false]
+        );
+        // A broken function after the others lexes, but is one more parser error.
+        let item = [(
+            Span::new(src.len(), src.len()),
+            "fn g() {\n    let = 1\n}\n",
+        )];
+        assert_eq!(kept(src, &d.with_safe_fix_for_test(&item)), [false]);
+        let src = "fn f(s: string, n: i64) {\n    print(s + n)\n}\nfn main() {}\n";
+        let [d] = <[Diagnostic; 1]>::try_from(front_end(src).1).expect("one diagnostic");
+        assert_eq!(kept(src, &d.with_safe_fix_for_test(&unclosed)), [true]);
         // Two parser errors: likewise.
         let src = "fn main() {\n    let mut _ = 1\n}\nfn g() {\n    let mut _ = 2\n}\n";
         let ds = front_end(src).1;

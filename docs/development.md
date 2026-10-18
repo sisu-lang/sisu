@@ -196,7 +196,8 @@ required.
 
 The fuzz target, `fuzz/fuzz_targets/front_end.rs`, feeds arbitrary bytes to
 `sisuc --check`. It renders the report as text and as JSON, and asserts that
-every span and every fix edit is well formed. It also applies each safe fix
+every span and every fix edit is well formed, and that no fix shown leaves the
+source lexing or parsing worse. It also applies each safe fix
 alone and checks the result: the fix deletes no comment, removes its
 diagnostic, and keeps every diagnostic of another code. An input that checks
 clean is printed as a typed tree and compiled, without and with `--rc-checks`,

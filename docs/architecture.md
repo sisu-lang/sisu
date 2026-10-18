@@ -231,10 +231,12 @@ source line with the code underlined. `diagnostic/json.rs` writes the same
 diagnostic as one JSON line, and `diagnostic/suggest.rs` finds the closest
 name for a did-you-mean fix. `report.rs` writes diagnostics and tool errors
 as text or JSON, counts them and ends with the summary. Before it writes one,
-`front_end::sound_fixes` drops any fix whose result would lex or parse worse
-than the input, and makes unsafe any safe fix whose edits cover a comment or
-another lexer error, text no rule sees, so no stage has to guard its own
-fixes. The explanations in
+`front_end::sound_fixes` drops any fix of a lexer or parser diagnostic whose
+result would lex or parse worse than the input, and makes unsafe any safe fix
+whose edits cover a comment or another lexer error, text no rule sees. It does
+not judge a checker fix: that would parse the source again for each one, and
+the checker runs only on items that parse. The fuzz target checks that no fix
+shown makes the syntax worse. The explanations in
 [`docs/diagnostics`](diagnostics/README.md) are what `--explain` prints.
 
 ## Updating the diagram
