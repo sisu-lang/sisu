@@ -292,7 +292,11 @@ runs (`taskset -c 2 hyperfine -N -w 5 -r 50 ...`):
 `bench/features/` holds Sisu-only programs sized for CodSpeed's simulation.
 They have no ports to other languages and no place in the tables above. Each
 must print values that depend on all of its work, and must scale with its
-input. This table lists what CodSpeed covers and which benchmark measures it:
+input.
+
+### What CodSpeed covers
+
+This table lists each feature or path and the benchmark that measures it:
 
 | Feature or path | Benchmark |
 | --- | --- |
@@ -300,7 +304,7 @@ input. This table lists what CodSpeed covers and which benchmark measures it:
 | Array indexing in a loop | sieve |
 | Class allocation and release, `?.` and `??` | binary_trees |
 | Writes to an array with one holder, passed and returned | quicksort |
-| Copy on write of an array with a live copy | shared_arrays |
+| Copy-on-write of an array with a live copy | shared_arrays |
 | `f64` arithmetic | nbody, mandelbrot |
 | Short loops over small arrays | fannkuch_redux |
 | String `+=`, interpolation with format specs, `words`, `chars`, `bytes`, non-ASCII text | strings |

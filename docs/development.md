@@ -181,17 +181,19 @@ compiler on `bench/hello` (an `-O2` build), on `bench/binary_trees`
 uses most of the language. The `-O2` build of that input comes in two sizes:
 20 sections on every run (`build_large_20`) and 200 sections on pushes to
 `main` only (`build_large`, in `codspeed-main.yml`). Pull request reports show
-`build_large` as skipped, carrying `main`'s last result. `check_large` and
-`make callgrind` keep the 200-section input.
+`build_large` as skipped, with its result from the baseline run.
+`check_large` and `make callgrind` keep the 200-section input.
 `scripts/codspeed-prep.sh` builds them and checks every program's output
 first. The `CodSpeed` workflow runs on pushes to `main` and on pull requests
 that touch the code, the benchmarks or their tooling. It never turns a pull
 request's check red. On a push to `main`, a step that fails, such as a prep
 that no longer builds, fails the run, so the benchmarks cannot stop running
-unnoticed. Agents read results through the CodSpeed MCP tools and do not run
-CodSpeed locally. To compare a change before pushing, count the instructions
-of `target/release/sisuc --check target/codspeed/large/main.sisu` under
-callgrind, as `make callgrind` does.
+unnoticed. The bench step's time is its duration in the GitHub Actions run of
+the `CodSpeed` workflow, or in its job log. Agents read results through the
+CodSpeed MCP tools and do not run CodSpeed locally. To compare a change before
+pushing, count the instructions of
+`target/release/sisuc --check target/codspeed/large/main.sisu` under callgrind,
+as `make callgrind` does.
 
 Set these once in the CodSpeed UI: "Informational Status Checks on Failure"
 on, PR comment mode "On Change", threshold 10%. Do not make the check

@@ -33,9 +33,9 @@ env:
 # the rest (nothing is measured or uploaded after a failed prep) and the
 # summary names it. On a pull request every check stays green; on a push to
 # main the summary step then fails the job, so a benchmark that stops running
-# shows on main. Pull requests
-# run codspeed.yml, and pushes to main also run codspeed-main.yml, through the
-# merged config that prep writes. The app comments on the PR on change.
+# shows on main. Pull requests run codspeed.yml, and pushes to main also run
+# codspeed-main.yml, through the merged config that prep writes. The app
+# comments on the PR on change.
 jobs:
   benchmarks:
     name: Benchmarks (informational)

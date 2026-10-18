@@ -495,7 +495,7 @@ Order matters in these places:
 
 A milestone that adds a feature with a run-time cost adds a program under
 `bench/features/`, or extends one, and adds its row to "What CodSpeed
-covers" in [Benchmarks](benchmarks.md#benchmarks-for-codspeed-only).
+covers" in [Benchmarks](benchmarks.md#what-codspeed-covers).
 Otherwise its spec says why the feature needs none.
 
 Each milestone also adds its new syntax to the generator of the large input
@@ -504,7 +504,8 @@ A change to the generator shows as a step in `check_large`,
 `build_large_20` and `build_large`, and the pull request says so.
 
 The bench step of a pull request stays under 3 minutes, read from the job
-log. A benchmark that would push it over shrinks its input, or moves to
+log (see [Coverage and performance](development.md#coverage-and-performance)).
+A benchmark that would push it over shrinks its input, or moves to
 `codspeed-main.yml`, which runs only on pushes to `main`.
 
 The first candidates:
