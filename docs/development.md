@@ -25,6 +25,7 @@ running the same checks as CI. Sisu builds and runs on x86-64 Linux.
   and memory errors.
 - For `make miri`, a nightly toolchain with Miri:
   `rustup toolchain install nightly --component miri --component rust-src`.
+- [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
 
 LLVM 22 lives inside the repository. `scripts/install-llvm.sh` downloads the
 official release (1.9 GB) and keeps only what the build needs in `.llvm/22`
@@ -382,8 +383,8 @@ prerequisite is [uv](https://docs.astral.sh/uv/); it needs no Rust and no LLVM.
 $ make site   # tests the build, then builds site/_site
 ```
 
-CI runs the same target. The `Pages` workflow
-deploys the site to GitHub Pages and runs only when you start it by hand.
+CI runs the same target. The `Pages` workflow deploys the site to GitHub Pages
+and runs only when you start it by hand.
 
 ## Look inside the compiler
 
