@@ -27,6 +27,7 @@ The caller names one target. Infer its kind; ask when it is unclear.
 1. The repository root is `git rev-parse --show-toplevel` in the checkout that holds the target, which may be a worktree.
 2. `mktemp -d "${TMPDIR:-/tmp}/sisu-review-XXXXXXXX"` makes the run directory, `RUN`. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
 3. Find the two skills the brief cites: `test-audit` at `~/.claude/skills/test-audit/SKILL.md` and `codebase-design` at `~/.agents/skills/codebase-design/SKILL.md`. When one is not there, `find ~/.claude ~/.agents -path '*/<name>/SKILL.md'`. When neither place has it, delete its line from the brief and tell the user in the report.
+4. For the final diff of a branch, review what will merge. Run `git fetch origin`. When `git merge-base --is-ancestor origin/main <head>` fails, `main` has moved: rebase the branch onto `origin/main`, run `make test` and `make site`, and review the rebased range.
 
 ### 2. Write the brief
 
