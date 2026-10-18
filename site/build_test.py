@@ -460,6 +460,15 @@ class Build(unittest.TestCase):
                     self.assert_fails('diagnostics/X0001.html', found)
                     self.assertIn(url, found[0])
 
+    def test_explanation_html_is_text(self):
+        # `sisuc --explain` prints the Markdown as it is, so a `<` outside code shows, and markup cannot slip past the checks.
+        text = '# X0001: t\n\nA value of type Option<T> is <iframe src="https://evil.example/x"></iframe> here.\n\n    indented milestone 9\n\n## Fixed\n'
+        shown = build.explanation_html('X0001', text, '')
+        self.assertIn('<p>A value of type Option&lt;T&gt; is &lt;iframe src=&quot;https://evil.example/x&quot;&gt;&lt;/iframe&gt; here.</p>', shown)
+        self.assertNotIn('<iframe', shown)
+        self.assertIn('<pre data-lang="">indented milestone 9\n</pre>', shown)
+        self.assert_fails('diagnostics/X0001.html', problems(self, {'diagnostics/X0001.html': PAGE.format(shown)}))
+
     def test_categories_complete(self):
         explained = {f'docs/diagnostics/{name}.md': '' for name in ('E0001', 'W0002', 'README')}
         cases = [
@@ -514,6 +523,9 @@ class Build(unittest.TestCase):
             ('a hello Python Build cell', md_table('fib', FIB), md_table('hello', HELLO, HELLO_BUILDS | {'Python': '0.5'}), 'hello'),
             ('no hello', md_table('fib', FIB), '', 'hello'),
             ('only zeros', md_table('fib', {lang: '0.00' for lang in FIB}), hello, 'fib'),
+            # Python is drawn off the scale, which is only true when it is the slowest.
+            ('Python faster than Go', md_table('fib', FIB | {'Python': '0.20'}), hello, 'fib'),
+            ('Python level with Go', md_table('fib', FIB | {'Python': '0.28'}), hello, 'fib'),
         ]
         for name, fib, hello, program in cases:
             with self.subTest(name):

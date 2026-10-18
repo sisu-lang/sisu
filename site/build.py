@@ -214,8 +214,11 @@ def code_fence(renderer, tokens, idx, options, env) -> str:
     return f'<figure class="code"><pre data-lang="{html.escape(token.info.strip())}">{escape(token.content)}</pre></figure>\n'
 
 
-MD = MarkdownIt('commonmark').enable('table')
+# No raw HTML: `sisuc --explain` prints `Option<T>` as written, and the page must show the same.
+MD = MarkdownIt('commonmark', {'html': False}).enable('table')
 MD.add_render_rule('fence', code_fence)
+# An indented block gets data-lang too, so the page checks see it as shown code.
+MD.add_render_rule('code_block', code_fence)
 CODE_LINK = re.compile(r'([EW]\d{4})\.md(#.*)?')
 
 
@@ -435,6 +438,8 @@ def chart(program: str, table: dict[str, dict[str, str]]) -> str:
     largest = max(values.values())
     if not largest:
         raise BuildError(f'{BENCHMARKS}: table {program!r}: every {column} is 0')
+    if program != 'hello' and seconds(program, 'Python', column, table['Python'][column]) <= largest:
+        raise BuildError(f"{BENCHMARKS}: table {program!r}: Python's {column} is not above every other, so it is not off the scale")
 
     def li(language):
         width = (values[language] / largest * 100).quantize(Decimal('0.1'), ROUND_HALF_UP)
