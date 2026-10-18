@@ -4,7 +4,7 @@ How to help with Sisu, a one-person learning project at an early stage.
   <section class="ph"><div class="w">
     <h1>Contribute to Sisu</h1>
     <p class="lede">One person builds Sisu, in the open. It is a learning project at an early stage, so there is no team to hand work to yet. This page says what help fits, how to build the compiler, and which checks a change must pass.</p>
-    <p class="meta">Checked against the repository at commit f372ddd.</p>
+    <p class="meta">Checked against the repository at commit d2c991a.</p>
   </div></section>
   <!-- source: CONTRIBUTING.md ("Sisu is a solo learning project"), README.md ("a passion project at an early stage") -->
 
@@ -24,7 +24,7 @@ How to help with Sisu, a one-person learning project at an early stage.
       <h2 id="who">Who runs the project</h2>
       <p>Mikko Leppänen builds and maintains Sisu, and writes most changes with an AI agent, under the same rules this page describes.</p>
       <p><a href="https://github.com/sisu-lang/sisu/blob/main/AGENTS.md">AGENTS.md</a> holds the rules for changing the code, for people and agents alike. <a href="https://github.com/sisu-lang/sisu/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> is the route through them.</p>
-      <!-- source: git log at f372ddd (every commit not by dependabot is authored by Mikko Leppänen; README.md and Cargo.toml name no author), CONTRIBUTING.md -->
+      <!-- source: git log at d2c991a (every commit not by dependabot is authored by Mikko Leppänen; README.md and Cargo.toml name no author), CONTRIBUTING.md -->
 
       <h2 id="help">What help fits</h2>
       <p>The project has no written policy on outside help yet. [TK: which kinds of outside help you want, and which you do not]</p>
@@ -68,12 +68,13 @@ $ ./fib
 {{text ../crates/sisuc/tests/run/fib.out}}</pre></figure>
       <p>Build the whole workspace, not only <code>sisuc</code>. Every program links with the runtime library, which <code>sisuc</code> looks for next to its own executable; <code>cargo build -p sisuc</code> does not build it. <code>make help</code> lists every target.</p>
       <p><a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md">Developing Sisu</a> has the full list of prerequisites and commands.</p>
-      <!-- source: docs/development.md ("Prerequisites", "Set up a clone", "Compile and run a program"), rust-toolchain.toml (channel 1.99.0), Makefile (setup, build), README.md (x86-64 Linux only); fib output checked with target/release/sisuc at f372ddd -->
+      <!-- source: docs/development.md ("Prerequisites", "Set up a clone", "Compile and run a program"), rust-toolchain.toml (channel 1.99.0), Makefile (setup, build), README.md (x86-64 Linux only); fib output from crates/sisuc/tests/run/fib.out, which the end-to-end tests check -->
 
       <h2 id="checks">Checks before a pull request</h2>
       <p>The pre-commit hook runs the same checks as CI. Before you open a pull request, run these:</p>
       <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
 $ make check     # lint, test and deny, as CI requires
+$ make site      # build and check the website, as CI does
 $ make miri      # only when you change crates/runtime
 $ make verify    # coverage, then mutants, on your diff
 </pre></figure>
@@ -83,7 +84,7 @@ $ make verify    # coverage, then mutants, on your diff
         <li><code>make miri</code> runs the runtime's unit tests under Miri on nightly, which stops at undefined behaviour. CI runs it too.</li>
         <li><code>make verify</code> ends with one line, <code>verify: PASS</code> or <code>verify: FAIL</code>. Cover or explain each uncovered region, and kill or explain each surviving mutant.</li>
       </ul>
-      <!-- source: CONTRIBUTING.md (steps 1 and 5), Makefile (check, test, miri, verify), Cargo.toml (lint comments: CI and the pre-commit hook run clippy with -D warnings; #[expect] with a reason), .github/workflows/ci.yml (RUSTFLAGS="-D warnings"; jobs Lint, Test, Miri, Dependencies), docs/development.md ("Prerequisites": Valgrind; "Coverage and performance": verify's last line), AGENTS.md -->
+      <!-- source: CONTRIBUTING.md (steps 1 and 5), Makefile (check, test, miri, verify), Cargo.toml (lint comments: CI and the pre-commit hook run clippy with -D warnings; #[expect] with a reason), .github/workflows/ci.yml (RUSTFLAGS="-D warnings"; jobs Lint, Test, Miri, Dependencies, Site), docs/development.md ("Prerequisites": Valgrind; "Coverage and performance": verify's last line), AGENTS.md -->
 
       <h2 id="standards">Code standards</h2>
       <p>Clippy, rustfmt and the hooks enforce the mechanical rules. <a href="https://github.com/sisu-lang/sisu/blob/main/CODING_STANDARDS.md">CODING_STANDARDS.md</a> holds the judgement calls that no check can make. Four of them:</p>

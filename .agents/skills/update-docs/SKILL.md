@@ -56,6 +56,11 @@ Read each target below before you decide it needs no edit.
 | A diagnostic code added or removed | `site/data/categories.toml` |
 | An ADR added | A row on `site/src/decisions.html` |
 | Closures landing | Move `site/programs/pending/orders.sisu` to `site/programs/run/`; the pending case says so |
+| A stage, the runtime (`crates/runtime`) or `docs/architecture.md` | The Architecture page, `site/src/architecture.html`, and the page's hand-kept commit |
+| A command, a prerequisite, CI (`.github/workflows/`), `CONTRIBUTING.md`, `AGENTS.md` or `CODING_STANDARDS.md` | The Contribute page, `site/src/contribute.html`, and "Build it" on Home, and the page's hand-kept commit |
+| A language feature added or changed | The Tour's prose and its "What is not here yet" list in `site/src/tour.html`, and the page's hand-kept commit |
+| The prose of `docs/benchmarks.md`, or `scripts/bench.sh` | The Benchmarks prose in `site/src/benchmarks.html`, and the page's hand-kept commit |
+| An ADR's status changing, such as proposed to accepted, or a planned one built | Its row's note on `site/src/decisions.html` (the `<small>` or `soon` after its title) and its label in `site/data/status.toml`, such as "ADR 0012 (proposed)", and the page's hand-kept commit |
 | You reviewed a hand-written page: Home's hand-written sections, Tour, Architecture, Decisions, Contribute, or Benchmarks prose | The commit written on it: "checked against the repository at commit" at the end of Home's "Built in the open" section and in the meta lines of Tour and Contribute; "Prose checked against the repository at commit" in the Benchmarks meta line; "at commit" in the meta lines of Architecture and Decisions. Generated pages and blocks show `{{commit}}` and need no update. |
 | `run/tree_sum.sisu`, `run/shared_arrays.sisu`, `run-fail/overflow.sisu` or `diagnostics/counter.sisu` under `crates/sisuc/tests`, or their expected output | The examples in `README.md`, which must stay identical to them |
 
