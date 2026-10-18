@@ -33,6 +33,6 @@ benchmarks:
   - name: check_large
     id: check_large
     exec: target/release/sisuc --check target/codspeed/large/main.sisu
-  - name: build_large
-    id: build_large
-    exec: target/release/sisuc -O2 target/codspeed/large/main.sisu target/codspeed/build_large/main
+  - name: build_large_20
+    id: build_large_20
+    exec: target/release/sisuc -O2 target/codspeed/large_20/main.sisu target/codspeed/build_large_20/main

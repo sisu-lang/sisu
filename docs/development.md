@@ -177,7 +177,11 @@ in `codspeed.yml`: the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`,
 `mandelbrot` and `fannkuch_redux` programs at reduced inputs, and the
 compiler on `bench/hello` (an `-O2` build), on `bench/binary_trees`
 (`--check` and an `-O2` build) and on a generated 200-section input that
-uses most of the language.
+uses most of the language. The `-O2` build of that input comes in two sizes:
+20 sections on every run (`build_large_20`) and 200 sections on pushes to
+`main` only (`build_large`, in `codspeed-main.yml`). Pull request reports show
+`build_large` as skipped, carrying `main`'s last result. `check_large` and
+`make callgrind` keep the 200-section input.
 `scripts/codspeed-prep.sh` builds them and checks every program's output
 first. The `CodSpeed` workflow runs on pushes to `main` and on pull requests
 that touch the code, the benchmarks or their tooling. It never turns a pull
