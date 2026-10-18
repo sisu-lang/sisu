@@ -130,7 +130,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
 
 /* link list: rows of title + one line (decisions, related pages) */
 .rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); overflow: hidden; }
-.rows li + li { border-top: 1px solid var(--rule); }
+.rows li:not([hidden]) ~ li:not([hidden]) { border-top: 1px solid var(--rule); }
 .rows a { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 16px; padding: 16px 20px; text-decoration: none; color: var(--ink); }
 .rows a:hover { background: var(--hover); }
 .rows .num { font: 600 14px "JetBrains Mono", monospace; color: var(--mute); padding-top: 2px; }

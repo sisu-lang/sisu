@@ -405,9 +405,9 @@ def build(out: Path) -> None:
         try:
             if text.count('\n') < 2:
                 raise BuildError('needs a title line, a description line and the body')
-            title, description, body = text.split('\n', 2)
-            body = '\n'.join(line for line in body.split('\n') if not COMMENT_LINE.fullmatch(line))
-            page = assemble(body, title=title, description=description, page=src.name, depth=0, context={})
+            name, description, rest = text.split('\n', 2)
+            body = '\n'.join(line for line in rest.split('\n') if not COMMENT_LINE.fullmatch(line))
+            page = assemble(body, title=name, description=description, page=src.name, depth=0, context={})
         except BuildError as e:
             raise BuildError(f'{src.relative_to(ROOT)}: {e}') from e
         (out / src.name).write_text(page, encoding='utf-8')

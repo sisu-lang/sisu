@@ -482,7 +482,16 @@ class Pages(unittest.TestCase):
         self.assertNotIn(-1, places, parts)
         self.assertEqual(places, sorted(places))
         self.assertNotIn('Your code', page)
+        self.assertIn('action="../diagnostics.html"', page)
         self.assertNotIn('After the fix', page)
+
+    def test_category_and_severity(self):
+        cases = [('E0072', 'Syntax', 'Error'), ('W0002', 'Variables and change', 'Warning')]
+        for code, category, severity in cases:
+            with self.subTest(code):
+                page = self.page(f'diagnostics/{code}.html')
+                self.assertEqual(re.findall(r'<a href="[^"]*#[^"]*" aria-current="page"[^>]*>(.*?)</a>', page), [category])
+                self.assertIn(f'<span class="sev">{severity}</span>', page)
 
     def test_fix_badges(self):
         cases = [('E0130', ['Unsafe fix']), ('E0001', ['Safe fix']), ('E0032', [])]
