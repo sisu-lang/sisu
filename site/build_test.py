@@ -86,6 +86,31 @@ notes = [["Roadmap", "docs/roadmap.md"]]
 """
 
 
+BENCH_HEADER = '| Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |\n| --- | ---: | ---: | ---: | ---: | ---: |\n'
+
+
+def bench_table(program, walls, builds=None):
+    """A `### <program>` table: `walls` maps each language to its Wall cell, `builds` to its Build cell.
+    By default every build takes 0.05 and Python has none."""
+    builds = builds or {lang: '-' if lang == 'Python' else '0.05' for lang in walls}
+    rows = []
+    for lang, wall in walls.items():
+        cells = [lang, wall, '0.1', '1.0', '9', builds[lang]]
+        rows.append('| ' + ' | '.join(f'**{c}**' for c in cells) + ' |' if lang == 'Sisu' else '| ' + ' | '.join(cells) + ' |')
+    return f'### {program}\n\n{BENCH_HEADER}' + '\n'.join(rows) + '\n\n'
+
+
+# The mockup's fib values, then a hello whose Wall cells agree, in the order the Markdown has them.
+FIB = {'Rust': '0.17', 'C': '0.18', 'Sisu': '0.26', 'Java': '0.27', 'Go': '0.28', 'Python': '5.18'}
+HELLO = {lang: '0.00' for lang in FIB}
+HELLO_BUILDS = {'Go': '0.037', 'C': '0.053', 'Sisu': '0.058', 'Rust': '0.073', 'Java': '0.196', 'Python': '-'}
+BENCH_LI = r'<li( class="\w+")?><span>(\w+)</span><span class="track">(.*?)</span><span class="val">(.*?)</span></li>'
+
+
+def bench_md(*tables, intro='Commit abc1234, on 2026-10-12.\n\nOn a machine.\n\n'):
+    return f'# Benchmarks\n\nAbout.\n\n## Results\n\n{intro}' + ''.join(tables) + '## The programs\n\nText.\n'
+
+
 def temp_file(test, text):
     """A file holding `text`, removed when the test ends."""
     tmp = tempfile.TemporaryDirectory()
@@ -446,6 +471,102 @@ class Build(unittest.TestCase):
                 else:
                     self.assert_fails('categories.toml', found)
                     self.assertIn(code, found[0])
+
+    def test_benchmark_table_shape(self):
+        tables = build.benchmark_tables(bench_md(bench_table('fib', FIB)))
+        self.assertEqual(tables['fib']['Sisu'], {'Wall (s)': '0.26', 'CPU (s)': '0.1', 'Peak RSS (MiB)': '1.0',
+                                                 'Binary (KiB)': '9', 'Build (s)': '0.05'})
+        self.assertEqual(list(tables['fib']), list(FIB))
+        fib = bench_table('fib', FIB)
+        cases = [
+            ('a renamed column', fib.replace('CPU (s)', 'CPU'), 'fib'),
+            ('a new language', bench_table('fib', FIB | {'Zig': '0.2'}), 'fib'),
+            ('a missing language', bench_table('fib', {k: v for k, v in FIB.items() if k != 'Go'}), 'fib'),
+            ('a program without a table', fib + '### sieve\n\nNo table yet.\n\n', 'sieve'),
+        ]
+        for name, table, program in cases:
+            with self.subTest(name):
+                with self.assertRaisesRegex(build.BuildError, rf'docs/benchmarks\.md.*{program}'):
+                    build.benchmark_tables(bench_md(table))
+        other = f'## The programs\n\n{BENCH_HEADER}| Zig | 1 | 1 | 1 | 1 | 1 |\n\n### Extra\n\nNo table.\n'
+        self.assertEqual(build.benchmark_tables(bench_md(fib) + other).keys(), {'fib'})
+
+    def test_chart_cells_must_be_drawable(self):
+        hello = bench_table('hello', HELLO, HELLO_BUILDS)
+        cases = [
+            ('a Wall cell', bench_table('fib', FIB | {'Go': '-'}), hello, 'fib'),
+            ("Python's Wall cell", bench_table('fib', FIB | {'Python': '-'}), hello, 'fib'),
+            ('a hello Wall cell', bench_table('fib', FIB), bench_table('hello', HELLO | {'Go': '-'}, HELLO_BUILDS), 'hello'),
+            ('a hello Build cell', bench_table('fib', FIB), bench_table('hello', HELLO, HELLO_BUILDS | {'Go': '-'}), 'hello'),
+            ('no hello', bench_table('fib', FIB), '', 'hello'),
+            ('only zeros', bench_table('fib', {lang: '0.00' for lang in FIB}), hello, 'fib'),
+        ]
+        for name, fib, hello, program in cases:
+            with self.subTest(name):
+                with self.assertRaisesRegex(build.BuildError, rf'docs/benchmarks\.md.*{program}'):
+                    build.bench_charts(bench_md(fib, hello))
+
+    def test_chart_widths(self):
+        charts = build.bench_charts(bench_md(bench_table('hello', HELLO, HELLO_BUILDS), bench_table('fib', FIB)))
+        self.assertEqual(re.findall(r'<h3>(.*?)</h3><p class="unit">(.*?)</p>', charts),
+                         [('fib', 'wall time, seconds'), ('hello', 'build time, seconds: compile one file and link it')])
+        fib, hello = charts.split('<figure class="chart">')[1:]
+        self.assertEqual(re.findall(BENCH_LI, fib), [
+            ('', 'Rust', '<i style="width:60.7%"></i>', '0.17 s'), ('', 'C', '<i style="width:64.3%"></i>', '0.18 s'),
+            (' class="sisu"', 'Sisu', '<i style="width:92.9%"></i>', '0.26 s'), ('', 'Java', '<i style="width:96.4%"></i>', '0.27 s'),
+            ('', 'Go', '<i style="width:100%"></i>', '0.28 s'), (' class="off"', 'Python', 'off the scale', '5.18 s')])
+        self.assertEqual(re.findall(BENCH_LI, hello), [
+            ('', 'Go', '<i style="width:18.9%"></i>', '0.037 s'), ('', 'C', '<i style="width:27%"></i>', '0.053 s'),
+            (' class="sisu"', 'Sisu', '<i style="width:29.6%"></i>', '0.058 s'), ('', 'Rust', '<i style="width:37.2%"></i>', '0.073 s'),
+            ('', 'Java', '<i style="width:100%"></i>', '0.196 s'), (' class="off"', 'Python', 'no build step', '-')])
+
+    def test_chart_ties_keep_the_document_order(self):
+        walls = {'C': '0.14', 'Sisu': '0.14', 'Go': '0.23', 'Java': '0.20', 'Rust': '0.12', 'Python': '12.16'}
+        charts = build.bench_charts(bench_md(bench_table('nbody', walls), bench_table('hello', HELLO, HELLO_BUILDS)))
+        self.assertEqual(re.findall(r'<span>(\w+)</span>', charts.split('<figure class="chart">')[1]),
+                         ['Rust', 'C', 'Sisu', 'Java', 'Go', 'Python'])
+
+    def test_hello_foot_note(self):
+        cases = [
+            ('one differs', HELLO | {'Java': '0.01'}, "Every hello program runs in 0.00 s of wall time except Java's, 0.01 s. The build is what differs."),
+            ('all equal', HELLO, 'Every hello program runs in 0.00 s of wall time. The build is what differs.'),
+        ]
+        for name, walls, note in cases:
+            with self.subTest(name):
+                charts = build.bench_charts(bench_md(bench_table('fib', FIB), bench_table('hello', walls, HELLO_BUILDS)))
+                self.assertEqual(re.findall(r'<p class="foot">(.*?)</p>', charts), [note])
+        for name, walls in [('two differ', HELLO | {'Java': '0.01', 'Go': '0.01'}), ('a split', {k: '0.01' if k in ('C', 'Go', 'Java') else '0.00' for k in HELLO})]:
+            with self.subTest(name):
+                with self.assertRaisesRegex(build.BuildError, r'docs/benchmarks\.md.*hello'):
+                    build.bench_charts(bench_md(bench_table('hello', walls, HELLO_BUILDS)))
+
+    def test_bench_table(self):
+        table = build.bench_table(bench_md(bench_table('fib', FIB), bench_table('hello', HELLO | {'Java': '0.01'}, HELLO_BUILDS),
+                                           bench_table('sieve', FIB)))
+        self.assertEqual(re.findall(r'<th(?: [^>]*)?>(.*?)</th>', table), ['Benchmark', 'Sisu', 'C', 'Rust', 'Go', 'Java', 'Python'])
+        rows = [re.findall(r'<td[^>]*>(.*?)</td>', row) for row in re.findall(r'<tr><td>.*?</tr>', table)]
+        self.assertEqual(rows, [
+            ['<code>fib</code>', '<b>0.26</b>', '0.18', '0.17', '0.28', '0.27', '5.18'],
+            ['<code>hello</code>', '<b>0.00</b>', '0.00', '0.00', '0.00', '0.01', '0.00'],
+            ['<code>hello</code>, build', '<b>0.058</b>', '0.053', '0.073', '0.037', '0.196', '-'],
+            ['<code>sieve</code>', '<b>0.26</b>', '0.18', '0.17', '0.28', '0.27', '5.18']])
+
+    def test_results_note(self):
+        md = bench_md(intro='Commit `abc1234`, on\n2026-10-12.\n\nOn a machine.\n\n')
+        self.assertEqual(build.results_note(md), '<p class="after">Commit <code>abc1234</code>, on\n2026-10-12.</p>\n')
+        for name, text in [('a heading first', bench_md(intro='### fib\n\nOn a machine.\n\n')),
+                           ('no paragraph', bench_md(intro='')),
+                           ('a table first', bench_md(intro=BENCH_HEADER + '| C | 1 | 1 | 1 | 1 | 1 |\n\n')),
+                           ('no Results', '# Benchmarks\n\nAbout.\n\n## Other\n\nText.\n')]:
+            with self.subTest(name):
+                with self.assertRaisesRegex(build.BuildError, r'docs/benchmarks\.md'):
+                    build.results_note(text)
+
+    def test_bench_directives_read_the_document(self):
+        fake_site(self, {}, {'docs/benchmarks.md': bench_md(bench_table('fib', FIB), bench_table('hello', HELLO, HELLO_BUILDS))})
+        self.assertEqual(build.expand('{{bench-charts}}', {}).count('<figure class="chart">'), 2)
+        self.assertIn('<td><code>fib</code></td>', build.expand('{{bench-table}}', {}))
+        self.assertIn('Commit abc1234', build.expand('{{bench-results-note}}', {}))
 
 
 class Pages(unittest.TestCase):

@@ -28,6 +28,7 @@ import unittest
 from bisect import bisect_left
 from collections import Counter
 from collections.abc import Callable
+from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from html.parser import HTMLParser
 from itertools import accumulate, groupby
@@ -344,6 +345,144 @@ def code_page(code: str) -> str:
                     page='diagnostics.html', depth=1, context=context)
 
 
+BENCHMARKS = 'docs/benchmarks.md'
+BENCH_HEADER = ['Language', 'Wall (s)', 'CPU (s)', 'Peak RSS (MiB)', 'Binary (KiB)', 'Build (s)']
+# The table's columns, which is not the order of the Markdown's rows: that runs from fastest to slowest.
+BENCH_LANGUAGES = ['Sisu', 'C', 'Rust', 'Go', 'Java', 'Python']
+
+
+def benchmarks_md() -> str:
+    return read(f'../{BENCHMARKS}')
+
+
+def benchmark_tables(markdown: str) -> dict[str, dict[str, dict[str, str]]]:
+    """Program -> language -> column -> cell text, from each `### <program>` table under `## Results`."""
+    tables, programs = {}, []
+    section = tag = ''
+    rows = None
+    for token in MD.parse(markdown):
+        if token.type == 'heading_open':
+            tag = token.tag
+        elif token.type == 'inline' and tag:
+            if tag == 'h2':
+                section = token.content
+            elif tag == 'h3' and section == 'Results':
+                programs.append(token.content)
+            tag = ''
+        elif token.type == 'table_open':
+            rows = []
+        elif token.type == 'tr_open' and rows is not None:
+            rows.append([])
+        elif token.type == 'inline' and rows is not None:
+            rows[-1].append(plain(token))
+        elif token.type == 'table_close':
+            if section == 'Results' and programs:
+                tables[programs[-1]] = benchmark_rows(programs[-1], rows)
+            rows = None
+    for program in programs:
+        if program not in tables:
+            raise BuildError(f'{BENCHMARKS}: table {program!r} is missing')
+    return tables
+
+
+def benchmark_rows(program: str, rows: list[list[str]]) -> dict[str, dict[str, str]]:
+    where = f'{BENCHMARKS}: table {program!r}'
+    if rows[0] != BENCH_HEADER:
+        raise BuildError(f'{where} has the header {rows[0]}, not {BENCH_HEADER}')
+    languages = [row[0] for row in rows[1:]]
+    if sorted(languages) != sorted(BENCH_LANGUAGES):
+        raise BuildError(f'{where} has the languages {languages}, not exactly {sorted(BENCH_LANGUAGES)}')
+    return {row[0]: dict(zip(BENCH_HEADER[1:], row[1:])) for row in rows[1:]}
+
+
+def seconds(program: str, language: str, column: str, cell: str) -> Decimal:
+    """A cell that a chart draws, which must be a number."""
+    if not re.fullmatch(r'\d+(\.\d+)?', cell):
+        raise BuildError(f"{BENCHMARKS}: table {program!r}: {language}'s {column} is {cell!r}, not a number")
+    return Decimal(cell)
+
+
+def hello_note(table: dict[str, dict[str, str]]) -> str:
+    """The foot of the hello chart: the one Wall time all its programs share, or all but one."""
+    cells = {language: row['Wall (s)'] for language, row in table.items()}
+    for language, cell in cells.items():
+        seconds('hello', language, 'Wall (s)', cell)
+    (common, _), *rest = Counter(cells.values()).most_common()
+    if not rest:
+        odd = ''
+    elif len(rest) == 1 and rest[0][1] == 1:
+        odd = f" except {next(l for l, c in cells.items() if c == rest[0][0])}'s, {rest[0][0]} s"
+    else:
+        raise BuildError(f"{BENCHMARKS}: table 'hello': the Wall cells {cells} do not agree but for one language")
+    return f'Every hello program runs in {common} s of wall time{odd}. The build is what differs.'
+
+
+def chart(program: str, table: dict[str, dict[str, str]]) -> str:
+    """One bar chart: the program's Wall time, or its Build time for hello. Python is text, off the scale."""
+    column = 'Build (s)' if program == 'hello' else 'Wall (s)'
+    values = {l: seconds(program, l, column, row[column]) for l, row in table.items() if l != 'Python'}
+    largest = max(values.values())
+    if not largest:
+        raise BuildError(f'{BENCHMARKS}: table {program!r}: every {column} is 0')
+
+    def li(language):
+        width = (values[language] / largest * 100).quantize(Decimal('0.1'), ROUND_HALF_UP)
+        cls = ' class="sisu"' if language == 'Sisu' else ''
+        return (f'<li{cls}><span>{language}</span><span class="track"><i style="width:{str(width).removesuffix(".0")}%"></i></span>'
+                f'<span class="val">{table[language][column]} s</span></li>')
+
+    python = table['Python'][column]
+    track, val = ('no build step', '-') if python == '-' and program == 'hello' else ('off the scale', f'{seconds(program, "Python", column, python)} s')
+    items = [li(language) for language in sorted(values, key=values.__getitem__)]
+    items.append(f'<li class="off"><span>Python</span><span class="track">{track}</span><span class="val">{val}</span></li>')
+    unit = 'build time, seconds: compile one file and link it' if program == 'hello' else 'wall time, seconds'
+    foot = f'<p class="foot">{hello_note(table)}</p>' if program == 'hello' else ''
+    body = '\n        '.join(items)
+    return f'<figure class="chart"><h3>{escape(program)}</h3><p class="unit">{unit}</p><ol>\n        {body}\n      </ol>{foot}</figure>'
+
+
+def bench_charts(markdown: str) -> str:
+    """A chart for each program, in the document's order with hello last."""
+    tables = benchmark_tables(markdown)
+    if 'hello' not in tables:
+        raise BuildError(f"{BENCHMARKS}: no table for 'hello'")
+    return '\n      '.join(chart(p, tables[p]) for p in [*(p for p in tables if p != 'hello'), 'hello'])
+
+
+def bench_table(markdown: str) -> str:
+    """The results table: a row for each program's Wall time, and for hello's Build time after hello's."""
+    def row(label, table, column):
+        cells = [f'<b>{escape(table[l][column])}</b>' if l == 'Sisu' else escape(table[l][column]) for l in BENCH_LANGUAGES]
+        return f'<tr><td>{label}</td>' + ''.join(f'<td class="n">{c}</td>' for c in cells) + '</tr>'
+
+    rows = []
+    for program, table in benchmark_tables(markdown).items():
+        rows.append(row(f'<code>{escape(program)}</code>', table, 'Wall (s)'))
+        if program == 'hello':
+            rows.append(row('<code>hello</code>, build', table, 'Build (s)'))
+    head = ''.join(f'<th class="n">{l}</th>' for l in BENCH_LANGUAGES)
+    body = '\n        '.join(rows)
+    return f'''<div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Benchmark</th>{head}</tr></thead>
+      <tbody>
+        {body}
+      </tbody>
+    </table></div>'''
+
+
+def results_note(markdown: str) -> str:
+    """The first paragraph between `## Results` and the next heading, rendered."""
+    tokens = MD.parse(markdown)
+    in_results = False
+    for i, token in enumerate(tokens):
+        if token.type == 'heading_open':
+            in_results = token.tag == 'h2' and tokens[i + 1].content == 'Results'
+        elif token.type == 'paragraph_open' and in_results:
+            token.attrSet('class', 'after')
+            return MD.renderer.render(tokens[i:i + 3], MD.options, {})
+    raise BuildError(f'{BENCHMARKS} has no paragraph between "## Results" and the first "###"')
+
+
 DIRECTIVES: dict[str, Callable[..., str]] = {
     'commit': commit,
     'text': lambda path: escape(read(path)),
@@ -355,6 +494,9 @@ DIRECTIVES: dict[str, Callable[..., str]] = {
     'diagnostic-count': diagnostic_count,
     'diagnostics-index': diagnostics_index,
     'diagnostic-categories': lambda: category_links(''),
+    'bench-charts': lambda: bench_charts(benchmarks_md()),
+    'bench-table': lambda: bench_table(benchmarks_md()),
+    'bench-results-note': lambda: results_note(benchmarks_md()),
 }
 DIRECTIVE = re.compile(r'\{\{([\w-]+)((?: [^\s{}]+)*)\}\}')
 

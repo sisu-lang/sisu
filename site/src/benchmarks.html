@@ -30,93 +30,18 @@ Benchmarks
   <section class="ph"><div class="w">
     <h1>How fast is Sisu?</h1>
     <p class="lede">Eight small programs, each written with the same algorithm in Sisu, C, Rust, Go, Java and Python. The numbers show where Sisu stands today, not how fast it will be.</p>
-    <p class="meta">Intel Core i9-14900K under Linux 7.0 · Measured from 2026-10-12 to 2026-10-16 · The commit for each program is in the table below</p>
+    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commits and dates are named below the table · Prose checked against the repository at commit 934542b</p>
   </div></section>
   <!-- source: docs/benchmarks.md (intro, Results) -->
 
   <section class="s" aria-labelledby="h-results"><div class="w">
     <div class="s-h"><h2 id="h-results">Results</h2><p>Wall time in seconds, the median of 5 runs. Shorter is faster. Each chart has its own scale. Python takes too long to draw on the same scale as the rest, so its time is given as text.</p></div>
     <div class="charts" aria-hidden="true">
-      <figure class="chart"><h3>fib</h3><p class="unit">wall time, seconds</p><ol>
-        <li><span>Rust</span><span class="track"><i style="width:60.7%"></i></span><span class="val">0.17 s</span></li>
-        <li><span>C</span><span class="track"><i style="width:64.3%"></i></span><span class="val">0.18 s</span></li>
-        <li class="sisu"><span>Sisu</span><span class="track"><i style="width:92.9%"></i></span><span class="val">0.26 s</span></li>
-        <li><span>Java</span><span class="track"><i style="width:96.4%"></i></span><span class="val">0.27 s</span></li>
-        <li><span>Go</span><span class="track"><i style="width:100%"></i></span><span class="val">0.28 s</span></li>
-        <li class="off"><span>Python</span><span class="track">off the scale</span><span class="val">5.18 s</span></li>
-      </ol></figure>
-      <figure class="chart"><h3>sieve</h3><p class="unit">wall time, seconds</p><ol>
-        <li><span>Rust</span><span class="track"><i style="width:75%"></i></span><span class="val">0.18 s</span></li>
-        <li><span>C</span><span class="track"><i style="width:83.3%"></i></span><span class="val">0.20 s</span></li>
-        <li><span>Go</span><span class="track"><i style="width:87.5%"></i></span><span class="val">0.21 s</span></li>
-        <li class="sisu"><span>Sisu</span><span class="track"><i style="width:95.8%"></i></span><span class="val">0.23 s</span></li>
-        <li><span>Java</span><span class="track"><i style="width:100%"></i></span><span class="val">0.24 s</span></li>
-        <li class="off"><span>Python</span><span class="track">off the scale</span><span class="val">2.29 s</span></li>
-      </ol></figure>
-      <figure class="chart"><h3>binary_trees</h3><p class="unit">wall time, seconds</p><ol>
-        <li><span>Java</span><span class="track"><i style="width:27.8%"></i></span><span class="val">0.37 s</span></li>
-        <li><span>C</span><span class="track"><i style="width:46.6%"></i></span><span class="val">0.62 s</span></li>
-        <li><span>Rust</span><span class="track"><i style="width:54.1%"></i></span><span class="val">0.72 s</span></li>
-        <li class="sisu"><span>Sisu</span><span class="track"><i style="width:63.9%"></i></span><span class="val">0.85 s</span></li>
-        <li><span>Go</span><span class="track"><i style="width:100%"></i></span><span class="val">1.33 s</span></li>
-        <li class="off"><span>Python</span><span class="track">off the scale</span><span class="val">19.22 s</span></li>
-      </ol></figure>
-      <figure class="chart"><h3>quicksort</h3><p class="unit">wall time, seconds</p><ol>
-        <li><span>C</span><span class="track"><i style="width:82.8%"></i></span><span class="val">0.53 s</span></li>
-        <li><span>Go</span><span class="track"><i style="width:85.9%"></i></span><span class="val">0.55 s</span></li>
-        <li><span>Rust</span><span class="track"><i style="width:85.9%"></i></span><span class="val">0.55 s</span></li>
-        <li class="sisu"><span>Sisu</span><span class="track"><i style="width:96.9%"></i></span><span class="val">0.62 s</span></li>
-        <li><span>Java</span><span class="track"><i style="width:100%"></i></span><span class="val">0.64 s</span></li>
-        <li class="off"><span>Python</span><span class="track">off the scale</span><span class="val">12.66 s</span></li>
-      </ol></figure>
-      <figure class="chart"><h3>nbody</h3><p class="unit">wall time, seconds</p><ol>
-        <li><span>Rust</span><span class="track"><i style="width:52.2%"></i></span><span class="val">0.12 s</span></li>
-        <li><span>C</span><span class="track"><i style="width:60.9%"></i></span><span class="val">0.14 s</span></li>
-        <li class="sisu"><span>Sisu</span><span class="track"><i style="width:60.9%"></i></span><span class="val">0.14 s</span></li>
-        <li><span>Java</span><span class="track"><i style="width:87%"></i></span><span class="val">0.20 s</span></li>
-        <li><span>Go</span><span class="track"><i style="width:100%"></i></span><span class="val">0.23 s</span></li>
-        <li class="off"><span>Python</span><span class="track">off the scale</span><span class="val">12.16 s</span></li>
-      </ol></figure>
-      <figure class="chart"><h3>mandelbrot</h3><p class="unit">wall time, seconds</p><ol>
-        <li><span>C</span><span class="track"><i style="width:96.7%"></i></span><span class="val">0.58 s</span></li>
-        <li class="sisu"><span>Sisu</span><span class="track"><i style="width:96.7%"></i></span><span class="val">0.58 s</span></li>
-        <li><span>Go</span><span class="track"><i style="width:98.3%"></i></span><span class="val">0.59 s</span></li>
-        <li><span>Rust</span><span class="track"><i style="width:98.3%"></i></span><span class="val">0.59 s</span></li>
-        <li><span>Java</span><span class="track"><i style="width:100%"></i></span><span class="val">0.60 s</span></li>
-        <li class="off"><span>Python</span><span class="track">off the scale</span><span class="val">17.15 s</span></li>
-      </ol></figure>
-      <figure class="chart"><h3>fannkuch_redux</h3><p class="unit">wall time, seconds</p><ol>
-        <li><span>C</span><span class="track"><i style="width:64.7%"></i></span><span class="val">0.11 s</span></li>
-        <li><span>Go</span><span class="track"><i style="width:70.6%"></i></span><span class="val">0.12 s</span></li>
-        <li><span>Rust</span><span class="track"><i style="width:70.6%"></i></span><span class="val">0.12 s</span></li>
-        <li class="sisu"><span>Sisu</span><span class="track"><i style="width:76.5%"></i></span><span class="val">0.13 s</span></li>
-        <li><span>Java</span><span class="track"><i style="width:100%"></i></span><span class="val">0.17 s</span></li>
-        <li class="off"><span>Python</span><span class="track">off the scale</span><span class="val">2.76 s</span></li>
-      </ol></figure>
-      <figure class="chart"><h3>hello</h3><p class="unit">build time, seconds: compile one file and link it</p><ol>
-        <li><span>Go</span><span class="track"><i style="width:18.9%"></i></span><span class="val">0.037 s</span></li>
-        <li><span>C</span><span class="track"><i style="width:27%"></i></span><span class="val">0.053 s</span></li>
-        <li class="sisu"><span>Sisu</span><span class="track"><i style="width:29.6%"></i></span><span class="val">0.058 s</span></li>
-        <li><span>Rust</span><span class="track"><i style="width:37.2%"></i></span><span class="val">0.073 s</span></li>
-        <li><span>Java</span><span class="track"><i style="width:100%"></i></span><span class="val">0.196 s</span></li>
-        <li class="off"><span>Python</span><span class="track">no build step</span><span class="val">-</span></li>
-      </ol><p class="foot">Every hello program runs in 0.00 s of wall time except Java's, 0.01 s. The build is what differs.</p></figure>
+      {{bench-charts}}
     </div>
 
-    <div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Benchmark</th><th class="n">Sisu</th><th class="n">C</th><th class="n">Rust</th><th class="n">Go</th><th class="n">Java</th><th class="n">Python</th><th>Commit, date</th></tr></thead>
-      <tbody>
-        <tr><td><code>fib</code></td><td class="n"><b>0.26</b></td><td class="n">0.18</td><td class="n">0.17</td><td class="n">0.28</td><td class="n">0.27</td><td class="n">5.18</td><td><code>9cbd44e</code>, 2026-10-12</td></tr>
-        <tr><td><code>sieve</code></td><td class="n"><b>0.23</b></td><td class="n">0.20</td><td class="n">0.18</td><td class="n">0.21</td><td class="n">0.24</td><td class="n">2.29</td><td><code>9cbd44e</code>, 2026-10-12</td></tr>
-        <tr><td><code>binary_trees</code></td><td class="n"><b>0.85</b></td><td class="n">0.62</td><td class="n">0.72</td><td class="n">1.33</td><td class="n">0.37</td><td class="n">19.22</td><td><code>7c8d29e</code>, 2026-10-12</td></tr>
-        <tr><td><code>hello</code></td><td class="n"><b>0.00</b></td><td class="n">0.00</td><td class="n">0.00</td><td class="n">0.00</td><td class="n">0.01</td><td class="n">0.00</td><td><code>4690caa</code>, 2026-10-15</td></tr>
-        <tr><td><code>hello</code>, build</td><td class="n"><b>0.058</b></td><td class="n">0.053</td><td class="n">0.073</td><td class="n">0.037</td><td class="n">0.196</td><td class="n">-</td><td><code>4690caa</code>, 2026-10-15</td></tr>
-        <tr><td><code>quicksort</code></td><td class="n"><b>0.62</b></td><td class="n">0.53</td><td class="n">0.55</td><td class="n">0.55</td><td class="n">0.64</td><td class="n">12.66</td><td><code>3dbda29</code>, 2026-10-15</td></tr>
-        <tr><td><code>nbody</code></td><td class="n"><b>0.14</b></td><td class="n">0.14</td><td class="n">0.12</td><td class="n">0.23</td><td class="n">0.20</td><td class="n">12.16</td><td><code>10bb08f</code>, 2026-10-16</td></tr>
-        <tr><td><code>mandelbrot</code></td><td class="n"><b>0.58</b></td><td class="n">0.58</td><td class="n">0.59</td><td class="n">0.59</td><td class="n">0.60</td><td class="n">17.15</td><td><code>d8a9603</code>, 2026-10-16</td></tr>
-        <tr><td><code>fannkuch_redux</code></td><td class="n"><b>0.13</b></td><td class="n">0.11</td><td class="n">0.12</td><td class="n">0.12</td><td class="n">0.17</td><td class="n">2.76</td><td><code>d8a9603</code>, 2026-10-16</td></tr>
-      </tbody>
-    </table></div>
+    {{bench-table}}
+    {{bench-results-note}}
     <p class="after">Wall time in seconds, the median of 5 runs. The <code>hello</code>, build row gives build time instead. The full tables, with CPU time, peak memory, binary size and build time, are in <a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md">docs/benchmarks.md</a>.</p>
 
     <div class="callout"><p>These numbers come from one machine, at the commits named above. They change as the compiler changes, and they are rerun by hand when a change should move them.</p></div>
