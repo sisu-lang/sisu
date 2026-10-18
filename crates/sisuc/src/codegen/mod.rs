@@ -33,7 +33,7 @@ use inkwell::values::{
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use self::enums::EnumLayout;
-use self::layout::{ClassLayout, tbaa_tag};
+use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
 use crate::source::{LineIndex, Span};
 use crate::tir::{
@@ -384,18 +384,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .map(|a| self.expr(a).expect("the checker should reject a `unit` or `never` argument, so each argument has a value"))
             .collect();
-        let i64_type = self.context.i64_type();
-        let (size, align) = self.class_layout(class);
+        let (size, align) = self.heap_size(&HeapBlock::Class(class));
         let object = self
             .builder
-            .build_call(
-                self.alloc,
-                &[
-                    i64_type.const_int(size, false).into(),
-                    i64_type.const_int(u64::from(align), false).into(),
-                ],
-                "object",
-            )
+            .build_call(self.alloc, &[size.into(), align.into()], "object")
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()

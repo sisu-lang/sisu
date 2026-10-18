@@ -7,6 +7,7 @@ use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
 use super::abi::{RC_FAULT_RELEASE, RC_FAULT_RETAIN};
+use super::layout::HeapBlock;
 use super::rc::{Helper, counted_core, param};
 use super::{Codegen, POSITIONED, Slot, class_of};
 use crate::source::Span;
@@ -85,44 +86,24 @@ impl<'ctx> Codegen<'ctx, '_> {
         len: IntValue<'ctx>,
         span: Option<Span>,
     ) -> PointerValue<'ctx> {
-        let i64_type = self.context.i64_type();
         let layout = self.array_layout(element);
-        let (size, offset) = (
-            i64_type.const_int(layout.size, false),
-            i64_type.const_int(layout.offset, false),
-        );
-        let total = if let Some(span) = span {
-            let negative = self.int_compare(IntPredicate::SLT, len, i64_type.const_zero());
-            self.panic_if(negative, span, "array length is negative");
-            let (elements, wrapped) = self.overflowing("llvm.umul.with.overflow", len, size);
-            let (total, carried) = self.overflowing("llvm.uadd.with.overflow", elements, offset);
-            // `Layout::from_size_align` needs the size rounded up to the alignment to fit in
-            // an `isize`.
-            let largest = i64_type.const_int(i64::MAX.cast_unsigned() - layout.align + 1, false);
-            let above = self.int_compare(IntPredicate::UGT, total, largest);
-            let too_large = [wrapped, carried, above]
-                .into_iter()
-                .reduce(|a, b| self.builder.build_or(a, b, "too_large").expect(POSITIONED))
-                .expect("the size checks should have three flags");
-            self.panic_if(too_large, span, "array is too large");
-            total
-        } else {
-            self.block_size(&layout, len)
+        let (size, align) = match span {
+            Some(span) => self.checked_array_size(&layout, len, span),
+            None => self.heap_size(&HeapBlock::Array {
+                layout: &layout,
+                len,
+            }),
         };
         let array = self
             .builder
-            .build_call(
-                self.alloc,
-                &[total.into(), i64_type.const_int(layout.align, false).into()],
-                "array",
-            )
+            .build_call(self.alloc, &[size.into(), align.into()], "array")
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
         // Tagged, unlike the other blocks' inits, so -O2 knows it cannot alias an element.
-        self.store_count(array, i64_type.const_int(1, false));
+        self.store_count(array, self.context.i64_type().const_int(1, false));
         self.store_tagged(self.len_ptr(array), len.into(), self.header_tag);
         array
     }
@@ -612,15 +593,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             });
         }
         let layout = self.array_layout(element);
-        let i64_type = self.context.i64_type();
-        self.call(
-            self.free,
-            &[
-                array.into(),
-                self.block_size(&layout, len).into(),
-                i64_type.const_int(layout.align, false).into(),
-            ],
-        );
+        let (size, align) = self.heap_size(&HeapBlock::Array {
+            layout: &layout,
+            len,
+        });
+        self.call(self.free, &[array.into(), size.into(), align.into()]);
         self.builder.build_return(None).expect(POSITIONED);
     }
 

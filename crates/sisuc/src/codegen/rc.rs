@@ -12,6 +12,7 @@ use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use rustc_hash::FxHashSet;
 
 use super::abi::{RC_FAULT_RELEASE, RC_FAULT_RETAIN};
+use super::layout::HeapBlock;
 use super::{Codegen, POSITIONED};
 use crate::tir::{Program, Type, TypeKind};
 
@@ -186,16 +187,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         // Loaded before the free, which ends the object.
         let next = chain.map(|index| load_field(index).into_pointer_value());
-        let (size, align) = self.class_layout(id);
-        let i64_type = self.context.i64_type();
-        self.call(
-            self.free,
-            &[
-                object.into(),
-                i64_type.const_int(size, false).into(),
-                i64_type.const_int(u64::from(align), false).into(),
-            ],
-        );
+        let (size, align) = self.heap_size(&HeapBlock::Class(id));
+        self.call(self.free, &[object.into(), size.into(), align.into()]);
         if let (Some(next), Some((body, phi))) = (next, looped) {
             let done = self.context.append_basic_block(drop, "done");
             let counted = self.context.append_basic_block(drop, "next");

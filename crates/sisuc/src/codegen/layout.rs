@@ -1,15 +1,17 @@
 //! How a Sisu value sits in memory: the LLVM type of each Sisu type, the layouts of classes,
-//! array blocks and string blocks, and the TBAA tags that describe them.
+//! array blocks and string blocks, the size of every heap block, and the TBAA tags that
+//! describe them.
 
 use std::cmp::Reverse;
 
-use inkwell::AddressSpace;
 use inkwell::context::Context;
 use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::values::{BasicValue, BasicValueEnum, IntValue, MetadataValue, PointerValue};
+use inkwell::{AddressSpace, IntPredicate};
 
 use super::{Codegen, POSITIONED};
-use crate::tir::{Class, ClassId, Type, TypeKind};
+use crate::source::Span;
+use crate::tir::{Class, ClassId, EnumId, Type, TypeKind};
 
 /// The tag of a TBAA type `name` under `root`. Every type sits directly under the root, so LLVM
 /// assumes that an access tagged with one never touches memory that an access tagged with
@@ -55,6 +57,21 @@ pub(super) struct StringLayout<'ctx> {
     pub(super) size: u64,
     /// The header's ABI alignment, which is the block's.
     pub(super) align: u32,
+}
+
+/// A heap block, named by what its size depends on. `heap_size` gives its size and alignment.
+pub(super) enum HeapBlock<'a, 'ctx> {
+    /// An object of the class.
+    Class(ClassId),
+    /// An array block of `len` elements.
+    Array {
+        layout: &'a ArrayLayout<'ctx>,
+        len: IntValue<'ctx>,
+    },
+    /// A string block of capacity `cap`.
+    String { cap: IntValue<'ctx> },
+    /// A box of the enum.
+    Box(EnumId),
 }
 
 /// The header's fields, by index.
@@ -235,15 +252,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         (body, element)
     }
 
-    /// The ABI size and alignment of an object of class `id`, from the target's data layout.
-    pub(super) fn class_layout(&self, id: ClassId) -> (u64, u32) {
-        let ty = &self.classes[id.0].ty;
-        (
-            self.target_data.get_abi_size(ty),
-            self.target_data.get_abi_alignment(ty),
-        )
-    }
-
     /// `load`, tagged with `tag`: `header_tag`, `element_tag` or a field's tag.
     pub(super) fn load_tagged(
         &self,
@@ -319,21 +327,74 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// `offset + len * size`: the size of a block whose length `len` passed the size checks,
-    /// or is a literal's.
-    pub(super) fn block_size(
+    /// The size and alignment of `block`, as the `i64`s that `sisu_alloc`, `sisu_realloc` and
+    /// `sisu_free` take. Every one of those calls takes them from here, so a block is freed
+    /// with the layout it was allocated with.
+    pub(super) fn heap_size(
+        &self,
+        block: &HeapBlock<'_, 'ctx>,
+    ) -> (IntValue<'ctx>, IntValue<'ctx>) {
+        let i64_type = self.context.i64_type();
+        let abi = |ty: &StructType<'ctx>| {
+            (
+                i64_type.const_int(self.target_data.get_abi_size(ty), false),
+                i64_type.const_int(u64::from(self.target_data.get_abi_alignment(ty)), false),
+            )
+        };
+        match *block {
+            HeapBlock::Class(id) => abi(&self.classes[id.0].ty),
+            HeapBlock::Box(inner) => abi(&self.enums[inner.0].boxed),
+            // A length that reaches here passed the size checks, or is a literal's or an
+            // existing block's.
+            HeapBlock::Array { layout, len } => {
+                let elements = self
+                    .builder
+                    .build_int_nuw_mul(len, i64_type.const_int(layout.size, false), "elements")
+                    .expect(POSITIONED);
+                let size = self
+                    .builder
+                    .build_int_nuw_add(elements, i64_type.const_int(layout.offset, false), "size")
+                    .expect(POSITIONED);
+                (size, i64_type.const_int(layout.align, false))
+            }
+            HeapBlock::String { cap } => {
+                let layout = self.string_layout();
+                let size = self
+                    .builder
+                    .build_int_nuw_add(i64_type.const_int(layout.size, false), cap, "size")
+                    .expect(POSITIONED);
+                (size, i64_type.const_int(u64::from(layout.align), false))
+            }
+        }
+    }
+
+    /// `heap_size`'s array formula with checks, for `[v; n]`, whose length `len` is the
+    /// program's: panics at `span` when `len` is negative or the block would be too large.
+    pub(super) fn checked_array_size(
         &self,
         layout: &ArrayLayout<'ctx>,
         len: IntValue<'ctx>,
-    ) -> IntValue<'ctx> {
+        span: Span,
+    ) -> (IntValue<'ctx>, IntValue<'ctx>) {
         let i64_type = self.context.i64_type();
-        let elements = self
-            .builder
-            .build_int_nuw_mul(len, i64_type.const_int(layout.size, false), "elements")
-            .expect(POSITIONED);
-        self.builder
-            .build_int_nuw_add(elements, i64_type.const_int(layout.offset, false), "size")
-            .expect(POSITIONED)
+        let (size, offset) = (
+            i64_type.const_int(layout.size, false),
+            i64_type.const_int(layout.offset, false),
+        );
+        let negative = self.int_compare(IntPredicate::SLT, len, i64_type.const_zero());
+        self.panic_if(negative, span, "array length is negative");
+        let (elements, wrapped) = self.overflowing("llvm.umul.with.overflow", len, size);
+        let (total, carried) = self.overflowing("llvm.uadd.with.overflow", elements, offset);
+        // `Layout::from_size_align` needs the size rounded up to the alignment to fit in
+        // an `isize`.
+        let largest = i64_type.const_int(i64::MAX.cast_unsigned() - layout.align + 1, false);
+        let above = self.int_compare(IntPredicate::UGT, total, largest);
+        let too_large = [wrapped, carried, above]
+            .into_iter()
+            .reduce(|a, b| self.builder.build_or(a, b, "too_large").expect(POSITIONED))
+            .expect("the size checks should have three flags");
+        self.panic_if(too_large, span, "array is too large");
+        (total, i64_type.const_int(layout.align, false))
     }
 
     /// The address of the header's length.

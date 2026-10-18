@@ -13,7 +13,7 @@ use inkwell::values::{
 use inkwell::{AddressSpace, IntPredicate};
 
 use super::abi::{PAD_CENTER, PAD_LEFT, PAD_RIGHT};
-use super::layout::{BYTES, CAP, LEN};
+use super::layout::{BYTES, CAP, HeapBlock, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::source::Span;
@@ -140,15 +140,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         lhs: PointerValue<'ctx>,
         rhs: PointerValue<'ctx>,
     ) -> PointerValue<'ctx> {
-        let layout = self.string_layout();
         let i64_type = self.context.i64_type();
-        let header = i64_type.const_int(layout.size, false);
-        let align = i64_type.const_int(u64::from(layout.align), false);
-        let block_size = |cap| {
-            self.builder
-                .build_int_nuw_add(header, cap, "size")
-                .expect(POSITIONED)
-        };
         let (len, rhs_len) = (self.string_len(lhs), self.string_len(rhs));
         // Both strings exist in memory, which on x86-64 is below 2^47 bytes, so no length,
         // capacity or block size here can overflow.
@@ -186,16 +178,13 @@ impl<'ctx> Codegen<'ctx, '_> {
             .build_select(more, needed, double, "cap")
             .expect(POSITIONED)
             .into_int_value();
+        let (old_size, align) = self.heap_size(&HeapBlock::String { cap });
+        let (new_size, _) = self.heap_size(&HeapBlock::String { cap: new_cap });
         let grown = self
             .builder
             .build_call(
                 self.realloc(),
-                &[
-                    lhs.into(),
-                    block_size(cap).into(),
-                    align.into(),
-                    block_size(new_cap).into(),
-                ],
+                &[lhs.into(), old_size.into(), align.into(), new_size.into()],
                 "grown",
             )
             .expect(POSITIONED)
@@ -242,13 +231,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// A new block with count 1 and capacity `cap`, whose length is not yet stored.
     fn new_string(&self, cap: IntValue<'ctx>) -> PointerValue<'ctx> {
-        let layout = self.string_layout();
-        let i64_type = self.context.i64_type();
-        let size = self
-            .builder
-            .build_int_nuw_add(i64_type.const_int(layout.size, false), cap, "size")
-            .expect(POSITIONED);
-        let align = i64_type.const_int(u64::from(layout.align), false);
+        let (size, align) = self.heap_size(&HeapBlock::String { cap });
         let string = self
             .builder
             .build_call(self.alloc, &[size.into(), align.into()], "string")
@@ -653,24 +636,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .position_at_end(self.context.append_basic_block(function, "entry"));
         let string = param(function);
-        let layout = self.string_layout();
-        let i64_type = self.context.i64_type();
-        let size = self
-            .builder
-            .build_int_nuw_add(
-                self.load_string_field(string, CAP),
-                i64_type.const_int(layout.size, false),
-                "size",
-            )
-            .expect(POSITIONED);
-        self.call(
-            self.free,
-            &[
-                string.into(),
-                size.into(),
-                i64_type.const_int(u64::from(layout.align), false).into(),
-            ],
-        );
+        let cap = self.load_string_field(string, CAP);
+        let (size, align) = self.heap_size(&HeapBlock::String { cap });
+        self.call(self.free, &[string.into(), size.into(), align.into()]);
         self.builder.build_return(None).expect(POSITIONED);
     }
 

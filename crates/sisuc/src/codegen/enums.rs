@@ -22,6 +22,7 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue,
 };
 
+use super::layout::HeapBlock;
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED};
 use crate::tir::{Enum, EnumId, Expr, Payload, Type, TypeKind};
@@ -358,9 +359,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             _ => (value, None),
         };
         let inner = boxed_enum(ty);
+        let (size, align) = self.heap_size(&HeapBlock::Box(inner));
         let boxed = self
             .builder
-            .build_call(self.alloc, &self.box_layout(inner), "box")
+            .build_call(self.alloc, &[size.into(), align.into()], "box")
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()
@@ -373,24 +375,6 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.branch_to(done);
             self.builder.position_at_end(done);
         }
-    }
-
-    /// The ABI size and alignment of a box of the enum `inner`, as `sisu_alloc` and `sisu_free`
-    /// take them.
-    fn box_layout(&self, inner: EnumId) -> [BasicMetadataValueEnum<'ctx>; 2] {
-        let box_type = self.enums[inner.0].boxed;
-        let i64_type = self.context.i64_type();
-        [
-            i64_type
-                .const_int(self.target_data.get_abi_size(&box_type), false)
-                .into(),
-            i64_type
-                .const_int(
-                    u64::from(self.target_data.get_abi_alignment(&box_type)),
-                    false,
-                )
-                .into(),
-        ]
     }
 
     /// A scratch slot holding the enum `value`, for a helper that takes its address.
@@ -584,8 +568,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.store(head, following);
             let walk = self.helper(Helper::Walk, Type::intern(TypeKind::Enum(member)));
             self.call(walk, &[self.box_value(member, boxed).into(), heads.into()]);
-            let [size, align] = self.box_layout(member);
-            self.call(self.free, &[boxed.into(), size, align]);
+            let (size, align) = self.heap_size(&HeapBlock::Box(member));
+            self.call(self.free, &[boxed.into(), size.into(), align.into()]);
             self.branch_to(next);
             self.builder.position_at_end(empty);
         }
