@@ -454,7 +454,10 @@ impl Brackets {
         tokens: &mut Vec<Token>,
         diagnostics: &mut Vec<Diagnostic>,
     ) -> Option<usize> {
-        self.cut(at, literal::not_closed, tokens, diagnostics)
+        // A literal cut off before its first `{` is a frame whose brace is not open.
+        let interpolation = self.frames.iter().any(|f| f.brace < self.open.len());
+        let d = |quote| literal::not_closed(quote, interpolation);
+        self.cut(at, d, tokens, diagnostics)
     }
 
     /// Ends every open interpolation at the comment at `at`, which takes the rest of the line, so

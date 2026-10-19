@@ -1,0 +1,10 @@
+error[E0086]: a constant's value cannot use interpolation
+ --> E0086-interpolation.sisu:2:11
+  |
+2 | const S = "{N}"
+  |           ^^^^^
+  |
+  = help: join `string` constants with `+`, or use a `let` in a function
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0086

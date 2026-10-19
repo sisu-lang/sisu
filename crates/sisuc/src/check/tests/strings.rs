@@ -267,9 +267,11 @@ fn concat_mismatch() {
             Some("let b: u8 = \"{(1 + n)}{s}\""),
         ),
         // A `[]` or a `None` has no type of its own: it is the literal that cannot be a
-        // `string`, with no other operand to point at.
-        ("let b: u8 = [] + s", (2, 17, "[]"), &[], None),
-        ("let b: u8 = None + s", (2, 17, "None"), &[], None),
+        // `string`, beside the `string` it would join, in either place.
+        ("let b: u8 = [] + s", (2, 17, "[]"), &[(2, 22)], None),
+        ("let b: u8 = None + s", (2, 17, "None"), &[(2, 24)], None),
+        ("print(s + [])", (2, 15, "[]"), &[(2, 11)], None),
+        ("print(s + None)", (2, 15, "None"), &[(2, 11)], None),
         (
             "let b: u8 = 300 + s",
             (2, 17, "300"),
@@ -277,6 +279,39 @@ fn concat_mismatch() {
             Some("let b: u8 = \"{300}{s}\""),
         ),
     ]);
+}
+
+/// A `None` beside a `string` that holds a mismatch of its own gets the label, and that
+/// mismatch is left as it is.
+#[test]
+fn join_literal_after_another_mismatch() {
+    let src = with_items(&body(
+        "s: string",
+        "print({ let x: i64 = true\n s } + None)",
+    ));
+    assert_eq!(
+        found(&src),
+        [
+            (Code::Mismatch, (2, 26), vec![]),
+            (Code::Mismatch, (3, 8), vec![(2, 11)]),
+        ]
+    );
+}
+
+/// A compound `+=` on an element joins as `+` does: the `None` or `[]` points at the element.
+#[test]
+fn join_literal_in_element_compound() {
+    let src = with_items(&body(
+        "",
+        "let mut xs = [\"a\"]\n    xs[0] += None\n    xs[0] += []",
+    ));
+    assert_eq!(
+        found(&src),
+        [
+            (Code::Mismatch, (3, 14), vec![(3, 5)]),
+            (Code::Mismatch, (4, 14), vec![(4, 5)]),
+        ]
+    );
 }
 
 /// Literals, comments, line breaks and statements around the operands decide the unsafe fix.

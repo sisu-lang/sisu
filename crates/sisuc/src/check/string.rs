@@ -11,7 +11,8 @@ use super::expr::{local, no_member, path, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{
-    Definition, Diagnostic, DiagnosticKind, InterpolateHelp, MismatchFix, MismatchSource, Operand,
+    Code, Definition, Diagnostic, DiagnosticKind, InterpolateHelp, MismatchFix, MismatchSource,
+    Operand, invisible,
 };
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -176,6 +177,33 @@ impl Checker<'_> {
             conversion: false,
         }
         .into()
+    }
+
+    /// The mismatch of a `None` or `[]` operand of the join `lhs + rhs`, among the diagnostics
+    /// from `start`, made the one a typed operand gets, with the label on the `string`.
+    pub(super) fn label_join_literals(&mut self, start: usize, [lhs, rhs]: [&ast::Expr; 2]) {
+        for (e, other) in [(lhs, rhs), (rhs, lhs)] {
+            let got = match &e.kind {
+                ExprKind::NoneLit => "None",
+                ExprKind::ArrayLit(elements) if elements.is_empty() => "[]",
+                _ => continue,
+            };
+            let want = vec![self.type_name(Type::STRING)];
+            for d in self.diagnostics[start..]
+                .iter_mut()
+                .filter(|d| d.code() == Code::Mismatch && d.span() == e.span)
+            {
+                *d = DiagnosticKind::Mismatch {
+                    want: want.clone(),
+                    got: got.to_string(),
+                    at: e.span,
+                    source: Some(MismatchSource::Concat(other.span)),
+                    fix: None,
+                    conversion: false,
+                }
+                .into();
+            }
+        }
     }
 
     /// Whether `span` holds no line break, which a string literal cannot hold. A comment inside
@@ -421,7 +449,8 @@ impl Checker<'_> {
     }
 }
 
-/// A string literal, for the message, in Sisu's escapes: no other literal is named.
+/// A string literal, for the message, in Sisu's escapes, and a character the user cannot see
+/// but a space by its code point: no other literal is named.
 fn literal(e: &ast::Expr) -> Option<String> {
     let ExprKind::Str(text) = &e.kind else {
         return None;
@@ -434,7 +463,7 @@ fn literal(e: &ast::Expr) -> Option<String> {
             '\t' => quoted.push_str("\\t"),
             '\r' => quoted.push_str("\\r"),
             '\0' => quoted.push_str("\\0"),
-            c if c.is_control() => write!(quoted, "\\u{{{:X}}}", u32::from(c))
+            c if c != ' ' && invisible(c) => write!(quoted, "\\u{{{:X}}}", u32::from(c))
                 .expect("writing to a `String` should never fail"),
             c => quoted.push(c),
         }
@@ -536,6 +565,7 @@ mod tests {
             "a\nb\tc\rd\0e",
             "\u{7}\u{1B}\u{7F}\u{85}",
             "é😀",
+            "a b\u{AD}\u{2028}\u{FEFF}",
         ] {
             let e = ast::Expr {
                 kind: ExprKind::Str(text.to_string()),
@@ -549,6 +579,7 @@ mod tests {
                 "{name}"
             );
             assert!(lexed.diagnostics.is_empty(), "{name}");
+            assert!(!name.chars().any(|c| c != ' ' && invisible(c)), "{name}");
         }
     }
 }

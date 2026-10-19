@@ -583,8 +583,9 @@ pub(crate) enum DiagnosticKind {
     ConstInFunction { at: Span },
     /// The type at `at` of a constant, which is none a constant can have.
     ConstantType { at: Span },
-    /// The part at `at` of a constant's value, which is not known at compile time.
-    ConstantNotKnown { at: Span },
+    /// The part at `at` of a constant's value, which is not known at compile time; `interpolation`
+    /// when it is an interpolated string.
+    ConstantNotKnown { at: Span, interpolation: bool },
     /// The use at `at`, in the value of the constant `user`, of the constant `name` declared at
     /// `declared`: `itself` when `name` is `user`, else `name` is declared below `user`.
     ConstantOrder {
@@ -606,8 +607,13 @@ pub(crate) enum DiagnosticKind {
     /// The `char` literal at `at`, which holds no code point or more than one; `string` when its
     /// text holds no `"`, `{` or `}`, which a string literal would read differently.
     NotOneCodePoint { at: Span, string: bool },
-    /// The literal of `kind` that starts at `at` and stops at a line break or the end of the file.
-    LiteralNotClosed { kind: LiteralKind, at: Span },
+    /// The literal of `kind` that starts at `at` and stops at a line break or the end of the file;
+    /// `interpolation` when an interpolation's `{` is open there.
+    LiteralNotClosed {
+        kind: LiteralKind,
+        at: Span,
+        interpolation: bool,
+    },
     /// Arithmetic on the `char` at `at`.
     ArithmeticOnChar { at: Span },
     /// The `}` at `at` in the text of a string literal, which no interpolation opened.
@@ -2142,10 +2148,13 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::ConstantType { at } => {
                 Diagnostic::coded(code, at, "a constant is `i64`, `u8`, `f64`, `bool`, `char` or `string`")
             }
-            DiagnosticKind::ConstantNotKnown { at } => {
+            DiagnosticKind::ConstantNotKnown { at, interpolation } => if interpolation {
+                Diagnostic::coded(code, at, "a constant's value cannot use interpolation")
+                    .with_help("join `string` constants with `+`, or use a `let` in a function")
+            } else {
                 Diagnostic::coded(code, at, "a constant's value must be known at compile time")
                     .with_help("use literals, operators and earlier constants")
-            }
+            },
             DiagnosticKind::ConstantOrder {
                 name,
                 user,
@@ -2202,10 +2211,18 @@ impl From<DiagnosticKind> for Diagnostic {
                     d
                 }
             }
-            DiagnosticKind::LiteralNotClosed { kind, at } => match kind {
+            DiagnosticKind::LiteralNotClosed {
+                kind,
+                at,
+                interpolation,
+            } => match kind {
                 LiteralKind::Char => Diagnostic::coded(code, at, "`char` literal is not closed"),
                 LiteralKind::String => Diagnostic::coded(code, at, "string literal is not closed")
-                    .with_help(r"write `\n` for a line break"),
+                    .with_help(if interpolation {
+                        r"a `{` starts an interpolation: end it with `}`, or write `\{` for a literal brace"
+                    } else {
+                        r"write `\n` for a line break"
+                    }),
             },
             DiagnosticKind::ArithmeticOnChar { at } => {
                 Diagnostic::coded(code, at, "arithmetic does not apply to `char`").with_help(
@@ -2861,7 +2878,7 @@ fn similar(d: Diagnostic, at: Span, suggestion: Option<Suggestion>) -> Diagnosti
 }
 
 /// Whether `c` is a character the user cannot see.
-fn invisible(c: char) -> bool {
+pub(crate) fn invisible(c: char) -> bool {
     c.is_whitespace() || c.is_control() || is_format(c)
 }
 

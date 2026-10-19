@@ -130,14 +130,25 @@ fn char_arithmetic_reports_once() {
         &with_main("fn f(c: char) {\n    print(c + 1 + 2)\n}"),
         &[(Code::ArithmeticOnChar, (2, 13))],
     );
-    // A float sum or a float block beside the `char` is one diagnostic, at the float. This row
-    // pins today's output: the first reads "expected `i64`" at `1.0`, which is misleading; see
-    // `.scratch/diagnostic-wording/issues/01-char-plus-float-says-i64.md`.
+    // A float sum or a float block beside the `char` is one diagnostic, at the `char`, which
+    // expects an `f64`: the `char`'s `i64` does not reach the sum's `1.0`.
     codes(
         &with_main(
             "fn f(c: char) {\n    print(c + (1.0 + 2.0))\n    print(c + { let k = 1.5\n k })\n}",
         ),
-        &[(Code::Mismatch, (2, 16)), (Code::Mismatch, (3, 11))],
+        &[(Code::Mismatch, (2, 11)), (Code::Mismatch, (3, 11))],
+    );
+    // A `None` or `[]` inside the operand beside the `char` reports itself, which has no type to
+    // take, and a mixed `if` joins to `f64`.
+    codes(
+        &with_main(
+            "fn f(c: char) {\n    print(c + { None })\n    print(c + { [] })\n    print(c + if true { 1.0 } else { 2 })\n}",
+        ),
+        &[
+            (Code::CannotInfer, (2, 17)),
+            (Code::CannotInfer, (3, 17)),
+            (Code::Mismatch, (4, 11)),
+        ],
     );
     // A `u8` or an `i64` beside the `char` is not reported as well, on either side.
     codes(
