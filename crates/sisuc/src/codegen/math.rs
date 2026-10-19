@@ -99,9 +99,13 @@ impl<'ctx> Codegen<'ctx, '_> {
         function: FunctionValue<'ctx>,
         args: &[BasicValueEnum<'ctx>],
     ) -> FloatValue<'ctx> {
-        let args: Vec<_> = args.iter().map(|&a| a.into()).collect();
+        // The `f64` methods take at most two arguments, so the call needs no `Vec`.
+        let mut buffer = [args[0].into(); 2];
+        for (slot, &arg) in buffer.iter_mut().zip(args) {
+            *slot = arg.into();
+        }
         self.builder
-            .build_call(function, &args, "math")
+            .build_call(function, &buffer[..args.len()], "math")
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()

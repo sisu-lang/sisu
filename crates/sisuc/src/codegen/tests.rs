@@ -2,6 +2,7 @@ use super::*;
 use crate::check::check;
 use crate::parser::parse_ok;
 use crate::tir::BinaryOp;
+use inkwell::values::{AnyValue, InstructionOpcode, InstructionValue, Operand};
 
 /// Lexes, parses, checks (no errors allowed), marks last uses in and compiles `src`, then
 /// verifies the module.
@@ -1186,6 +1187,30 @@ fn field_accesses_carry_their_fields_tbaa_tag() {
     );
 }
 
+/// The instructions of `function`'s entry block, in order.
+fn entry_instructions(function: FunctionValue<'_>) -> Vec<InstructionValue<'_>> {
+    let first = function
+        .get_first_basic_block()
+        .and_then(BasicBlock::get_first_instruction);
+    std::iter::successors(first, |i| i.get_next_instruction()).collect()
+}
+
+/// Operand `n` of `instruction`, which should be a value, not a block.
+fn operand_of(instruction: InstructionValue<'_>, n: u32) -> BasicValueEnum<'_> {
+    let Some(Operand::Value(value)) = instruction.get_operand(n) else {
+        panic!("operand {n} of {instruction:?} should be a value")
+    };
+    value
+}
+
+/// The instruction whose result is pointer operand `n` of `instruction`.
+fn address_of(instruction: InstructionValue<'_>, n: u32) -> InstructionValue<'_> {
+    operand_of(instruction, n)
+        .into_pointer_value()
+        .as_instruction()
+        .expect("the pointer should be an instruction's result")
+}
+
 /// `binary_value` takes `&&` and `||` as the eager `and` and `or` of two computed `bool`s, which
 /// is what a range pattern's test is in mir: no branch, no second block.
 #[test]
@@ -1202,38 +1227,37 @@ fn binary_value_takes_and_and_or_of_two_computed_bools() {
     codegen
         .builder
         .position_at_end(context.append_basic_block(function, "entry"));
-    let operand = |n| {
+    let param = |n| {
         function
             .get_nth_param(n)
             .expect("the function should have two parameters")
     };
     let span = Span::new(0, 0);
-    let both = codegen.binary_value(BinaryOp::And, Type::BOOL, operand(0), operand(1), span);
-    let either = codegen.binary_value(BinaryOp::Or, Type::BOOL, both, operand(1), span);
+    let both = codegen.binary_value(BinaryOp::And, Type::BOOL, param(0), param(1), span);
+    let either = codegen.binary_value(BinaryOp::Or, Type::BOOL, both, param(1), span);
     codegen
         .builder
         .build_return(Some(&either))
         .expect(POSITIONED);
-    let ir = codegen.module.print_to_string().to_string();
-    let body = function_body(&ir, "define i1 @both(i1 %0, i1 %1)");
-    let ops: Vec<_> = body
-        .lines()
-        .skip(2)
-        .map(|l| l.split_once(" = ").map_or(l, |(_, op)| op).trim())
-        .collect();
+    let instructions = entry_instructions(function);
+    let opcodes: Vec<_> = instructions.iter().map(|i| i.get_opcode()).collect();
     assert_eq!(
-        ops,
-        ["and i1 %0, %1", "or i1 %and, %1", "ret i1 %or"],
-        "{body}"
+        opcodes,
+        [
+            InstructionOpcode::And,
+            InstructionOpcode::Or,
+            InstructionOpcode::Return
+        ]
     );
-}
-
-/// The text of `line` after the first `start` and before the next `end`.
-fn between<'a>(line: &'a str, start: &str, end: &str) -> &'a str {
-    let (_, rest) = line
-        .split_once(start)
-        .unwrap_or_else(|| panic!("no {start:?} in {line}"));
-    rest.split_once(end).map_or(rest, |(text, _)| text)
+    let [and, or, ret] = instructions[..] else {
+        unreachable!("the opcodes should have three entries")
+    };
+    assert_eq!(
+        [operand_of(and, 0), operand_of(and, 1)],
+        [param(0), param(1)]
+    );
+    assert_eq!([operand_of(or, 0), operand_of(or, 1)], [both, param(1)]);
+    assert_eq!(operand_of(ret, 0), either);
 }
 
 /// A string's length is field 1 of its header, read without a tag; an array's is field 1 of
@@ -1242,46 +1266,65 @@ fn between<'a>(line: &'a str, start: &str, end: &str) -> &'a str {
 #[test]
 fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
     let context = Context::create();
-    let ir = compiled(
+    let module = compiled(
         &context,
         "fn size(s: string, a: [i64]) -> i64 {\n    s.len() + a.len()\n}\nfn main() {}",
-    )
-    .print_to_string()
-    .to_string();
-    let body = function_body(&ir, "define internal i64 @sisu.size(ptr");
-    let lines: Vec<_> = body.lines().map(str::trim).collect();
-    let defining = |id: &str| {
-        *lines
-            .iter()
-            .find(|l| l.starts_with(&format!("{id} = ")))
-            .unwrap_or_else(|| panic!("no {id} in\n{body}"))
+    );
+    let ir = module.print_to_string().to_string();
+    let function = module
+        .get_function("sisu.size")
+        .expect("the module should define `size`");
+    let param = |n| {
+        function
+            .get_nth_param(n)
+            .expect("the function should have two parameters")
     };
-    let loads: Vec<_> = lines
+    let entry = entry_instructions(function);
+    let loads: Vec<_> = entry
         .iter()
-        .filter(|l| l.contains("load i64"))
-        .map(|load| {
-            let gep = defining(between(load, "load i64, ptr ", ","));
-            let base = defining(between(gep, ", ptr ", ","));
-            let slot = between(base, "load ptr, ptr ", ",");
-            let stored = lines
+        .filter(|i| {
+            i.get_opcode() == InstructionOpcode::Load
+                && address_of(**i, 0).get_opcode() == InstructionOpcode::GetElementPtr
+        })
+        .map(|&load| {
+            let gep = address_of(load, 0);
+            // The base is a load of the slot that the parameter was stored into.
+            let slot = operand_of(address_of(gep, 0), 0);
+            let stored = entry
                 .iter()
-                .find(|l| l.starts_with("store ptr %") && l.contains(&format!(", ptr {slot},")))
-                .unwrap_or_else(|| panic!("no store to {slot} in\n{body}"));
+                .find(|i| i.get_opcode() == InstructionOpcode::Store && operand_of(**i, 1) == slot)
+                .expect("the parameter should be stored into its slot");
+            let text = load.print_to_string().to_string();
             (
-                between(gep, "nuw ", ", ptr"),
-                gep.rsplit_once("i32 ").map(|(_, field)| field),
-                between(stored, "store ptr ", ","),
-                load.contains("!tbaa").then(|| tbaa_name(&ir, load)),
+                gep.get_gep_source_element_type()
+                    .expect("a GEP should have a source element type")
+                    .print_to_string()
+                    .to_string(),
+                operand_of(gep, 2)
+                    .into_int_value()
+                    .get_zero_extended_constant(),
+                operand_of(*stored, 0),
+                text.contains("!tbaa").then(|| tbaa_name(&ir, &text)),
             )
         })
         .collect();
     assert_eq!(
         loads,
         [
-            ("{ i64, i64, i64, [0 x i8] }", Some("1"), "%0", None),
-            ("{ i64, i64 }", Some("1"), "%1", Some("count and length")),
+            (
+                "{ i64, i64, i64, [0 x i8] }".to_string(),
+                Some(1),
+                param(0),
+                None
+            ),
+            (
+                "{ i64, i64 }".to_string(),
+                Some(1),
+                param(1),
+                Some("count and length")
+            ),
         ],
-        "{body}"
+        "{ir}"
     );
 }
 
