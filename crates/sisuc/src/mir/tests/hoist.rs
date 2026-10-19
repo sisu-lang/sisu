@@ -458,7 +458,7 @@ fn many_roots_probe_linearly() {
         // Each root's `make_unique` is looked up at least once.
         assert!(probes >= roots, "{roots} roots: {probes} probes");
         assert!(
-            probes <= 2 * size,
+            probes <= 3 * size,
             "{roots} roots: {probes} probes, size {size}"
         );
         assert!(
@@ -499,7 +499,7 @@ fn sibling_loops_merge_into_the_largest() {
         assert_eq!(uniques[f.loops[0].pre_header.0], depth, "depth {depth}");
         assert_eq!(uniques.iter().sum::<usize>(), depth, "depth {depth}");
         assert!(
-            probes <= 2 * size,
+            probes <= 3 * size,
             "depth {depth}: {probes} probes, size {size}"
         );
     }
@@ -594,24 +594,31 @@ const TREE: &str = "fn f(xs: [i64]) {
 #[test]
 fn roots_stop_at_different_ancestors_of_a_tree() {
     let (f, _, _, _) = hoisted_with_work(TREE);
-    let at = |lp: usize| -> Vec<String> {
-        let mut names: Vec<String> = f.blocks[f.loops[lp].pre_header.0]
+    // Every `make_unique` in the pre-header, as its local's name and its projection count.
+    let at = |lp: usize| -> Vec<(Option<String>, usize)> {
+        let mut uniques: Vec<_> = f.blocks[f.loops[lp].pre_header.0]
             .stmts
             .iter()
             .filter_map(|stmt| {
                 let Statement::MakeUnique(place) = stmt else {
                     return None;
                 };
-                // A pre-header holds no other `make_unique`, so a projected one fails too.
-                f.locals[place.local.0].name.clone()
+                Some((
+                    f.locals[place.local.0].name.clone(),
+                    place.projections.len(),
+                ))
             })
             .collect();
-        names.sort();
-        names
+        uniques.sort();
+        uniques
     };
     let expected: [&[&str]; 6] = [&["a", "e"], &["d", "g"], &["c", "h"], &["b"], &[], &[]];
     for (lp, names) in expected.iter().enumerate() {
-        assert_eq!(at(lp), *names, "loops[{lp}]");
+        let names: Vec<_> = names
+            .iter()
+            .map(|name| (Some((*name).to_owned()), 0))
+            .collect();
+        assert_eq!(at(lp), names, "loops[{lp}]");
     }
     // Each `make_unique` has left the loops.
     assert_eq!(level_0_uniques(&f).iter().sum::<usize>(), 7);

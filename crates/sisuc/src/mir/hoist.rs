@@ -51,9 +51,7 @@ pub(super) fn hoist(function: &mut Function) {
     let mut blocks = BlocksMut::new(&mut function.blocks);
     for (block, lp) in innermost.iter().enumerate() {
         let Some(lp) = *lp else { continue };
-        blocks.retain(block, |stmt| {
-            level_0(stmt).is_none_or(|local| !leave[lp].contains(local))
-        });
+        blocks.retain(block, &leave[lp]);
     }
     let mut arrive: Vec<(usize, LocalId)> = arrive
         .into_iter()
@@ -349,8 +347,7 @@ thread_local! {
     /// each one appended.
     pub(super) static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many keys the hoist's `States` and `Roots` have touched on this thread, counted at
-    /// the key: each one made to hash for a lookup or an insertion, each comparison of two and
-    /// each read of the local in one.
+    /// the key: each hash of one, each comparison of two and each read of the local in one.
     pub(super) static PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -381,28 +378,26 @@ mod seam {
     use rustc_hash::{FxHashMap, FxHashSet};
 
     use self::key::Key;
-    use super::{Walk, step};
+    use super::{Walk, level_0, step};
     use crate::mir::{Block, LocalId, Statement};
 
-    /// A local as the key of a `States` or a `Roots`. Its field is private, so a scan of a set
-    /// counts each key it compares or reads.
+    /// A local as the key of a `States` or a `Roots`. Its field is private and it cannot be
+    /// cloned, so a scan of a set counts each key it hashes, compares or reads.
     mod key {
         use std::hash::{Hash, Hasher};
 
         use super::super::probe;
         use crate::mir::LocalId;
 
-        #[derive(Clone, Copy)]
         pub(super) struct Key(LocalId);
 
         impl Key {
             /// The key of `local`, made to look it up or to insert it.
-            pub(super) fn new(local: LocalId) -> Self {
-                probe();
+            pub(super) const fn new(local: LocalId) -> Self {
                 Self(local)
             }
 
-            pub(super) fn local(self) -> LocalId {
+            pub(super) fn local(&self) -> LocalId {
                 probe();
                 self.0
             }
@@ -419,6 +414,7 @@ mod seam {
 
         impl Hash for Key {
             fn hash<H: Hasher>(&self, state: &mut H) {
+                probe();
                 self.0.hash(state);
             }
         }
@@ -458,11 +454,11 @@ mod seam {
             Self { blocks }
         }
 
-        /// Drops the statements of `block` that `keep` refuses.
-        pub(super) fn retain(&mut self, block: usize, mut keep: impl FnMut(&Statement) -> bool) {
+        /// Drops the level-0 `make_unique` statements of `block` whose local is in `leave`.
+        pub(super) fn retain(&mut self, block: usize, leave: &Roots) {
             self.blocks[block].stmts.retain(|stmt| {
                 step();
-                keep(stmt)
+                level_0(stmt).is_none_or(|local| !leave.contains(local))
             });
         }
 
