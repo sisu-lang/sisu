@@ -82,10 +82,6 @@ pub(crate) struct Block {
 #[derive(Debug)]
 pub(crate) struct Loop {
     pub(crate) pre_header: BlockId,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 7's codegen names a loop's header block")
-    )]
     pub(crate) header: BlockId,
     pub(crate) blocks: Vec<BlockId>,
 }

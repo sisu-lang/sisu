@@ -2,7 +2,7 @@
 //! is `codegen/hoist.rs`'s, ported unchanged, with the rows that a borrowed read widens.
 
 use super::*;
-use crate::mir::hoist::unique_roots;
+use crate::mir::hoist::{PROBES, VISITS, hoist, unique_roots};
 use crate::mir::ownership;
 
 /// The `partition` row: quicksort's partition loop.
@@ -206,11 +206,7 @@ fn unique_roots_of_each_loop() {
         .collect();
     assert_eq!(found, expected);
     // The `moved` row bars `a` through the move that `return a` makes into a temporary.
-    let (_, moved, _) = CASES
-        .iter()
-        .find(|(name, ..)| *name == "moved")
-        .expect("the table should have a `moved` row");
-    has(&built(moved), "f", &["_ = move a#", "return move _"]);
+    has(&built(row("moved")), "f", &["_ = move a#", "return move _"]);
 }
 
 /// The printed text of block `id` in `f`, a function as `function` gives it: from its label
@@ -246,23 +242,53 @@ fn pre_header_and_loop(src: &str) -> (String, String) {
     (block_text(&printed, lp.pre_header).to_owned(), in_loop)
 }
 
+/// The last statement of a printed block, before its terminator, trimmed.
+fn last_statement(block: &str) -> &str {
+    block.lines().rev().nth(1).map_or("", str::trim)
+}
+
+/// The source of the row `name` of `CASES`.
+fn row(name: &str) -> &'static str {
+    CASES
+        .iter()
+        .find(|(row, ..)| *row == name)
+        .map_or_else(|| panic!("no row {name}"), |(_, src, _)| *src)
+}
+
 #[test]
 fn hoisted_unique_sits_in_the_pre_header() {
     let (pre_header, in_loop) = pre_header_and_loop(PARTITION);
-    assert!(pre_header.contains("make_unique a#"), "{pre_header}");
+    // Last, after everything the pre-header computes before the loop.
+    assert!(
+        last_statement(&pre_header).starts_with("make_unique a#"),
+        "{pre_header}"
+    );
     // The writes stay in the loop, with their checks and without their `make_unique`.
     assert_eq!(in_loop.matches("check a#").count(), 2, "{in_loop}");
     assert!(!in_loop.contains("make_unique"), "{in_loop}");
     // Only the root moves: a grid's row is still made unique at the write.
     let (pre_header, in_loop) = pre_header_and_loop(GRID);
-    assert!(pre_header.contains("make_unique g#"), "{pre_header}");
+    assert!(
+        last_statement(&pre_header).starts_with("make_unique g#"),
+        "{pre_header}"
+    );
     assert_eq!(in_loop.matches("make_unique").count(), 1, "{in_loop}");
     assert!(in_loop.contains("make_unique g#1["), "{in_loop}");
+    // `for x in a` copies `a` in the pre-header: made unique before that copy, the loop would
+    // write into the array it iterates over.
+    let (pre_header, _) = pre_header_and_loop(row("for_over_itself"));
+    let copy = pre_header
+        .find("copy a#")
+        .unwrap_or_else(|| panic!("{pre_header}"));
+    assert!(
+        last_statement(&pre_header[copy..]).starts_with("make_unique a#"),
+        "{pre_header}"
+    );
 }
 
 /// `f(s, c)` with one loop, `bb1` and `bb2`: `bb1` makes `s` unique and branches on `c`, and
-/// `bb2` ends with `exit`.
-fn loop_ending_in(exit: Terminator) -> Function {
+/// `bb2` runs `stmts` and ends with `exit`.
+fn hand_built(stmts: Vec<Statement>, exit: Terminator) -> Function {
     let mut b = Builder::new("f");
     let s = b.param("s", Type::STRING);
     let c = b.param("c", Type::BOOL);
@@ -281,18 +307,134 @@ fn loop_ending_in(exit: Terminator) -> Function {
             else_: BlockId(2),
         },
     );
-    b.block(Vec::new(), exit);
+    b.block(stmts, exit);
     b.add_loop(BlockId(0), BlockId(1), vec![BlockId(1), BlockId(2)]);
     b.finish()
 }
 
-/// A move in a terminator bars its local, as one in a statement does. Lowering moves a return
-/// value into a temporary first, so only a hand-built function reaches this.
+/// Bars that lowering never puts on a written local, so only a hand-built function reaches
+/// them: a move in a terminator (a return value moves into a temporary first), a `release`
+/// (only of temporaries), and a `use` or a guarded `use` (the ownership pass replaces each).
+/// Each bars its local, as a move in a statement does; with none, `s` hoists.
 #[test]
-fn terminator_move_bars() {
+fn hand_built_bars() {
     let s = LocalId(0);
-    let f = loop_ending_in(Terminator::Return(None));
-    assert_eq!(unique_roots(&f, &f.loops[0]), [s]);
-    let f = loop_ending_in(Terminator::Return(Some(Operand::Move(s))));
-    assert_eq!(unique_roots(&f, &f.loops[0]), []);
+    let reads = |operand| Statement::Assign {
+        dest: None,
+        value: Rvalue::Use(operand),
+    };
+    let cases = [
+        ("none", Vec::new(), Terminator::Return(None), vec![s]),
+        (
+            "return move",
+            Vec::new(),
+            Terminator::Return(Some(Operand::Move(s))),
+            vec![],
+        ),
+        (
+            "release",
+            vec![Statement::Release(s)],
+            Terminator::Return(None),
+            vec![],
+        ),
+        (
+            "use",
+            vec![reads(Operand::Use(s))],
+            Terminator::Return(None),
+            vec![],
+        ),
+        (
+            "guarded",
+            vec![reads(Operand::Guarded(s))],
+            Terminator::Return(None),
+            vec![],
+        ),
+    ];
+    for (name, stmts, exit, expected) in cases {
+        let f = hand_built(stmts, exit);
+        assert_eq!(unique_roots(&f, &f.loops[0]), expected, "{name}");
+    }
+}
+
+/// `f` with `depth` nested loops, each of which writes `a`.
+fn nested(depth: usize) -> String {
+    let opens = (0..depth)
+        .map(|level| format!("for i{level} in 0..2 {{\n    a[0] = {level}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let closes = "}\n".repeat(depth);
+    format!("fn f(xs: [i64]) -> [i64] {{\n    let mut a = xs\n{opens}{closes}a\n}}")
+}
+
+/// `f` with one loop that writes each of `roots` arrays.
+fn many_roots(roots: usize) -> String {
+    let lets = (0..roots)
+        .map(|k| format!("    let mut a{k} = [0]\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let writes = (0..roots)
+        .map(|k| format!("        a{k}[0] = j\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    format!("fn f() {{\n{lets}    for j in 0..2 {{\n{writes}    }}\n}}")
+}
+
+/// The level-0 `make_unique` statements of `f`, per block.
+fn level_0_uniques(f: &Function) -> Vec<usize> {
+    f.blocks
+        .iter()
+        .map(|block| {
+            block
+                .stmts
+                .iter()
+                .filter(|stmt| {
+                    matches!(stmt, Statement::MakeUnique(place) if place.projections.is_empty())
+                })
+                .count()
+        })
+        .collect()
+}
+
+/// Hoists `f` of `src` and gives `f`, with the blocks the hoist fetched and its set probes.
+fn hoisted_with_work(src: &str) -> (Function, usize, usize) {
+    let mut f = placed_f(src);
+    VISITS.set(0);
+    PROBES.set(0);
+    hoist(&mut f);
+    (f, VISITS.get(), PROBES.get())
+}
+
+/// The hoist reads each block once and rewrites it at most once, however deep the loops nest:
+/// an outer loop does not walk its inner loops' blocks again.
+#[test]
+fn nested_loops_fetch_each_block_at_most_twice() {
+    for depth in [8, 16, 32] {
+        let (f, visits, _) = hoisted_with_work(&nested(depth));
+        // Every write's `make_unique` reaches the outermost pre-header as one statement.
+        let uniques = level_0_uniques(&f);
+        assert_eq!(uniques.iter().sum::<usize>(), 1, "depth {depth}");
+        assert_eq!(uniques[f.loops[0].pre_header.0], 1, "depth {depth}");
+        assert!(
+            visits <= 2 * f.blocks.len(),
+            "depth {depth}: {visits} fetches of {} blocks",
+            f.blocks.len()
+        );
+    }
+}
+
+/// The work of deciding which `make_unique` statements leave a loop grows with the number of
+/// arrays it writes, not with its square.
+#[test]
+fn many_roots_probe_linearly() {
+    for roots in [16, 32, 64] {
+        let (f, visits, probes) = hoisted_with_work(&many_roots(roots));
+        let uniques = level_0_uniques(&f);
+        assert_eq!(uniques[f.loops[0].pre_header.0], roots, "{roots} roots");
+        assert_eq!(uniques.iter().sum::<usize>(), roots, "{roots} roots");
+        assert!(probes <= 8 * roots, "{roots} roots: {probes} probes");
+        assert!(
+            visits <= 2 * f.blocks.len(),
+            "{roots} roots: {visits} fetches"
+        );
+    }
 }
