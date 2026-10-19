@@ -859,6 +859,143 @@ fn main() {}",
     assert!(branch_at < print_at, "{main}");
 }
 
+const MOVED_ROOT_SOURCE: &str = "enum Shape {\n    Dot\n    Circle(i64)\n}\nclass Holder {\n    mut n: i64\n    mut xs: [i64]\n    mut shape: Shape\n}\nfn make_holder() -> Holder { Holder(n: 1, xs: [1, 2], shape: Shape.Dot) }\nfn make_array() -> [i64] { [1, 2] }\nfn take_holder(h: Holder) {}\nfn take_array(xs: [i64]) {}\nfn main() {}";
+
+/// Builds `main` as `r = make(); take(move r); <what>(r)`, which the certifier would reject, and
+/// asserts that `<what>` reaches `r`'s root slot only after a null test that calls
+/// `sisu_rc_fault(2)`: the first instructions after the call to `take` are that test.
+/// `what` gives the statements after the move and the terminator of `bb0`; `bb1` returns.
+fn assert_root_read_faults(
+    root: Type,
+    (make, take): (&str, &str),
+    what: impl FnOnce(LocalId) -> (Vec<Statement>, Terminator),
+) {
+    let context = Context::create();
+    let module = compiled_from(&context, MOVED_ROOT_SOURCE, true, |mir| {
+        let func = |name: &str| {
+            let at = mir.functions.iter().position(|f| f.name == name);
+            FuncId(at.expect("the source should define the function"))
+        };
+        let call = |func, args| Statement::Assign {
+            dest: None,
+            value: Rvalue::Call { func, args },
+        };
+        let mut b = mir::tests::Builder::new("main");
+        let r = b.local("r", root);
+        let (after, term) = what(r);
+        let mut stmts = vec![
+            Statement::Assign {
+                dest: Some(r),
+                value: Rvalue::Call {
+                    func: func(make),
+                    args: Vec::new(),
+                },
+            },
+            call(func(take), vec![mir::Operand::Move(r)]),
+        ];
+        stmts.extend(after);
+        b.block(stmts, term);
+        b.block(Vec::new(), Terminator::Return(None));
+        let main = mir.functions.iter_mut().find(|f| f.name == "main");
+        *main.expect("the source should define `main`") = b.finish();
+    });
+    let ir = module.print_to_string().to_string();
+    let main = function_body(&ir, "@sisu.main(");
+    let lines: Vec<&str> = main.lines().map(str::trim).collect();
+    let take_at = lines
+        .iter()
+        .position(|l| l.starts_with("call void @sisu.take_"))
+        .unwrap_or_else(|| panic!("no call to take in\n{main}"));
+    let slot = lines[..take_at]
+        .iter()
+        .rev()
+        .find_map(|l| l.strip_prefix("store ptr null, ptr "))
+        .and_then(|rest| rest.split(',').next())
+        .unwrap_or_else(|| panic!("no move in\n{main}"));
+    let after = &lines[take_at + 1..];
+    let (load_at, loaded, _) =
+        instruction(after, &|t| t.starts_with(&format!("load ptr, ptr {slot},")))
+            .unwrap_or_else(|| panic!("no load of {slot} after the move in\n{main}"));
+    let (null_at, null, _) = instruction(after, &|t| t == format!("icmp eq ptr {loaded}, null"))
+        .unwrap_or_else(|| panic!("no null test of {loaded} in\n{main}"));
+    assert_eq!((load_at, null_at), (0, 1), "{main}");
+    let branch_at = assert_faults_on(&lines, null, 2, main);
+    assert_eq!(branch_at, take_at + 3, "{main}");
+}
+
+fn whole_place(local: LocalId) -> Place {
+    Place {
+        local,
+        projections: Vec::new(),
+        borrow: false,
+        guard: false,
+    }
+}
+
+#[test]
+fn store_to_a_moved_root_faults() {
+    let holder = Type::intern(TypeKind::Class(ClassId(0)));
+    assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
+        let place = Place {
+            projections: vec![Projection::Field(0)],
+            ..whole_place(r)
+        };
+        let value = mir::Operand::Const(Const::Int(5, Type::I64));
+        (
+            vec![Statement::Store { place, value }],
+            Terminator::Goto(BlockId(1)),
+        )
+    });
+}
+
+#[test]
+fn make_unique_of_a_moved_array_faults() {
+    let array = Type::intern(TypeKind::Array(Type::I64));
+    assert_root_read_faults(array, ("make_array", "take_array"), |r| {
+        (
+            vec![Statement::MakeUnique(whole_place(r))],
+            Terminator::Goto(BlockId(1)),
+        )
+    });
+}
+
+#[test]
+fn check_of_a_moved_array_faults() {
+    let array = Type::intern(TypeKind::Array(Type::I64));
+    assert_root_read_faults(array, ("make_array", "take_array"), |r| {
+        let element = Place {
+            projections: vec![Projection::Index {
+                index: mir::Operand::Const(Const::Int(0, Type::I64)),
+                span: Span::new(0, 0),
+            }],
+            ..whole_place(r)
+        };
+        (
+            vec![Statement::Check(element)],
+            Terminator::Goto(BlockId(1)),
+        )
+    });
+}
+
+/// An enum local is not a pointer, so a moved one is not checked; a switch on the tag of an
+/// enum field reads the class that holds it.
+#[test]
+fn switch_on_a_field_of_a_moved_class_faults() {
+    let holder = Type::intern(TypeKind::Class(ClassId(0)));
+    assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
+        let shape = Place {
+            projections: vec![Projection::Field(2)],
+            ..whole_place(r)
+        };
+        let term = Terminator::SwitchTag {
+            place: shape,
+            arms: vec![(0, BlockId(1))],
+            otherwise: Some(BlockId(1)),
+        };
+        (Vec::new(), term)
+    });
+}
+
 #[test]
 fn main_flushes_stdout_before_the_exit_check_and_the_return() {
     let context = Context::create();

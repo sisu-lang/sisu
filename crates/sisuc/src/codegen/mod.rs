@@ -744,9 +744,11 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The value at `place`, not retained, and its type. With `checked`, each index is checked
     /// against its array's length first, as a read does; a `take` follows its place's `check`.
     fn read(&self, place: &Place, checked: bool) -> (BasicValueEnum<'ctx>, Type) {
-        self.check_not_moved(place.local);
         match place.projections.split_last() {
-            None => (self.load_local(place.local), self.types[place.local.0]),
+            None => {
+                self.check_not_moved(place.local);
+                (self.load_local(place.local), self.types[place.local.0])
+            }
             // `payload_value` reads a boxed `F?`, which has no address.
             Some((&Projection::Payload { variant, field }, outer)) => {
                 let (address, ty, _) = self.address(place.local, outer, checked);
@@ -768,13 +770,15 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The address of `local` through `projections`, the type of the value there, and the TBAA
     /// tag of the last step when it is a field or an element. A field or index step loads the
     /// pointer that the step before it reached. With `checked`, each index is checked against
-    /// its array's length.
+    /// its array's length. Every root read, a store's and a `switch`'s included, comes through
+    /// here, so this is where a root slot is checked for a move (`check_not_moved`).
     fn address(
         &self,
         local: LocalId,
         projections: &[Projection],
         checked: bool,
     ) -> (PointerValue<'ctx>, Type, Option<MetadataValue<'ctx>>) {
+        self.check_not_moved(local);
         let (mut address, _) = self.slot(local);
         let mut ty = self.types[local.0];
         let mut tag = None;
