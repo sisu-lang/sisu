@@ -2,6 +2,7 @@
 //! in-place read by liveness. The ported tests make the decision `last_use.rs` makes on `tir`.
 
 use super::*;
+use crate::mir::liveness::CONSULTED;
 
 /// How often `part` occurs in function `name` of `printed`, temporaries normalized.
 fn count(printed: &str, name: &str, part: &str) -> usize {
@@ -151,6 +152,31 @@ fn element_write_roots() {
          fn reads_len() {\n    let mut xs = [1]\n    xs[0] = xs.len()\n}\n\
          fn g(v: [i64]) -> i64 { 0 }\n\
          fn passes() {\n    let mut xs = [1]\n    xs[0] = g(xs)\n}",
+    );
+    has(
+        &printed,
+        "shared",
+        &["b#1 = copy a#0", "make_unique a#0", "a#0[0] = 9"],
+    );
+    has(
+        &printed,
+        "compound",
+        &["_ = xs#0[_]", "make_unique xs#0", "xs#0[_] = _"],
+    );
+    has(
+        &printed,
+        "during_for",
+        &["_ = copy xs#0", "make_unique xs#0", "xs#0[0] = 1"],
+    );
+    has(
+        &printed,
+        "reads_len",
+        &["_ = len xs#0", "make_unique xs#0", "xs#0[0] = _"],
+    );
+    has(
+        &printed,
+        "passes",
+        &["_ = copy xs#0", "call g(move _)", "make_unique xs#0"],
     );
     assert!(!printed.contains("move a"), "{printed}");
     assert!(!printed.contains("move xs"), "{printed}");
@@ -472,5 +498,26 @@ fn pass_leaves_no_use_or_mark() {
             before.iter().any(|lowered| lowered.contains(mark)),
             "lowering left no `{mark}`"
         );
+    }
+}
+
+/// Liveness answers each question of the pass in one lookup, and the walk checks each edge it
+/// crosses in one lookup, not a search of the local's mentions: `n` borrow sites of `a` in a
+/// row cost `n`, and `n` of them under `if`s cost `n` and the 3 edges of each `if`, less the
+/// last join's 2, which `a` is not live into.
+#[test]
+fn liveness_answers_in_one_lookup() {
+    let n = 200;
+    let line = format!("fn f(a: [i64]) {{\n{}}}", "    print(a.len())\n".repeat(n));
+    let branch = format!(
+        "fn g(a: [i64], c: bool) {{\n{}}}",
+        "    if c { print(a.len()) }\n".repeat(n)
+    );
+    for (src, lookups) in [(line, n), (branch, n + 3 * n - 2)] {
+        let program = checked(&src);
+        CONSULTED.set(0);
+        let printed = print(&build(&program), &program);
+        assert_eq!(CONSULTED.get(), lookups, "{src}");
+        assert_eq!(printed.matches("len a#").count(), n - 1, "{printed}");
     }
 }

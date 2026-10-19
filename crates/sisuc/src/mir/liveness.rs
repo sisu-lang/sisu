@@ -1,25 +1,22 @@
 //! Sparse per-local liveness: for each counted local, from each block where a read comes before
 //! any write, walk back over predecessors and stop at a block that writes the local whole
-//! (Boissinot et al.'s path exploration). No set is built per block: the cost is the blocks
-//! each local is live in, summed over locals, plus its mentions.
+//! (Boissinot et al.'s path exploration). Then one backward scan of the local's mentions
+//! answers, for each statement that mentions it, whether it is live after that statement. The
+//! cost is the blocks each local is live in, summed over locals, plus the mentions.
 //!
 //! A read through any projection uses its root, and so do `check`, `make_unique`, `take` and a
 //! store through a place rooted at it: `f(a); a[0] = 1` keeps `a` live across the call. A
 //! whole assignment writes the local. `end` and `release?` neither read nor write it.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 
 use super::{
     BlockId, Function, LocalId, Operand, Place, Projection, Rvalue, Statement, Terminator,
 };
 
-/// Where each counted local is live.
+/// Whether each counted local is live after each statement that mentions it.
 pub(super) struct Liveness {
-    /// Each counted local's statements that read or write it, in block and then statement
-    /// order; a block's terminator is at the block's length.
-    mentions: Vec<Vec<Mention>>,
-    /// The locals live at the end of each block they are live out of.
-    live_out: FxHashSet<(LocalId, BlockId)>,
+    after: FxHashMap<(LocalId, BlockId, usize), bool>,
 }
 
 /// A statement that reads or writes a local. One that does both is noted twice, its read
@@ -31,16 +28,29 @@ struct Mention {
     reads: bool,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many answers liveness has looked up on this thread: one per question the pass
+    /// asks, and one per predecessor the walk examines.
+    pub(super) static CONSULTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn consulted() {
+    CONSULTED.set(CONSULTED.get() + 1);
+}
+
 impl Liveness {
     /// Whether a later statement can read `local`'s value after statement `at`, before
-    /// anything writes it whole.
+    /// anything writes it whole. Statement `at` (a block's length for its terminator) must
+    /// mention `local`.
     pub(super) fn live_after(&self, local: LocalId, at: (BlockId, usize)) -> bool {
-        let mentions = &self.mentions[local.0];
-        let next = mentions.partition_point(|m| (m.block.0, m.at) <= (at.0.0, at.1));
-        match mentions.get(next) {
-            Some(m) if m.block == at.0 => m.reads,
-            _ => self.live_out.contains(&(local, at.0)),
-        }
+        #[cfg(test)]
+        consulted();
+        *self
+            .after
+            .get(&(local, at.0, at.1))
+            .expect("the statement should mention the local")
     }
 }
 
@@ -72,29 +82,54 @@ pub(super) fn liveness(function: &Function) -> Liveness {
             preds[to.0].push(block_id);
         }
     }
-    let mut live_out = FxHashSet::default();
+    // Per block, the last local (as its index plus one) that mentions it or is live out of
+    // it: each local's walk reads and writes only the blocks it reaches.
+    let mut mentioned = vec![0; function.blocks.len()];
+    let mut live_out = vec![0; function.blocks.len()];
     let mut stack = Vec::new();
+    let mut after = FxHashMap::default();
     for (local, list) in mentions.iter().enumerate() {
+        let stamp = local + 1;
         let local = LocalId(local);
-        // The blocks whose first mention reads: the local is live on entry to them.
-        stack.extend(
-            list.iter()
-                .enumerate()
-                .filter(|&(i, m)| m.reads && (i == 0 || list[i - 1].block != m.block))
-                .map(|(_, m)| m.block),
-        );
+        for block in list.chunk_by(|a, b| a.block == b.block) {
+            let first = block[0];
+            mentioned[first.block.0] = stamp;
+            // A read before any write: the local is live on entry to the block.
+            if first.reads {
+                stack.push(first.block);
+            }
+        }
         while let Some(block) = stack.pop() {
             for &pred in &preds[block.0] {
+                #[cfg(test)]
+                consulted();
                 // A predecessor that mentions the local either read it first, and was
                 // pushed above, or writes it before any read, which ends the walk.
-                let mentioned = list.binary_search_by_key(&pred.0, |m| m.block.0).is_ok();
-                if live_out.insert((local, pred)) && !mentioned {
-                    stack.push(pred);
+                if live_out[pred.0] != stamp {
+                    live_out[pred.0] = stamp;
+                    if mentioned[pred.0] != stamp {
+                        stack.push(pred);
+                    }
                 }
             }
         }
+        // Backward: a statement's answer is the next mentioning statement's read in its
+        // block, or whether the local is live out of the block.
+        let mut next: Option<Mention> = None;
+        for statement in list
+            .chunk_by(|a, b| (a.block, a.at) == (b.block, b.at))
+            .rev()
+        {
+            let m = statement[0];
+            let live = match next {
+                Some(n) if n.block == m.block => n.reads,
+                _ => live_out[m.block.0] == stamp,
+            };
+            after.insert((local, m.block, m.at), live);
+            next = Some(m);
+        }
     }
-    Liveness { mentions, live_out }
+    Liveness { after }
 }
 
 /// The local `stmt` writes whole, if any.

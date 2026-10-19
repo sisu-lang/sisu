@@ -40,9 +40,12 @@ pub(super) fn place(function: &mut Function) {
             // A counted field store's `take` and store read one borrow site, lowered as two
             // copies of one place: the store decides it, and the `take` follows.
             let mut store = match (&stmt, stmts.peek()) {
-                (Statement::Take { place, .. }, Some((_, Statement::Store { place: to, .. })))
-                    if place.borrow && to == place =>
-                {
+                (Statement::Take { place, .. }, next) if place.borrow => {
+                    debug_assert!(
+                        matches!(next, Some((_, Statement::Store { place: to, .. })) if to == place),
+                        "a borrowed take should be followed by the store to its place: lowering's \
+                         store() emits them together"
+                    );
                     stmts.next()
                 }
                 _ => None,
@@ -100,11 +103,10 @@ impl Placer<'_> {
     fn rvalue(&mut self, value: &mut Rvalue) {
         match value {
             // `l = use x` needs no temporary.
-            Rvalue::Use(op @ (Operand::Use(_) | Operand::Guarded(_))) => {
-                let (Operand::Use(local) | Operand::Guarded(local)) = *op else {
-                    unreachable!("the arm's pattern should hold a `use`")
-                };
-                *value = if self.copies(op) {
+            Rvalue::Use(Operand::Use(local) | Operand::Guarded(local)) => {
+                let local = *local;
+                let guarded = matches!(value, Rvalue::Use(Operand::Guarded(_)));
+                *value = if self.copies(local, guarded) {
                     Rvalue::Copy(whole(local))
                 } else {
                     Rvalue::Use(Operand::Move(local))
@@ -169,23 +171,17 @@ impl Placer<'_> {
         }
     }
 
-    /// Whether the `use` `op` reads a copy: always for a guard binding, otherwise when its
-    /// local is live after the statement.
-    fn copies(&self, op: &Operand) -> bool {
-        match *op {
-            Operand::Guarded(_) => true,
-            Operand::Use(local) => self.live.live_after(local, self.at),
-            Operand::Const(_) | Operand::Read(_) | Operand::Move(_) => {
-                unreachable!("only a `use` should be decided")
-            }
-        }
+    /// Whether a `use` of `local` reads a copy: always for a guard binding, otherwise when
+    /// `local` is live after the statement.
+    fn copies(&self, local: LocalId, guarded: bool) -> bool {
+        guarded || self.live.live_after(local, self.at)
     }
 
     /// A `use` becomes a move of its local, or of a copy made just before the statement.
     fn operand(&mut self, op: &mut Operand) {
         match *op {
             Operand::Use(local) | Operand::Guarded(local) => {
-                *op = if self.copies(op) {
+                *op = if self.copies(local, matches!(op, Operand::Guarded(_))) {
                     let copy = self.temp(local);
                     self.out.push(Statement::Assign {
                         dest: Some(copy),
