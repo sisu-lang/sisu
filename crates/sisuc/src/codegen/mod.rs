@@ -124,9 +124,10 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
 
 /// Compiles a program that passed `check`, whose mir is `mir` (`mir::build`), into an LLVM
 /// module for `machine`; `program` gives the classes, the enums and the types. With
-/// `rc_checks`, a retain or release of an object whose count is below 1 calls `sisu_rc_fault`,
-/// and `@main` calls `sisu_rc_check_exit` after `sisu.main` returns. `@main` always calls
-/// `sisu_flush_stdout` first.
+/// `rc_checks`, a retain or release of an object whose count is below 1, and a read of a `string`,
+/// class or array local that was moved, call `sisu_rc_fault`, and `@main` calls
+/// `sisu_rc_check_exit` after `sisu.main` returns. `@main` always calls `sisu_flush_stdout`
+/// first.
 pub(crate) fn compile<'ctx>(
     context: &'ctx Context,
     program: &Program,
@@ -321,6 +322,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `Move`: the value of `local`, whose reference leaves its slot without a retain. The
     /// slot then holds the zero value, which releasing skips.
     fn move_local(&self, local: LocalId) -> BasicValueEnum<'ctx> {
+        self.check_not_moved(local);
         let (ptr, ty) = self.slot(local);
         let value = self.builder.build_load(ty, ptr, "moved").expect(POSITIONED);
         self.store(ptr, ty.const_zero());
@@ -742,6 +744,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The value at `place`, not retained, and its type. With `checked`, each index is checked
     /// against its array's length first, as a read does; a `take` follows its place's `check`.
     fn read(&self, place: &Place, checked: bool) -> (BasicValueEnum<'ctx>, Type) {
+        self.check_not_moved(place.local);
         match place.projections.split_last() {
             None => (self.load_local(place.local), self.types[place.local.0]),
             // `payload_value` reads a boxed `F?`, which has no address.

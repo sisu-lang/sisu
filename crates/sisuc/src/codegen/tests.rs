@@ -12,10 +12,22 @@ fn compiled<'ctx>(context: &'ctx Context, src: &str) -> Module<'ctx> {
 
 /// `compiled`, with the RC checks if `rc_checks`.
 fn compiled_with<'ctx>(context: &'ctx Context, src: &str, rc_checks: bool) -> Module<'ctx> {
+    compiled_from(context, src, rc_checks, |_| {})
+}
+
+/// `compiled_with`, after `edit` changes the mir that `build` gives: a test uses it to put in
+/// mir that lowering cannot produce.
+fn compiled_from<'ctx>(
+    context: &'ctx Context,
+    src: &str,
+    rc_checks: bool,
+    edit: impl FnOnce(&mut mir::Program),
+) -> Module<'ctx> {
     let program = parse_ok(src);
     let (program, diagnostics) = check(&program, src);
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-    let mir = mir::build(&program);
+    let mut mir = mir::build(&program);
+    edit(&mut mir);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let module = compile(
         context,
@@ -710,6 +722,13 @@ fn assert_count_checked(body: &str, kind: u32, step: &dyn Fn(&str) -> bool) {
             && count_owner(&lines, t) == Some(object)
     })
     .unwrap_or_else(|| panic!("no signed test of {object}'s count against 1 in\n{body}"));
+    let branch_at = assert_faults_on(&lines, dead, kind, body);
+    assert!([test_at, branch_at, step_at].is_sorted(), "{body}");
+}
+
+/// Asserts that the branch on `dead` in `lines` goes, when `dead` holds, to a block that
+/// calls `sisu_rc_fault(i32 <kind>)`; returns the branch's line index.
+fn assert_faults_on(lines: &[&str], dead: &str, kind: u32, body: &str) -> usize {
     let branch = format!("br i1 {dead}, label %");
     let branch_at = lines
         .iter()
@@ -728,7 +747,7 @@ fn assert_count_checked(body: &str, kind: u32, step: &dyn Fn(&str) -> bool) {
         Some(format!("call void @sisu_rc_fault(i32 {kind})").as_str()),
         "{body}"
     );
-    assert!([test_at, branch_at, step_at].is_sorted(), "{body}");
+    branch_at
 }
 
 #[test]
@@ -762,6 +781,82 @@ fn rc_checks_guard_retain_release_and_exit() {
         .split_once("call void @sisu_rc_check_exit()")
         .unwrap_or_else(|| panic!("no exit check in\n{main}"));
     assert!(after_check.contains("ret i32 0"), "{main}");
+}
+
+/// `fn main() { let s = "hi"; take(move s); print(s) }`: the mir of a read after a move, which
+/// the certifier would reject.
+fn print_after_move() -> mir::Function {
+    let whole = |local| Place {
+        local,
+        projections: Vec::new(),
+        borrow: false,
+        guard: false,
+    };
+    let assign = |dest, value| Statement::Assign { dest, value };
+    let mut b = mir::tests::Builder::new("main");
+    let s = b.local("s", Type::STRING);
+    b.block(
+        vec![
+            assign(Some(s), Rvalue::CopyStr("hi".to_owned())),
+            assign(
+                None,
+                Rvalue::Call {
+                    func: FuncId(0),
+                    args: vec![mir::Operand::Move(s)],
+                },
+            ),
+            assign(
+                None,
+                Rvalue::Print {
+                    stream: Stream::Stdout,
+                    operand: mir::Operand::Read(whole(s)),
+                },
+            ),
+            Statement::ScopeRelease(s),
+        ],
+        Terminator::Return(None),
+    );
+    b.finish()
+}
+
+#[test]
+fn read_after_move_faults() {
+    let context = Context::create();
+    let module = compiled_from(
+        &context,
+        "fn take(s: string) {}
+fn main() {}",
+        true,
+        |mir| {
+            let main = mir.functions.iter_mut().find(|f| f.name == "main");
+            *main.expect("the source should define `main`") = print_after_move();
+        },
+    );
+    let ir = module.print_to_string().to_string();
+    let main = function_body(&ir, "@sisu.main(");
+    let lines: Vec<&str> = main.lines().map(str::trim).collect();
+    // The move empties `s`'s slot; the print then reads the slot, and null tests what it loaded.
+    let moved_at = lines
+        .iter()
+        .position(|l| l.starts_with("store ptr null, ptr "))
+        .unwrap_or_else(|| panic!("no move in\n{main}"));
+    let slot = lines[moved_at]["store ptr null, ptr ".len()..]
+        .split(',')
+        .next()
+        .expect("a store should name its address");
+    let print_at = lines
+        .iter()
+        .position(|l| l.starts_with("call void @sisu_print_str("))
+        .unwrap_or_else(|| panic!("no print in\n{main}"));
+    let between = &lines[moved_at..print_at];
+    let (_, loaded, _) = instruction(between, &|t| {
+        t.starts_with(&format!("load ptr, ptr {slot},"))
+    })
+    .unwrap_or_else(|| panic!("the print should read {slot} in\n{main}"));
+    let (_, null, _) = instruction(between, &|t| t == format!("icmp eq ptr {loaded}, null"))
+        .unwrap_or_else(|| panic!("no null test of {loaded} in\n{main}"));
+    let branch_at = assert_faults_on(&lines, null, 2, main);
+    assert!(branch_at < print_at, "{main}");
 }
 
 #[test]
