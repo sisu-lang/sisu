@@ -593,7 +593,8 @@ fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violati
 
 /// Rule 6, per reachable block: a `take` marks its place taken until the store to the same
 /// place. A store of a counted value needs its place taken, and a read of a taken place, a
-/// second `take` of it or the end of the block while it is taken is an error.
+/// second `take` of it, a change to a local its indexes read, or the end of the block while
+/// it is taken is an error. The last keeps the store's place the one the `take` addressed.
 fn takes(function: &Function, tree: &Tree) -> Result<(), Violation> {
     for (b, block) in function.blocks.iter().enumerate() {
         if !tree.reachable(b) {
@@ -601,11 +602,16 @@ fn takes(function: &Function, tree: &Tree) -> Result<(), Violation> {
         }
         let mut taken: Vec<&Place> = Vec::new();
         let mut found = None;
-        let mut check = |taken: &[&Place], local: LocalId, at: Option<&Place>, own: bool| {
-            if !own && found.is_none() && taken.iter().any(|t| overlaps(t, local, at)) {
-                found = Some(local);
-            }
-        };
+        let mut check =
+            |taken: &[&Place], local: LocalId, at: Option<&Place>, own: bool, changes| {
+                if found.is_none()
+                    && taken.iter().any(|t| {
+                        (!own && overlaps(t, local, at)) || (changes && indexed_by(t, local))
+                    })
+                {
+                    found = Some(local);
+                }
+            };
         for stmt in &block.stmts {
             // A store's own place is its target, not a read.
             let target = if let Statement::Store { place, .. } = stmt {
@@ -613,24 +619,24 @@ fn takes(function: &Function, tree: &Tree) -> Result<(), Violation> {
             } else {
                 None
             };
-            statement(stmt, &mut |local, _, at| {
+            statement(stmt, &mut |local, effect, at| {
                 let own = at
                     .zip(target)
                     .is_some_and(|(at, target)| std::ptr::eq(at, target));
-                check(&taken, local, at, own);
+                check(&taken, local, at, own, own || effect.kills());
             });
             if let Statement::Store { place, value } = stmt {
                 if let Some(i) = taken.iter().position(|t| *t == place) {
                     taken.swap_remove(i);
                 } else if counted_value(function, value) || overlapping(&taken, place) {
-                    check(&[place], place.local, None, false);
+                    check(&[place], place.local, None, false, false);
                 }
             } else if let Statement::Take { place, .. } = stmt {
                 taken.push(place);
             }
         }
         terminator(&block.term, &mut |local, _, at| {
-            check(&taken, local, at, false);
+            check(&taken, local, at, false, false);
         });
         if let Some(local) = found.or(taken.first().map(|t| t.local)) {
             return Err(Violation {
@@ -662,6 +668,20 @@ fn counted_value(function: &Function, value: &Operand) -> bool {
         ),
         Operand::Const(_) | Operand::Use(_) | Operand::Guarded(_) => false,
     }
+}
+
+/// Whether an index of `t` reads `local`.
+fn indexed_by(t: &Place, local: LocalId) -> bool {
+    let mut found = false;
+    for projection in &t.projections {
+        match projection {
+            Projection::Index { index, .. } => operand(index, &mut |read, _, _| {
+                found |= read == local;
+            }),
+            Projection::Field(_) | Projection::Payload { .. } => {}
+        }
+    }
+    found
 }
 
 fn overlapping(taken: &[&Place], place: &Place) -> bool {

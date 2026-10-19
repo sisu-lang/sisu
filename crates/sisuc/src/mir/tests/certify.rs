@@ -494,6 +494,82 @@ fn read_between_take_and_store() {
     rejects(&b.finish(), 0, a, Rule::Take);
 }
 
+/// `old = take a[i]; i = 1; a[i] = move t`: the store would fill an element other than the
+/// one taken.
+#[test]
+fn index_changed_between_take_and_store() {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::STRING));
+    let i = b.param("i", Type::I64);
+    let t = b.local("t", Type::STRING);
+    let old = b.local("old", Type::STRING);
+    let at_i = Place {
+        projections: vec![Projection::Index {
+            index: read(i),
+            span: Span::new(0, 0),
+        }],
+        ..whole(a)
+    };
+    b.block(
+        vec![
+            literal(t),
+            Statement::Take {
+                dest: old,
+                place: at_i.clone(),
+            },
+            assign(i, Rvalue::Use(Operand::Const(Const::Int(1, Type::I64)))),
+            Statement::Store {
+                place: at_i,
+                value: Operand::Move(t),
+            },
+            Statement::Release(old),
+            Statement::Release(a),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, i, Rule::Take);
+}
+
+/// `old = take a[k[0]]; k[0] = 1; a[k[0]] = move t`: a store into the index's array moves the
+/// address too.
+#[test]
+fn index_array_stored_between_take_and_store() {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::STRING));
+    let k = b.param("k", Type::array(Type::I64));
+    let t = b.local("t", Type::STRING);
+    let old = b.local("old", Type::STRING);
+    let at_k = Place {
+        projections: vec![Projection::Index {
+            index: Operand::Read(first(k)),
+            span: Span::new(0, 0),
+        }],
+        ..whole(a)
+    };
+    b.block(
+        vec![
+            literal(t),
+            Statement::Take {
+                dest: old,
+                place: at_k.clone(),
+            },
+            Statement::Store {
+                place: first(k),
+                value: Operand::Const(Const::Int(1, Type::I64)),
+            },
+            Statement::Store {
+                place: at_k,
+                value: Operand::Move(t),
+            },
+            Statement::Release(old),
+            Statement::Release(k),
+            Statement::Release(a),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, k, Rule::Take);
+}
+
 /// `x` is borrowed on one path into `bb3` and empty on the other; `read` reads it there.
 fn borrowed_or_empty(read_it: bool) -> (Function, LocalId) {
     let mut b = Builder::new("f");
