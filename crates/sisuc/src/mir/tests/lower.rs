@@ -184,13 +184,7 @@ fn early_exit_releases_spilled_locals() {
 /// Lowering creates a block only when an edge reaches it.
 #[test]
 fn every_block_is_reachable() {
-    let program = lowered_program(
-        "fn f() -> i64 { panic(\"x\") }\n\
-         fn g() {\n    while true {\n    }\n}\n\
-         fn h(c: bool) -> i64 { if c { return 1 } else { return 2 } }\n\
-         fn r() -> i64 {\n    return 1\n    print(2)\n    3\n}\n\
-         fn m(c: bool) -> i64 {\n    match c {\n        true => 1\n        _ => 0\n    }\n}",
-    );
+    let program = lowered_program(UNREACHABLE_CODE);
     for f in &program.functions {
         assert_eq!(unreachable_blocks(f), [], "fn {}", f.name);
     }

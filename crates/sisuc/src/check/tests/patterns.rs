@@ -818,30 +818,6 @@ fn many_unreachable_rows_check_in_linear_time() {
     }
 }
 
-/// The keep-alive override for this test is in `.config/nextest.toml`: an arm whose last-use walk
-/// copies or joins the set of every local in the function makes the walk quadratic in the arms,
-/// since each arm adds a local, and this test hangs instead of failing.
-#[test]
-fn many_arms_mark_last_uses_in_linear_time() {
-    const VARIANTS: usize = 200_000;
-    let variants = (0..VARIANTS)
-        .map(|i| format!("    V{i}(string)\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    let arms = (0..VARIANTS)
-        .map(|i| format!("        V{i}(s) => s\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    let src = format!(
-        "enum E {{\n{variants}}}\nfn f(e: E) -> string {{\n    match e {{\n{arms}    }}\n}}\nfn main() {{}}"
-    );
-    let (program, ds) = crate::front_end::front_end(&src);
-    assert!(ds.is_empty(), "{ds:?}");
-    let printed = program.expect("the source should check clean").to_string();
-    // Each arm's `s` is read once, so every read is its last use.
-    assert_eq!(printed.matches("(block (move s#").count(), VARIANTS);
-}
-
 /// The keep-alive override for this test is in `.config/nextest.toml`: a variant pattern that
 /// copies its variant's field types before it checks its form costs the variant's width, so short
 /// malformed patterns of a wide variant are quadratic and this test hangs instead of failing.

@@ -2,6 +2,7 @@ use super::*;
 use crate::check::check;
 use crate::parser::parse_ok;
 
+mod certify;
 mod lower;
 mod ownership;
 mod pattern;
@@ -42,6 +43,14 @@ pub(super) const EVERY_KIND: &str = "class O {\n    mut n: i64\n    mut s: strin
             print(i)\n\
         }\n\
     }";
+
+/// Code after a `return`, an endless loop, a function that always panics, an `if` whose
+/// branches both return and a `match` whose last arm is `_`.
+pub(super) const UNREACHABLE_CODE: &str = "fn f() -> i64 { panic(\"x\") }\n\
+     fn g() {\n    while true {\n    }\n}\n\
+     fn h(c: bool) -> i64 { if c { return 1 } else { return 2 } }\n\
+     fn r() -> i64 {\n    return 1\n    print(2)\n    3\n}\n\
+     fn m(c: bool) -> i64 {\n    match c {\n        true => 1\n        _ => 0\n    }\n}";
 
 /// The typed tree of `src`, which checks without an error, with an empty `main` added when it
 /// has none, and with its last uses marked, as the build passes it on.
@@ -131,4 +140,75 @@ pub(super) fn unreachable_blocks(f: &Function) -> Vec<BlockId> {
         .filter(|&i| !seen[i])
         .map(BlockId)
         .collect()
+}
+
+/// Builds a `Function` by hand, for mir that lowering cannot produce. Each local's scope is
+/// `bb0` until `scope` moves it; a block's terminator may name blocks not built yet.
+pub(crate) struct Builder {
+    function: Function,
+}
+
+impl Builder {
+    pub(crate) fn new(name: &str) -> Self {
+        Builder {
+            function: Function {
+                name: name.to_owned(),
+                params: 0,
+                ret: Type::UNIT,
+                locals: Vec::new(),
+                blocks: Vec::new(),
+                loops: Vec::new(),
+                owners: FxHashMap::default(),
+            },
+        }
+    }
+
+    /// A parameter, declared before any other local.
+    pub(crate) fn param(&mut self, name: &str, ty: Type) -> LocalId {
+        assert_eq!(
+            self.function.params,
+            self.function.locals.len(),
+            "parameters should come first"
+        );
+        self.function.params += 1;
+        self.local(name, ty)
+    }
+
+    /// A named local of `ty`, which holds no enum: counted when `ty` is.
+    pub(crate) fn local(&mut self, name: &str, ty: Type) -> LocalId {
+        self.function.locals.push(Local {
+            name: Some(name.to_owned()),
+            ty,
+            counted: ty.is_counted(&[]),
+            scope: BlockId(0),
+        });
+        LocalId(self.function.locals.len() - 1)
+    }
+
+    pub(crate) fn scope(&mut self, local: LocalId, block: BlockId) {
+        self.function.locals[local.0].scope = block;
+    }
+
+    /// Records `binding` as a `match` binding that borrows from `owner`.
+    pub(crate) fn owner(&mut self, binding: LocalId, owner: LocalId) {
+        self.function.owners.insert(binding, owner);
+    }
+
+    pub(crate) fn add_loop(&mut self, pre_header: BlockId, header: BlockId, blocks: Vec<BlockId>) {
+        self.function.loops.push(Loop {
+            pre_header,
+            header,
+            blocks,
+        });
+    }
+
+    /// The next block, `bb{n}` for the `n` blocks built before it.
+    pub(crate) fn block(&mut self, stmts: Vec<Statement>, term: Terminator) -> BlockId {
+        self.function.blocks.push(Block { stmts, term });
+        BlockId(self.function.blocks.len() - 1)
+    }
+
+    pub(crate) fn finish(self) -> Function {
+        self.function
+    }
 }

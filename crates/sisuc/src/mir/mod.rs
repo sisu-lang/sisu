@@ -22,6 +22,7 @@ use crate::source::Span;
 use crate::tir::{self, BinaryOp, ClassId, CompareOp, EnumId, Format, FuncId, MathOp, Stream};
 pub(crate) use crate::tir::{LocalId, Type, UnaryOp};
 
+mod certify;
 mod liveness;
 mod lower;
 mod ownership;
@@ -53,10 +54,6 @@ pub(crate) struct Function {
     )]
     pub(crate) loops: Vec<Loop>,
     /// Each `match` binding, and the scrutinee local it borrows from.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 4's certifier reads the owners")
-    )]
     pub(crate) owners: FxHashMap<LocalId, LocalId>,
 }
 
@@ -316,28 +313,49 @@ pub(crate) enum Terminator {
 
 impl Terminator {
     /// The blocks this terminator can jump to.
-    pub(crate) fn successors(&self) -> Vec<BlockId> {
-        match self {
-            Terminator::Goto(to) => vec![*to],
-            Terminator::Branch { then, else_, .. } => vec![*then, *else_],
-            Terminator::IfPresent { some, none, .. } => vec![*some, *none],
+    pub(crate) fn successors(&self) -> impl Iterator<Item = BlockId> + '_ {
+        let (fixed, tags, values, otherwise): ([Option<BlockId>; 2], &[_], &[_], _) = match self {
+            Terminator::Goto(to) => ([Some(*to), None], &[], &[], None),
+            Terminator::Branch { then, else_, .. } => ([Some(*then), Some(*else_)], &[], &[], None),
+            Terminator::IfPresent { some, none, .. } => {
+                ([Some(*some), Some(*none)], &[], &[], None)
+            }
             Terminator::SwitchTag {
                 arms, otherwise, ..
-            } => arms.iter().map(|(_, to)| *to).chain(*otherwise).collect(),
+            } => ([None, None], arms.as_slice(), &[], *otherwise),
             Terminator::SwitchValue {
                 arms, otherwise, ..
-            } => arms.iter().map(|(_, to)| *to).chain(*otherwise).collect(),
-            Terminator::Return(_) | Terminator::Panic { .. } | Terminator::Unreachable => vec![],
-        }
+            } => ([None, None], &[], arms.as_slice(), *otherwise),
+            Terminator::Return(_) | Terminator::Panic { .. } | Terminator::Unreachable => {
+                ([None, None], &[], &[], None)
+            }
+        };
+        fixed
+            .into_iter()
+            .flatten()
+            .chain(tags.iter().map(|(_, to)| *to))
+            .chain(values.iter().map(|(_, to)| *to))
+            .chain(otherwise)
     }
 }
 
 /// The mir of `program`, with its copies, moves and releases placed. For now it lowers and
-/// places them.
+/// places them. A debug build certifies each function and panics on a violation.
 pub(crate) fn build(program: &tir::Program) -> Program {
     let mut mir = lower(program);
     for function in &mut mir.functions {
         ownership::place(function);
+        if cfg!(debug_assertions)
+            && let Err(violation) = certify::certify(function)
+        {
+            panic!(
+                "mir certifier: fn {}, bb{}, {}: {}",
+                function.name,
+                violation.block.0,
+                print::local_name(function, violation.local),
+                violation.rule
+            );
+        }
     }
     mir
 }

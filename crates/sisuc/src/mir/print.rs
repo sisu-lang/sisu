@@ -29,6 +29,14 @@ thread_local! {
     pub(super) static EXAMINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// `x#0` for a named local, `_7` for a temporary or a local the checker made up.
+pub(super) fn local_name(function: &Function, id: LocalId) -> String {
+    match &function.locals[id.0].name {
+        Some(name) => format!("{name}#{}", id.0),
+        None => format!("_{}", id.0),
+    }
+}
+
 struct Printer<'a> {
     out: &'a mut String,
     tir: &'a tir::Program,
@@ -72,10 +80,7 @@ impl Printer<'_> {
 
     /// `x#0` for a named local, `_7` for a temporary or a local the checker made up.
     fn local(&self, id: LocalId) -> String {
-        match &self.function.locals[id.0].name {
-            Some(name) => format!("{name}#{}", id.0),
-            None => format!("_{}", id.0),
-        }
+        local_name(self.function, id)
     }
 
     /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`.

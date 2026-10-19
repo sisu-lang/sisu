@@ -9,11 +9,14 @@
 //! A `site_pending` case is a program the site shows before it compiles: `sisuc --check` reports
 //! an error, until the day it compiles. An `explanation` case is the Broken program of a
 //! `docs/diagnostics` explanation, whose `sisuc` output is under `site/programs/explanations/`.
+//! An `every_program_certifies` case builds the mir of a program in `tests/run`, `tests/run-fail`,
+//! `tests/programs` or `bench`, which a debug build certifies.
 //!
 //! `SISU_BLESS=1` rewrites the `.out`, `.err` and `.json` files of passing cases. It never creates
 //! one.
 
 use std::path::Path;
+use std::process::Command;
 
 mod site;
 mod support;
@@ -170,6 +173,67 @@ fn explanation_orphans(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "datatest-stable accepts only test functions that return a `Result`"
+)]
+fn every_program_certifies(path: &Path) -> datatest_stable::Result<()> {
+    certifies(path);
+    Ok(())
+}
+
+/// Asserts that `sisuc --emit mir` builds `path`, which the debug build the tests use certifies
+/// function by function, and that a traversal from each function's `bb0` visits every block.
+fn certifies(path: &Path) {
+    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+        .args(["--emit", "mir"])
+        .arg(path)
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}: {}",
+        path.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mir = String::from_utf8_lossy(&out.stdout);
+    for function in mir.split("\nfn ") {
+        let first = function.lines().next().unwrap_or_default();
+        // Each block's successors, from its last line: its terminator.
+        let mut successors: Vec<Vec<usize>> = Vec::new();
+        for line in function.lines() {
+            if let Some(label) = line.strip_prefix("  bb") {
+                assert!(label.ends_with(':'), "{line}");
+                successors.push(Vec::new());
+            } else if let Some(block) = successors.last_mut() {
+                *block = line
+                    .split_whitespace()
+                    .filter_map(|token| token.trim_matches([',', '[', ']']).strip_prefix("bb"))
+                    .filter_map(|n| n.parse().ok())
+                    .collect();
+            }
+        }
+        assert!(
+            !successors.is_empty(),
+            "{}: {first}: no blocks",
+            path.display()
+        );
+        let mut seen = vec![false; successors.len()];
+        let mut stack = vec![0];
+        while let Some(block) = stack.pop() {
+            if !std::mem::replace(&mut seen[block], true) {
+                stack.extend(&successors[block]);
+            }
+        }
+        assert!(
+            seen.iter().all(|&seen| seen),
+            "{}: {first}: a block that bb0 does not reach",
+            path.display()
+        );
+    }
+}
+
 datatest_stable::harness! {
     { test = run, root = "tests/run", pattern = r"\.sisu$" },
     { test = run_fail, root = "tests/run-fail", pattern = r"\.sisu$" },
@@ -187,4 +251,6 @@ datatest_stable::harness! {
     { test = site_diagnostics_orphans, root = "../../site/programs/diagnostics" },
     { test = site_pending_orphans, root = "../../site/programs/pending" },
     { test = explanation_orphans, root = "../../site/programs/explanations" },
+    { test = every_program_certifies, root = "tests", pattern = r"^(run|run-fail|programs)/[^/]+\.sisu$" },
+    { test = every_program_certifies, root = "../../bench", pattern = r"main\.sisu$" },
 }
