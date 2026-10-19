@@ -17,9 +17,11 @@ taken and given up.
   `release?` gives one up only if the local still owns it, `make_unique`
   copies a shared block before a write, and `take` plus a store replaces a
   field. A move is an operand: a consuming read that leaves its local empty.
-- **One pass places them.** The ownership pass decides every copy, move,
-  borrowed read and scope release. The lowering from `tir` emits none of them
-  on its own.
+- **One pass places them.** The ownership pass turns each consuming read
+  into a copy or a move, marks borrowed reads, and places their releases. The
+  lowering from `tir` emits the releases that scopes and stores require: a
+  `release?` before a whole-local reassignment, and scope releases on
+  `return`, `break` and `continue`.
 - **Codegen obeys.** It lowers each statement as written and decides nothing
   about counts.
 - **The certifier checks.** In debug builds of `sisuc`, a dataflow over every
