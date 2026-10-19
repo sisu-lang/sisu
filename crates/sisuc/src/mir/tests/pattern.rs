@@ -421,39 +421,3 @@ fn wide_guard_probes_once_per_read() {
         .count();
     assert_eq!(marked, wide, "each guard read is marked");
 }
-
-/// Inside an arm's guard, a use of a binding is marked, and so is a borrow site rooted at one;
-/// in the body, after the commit, neither is.
-#[test]
-fn guard_uses_of_bindings_are_marked() {
-    let program = lowered_program(
-        "enum E {\n    S(string)\n    U\n}\n\
-         fn keep(s: string) -> bool { true }\n\
-         fn f(e: E) -> i64 {\n    match e {\n        S(x) if keep(x) && x.len() > 0 => x.len()\n        _ => 0\n    }\n}",
-    );
-    let f = func(&program, "f");
-    let x = named(f, "x");
-    let (mut guarded, mut used, mut sites) = (0, 0, Vec::new());
-    for block in &f.blocks {
-        for stmt in &block.stmts {
-            if let Statement::Assign {
-                value: Rvalue::Call { args, .. },
-                ..
-            } = stmt
-            {
-                guarded += args.iter().filter(|a| **a == Operand::Guarded(x)).count();
-                used += args.iter().filter(|a| **a == Operand::Use(x)).count();
-            }
-            if let Statement::Assign {
-                value: Rvalue::Len(Operand::Read(place)),
-                ..
-            } = stmt
-                && place.local == x
-            {
-                sites.push((place.borrow, place.guard));
-            }
-        }
-    }
-    assert_eq!((guarded, used), (1, 0));
-    assert_eq!(sites, [(true, true), (true, false)]);
-}

@@ -3,6 +3,7 @@ use crate::check::check;
 use crate::parser::parse_ok;
 
 mod lower;
+mod ownership;
 mod pattern;
 
 /// The typed tree of `src`, which checks without an error, with an empty `main` added when it
@@ -28,6 +29,12 @@ pub(super) fn lowered_program(src: &str) -> Program {
 pub(super) fn lowered(src: &str) -> String {
     let program = checked(src);
     print(&lower(&program), &program)
+}
+
+/// The printed mir of `src` as `build` gives it, with its copies, moves and releases placed.
+pub(super) fn built(src: &str) -> String {
+    let program = checked(src);
+    print(&build(&program), &program)
 }
 
 /// The printed function `name`, from its `fn` line through its closing `}`, with every
@@ -81,26 +88,10 @@ pub(super) fn unreachable_blocks(f: &Function) -> Vec<BlockId> {
         if std::mem::replace(&mut seen[block.0], true) {
             continue;
         }
-        stack.extend(successors(&f.blocks[block.0].term));
+        stack.extend(f.blocks[block.0].term.successors());
     }
     (0..f.blocks.len())
         .filter(|&i| !seen[i])
         .map(BlockId)
         .collect()
-}
-
-/// The blocks `term` can jump to.
-fn successors(term: &Terminator) -> Vec<BlockId> {
-    match term {
-        Terminator::Goto(to) => vec![*to],
-        Terminator::Branch { then, else_, .. } => vec![*then, *else_],
-        Terminator::IfPresent { some, none, .. } => vec![*some, *none],
-        Terminator::SwitchTag {
-            arms, otherwise, ..
-        } => arms.iter().map(|(_, to)| *to).chain(*otherwise).collect(),
-        Terminator::SwitchValue {
-            arms, otherwise, ..
-        } => arms.iter().map(|(_, to)| *to).chain(*otherwise).collect(),
-        Terminator::Return(_) | Terminator::Panic { .. } | Terminator::Unreachable => vec![],
-    }
 }

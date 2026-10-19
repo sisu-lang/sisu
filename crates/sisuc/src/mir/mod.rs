@@ -9,6 +9,12 @@
 //! on every edge that leaves its scope, and `check`, `make_unique` and `take` for each write
 //! through a place. Two forms are left for a later pass to decide: `Use`, a consuming read of a
 //! whole counted local, and a borrow site, a place whose root a statement reads in place.
+//!
+//! The ownership pass (`ownership.rs`) decides them by liveness (`liveness.rs`): a `Use` moves
+//! the local when nothing reads it later and copies it otherwise, and a borrow site reads its
+//! root in place unless that is the root's last use, when the root moves into a temporary that
+//! is released after the statement. A `match` binding read in its arm's test or guard is
+//! borrowed, so it is copied or read in place whatever liveness says.
 
 use rustc_hash::FxHashMap;
 
@@ -16,7 +22,9 @@ use crate::source::Span;
 use crate::tir::{self, BinaryOp, ClassId, CompareOp, EnumId, Format, FuncId, MathOp, Stream};
 pub(crate) use crate::tir::{LocalId, Type, UnaryOp};
 
+mod liveness;
 mod lower;
+mod ownership;
 mod print;
 
 pub(crate) use lower::lower;
@@ -306,9 +314,32 @@ pub(crate) enum Terminator {
     Unreachable,
 }
 
-/// The mir of `program`, ready for codegen. For now it only lowers.
+impl Terminator {
+    /// The blocks this terminator can jump to.
+    pub(crate) fn successors(&self) -> Vec<BlockId> {
+        match self {
+            Terminator::Goto(to) => vec![*to],
+            Terminator::Branch { then, else_, .. } => vec![*then, *else_],
+            Terminator::IfPresent { some, none, .. } => vec![*some, *none],
+            Terminator::SwitchTag {
+                arms, otherwise, ..
+            } => arms.iter().map(|(_, to)| *to).chain(*otherwise).collect(),
+            Terminator::SwitchValue {
+                arms, otherwise, ..
+            } => arms.iter().map(|(_, to)| *to).chain(*otherwise).collect(),
+            Terminator::Return(_) | Terminator::Panic { .. } | Terminator::Unreachable => vec![],
+        }
+    }
+}
+
+/// The mir of `program`, with its copies, moves and releases placed. For now it lowers and
+/// places them.
 pub(crate) fn build(program: &tir::Program) -> Program {
-    lower(program)
+    let mut mir = lower(program);
+    for function in &mut mir.functions {
+        ownership::place(function);
+    }
+    mir
 }
 
 #[cfg(test)]
