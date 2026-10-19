@@ -28,8 +28,9 @@ alone, deletes no comment and removes its diagnostic and no other. For an
 input that checks clean, it also prints the typed tree, builds its mir and
 runs codegen, and LLVM must verify the module. The `--emit` and `--check`
 flags stop the pipeline early, as
-[Developing Sisu](development.md#look-inside-the-compiler) lists. `--format json` switches the diagnostics to JSON Lines, and
-`--explain <code>` prints the explanation of a code and runs no stage.
+[Developing Sisu](development.md#look-inside-the-compiler) lists.
+`--format json` switches the diagnostics to JSON Lines, and `--explain <code>`
+prints the explanation of a code and runs no stage.
 
 **Lexer** (`lexer/`). Turns source text into tokens. A line break that can
 end a statement becomes a `Newline` token, because statements end at
@@ -99,7 +100,7 @@ typed tree, `tir`, which `mir` is built from. A type in `tir` is a
 4-byte `Type` handle into one table (`types.rs`), as a name is a `Symbol`;
 its `kind()` gives the structure, and equal structures get the same handle.
 
-**Mir** (`mir/`). The mid-level IR between `tir` and LLVM IR
+**mir** (`mir/`). The mid-level IR between `tir` and LLVM IR
 ([ADR 0025](adr/0025-mir-holds-every-count.md)), built on the build path only,
 so `--check` does not pay for it. `mir::build` lowers each function of `tir` to
 typed locals and basic blocks in which every copy, move and release is its own

@@ -1,4 +1,4 @@
-//! The typed tree: what the checker produces and codegen reads. Its S-expression printer backs
+//! The typed tree: the checker's output, from which mir is lowered. Its S-expression printer backs
 //! `--emit tir` and the checker tests.
 
 use std::fmt;

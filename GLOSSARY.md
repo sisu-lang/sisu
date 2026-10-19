@@ -60,9 +60,10 @@ The Sisu prelude file arrives in milestone 8.
 
 **RC check**:
 A check that a program built with `sisuc --rc-checks` makes on its reference
-counts: no retain or release of a count below 1, no read of a local whose
-reference was moved out, and no object still allocated at a normal exit. A failed check prints `sisu: rc check: <what>`
-on stderr and exits with code 102.
+counts: no retain or release of a count below 1, no read of a string, class
+or array local whose reference was moved out, and no object still allocated
+at a normal exit. A failed check prints `sisu: rc check: <what>` on stderr and
+exits with code 102.
 
 ## Arrays
 
