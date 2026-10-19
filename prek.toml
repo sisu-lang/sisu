@@ -59,12 +59,11 @@ language = "system"
 entry = '''perl -ne 'last if /^#\[cfg\(test\)\]/; if (/:\?\}/) { print "$ARGV:$.: diagnostic text uses {:?}; escape the Sisu way\n"; $bad = 1 } END { exit($bad ? 1 : 0) }' '''
 files = '^crates/sisuc/src/diagnostic/registry\.rs$'
 
-# rustfmt keeps code within 100 columns but leaves comments alone on stable.
 [[repos.hooks]]
 id = "comment-width"
 name = "comments fit in 100 columns"
 language = "system"
-entry = '''perl -CSD -ne 'chomp; if (m{^\s*//} && length > 100) { print "$ARGV:$.: comment is ", length, " columns; wrap it at 100\n"; $bad = 1 } close ARGV if eof; END { exit($bad ? 1 : 0) }' '''
+entry = "python3 scripts/comment_width.py"
 types = ["rust"]
 
 [[repos.hooks]]
