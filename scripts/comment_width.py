@@ -1,5 +1,5 @@
-"""Rejects a `//` comment line over 100 columns. rustfmt keeps code within 100 columns but leaves
-comments alone on stable.
+"""Rejects a `//` comment line over 100 columns. rustfmt breaks code at 100 columns where it can,
+but on stable it does not wrap comments (`wrap_comments` is unstable).
 
 Usage: python3 comment_width.py FILE...
 """
