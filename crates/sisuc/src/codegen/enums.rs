@@ -322,6 +322,16 @@ impl<'ctx> Codegen<'ctx, '_> {
         args: &[Expr],
     ) -> BasicValueEnum<'ctx> {
         let values: Vec<_> = args.iter().map(|a| self.operand(a)).collect();
+        self.variant_value(id, variant, &values)
+    }
+
+    /// The value of variant `variant` of enum `id` with the evaluated `values` as its fields.
+    pub(super) fn variant_value(
+        &self,
+        id: EnumId,
+        variant: usize,
+        values: &[BasicValueEnum<'ctx>],
+    ) -> BasicValueEnum<'ctx> {
         let layout = self.enum_layout(id);
         let (ty, tag) = (layout.ty, layout.tag);
         let slot = self.entry_alloca(ty.into(), "variant");
@@ -332,7 +342,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             tag.const_int(tag_value, false).into(),
         );
         let fields = &self.program.enums[id.0].variants[variant].fields;
-        for (field, (value, payload)) in values.into_iter().zip(fields).enumerate() {
+        for (field, (&value, payload)) in values.iter().zip(fields).enumerate() {
             let place = self.field_slot(slot, id, variant, field);
             if payload.boxed {
                 self.store_boxed(place, value, payload.ty);

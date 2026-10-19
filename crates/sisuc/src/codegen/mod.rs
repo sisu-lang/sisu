@@ -27,8 +27,8 @@ use inkwell::targets::{
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
-    MetadataValue, PointerValue,
+    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, MetadataValue,
+    PointerValue,
 };
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
@@ -37,8 +37,8 @@ use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
 use crate::source::{LineIndex, Span};
 use crate::tir::{
-    Block, ClassId, CompareOp, Expr, ExprKind, Function, LocalId, Place, Program, Stmt, Stream,
-    Type, TypeKind, UnaryOp,
+    Block, ClassId, CompareOp, Expr, ExprKind, FuncId, Function, LocalId, Place, Program, Stmt,
+    Stream, Type, TypeKind, UnaryOp,
 };
 
 /// The `expect` message for a builder call: codegen positions the builder before it emits code.
@@ -289,17 +289,29 @@ impl<'ctx> Codegen<'ctx, '_> {
         let object = object
             .expect("the checker should only emit a field access on a class-typed base, which lowers to a pointer")
             .into_pointer_value();
-        let class = class_of(base.ty);
+        // Retain before releasing the base: the base's drop could release the field first.
+        let value = self.field_value(class_of(base.ty), object, index, ty);
+        if !borrowed {
+            self.release(object.into(), base.ty);
+        }
+        value
+    }
+
+    /// Field `index` of `object`, an instance of `class`, retained; `ty` is the field's type.
+    /// The caller releases the object if it owns a reference.
+    fn field_value(
+        &self,
+        class: ClassId,
+        object: PointerValue<'ctx>,
+        index: usize,
+        ty: Type,
+    ) -> BasicValueEnum<'ctx> {
         let field = self.field_ptr(class, object, index);
         let llvm_ty = self.llvm_type(ty).expect(
             "the checker should give every class field a value type, never `unit` or `never`",
         );
         let value = self.load_tagged(llvm_ty, field, "load", self.field_tag(class, index));
-        // Retain before releasing the base: the base's drop could release the field first.
         self.retain(value, ty);
-        if !borrowed {
-            self.release(object.into(), base.ty);
-        }
         value
     }
 
@@ -384,6 +396,15 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .map(|a| self.expr(a).expect("the checker should reject a `unit` or `never` argument, so each argument has a value"))
             .collect();
+        self.new_object_value(class, &args)
+    }
+
+    /// A new object of `class` with count 1, whose fields are the evaluated `args`.
+    fn new_object_value(
+        &self,
+        class: ClassId,
+        args: &[BasicValueEnum<'ctx>],
+    ) -> PointerValue<'ctx> {
         let (size, align) = self.heap_size(&HeapBlock::Class(class));
         let object = self
             .builder
@@ -394,11 +415,57 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
             .into_pointer_value();
         self.init_count(object);
-        for (index, arg) in args.into_iter().enumerate() {
+        for (index, &arg) in args.iter().enumerate() {
             let field = self.field_ptr(class, object, index);
             self.store(field, arg);
         }
         object
+    }
+
+    /// `Call`: `func` applied to the evaluated `args`; `None` for a `unit` result.
+    fn call_value(
+        &self,
+        func: FuncId,
+        args: &[BasicValueEnum<'ctx>],
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let args: Vec<BasicMetadataValueEnum> = args.iter().map(|&a| a.into()).collect();
+        self.builder
+            .build_call(self.functions[func.0], &args, "call")
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+    }
+
+    /// `-x` or `!x` on an evaluated operand of type `ty`; negating an `i64` panics at `span` on
+    /// overflow.
+    fn unary_value(
+        &self,
+        op: UnaryOp,
+        ty: Type,
+        operand: BasicValueEnum<'ctx>,
+        span: Span,
+    ) -> BasicValueEnum<'ctx> {
+        if ty == Type::F64 {
+            let negated = self
+                .builder
+                .build_float_neg(operand.into_float_value(), "neg");
+            return negated.expect(POSITIONED).into();
+        }
+        let operand = operand.into_int_value();
+        match op {
+            UnaryOp::Neg => {
+                let zero = self.context.i64_type().const_zero();
+                self.checked("llvm.ssub.with.overflow", zero, operand, span)
+            }
+            UnaryOp::Not => self.builder.build_not(operand, "not").expect(POSITIONED),
+        }
+        .into()
+    }
+
+    /// `Wrap`: `value` as a present optional of type `ty`.
+    fn wrap_value(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        let some = self.context.bool_type().const_int(1, false);
+        self.optional(ty, some, value)
     }
 
     fn declare(&mut self, f: &Function) {
@@ -643,19 +710,30 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `lhs == rhs`, or `!=` when `negated`; releases both operands after comparing them.
     fn equal_expr(&mut self, negated: bool, lhs: &Expr, rhs: &Expr) -> IntValue<'ctx> {
         let (l, r) = (self.operand(lhs), self.operand(rhs));
-        let equal = match lhs.ty {
-            Type::I64 | Type::U8 | Type::BOOL | Type::CHAR if negated => {
-                self.int_compare(IntPredicate::NE, l.into_int_value(), r.into_int_value())
-            }
-            _ if negated => {
-                let equal = self.equal(lhs.ty, l, r);
-                self.builder.build_not(equal, "not").expect(POSITIONED)
-            }
-            _ => self.equal(lhs.ty, l, r),
-        };
+        let equal = self.equal_value(negated, lhs.ty, l, r);
         self.release(l, lhs.ty);
         self.release(r, rhs.ty);
         equal
+    }
+
+    /// `lhs == rhs`, or `!=` when `negated`, on two evaluated operands of type `ty`.
+    fn equal_value(
+        &self,
+        negated: bool,
+        ty: Type,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> IntValue<'ctx> {
+        match ty {
+            Type::I64 | Type::U8 | Type::BOOL | Type::CHAR if negated => {
+                self.int_compare(IntPredicate::NE, lhs.into_int_value(), rhs.into_int_value())
+            }
+            _ if negated => {
+                let equal = self.equal(ty, lhs, rhs);
+                self.builder.build_not(equal, "not").expect(POSITIONED)
+            }
+            _ => self.equal(ty, lhs, rhs),
+        }
     }
 
     /// `lhs is rhs`; releases both operands after comparing them.
@@ -678,13 +756,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.expr(e)
             .expect("the checker should type this expression `i64` or `bool`, so it has a value")
             .into_int_value()
-    }
-
-    /// An expression the checker typed `f64`.
-    fn float(&mut self, e: &Expr) -> FloatValue<'ctx> {
-        self.expr(e)
-            .expect("the checker should type this expression `f64`, so it has a value")
-            .into_float_value()
     }
 
     /// The expression's value, `None` for `unit` or `never`.
@@ -724,41 +795,21 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             ExprKind::Move(local) => return Some(self.move_local(*local)),
             ExprKind::Call { func, args } => {
-                let args: Vec<_> = args.iter().map(|a| self.operand(a).into()).collect();
-                return self
-                    .builder
-                    .build_call(self.functions[func.0], &args, "call")
-                    .expect(POSITIONED)
-                    .try_as_basic_value()
-                    .basic();
+                let args: Vec<_> = args.iter().map(|a| self.operand(a)).collect();
+                return self.call_value(*func, &args);
             }
             ExprKind::Print { stream, operand } => {
                 self.print(*stream, operand);
                 return None;
             }
             ExprKind::Math { op, operands } => return Some(self.math(*op, operands)),
-            ExprKind::Unary { operand, .. } if e.ty == Type::F64 => {
-                let operand = self.float(operand);
-                let negated = self.builder.build_float_neg(operand, "neg");
-                return Some(negated.expect(POSITIONED).into());
-            }
             ExprKind::Unary { op, operand } => {
-                let operand = self.value(operand);
-                match op {
-                    UnaryOp::Neg => {
-                        let zero = self.context.i64_type().const_zero();
-                        self.checked("llvm.ssub.with.overflow", zero, operand, e.span)
-                    }
-                    UnaryOp::Not => self
-                        .builder
-                        .build_not(operand, "not")
-                        .expect(POSITIONED),
-                }
+                let operand = self.operand(operand);
+                return Some(self.unary_value(*op, e.ty, operand, e.span));
             }
-            ExprKind::Binary { op, lhs, rhs } if e.ty == Type::F64 => {
-                return Some(self.float_binary(*op, lhs, rhs).into());
+            ExprKind::Binary { op, lhs, rhs } => {
+                return Some(self.binary(*op, lhs, rhs, e.span));
             }
-            ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, e.span),
             ExprKind::Compare { operands, ops } => self.compare(operands, ops),
             ExprKind::Equal { negated, lhs, rhs } => self.equal_expr(*negated, lhs, rhs),
             ExprKind::Is { lhs, rhs } => self.is_expr(lhs, rhs),
@@ -834,8 +885,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             ExprKind::None => Some(self.empty(e.ty)),
             ExprKind::Wrap(operand) => {
                 let value = self.expr(operand)?;
-                let some = self.context.bool_type().const_int(1, false);
-                Some(self.optional(e.ty, some, value))
+                Some(self.wrap_value(e.ty, value))
             }
             ExprKind::IfSome {
                 bind,
@@ -918,27 +968,33 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     fn print(&mut self, stream: Stream, operand: &Expr) {
-        if operand.ty == Type::STRING {
-            self.print_string(stream, operand);
+        let value = self.operand(operand);
+        self.print_value(stream, operand.ty, value);
+        self.release(value, operand.ty);
+    }
+
+    /// `print` or `eprint` of an evaluated operand of type `ty`; the caller releases it.
+    fn print_value(&self, stream: Stream, ty: Type, value: BasicValueEnum<'ctx>) {
+        if ty == Type::STRING {
+            self.print_string(stream, value.into_pointer_value());
             return;
         }
         let printers = self.printers[stream.index()];
-        if operand.ty == Type::F64 {
-            let arg = self.float(operand);
+        if ty == Type::F64 {
             self.builder
-                .build_call(printers.f64, &[arg.into()], "")
+                .build_call(printers.f64, &[value.into_float_value().into()], "")
                 .expect(POSITIONED);
             return;
         }
-        let mut arg = self.value(operand);
-        if operand.ty == Type::U8 {
+        let mut arg = value.into_int_value();
+        if ty == Type::U8 {
             arg = self
                 .builder
                 .build_int_z_extend(arg, self.context.i64_type(), "widened")
                 .expect(POSITIONED);
         }
-        let is_bool = operand.ty == Type::BOOL;
-        let print = match operand.ty {
+        let is_bool = ty == Type::BOOL;
+        let print = match ty {
             Type::BOOL => printers.bool,
             Type::CHAR => printers.char,
             _ => printers.int,
@@ -1044,11 +1100,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect("a comparison chain should have at least one operator");
         let function = self.current_function();
         let mut false_from = Vec::new();
-        let signed = !matches!(operands[0].ty, Type::U8 | Type::CHAR);
+        let ty = operands[0].ty;
         let mut lhs = self.operand(&operands[0]);
         for (op, operand) in first_ops.iter().zip(&operands[1..]) {
             let rhs = self.operand(operand);
-            let holds = self.compare_pair(*op, signed, lhs, rhs);
+            let holds = self.compare_value(*op, ty, lhs, rhs);
             let next = self.context.append_basic_block(function, "chain.next");
             false_from.push((holds, self.current_block(), next));
             self.builder.position_at_end(next);
@@ -1059,7 +1115,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .last()
                 .expect("a comparison chain should have at least two operands"),
         );
-        let holds = self.compare_pair(*last_op, signed, lhs, rhs);
+        let holds = self.compare_value(*last_op, ty, lhs, rhs);
         if false_from.is_empty() {
             return holds;
         }

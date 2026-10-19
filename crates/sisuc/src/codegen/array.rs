@@ -224,6 +224,15 @@ impl<'ctx> Codegen<'ctx, '_> {
                 )
             })
             .collect();
+        self.array_lit_value(ty, &values)
+    }
+
+    /// The block of an array literal of type `ty`, which takes each of the evaluated `values`.
+    pub(super) fn array_lit_value(
+        &self,
+        ty: Type,
+        values: &[BasicValueEnum<'ctx>],
+    ) -> PointerValue<'ctx> {
         let element = element_of(ty);
         let i64_type = self.context.i64_type();
         let len = u64::try_from(values.len())
@@ -231,21 +240,32 @@ impl<'ctx> Codegen<'ctx, '_> {
         let array = self.alloc_array(element, i64_type.const_int(len, false), None);
         for (index, value) in (0..).zip(values) {
             let slot = self.element_ptr(element, array, i64_type.const_int(index, false));
-            self.store_tagged(slot, value, self.element_tag);
+            self.store_tagged(slot, *value, self.element_tag);
         }
         array
     }
 
-    /// `ArrayFill`: `value`, then `len`, then the block, with `value` in every slot. A
-    /// counted pointer `value` gains `len - 1` references in one step, or loses its one when
-    /// `len` is 0. A counted enum `value` is retained once per slot, then released.
+    /// `ArrayFill`: `value`, then `len`, then the block, with `value` in every slot.
     pub(super) fn array_fill(&mut self, ty: Type, value: &Expr, len: &Expr) -> PointerValue<'ctx> {
-        let element = element_of(ty);
         let filler = self.expr(value).expect(
             "the checker should give the value of `[v; n]` a value type, never `unit` or `never`",
         );
         let count = self.value(len);
-        let array = self.alloc_array(element, count, Some(len.span));
+        self.array_fill_value(filler, count, ty, len.span)
+    }
+
+    /// The block of `[filler; count]` of type `ty`; a negative or oversized `count` panics at
+    /// `span`. A counted pointer `filler` gains `count - 1` references in one step, or loses its
+    /// one when `count` is 0. A counted enum `filler` is retained once per slot, then released.
+    pub(super) fn array_fill_value(
+        &self,
+        filler: BasicValueEnum<'ctx>,
+        count: IntValue<'ctx>,
+        ty: Type,
+        span: Span,
+    ) -> PointerValue<'ctx> {
+        let element = element_of(ty);
+        let array = self.alloc_array(element, count, Some(span));
         self.count_loop(count, |index| {
             self.store_tagged(
                 self.element_ptr(element, array, index),
@@ -314,12 +334,25 @@ impl<'ctx> Codegen<'ctx, '_> {
         .expect("the checker should only index an array, which lowers to a pointer")
         .into_pointer_value();
         let at = self.value(index);
-        self.check_bounds(array, at, index.span);
-        let value = self.load_element(ty, array, at);
-        self.retain(value, ty);
+        let value = self.index_value(array, at, ty, index.span);
         if local.is_none() {
             self.release(array.into(), base.ty);
         }
+        value
+    }
+
+    /// The element of `array` at `index`, retained; an index outside the array panics at `span`.
+    /// The caller releases the array if it owns a reference.
+    pub(super) fn index_value(
+        &self,
+        array: PointerValue<'ctx>,
+        index: IntValue<'ctx>,
+        ty: Type,
+        span: Span,
+    ) -> BasicValueEnum<'ctx> {
+        self.check_bounds(array, index, span);
+        let value = self.load_element(ty, array, index);
+        self.retain(value, ty);
         value
     }
 
@@ -334,26 +367,43 @@ impl<'ctx> Codegen<'ctx, '_> {
         let array = array
             .expect("the checker should only call `len` on an array or a string, which lower to a pointer")
             .into_pointer_value();
-        let len = if base.ty == Type::STRING {
-            self.string_len(array)
-        } else {
-            self.array_len(array)
-        };
+        let len = self.len_value(array, base.ty);
         if !borrowed {
             self.release(array.into(), base.ty);
         }
         len
     }
 
-    /// `Sum`: the elements of `base`, an `[i64]` or an `[f64]` as `ty` says, added in order
-    /// from zero; then the base is released. An `i64` adds with the checked add of `+`, which
-    /// panics at `span`, and an `f64` with `fadd` from `+0.0`, so an empty `[f64]` sums to
-    /// `0.0` and the order of the additions is the order of the elements.
+    /// The length of `array`, of type `ty`, an array or a string.
+    pub(super) fn len_value(&self, array: PointerValue<'ctx>, ty: Type) -> IntValue<'ctx> {
+        if ty == Type::STRING {
+            self.string_len(array)
+        } else {
+            self.array_len(array)
+        }
+    }
+
+    /// `Sum`: the elements of `base`, an `[i64]` or an `[f64]`, then the release of the base.
     pub(super) fn sum(&mut self, ty: Type, base: &Expr, span: Span) -> BasicValueEnum<'ctx> {
         let array = self
             .expr(base)
             .expect("the checker should only call `sum` on an array, which lowers to a pointer")
             .into_pointer_value();
+        let sum = self.sum_value(ty, array, span);
+        self.release(array.into(), base.ty);
+        sum
+    }
+
+    /// The elements of `array`, an `[i64]` or an `[f64]` as `ty` says, added in order from
+    /// zero. An `i64` adds with the checked add of `+`, which panics at `span`, and an `f64`
+    /// with `fadd` from `+0.0`, so an empty `[f64]` sums to `0.0` and the order of the additions
+    /// is the order of the elements.
+    pub(super) fn sum_value(
+        &self,
+        ty: Type,
+        array: PointerValue<'ctx>,
+        span: Span,
+    ) -> BasicValueEnum<'ctx> {
         let llvm_type = self.array_layout(ty).element;
         let total = self.entry_alloca(llvm_type, "total");
         self.store(total, llvm_type.const_zero());
@@ -376,15 +426,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             };
             self.store(total, added);
         });
-        let sum = self.load(llvm_type, total);
-        self.release(array.into(), base.ty);
-        sum
+        self.load(llvm_type, total)
     }
 
     /// `Contains`: `base`, then `value`; whether some element of `base` is `==` to `value`,
     /// stopping at the first that is. Then both are released.
     pub(super) fn contains(&mut self, base: &Expr, value: &Expr) -> IntValue<'ctx> {
-        let element = element_of(base.ty);
         let array = self
             .expr(base)
             .expect(
@@ -392,6 +439,20 @@ impl<'ctx> Codegen<'ctx, '_> {
             )
             .into_pointer_value();
         let needle = self.operand(value);
+        let hit = self.contains_value(element_of(base.ty), array, needle);
+        self.release(array.into(), base.ty);
+        self.release(needle, value.ty);
+        hit
+    }
+
+    /// Whether some element of `array`, whose element type is `element`, is `==` to `needle`,
+    /// stopping at the first that is.
+    pub(super) fn contains_value(
+        &self,
+        element: Type,
+        array: PointerValue<'ctx>,
+        needle: BasicValueEnum<'ctx>,
+    ) -> IntValue<'ctx> {
         let function = self.current_function();
         let found = self.context.append_basic_block(function, "contains.found");
         let end = self.context.append_basic_block(function, "contains.end");
@@ -409,18 +470,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.branch_to(end);
         self.builder.position_at_end(end);
         let bool_type = self.context.bool_type();
-        let hit = self
-            .phi(
-                bool_type,
-                &[
-                    (bool_type.const_zero(), missed),
-                    (bool_type.const_int(1, false), found),
-                ],
-            )
-            .into_int_value();
-        self.release(array.into(), base.ty);
-        self.release(needle, value.ty);
-        hit
+        self.phi(
+            bool_type,
+            &[
+                (bool_type.const_zero(), missed),
+                (bool_type.const_int(1, false), found),
+            ],
+        )
+        .into_int_value()
     }
 
     /// The operands of a field or element `place`, evaluated left to right: a field root's

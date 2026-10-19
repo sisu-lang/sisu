@@ -18,12 +18,32 @@ impl<'ctx> Codegen<'ctx, '_> {
         lhs: &Expr,
         rhs: &Expr,
         span: Span,
-    ) -> IntValue<'ctx> {
+    ) -> BasicValueEnum<'ctx> {
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
-            return self.short_circuit(op == BinaryOp::And, lhs, rhs);
+            return self.short_circuit(op == BinaryOp::And, lhs, rhs).into();
         }
-        let signed = lhs.ty != Type::U8;
-        let (l, r) = (self.value(lhs), self.value(rhs));
+        let (l, r) = (self.operand(lhs), self.operand(rhs));
+        self.binary_value(op, lhs.ty, l, r, span)
+    }
+
+    /// `lhs op rhs` on two evaluated operands of type `ty`: an `i64` or `u8` op that panics at
+    /// `span` on overflow or a zero divisor, or an `f64` op to IEEE 754, with no such check
+    /// and no fast-math flag. `&&` and `||` are branches, so they never reach here.
+    pub(super) fn binary_value(
+        &self,
+        op: BinaryOp,
+        ty: Type,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+        span: Span,
+    ) -> BasicValueEnum<'ctx> {
+        if ty == Type::F64 {
+            return self
+                .float_binary(op, lhs.into_float_value(), rhs.into_float_value())
+                .into();
+        }
+        let (l, r) = (lhs.into_int_value(), rhs.into_int_value());
+        let signed = ty != Type::U8;
         let intrinsic = |name| {
             format!(
                 "llvm.{}{name}.with.overflow",
@@ -43,17 +63,17 @@ impl<'ctx> Codegen<'ctx, '_> {
                 "`binary` should send `and` and `or` to `short_circuit` before this match"
             ),
         }
+        .into()
     }
 
     /// `lhs op rhs` on `f64`s, to IEEE 754: no overflow or zero divisor check, and no fast-math
     /// flag. `%` is `frem`, whose result has the sign of `lhs`, as C's `fmod`.
-    pub(super) fn float_binary(
-        &mut self,
+    fn float_binary(
+        &self,
         op: BinaryOp,
-        lhs: &Expr,
-        rhs: &Expr,
+        l: FloatValue<'ctx>,
+        r: FloatValue<'ctx>,
     ) -> FloatValue<'ctx> {
-        let (l, r) = (self.float(lhs), self.float(rhs));
         let b = &self.builder;
         match op {
             BinaryOp::Add => b.build_float_add(l, r, "sum"),
@@ -177,6 +197,24 @@ impl<'ctx> Codegen<'ctx, '_> {
         .expect(POSITIONED)
     }
 
+    /// One step of a comparison chain: `lhs op rhs` on two evaluated operands of type `ty`.
+    pub(super) fn compare_value(
+        &self,
+        op: CompareOp,
+        ty: Type,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> IntValue<'ctx> {
+        if ty == Type::STRING {
+            return self.compare_strings_value(
+                op,
+                lhs.into_pointer_value(),
+                rhs.into_pointer_value(),
+            );
+        }
+        self.compare_pair(op, !matches!(ty, Type::U8 | Type::CHAR), lhs, rhs)
+    }
+
     /// `lhs op rhs` on two integers, `signed` or not, or on two `f64`s, ordered: false beside a
     /// NaN.
     pub(super) fn compare_pair(
@@ -216,13 +254,22 @@ impl<'ctx> Codegen<'ctx, '_> {
         let ExprKind::Convert(operand) = &e.kind else {
             unreachable!("`convert` should be called on a `Convert` node");
         };
-        let kind = e.ty.kind();
+        let value = self.operand(operand);
+        self.convert_value(e.ty, value)
+    }
+
+    /// `value` converted to `ty`, as `convert` says.
+    pub(super) fn convert_value(
+        &self,
+        ty: Type,
+        value: BasicValueEnum<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        let kind = ty.kind();
         if kind == TypeKind::Optional(Type::I64) {
-            let x = self.float(operand);
-            let (fits, n) = self.float_to_int(x);
-            return self.optional(e.ty, fits, n.into());
+            let (fits, n) = self.float_to_int(value.into_float_value());
+            return self.optional(ty, fits, n.into());
         }
-        let value = self.value(operand);
+        let value = value.into_int_value();
         let (fits, payload) = match kind {
             TypeKind::F64 => {
                 return self
@@ -249,13 +296,13 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
                 ty => unreachable!("the checker should give no conversion to `{ty}?`"),
             },
-            _ => unreachable!("the checker should give no conversion to `{}`", e.ty),
+            _ => unreachable!("the checker should give no conversion to `{ty}`"),
         };
         let narrowed = self
             .builder
             .build_int_truncate(value, payload, "narrowed")
             .expect(POSITIONED);
-        self.optional(e.ty, fits, narrowed.into())
+        self.optional(ty, fits, narrowed.into())
     }
 
     /// Whether `x` is a whole number in `i64`'s range, and that number, with no branch.

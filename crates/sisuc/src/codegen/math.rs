@@ -14,11 +14,22 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// leave the sign of a zero result unspecified, and LLVM picks it differently at `-O0` and
     /// `-O2`. With `lo` above `hi`, `clamp` gives `hi`, as `min(max(x, lo), hi)` does.
     pub(super) fn math(&mut self, op: MathOp, operands: &[Expr]) -> BasicValueEnum<'ctx> {
-        if operands[0].ty == Type::I64 {
-            let values: Vec<_> = operands.iter().map(|e| self.value(e)).collect();
+        let values: Vec<_> = operands.iter().map(|e| self.operand(e)).collect();
+        self.math_value(op, operands[0].ty, &values)
+    }
+
+    /// `op` on the evaluated `operands`, whose type is `ty`, `i64` or `f64`.
+    pub(super) fn math_value(
+        &self,
+        op: MathOp,
+        ty: Type,
+        operands: &[BasicValueEnum<'ctx>],
+    ) -> BasicValueEnum<'ctx> {
+        if ty == Type::I64 {
+            let values: Vec<_> = operands.iter().map(|v| v.into_int_value()).collect();
             return self.integer_math(op, &values).into();
         }
-        let values: Vec<_> = operands.iter().map(|e| self.float(e)).collect();
+        let values: Vec<_> = operands.iter().map(|v| v.into_float_value()).collect();
         let x = values[0];
         let f64_type = self.context.f64_type();
         let infinity = f64_type.const_float(f64::INFINITY);
