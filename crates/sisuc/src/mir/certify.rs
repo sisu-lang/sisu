@@ -14,12 +14,14 @@
 //! caught whether or not `Function::loops` records it.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::fmt;
 
 use rustc_hash::FxHashMap;
 
 use self::graph::Graph;
+use self::range::RangeMin;
+use self::wavelet::Wavelet;
 use super::{
     BlockId, Const, Function, LocalId, Operand, Place, Projection, Rvalue, Statement, Terminator,
 };
@@ -55,7 +57,9 @@ pub(crate) enum Rule {
     Take,
     /// The borrow of a local that may be owned ends.
     End,
-    /// A borrow reaches a `return`, or leaves the local's region, still borrowed.
+    /// A borrow reaches a `return`, or leaves the local's region, still borrowed. The check is
+    /// by region: a missing `End` inside the region shows later, as `Borrow` at the root's
+    /// kill (the scrutinee's scope release), and not at all before a `panic`.
     Unended,
     /// An owned value leaves the local's region: it can never be consumed.
     Escape,
@@ -67,7 +71,9 @@ impl fmt::Display for Rule {
             Rule::Scope => "mentioned where its scope block does not dominate",
             Rule::Consume => "consumed where it may not own a reference",
             Rule::Read => "read where it may be empty or ended",
-            Rule::Borrow => "its borrow's root is consumed, assigned or released while it is read",
+            Rule::Borrow => {
+                "its borrow's root is consumed, assigned or released while it is borrowed"
+            }
             Rule::Return => "may still own a reference at `return`",
             Rule::Assign => "assigned where it may own a reference",
             Rule::Take => "a `take` without exactly one store to its place in its block",
@@ -162,8 +168,11 @@ impl Kills {
 
 #[cfg(test)]
 thread_local! {
-    /// How many control-flow edges the certifier has been handed on this thread.
-    pub(super) static EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How much of the function's structure the certifier has read on this thread: each
+    /// control-flow edge handed out, each immediate dominator read through `Tree::parent` and
+    /// each range query. Building the dominator tree's numbers, the prefix sums of `returns`
+    /// and a range table's own entries are not counted; each is one pass over the blocks.
+    pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The control-flow graph. Its fields are private, so every edge read is counted.
@@ -178,7 +187,7 @@ mod graph {
     /// Counts `edges` edges handed out.
     fn handed(edges: &[usize]) -> &[usize] {
         #[cfg(test)]
-        super::EDGES.set(super::EDGES.get() + edges.len());
+        super::READS.set(super::READS.get() + edges.len());
         edges
     }
 
@@ -256,6 +265,13 @@ impl Tree {
             }
         }
         tree
+    }
+
+    /// `block`'s immediate dominator.
+    fn parent(&self, block: usize) -> usize {
+        #[cfg(test)]
+        READS.set(READS.get() + 1);
+        self.idom[block]
     }
 
     fn reachable(&self, block: usize) -> bool {
@@ -703,82 +719,72 @@ fn overlaps(t: &Place, local: LocalId, place: Option<&Place>) -> bool {
         })
 }
 
-/// Per function, what each local's region queries: the dominance frontiers, and over the
-/// dominator tree's pre-order the depth an edge's ends meet at and the returns.
+/// Per function, what each local's region queries, over the dominator tree's pre-order.
 struct Shape {
-    frontier: Vec<Vec<usize>>,
-    /// `meet[k][i]`: the least, over the blocks at pre-order `i..i + 2^k`, of the depth in the
-    /// dominator tree where an edge from the block meets its target's dominators. An edge from
-    /// a block of `S`'s subtree leaves it exactly when that depth is less than `S`'s.
-    meet: Vec<Vec<usize>>,
+    /// Per block, the least depth in the dominator tree where an edge from it meets its
+    /// target's dominators: the target's when it dominates the block, else its immediate
+    /// dominator's. An edge from `S`'s subtree leaves it exactly when that depth is less than
+    /// `S`'s.
+    meet: RangeMin,
+    /// The same over the edges whose ends share a strongly connected component. A path from
+    /// `S` that leaves its subtree comes back to `S` exactly along such an edge.
+    back: RangeMin,
+    /// Each block's strongly connected component.
+    component: Vec<usize>,
+    /// The target of each edge `y -> z` where `y` is not `z`'s immediate dominator, by `y`'s
+    /// pre-order number, with `z`'s depth as its value. `z` is then in the dominance frontier
+    /// of each block from `y` up to the one below `z`'s immediate dominator: of `x` when `y`
+    /// is in `x`'s subtree and `z` is no deeper than `x`.
+    joins: Wavelet,
+    /// The edges from the block at pre-order `i`, at `join_at[i]..join_at[i + 1]`.
+    join_at: Vec<usize>,
     /// The `return` blocks before each pre-order number.
     returns: Vec<usize>,
 }
 
 impl Shape {
     fn new(function: &Function, graph: &Graph, tree: &Tree) -> Self {
-        let n = graph.len();
-        // Cooper, Harvey and Kennedy's runners; a runner stops at a block that already has the
-        // join, since an earlier runner went on from there to the join's dominator.
-        let mut frontier = vec![Vec::new(); n];
-        for &join in &tree.at {
-            for &pred in graph.preds(join) {
-                let mut runner = if tree.reachable(pred) { pred } else { NONE };
-                while runner != NONE
-                    && runner != tree.idom[join]
-                    && frontier[runner].last() != Some(&join)
-                {
-                    frontier[runner].push(join);
-                    runner = tree.idom[runner];
-                }
-            }
-        }
-        // An edge to `to` meets `to` itself when `to` dominates its source, else `to`'s
-        // immediate dominator, which dominates every predecessor of `to`.
-        let first: Vec<usize> = tree
-            .at
-            .iter()
-            .map(|&block| {
-                graph
-                    .succs(block)
-                    .iter()
-                    .map(|&to| {
-                        if tree.dominates(to, block) {
-                            tree.depth[to]
-                        } else {
-                            tree.depth[to] - 1
-                        }
-                    })
-                    .min()
-                    .unwrap_or(NONE)
-            })
-            .collect();
-        let mut meet = vec![first];
-        while 1 << meet.len() <= tree.at.len() {
-            let half = 1 << (meet.len() - 1);
-            let below = &meet[meet.len() - 1];
-            let next = (0..below.len() - half)
-                .map(|i| below[i].min(below[i + half]))
-                .collect();
-            meet.push(next);
-        }
+        let component = components(graph, tree);
+        let depth = |block: usize| u32::try_from(tree.depth[block]).unwrap_or(u32::MAX);
+        let mut meet = Vec::with_capacity(tree.at.len());
+        let mut back = Vec::with_capacity(tree.at.len());
+        let mut joins = Vec::new();
+        let mut join_to = Vec::new();
+        let mut join_at = Vec::with_capacity(tree.at.len() + 1);
         let mut returns = Vec::with_capacity(tree.at.len() + 1);
         returns.push(0);
         for &block in &tree.at {
+            let (mut least, mut least_back) = (u32::MAX, u32::MAX);
+            join_at.push(joins.len());
+            for &to in graph.succs(block) {
+                let meets = if tree.dominates(to, block) {
+                    depth(to)
+                } else {
+                    depth(to) - 1
+                };
+                least = least.min(meets);
+                if component[to] == component[block] {
+                    least_back = least_back.min(meets);
+                }
+                if tree.parent(to) != block {
+                    joins.push(depth(to));
+                    join_to.push(to);
+                }
+            }
+            meet.push(least);
+            back.push(least_back);
             let ends = matches!(function.blocks[block].term, Terminator::Return(_));
             returns.push(returns[returns.len() - 1] + usize::from(ends));
         }
+        join_at.push(joins.len());
         Shape {
-            frontier,
-            meet,
+            meet: RangeMin::new(meet),
+            back: RangeMin::new(back),
+            component,
+            joins: Wavelet::new(&joins, &join_to),
+            join_at,
             returns,
         }
-    }
-
-    /// The least meeting depth over pre-order numbers `from..=to`.
-    fn meet(&self, from: usize, to: usize) -> usize {
-        let k = (to - from + 1).ilog2() as usize;
-        self.meet[k][from].min(self.meet[k][to + 1 - (1 << k)])
     }
 
     fn returns(&self, from: usize, to: usize) -> bool {
@@ -786,18 +792,261 @@ impl Shape {
     }
 }
 
+/// Each reachable block's strongly connected component, by Kosaraju's two walks: a block's
+/// post-order along the edges from `bb0`, then backwards along them from each block in reverse
+/// post-order. An unreachable block's is `NONE`.
+fn components(graph: &Graph, tree: &Tree) -> Vec<usize> {
+    let n = graph.len();
+    let mut order = Vec::with_capacity(tree.at.len());
+    let mut seen = vec![false; n];
+    seen[0] = true;
+    let mut stack = vec![(0, graph.succs(0), 0)];
+    while let Some(&mut (block, succs, ref mut next)) = stack.last_mut() {
+        if let Some(&to) = succs.get(*next) {
+            *next += 1;
+            if !seen[to] {
+                seen[to] = true;
+                stack.push((to, graph.succs(to), 0));
+            }
+        } else {
+            order.push(block);
+            stack.pop();
+        }
+    }
+    let mut component = vec![NONE; n];
+    let mut flood = Vec::new();
+    for &root in order.iter().rev() {
+        if component[root] != NONE {
+            continue;
+        }
+        component[root] = root;
+        flood.push(root);
+        while let Some(block) = flood.pop() {
+            for &pred in graph.preds(block) {
+                if tree.reachable(pred) && component[pred] == NONE {
+                    component[pred] = root;
+                    flood.push(pred);
+                }
+            }
+        }
+    }
+    component
+}
+
+/// Values at positions, as a wavelet matrix: one bit level per value bit, high to low, each
+/// level's bits in the order the levels above sorted the positions by. It reports the items at
+/// a range of positions whose values lie in a range, each query in time proportional to its
+/// answers and the bits of a value, and the whole in a bit and an item per position.
+pub(in crate::mir) mod wavelet {
+    pub(in crate::mir) struct Wavelet {
+        levels: Vec<Level>,
+        /// The items in the order the last level sorted them.
+        items: Vec<usize>,
+    }
+
+    struct Level {
+        words: Vec<u64>,
+        /// The ones before each word.
+        ones: Vec<usize>,
+        zeros: usize,
+    }
+
+    impl Level {
+        fn zeros_before(&self, at: usize) -> usize {
+            let (word, bit) = (at / 64, at % 64);
+            let below = self
+                .words
+                .get(word)
+                .map_or(0, |&w| (w & ((1 << bit) - 1)).count_ones() as usize);
+            at - self.ones[word] - below
+        }
+    }
+
+    impl Wavelet {
+        pub(in crate::mir) fn new(values: &[u32], items: &[usize]) -> Self {
+            let bits = 32 - values.iter().max().map_or(0, |max| max.leading_zeros());
+            let mut order: Vec<usize> = (0..values.len()).collect();
+            let mut levels = Vec::with_capacity(bits as usize);
+            for bit in (0..bits).rev() {
+                let one = |at: usize| values[at] >> bit & 1 == 1;
+                let mut words = vec![0u64; values.len().div_ceil(64)];
+                let mut ones = Vec::with_capacity(words.len() + 1);
+                for (i, &at) in order.iter().enumerate() {
+                    if one(at) {
+                        words[i / 64] |= 1 << (i % 64);
+                    }
+                }
+                ones.push(0);
+                for &word in &words {
+                    ones.push(ones[ones.len() - 1] + word.count_ones() as usize);
+                }
+                let (mut low, high): (Vec<usize>, Vec<usize>) =
+                    order.iter().partition(|&&at| !one(at));
+                let zeros = low.len();
+                low.extend(high);
+                order = low;
+                levels.push(Level { words, ones, zeros });
+            }
+            let items = order.iter().map(|&at| items[at]).collect();
+            Wavelet { levels, items }
+        }
+
+        /// Calls `f` with the item at each position of `from..to` whose value lies in
+        /// `low..=high`.
+        pub(in crate::mir) fn report(
+            &self,
+            from: usize,
+            to: usize,
+            low: u32,
+            high: u32,
+            stack: &mut Vec<(usize, usize, usize, u64)>,
+            mut f: impl FnMut(usize),
+        ) {
+            #[cfg(test)]
+            super::READS.set(super::READS.get() + 1);
+            let bits = self.levels.len();
+            stack.clear();
+            stack.push((0, from, to, 0));
+            while let Some((level, from, to, base)) = stack.pop() {
+                let width = 1u64 << (bits - level);
+                if from >= to || base > u64::from(high) || base + width <= u64::from(low) {
+                    continue;
+                }
+                let Some(this) = self.levels.get(level) else {
+                    for &item in &self.items[from..to] {
+                        #[cfg(test)]
+                        super::READS.set(super::READS.get() + 1);
+                        f(item);
+                    }
+                    continue;
+                };
+                let (from0, to0) = (this.zeros_before(from), this.zeros_before(to));
+                stack.push((level + 1, from0, to0, base));
+                stack.push((
+                    level + 1,
+                    this.zeros + from - from0,
+                    this.zeros + to - to0,
+                    base + width / 2,
+                ));
+            }
+        }
+    }
+}
+
+/// The least of fixed values over a range of positions, each query in constant time and the
+/// whole in linear memory: per block of 64 positions, each position's mask of the minima of
+/// its block so far, and over the blocks a sparse table of their least positions.
+pub(in crate::mir) mod range {
+    pub(in crate::mir) struct RangeMin {
+        values: Vec<u32>,
+        /// Bit `j` of `masks[i]`: the position `j` of `i`'s block holds a value less than every
+        /// one after it up to `i`.
+        masks: Vec<u64>,
+        /// `table[k][b]`: the position of the least value in blocks `b..b + 2^k`.
+        table: Vec<Vec<usize>>,
+    }
+
+    impl RangeMin {
+        pub(in crate::mir) fn new(values: Vec<u32>) -> Self {
+            let mut masks = vec![0; values.len()];
+            let mut least = Vec::with_capacity(values.len().div_ceil(64));
+            for (b, chunk) in values.chunks(64).enumerate() {
+                let mut mask: u64 = 0;
+                for (j, &value) in chunk.iter().enumerate() {
+                    while mask != 0 {
+                        let top = 63 - mask.leading_zeros() as usize;
+                        if chunk[top] < value {
+                            break;
+                        }
+                        mask &= !(1 << top);
+                    }
+                    mask |= 1 << j;
+                    masks[b * 64 + j] = mask;
+                }
+                least.push(b * 64 + mask.trailing_zeros() as usize);
+            }
+            let mut range = RangeMin {
+                values,
+                masks,
+                table: Vec::new(),
+            };
+            let mut table = vec![least];
+            while 1 << table.len() <= table[0].len() {
+                let half = 1 << (table.len() - 1);
+                let below = &table[table.len() - 1];
+                let next = (0..below.len() - half)
+                    .map(|b| range.less(below[b], below[b + half]))
+                    .collect();
+                table.push(next);
+            }
+            range.table = table;
+            range
+        }
+
+        pub(in crate::mir) fn get(&self, at: usize) -> u32 {
+            self.values[at]
+        }
+
+        /// The position of a least value at `from..=to`.
+        pub(in crate::mir) fn argmin(&self, from: usize, to: usize) -> usize {
+            #[cfg(test)]
+            super::READS.set(super::READS.get() + 1);
+            let (first, last) = (from / 64, to / 64);
+            if first == last {
+                return self.within(from, to);
+            }
+            let mut best = self.less(
+                self.within(from, first * 64 + 63),
+                self.within(last * 64, to),
+            );
+            if first + 1 < last {
+                let (a, b) = (first + 1, last - 1);
+                let k = (b - a + 1).ilog2() as usize;
+                let blocks = self.less(self.table[k][a], self.table[k][b + 1 - (1 << k)]);
+                best = self.less(best, blocks);
+            }
+            best
+        }
+
+        pub(in crate::mir) fn min(&self, from: usize, to: usize) -> u32 {
+            self.values[self.argmin(from, to)]
+        }
+
+        /// The least at `from..=to`, both in one block: the first minimum at or after `from`
+        /// that is still one at `to`.
+        fn within(&self, from: usize, to: usize) -> usize {
+            let mask = self.masks[to] & (u64::MAX << (from % 64));
+            (to & !63) + mask.trailing_zeros() as usize
+        }
+
+        fn less(&self, a: usize, b: usize) -> usize {
+            if self.values[b] < self.values[a] {
+                b
+            } else {
+                a
+            }
+        }
+    }
+}
+
 /// The buffers of one local's region, kept for the next local. Per block, the last region
-/// stamped there and the block's node, so nothing is cleared between locals.
+/// stamped there, so nothing is cleared between locals.
 struct Scratch {
     stamp: Vec<usize>,
-    slot: Vec<usize>,
     next: usize,
     /// Each node block's events, at `events[from[block]..to[block]]`.
     from: Vec<usize>,
     to: Vec<usize>,
     /// The node blocks, in pre-order: the scope block first.
     blocks: Vec<usize>,
-    work: Vec<usize>,
+    /// The nodes whose frontier is still to search, deepest first.
+    work: BinaryHeap<(usize, usize)>,
+    /// The subtrees searched, as pre-order ranges keyed by their first number.
+    searched: BTreeMap<usize, usize>,
+    /// Ranges of positions in `Shape::joins` to search, and the search's own stack.
+    ranges: Vec<(usize, usize)>,
+    found: Vec<usize>,
+    levels: Vec<(usize, usize, usize, u64)>,
     /// Each predecessor of a node inside the region: its pre-order number, the block and the
     /// node.
     queries: Vec<(usize, usize, usize)>,
@@ -822,12 +1071,15 @@ impl Scratch {
     fn new(blocks: usize) -> Self {
         Scratch {
             stamp: vec![0; blocks],
-            slot: vec![0; blocks],
             next: 0,
             from: vec![0; blocks],
             to: vec![0; blocks],
             blocks: Vec::new(),
-            work: Vec::new(),
+            work: BinaryHeap::new(),
+            searched: BTreeMap::new(),
+            ranges: Vec::new(),
+            found: Vec::new(),
+            levels: Vec::new(),
             queries: Vec::new(),
             links: Vec::new(),
             inputs: Vec::new(),
@@ -919,9 +1171,9 @@ impl Region<'_> {
         let s = scratch;
         let count = s.blocks.len();
         let init = if param { OWNED } else { EMPTY };
-        // What reaches the scope block from outside the region: empty, or ended after a
-        // borrow left it ended.
-        let mut from_outside = EMPTY;
+        // What reaches the scope block from outside the region: empty, and ended once a
+        // borrow leaves it ended along a path that comes back.
+        let mut from_outside = if outside { EMPTY } else { 0 };
         s.out.clear();
         s.out.resize(count, 0);
         s.queued.clear();
@@ -933,14 +1185,14 @@ impl Region<'_> {
             s.queued[i] = false;
             let block = s.blocks[i];
             let mut states = if block == 0 { init } else { 0 };
-            if i == 0 && outside {
+            if i == 0 {
                 states |= from_outside;
             }
             for &(from, pred) in &s.inputs[s.input_at[i]..s.input_at[i + 1]] {
                 states |= self.edge(s.blocks[from], s.out[from], pred, block);
             }
-            let (out, leaves) = self.transfer(s, i, states)?;
-            if leaves & ENDED != 0 && from_outside & ENDED == 0 && outside {
+            let (out, back) = self.transfer(s, i, states)?;
+            if back & ENDED != 0 && from_outside & ENDED == 0 {
                 from_outside |= ENDED;
                 if !s.queued[0] {
                     s.queued[0] = true;
@@ -982,20 +1234,8 @@ impl Region<'_> {
                 s.add(none.0);
             }
         }
-        // The iterated dominance frontier, within the region.
-        s.work.clear();
-        s.work.extend_from_slice(&s.blocks);
-        while let Some(block) = s.work.pop() {
-            for &join in &self.shape.frontier[block] {
-                if inside(join) && s.add(join) {
-                    s.work.push(join);
-                }
-            }
-        }
+        self.frontier(s);
         s.blocks.sort_unstable_by_key(|&block| tree.pre[block]);
-        for (i, &block) in s.blocks.iter().enumerate() {
-            s.slot[block] = i;
-        }
         let mut outside = false;
         s.queries.clear();
         for (i, &block) in s.blocks.iter().enumerate() {
@@ -1048,6 +1288,48 @@ impl Region<'_> {
         outside
     }
 
+    /// Adds the iterated dominance frontier of the nodes, within the region, deepest node
+    /// first. A node's frontier within the region is the targets of the join edges from its
+    /// subtree that are deeper than the scope block and no deeper than the node. A subtree
+    /// searched already holds no other such edge, since a node below the one searching is
+    /// deeper, so each edge is found at most once. The scope block's frontier within the
+    /// region is at most itself.
+    fn frontier(&self, s: &mut Scratch) {
+        let (tree, shape) = (self.tree, self.shape);
+        let low = u32::try_from(tree.depth[self.scope] + 1).unwrap_or(u32::MAX);
+        s.work.clear();
+        s.searched.clear();
+        for &block in &s.blocks[1..] {
+            s.work.push((tree.depth[block], block));
+        }
+        while let Some((depth, block)) = s.work.pop() {
+            let (first, last) = (tree.pre[block], tree.last[block]);
+            let mut from = first;
+            while let Some((&inner, &end)) = s.searched.range(first..=last).next() {
+                s.ranges.push((shape.join_at[from], shape.join_at[inner]));
+                s.searched.remove(&inner);
+                from = end + 1;
+            }
+            s.ranges
+                .push((shape.join_at[from], shape.join_at[last + 1]));
+            s.searched.insert(first, last);
+            let high = u32::try_from(depth).unwrap_or(u32::MAX);
+            while let Some((a, b)) = s.ranges.pop() {
+                let found = &mut s.found;
+                shape
+                    .joins
+                    .report(a, b, low, high, &mut s.levels, |join| found.push(join));
+            }
+            for at in 0..s.found.len() {
+                let join = s.found[at];
+                if s.add(join) {
+                    s.work.push((tree.depth[join], join));
+                }
+            }
+            s.found.clear();
+        }
+    }
+
     /// The set on the edge from `pred`, which holds the set `out` of node `from`, to `to`.
     fn edge(&self, from: usize, out: States, pred: usize, to: usize) -> States {
         if from == pred
@@ -1071,8 +1353,8 @@ impl Region<'_> {
     }
 
     /// Node `i`'s set at its end, and the states that leave the region from it or from the
-    /// blocks it covers: those of its subtree outside its node children's. Checks the rules
-    /// on the way.
+    /// blocks it covers (those of its subtree outside its node children's) along a path back
+    /// to the scope block. Checks the rules on the way.
     fn transfer(
         &self,
         s: &Scratch,
@@ -1099,12 +1381,14 @@ impl Region<'_> {
         if let Terminator::Return(_) = self.function.blocks[block].term {
             self.at_return(block, states)?;
         }
-        let mut leaves = 0;
+        let mut back = 0;
         for &to in self.graph.succs(block) {
             if !self.tree.dominates(self.scope, to) {
                 let states = self.edge(block, states, block, to);
                 self.leave(block, states)?;
-                leaves |= states;
+                if self.shape.component[to] == self.shape.component[block] {
+                    back |= states;
+                }
             }
         }
         let tree = self.tree;
@@ -1117,7 +1401,7 @@ impl Region<'_> {
                 tree.last[block] + 1
             };
             if from < to {
-                leaves |= self.cover(from, to - 1, states)?;
+                back |= self.cover(from, to - 1, states)?;
             }
             if child >= s.end[i] {
                 break;
@@ -1125,11 +1409,12 @@ impl Region<'_> {
             from = tree.last[s.blocks[child]] + 1;
             child = s.end[child];
         }
-        Ok((states, leaves))
+        Ok((states, back))
     }
 
     /// Checks the blocks at pre-order `from..=to`, which hold `states` throughout: the root's
-    /// kills, the returns and the exits. The states that leave the region from them.
+    /// kills, the returns and the exits. The states that leave the region from them along a
+    /// path back to the scope block.
     fn cover(&self, from: usize, to: usize, states: States) -> Result<States, Violation> {
         if states & BORROWED != 0
             && let Some(Kills { pres: kills, .. }) = self.root
@@ -1148,16 +1433,16 @@ impl Region<'_> {
             self.at_return(self.tree.at[at], states)?;
         }
         let depth = self.tree.depth[self.scope];
-        if self.shape.meet(from, to) >= depth {
+        let at = self.shape.meet.argmin(from, to);
+        if self.shape.meet.get(at) as usize >= depth {
             return Ok(0);
         }
-        if owes {
-            let at = (from..=to)
-                .find(|&pre| self.shape.meet(pre, pre) < depth)
-                .expect("a range with an exit should hold an exiting block");
-            self.leave(self.tree.at[at], states)?;
+        self.leave(self.tree.at[at], states)?;
+        if (self.shape.back.min(from, to) as usize) < depth {
+            Ok(states)
+        } else {
+            Ok(0)
         }
-        Ok(states)
     }
 
     /// One effect on the set, checked against rules 1, 2, 5 and the end of a borrow.

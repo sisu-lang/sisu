@@ -345,19 +345,24 @@ pub(crate) fn build(program: &tir::Program) -> Program {
     let mut mir = lower(program);
     for function in &mut mir.functions {
         ownership::place(function);
-        if cfg!(debug_assertions)
-            && let Err(violation) = certify::certify(function)
-        {
-            panic!(
-                "mir certifier: fn {}, bb{}, {}: {}",
-                function.name,
-                violation.block.0,
-                print::local_name(function, violation.local),
-                violation.rule
-            );
+        if cfg!(debug_assertions) {
+            certified(function);
         }
     }
     mir
+}
+
+/// Panics on the first rule `function` breaks.
+fn certified(function: &Function) {
+    if let Err(violation) = certify::certify(function) {
+        panic!(
+            "mir certifier: fn {}, bb{}, {}: {}",
+            function.name,
+            violation.block.0,
+            print::local_name(function, violation.local),
+            violation.rule
+        );
+    }
 }
 
 #[cfg(test)]

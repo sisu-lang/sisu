@@ -2,8 +2,11 @@
 //! and the cost of a region.
 
 use super::*;
-use crate::mir::certify::{EDGES, Rule, Violation, certify};
+use crate::mir::certify::range::RangeMin;
+use crate::mir::certify::wavelet::Wavelet;
+use crate::mir::certify::{READS, Rule, Violation, certify};
 use crate::source::Span;
+use crate::tir::TypeKind;
 
 // Statements and operands, written short.
 
@@ -130,6 +133,22 @@ fn certifies(src: &str) -> Program {
         assert_eq!(certify(f), Ok(()), "fn {}", f.name);
     }
     program
+}
+
+/// How many statements of `f` borrow into `binding`.
+fn borrows(f: &Function, binding: LocalId) -> usize {
+    f.blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .filter(|stmt| {
+            matches!(stmt, Statement::Assign { dest: Some(dest), value: Rvalue::Borrow(_) } if *dest == binding)
+        })
+        .count()
+}
+
+/// Whether block `at` of `f` starts with `end binding`.
+fn starts_with_end(f: &Function, at: BlockId, binding: LocalId) -> bool {
+    matches!(f.blocks[at.0].stmts.first(), Some(Statement::End(local)) if *local == binding)
 }
 
 /// The local of `f` named `name`.
@@ -405,16 +424,7 @@ fn second_alternative_reassigns_its_binding() {
          fn f(t: Two) -> string {\n    match t {\n        Pair(a, _) | Pair(_, a) if keep(a) => a\n        _ => \"\"\n    }\n}",
     );
     let f = &program.functions[1];
-    let a = named(f, "a");
-    let borrows = f
-        .blocks
-        .iter()
-        .flat_map(|block| &block.stmts)
-        .filter(|stmt| {
-            matches!(stmt, Statement::Assign { dest: Some(dest), value: Rvalue::Borrow(_) } if *dest == a)
-        })
-        .count();
-    assert_eq!(borrows, 2);
+    assert_eq!(borrows(f, named(f, "a")), 2);
 }
 
 /// `order` from `tests/run/match_alternatives.sisu` with `string` fields, and an `|` of two
@@ -431,6 +441,12 @@ fn order_and_pair_alternatives() {
     );
     let names: Vec<&str> = program.functions.iter().map(|f| f.name.as_str()).collect();
     assert_eq!(names, ["see", "order", "pick", "main"]);
+    // Each name is bound once per alternative that binds it.
+    let order = &program.functions[1];
+    assert_eq!(borrows(order, named(order, "x")), 2);
+    assert_eq!(borrows(order, named(order, "y")), 2);
+    let pick = &program.functions[2];
+    assert_eq!(borrows(pick, named(pick, "a")), 2);
 }
 
 #[test]
@@ -689,7 +705,14 @@ fn pattern_fails_after_a_binding() {
         "enum P {\n    Two(string, i64)\n    Zero\n}\n\
          fn f(p: P) -> string {\n    match p {\n        Two(x, 1) => x\n        _ => \"\"\n    }\n}",
     );
-    assert_eq!(program.functions[0].name, "f");
+    let f = &program.functions[0];
+    let x = named(f, "x");
+    // The block that binds `x` tests the literal, and its failure edge ends `x`.
+    assert!(f.blocks.iter().any(|block| {
+        block.stmts.iter().any(|stmt| {
+            matches!(stmt, Statement::Assign { dest: Some(dest), value: Rvalue::Borrow(_) } if *dest == x)
+        }) && matches!(block.term, Terminator::SwitchValue { otherwise: Some(to), .. } if starts_with_end(f, to, x))
+    }));
 }
 
 #[test]
@@ -698,7 +721,16 @@ fn alternative_with_a_guard() {
         "enum E {\n    S(string)\n    T(string)\n}\n\
          fn h(e: E, c: bool) -> i64 {\n    match e {\n        S(x) | T(x) if c => 1\n        _ => 0\n    }\n}",
     );
-    assert_eq!(program.functions[0].name, "h");
+    let h = &program.functions[0];
+    let x = named(h, "x");
+    assert_eq!(borrows(h, x), 2);
+    // The guard's failure edge retries the next alternative, and after the last it ends `x`.
+    assert!(h.blocks.iter().any(|block| {
+        matches!(block.term, Terminator::Branch { else_, .. } if matches!(
+            h.blocks[else_.0].term,
+            Terminator::SwitchValue { otherwise: Some(to), .. } if starts_with_end(h, to, x)
+        ))
+    }));
 }
 
 /// `s` enters the loop owned; each iteration releases what it may hold, reassigns it and moves
@@ -1048,6 +1080,362 @@ fn exit_from_a_block_that_skips_the_release() {
     rejects(&b.finish(), 2, s, Rule::Escape);
 }
 
+// The certifier's contracts, one test each.
+
+/// `bb3` dominates neither `bb2`'s path through `bb1` nor `bb2`, so `s`, scoped at `bb3`, may not
+/// be mentioned in `bb2`. Lengauer and Tarjan's relative dominator decides `bb2`'s here.
+#[test]
+fn dominators_of_intersecting_paths() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::BOOL);
+    let s = b.local("s", Type::STRING);
+    b.scope(s, BlockId(3));
+    b.block(vec![], branch(c, 3, 1));
+    b.block(vec![], goto(2));
+    b.block(vec![fresh(s), Statement::Release(s)], ret());
+    b.block(vec![], branch(c, 1, 2));
+    rejects(&b.finish(), 2, s, Rule::Scope);
+}
+
+/// `old = take a[0]; a[0][1] = 5`: a store inside the taken element.
+#[test]
+fn store_inside_a_taken_place() {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::array(Type::I64)));
+    let t = b.local("t", Type::array(Type::I64));
+    let old = b.local("old", Type::array(Type::I64));
+    let mut inner = first(a);
+    inner.projections.push(Projection::Index {
+        index: Operand::Const(Const::Int(1, Type::I64)),
+        span: Span::new(0, 0),
+    });
+    b.block(
+        vec![
+            fresh(t),
+            Statement::Take {
+                dest: old,
+                place: first(a),
+            },
+            Statement::Store {
+                place: inner,
+                value: Operand::Const(Const::Int(5, Type::I64)),
+            },
+            Statement::Store {
+                place: first(a),
+                value: Operand::Move(t),
+            },
+            Statement::Release(old),
+            Statement::Release(a),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, a, Rule::Take);
+}
+
+/// `old = take o.0; u = copy o.1`: two fields of one object do not overlap.
+#[test]
+fn read_of_a_field_beside_a_taken_one() {
+    let mut b = Builder::new("f");
+    let o = b.param("o", Type::intern(TypeKind::Class(ClassId(0))));
+    let t = b.local("t", Type::STRING);
+    let u = b.local("u", Type::STRING);
+    let old = b.local("old", Type::STRING);
+    let field = |at| Place {
+        projections: vec![Projection::Field(at)],
+        ..whole(o)
+    };
+    b.block(
+        vec![
+            literal(t),
+            Statement::Take {
+                dest: old,
+                place: field(0),
+            },
+            assign(u, Rvalue::Copy(field(1))),
+            Statement::Store {
+                place: field(0),
+                value: Operand::Move(t),
+            },
+            Statement::Release(old),
+            Statement::Release(u),
+            Statement::Release(o),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// A parameter is owned from the start, so one never mentioned still owes its release.
+#[test]
+fn unmentioned_parameter_reaches_a_return() {
+    let mut b = Builder::new("f");
+    let s = b.param("s", Type::STRING);
+    b.block(vec![], ret());
+    rejects(&b.finish(), 0, s, Rule::Return);
+}
+
+/// Sol's case: `b` leaves `bb1` ended, and no path comes back to `bb1`.
+#[test]
+fn ended_binding_leaves_and_never_comes_back() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::BOOL);
+    let s = b.param("s", Type::STRING);
+    let x = b.local("x", Type::STRING);
+    b.scope(x, BlockId(1));
+    b.owner(x, s);
+    b.block(vec![], branch(c, 1, 2));
+    b.block(
+        vec![Statement::ScopeRelease(x), borrow(x, s), Statement::End(x)],
+        goto(2),
+    );
+    b.block(vec![Statement::Release(s)], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// A loop whose body `bb2` borrows into `x` and ends it. With `release`, `bb2` also scope-releases
+/// `x` first, which the ended value that comes back round the loop breaks. With `covered`, the
+/// back edge leaves from `bb4`, a block of `bb2`'s that does not mention `x`.
+fn ended_binding_comes_back(release: bool, covered: bool) -> (Function, LocalId) {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::BOOL);
+    let s = b.param("s", Type::STRING);
+    let x = b.local("x", Type::STRING);
+    b.scope(x, BlockId(2));
+    b.owner(x, s);
+    b.block(vec![], goto(1));
+    b.block(vec![], branch(c, 2, 3));
+    let mut body = vec![borrow(x, s), Statement::End(x)];
+    if release {
+        body.insert(0, Statement::ScopeRelease(x));
+    }
+    b.block(body, goto(if covered { 4 } else { 1 }));
+    b.block(vec![Statement::Release(s)], ret());
+    b.block(vec![], goto(1));
+    (b.finish(), x)
+}
+
+#[test]
+fn ended_binding_comes_back_to_a_scope_release() {
+    for covered in [false, true] {
+        let (f, x) = ended_binding_comes_back(true, covered);
+        assert_eq!(
+            certify(&f),
+            Err(Violation {
+                block: BlockId(2),
+                local: x,
+                rule: Rule::Consume
+            }),
+            "covered {covered}"
+        );
+    }
+}
+
+#[test]
+fn ended_binding_comes_back_to_a_borrow() {
+    for covered in [false, true] {
+        assert_eq!(
+            certify(&ended_binding_comes_back(false, covered).0),
+            Ok(()),
+            "covered {covered}"
+        );
+    }
+}
+
+/// `o` is empty on the `None` edge, so the read there is a use after consume.
+#[test]
+fn read_on_the_none_edge() {
+    let mut b = Builder::new("f");
+    let o = b.local("o", Type::optional(Type::STRING));
+    b.block(
+        vec![fresh(o)],
+        Terminator::IfPresent {
+            optional: o,
+            some: BlockId(1),
+            none: BlockId(2),
+        },
+    );
+    b.block(vec![Statement::Release(o)], ret());
+    b.block(vec![show(read(o))], ret());
+    rejects(&b.finish(), 2, o, Rule::Read);
+}
+
+/// `o` keeps its value on the `Some` edge, so a `return` there leaks it.
+#[test]
+fn leak_on_the_some_edge() {
+    let mut b = Builder::new("f");
+    let o = b.local("o", Type::optional(Type::STRING));
+    b.block(
+        vec![fresh(o)],
+        Terminator::IfPresent {
+            optional: o,
+            some: BlockId(1),
+            none: BlockId(2),
+        },
+    );
+    b.block(vec![show(read(o))], ret());
+    b.block(vec![], ret());
+    rejects(&b.finish(), 1, o, Rule::Return);
+}
+
+/// `release x` of a borrowed binding, and of an ended one: neither owns a reference.
+#[test]
+fn release_of_a_borrowed_or_ended_binding() {
+    for ended in [false, true] {
+        let mut b = Builder::new("f");
+        let s = b.local("s", Type::STRING);
+        let x = b.local("x", Type::STRING);
+        b.owner(x, s);
+        let mut stmts = vec![fresh(s), borrow(x, s), Statement::Release(x)];
+        if ended {
+            stmts.insert(2, Statement::End(x));
+        }
+        stmts.push(Statement::Release(s));
+        b.block(stmts, ret());
+        assert_eq!(
+            certify(&b.finish()),
+            Err(Violation {
+                block: BlockId(0),
+                local: x,
+                rule: Rule::Consume
+            }),
+            "ended {ended}"
+        );
+    }
+}
+
+/// `bb1` is unreachable, so its double release is never run.
+#[test]
+fn dead_block_is_ignored() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    b.block(vec![fresh(s), Statement::Release(s)], ret());
+    b.block(vec![Statement::Release(s), Statement::Release(s)], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// The presence branch in `bb0` makes `bb2` a node before `bb1`'s events and `bb2`'s own are
+/// seen; `bb2` still applies only its own.
+#[test]
+fn none_target_applies_its_own_events() {
+    let mut b = Builder::new("f");
+    let o = b.param("o", Type::optional(Type::STRING));
+    b.block(
+        vec![],
+        Terminator::IfPresent {
+            optional: o,
+            some: BlockId(1),
+            none: BlockId(2),
+        },
+    );
+    b.block(vec![Statement::Release(o)], ret());
+    b.block(vec![fresh(o), Statement::Release(o)], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// `bb2` and `bb3` hold `s` owned without mentioning it; only `bb3` leaves `s`'s region.
+#[test]
+fn escape_names_the_block_that_leaves() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::BOOL);
+    let s = b.local("s", Type::STRING);
+    b.scope(s, BlockId(1));
+    b.block(vec![], branch(c, 1, 4));
+    b.block(vec![fresh(s)], goto(2));
+    b.block(vec![], goto(3));
+    b.block(vec![], goto(4));
+    b.block(vec![], ret());
+    rejects(&b.finish(), 3, s, Rule::Escape);
+}
+
+/// At a `panic` the program ends, so a value still owned there is no leak.
+#[test]
+fn owned_value_at_a_panic() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let m = b.local("m", Type::STRING);
+    b.block(
+        vec![fresh(s), literal(m)],
+        Terminator::Panic {
+            message: Operand::Move(m),
+            span: Span::new(0, 0),
+        },
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// Only rule 4 is waived at a `panic`: a double release before one is still an error.
+#[test]
+fn double_release_before_a_panic() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let m = b.local("m", Type::STRING);
+    b.block(
+        vec![
+            fresh(s),
+            Statement::Release(s),
+            Statement::Release(s),
+            literal(m),
+        ],
+        Terminator::Panic {
+            message: Operand::Move(m),
+            span: Span::new(0, 0),
+        },
+    );
+    rejects(&b.finish(), 0, s, Rule::Consume);
+}
+
+/// A debug build panics on the first violation, naming the function, the block and the local.
+#[test]
+#[should_panic(expected = "mir certifier: fn f, bb0, s#0: may still own a reference at `return`")]
+fn violation_panics_in_a_debug_build() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    b.block(vec![fresh(s)], ret());
+    certified(&b.finish());
+}
+
+/// Every range of a pseudo-random array against a scan: its least value, and the positions
+/// whose values lie in a range.
+#[test]
+fn range_queries_match_a_scan() {
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    let values: Vec<u32> = (0..300)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            u32::try_from(seed % 40).expect("a value under 40 should fit")
+        })
+        .collect();
+    let least = RangeMin::new(values.clone());
+    for from in 0..values.len() {
+        for to in from..values.len() {
+            let at = least.argmin(from, to);
+            assert!((from..=to).contains(&at), "{from}..={to}");
+            assert_eq!(
+                Some(&values[at]),
+                values[from..=to].iter().min(),
+                "{from}..={to}"
+            );
+        }
+    }
+    let wavelet = Wavelet::new(&values, &(0..values.len()).collect::<Vec<_>>());
+    let mut stack = Vec::new();
+    for (low, high) in [(0, 39), (5, 9), (12, 12), (39, 50), (3, 2)] {
+        for from in (0..=values.len()).step_by(7) {
+            for to in (from..=values.len()).step_by(5) {
+                let mut found = Vec::new();
+                wavelet.report(from, to, low, high, &mut stack, |at| found.push(at));
+                found.sort_unstable();
+                let expected: Vec<usize> = (from..to)
+                    .filter(|&at| (low..=high).contains(&values[at]))
+                    .collect();
+                assert_eq!(found, expected, "{from}..{to} in {low}..={high}");
+            }
+        }
+    }
+}
+
 /// The scope release of each `s_i` sits in the function's last block, after every later `if`.
 /// Each `s_i`'s region is its own block and that last one, so the edges the certifier reads
 /// grow by the same amount for each `n` more locals.
@@ -1076,9 +1464,9 @@ fn scope_release_gap_is_sparse() {
             })
             .count();
         assert_eq!(locals, n);
-        EDGES.set(0);
+        READS.set(0);
         assert_eq!(certify(f), Ok(()));
-        EDGES.get()
+        READS.get()
     };
     let n = 100;
     let (one, two, three) = (edges(n), edges(2 * n), edges(3 * n));
@@ -1090,6 +1478,31 @@ fn scope_release_gap_is_sparse() {
         2 * n,
         3 * n
     );
+}
+
+/// `while D_n {} print(s)`, with `D_0 = c` and `D_{n+1} = { while D_n {} c }`: block `k` of
+/// the nesting has every loop head around it in its dominance frontier, so storing every
+/// block's frontier grows as `n^2`. The reads grow by the same amount for each 10 more levels.
+#[test]
+fn nested_loop_conditions_read_linearly() {
+    let source = |n: usize| {
+        let mut cond = "c".to_owned();
+        for _ in 0..n {
+            cond = format!("{{\n        while {cond} {{}}\n        c\n    }}");
+        }
+        format!("fn f(c: bool, s: string) {{\n    while {cond} {{}}\n    print(s)\n}}")
+    };
+    let reads = |n: usize| {
+        let program = build(&checked(&source(n)));
+        let f = &program.functions[0];
+        assert_eq!(f.loops.len(), n + 1);
+        READS.set(0);
+        assert_eq!(certify(f), Ok(()));
+        READS.get()
+    };
+    let (one, two, three) = (reads(10), reads(20), reads(30));
+    assert!(one > 0);
+    assert_eq!(three - two, two - one, "{one}, {two}, {three} reads");
 }
 
 // The ported timeout tests, now through lowering, the ownership pass and the certifier. Their
