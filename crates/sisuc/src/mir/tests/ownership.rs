@@ -342,6 +342,7 @@ fn guard_reads() {
 #[test]
 fn scalars_never_move() {
     let printed = built("fn f(n: i64) -> i64 { n }");
+    has(&printed, "f", &["= n#0", "return _"]);
     assert!(!function(&printed, "f").contains("move"), "{printed}");
 }
 
@@ -418,4 +419,58 @@ fn projection_write_is_a_use() {
     );
     has(&printed, "k", &["_ = copy a#1", "call h(move _)"]);
     assert!(!function(&printed, "k").contains("move a#1"), "{printed}");
+}
+
+/// A counted field store at its base's last use moves the base once, before the `take` of the
+/// old value: the `take` and the store read the one moved root.
+#[test]
+fn field_store_take_and_store_share_one_root() {
+    let printed =
+        built("class O {\n    mut s: string\n}\nfn f(o: O, name: string) {\n    o.s = name\n}");
+    has(
+        &printed,
+        "f",
+        &[
+            "_ = move o#0",
+            "_ = take _.0",
+            "_.0 = move name#1",
+            "release _",
+        ],
+    );
+    assert_eq!(count(&printed, "f", "o#0."), 0, "{printed}");
+}
+
+/// A panic reads its message in the terminator, so an earlier read copies it.
+#[test]
+fn panic_reads_its_message() {
+    let printed = built("fn die(m: string) {\n    print(m)\n    panic(m)\n}");
+    has(
+        &printed,
+        "die",
+        &["_ = copy m#0", "call print(_)", "panic move m#0"],
+    );
+}
+
+/// After the pass no `use`, guard mark or borrow-site flag is left, in a function with every
+/// kind of node and in a guard that reads a binding both ways; lowering left each of them.
+#[test]
+fn pass_leaves_no_use_or_mark() {
+    let guard = "enum E {\n    S(string)\n    T(string)\n}\nfn keep(s: string) -> bool { true }\n\
+                 fn f(e: E) -> i64 {\n    match e {\n        S(x) | T(x) if keep(x) && x.len() > 0 => 0\n        _ => 1\n    }\n}";
+    let marks = ["Use(LocalId(", "Guarded(", "borrow: true", "guard: true"];
+    let mut before = Vec::new();
+    for src in [EVERY_KIND, guard] {
+        let program = checked(src);
+        before.push(format!("{:?}", lower(&program).functions));
+        let after = format!("{:?}", build(&program).functions);
+        for mark in marks {
+            assert!(!after.contains(mark), "`{mark}` left in\n{after}");
+        }
+    }
+    for mark in marks {
+        assert!(
+            before.iter().any(|lowered| lowered.contains(mark)),
+            "lowering left no `{mark}`"
+        );
+    }
 }

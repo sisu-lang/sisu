@@ -377,43 +377,7 @@ fn mentions_every_kind_of_node() {
 /// released after, consumed ones are `use`d or moved, and a chain or `&&` branches.
 #[test]
 fn lowers_every_kind_of_node() {
-    let printed = lowered(
-        "class O {\n    mut n: i64\n    mut s: string\n}\n\
-         enum E {\n    V(i64)\n    W\n}\n\
-         fn g(x: i64) -> i64 { x }\n\
-         fn name() -> string { \"n\" }\n\
-         fn f(o: O, p: O, xs: [i64], s: string, cs: [char], c: bool, x: f64, k: char) {\n\
-             let m = O(n: 1, s: \"\")\n\
-             let v = E.V(2)\n\
-             let w: i64? = g(3)\n\
-             let none: i64? = None\n\
-             let b = u8(o.n)\n\
-             print(x.abs())\n\
-             print(-o.n)\n\
-             print(1.5 * x)\n\
-             print(k == 'a')\n\
-             print(s != \"t\")\n\
-             print(o is p)\n\
-             print(1 < xs[0] < 3)\n\
-             print(c && xs.len() > 0)\n\
-             print(c || false)\n\
-             print(xs.contains(2))\n\
-             print([4; 2].sum())\n\
-             print(s.words().len())\n\
-             let ws = s.words()\n\
-             let bs = s.bytes()\n\
-             let chs = s.chars()\n\
-             print(string(cs))\n\
-             print(\"{x:>8}\")\n\
-             let line = read_line()\n\
-             eprint(1)\n\
-             name()\n\
-             for i in 0..2 {\n\
-                 if c { continue }\n\
-                 print(i)\n\
-             }\n\
-         }",
-    );
+    let printed = lowered(EVERY_KIND);
     has(
         &printed,
         "f",

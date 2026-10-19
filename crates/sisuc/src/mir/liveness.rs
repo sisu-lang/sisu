@@ -22,8 +22,8 @@ pub(super) struct Liveness {
     live_out: FxHashSet<(LocalId, BlockId)>,
 }
 
-/// A statement that reads or writes a local. Its reads come before its write, as an
-/// assignment evaluates its value before it writes its destination.
+/// A statement that reads or writes a local. One that does both is noted twice, its read
+/// first, as an assignment evaluates its value before it writes its destination.
 #[derive(Clone, Copy)]
 struct Mention {
     block: BlockId,
@@ -51,18 +51,12 @@ pub(super) fn liveness(function: &Function) -> Liveness {
     for (b, block) in function.blocks.iter().enumerate() {
         let block_id = BlockId(b);
         let mut note = |at: usize, local: LocalId, reads: bool| {
-            if !function.locals[local.0].counted {
-                return;
-            }
-            let found: &mut Vec<Mention> = &mut mentions[local.0];
-            match found.last_mut() {
-                // A second mention in one statement: a read there still comes first.
-                Some(last) if last.block == block_id && last.at == at => last.reads |= reads,
-                _ => found.push(Mention {
+            if function.locals[local.0].counted {
+                mentions[local.0].push(Mention {
                     block: block_id,
                     at,
                     reads,
-                }),
+                });
             }
         };
         for (at, stmt) in block.stmts.iter().enumerate() {
