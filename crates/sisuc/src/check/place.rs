@@ -27,8 +27,8 @@ struct CheckedPlace {
     path: Option<Path>,
     /// The type a value written to it needs; `None` is `Error`.
     ty: Option<Type>,
-    /// `false` for a root that is a field without `mut`. A name root that cannot be written is reported but
-    /// still lowers, as in milestone 2.
+    /// `false` for a root that is a field without `mut`. A name root that cannot be written is
+    /// reported but still lowers, as in milestone 2.
     writable: bool,
 }
 

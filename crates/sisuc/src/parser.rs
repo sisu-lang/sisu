@@ -549,8 +549,8 @@ impl<'a> Parser<'a> {
     }
 
     /// The name and kind of the item that starts at `start`, when its header is intact: `fn`,
-    /// `class`, `enum` or `const`, then a name, with no lexer diagnostic before the token after the name.
-    /// `fn to$tal` lexes as `fn to tal`, so its name is not `to`.
+    /// `class`, `enum` or `const`, then a name, with no lexer diagnostic before the token after the
+    /// name. `fn to$tal` lexes as `fn to tal`, so its name is not `to`.
     fn header(&self, start: usize) -> Option<Broken> {
         let kind = match self.tokens[start].kind {
             TokenKind::Fn => BrokenKind::Function,

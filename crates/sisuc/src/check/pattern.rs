@@ -93,9 +93,9 @@ fn empty_block() -> tir::Block {
 }
 
 impl Checker<'_> {
-    /// `match scrutinee { arms }`, whose keyword is at `keyword` and `}` at `close`. Each arm is checked in a scope
-    /// that holds its bindings, and the arms join as an `if`'s branches do (`join`). When every
-    /// pattern checked, the arms are checked for coverage and reachability.
+    /// `match scrutinee { arms }`, whose keyword is at `keyword` and `}` at `close`. Each arm is
+    /// checked in a scope that holds its bindings, and the arms join as an `if`'s branches do
+    /// (`join`). When every pattern checked, the arms are checked for coverage and reachability.
     pub(super) fn match_expr(
         &mut self,
         span: Span,

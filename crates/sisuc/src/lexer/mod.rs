@@ -2829,7 +2829,8 @@ mod tests {
                 "fn main() {\n    if true { while false }\n    {\n    }\n}",
                 (3, 5),
             ),
-            // A `}` after the keyword: the header has its block, or the keyword sits in a closed one.
+            // A `}` after the keyword: the header has its block, or the keyword sits in a closed
+            // one.
             (
                 "fn main() {\n    if c { 1 } else { 2 } + 3\n    {\n    }\n}",
                 (3, 5),

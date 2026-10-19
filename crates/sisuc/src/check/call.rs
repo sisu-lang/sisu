@@ -1,4 +1,5 @@
-//! Calls: functions, methods, and the constructors of classes and enum variants, with their arguments and labels.
+//! Calls: functions, methods, and the constructors of classes and enum variants, with their
+//! arguments and labels.
 
 use std::fmt;
 

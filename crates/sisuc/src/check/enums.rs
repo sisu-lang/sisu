@@ -202,7 +202,8 @@ impl Checker<'_> {
                 }
             }
             Some((args, parens)) => {
-                // The fix deletes the parentheses, so what they hold (even a comment) makes it unsafe.
+                // The fix deletes the parentheses, so what they hold (even a comment) makes it
+                // unsafe.
                 let inside = parens.start()..parens.end();
                 self.report(DiagnosticKind::VariantForm {
                     path: path.to_string(),

@@ -46,7 +46,8 @@ fn on_path(program: &str) -> bool {
 }
 
 /// Cargo builds `libsisu_runtime.a` into the same directory as `sisuc`.
-// ponytail: only works from a Cargo target directory; add a search path once sisuc is installed elsewhere.
+// ponytail: only works from a Cargo target directory; add a search path once sisuc is installed
+// elsewhere.
 fn runtime_library() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate sisuc: {e}"))?;
     let path = exe.with_file_name("libsisu_runtime.a");

@@ -1,4 +1,5 @@
-//! The prelude: `print`, `eprint`, `panic` and `read_line`, the names no top-level item can take, and `todo`.
+//! The prelude: `print`, `eprint`, `panic` and `read_line`, the names no top-level item can take,
+//! and `todo`.
 
 use super::*;
 
