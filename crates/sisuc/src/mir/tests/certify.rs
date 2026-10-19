@@ -1491,9 +1491,22 @@ fn range_queries_match_a_scan() {
     }
 }
 
+/// Asserts that `one`, `two` and `three`, the reads for inputs of size `n`, `2n` and `3n`,
+/// grow no faster than `n log n`: the second step adds at most a tenth more than the first.
+/// The wavelet matrix and its queries add one bit level per doubling of the depths they hold,
+/// a few percent from `2n` to `3n`; quadratic work makes the second step two thirds larger.
+fn assert_near_linear(one: usize, two: usize, three: usize) {
+    assert!(one > 0);
+    let (first, second) = (two - one, three - two);
+    assert!(
+        second <= first + first / 10,
+        "{one}, {two}, {three} reads: the second step adds {second}, the first {first}"
+    );
+}
+
 /// The scope release of each `s_i` sits in the function's last block, after every later `if`.
-/// Each `s_i`'s region is its own block and that last one, so the edges the certifier reads
-/// grow by the same amount for each `n` more locals.
+/// Each `s_i`'s region is its own block and that last one, so the reads grow near linearly
+/// with the locals.
 #[test]
 fn scope_release_gap_is_sparse() {
     let source = |n: usize| {
@@ -1524,20 +1537,12 @@ fn scope_release_gap_is_sparse() {
         READS.get()
     };
     let n = 100;
-    let (one, two, three) = (edges(n), edges(2 * n), edges(3 * n));
-    assert!(one > 0);
-    assert_eq!(
-        three - two,
-        two - one,
-        "{one}, {two}, {three} edges for {n}, {}, {}",
-        2 * n,
-        3 * n
-    );
+    assert_near_linear(edges(n), edges(2 * n), edges(3 * n));
 }
 
 /// `while D_n {} print(s)`, with `D_0 = c` and `D_{n+1} = { while D_n {} c }`: block `k` of
 /// the nesting has every loop head around it in its dominance frontier, so storing every
-/// block's frontier grows as `n^2`. The reads grow by the same amount for each 10 more levels.
+/// block's frontier grows as `n^2`. The reads grow near linearly with the levels.
 #[test]
 fn nested_loop_conditions_read_linearly() {
     let source = |n: usize| {
@@ -1555,9 +1560,7 @@ fn nested_loop_conditions_read_linearly() {
         assert_eq!(certify(f), Ok(()));
         READS.get()
     };
-    let (one, two, three) = (reads(10), reads(20), reads(30));
-    assert!(one > 0);
-    assert_eq!(three - two, two - one, "{one}, {two}, {three} reads");
+    assert_near_linear(reads(10), reads(20), reads(30));
 }
 
 // The ported timeout tests, now through lowering, the ownership pass and the certifier. Their
