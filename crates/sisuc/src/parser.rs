@@ -39,6 +39,10 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         comments,
         breaks,
     } = lexed;
+    debug_assert!(
+        diagnostics.is_sorted_by_key(|d| d.span().start()),
+        "`lexer_in` searches the lexer's diagnostics by where they start"
+    );
     Parser {
         source,
         tokens: &tokens,
@@ -71,6 +75,18 @@ fn earlier(a: Diagnostic, b: Diagnostic) -> Diagnostic {
     } else {
         a
     }
+}
+
+/// Whether one of `ranges` holds `at`, given that neither their starts nor their ends go back
+/// (`rising`): the last to start at or before `at` holds it if any does.
+fn holds(ranges: &[Range<usize>], at: usize) -> bool {
+    let i = ranges.partition_point(|r| r.start <= at);
+    i > 0 && ranges[i - 1].contains(&at)
+}
+
+/// Whether neither the starts nor the ends of `ranges` go back, as `holds` needs.
+fn rising(ranges: &[Range<usize>]) -> bool {
+    ranges.is_sorted_by(|a, b| a.start <= b.start && a.end <= b.end)
 }
 
 /// The format spec `text`, written at `at` from its `:`: `[<^>][width][.precision]`, with a
@@ -522,11 +538,12 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
         diagnostics.append(&mut self.specs);
-        let outside = |at: &usize| !covered.iter().any(|r| r.contains(at));
+        // An unnamed item starts where its line does, inside the item before, so items may overlap.
+        debug_assert!(rising(&covered));
         diagnostics.extend(
             self.lexer
                 .iter()
-                .filter(|d| outside(&d.span().start()))
+                .filter(|d| !holds(&covered, d.span().start()))
                 .cloned(),
         );
         diagnostics.sort_by_key(|d| d.span().start());
@@ -643,9 +660,9 @@ impl<'a> Parser<'a> {
 
     /// The lexer diagnostics that start in `bytes`, in order.
     fn lexer_in(&self, bytes: Range<usize>) -> impl Iterator<Item = &Diagnostic> {
-        self.lexer
-            .iter()
-            .filter(move |d| bytes.contains(&d.span().start()))
+        let at = |end: usize| self.lexer.partition_point(|d| d.span().start() < end);
+        let start = at(bytes.start);
+        self.lexer[start..at(bytes.end).max(start)].iter()
     }
 
     /// Parses with `parse` the item or member that starts here and runs to `end`. Its error is
@@ -691,13 +708,10 @@ impl<'a> Parser<'a> {
         let mut errors = Vec::new();
         let mut methods = Vec::new();
         let parsed = body(self, &mut errors, &mut methods);
+        debug_assert!(rising(&methods));
         let outside = self
             .lexer_in(bytes)
-            .find(|d| {
-                !methods
-                    .iter()
-                    .any(|m: &Range<usize>| m.contains(&d.span().start()))
-            })
+            .find(|d| !holds(&methods, d.span().start()))
             .cloned();
         match (parsed, outside) {
             (Ok(item), None) => Ok((item, errors)),
@@ -2595,6 +2609,16 @@ mod tests {
     use crate::diagnostic::explanations::{apply_fix, fix_edits};
     use crate::lexer::lex;
     use crate::source::line_col;
+
+    /// Ranges may overlap, as an unnamed item does the item before it, but neither starts nor ends
+    /// may go back.
+    #[test]
+    fn rising_ranges() {
+        assert!(rising(&[0..2, 1..9, 9..9]));
+        assert!(!rising(&[0..5, 1..4]));
+        assert!(!rising(&[1..5, 0..6]));
+        assert!(holds(&[0..2, 1..9], 1) && holds(&[0..2, 1..9], 8) && !holds(&[0..2, 3..9], 2));
+    }
 
     fn program(src: &str) -> String {
         parse_ok(src).to_string()

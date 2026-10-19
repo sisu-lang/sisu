@@ -51,7 +51,8 @@ pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>)
 /// was not about. A checker fix is not judged: the checker runs only on items that parse, and
 /// the fuzz target asserts that every fix shown keeps the syntax, the checker's included.
 /// Judging one lexes and parses the whole source again, so judging every checker fix made N
-/// warnings cost N parses.
+/// warnings cost N parses. For the same reason only the first `JUDGED` syntax fixes are judged;
+/// later ones are dropped.
 pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
     let mut sound = diagnostics.to_vec();
     // Judging a fix lexes and parses `source` again, so skip that when no diagnostic has one.
@@ -64,9 +65,13 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
             .map(|d| (d.code(), d.span()))
             .collect();
         let marks = marks(source);
+        let mut judged = 0;
         for d in &mut sound {
             if reported.contains(&(d.code(), d.span())) {
-                d.retain_fixes(|fix| syntax_errors(&fix.apply(source)) <= before);
+                d.retain_fixes(|fix| {
+                    judged += 1;
+                    judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
+                });
             }
             let own = d.span().start();
             d.demote_fixes(|fix| {
@@ -77,6 +82,11 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
     }
     sound
 }
+
+/// How many syntax fixes `sound_fixes` judges.
+// shortcut: a fix past the cap is dropped, not judged; judge only the edited item if files with
+// more fixable syntax errors turn up.
+const JUDGED: usize = 100;
 
 /// Where each comment and each lexer error of `source` starts: text that the parser never sees,
 /// so that no rule behind a fix knows it is there.
@@ -170,6 +180,18 @@ mod tests {
         }
     }
 
+    /// Past `JUDGED` syntax fixes, a fix is dropped unjudged: each judgement parses the whole
+    /// source again.
+    #[test]
+    fn fixes_past_the_cap_are_dropped() {
+        let src = "fn f() {\n    print(0X1)\n}\n".repeat(JUDGED + 1) + "fn main() {}\n";
+        let ds = sound_fixes(&src, &front_end(&src).1);
+        assert_eq!(ds.len(), JUDGED + 1);
+        let mut fixed = ds.iter().map(|d| !d.fixes().is_empty());
+        assert!(fixed.clone().take(JUDGED).all(|f| f));
+        assert_eq!(fixed.next_back(), Some(false));
+    }
+
     /// A safe fix that deletes up to a token is unsafe when a comment or a stray character lies in
     /// what it deletes: the rule behind it sees only tokens.
     #[test]
@@ -233,6 +255,19 @@ fn main() {
                 (Code::Expected, (2, 9)),
                 (Code::Var, (6, 5)),
                 (Code::Mismatch, (10, 19))
+            ]
+        );
+    }
+
+    /// The unnamed `const enum` starts where its line does, inside the unnamed `1` before it;
+    /// the `$` between them is reported once.
+    #[test]
+    fn overlapping_unnamed_items() {
+        assert_eq!(
+            codes("1\n$\nconst enum{}"),
+            [
+                (Code::Expected, (1, 1)),
+                (Code::UnexpectedCharacter, (2, 1))
             ]
         );
     }
