@@ -323,7 +323,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                 line_start = true;
                 // Look ahead only where a `Newline` would be pushed: the next newlines of a
                 // blank run then find `Newline` last and skip it, so no gap is scanned twice.
-                if ends_statement(&tokens, &brackets.open) {
+                if ends_statement(&tokens, &brackets.open, brackets.trailing_semicolons) {
                     if let Some(gap) = continues_line(&source[start..]) {
                         // Jump to the `.`/`?.`, so a long gap is scanned once.
                         while chars.next_if(|&(i, _)| i < start + gap).is_some() {}
@@ -332,6 +332,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                         // and one at `\n` after `\r` sits a column too far right.
                         let end = start - usize::from(source[..start].ends_with('\r'));
                         tokens.push(newline(Span::new(end, end)));
+                        brackets.count(false);
                     }
                 }
                 continue;
@@ -363,10 +364,11 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                 kind
             }
             '-' if matches!(chars.peek(), Some(&(_, ' ' | '\t')))
-                && tokens.last().is_some_and(|t| t.kind == TokenKind::Newline) =>
+                && before_semicolons(&tokens, brackets.trailing_semicolons)
+                    .is_some_and(|t| t.kind == TokenKind::Newline) =>
             {
                 let at = Span::new(start, start + 1);
-                if !after_skip(source, &tokens, skipped) {
+                if !after_skip(source, &tokens, brackets.in_block(), skipped) {
                     diagnostics.push(DiagnosticKind::LeadingBinaryMinus { at }.into());
                 }
                 TokenKind::Minus
@@ -382,30 +384,25 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
             }
         };
         let span = Span::new(start, chars.peek().map_or(source.len(), |&(i, _)| i));
+        // A `;` that separates statements does not end the line's start: the token after it is
+        // the first one the source would have there without it.
+        let separator = kind == TokenKind::Semicolon && brackets.in_block();
         if line_start {
-            if let Some(d) = check_line_start(source, &tokens, &brackets.open, &kind, span) {
-                // A `{` on its own line lexes as if written on the line above. No other line-start
-                // error follows a `Newline`: each fires only inside `(` or `[`.
-                if tokens.last().is_some_and(|t| t.kind == TokenKind::Newline) {
-                    tokens.pop();
-                }
-                if !after_skip(source, &tokens, skipped) {
-                    diagnostics.push(d);
-                }
-            }
-            line_start = false;
+            diagnostics.extend(brackets.line_start(source, &mut tokens, (&kind, span), skipped));
+            line_start = separator;
         }
         if let Err(d) = track_bracket(&mut brackets.open, &kind, span) {
             return Err(first_or(diagnostics, d));
         }
         tokens.push(Token { kind, span });
+        brackets.count(separator);
     }
     brackets.end_line(source.len(), &mut tokens, &mut diagnostics);
     if let Some(&(bracket, at)) = brackets.open.last() {
         let unclosed = DiagnosticKind::UnclosedBracket { bracket, at };
         return Err(first_or(diagnostics, unclosed.into()));
     }
-    if ends_statement(&tokens, &brackets.open) {
+    if ends_statement(&tokens, &brackets.open, brackets.trailing_semicolons) {
         tokens.push(newline(Span::new(source.len(), source.len())));
     }
     tokens.push(eof(&tokens));
@@ -436,14 +433,54 @@ struct Frame {
 struct Brackets {
     open: Vec<Open>,
     frames: Vec<Frame>,
+    /// How many `;`s that separate statements end the tokens, as `in_block` says. A cut that
+    /// shortens the tokens resets it.
+    trailing_semicolons: usize,
 }
 
 impl Brackets {
+    /// Whether the innermost open bracket is a block's `{`, or there is none: a `;` here
+    /// separates statements. An interpolation's `{` is not a block.
+    fn in_block(&self) -> bool {
+        self.open.last().is_none_or(|&(c, _)| c == '{') && !self.at_end()
+    }
+
     /// Whether a `}` ends the innermost interpolation: every bracket opened in it is closed.
     fn at_end(&self) -> bool {
         self.frames
             .last()
             .is_some_and(|f| f.brace + 1 == self.open.len())
+    }
+
+    /// Counts a token just pushed: a `;` that separates statements, or another token.
+    fn count(&mut self, separator: bool) {
+        self.trailing_semicolons = if separator {
+            self.trailing_semicolons + 1
+        } else {
+            0
+        };
+    }
+
+    /// The layout error of the token `at`, which starts a line, unless text was `skipped` on the
+    /// line above it. A `{` on its own line lexes as if written on the line above, so it pops the
+    /// `Newline` before it. No other line-start error follows a `Newline`: each fires only inside
+    /// `(` or `[`. That `Newline` sits before the line's `;`s, or is the last token when they are
+    /// before it.
+    fn line_start(
+        &self,
+        source: &str,
+        tokens: &mut Vec<Token>,
+        (kind, span): (&TokenKind, Span),
+        skipped: Option<usize>,
+    ) -> Option<Diagnostic> {
+        let d = check_line_start(source, tokens, &self.open, kind, span)?;
+        let at = tokens.len().checked_sub(self.trailing_semicolons + 1);
+        if let Some(at) =
+            at.filter(|&i| tokens.get(i).is_some_and(|t| t.kind == TokenKind::Newline))
+        {
+            tokens.remove(at);
+        }
+        (!after_skip(source, tokens, self.in_block(), skipped)).then_some(d)
     }
 
     /// Ends every open interpolation at the line end or the end of the file at `at`, and returns
@@ -491,6 +528,7 @@ impl Brackets {
     ) -> Option<usize> {
         let (outer, inner) = (self.frames.first()?, self.frames.last()?);
         unclosed(outer.before, d(inner.quote), diagnostics);
+        self.trailing_semicolons = 0;
         self.open.truncate(outer.brace);
         tokens.truncate(outer.token + 1);
         if let Some(t) = tokens.get_mut(outer.token) {
@@ -616,9 +654,9 @@ fn first_or(diagnostics: Vec<Diagnostic>, bracket: Diagnostic) -> Diagnostic {
 
 /// Whether text was `skipped` on the line of the last code token or after it. A line-start
 /// diagnostic then reads text that recovery may have dropped, so it may be a consequence of the
-/// skip's own diagnostic, and is not reported.
-fn after_skip(source: &str, tokens: &[Token], skipped: Option<usize>) -> bool {
-    let code = tokens.iter().rfind(|t| t.kind != TokenKind::Newline);
+/// skip's own diagnostic, and is not reported. In a block, a `;` is not code.
+fn after_skip(source: &str, tokens: &[Token], in_block: bool, skipped: Option<usize>) -> bool {
+    let code = last_code(tokens, in_block);
     skipped.zip(code).is_some_and(|(s, code)| {
         // `None` when the skip comes after the code token.
         source
@@ -647,6 +685,21 @@ fn continues_line(rest: &str) -> Option<usize> {
     }
 }
 
+/// The last token that is not a `Newline`, nor, in a block, a `;` that separates statements: the
+/// token the source would end with without them.
+fn last_code(tokens: &[Token], in_block: bool) -> Option<&Token> {
+    tokens
+        .iter()
+        .rfind(|t| !(t.kind == TokenKind::Newline || in_block && t.kind == TokenKind::Semicolon))
+}
+
+/// The token before the last `trailing` tokens, which are `;`s that separate statements: the one
+/// a line break there would follow without them. Found by indexing, so that a long run of `;`
+/// lines costs no more than a short one.
+fn before_semicolons(tokens: &[Token], trailing: usize) -> Option<&Token> {
+    tokens.get(tokens.len().checked_sub(trailing + 1)?)
+}
+
 fn newline(span: Span) -> Token {
     Token {
         kind: TokenKind::Newline,
@@ -654,16 +707,12 @@ fn newline(span: Span) -> Token {
     }
 }
 
-/// Whether a line break here ends a statement: the previous token can end one,
-/// and the innermost open bracket, if any, is a block. A `;` is not such a token, but the break
-/// after it must reach the parser, so that it can tell a `;` that ends a line from one with
-/// code after it.
-fn ends_statement(tokens: &[Token], open: &[Open]) -> bool {
-    let ends = can_end_statement(tokens.last())
-        || tokens
-            .last()
-            .is_some_and(|t| t.kind == TokenKind::Semicolon);
-    ends && open.last().is_none_or(|&(c, _)| c == '{')
+/// Whether a line break here ends a statement: the token before the last `trailing` tokens, which
+/// are `;`s that separate statements, can end one, and the innermost open bracket, if any, is a
+/// block. A `;` is transparent, so `x;\n` ends a statement as `x\n` does, and `{;\n` does not.
+fn ends_statement(tokens: &[Token], open: &[Open], trailing: usize) -> bool {
+    can_end_statement(before_semicolons(tokens, trailing))
+        && open.last().is_none_or(|&(c, _)| c == '{')
 }
 
 /// Whether `token` can end a statement (Go's rule).
@@ -713,14 +762,15 @@ fn check_line_start(
 ) -> Option<Diagnostic> {
     match kind {
         TokenKind::LBrace => {
-            let code = tokens.iter().rfind(|t| t.kind != TokenKind::Newline);
+            let in_block = open.last().is_none_or(|&(c, _)| c == '{');
+            let code = last_code(tokens, in_block);
             match code {
                 Some(code) if can_end_statement(Some(code)) || code.kind == TokenKind::Else => {
                     // Only a header takes the `{`: joining it to another statement almost never
                     // gives a valid one (`print(1) {`, `let x = 1 {`, `} {`). Inside `(` or `[`
                     // the moved `{` would still sit in the unclosed bracket.
                     let statement = last_statement(tokens);
-                    let join = (open.last().is_none_or(|&(c, _)| c == '{')
+                    let join = (in_block
                         && statement.first().is_some_and(is_header)
                         && header_awaits_brace(statement))
                     .then(|| Join {
@@ -764,17 +814,18 @@ fn line_of<'t>(source: &str, tokens: &'t [Token], code: &Token) -> &'t [Token] {
     &tokens[before.map_or(0, |i| i + 1)..]
 }
 
-/// The statement that `tokens` ends with, before any line break after it: back to the last
-/// line break that ended a statement, or to the `{` of the block it stands in. A break inside
-/// brackets or before a continuation never reached `tokens`, so a statement can span lines.
+/// The statement that `tokens` ends with in a block, before any line break or `;` after it: back
+/// to the last line break or `;` that ended a statement, or to the `{` of the block it stands in.
+/// A break inside brackets or before a continuation never reached `tokens`, so a statement can
+/// span lines, and a `;` inside `( )`, `[ ]` or an interpolation does not end it.
 fn last_statement(tokens: &[Token]) -> &[Token] {
     let end = tokens
         .iter()
-        .rposition(|t| t.kind != TokenKind::Newline)
+        .rposition(|t| !matches!(t.kind, TokenKind::Newline | TokenKind::Semicolon))
         .map_or(0, |i| i + 1);
     let mut depth = 0_usize;
     let start = tokens[..end].iter().rposition(|t| match t.kind {
-        TokenKind::RBrace => {
+        TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket | TokenKind::StrTail(_) => {
             depth += 1;
             false
         }
@@ -782,7 +833,11 @@ fn last_statement(tokens: &[Token]) -> &[Token] {
             depth -= 1;
             false
         }
-        TokenKind::LBrace | TokenKind::Newline => depth == 0,
+        TokenKind::LParen | TokenKind::LBracket | TokenKind::StrHead(_) => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        TokenKind::LBrace | TokenKind::Newline | TokenKind::Semicolon => depth == 0,
         _ => false,
     });
     &tokens[start.map_or(0, |i| i + 1)..end]
@@ -2892,12 +2947,173 @@ mod tests {
 
     #[test]
     fn semicolon_before_a_line_start_lexes_clean() {
-        // The `[` after `;` starts an array element, and a `{` after `;` is for the parser.
-        for src in [
-            "fn main() { let b = [0;\n[2][0]] }",
-            "fn main() {\n    let x = 1;\n    {\n    }\n}",
+        // The `[` after `;` starts an array element.
+        assert!(lex_clean("fn main() { let b = [0;\n[2][0]] }").is_ok());
+    }
+
+    /// The token kinds of `src`, which the lexer recovers from.
+    fn recovered_kinds(src: &str) -> Vec<TokenKind> {
+        let lexed = lex(src).expect("the lexer recovers");
+        lexed.tokens.into_iter().map(|t| t.kind).collect()
+    }
+
+    #[test]
+    fn layout_looks_past_a_semicolon() {
+        use Code::{BraceOnNewLine, LeadingBinaryMinus, UnexpectedCharacter};
+        for (src, want) in [
+            // A `;` ends the line above as a line break does, so the `{` below it is on its own
+            // line, and so is a `{` after a line-initial `;`.
+            (
+                "fn main() {\n    let x = 1;\n    {\n    }\n}",
+                vec![(BraceOnNewLine, 3, 5)],
+            ),
+            (
+                "fn main() {\n    let x = 1\n    ; { }\n}",
+                vec![(BraceOnNewLine, 3, 7)],
+            ),
+            (
+                "fn main() {\n    let x = 1;\n    ;\n    { }\n}",
+                vec![(BraceOnNewLine, 4, 5)],
+            ),
+            (
+                "fn main() {\n    let t = a\n    ; - b\n}",
+                vec![(LeadingBinaryMinus, 3, 7)],
+            ),
+            // After a `{`, a `;` does not make the minus leading, as a line break does not.
+            ("fn f() -> i64 {\n;\n- 1\n}", vec![]),
+            // Inside `[ ]` the `;` separates the parts of an array: it is not skipped.
+            ("fn main() { let b = [0;\n{ 1 }] }", vec![]),
+            // The skipped `$` hides the minus, with or without the `;`.
+            (
+                "fn main() {\n    let x = 1 $\n    ; - 2\n}",
+                vec![(UnexpectedCharacter, 2, 15)],
+            ),
         ] {
-            assert!(lex_clean(src).is_ok(), "{src}");
+            assert_eq!(found(src), want, "{src}");
+        }
+    }
+
+    #[test]
+    fn a_semicolon_is_transparent_to_the_moved_brace() {
+        use TokenKind::{Eof, LBrace, Newline, RBrace, Semicolon};
+        // The `{` pops the `Newline` that stands before the line's `;`s, or after the previous
+        // line's, as it would pop the one that stands before it without them.
+        for (src, want) in [
+            (
+                "x\n; {}",
+                vec![ident("x"), Semicolon, LBrace, RBrace, Newline, Eof],
+            ),
+            (
+                "x;\n{}",
+                vec![ident("x"), Semicolon, LBrace, RBrace, Newline, Eof],
+            ),
+            (
+                "x;\n;\n{}",
+                vec![
+                    ident("x"),
+                    Semicolon,
+                    Semicolon,
+                    LBrace,
+                    RBrace,
+                    Newline,
+                    Eof,
+                ],
+            ),
+            (
+                "x;;\n{}",
+                vec![
+                    ident("x"),
+                    Semicolon,
+                    Semicolon,
+                    LBrace,
+                    RBrace,
+                    Newline,
+                    Eof,
+                ],
+            ),
+        ] {
+            assert_eq!(recovered_kinds(src), want, "{src}");
+            assert_eq!(found(src).len(), 1, "{src}");
+        }
+        // No `Newline` after the `;`, as there is none after the `{`.
+        assert_eq!(
+            all_kinds("{;\n}"),
+            [LBrace, Semicolon, RBrace, Newline, Eof]
+        );
+    }
+
+    #[test]
+    fn a_cut_interpolation_leaves_no_semicolon_count() {
+        use TokenKind::{Eof, Eq, Fn, LBrace, LParen, Let, Newline, RBrace, RParen, Str};
+        // The line break cuts the literal. A `;` in the interpolation, or in a block in it, is
+        // not among the tokens that remain, so the count of them is not left stale: the `Newline`
+        // after the literal still comes, and nothing underflows.
+        for src in [
+            "fn main() {\n    let s = \"{a;\n}",
+            "fn main() {\n    let s = \"{;;\n}",
+            "fn main() {\n    let s = \"{ { a;\n}",
+            "fn main() {\n    let s = \"{ { a;;\n}",
+        ] {
+            assert_eq!(
+                recovered_kinds(src),
+                [
+                    Fn,
+                    ident("main"),
+                    LParen,
+                    RParen,
+                    LBrace,
+                    Let,
+                    ident("s"),
+                    Eq,
+                    Str(String::new()),
+                    Newline,
+                    RBrace,
+                    Newline,
+                    Eof
+                ],
+                "{src}"
+            );
+            assert_eq!(found(src), [(Code::LiteralNotClosed, 2, 13)], "{src}");
+        }
+    }
+
+    #[test]
+    fn brace_on_new_line_after_a_semicolon_joins_its_statement() {
+        // The join replaces the gap by a space, so a gap that holds a `;` makes it unsafe. The
+        // statement is the one after the last `;` outside brackets.
+        for (src, safe, joined) in [
+            (
+                "fn main() {\n    let x = 1; if c\n    { }\n}",
+                true,
+                "fn main() {\n    let x = 1; if c { }\n}",
+            ),
+            (
+                "fn main() {\n    if c\n    ; { }\n}",
+                false,
+                "fn main() {\n    if c { }\n}",
+            ),
+            (
+                "fn main() {\n    if c;\n    { }\n}",
+                false,
+                "fn main() {\n    if c { }\n}",
+            ),
+            ("let x = 1; if f(1)\n{ }", true, "let x = 1; if f(1) { }"),
+            // Neither does a `;` inside `[ ]` or in an interpolation.
+            (
+                "fn main() {\n    if xs == [0; 3]\n    { }\n}",
+                true,
+                "fn main() {\n    if xs == [0; 3] { }\n}",
+            ),
+            (
+                "fn main() {\n    if \"{a; b}\" == c\n    { }\n}",
+                true,
+                "fn main() {\n    if \"{a; b}\" == c { }\n}",
+            ),
+        ] {
+            let d = only(src);
+            assert_eq!(d.code(), Code::BraceOnNewLine, "{src}");
+            assert_eq!(fix_edits(&d).map(|(safe, _)| safe), Some(safe), "{src}");
+            assert_eq!(apply_fix(src, &d), joined, "{src}");
         }
     }
 
