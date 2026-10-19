@@ -50,9 +50,6 @@ pub(super) fn hoist(function: &mut Function) {
     let mut blocks = BlocksMut::new(&mut function.blocks);
     for (block, lp) in innermost.iter().enumerate() {
         let Some(lp) = *lp else { continue };
-        if leave[lp].is_empty() {
-            continue;
-        }
         blocks
             .get_mut(block)
             .stmts
@@ -461,10 +458,6 @@ mod seam {
     }
 
     impl Roots {
-        pub(super) fn is_empty(&self) -> bool {
-            self.set.is_empty()
-        }
-
         pub(super) fn insert(&mut self, local: LocalId) {
             probe();
             self.set.insert(local);

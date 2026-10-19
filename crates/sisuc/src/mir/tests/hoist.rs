@@ -274,6 +274,16 @@ fn hoisted_unique_sits_in_the_pre_header() {
     );
     assert_eq!(in_loop.matches("make_unique").count(), 1, "{in_loop}");
     assert!(in_loop.contains("make_unique g#1["), "{in_loop}");
+    // A barred array keeps its `make_unique` at the write, beside one that leaves.
+    let (pre_header, in_loop) = pre_header_and_loop(
+        "fn f(xs: [i64], ys: [i64]) -> [i64] {\n    let mut a = xs\n    let mut b = ys\n    let mut keep = [0]\n    for j in 0..2 {\n        a[j] = 1\n        keep = b\n        b[j] = 1\n    }\n    print(keep[0])\n    a\n}",
+    );
+    assert!(
+        last_statement(&pre_header).starts_with("make_unique a#"),
+        "{pre_header}"
+    );
+    assert!(in_loop.contains("make_unique b#"), "{in_loop}");
+    assert!(!in_loop.contains("make_unique a#"), "{in_loop}");
     // `for x in a` copies `a` in the pre-header: made unique before that copy, the loop would
     // write into the array it iterates over.
     let (pre_header, _) = pre_header_and_loop(row("for_over_itself"));
@@ -414,6 +424,8 @@ fn nested_loops_fetch_each_block_at_most_twice() {
         let uniques = level_0_uniques(&f);
         assert_eq!(uniques.iter().sum::<usize>(), 1, "depth {depth}");
         assert_eq!(uniques[f.loops[0].pre_header.0], 1, "depth {depth}");
+        // Each block of the outer loop is read at least once.
+        assert!(visits >= f.loops[0].blocks.len(), "depth {depth}: {visits}");
         assert!(
             visits <= 2 * f.blocks.len(),
             "depth {depth}: {visits} fetches of {} blocks",
@@ -431,10 +443,79 @@ fn many_roots_probe_linearly() {
         let uniques = level_0_uniques(&f);
         assert_eq!(uniques[f.loops[0].pre_header.0], roots, "{roots} roots");
         assert_eq!(uniques.iter().sum::<usize>(), roots, "{roots} roots");
+        // Each root's `make_unique` is probed at least once.
+        assert!(probes >= roots, "{roots} roots: {probes} probes");
         assert!(probes <= 8 * roots, "{roots} roots: {probes} probes");
         assert!(
             visits <= 2 * f.blocks.len(),
             "{roots} roots: {visits} fetches"
         );
+    }
+}
+
+/// `f` with `depth` nested loops, each of which writes its own array, and has an empty loop
+/// after the loop nested in it.
+fn nested_with_siblings(depth: usize) -> String {
+    let lets = (0..depth)
+        .map(|level| format!("    let mut a{level} = [0]\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let opens = (0..depth)
+        .map(|level| format!("for i{level} in 0..2 {{\n    a{level}[0] = 1\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let closes = (0..depth)
+        .rev()
+        .map(|level| format!("for s{level} in 0..2 {{\n}}\n}}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    format!("fn f() {{\n{lets}{opens}{closes}}}")
+}
+
+/// A loop's states start from its largest inner loop's, so the states of the deep loop are
+/// not copied into each level's small empty loop: the probes grow with the depth, not with
+/// its square.
+#[test]
+fn sibling_loops_merge_into_the_largest() {
+    for depth in [8, 16, 32] {
+        let (f, _, probes) = hoisted_with_work(&nested_with_siblings(depth));
+        // Every array reaches the outermost pre-header.
+        let uniques = level_0_uniques(&f);
+        assert_eq!(uniques[f.loops[0].pre_header.0], depth, "depth {depth}");
+        assert_eq!(uniques.iter().sum::<usize>(), depth, "depth {depth}");
+        assert!(probes <= 40 * depth, "depth {depth}: {probes} probes");
+    }
+}
+
+/// `f` with an outer loop and two loops inside it: the first writes `a`, the second bars it
+/// with `keep = a`. `pad` locals in the writing loop when `pad_writer`, else in the barring
+/// one, make that loop's states the larger.
+fn sibling_bars(pad_writer: bool) -> String {
+    let pad = (0..8)
+        .map(|k| format!("            let p{k} = {k}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let (writer_pad, barring_pad) = if pad_writer {
+        (pad.as_str(), "")
+    } else {
+        ("", pad.as_str())
+    };
+    format!(
+        "fn f(xs: [i64]) -> [i64] {{\n    let mut a = xs\n    let mut keep = [0]\n    for i in 0..2 {{\n        for j in 0..2 {{\n            a[j] = 1\n{writer_pad}        }}\n        for k in 0..2 {{\n            keep = a\n{barring_pad}        }}\n    }}\n    print(keep[0])\n    a\n}}"
+    )
+}
+
+/// A sibling loop that bars `a` bars the outer loop, so the writing loop's `make_unique`
+/// stops at its own pre-header, whichever of the two has the larger states.
+#[test]
+fn a_sibling_loop_bars_the_outer_loop() {
+    for pad_writer in [false, true] {
+        let (f, _, _) = hoisted_with_work(&sibling_bars(pad_writer));
+        let uniques = level_0_uniques(&f);
+        assert_eq!(
+            uniques[f.loops[1].pre_header.0], 1,
+            "pad_writer {pad_writer}"
+        );
+        assert_eq!(uniques.iter().sum::<usize>(), 1, "pad_writer {pad_writer}");
     }
 }
