@@ -986,18 +986,54 @@ pub(in crate::mir) mod wavelet {
 /// whole in linear memory: per block of 64 positions, each position's mask of the minima of
 /// its block so far, and over the blocks a sparse table of their least positions.
 pub(in crate::mir) mod range {
+    use self::tables::Tables;
+
+    /// The tables. Their fields are private, so every read, `argmin`'s too, is counted.
+    mod tables {
+        pub(super) struct Tables {
+            values: Vec<u32>,
+            /// Bit `j` of `masks[i]`: the position `j` of `i`'s block holds a value less than
+            /// every one after it up to `i`.
+            masks: Vec<u64>,
+            /// `table[k][b]`: the position of the least value in blocks `b..b + 2^k`.
+            table: Vec<Vec<usize>>,
+        }
+
+        impl Tables {
+            pub(super) fn new(values: Vec<u32>, masks: Vec<u64>, table: Vec<Vec<usize>>) -> Self {
+                super::super::count(
+                    values.len() + masks.len() + table.iter().map(Vec::len).sum::<usize>(),
+                );
+                Tables {
+                    values,
+                    masks,
+                    table,
+                }
+            }
+
+            pub(super) fn value(&self, at: usize) -> u32 {
+                super::super::count(1);
+                self.values[at]
+            }
+
+            pub(super) fn mask(&self, at: usize) -> u64 {
+                super::super::count(1);
+                self.masks[at]
+            }
+
+            pub(super) fn table(&self, k: usize, block: usize) -> usize {
+                super::super::count(1);
+                self.table[k][block]
+            }
+        }
+    }
+
     pub(in crate::mir) struct RangeMin {
-        values: Vec<u32>,
-        /// Bit `j` of `masks[i]`: the position `j` of `i`'s block holds a value less than every
-        /// one after it up to `i`.
-        masks: Vec<u64>,
-        /// `table[k][b]`: the position of the least value in blocks `b..b + 2^k`.
-        table: Vec<Vec<usize>>,
+        tables: Tables,
     }
 
     impl RangeMin {
         pub(in crate::mir) fn new(values: Vec<u32>) -> Self {
-            super::count(values.len());
             let mut masks = vec![0; values.len()];
             let mut least = Vec::with_capacity(values.len().div_ceil(64));
             for (b, chunk) in values.chunks(64).enumerate() {
@@ -1015,27 +1051,23 @@ pub(in crate::mir) mod range {
                 }
                 least.push(b * 64 + mask.trailing_zeros() as usize);
             }
-            let mut range = RangeMin {
-                values,
-                masks,
-                table: Vec::new(),
-            };
+            let less = |a: usize, b: usize| if values[b] < values[a] { b } else { a };
             let mut table = vec![least];
             while 1 << table.len() <= table[0].len() {
                 let half = 1 << (table.len() - 1);
                 let below = &table[table.len() - 1];
                 let next = (0..below.len() - half)
-                    .map(|b| range.less(below[b], below[b + half]))
+                    .map(|b| less(below[b], below[b + half]))
                     .collect();
                 table.push(next);
             }
-            range.table = table;
-            range
+            RangeMin {
+                tables: Tables::new(values, masks, table),
+            }
         }
 
         pub(in crate::mir) fn get(&self, at: usize) -> u32 {
-            super::count(1);
-            self.values[at]
+            self.tables.value(at)
         }
 
         /// The position of a least value at `from..=to`.
@@ -1051,8 +1083,10 @@ pub(in crate::mir) mod range {
             if first + 1 < last {
                 let (a, b) = (first + 1, last - 1);
                 let k = (b - a + 1).ilog2() as usize;
-                super::count(2);
-                let blocks = self.less(self.table[k][a], self.table[k][b + 1 - (1 << k)]);
+                let blocks = self.less(
+                    self.tables.table(k, a),
+                    self.tables.table(k, b + 1 - (1 << k)),
+                );
                 best = self.less(best, blocks);
             }
             best
@@ -1065,18 +1099,12 @@ pub(in crate::mir) mod range {
         /// The least at `from..=to`, both in one block: the first minimum at or after `from`
         /// that is still one at `to`.
         fn within(&self, from: usize, to: usize) -> usize {
-            super::count(1);
-            let mask = self.masks[to] & (u64::MAX << (from % 64));
+            let mask = self.tables.mask(to) & (u64::MAX << (from % 64));
             (to & !63) + mask.trailing_zeros() as usize
         }
 
         fn less(&self, a: usize, b: usize) -> usize {
-            super::count(2);
-            if self.values[b] < self.values[a] {
-                b
-            } else {
-                a
-            }
+            if self.get(b) < self.get(a) { b } else { a }
         }
     }
 }
