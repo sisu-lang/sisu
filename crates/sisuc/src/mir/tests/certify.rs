@@ -1290,6 +1290,29 @@ fn ended_binding_comes_back_to_a_borrow() {
     }
 }
 
+/// Sol's case: `x`, scoped at `bb1`, leaves it ended into the loop `bb2`, `bb4`. The back edge
+/// `bb4` to `bb2` meets the tree at `bb1`'s depth, but it re-enters only `bb2`, a block below
+/// `bb1`, so no ended `x` comes back to `bb1`'s scope release.
+#[test]
+fn edge_to_a_block_below_the_scope_block_does_not_come_back() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::BOOL);
+    let s = b.param("s", Type::STRING);
+    let x = b.local("x", Type::STRING);
+    b.scope(x, BlockId(1));
+    b.owner(x, s);
+    b.block(vec![], branch(c, 1, 5));
+    b.block(
+        vec![Statement::ScopeRelease(x), borrow(x, s), Statement::End(x)],
+        branch(c, 2, 3),
+    );
+    b.block(vec![], goto(4));
+    b.block(vec![], goto(4));
+    b.block(vec![], branch(c, 2, 5));
+    b.block(vec![Statement::Release(s)], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
 /// `o` is empty on the `None` edge, so the read there is a use after consume.
 #[test]
 fn read_on_the_none_edge() {
