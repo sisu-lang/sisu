@@ -1,4 +1,5 @@
 use super::*;
+use crate::mir::lower::PROBED;
 
 /// The function `name` of `program`.
 fn func<'p>(program: &'p Program, name: &str) -> &'p Function {
@@ -40,13 +41,18 @@ fn else_of_branch_on(f: &Function, cond: LocalId) -> BlockId {
     let found: Vec<_> = f
         .blocks
         .iter()
-        .filter_map(|block| match &block.term {
-            Terminator::Branch {
+        .filter_map(|block| {
+            if let Terminator::Branch {
                 cond: Operand::Read(place),
                 else_,
                 ..
-            } if place.local == cond => Some(*else_),
-            _ => None,
+            } = &block.term
+                && place.local == cond
+            {
+                Some(*else_)
+            } else {
+                None
+            }
         })
         .collect();
     let [else_] = found[..] else {
@@ -57,13 +63,16 @@ fn else_of_branch_on(f: &Function, cond: LocalId) -> BlockId {
 
 /// The `switch` on `tried` that ends `block`, if one does: its arms and its otherwise.
 fn switch_on(f: &Function, block: BlockId, tried: LocalId) -> Option<(Vec<BlockId>, BlockId)> {
-    match &f.blocks[block.0].term {
-        Terminator::SwitchValue {
-            operand: Operand::Read(place),
-            arms,
-            otherwise: Some(otherwise),
-        } if place.local == tried => Some((arms.iter().map(|(_, to)| *to).collect(), *otherwise)),
-        _ => None,
+    if let Terminator::SwitchValue {
+        operand: Operand::Read(place),
+        arms,
+        otherwise: Some(otherwise),
+    } = &f.blocks[block.0].term
+        && place.local == tried
+    {
+        Some((arms.iter().map(|(_, to)| *to).collect(), *otherwise))
+    } else {
+        None
     }
 }
 
@@ -72,15 +81,20 @@ fn dispatch_of(f: &Function, tried: LocalId) -> BlockId {
     let starts: Vec<_> = f
         .blocks
         .iter()
-        .filter_map(|block| match (block.stmts.last(), &block.term) {
-            (
+        .filter_map(|block| {
+            if let (
                 Some(Statement::Assign {
                     dest: Some(dest),
                     value: Rvalue::Use(Operand::Const(Const::Int(0, _))),
                 }),
                 Terminator::Goto(to),
-            ) if *dest == tried => Some(*to),
-            _ => None,
+            ) = (block.stmts.last(), &block.term)
+                && *dest == tried
+            {
+                Some(*to)
+            } else {
+                None
+            }
         })
         .collect();
     let [dispatch] = starts[..] else {
@@ -294,9 +308,32 @@ fn failure_edge_ends_bindings() {
     );
 }
 
-/// Nested `|` tries alternatives in left-to-right expansion order: the guard's failure resumes
-/// the last choice point, and once that one runs out it resumes the first. Each choice point has
-/// one `tried` and one dispatch block, and the guard is one block.
+/// The payload field that the alternative starting at `start` binds: `start` tests the tag of a
+/// `T` and its match edge borrows one field of it.
+fn borrowed_field(f: &Function, start: BlockId) -> usize {
+    let Terminator::SwitchTag { arms, .. } = &f.blocks[start.0].term else {
+        panic!("bb{} should test a `T`'s tag", start.0)
+    };
+    let [(_, matched)] = arms[..] else {
+        panic!("bb{} should test one tag, not {arms:?}", start.0)
+    };
+    let Some(Statement::Assign {
+        value: Rvalue::Borrow(place),
+        ..
+    }) = f.blocks[matched.0].stmts.first()
+    else {
+        panic!("bb{} should start with a binding's borrow", matched.0)
+    };
+    let Some(Projection::Payload { field, .. }) = place.projections.last() else {
+        panic!("{place:?} should end in a payload field")
+    };
+    *field
+}
+
+/// Nested `|` tries alternatives in left-to-right expansion order: each dispatch tries its
+/// alternatives in order, the guard's failure resumes the last choice point, and once that one
+/// runs out it resumes the first. Each choice point has one `tried` and one dispatch block, and
+/// the guard is one block.
 #[test]
 fn order_of_nested_alternatives() {
     let src = "enum Pair {\n    T(string, string)\n}\n\
@@ -327,6 +364,46 @@ fn order_of_nested_alternatives() {
         "the last choice point, run out, resumes the first"
     );
     assert_ne!(last_exhausted, dispatch_of(f, first));
+    for tried in [first, last] {
+        let (starts, _) = switch_on(f, dispatch_of(f, tried), tried).expect("a dispatch switches");
+        let fields: Vec<_> = starts
+            .iter()
+            .map(|&start| borrowed_field(f, start))
+            .collect();
+        assert_eq!(fields, [0, 1], "`T(x, _)` is tried before `T(_, x)`");
+    }
+}
+
+/// Whether a read in a guard reads a binding is one probe, not a scan of the open guards'
+/// bindings: a guard that reads each of `wide` bindings probes once per read.
+#[test]
+fn wide_guard_probes_once_per_read() {
+    let wide = 64;
+    let names: Vec<_> = (0..wide).map(|i| format!("a{i}")).collect();
+    let reads: Vec<_> = names.iter().map(|name| format!("keep({name})")).collect();
+    let src = format!(
+        "enum W {{\n    V({})\n    N\n}}\nfn keep(s: string) -> bool {{ true }}\n\
+         fn f(w: W) -> i64 {{\n    match w {{\n        V({}) if {} => 1\n        _ => 0\n    }}\n}}",
+        vec!["string"; wide].join(", "),
+        names.join(", "),
+        reads.join(" && "),
+    );
+    let program = checked(&src);
+    PROBED.set(0);
+    let mir = lower(&program);
+    // One probe for `use w#0`, and one per binding the guard reads.
+    assert_eq!(PROBED.get(), 1 + wide);
+    let f = func(&mir, "f");
+    let marked = f
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .filter(|stmt| {
+            matches!(stmt, Statement::Assign { value: Rvalue::Call { args, .. }, .. }
+                if matches!(args[..], [Operand::Guarded(_)]))
+        })
+        .count();
+    assert_eq!(marked, wide, "each guard read is marked");
 }
 
 /// Inside an arm's guard, a use of a binding is marked, and so is a borrow site rooted at one;
@@ -343,19 +420,21 @@ fn guard_uses_of_bindings_are_marked() {
     let (mut guarded, mut used, mut sites) = (0, 0, Vec::new());
     for block in &f.blocks {
         for stmt in &block.stmts {
-            match stmt {
-                Statement::Assign {
-                    value: Rvalue::Call { args, .. },
-                    ..
-                } => {
-                    guarded += args.iter().filter(|a| **a == Operand::Guarded(x)).count();
-                    used += args.iter().filter(|a| **a == Operand::Use(x)).count();
-                }
-                Statement::Assign {
-                    value: Rvalue::Len(Operand::Read(place)),
-                    ..
-                } if place.local == x => sites.push((place.borrow, place.guard)),
-                _ => {}
+            if let Statement::Assign {
+                value: Rvalue::Call { args, .. },
+                ..
+            } = stmt
+            {
+                guarded += args.iter().filter(|a| **a == Operand::Guarded(x)).count();
+                used += args.iter().filter(|a| **a == Operand::Use(x)).count();
+            }
+            if let Statement::Assign {
+                value: Rvalue::Len(Operand::Read(place)),
+                ..
+            } = stmt
+                && place.local == x
+            {
+                sites.push((place.borrow, place.guard));
             }
         }
     }

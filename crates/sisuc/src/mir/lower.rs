@@ -60,6 +60,8 @@ struct Lowering<'a> {
     /// The bindings of the arms whose test or guard is being lowered, outermost first: they
     /// are borrowed, so an edge that leaves the test or guard ends them.
     guard: Vec<LocalId>,
+    /// Whether each source local is on `guard`, so that a read asks in constant time.
+    guarded: Vec<bool>,
     /// The failure targets of the patterns lowered so far (`pattern.rs`).
     targets: Vec<pattern::Lazy>,
 }
@@ -140,6 +142,7 @@ impl<'a> Lowering<'a> {
             mentions: Mentions::of(&f.body, f.locals.len()),
             owners: FxHashMap::default(),
             guard: Vec::new(),
+            guarded: vec![false; f.locals.len()],
             targets: Vec::new(),
         };
         lowering.current = Some(lowering.new_block());
@@ -242,10 +245,33 @@ impl<'a> Lowering<'a> {
     fn read(&self, local: LocalId) -> Operand {
         if !self.locals[local.0].counted {
             Operand::Read(whole(local))
-        } else if self.guard.contains(&local) {
+        } else if self.is_guarded(local) {
             Operand::Guarded(local)
         } else {
             Operand::Use(local)
+        }
+    }
+
+    /// Whether `local` is a binding of an arm whose test or guard is being lowered.
+    fn is_guarded(&self, local: LocalId) -> bool {
+        #[cfg(test)]
+        PROBED.set(PROBED.get() + 1);
+        // A temporary is never a binding, and its id is past the source locals.
+        self.guarded.get(local.0).copied().unwrap_or(false)
+    }
+
+    /// Puts `bindings` on the guard stack: their arm's test and guard are being lowered.
+    fn open_guards(&mut self, bindings: &[LocalId]) {
+        for &binding in bindings {
+            self.guarded[binding.0] = true;
+        }
+        self.guard.extend(bindings);
+    }
+
+    /// Takes the guard bindings above `mark` off the stack: their arm committed or failed.
+    fn close_guards(&mut self, mark: usize) {
+        for binding in self.guard.drain(mark..) {
+            self.guarded[binding.0] = false;
         }
     }
 
@@ -423,7 +449,7 @@ impl<'a> Lowering<'a> {
         if borrow && let Some(local) = local_of(base) {
             let place = MirPlace {
                 borrow: true,
-                guard: self.guard.contains(&local),
+                guard: self.is_guarded(local),
                 ..whole(local)
             };
             return Some((place, None));
@@ -1151,6 +1177,8 @@ fn mentions(e: &Expr, found: &mut Mentions) {
 thread_local! {
     /// How many expressions `mentions` has walked on this thread.
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many guard bindings `is_guarded` has examined on this thread.
+    pub(super) static PROBED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `mentions` of `e`'s own node and its children.

@@ -153,7 +153,7 @@ impl Lowering<'_> {
             for &binding in &arm.bindings {
                 self.locals[binding.0].scope = start;
             }
-            self.guard.extend(&arm.bindings);
+            self.open_guards(&arm.bindings);
             let fail = self.target(Kind::Fail);
             let retry = self.test(&arm.pattern, &whole(temp), scrutinee.ty, fail);
             let passed = match &arm.guard {
@@ -165,7 +165,7 @@ impl Lowering<'_> {
                 self.arm(outer, &arm.body, dest, &mut join);
             }
             self.scope.truncate(outer);
-            self.guard.truncate(guards);
+            self.close_guards(guards);
             let Some(fail) = self.targets[fail.0].block else {
                 self.current = None;
                 break;
@@ -196,7 +196,7 @@ impl Lowering<'_> {
     /// borrowed value, then `temp`, when `counted`, is released and leaves the scope stack, and
     /// the counted bindings join it. The bindings are no longer borrowed.
     fn commit(&mut self, temp: LocalId, counted: bool, guards: usize, bindings: &[LocalId]) {
-        self.guard.truncate(guards);
+        self.close_guards(guards);
         for &binding in bindings {
             if self.locals[binding.0].counted {
                 self.push(Statement::Assign {
