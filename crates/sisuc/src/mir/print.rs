@@ -139,12 +139,14 @@ impl Printer<'_> {
                 format!("concat({}, {})", self.operand(lhs), self.operand(rhs))
             }
             Rvalue::Interpolate { parts, formats } => {
+                // The formats are in part order, so one pass over them meets each in turn.
+                let mut formats = formats.iter().peekable();
                 let parts: Vec<_> = parts
                     .iter()
                     .enumerate()
                     .map(|(i, part)| {
                         let part = self.operand(part);
-                        match formats.iter().find(|format| format.part == i) {
+                        match formats.next_if(|format| format.part == i) {
                             Some(format) => format!("fmt({part}, \"{format}\")"),
                             None => part,
                         }

@@ -1,7 +1,7 @@
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use super::*;
-use crate::mir::lower::block_mentions;
+use crate::mir::lower::{Mentions, WALKED};
 
 /// Calls run in source order, and an `i64` is returned by a read, not moved.
 #[test]
@@ -363,12 +363,10 @@ fn mentions_every_kind_of_node() {
         .iter()
         .find(|f| f.name == "f")
         .expect("the source should define `f`");
-    let mut found = Vec::new();
-    block_mentions(&f.body, &mut found);
-    let found: FxHashSet<_> = found.into_iter().collect();
+    let mentions = Mentions::of(&f.body, f.locals.len());
     for (id, local) in f.locals.iter().enumerate() {
         if let Some(name) = &local.name {
-            assert!(found.contains(&id), "`{name}` not found");
+            assert!(mentions.mentions(id), "`{name}` not found");
         }
     }
 }
@@ -605,12 +603,17 @@ fn borrow_sites_are_marked() {
         f.blocks[0]
             .stmts
             .iter()
-            .find_map(|stmt| match stmt {
-                Statement::Assign {
+            .find_map(|stmt| {
+                if let Statement::Assign {
                     value: Rvalue::Use(Operand::Read(place)),
                     ..
-                } if !place.projections.is_empty() => Some(place.clone()),
-                _ => None,
+                } = stmt
+                    && !place.projections.is_empty()
+                {
+                    Some(place.clone())
+                } else {
+                    None
+                }
             })
             .expect("the function should read an element")
     };
@@ -645,5 +648,62 @@ fn loops_record_their_blocks() {
     assert_eq!(
         loops,
         [(0, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]), (2, 4, vec![4, 5, 6])]
+    );
+}
+
+/// The pin rule asks one index of the body's mentions, so lowering walks each expression once:
+/// a wide operand list and a right-deep sum cost a visit per node, not a walk of the later
+/// operands per operand. Each `x` but the last is still pinned, as `x` comes again later.
+#[test]
+fn pins_walk_the_body_once() {
+    let wide = 200;
+    let deep = 60;
+    let src = format!(
+        "fn f(x: i64, y: i64) {{\n    print([{}0].len())\n    print({}x{})\n    print([x, y, x, y, 0].len())\n}}",
+        "x, ".repeat(wide),
+        "x + (".repeat(deep),
+        ")".repeat(deep),
+    );
+    let program = checked(&src);
+    WALKED.set(0);
+    let printed = print::print(&lower(&program), &program);
+    // Print, Len, ArrayLit and its elements; Print, the sums and their operands; the last line.
+    let nodes = (3 + wide + 1) + (1 + 2 * deep + 1) + (3 + 5);
+    assert_eq!(WALKED.get(), nodes);
+    let f = function(&printed, "f");
+    assert_eq!(f.matches("_ = x#0\n").count(), (wide - 1) + deep + 1);
+    has(
+        &printed,
+        "f",
+        &["_ = x#0\n    _ = y#1\n    _ = array[_, _, x#0, y#1, 0]"],
+    );
+}
+
+/// `break` and `continue` scope-release the locals the loop's body declared, and only those:
+/// `s`, declared outside the loop, is released at the end of the function.
+#[test]
+fn loop_exits_release_the_body_locals() {
+    let printed = lowered(
+        "fn f(c: bool) {\n    let s = \"a\"\n    while c {\n        let t = \"b\"\n        if c { break } else { continue }\n    }\n}",
+    );
+    // The break edge, then the continue edge, then the function's exit.
+    has(
+        &printed,
+        "f",
+        &["  bb4:\n    release? t#2\n    goto bb6\n  \
+           bb5:\n    release? t#2\n    goto bb1\n  \
+           bb6:\n    release? s#1\n    return"],
+    );
+}
+
+/// Each part of an interpolation prints with its own format, in part order.
+#[test]
+fn interpolation_prints_each_format_with_its_part() {
+    let printed =
+        lowered("fn f(a: i64, b: i64, c: i64, d: i64) {\n    print(\"{a:>3}{b}{c:<2}{d:>4}\")\n}");
+    has(
+        &printed,
+        "f",
+        &["interp(fmt(a#0, \">3\"), b#1, fmt(c#2, \"<2\"), fmt(d#3, \">4\"))"],
     );
 }

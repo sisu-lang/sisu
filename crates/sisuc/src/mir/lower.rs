@@ -11,6 +11,8 @@
 //! temporaries never join it: the checker's `spill` binds every counted operand before a later
 //! operand that can exit to a `let` local, so no temporary is owned across an exit.
 
+use std::ptr;
+
 use rustc_hash::FxHashMap;
 
 use super::{
@@ -49,6 +51,8 @@ struct Lowering<'a> {
     scope: Vec<LocalId>,
     /// The loops around the code being lowered, innermost last.
     frames: Vec<Frame>,
+    /// Where the function's body mentions each local, which the pin rule asks.
+    mentions: Mentions,
 }
 
 /// A loop being lowered: where `continue` goes, where `break` goes once one has, and the
@@ -122,6 +126,7 @@ impl<'a> Lowering<'a> {
             current: None,
             scope: Vec::new(),
             frames: Vec::new(),
+            mentions: Mentions::of(&f.body, f.locals.len()),
         };
         lowering.current = Some(lowering.new_block());
         for (i, param) in f.params.iter().enumerate() {
@@ -318,7 +323,7 @@ impl<'a> Lowering<'a> {
         Some(())
     }
 
-    /// The value of `e`, which the checker gives one, in a local: `dest`, or a new temporary.
+    /// The value of `e`, which the checker gives one, in a new temporary.
     fn temp_of(&mut self, e: &Expr) -> Option<LocalId> {
         Some(
             self.into(e, None)?
@@ -352,14 +357,7 @@ impl<'a> Lowering<'a> {
             Operand::Read(place) => place.local,
             Operand::Const(_) | Operand::Move(_) => return op,
         };
-        // shortcut: each pin walks the later operands, so right-deep nesting is quadratic;
-        // collect the mentions once per statement if that shows up in a profile.
-        let mentioned = later.iter().any(|e| {
-            let mut found = Vec::new();
-            mentions(e, &mut found);
-            found.contains(&local.0)
-        });
-        if !mentioned {
+        if !self.mentions.within(local, later) {
             return op;
         }
         let ty = self.locals[local.0].ty;
@@ -1003,8 +1001,81 @@ fn leaves_locals(expr: &Expr) -> bool {
     }
 }
 
-/// Adds to `found` each local that `e` reads or assigns, and those its blocks define.
-pub(super) fn mentions(e: &Expr, found: &mut Vec<usize>) {
+/// Each local's mentions in a function body, in the order `block_mentions` walks it, and the
+/// stretch of that order each expression covers. Whether any of a run of sibling expressions
+/// mentions a local is then a binary search, not a walk: the body is walked once.
+pub(super) struct Mentions {
+    /// The local of each mention, in walk order.
+    found: Vec<usize>,
+    /// Each expression's mentions: `found[start..end]`.
+    spans: FxHashMap<*const Expr, (usize, usize)>,
+    /// Each local's positions in `found`, ascending.
+    at: Vec<Vec<usize>>,
+}
+
+impl Mentions {
+    /// The mentions of `body`, whose function has `locals` locals.
+    pub(super) fn of(body: &Block, locals: usize) -> Mentions {
+        let mut mentions = Mentions {
+            found: Vec::new(),
+            spans: FxHashMap::default(),
+            at: vec![Vec::new(); locals],
+        };
+        block_mentions(body, &mut mentions);
+        for (position, &local) in mentions.found.iter().enumerate() {
+            mentions.at[local].push(position);
+        }
+        mentions
+    }
+
+    /// Whether any of `siblings`, adjacent expressions in walk order, mentions `local`.
+    fn within(&self, local: LocalId, siblings: &[&Expr]) -> bool {
+        let (Some(first), Some(last)) = (siblings.first(), siblings.last()) else {
+            return false;
+        };
+        let (start, end) = (self.span(first).0, self.span(last).1);
+        // A lowering temporary is past the `tir` locals, and no expression mentions it.
+        let Some(at) = self.at.get(local.0) else {
+            return false;
+        };
+        at.get(at.partition_point(|&position| position < start))
+            .is_some_and(|&position| position < end)
+    }
+
+    fn span(&self, e: &Expr) -> (usize, usize) {
+        *self
+            .spans
+            .get(&ptr::from_ref(e))
+            .expect("the walk should have reached every expression of the body")
+    }
+
+    /// Whether the body mentions `local` at all.
+    #[cfg(test)]
+    pub(super) fn mentions(&self, local: usize) -> bool {
+        !self.at[local].is_empty()
+    }
+}
+
+/// Adds to `found` each local that `e` reads or assigns, and those its blocks define, and
+/// records the stretch of `found` that `e` covers.
+fn mentions(e: &Expr, found: &mut Mentions) {
+    #[cfg(test)]
+    WALKED.set(WALKED.get() + 1);
+    let start = found.found.len();
+    expr_mentions(e, found);
+    found
+        .spans
+        .insert(ptr::from_ref(e), (start, found.found.len()));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many expressions `mentions` has walked on this thread.
+    pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// `mentions` of `e`'s own node and its children.
+fn expr_mentions(e: &Expr, found: &mut Mentions) {
     match &e.kind {
         ExprKind::Int(_)
         | ExprKind::Float(_)
@@ -1016,7 +1087,7 @@ pub(super) fn mentions(e: &Expr, found: &mut Vec<usize>) {
         | ExprKind::Break
         | ExprKind::Continue
         | ExprKind::Return(None) => {}
-        ExprKind::Local(local) | ExprKind::Move(local) => found.push(local.0),
+        ExprKind::Local(local) | ExprKind::Move(local) => found.found.push(local.0),
         ExprKind::Call { args, .. }
         | ExprKind::New { args, .. }
         | ExprKind::Variant { args, .. }
@@ -1093,11 +1164,11 @@ pub(super) fn mentions(e: &Expr, found: &mut Vec<usize>) {
 }
 
 /// Adds to `found` each local that `block` reads or assigns.
-pub(super) fn block_mentions(block: &Block, found: &mut Vec<usize>) {
+fn block_mentions(block: &Block, found: &mut Mentions) {
     for stmt in &block.stmts {
         match stmt {
             Stmt::Let { local, init } => {
-                found.push(local.0);
+                found.found.push(local.0);
                 mentions(init, found);
             }
             Stmt::Assign { place, value } | Stmt::Append { place, value } => {
@@ -1113,9 +1184,9 @@ pub(super) fn block_mentions(block: &Block, found: &mut Vec<usize>) {
 }
 
 /// Adds to `found` each local that `place` names or reads.
-fn place_mentions(place: &Place, found: &mut Vec<usize>) {
+fn place_mentions(place: &Place, found: &mut Mentions) {
     match place {
-        Place::Local(local) => found.push(local.0),
+        Place::Local(local) => found.found.push(local.0),
         Place::Field { base, .. } => mentions(base, found),
         Place::Index { base, index } => {
             place_mentions(base, found);
