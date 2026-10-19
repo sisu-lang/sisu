@@ -22,10 +22,14 @@ fn code_of(path: &Path) -> &str {
 
 /// Checks the explanation `docs/diagnostics/<code>.md` at `path`: its Broken program, written to
 /// `<code>.sisu` in its `case_dir`, makes `sisuc` print `site/programs/explanations/<code>.err`
-/// and `.json` (see `support::diagnose`). With `bless`, rewrites both files instead.
+/// and `.json` (see `support::diagnose`). With `bless`, rewrites both files instead. A retired
+/// code's page is skipped, as the site leaves it out.
 pub(crate) fn explanation(path: &Path, bless: bool) {
     let code = code_of(path);
     let markdown = fs::read_to_string(path).expect("an explanation should be readable");
+    if markdown.lines().any(|l| l.starts_with("Status: retired")) {
+        return;
+    }
     let source = support::case_dir(path).join(format!("{code}.sisu"));
     fs::write(&source, broken_program(code, &markdown))
         .expect("the case directory should be writable");

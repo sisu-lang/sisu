@@ -10,7 +10,7 @@ use crate::ast::{
 };
 use crate::diagnostic::{
     self, BuiltIn, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange, Join, LetField,
-    MatchIdiomForm, Owner, PowerFix, SemicolonPlace,
+    MatchIdiomForm, Owner, PowerFix,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::Span;
@@ -21,7 +21,8 @@ use crate::symbol::Symbol;
 pub(crate) struct Parsed {
     /// The intact items, and the names of the broken ones.
     pub(crate) program: Program,
-    /// One error per broken item, and each lexer diagnostic outside every item, by position.
+    /// One error per broken item, each lexer diagnostic outside every item, and every lexer
+    /// warning, by position.
     pub(crate) diagnostics: Vec<Diagnostic>,
     /// Whether every item is named, so that no use of a lost item can read as "cannot find".
     pub(crate) checkable: bool,
@@ -30,12 +31,13 @@ pub(crate) struct Parsed {
 /// Parses `lexed`, whose tokens end with `Eof` and whose brackets balance. An item with a
 /// syntax error, its own or the lexer's, is broken: it reports its earliest error, and the
 /// parser resumes after it. A bad format spec alone does not break its item: the parser reports
-/// it and reads its part without a spec.
+/// it and reads its part without a spec. A lexer warning breaks nothing.
 pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
     let Lexed {
         source,
         tokens,
         diagnostics,
+        warnings,
         comments,
         breaks,
     } = lexed;
@@ -52,6 +54,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         comments: &comments,
         breaks: &breaks,
         specs: Vec::new(),
+        warnings,
     }
     .program()
 }
@@ -270,6 +273,8 @@ struct Parser<'a> {
     breaks: &'a [usize],
     /// The error of each bad format spec so far that no broken item took.
     specs: Vec<Diagnostic>,
+    /// The lexer's warnings, which `program` reports whether or not their item is broken.
+    warnings: Vec<Diagnostic>,
 }
 
 impl<'a> Parser<'a> {
@@ -332,22 +337,9 @@ impl<'a> Parser<'a> {
         while self.eat(&TokenKind::Newline).is_some() {}
     }
 
-    /// What must follow a statement or a class member: a line break or the closing `}`. A `;`
-    /// here ends a complete statement, so it can be removed or the next one moved.
+    /// What must follow a statement or a class member: a line break, a `;` that stands in for
+    /// one, or the closing `}`. The one place that says "expected end of line".
     fn end_of_line(&self) -> Diagnostic {
-        if self.at(&TokenKind::Semicolon) {
-            // `;` is not `Eof`, so the token after it exists.
-            let place = match self.tokens[self.pos + 1].kind {
-                TokenKind::Newline | TokenKind::RBrace | TokenKind::Eof => SemicolonPlace::EndsLine,
-                TokenKind::Semicolon => SemicolonPlace::Repeated,
-                _ => SemicolonPlace::MidLine,
-            };
-            return DiagnosticKind::Semicolon {
-                at: self.peek().span,
-                place,
-            }
-            .into();
-        }
         self.expected("end of line")
     }
 
@@ -371,6 +363,12 @@ impl<'a> Parser<'a> {
             TokenKind::Int(_) => DiagnosticKind::Expected {
                 what: what.to_string(),
                 found: format!("`{}`", &self.source[found.span.range()]),
+                at: found.span,
+            },
+            // A `Newline` over a `;` that separates is named as written.
+            TokenKind::Newline if !found.span.range().is_empty() => DiagnosticKind::Expected {
+                what: what.to_string(),
+                found: "`;`".to_string(),
                 at: found.span,
             },
             _ => DiagnosticKind::Expected {
@@ -473,16 +471,6 @@ impl<'a> Parser<'a> {
             let start = self.pos;
             let tokens = self.tokens;
             let previous = tokens[..start].last();
-            // A `;` after an item's `}` ends its line, as one does in a block.
-            if self.at(&TokenKind::Semicolon)
-                && previous.is_some_and(|t| t.kind == TokenKind::RBrace)
-                && tokens[start + 1].kind == TokenKind::Newline
-            {
-                diagnostics.push(self.end_of_line());
-                self.bump();
-                self.skip_newlines();
-                continue;
-            }
             let header = self.header(start);
             // An item without a name would be lost, so the checker does not run; it runs on to
             // the next item, so that a foreign function and its body make one error.
@@ -538,6 +526,7 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
         diagnostics.append(&mut self.specs);
+        diagnostics.append(&mut self.warnings);
         // An unnamed item starts where its line does, inside the item before, so items may overlap.
         debug_assert!(rising(&covered));
         diagnostics.extend(
@@ -1011,6 +1000,7 @@ impl<'a> Parser<'a> {
             comments: self.comments,
             breaks: self.breaks,
             specs: Vec::new(),
+            warnings: Vec::new(),
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -1210,10 +1200,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Return => {
                 self.bump();
-                if self.at(&TokenKind::Newline)
-                    || self.at(&TokenKind::RBrace)
-                    || self.at(&TokenKind::Semicolon)
-                {
+                if self.at(&TokenKind::Newline) || self.at(&TokenKind::RBrace) {
                     StmtKind::Return(None)
                 } else {
                     StmtKind::Return(Some(self.child(base, &mut reach, Self::expr)?))
@@ -1821,8 +1808,9 @@ impl<'a> Parser<'a> {
 
     /// `ArmSplit` when the line ends here and the next line with code starts with one of
     /// `continues`, so continues the arm. The fix joins the lines, unless a comment lies between.
+    /// A `;` that separates ends the arm on purpose, so the parser reports what follows it.
     fn arm_split(&self, continues: &[TokenKind]) -> Result<(), Diagnostic> {
-        if !self.at(&TokenKind::Newline) {
+        if !self.at(&TokenKind::Newline) || !self.peek().span.range().is_empty() {
             return Ok(());
         }
         let Some(next) = self.tokens[self.pos..]
@@ -3369,18 +3357,10 @@ mod tests {
             parse_err("fn main() { let mut _ = 1 2 }"),
             (Code::Expected, 1, 27)
         );
-        assert_eq!(
-            parse_err("fn main() { let mut _ = 1; }"),
-            (Code::Semicolon, 1, 26)
-        );
         // The fixed source reports the same error, four columns (`mut `) earlier.
         assert_eq!(
             parse_err("fn main() { let _ = 1 2 }"),
             (Code::Expected, 1, 23)
-        );
-        assert_eq!(
-            parse_err("fn main() { let _ = 1; }"),
-            (Code::Semicolon, 1, 22)
         );
     }
 
@@ -3398,7 +3378,6 @@ mod tests {
             "fn main() { _ += 1 }",
             "fn main() { _[0] = 1 }",
             "fn main() { _ == 1 }",
-            "fn main() { _ = 1; }",
             "fn main() { _ = 1 2 }",
         ] {
             let d = parse_diagnostic(src);
@@ -4333,7 +4312,6 @@ mod tests {
     #[test]
     fn syntax_errors_for_arrays_and_for() {
         let rows = [
-            ("let x = 1; 2", Code::Semicolon, 22),
             ("let r = 0..3", Code::RangeOutsideFor, 22),
             ("f(0..3)", Code::RangeOutsideFor, 16),
             ("for i in 0..1..2 {}", Code::Expected, 26),
@@ -4347,33 +4325,29 @@ mod tests {
     }
 
     #[test]
-    fn stray_semicolon_in_a_class_body() {
-        assert_eq!(
-            parse_err("class A {\n    x: i64; y: i64\n}"),
-            (Code::Semicolon, 2, 11)
-        );
-    }
-
-    #[test]
-    fn semicolon_fix() {
-        for (src, position, at) in [
-            ("fn main() {\n    let x = 1;\n}", (2, 14), 25),
-            ("fn main() { let x = 1; }", (1, 22), 21),
+    fn redundant_semicolon_fix() {
+        for (src, position, at, replacement) in [
+            ("fn main() {\n    let x = 1;\n}", (2, 14), 25, ""),
+            ("fn main() { let x = 1; }", (1, 22), 21, ""),
             (
                 "fn main() {\n    print(1); // done\n    print(2)\n}",
                 (2, 13),
                 24,
+                "",
             ),
-            ("class A {\n    x: i64;\n}", (2, 11), 20),
+            ("class A {\n    x: i64;\n}", (2, 11), 20, ""),
             // `return;` has no value.
-            ("fn main() { return; }", (1, 19), 18),
+            ("fn main() { return; }", (1, 19), 18, ""),
+            ("fn main() { ; }", (1, 13), 12, ""),
+            // Removing the `;` alone would join `}` and `fn`.
+            ("fn f() {};fn main() {}", (1, 10), 9, " "),
         ] {
             let d = parse_diagnostic(src);
-            assert_eq!(d.code(), Code::Semicolon, "{src}");
+            assert_eq!(d.code(), Code::RedundantSemicolon, "{src}");
             assert_eq!(line_col(src, d.span().start()), position, "{src}");
             assert_eq!(
                 fix_edits(&d),
-                Some((true, vec![(at, at + 1, String::new())])),
+                Some((true, vec![(at, at + 1, replacement.to_string())])),
                 "{src}"
             );
             assert!(d.help().is_none(), "{src}");
@@ -4381,57 +4355,122 @@ mod tests {
     }
 
     #[test]
-    fn safe_semicolon_fix_removes_the_error() {
+    fn every_redundant_semicolon_fix_at_once() {
         let src = "fn main() {\n    let x = 1;\n    let y = x + 1; // two\n    print(y);\n}\n";
-        // One `;` at a time: the parser reports one error per item, and these `;`s share `main`.
-        let once = fixed(src);
+        // A warning breaks no item, so all three `;`s of `main` are reported together.
+        let ds = parsed(src).diagnostics;
+        let found: Vec<_> = (ds.iter())
+            .map(|d| (d.code(), line_col(src, d.span().start())))
+            .collect();
         assert_eq!(
-            once,
-            "fn main() {\n    let x = 1\n    let y = x + 1; // two\n    print(y);\n}\n"
+            found,
+            [(2, 14), (3, 18), (4, 13)].map(|at| (Code::RedundantSemicolon, at))
         );
-        let twice = fixed(&once);
-        let thrice = fixed(&twice);
+        let edits: Vec<_> = ds
+            .iter()
+            .flat_map(|d| d.fixes().iter().flat_map(diagnostic::Fix::edits))
+            .collect();
+        let fixed = diagnostic::explanations::apply(src, &edits);
         assert_eq!(
-            thrice,
+            fixed,
             "fn main() {\n    let x = 1\n    let y = x + 1 // two\n    print(y)\n}\n"
         );
-        parse_ok(&thrice);
+        parse_ok(&fixed);
     }
 
     #[test]
-    fn semicolon_mid_line_is_a_help() {
-        // A complete statement, then more code on the line: advice, no edit.
+    fn semicolon_mid_line_separates() {
+        // A complete statement, then more code on the line.
         for src in [
             "fn main() { let x = 1; let y = 2 }",
             "class A {\n    x: i64; y: i64\n}",
         ] {
-            let d = parse_diagnostic(src);
-            assert_eq!(d.code(), Code::Semicolon, "{src}");
-            assert!(d.help().is_some(), "{src}");
-            assert_eq!(fix_edits(&d), None, "{src}");
+            parse_ok(src);
         }
     }
 
     #[test]
-    fn doubled_semicolon_has_neither() {
-        // Moving the next statement does not help: another `;` follows.
+    fn doubled_semicolon_is_redundant_twice() {
         let src = "fn main() { let x = 1;; }";
-        let d = parse_diagnostic(src);
-        assert_eq!(d.code(), Code::Semicolon);
-        assert_eq!(line_col(src, d.span().start()), (1, 22));
-        assert!(d.help().is_none());
-        assert_eq!(fix_edits(&d), None);
+        let ds = parsed(src).diagnostics;
+        let found: Vec<_> = (ds.iter())
+            .map(|d| (d.code(), line_col(src, d.span().start())))
+            .collect();
+        assert_eq!(
+            found,
+            [(1, 22), (1, 23)].map(|at| (Code::RedundantSemicolon, at))
+        );
+        for d in &ds {
+            assert!(fix_edits(d).is_some_and(|(safe, _)| safe), "{d:?}");
+        }
+    }
+
+    #[test]
+    fn semicolon_in_an_interpolation_is_an_error() {
+        // An interpolation holds one expression: its `;` separates nothing.
+        assert_eq!(
+            parse_err(r#"fn main() { print("{a; b}") }"#),
+            (Code::Expected, 1, 22)
+        );
+    }
+
+    #[test]
+    fn semicolon_after_a_const_separates() {
+        // A `const`'s value may go on, so a `;` after it is needed on one line.
+        parse_ok("const X = if c { 1 } else { 2 }; fn main() {}");
+    }
+
+    #[test]
+    fn semicolon_before_a_top_level_brace_is_kept() {
+        // One error at the `;`: the `{ }` after it is not taken for a second, broken item.
+        assert_eq!(parse_err("fn main(); { }"), (Code::Expected, 1, 10));
+    }
+
+    #[test]
+    fn semicolon_beside_a_continuation() {
+        // Removing either `;` would join `x` and `.f()`, so neither is called redundant.
+        for (src, at) in [
+            ("fn main() {\n    x\n    ; .f()\n}", (3, 5)),
+            ("fn main() {\n    x;\n    .f()\n}", (3, 5)),
+        ] {
+            assert_eq!(parse_err(src), (Code::Expected, at.0, at.1), "{src}");
+        }
+    }
+
+    #[test]
+    fn semicolon_before_else_is_redundant() {
+        assert_eq!(
+            parse_err("fn main() {\n    if true { print(1) }; else { print(2) }\n}"),
+            (Code::RedundantSemicolon, 2, 25)
+        );
+    }
+
+    #[test]
+    fn semicolon_before_an_arrow_is_not_an_arm_split() {
+        assert_eq!(
+            parse_err("fn main() { match 1 { 1; => 2 } }"),
+            (Code::Expected, 1, 24)
+        );
+    }
+
+    #[test]
+    fn block_value_is_kept_past_a_semicolon() {
+        let parsed = parsed("fn main() { let y = { x; } }");
+        assert_eq!(
+            parsed.program.to_string(),
+            "(fn main () unit (block (let y (block x))))"
+        );
+        let codes: Vec<Code> = parsed.diagnostics.iter().map(Diagnostic::code).collect();
+        assert_eq!(codes, [Code::RedundantSemicolon]);
     }
 
     #[test]
     fn semicolon_elsewhere_is_an_expected_error() {
         // Not after a complete statement: the parser wanted something else there.
         for (src, col) in [
-            ("fn f();", 7),
             ("fn main() { let x = ; }", 21),
             ("fn main() { [1; 2; 3] }", 18),
             ("fn main() { f(1; 2) }", 16),
-            ("fn main() { ; }", 13),
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::Expected, "{src}");

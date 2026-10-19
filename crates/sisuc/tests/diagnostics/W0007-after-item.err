@@ -1,0 +1,14 @@
+warning[W0007]: unnecessary `;`
+ --> W0007-after-item.sisu:3:2
+  |
+3 | };
+  |  ^
+  |
+help: remove the `;`
+  |
+3 - };
+3 + }
+  |
+
+sisuc: 1 warning
+sisuc: for more on a code, run `sisuc --explain <code>`: W0007

@@ -8,8 +8,8 @@ hooks = [
   # The `.in`, `.out` and `.err` files of `run/` and `run-fail/` cases hold raw bytes as a
   # program reads or writes them: tabs, `\r`, `\0`, and a last line with no newline.
   { id = "trailing-whitespace", exclude = '^(crates/sisuc/tests|site/programs)/run(-fail)?/.*\.(in|out|err)$' },
-  # `no_trailing_newline.sisu` and `eof-quote.sisu` must not end in a newline, and the stderr snapshots end in one blank line.
-  { id = "end-of-file-fixer", exclude = '^(crates/sisuc/tests/(diagnostics/(.*\.err|no_trailing_newline\.sisu|eof-quote\.sisu)|run(-fail)?/.*\.(in|out|err))|site/programs/((diagnostics|explanations)/.*\.err|run(-fail)?/.*\.(in|out|err)))$' },
+  # `no_trailing_newline.sisu`, `eof-quote.sisu` and `W0007-places.sisu` must not end in a newline, and the stderr snapshots end in one blank line.
+  { id = "end-of-file-fixer", exclude = '^(crates/sisuc/tests/(diagnostics/(.*\.err|no_trailing_newline\.sisu|eof-quote\.sisu|W0007-places\.sisu)|run(-fail)?/.*\.(in|out|err))|site/programs/((diagnostics|explanations)/.*\.err|run(-fail)?/.*\.(in|out|err)))$' },
   { id = "mixed-line-ending", exclude = '^(crates/sisuc/tests|site/programs)/run(-fail)?/.*\.(in|out|err)$' },
   { id = "check-merge-conflict" },
   { id = "check-added-large-files" },

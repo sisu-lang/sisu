@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{Code, Diagnostic, Edit, Fix};
+use super::{Code, Diagnostic, Edit, Fix, RETIRED};
 use crate::front_end::{decode, front_end};
 use crate::lexer::lex;
 use crate::parser::{parse, parse_ok};
@@ -174,10 +174,25 @@ fn every_explanation_file_is_a_code() {
         let stem = name
             .strip_suffix(".md")
             .unwrap_or_else(|| panic!("{name} in docs/diagnostics is not an explanation"));
-        assert!(Code::parse(stem).is_some(), "{name} names no code");
+        let retired = RETIRED.iter().any(|&(code, _)| code == stem);
+        assert!(
+            Code::parse(stem).is_some() || retired,
+            "{name} names no code"
+        );
         seen += 1;
     }
-    assert_eq!(seen, Code::ALL.len());
+    assert_eq!(seen, Code::ALL.len() + RETIRED.len());
+}
+
+/// The site leaves out a retired page by its status line (`site/build.py`, `tests/site/mod.rs`).
+#[test]
+fn retired_explanations_say_so() {
+    for &(code, text) in RETIRED {
+        assert!(
+            text.lines().any(|l| l.starts_with("Status: retired ")),
+            "{code} has no `Status: retired` line"
+        );
+    }
 }
 
 /// The codes of `code`'s Broken example. E0072's stands for its text saved in Latin-1, since an
