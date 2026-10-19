@@ -98,8 +98,8 @@ fn field_store_base_borrowed_or_copied() {
     );
 }
 
-/// The base of an element write's field root is read into a temporary, as `place_operands`
-/// evaluates it today, even when the value is a constant.
+/// The base of an element write's field root is read into a temporary, never borrowed, even
+/// when the value is a constant.
 #[test]
 fn field_root_of_element_write_is_not_borrowed() {
     let printed = lowered("class O {\n    mut xs: [i64]\n}\nfn f(o: O) {\n    o.xs[0] = 5\n}");
@@ -526,6 +526,16 @@ fn base_borrowed_when_the_sibling_leaves_locals() {
             "_ = use p#1\n    _ = call g(i#2)\n    _ = 1 < _\n    _.1 = _\n    release _",
         ],
     );
+}
+
+/// An index whose last read of another local is a `Move` in the typed tree still leaves `xs`
+/// as it was: lowering reads that `Move` as a read, so `xs` is borrowed, not copied.
+#[test]
+fn base_borrowed_when_the_sibling_moves_another_local() {
+    let src = "fn moved(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    xs\n}";
+    assert!(checked(src).to_string().contains("(len (move ys#1))"));
+    let printed = lowered(src);
+    has(&printed, "moved", &["_ = len ys#1\n    _ = xs#0[_]"]);
 }
 
 /// Lowering stops at an exit: the statements after it, which the checker keeps and warns

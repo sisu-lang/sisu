@@ -15,6 +15,7 @@ mod string;
 
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
+use std::fmt::Write as _;
 
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
@@ -313,7 +314,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn load_local(&self, local: LocalId) -> BasicValueEnum<'ctx> {
         let (ptr, ty) = self.slot(local);
         // Name the load after the local (the alloca carries its name).
-        let name = ptr.get_name().to_string_lossy().into_owned();
+        let name = ptr.get_name().to_string_lossy();
         self.builder.build_load(ty, ptr, &name).expect(POSITIONED)
     }
 
@@ -417,17 +418,27 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// block starts with an `alloca` for every local that has a value type (see
     /// `entry_alloca`), and stores each parameter into its own.
     fn define(&mut self, f: &mir::Function, function: FunctionValue<'ctx>) {
-        let mut names: Vec<String> = (0..f.blocks.len()).map(|b| format!("bb{b}")).collect();
-        for l in &f.loops {
-            "loop.pre".clone_into(&mut names[l.pre_header.0]);
-        }
-        // A header that also enters an inner loop keeps the header's name.
-        for l in &f.loops {
-            "loop.body".clone_into(&mut names[l.header.0]);
-        }
-        self.blocks = names
-            .iter()
-            .map(|name| self.context.append_basic_block(function, name))
+        // Each block is named as it is appended, in mir's order, so LLVM numbers repeated names
+        // in that order. The sort is stable: a header that also enters an inner loop keeps the
+        // header's name, which comes last.
+        let mut roles: Vec<(usize, &str)> = (f.loops.iter())
+            .map(|l| (l.pre_header.0, "loop.pre"))
+            .chain(f.loops.iter().map(|l| (l.header.0, "loop.body")))
+            .collect();
+        roles.sort_by_key(|&(block, _)| block);
+        let mut roles = roles.into_iter().peekable();
+        let mut name = String::new();
+        self.blocks = (0..f.blocks.len())
+            .map(|b| {
+                name.clear();
+                while let Some((_, role)) = roles.next_if(|&(block, _)| block == b) {
+                    role.clone_into(&mut name);
+                }
+                if name.is_empty() {
+                    write!(name, "bb{b}").expect("writing to a `String` should not fail");
+                }
+                self.context.append_basic_block(function, &name)
+            })
             .collect();
         self.builder.position_at_end(self.blocks[0]);
         self.types = f.locals.iter().map(|local| local.ty).collect();

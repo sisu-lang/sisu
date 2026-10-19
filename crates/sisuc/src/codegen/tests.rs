@@ -1468,8 +1468,9 @@ fn general_path_releases_base() {
 
 /// An index built only from whitelisted nodes reads the base in place; one with a call copies
 /// the base, which is released before the element is printed. In `moved` the index's read of
-/// `ys` is its last use: mir decides that move itself, after the whitelist, which reads it as
-/// a read of `ys` (the plan's expected difference 5).
+/// `ys` is its last use, which the ownership pass makes a move. `compiled` marks no last uses,
+/// so this typed tree has no `Move`: `base_borrowed_when_the_sibling_moves_another_local`
+/// (`mir/tests/lower.rs`) covers one in the index.
 #[test]
 fn fast_path_follows_the_index_whitelist() {
     let context = Context::create();

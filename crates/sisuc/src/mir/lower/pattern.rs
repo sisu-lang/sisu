@@ -1,4 +1,4 @@
-//! `if let` and `match`, after `codegen/matching.rs`. The scrutinee is evaluated once into
+//! `if let` and `match`. The scrutinee is evaluated once into
 //! `temp`. The arms' patterns test it in order, in place; a binding borrows its part of `temp`
 //! while the patterns and the guard run, and is not on the scope stack. An `|` is a choice
 //! point: a local `tried` holds the alternative being tried, a dispatch block switches on it to

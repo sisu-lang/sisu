@@ -965,8 +965,7 @@ impl<'a> Lowering<'a> {
 
     /// The root of a written element place, and its index operands from the root outwards,
     /// each pinned against the indexes after it and `value`. A field root's base is read into
-    /// a temporary, never borrowed, as `place_operands` evaluates it today; the caller releases
-    /// it after the store.
+    /// a temporary, never borrowed; the caller releases it after the store.
     fn written_root<'p>(&mut self, place: &'p Place, value: &Expr) -> Option<WrittenRoot<'p>> {
         let mut indexes = Vec::new();
         let mut root = place;
@@ -1060,8 +1059,8 @@ impl<'a> Lowering<'a> {
 }
 
 /// Whether evaluating `expr` leaves every local as it was, so a local read before it still
-/// holds the same block after it: codegen's `leaves_locals`, with `Move` read as `Local`, since
-/// mir decides moves itself. The sibling condition of B1 and B5.
+/// holds the same block after it. A `Move` reads as a `Local`: mir decides moves itself, after
+/// lowering. The sibling condition of B1 and B5.
 fn leaves_locals(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Int(_) | ExprKind::Local(_) | ExprKind::Move(_) => true,

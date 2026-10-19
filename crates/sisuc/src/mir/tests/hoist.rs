@@ -1,5 +1,5 @@
-//! The hoist: which locals each loop makes unique once, at its pre-header (ADR 0021). The table
-//! is `codegen/hoist.rs`'s, ported unchanged, with the rows that a borrowed read widens.
+//! The hoist: which locals each loop makes unique once, at its pre-header (ADR 0021). A
+//! borrowed read never bars a local; a copy, a take, a release or an assignment does.
 
 use super::*;
 use crate::mir::hoist::{PROBES, STEPS, hoist, unique_roots};
@@ -178,7 +178,7 @@ const CASES: &[(&str, &str, &[&[&str]])] = &[
         &[&[], &[], &[], &[], &[], &[], &[]],
     ),
     // Review Focus 5: a borrowed read never bars, so a loop whose only read of `a` is a B6
-    // borrow hoists it; `codegen/hoist.rs` gives `[[]]` here.
+    // borrow hoists it.
     ("b6_borrow_hoists", B6, &[&["a"]]),
     // A copy of `a` in a nested branch of the same loop still bars it.
     (
