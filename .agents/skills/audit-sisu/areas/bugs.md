@@ -20,7 +20,7 @@ correct.
 ## Probes
 
 - Generate random well-typed programs from a small grammar (integers, `bool`, `u8`, locals, `if`, `while`, functions, arrays, one class) and run them through the differential and reference oracles. Thousands, not tens.
-- Evaluation order: give every operand a visible effect (a `print`, or a distinct panic) in calls, constructor calls, array literals, indexing, compound assignment, field and element writes, `&&`, `||` and chains. Compare with the order `mir/lower.rs` documents.
+- Evaluation order: give every operand a visible effect (a `print`, or a distinct panic) in calls, constructor calls, array literals, indexing, compound assignment, field and element writes, `&&`, `||` and chains. Compare with the order the header of `mir/lower.rs` lists.
 - Shadowing and scopes: the same name in nested blocks, in loop bodies, in `if let` and `while let` bindings, and as a parameter.
 - Edges: `i64::MIN` and `i64::MAX` literals and arithmetic, `u8` 0 and 255, comparison chains with equal ends, empty loops, `break` in the first iteration, `continue` in the last.
 - Optionals: `?.` on a chain where each link is `None` in turn; `??` with a right side that has effects (does it run only when needed?).

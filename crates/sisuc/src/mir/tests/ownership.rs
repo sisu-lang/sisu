@@ -276,7 +276,7 @@ fn nested_loops() {
     assert_eq!(count(&printed, "f", "move xs#0"), 1, "{printed}");
 }
 
-/// A last use inside an inner loop moves: rewriting reaches every loop depth.
+/// A last use inside an inner loop moves, at every loop depth.
 #[test]
 fn move_in_inner_loop() {
     let printed = built(

@@ -1,6 +1,6 @@
 // An arm body reassigns the scrutinee's variable while its bindings are live. The `Idle` arm
 // leaves `s` as it is, and `s` is read again after the `match` and on the loop's next iteration,
-// so the scrutinee is never a last-use `Move`: it is a live variable copied into the `match`'s
+// so the scrutinee is never moved into the `match`: it is a live variable copied into the `match`'s
 // retained temporary. The bindings keep their counter and string after `s` drops the old value,
 // which is released exactly once.
 class Counter {

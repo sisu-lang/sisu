@@ -95,19 +95,26 @@ their branch types, `check/call.rs` calls, method calls and constructors, and
 `check/member.rs` fields and methods found through `.` and `?.`. The checker
 reports every error in one run: an expression that already failed gets the
 poison type, so one mistake produces one diagnostic. A program with no errors comes out as the
-typed tree, `tir`, which is all that codegen reads. A type in `tir` is a
+typed tree, `tir`, which `mir` is built from. A type in `tir` is a
 4-byte `Type` handle into one table (`types.rs`), as a name is a `Symbol`;
 its `kind()` gives the structure, and equal structures get the same handle.
 
-**Moves** (`mir/ownership.rs`). Decides each read of a counted local on the
-mid-level IR, `mir`, which the build lowers `tir` to: a read that is the local's
+**Mir** (`mir/`). The mid-level IR between `tir` and LLVM IR
+([ADR 0025](adr/0025-mir-holds-every-count.md)), built on the build path only,
+so `--check` does not pay for it. `mir::build` lowers each function of `tir` to
+typed locals and basic blocks in which every copy, move and release is its own
+statement (`lower.rs`). The ownership pass (`ownership.rs`) then decides each
+read of a counted local by liveness (`liveness.rs`): a read that is the local's
 last use moves its reference instead of sharing it, so a later write to the
 array it holds can skip the copy
-([ADR 0007](adr/0007-arrays-are-values.md)). `tir` carries no moves; the
-decision is made by liveness on `mir`'s blocks, after lowering and before
-codegen ([ADR 0025](adr/0025-mir-holds-every-count.md)).
+([ADR 0007](adr/0007-arrays-are-values.md)). The hoist (`hoist.rs`) moves the
+`make_unique` of an array a loop writes to the loop's pre-header
+([ADR 0021](adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md)).
+Debug builds of the compiler end with the certifier (`certify.rs`), which
+checks on every path that each owned reference is moved or released once.
+`tir` carries no moves. `--emit mir` prints the result.
 
-**Codegen** (`codegen/`). Walks `tir` and builds an LLVM module through the
+**Codegen** (`codegen/`). Walks `mir` and builds an LLVM module through the
 [inkwell](https://github.com/TheDan64/inkwell) bindings. Each Sisu function
 becomes an LLVM function named `sisu.<name>`, and each method of a class or an
 enum one named `sisu.<Type>.<method>`. Codegen also emits a `main` with the C

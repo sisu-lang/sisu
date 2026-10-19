@@ -1653,17 +1653,21 @@ fn moves_of_s(src: &str) -> usize {
     print(&build(&program), &program).matches("move s#").count()
 }
 
+/// Sized to run in under a second; the counted tests `wide_guard_probes_once_per_read`
+/// (lowering) and `liveness_reads_grow_linearly` (ownership) pin the same passes' cost.
 #[test]
 fn many_guarded_arms_mark_last_uses_in_linear_time() {
-    const VARIANTS: usize = 32_000;
+    const VARIANTS: usize = 6_000;
     let src = wide_match(VARIANTS, ", keep: bool", "", |_| " if keep".to_owned());
     // Each arm's `s` is read once, in its body, so every read is its last use.
     assert_eq!(moves_of_s(&src), VARIANTS);
 }
 
+/// Sized to run in under a second; the counted tests `liveness_reads_grow_linearly`
+/// (ownership) and `scope_release_gap_is_sparse` (certifier) pin the same passes' cost.
 #[test]
 fn many_guards_of_distinct_locals_mark_last_uses_in_linear_time() {
-    const VARIANTS: usize = 48_000;
+    const VARIANTS: usize = 10_000;
     let locals = (0..VARIANTS)
         .map(|i| format!("    let g{i} = c\n"))
         .collect::<Vec<_>>()
@@ -1685,10 +1689,12 @@ fn nested_guards_mark_last_uses_in_linear_time() {
 }
 
 /// Arm `i`'s test hangs off arm `i - 1`'s failure edge, and the join has one predecessor per
-/// arm: iterative dominators are quadratic here.
+/// arm: iterative dominators are quadratic here. Sized to run in under a second; the counted
+/// `switch_back_to_every_block_reads_linearly` (certifier) pins the cost of a join with many
+/// predecessors, but no counted test covers the dominators of an arm chain.
 #[test]
 fn many_arms_mark_last_uses_in_linear_time() {
-    const VARIANTS: usize = 200_000;
+    const VARIANTS: usize = 16_000;
     let variants = (0..VARIANTS)
         .map(|i| format!("    V{i}(string)\n"))
         .collect::<Vec<_>>()

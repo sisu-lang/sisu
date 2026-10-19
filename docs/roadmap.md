@@ -518,10 +518,11 @@ which does it better. The first of these needs introduces `mir`:
 - Reference-count elision: removing increment and decrement pairs that
   cancel out, which is why Swift has SIL. ADR 0012 (proposed) removes the
   pair around a method's `self` without it.
-- Explicit count statements. Today codegen decides where to add and
-  subtract 1 while it emits LLVM IR, and the last-use pass must repeat
-  codegen's evaluation order by hand. In `mir`, one pass writes every
-  retain, release and move as a statement, and LLVM emission follows them.
+- Explicit count statements. Codegen once decided where to add and
+  subtract 1 while it emitted LLVM IR, and a separate last-use pass had to
+  repeat codegen's evaluation order by hand. In `mir`, lowering writes every
+  retain, release and move as a statement, the ownership pass places the
+  moves, and LLVM emission follows them.
   Debug builds of the compiler then check each function, as Swift's ownership
   verifier does: on every path, each owned reference is moved or released
   once, nothing is used after its release, and a borrow ends before its
@@ -713,7 +714,7 @@ Each is small once its milestone's main feature exists:
   designed on it once.
 - Milestone 9: `for` over any iterator. Milestone 3's `for` lowers to a loop
   over an array or a range. An iterator `for` lowers to a loop that calls
-  `next()` until it returns `None`, before the last-use pass runs, so a
+  `next()` until it returns `None`, before `mir` is built, so a
   `break` or `return` inside it still releases what the loop holds. A range
   then becomes a value that can be passed and stored, so the glossary's
   "range" entry changes with it.
@@ -1390,8 +1391,8 @@ accepted.
     different order;
   - whether labels and default values belong to a function type, so a call
     through a closure keeps them. Swift dropped labels from function types;
-  - that arguments are still evaluated left to right as written, which the
-    last-use pass already assumes, even when labels reorder them.
+  - that arguments are still evaluated left to right as written, which
+    `mir` lowering already assumes, even when labels reorder them.
 - **Closure syntax.** Resolved for `match` in milestone 7; the rest stays
   with milestone 9. The arm's pattern comes before its `=>` and an expression
   after it, so a closure inside an arm body, `n => xs.filter(x => x > n)`,

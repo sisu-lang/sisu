@@ -1,9 +1,26 @@
 //! `tir` to mir. The patterns of `IfSome` and `Match` are in `pattern.rs`.
 //!
-//! Operands are evaluated in source order, as codegen evaluates them today. Each helper returns
-//! `None` once the code it lowered cannot fall through (a `return`, `break`, `continue` or
-//! `panic`); lowering then stops emitting into that block, and a block is created only when an
-//! edge reaches it, so every block is reachable from the entry.
+//! Operands are evaluated in source order. Each helper returns `None` once the code it lowered
+//! cannot fall through (a `return`, `break`, `continue` or `panic`); lowering then stops
+//! emitting into that block, and a block is created only when an edge reaches it, so every
+//! block is reachable from the entry. The order, which the ownership pass reads off the blocks:
+//! - `Call`, `New`, `Variant`, `ArrayLit` and `Math` evaluate their arguments left to right, and
+//!   `Interpolate` its parts; `Index` evaluates base then index; `Contains` base then value;
+//!   `ArrayFill` value then length; `Equal`, `Is`, `Concat`, arithmetic and a string comparison
+//!   lhs then rhs.
+//! - `If` and `IfSome` evaluate the condition or scrutinee, then one branch. `Match` evaluates
+//!   its scrutinee once, then tests the arms' patterns in order, a guard after its arm's test,
+//!   and runs the body of the first arm that holds.
+//! - Assigning a counted local evaluates the value, releases the old value, then assigns;
+//!   assigning a field evaluates the base, then the value, then stores. Assigning an element
+//!   evaluates a field root's base, then the indexes from the root outwards, then the value,
+//!   then per level the bounds check and `make_unique`, then stores. An `Append` follows the
+//!   element write, after a copy of its place.
+//! - `Return` evaluates its value, then releases the scope; `break` and `continue` release the
+//!   scope their loop's frame marks, then jump.
+//! - `&&`, `||` and each step of a comparison chain have an edge that skips the rest.
+//! - An operand that reads a whole local which a later operand of the same statement mentions
+//!   is read into a temporary at once, so the statement sees the value the local had there.
 //!
 //! The scope stack holds the counted locals that `tir` declares and that are in scope, oldest
 //! first. A block, a loop's body and the function each mark its height; an edge that leaves
