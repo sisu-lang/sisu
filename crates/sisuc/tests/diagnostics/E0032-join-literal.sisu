@@ -1,0 +1,9 @@
+fn f(s: string) {
+    print([] + s)
+    print(s + None)
+    print([1] + s)
+}
+
+fn main() {
+    f("a")
+}

@@ -281,6 +281,23 @@ fn concat_mismatch() {
     ]);
 }
 
+/// A `None` beside a `string` that holds a mismatch of its own gets the label, and that
+/// mismatch is left as it is.
+#[test]
+fn join_literal_after_another_mismatch() {
+    let src = with_items(&body(
+        "s: string",
+        "print({ let x: i64 = true\n s } + None)",
+    ));
+    assert_eq!(
+        found(&src),
+        [
+            (Code::Mismatch, (2, 26), vec![]),
+            (Code::Mismatch, (3, 8), vec![(2, 11)]),
+        ]
+    );
+}
+
 /// Literals, comments, line breaks and statements around the operands decide the unsafe fix.
 #[test]
 fn concat_mismatch_layout() {

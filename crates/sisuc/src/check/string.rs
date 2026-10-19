@@ -189,12 +189,12 @@ impl Checker<'_> {
                 _ => continue,
             };
             let want = vec![self.type_name(Type::STRING)];
-            if let Some(d) = self.diagnostics[start..]
+            for d in self.diagnostics[start..]
                 .iter_mut()
-                .find(|d| d.code() == Code::Mismatch && d.span() == e.span)
+                .filter(|d| d.code() == Code::Mismatch && d.span() == e.span)
             {
                 *d = DiagnosticKind::Mismatch {
-                    want,
+                    want: want.clone(),
                     got: got.to_string(),
                     at: e.span,
                     source: Some(MismatchSource::Concat(other.span)),
