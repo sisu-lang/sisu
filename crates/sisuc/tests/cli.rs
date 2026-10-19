@@ -177,9 +177,10 @@ fn lexer_error_exits_1() {
     );
 }
 
+/// A mode flag with too few arguments, or with the arguments of another mode.
 #[test]
-fn bare_flag_is_a_usage_error() {
-    assert_usage_errors(&[&["--check"]]);
+fn mode_with_the_wrong_arguments_is_a_usage_error() {
+    assert_usage_errors(&[&["--check"], &["--check", "tir", "f.sisu"]]);
 }
 
 /// Runs `sisuc` with each of `cases` in the target tmp dir, and checks that each is a usage
@@ -717,8 +718,9 @@ fn emit_unknown_stage_lists_mir() {
 
 #[test]
 fn emit_with_an_error_prints_nothing_on_stdout() {
-    let flags: [(&[&str], &str); 2] = [
+    let flags: [(&[&str], &str); 3] = [
         (&["--emit", "tir"], "error[E0001]: "),
+        (&["--emit", "mir"], "error[E0001]: "),
         (
             &["--format", "json", "--emit", "tir"],
             r#"{"version":1,"kind":"diagnostic","code":"E0001","#,
@@ -741,7 +743,7 @@ fn emit_with_an_error_prints_nothing_on_stdout() {
 /// summary.
 #[test]
 fn json_emit_keeps_stdout() {
-    for stage in ["tokens", "ast", "tir", "ir", "ir-raw"] {
+    for stage in ["tokens", "ast", "tir", "mir", "ir", "ir-raw"] {
         let text = run_on("json_emit_keeps_stdout", SQUARE, &["--emit", stage]);
         let json = run_on(
             "json_emit_keeps_stdout",

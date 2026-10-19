@@ -90,11 +90,20 @@ fn dispatch_of(f: &Function, tried: LocalId) -> BlockId {
 }
 
 /// `if let` moves the optional into a temporary, and the `Some` edge moves the payload out of
-/// it: no copy and no release of that temporary on either edge.
+/// it: no copy and no release of that temporary on either edge. An uncounted payload is read,
+/// and its binding has nothing to release.
 #[test]
 fn ifsome_moves_the_payload() {
-    let printed =
-        lowered("fn unwrap(p: string?) -> string { if let q = p { q } else { return \"none\" } }");
+    let printed = lowered(
+        "fn unwrap(p: string?) -> string { if let q = p { q } else { return \"none\" } }\n\
+         fn count(m: i64?) -> i64 { if let q = m { q } else { 0 } }",
+    );
+    has(
+        &printed,
+        "count",
+        &["if_present _ bb1 bb2", "q#1 = unwrap _"],
+    );
+    assert!(!function(&printed, "count").contains("release"));
     has(
         &printed,
         "unwrap",
@@ -157,6 +166,31 @@ fn range_and_bool_patterns() {
     );
     has(&printed, "b", &["branch _ bb"]);
     assert!(!function(&printed, "b").contains("switch"));
+}
+
+/// A literal tests with a `switch` on the value, an `i64`, a `u8` or a string; a `char` range
+/// compares with code points.
+#[test]
+fn literals_switch_on_the_value() {
+    let printed = lowered(
+        "fn f(n: i64, b: u8, s: string, c: char) -> i64 {\n\
+             let x = match n {\n        3 => 1\n        _ => 0\n    }\n\
+             let y = match b {\n        7 => 1\n        _ => 0\n    }\n\
+             let z = match s {\n        \"hi\" => 1\n        _ => 0\n    }\n\
+             let w = match c {\n        'a'..='z' => 1\n        _ => 0\n    }\n\
+             x + y + z + w\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "switch _ [3: bb",
+            "switch _ [7u8: bb",
+            "switch _ [\"hi\": bb",
+            "_ = _ >= 'a'",
+            "_ = _ <= 'z'",
+        ],
+    );
 }
 
 /// A binding borrows its part of the scrutinee while the test runs. The commit copies it and

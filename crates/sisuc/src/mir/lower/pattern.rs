@@ -221,7 +221,8 @@ impl Lowering<'_> {
     /// not match, and leaves `current` where it does, with each binding borrowing its part.
     /// Returns the target that a test after this one fails to, its retry target: `fail` for a
     /// pattern with no `|`, the retry target of its last sub-test for a variant, and for an `|`
-    /// a switch that resumes the alternative that matched.
+    /// a switch that resumes the alternative that matched. Each statement that reads `place`
+    /// keeps its own copy of it, and the tests after it still need it.
     fn test(&mut self, pattern: &Pattern, place: &Place, ty: Type, fail: Target) -> Target {
         match &pattern.kind {
             PatternKind::Wild => fail,

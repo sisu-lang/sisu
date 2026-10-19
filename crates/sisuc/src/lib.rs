@@ -71,7 +71,6 @@ enum Stage {
     IrRaw,
 }
 
-/// The format and the mode the command line asks for.
 /// The stage `--emit` names.
 fn emit_stage(name: &OsString) -> Result<Stage, String> {
     match name.to_str() {
@@ -85,6 +84,7 @@ fn emit_stage(name: &OsString) -> Result<Stage, String> {
     }
 }
 
+/// The format and the mode the command line asks for.
 fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
     // `--format` is accepted only as the first two arguments.
     let (format, args) = match args {
