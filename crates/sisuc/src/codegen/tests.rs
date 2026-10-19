@@ -1839,3 +1839,41 @@ fn a_loop_makes_its_written_arrays_unique_before_it_starts() {
     let irs = irs.join("\n");
     assert_eq!(found, expected, "{irs}");
 }
+
+/// Each block is named after its mir index, or after its loop role: `loop.pre` for a
+/// pre-header, `loop.body` for a header. LLVM numbers the repeated names in mir's order.
+#[test]
+fn blocks_are_named_after_their_index_or_loop_role() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn f() {\n    for i in 0..2 {\n        for j in 0..3 {\n            print(j)\n        }\n    }\n\
+             for k in 0..4 {\n        print(k)\n    }\n}\nfn main() {}",
+    );
+    let f = module
+        .get_function("sisu.f")
+        .expect("`f` should be defined");
+    let names: Vec<String> = f
+        .get_basic_block_iter()
+        .map(|b| b.get_name().to_string_lossy().into_owned())
+        .collect();
+    let expected = [
+        "loop.pre",
+        "loop.body",
+        "loop.pre1",
+        "bb3",
+        "loop.body2",
+        "bb5",
+        "bb6",
+        "bb7",
+        "bb8",
+        "bb9",
+        "loop.pre3",
+        "loop.body4",
+        "bb12",
+        "bb13",
+        "bb14",
+        "bb15",
+    ];
+    assert_eq!(names, expected, "{}", f.print_to_string());
+}
