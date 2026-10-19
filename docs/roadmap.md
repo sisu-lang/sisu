@@ -504,7 +504,7 @@ follow it, ahead of the rest of milestone 8.
 4. Borrowed-parameter inference (replaces ADR 0012).
 5. Reuse of freed boxes.
 
-A mid-level IR, `mir`, between `tir` and LLVM IR. Each step down is a
+Each step down from `tir` to LLVM IR is a
 lowering: it rewrites a feature with simpler parts, so the stages below
 never see it. Rust has the same split: its HIR is a desugared tree, close
 to `tir`, and its MIR is a control-flow graph of basic blocks. Swift's SIL and

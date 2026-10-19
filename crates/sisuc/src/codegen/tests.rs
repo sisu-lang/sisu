@@ -2071,8 +2071,9 @@ fn a_loop_makes_its_written_arrays_unique_before_it_starts() {
     assert_eq!(found, expected, "{irs}");
 }
 
-/// Each block is named after its mir index, or after its loop role: `loop.pre` for a
-/// pre-header, `loop.body` for a header. LLVM numbers the repeated names in mir's order.
+/// Each block is named after its mir index (`bbN`), or after its loop role: `loop.pre` for a
+/// pre-header, `loop.body` for a header. Loop blocks compare by role prefix, since the digits
+/// LLVM appends to repeated names are its own.
 #[test]
 fn blocks_are_named_after_their_index_or_loop_role() {
     let context = Context::create();
@@ -2087,20 +2088,27 @@ fn blocks_are_named_after_their_index_or_loop_role() {
     let names: Vec<String> = f
         .get_basic_block_iter()
         .map(|b| b.get_name().to_string_lossy().into_owned())
+        .map(|n| {
+            if n.starts_with("loop.") {
+                n.trim_end_matches(|c: char| c.is_ascii_digit()).to_owned()
+            } else {
+                n
+            }
+        })
         .collect();
     let expected = [
         "loop.pre",
         "loop.body",
-        "loop.pre1",
+        "loop.pre",
         "bb3",
-        "loop.body2",
+        "loop.body",
         "bb5",
         "bb6",
         "bb7",
         "bb8",
         "bb9",
-        "loop.pre3",
-        "loop.body4",
+        "loop.pre",
+        "loop.body",
         "bb12",
         "bb13",
         "bb14",
