@@ -8,7 +8,7 @@ first two, and only for the paths that ran.
 ## Where the counts come from
 
 - `crates/sisuc/src/codegen/rc.rs`: the helpers (`retain`, `release.<T>`, `drop.<T>`, `eq.<T>`, `unique.<T>`). Equality helpers borrow their operands: they neither retain nor release.
-- `crates/sisuc/src/last_use.rs`: turns a counted local's last read into a move, which hands over its reference instead of retaining. Its header says it "must match codegen exactly" and lists the evaluation order it assumes. Every mismatch between that list and `codegen/` is a leak, a use after free, or a missed copy. This is the first place to hunt.
+- `crates/sisuc/src/mir/ownership.rs`: turns a counted local's last read into a move, which hands over its reference instead of retaining; `mir/lower.rs` writes the other counts as statements in source evaluation order. Every mismatch between that order and what `codegen/` emits is a leak, a use after free, or a missed copy. This is the first place to hunt.
 - `crates/sisuc/src/codegen/mod.rs` and `codegen/array.rs`: where expressions retain, where scopes and assignments release, and copy-on-write (`unique`).
 
 ## Oracles

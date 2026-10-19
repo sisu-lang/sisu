@@ -54,7 +54,7 @@ pub(super) const UNREACHABLE_CODE: &str = "fn f() -> i64 { panic(\"x\") }\n\
      fn m(c: bool) -> i64 {\n    match c {\n        true => 1\n        _ => 0\n    }\n}";
 
 /// The typed tree of `src`, which checks without an error, with an empty `main` added when it
-/// has none, and with its last uses marked, as the build passes it on.
+/// has none.
 fn checked(src: &str) -> tir::Program {
     let src = if src.contains("fn main") {
         src.to_owned()
@@ -62,9 +62,7 @@ fn checked(src: &str) -> tir::Program {
         format!("{src}\nfn main() {{}}")
     };
     let (program, diagnostics) = check(&parse_ok(&src), &src);
-    let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-    crate::last_use::mark(&mut program);
-    program
+    program.unwrap_or_else(|| panic!("{diagnostics:?}"))
 }
 
 /// The mir of `src` as lowering leaves it, before any pass.

@@ -121,8 +121,8 @@ the LLVM prefix must be absolute, and `-o` keeps its output out of the
 repository:
 
 ```console
-$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/last_use.rs --list
-$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/last_use.rs -j 4 -o <RUN>/coverage/last_use
+$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/mir/ownership.rs --list
+$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/mir/ownership.rs -j 4 -o <RUN>/coverage/ownership
 ```
 
 Each mutant runs the whole test suite, Valgrind cases included, so a file

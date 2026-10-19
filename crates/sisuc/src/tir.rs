@@ -274,8 +274,6 @@ pub(crate) enum ExprKind {
     Str(String),
     None,
     Local(LocalId),
-    /// A read of a counted local that takes its reference; only `last_use` makes one.
-    Move(LocalId),
     Call {
         func: FuncId,
         args: Vec<Expr>,
@@ -476,8 +474,7 @@ impl Expr {
             | ExprKind::Str(_)
             | ExprKind::None
             | ExprKind::ReadLine
-            | ExprKind::Local(_)
-            | ExprKind::Move(_) => false,
+            | ExprKind::Local(_) => false,
             ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => true,
             ExprKind::Call { args, .. }
             | ExprKind::New { args, .. }
@@ -672,11 +669,6 @@ impl Printer<'_> {
             ExprKind::Str(s) => write!(f, "{s:?}"),
             ExprKind::None => f.write_str("None"),
             ExprKind::Local(id) => self.local(f, *id),
-            ExprKind::Move(id) => {
-                f.write_str("(move ")?;
-                self.local(f, *id)?;
-                f.write_str(")")
-            }
             ExprKind::Call { func, args } => {
                 let name = &self.program.functions[func.0].name;
                 self.list(f, format_args!("call {name}"), args)

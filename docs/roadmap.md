@@ -519,7 +519,7 @@ which does it better. The first of these needs introduces `mir`:
   cancel out, which is why Swift has SIL. ADR 0012 (proposed) removes the
   pair around a method's `self` without it.
 - Explicit count statements. Today codegen decides where to add and
-  subtract 1 while it emits LLVM IR, and `last_use.rs` must repeat
+  subtract 1 while it emits LLVM IR, and the last-use pass must repeat
   codegen's evaluation order by hand. In `mir`, one pass writes every
   retain, release and move as a statement, and LLVM emission follows them.
   Debug builds of the compiler then check each function, as Swift's ownership

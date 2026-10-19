@@ -528,14 +528,18 @@ fn base_borrowed_when_the_sibling_leaves_locals() {
     );
 }
 
-/// An index whose last read of another local is a `Move` in the typed tree still leaves `xs`
-/// as it was: lowering reads that `Move` as a read, so `xs` is borrowed, not copied.
+/// An index whose read of another local is that local's last use still leaves `xs` as it was:
+/// the sibling condition sees a read, not a move, so `xs` is borrowed, not copied.
 #[test]
 fn base_borrowed_when_the_sibling_moves_another_local() {
     let src = "fn moved(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    xs\n}";
-    assert!(checked(src).to_string().contains("(len (move ys#1))"));
-    let printed = lowered(src);
-    has(&printed, "moved", &["_ = len ys#1\n    _ = xs#0[_]"]);
+    has(&lowered(src), "moved", &["_ = len ys#1\n    _ = xs#0[_]"]);
+    // The ownership pass then moves `ys`, its last use, and still reads `xs` in place.
+    has(
+        &built(src),
+        "moved",
+        &["_ = move ys#1\n    _ = len _\n    release _\n    _ = xs#0[_]"],
+    );
 }
 
 /// Lowering stops at an exit: the statements after it, which the checker keeps and warns

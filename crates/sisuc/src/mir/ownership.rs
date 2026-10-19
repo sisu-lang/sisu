@@ -6,7 +6,7 @@
 //!   `l = move x` or `l = copy x`.
 //! - A borrow site reads its root in place when the root is live after the statement. When it
 //!   is not, `t = move x` comes before the statement, the place reads `t`, and `release t`
-//!   follows: today's count for a base that `last_use` made a move.
+//!   follows: the statement owns the root's value, and releases it.
 //! - A guard mark, on a `use` of a `match` binding or a borrow site rooted at one, is a read
 //!   of a borrowed binding: a copy or an in-place read, whatever liveness says.
 

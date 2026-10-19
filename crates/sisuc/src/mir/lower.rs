@@ -110,9 +110,9 @@ fn constant(e: &Expr) -> Option<Const> {
     None
 }
 
-/// The local that `e` reads whole. `Move` reads like `Local`: mir decides moves itself.
+/// The local that `e` reads whole.
 fn local_of(e: &Expr) -> Option<LocalId> {
-    if let ExprKind::Local(local) | ExprKind::Move(local) = e.kind {
+    if let ExprKind::Local(local) = e.kind {
         Some(local)
     } else {
         None
@@ -506,8 +506,7 @@ impl<'a> Lowering<'a> {
             | ExprKind::Bool(_)
             | ExprKind::Char(_)
             | ExprKind::None
-            | ExprKind::Local(_)
-            | ExprKind::Move(_) => Rvalue::Use(
+            | ExprKind::Local(_) => Rvalue::Use(
                 self.leaf(e)
                     .expect("a constant or a local should be a leaf operand"),
             ),
@@ -1059,11 +1058,10 @@ impl<'a> Lowering<'a> {
 }
 
 /// Whether evaluating `expr` leaves every local as it was, so a local read before it still
-/// holds the same block after it. A `Move` reads as a `Local`: mir decides moves itself, after
-/// lowering. The sibling condition of B1 and B5.
+/// holds the same block after it. The sibling condition of B1 and B5.
 fn leaves_locals(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Int(_) | ExprKind::Local(_) | ExprKind::Move(_) => true,
+        ExprKind::Int(_) | ExprKind::Local(_) => true,
         ExprKind::Unary { operand, .. }
         | ExprKind::Convert(operand)
         | ExprKind::Len(operand)
@@ -1196,7 +1194,7 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Break
         | ExprKind::Continue
         | ExprKind::Return(None) => {}
-        ExprKind::Local(local) | ExprKind::Move(local) => found.found.push(local.0),
+        ExprKind::Local(local) => found.found.push(local.0),
         ExprKind::Call { args, .. }
         | ExprKind::New { args, .. }
         | ExprKind::Variant { args, .. }

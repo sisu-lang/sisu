@@ -61,9 +61,9 @@ optional `if` guard, `=>` and a body; a pattern is one or more alternatives
 joined by `|`. `if let` and `while let` take a pattern too. It rejects an item that nests deeper than
 256 levels, because every later stage walks the tree recursively.
 
-**Front end** (`front_end.rs`). Runs the lexer, parser, checker and last-use
-pass in order and returns the program and every diagnostic, in position
-order: the checker's are merged in by position. The checker runs only when
+**Front end** (`front_end.rs`). Runs the lexer, parser and checker in order and
+returns the program and every diagnostic, in position order: the checker's are
+merged in by position. The checker runs only when
 every item has a name.
 
 **Checker** (`check/`, `tir.rs`). Resolves every name, types every expression
@@ -99,12 +99,13 @@ typed tree, `tir`, which is all that codegen reads. A type in `tir` is a
 4-byte `Type` handle into one table (`types.rs`), as a name is a `Symbol`;
 its `kind()` gives the structure, and equal structures get the same handle.
 
-**Last use** (`last_use.rs`). Walks each function in `tir` backward and turns
-every read of a counted local that is its last use into a move. A move hands
-over the local's reference instead of sharing it, so a later write to the
+**Moves** (`mir/ownership.rs`). Decides each read of a counted local on the
+mid-level IR, `mir`, which the build lowers `tir` to: a read that is the local's
+last use moves its reference instead of sharing it, so a later write to the
 array it holds can skip the copy
-([ADR 0007](adr/0007-arrays-are-values.md)). The pass reports nothing; the
-driver runs it after the checker finds no errors.
+([ADR 0007](adr/0007-arrays-are-values.md)). `tir` carries no moves; the
+decision is made by liveness on `mir`'s blocks, after lowering and before
+codegen ([ADR 0025](adr/0025-mir-holds-every-count.md)).
 
 **Codegen** (`codegen/`). Walks `tir` and builds an LLVM module through the
 [inkwell](https://github.com/TheDan64/inkwell) bindings. Each Sisu function

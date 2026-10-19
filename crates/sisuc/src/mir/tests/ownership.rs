@@ -1,5 +1,5 @@
 //! The ownership pass: each `use`, borrow site and guard mark becomes a move, a copy or an
-//! in-place read by liveness. The ported tests make the decision `last_use.rs` makes on `tir`.
+//! in-place read by liveness. The ported tests assert the decision the retired tir pass made.
 
 use super::*;
 use crate::mir::liveness::CONSULTED;
@@ -380,6 +380,119 @@ fn borrow_site_at_last_use_moves_and_releases() {
     );
     has(&printed, "f", &["_ = move a#0", "_ = len _", "release _"]);
     has(&printed, "g", &["n#1 = len a#0"]);
+}
+
+/// The declarations the `match` tests below share.
+const MATCH_DECLS: &str = "enum Expr {\n    Num(i64)\n    Add(i64, i64)\n}\n\
+    class C { mut count: i64 }\n\
+    enum State {\n    Idle\n    Running(C)\n}\n\
+    fn main() {}";
+
+/// A `match` and the locals it reads: the scrutinee and each arm's last read move, and a local
+/// a later arm or a path out of the loop still reads stays in place.
+#[test]
+fn last_use_through_match() {
+    let built_t = |body: &str| built(&format!("{MATCH_DECLS}\n{body}"));
+    // The scrutinee moves into the test, and each arm's last read of a local moves.
+    let printed = built_t(
+        "fn t(s: State, d: C) -> C {\n    match s {\n        Running(c) => c\n        Idle => d\n    }\n}",
+    );
+    has(
+        &printed,
+        "t",
+        &[
+            "_ = move s#0\n    switch tag _",
+            "c#2 = borrow (_ as 1).0",
+            "_ = move c#2",
+            "_ = move d#1",
+        ],
+    );
+    // A local a later arm reads is live in the arms before it and at the test: the scrutinee is
+    // copied into the `match`, and the last arm moves it.
+    let printed = built_t(
+        "fn t(s: State) -> State {\n    match s {\n        Running(_) => State.Idle\n        Idle => s\n    }\n}",
+    );
+    has(
+        &printed,
+        "t",
+        &["bb0:\n    _ = copy s#0\n    switch tag _", "_ = move s#0"],
+    );
+    // A local every arm assigns is dead at the test, so the read before the `match` moves it; one
+    // arm that leaves it alone keeps it live there.
+    for (idle, moved) in [("xs = [2]", true), ("{}", false)] {
+        let printed = built_t(&format!(
+            "fn t(s: State) -> i64 {{\n    let mut xs = [0]\n    print(xs.len())\n    match s {{\n        Running(_) => xs = [1]\n        Idle => {idle}\n    }}\n    xs.len()\n}}"
+        ));
+        let (borrowed, taken) = (
+            "_ = len xs#1\n    call print(",
+            "_ = move xs#1\n    _ = len _\n    release _\n    call print(",
+        );
+        has(&printed, "t", &[if moved { taken } else { borrowed }]);
+        assert!(
+            !function(&printed, "t").contains(if moved { borrowed } else { taken }),
+            "{idle}: {printed}"
+        );
+    }
+    // An arm that returns or breaks empties or replaces the live set; the next arm still starts
+    // from the set live after the `match`, where `xs` is live, so neither read moves it.
+    for (src, xs) in [
+        (
+            "fn t(s: State) -> i64 {\n    let xs = [0]\n    print(xs.len())\n    match s {\n        Running(_) => return 1\n        Idle => {}\n    }\n    xs.len()\n}",
+            "xs#1",
+        ),
+        (
+            "fn t(s: State, c: bool) {\n    let xs = [0]\n    while c {\n        match s {\n            Running(_) => break\n            Idle => print(xs.len())\n        }\n    }\n}",
+            "xs#2",
+        ),
+    ] {
+        let printed = built_t(src);
+        has(&printed, "t", &[&format!("_ = len {xs}\n    call print(")]);
+        assert!(
+            !function(&printed, "t").contains(&format!(
+                "move {xs}\n    _ = len _\n    release _\n    call print("
+            )),
+            "{printed}"
+        );
+    }
+    // An arm's bindings are dead before its test, so the loop moves `l` into the `match` and `t`
+    // into `l`.
+    let printed = built(
+        "enum L {\n    Cons(i64, L)\n    Nil\n}\nfn main() {}\nfn t(l0: L) {\n    let mut l = l0\n    while let Cons(h, t) = l {\n        print(h)\n        l = t\n    }\n}",
+    );
+    has(
+        &printed,
+        "t",
+        &[
+            "_ = move l#1\n    switch tag _",
+            "_ = move t#3\n    release? l#1\n    l#1 = move _",
+        ],
+    );
+}
+
+/// An enum with a counted part moves at its last read; one with none is a value, read as it is.
+#[test]
+fn enum_countedness() {
+    // Each row: the declarations of `E`, and whether `E` is counted.
+    let rows = [
+        ("enum E {\n    A\n    B\n}", false),
+        ("enum E {\n    A(i64, bool)\n    B(char)\n}", false),
+        ("enum E {\n    A(string)\n}", true),
+        ("class C { n: i64 }\nenum E {\n    A(C)\n}", true),
+        ("enum E {\n    A\n    B(E)\n}", true),
+        ("enum S {\n    A(string)\n}\nenum E {\n    B(S)\n}", true),
+        ("enum S {\n    A(i64)\n}\nenum E {\n    B(S)\n}", false),
+    ];
+    for (decls, counted) in rows {
+        let printed = built(&format!(
+            "{decls}\nfn f(e: E) {{\n    let a = e\n    let b = e\n    print(1)\n}}"
+        ));
+        let second = if counted {
+            "b#2 = move e#0"
+        } else {
+            "b#2 = e#0\n"
+        };
+        has(&printed, "f", &[second]);
+    }
 }
 
 /// Review Focus 1: a guard binding read at a borrow site on a path that returns from the
