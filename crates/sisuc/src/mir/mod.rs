@@ -171,7 +171,6 @@ pub(crate) enum Rvalue {
     ArrayFill {
         value: Operand,
         len: Operand,
-        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     Wrap(Operand),
@@ -194,7 +193,6 @@ pub(crate) enum Rvalue {
     /// An overflow panics at `span`.
     Sum {
         base: Operand,
-        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     Contains {
@@ -211,7 +209,6 @@ pub(crate) enum Rvalue {
     Unary {
         op: UnaryOp,
         operand: Operand,
-        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     /// An overflow or a division by zero panics at `span`.
@@ -219,7 +216,6 @@ pub(crate) enum Rvalue {
         op: BinaryOp,
         lhs: Operand,
         rhs: Operand,
-        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     /// One step of a comparison chain.
@@ -298,7 +294,6 @@ pub(crate) enum Terminator {
     /// Ends the program; the message is consumed.
     Panic {
         message: Operand,
-        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     Unreachable,

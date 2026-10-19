@@ -4,7 +4,7 @@ use crate::parser::parse_ok;
 use crate::tir::BinaryOp;
 use inkwell::values::{AnyValue, InstructionOpcode, InstructionValue, Operand};
 
-/// Lexes, parses, checks (no errors allowed), marks last uses in and compiles `src`, then
+/// Lexes, parses, checks (no errors allowed), builds the mir of and compiles `src`, then
 /// verifies the module.
 fn compiled<'ctx>(context: &'ctx Context, src: &str) -> Module<'ctx> {
     compiled_with(context, src, false)
@@ -14,10 +14,18 @@ fn compiled<'ctx>(context: &'ctx Context, src: &str) -> Module<'ctx> {
 fn compiled_with<'ctx>(context: &'ctx Context, src: &str, rc_checks: bool) -> Module<'ctx> {
     let program = parse_ok(src);
     let (program, diagnostics) = check(&program, src);
-    let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-    crate::last_use::mark(&mut program);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let mir = mir::build(&program);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let module = compile(context, &program, "test.sisu", src, &machine, rc_checks);
+    let module = compile(
+        context,
+        &program,
+        &mir,
+        "test.sisu",
+        src,
+        &machine,
+        rc_checks,
+    );
     if let Err(e) = module.verify() {
         panic!("{e}\n{}", module.print_to_string());
     }
@@ -47,6 +55,8 @@ fn verifies_chain_and_short_circuit() {
     );
 }
 
+/// An `if` with one returning branch: that branch returns on its own, and the block after the
+/// `if` is reached only from the other.
 #[test]
 fn verifies_one_returning_branch() {
     let context = Context::create();
@@ -55,10 +65,15 @@ fn verifies_one_returning_branch() {
         "fn a(c: bool) -> i64 {\n    if c { return 1 } else { 2 }\n}\nfn b(c: bool) -> i64 {\n    if c { 1 } else { return 2 }\n}\nfn main() {\n    print(a(true))\n}",
     );
     let ir = module.print_to_string().to_string();
-    let phis: Vec<_> = ir.lines().filter(|l| l.contains(" = phi ")).collect();
-    assert_eq!(phis.len(), 2, "{ir}");
-    for phi in phis {
-        assert_eq!(phi.matches('[').count(), 1, "{phi}");
+    for name in ["a", "b"] {
+        let body = function_body(&ir, &format!("define internal i64 @sisu.{name}("));
+        assert_eq!(body.matches("\n  ret i64 ").count(), 2, "{body}");
+        let preds: Vec<_> = body
+            .lines()
+            .filter_map(|l| l.split_once("; preds = ").map(|(_, preds)| preds))
+            .collect();
+        assert!(!preds.is_empty(), "{body}");
+        assert!(preds.iter().all(|p| !p.contains(',')), "{body}");
     }
 }
 
@@ -648,8 +663,11 @@ fn field_read_retains_before_releasing_base() {
             .position(|l| wanted(l))
             .unwrap_or_else(|| panic!("no {what} in\n{main}"))
     };
-    let (_, next, _) = instruction(&lines, &|t| t.starts_with("load ptr, ptr "))
-        .unwrap_or_else(|| panic!("no load of `next` in\n{main}"));
+    // The field's load carries its TBAA tag; a local's slot has none.
+    let (_, next, _) = instruction(&lines, &|t| {
+        t.starts_with("load ptr, ptr ") && t.contains("!tbaa")
+    })
+    .unwrap_or_else(|| panic!("no load of `next` in\n{main}"));
     let order = [
         at(&|l| l.starts_with(&format!("{next} = load ptr")), "load"),
         at(
@@ -1164,10 +1182,20 @@ fn field_accesses_carry_their_fields_tbaa_tag() {
     .print_to_string()
     .to_string();
     let body = function_body(&ir, "define internal void @sisu.f(ptr");
-    let accesses: Vec<_> = body
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.contains(" double"))
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    // The loads and stores of `double`s, less those of the locals' slots.
+    let accesses: Vec<_> = lines
+        .iter()
+        .filter(|l| l.contains(" double") && !l.contains(" alloca "))
+        .filter(|l| {
+            let address = l
+                .split_once(", ptr ")
+                .and_then(|(_, rest)| rest.split(',').next())
+                .unwrap_or_else(|| panic!("no address in {l}"));
+            !lines
+                .iter()
+                .any(|m| m.starts_with(&format!("{address} = alloca ")))
+        })
         .map(|l| {
             (
                 l.split(' ').find(|w| *w == "load" || *w == "store"),
@@ -1195,6 +1223,45 @@ fn entry_instructions(function: FunctionValue<'_>) -> Vec<InstructionValue<'_>> 
     std::iter::successors(first, |i| i.get_next_instruction()).collect()
 }
 
+/// Every instruction of `function`, block by block, in order.
+fn instructions(function: FunctionValue<'_>) -> Vec<InstructionValue<'_>> {
+    function
+        .get_basic_block_iter()
+        .flat_map(|block| {
+            std::iter::successors(block.get_first_instruction(), |i| i.get_next_instruction())
+        })
+        .collect()
+}
+
+/// Where `value` came from through the slots of locals in `code`, straight-line instructions in
+/// order: while it is a load of an `alloca`, the value of the last store into that slot before
+/// the load.
+fn stored_origin<'ctx>(
+    code: &[InstructionValue<'ctx>],
+    mut value: BasicValueEnum<'ctx>,
+) -> BasicValueEnum<'ctx> {
+    while let Some(load) = value.as_instruction_value().filter(|i| {
+        i.get_opcode() == InstructionOpcode::Load
+            && operand_of(*i, 0)
+                .into_pointer_value()
+                .as_instruction()
+                .is_some_and(|slot| slot.get_opcode() == InstructionOpcode::Alloca)
+    }) {
+        let slot = operand_of(load, 0);
+        let before = code
+            .iter()
+            .position(|i| *i == load)
+            .expect("the load should be among the instructions");
+        let store = code[..before]
+            .iter()
+            .rev()
+            .find(|i| i.get_opcode() == InstructionOpcode::Store && operand_of(**i, 1) == slot)
+            .expect("a slot should be stored before it is loaded");
+        value = operand_of(*store, 0);
+    }
+    value
+}
+
 /// Operand `n` of `instruction`, which should be a value, not a block.
 fn operand_of(instruction: InstructionValue<'_>, n: u32) -> BasicValueEnum<'_> {
     let Some(Operand::Value(value)) = instruction.get_operand(n) else {
@@ -1211,10 +1278,10 @@ fn address_of(instruction: InstructionValue<'_>, n: u32) -> InstructionValue<'_>
         .expect("the pointer should be an instruction's result")
 }
 
-/// `binary_value` takes `&&` and `||` as the eager `and` and `or` of two computed `bool`s, which
+/// `binary` takes `&&` and `||` as the eager `and` and `or` of two computed `bool`s, which
 /// is what a range pattern's test is in mir: no branch, no second block.
 #[test]
-fn binary_value_takes_and_and_or_of_two_computed_bools() {
+fn binary_takes_and_and_or_of_two_computed_bools() {
     let context = Context::create();
     let src = "fn main() {}";
     let (program, diagnostics) = check(&parse_ok(src), src);
@@ -1233,8 +1300,8 @@ fn binary_value_takes_and_and_or_of_two_computed_bools() {
             .expect("the function should have two parameters")
     };
     let span = Span::new(0, 0);
-    let both = codegen.binary_value(BinaryOp::And, Type::BOOL, param(0), param(1), span);
-    let either = codegen.binary_value(BinaryOp::Or, Type::BOOL, both, param(1), span);
+    let both = codegen.binary(BinaryOp::And, Type::BOOL, param(0), param(1), span);
+    let either = codegen.binary(BinaryOp::Or, Type::BOOL, both, param(1), span);
     codegen
         .builder
         .build_return(Some(&either))
@@ -1262,7 +1329,8 @@ fn binary_value_takes_and_and_or_of_two_computed_bools() {
 
 /// A string's length is field 1 of its header, read without a tag; an array's is field 1 of
 /// its own header, the `i64` that carries the "count and length" tag. Each load reads the
-/// field of the pointer its own parameter gave: `len` picks by the base's type.
+/// field of the pointer its own parameter gave, through the slots it moved through: `len`
+/// picks by the base's type.
 #[test]
 fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
     let context = Context::create();
@@ -1288,12 +1356,6 @@ fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
         })
         .map(|&load| {
             let gep = address_of(load, 0);
-            // The base is a load of the slot that the parameter was stored into.
-            let slot = operand_of(address_of(gep, 0), 0);
-            let stored = entry
-                .iter()
-                .find(|i| i.get_opcode() == InstructionOpcode::Store && operand_of(**i, 1) == slot)
-                .expect("the parameter should be stored into its slot");
             let text = load.print_to_string().to_string();
             (
                 gep.get_gep_source_element_type()
@@ -1303,7 +1365,7 @@ fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
                 operand_of(gep, 2)
                     .into_int_value()
                     .get_zero_extended_constant(),
-                operand_of(*stored, 0),
+                stored_origin(&entry, operand_of(gep, 0)),
                 text.contains("!tbaa").then(|| tbaa_name(&ir, &text)),
             )
         })
@@ -1370,34 +1432,44 @@ fn nested_array_helpers_are_defined() {
 #[test]
 fn general_path_releases_base() {
     let context = Context::create();
-    let ir = compiled(
+    let module = compiled(
         &context,
         "fn make() -> [i64] { [1] }\nfn f() -> i64 { make()[0] }\nfn main() {}",
-    )
-    .print_to_string()
-    .to_string();
-    let body = function_body(&ir, "define internal i64 @sisu.f()");
-    let lines: Vec<&str> = body.lines().map(str::trim).collect();
-    // `f` returns the element it loaded.
-    let element = lines
+    );
+    let ir = module.print_to_string().to_string();
+    let f = module
+        .get_function("sisu.f")
+        .expect("the module should define `f`");
+    let all = instructions(f);
+    let ret = all
         .iter()
-        .find_map(|l| l.strip_prefix("ret i64 "))
-        .unwrap_or_else(|| panic!("no `ret i64` in\n{body}"));
-    let load = lines
-        .iter()
-        .position(|l| l.starts_with(&format!("{element} = load i64, ptr ")))
-        .unwrap_or_else(|| panic!("no load of {element} in\n{body}"));
-    let release = lines
-        .iter()
-        .position(|l| l.starts_with("call void @\"sisu_rc.release.[i64]\"(ptr "))
-        .unwrap_or_else(|| panic!("no release of the base in\n{body}"));
-    assert!(load < release, "{body}");
+        .find(|i| i.get_opcode() == InstructionOpcode::Return)
+        .unwrap_or_else(|| panic!("no `ret` in\n{ir}"));
+    // `f` returns the element it loaded, through its locals' slots.
+    let element = stored_origin(&all, operand_of(*ret, 0))
+        .as_instruction_value()
+        .unwrap_or_else(|| panic!("`f` should return a loaded value in\n{ir}"));
+    assert_eq!(
+        address_of(element, 0).get_opcode(),
+        InstructionOpcode::GetElementPtr,
+        "{ir}"
+    );
+    let at = |wanted: &dyn Fn(&InstructionValue<'_>) -> bool| all.iter().position(wanted);
+    let load = at(&|i| *i == element);
+    let release = at(&|i| {
+        i.get_opcode() == InstructionOpcode::Call
+            && i.print_to_string()
+                .to_string()
+                .contains("@\"sisu_rc.release.[i64]\"(")
+    })
+    .unwrap_or_else(|| panic!("no release of the base in\n{ir}"));
+    assert!(load.is_some_and(|load| load < release), "{ir}");
 }
 
-/// An index built only from whitelisted nodes keeps the fast path; one with a call or a move
-/// takes the general path, which releases the base before the element is printed. `o` and
-/// `ys` are read again later in `field` and `length`, so those indexes read them without a
-/// move; in `moved` the index's read of `ys` is its last use, which the whitelist excludes.
+/// An index built only from whitelisted nodes reads the base in place; one with a call copies
+/// the base, which is released before the element is printed. In `moved` the index's read of
+/// `ys` is its last use: mir decides that move itself, after the whitelist, which reads it as
+/// a read of `ys` (the plan's expected difference 5).
 #[test]
 fn fast_path_follows_the_index_whitelist() {
     let context = Context::create();
@@ -1419,7 +1491,7 @@ fn fast_path_follows_the_index_whitelist() {
         ("field", true),
         ("length", true),
         ("call", false),
-        ("moved", false),
+        ("moved", true),
     ] {
         let body = function_body(&ir, &format!("define internal ptr @sisu.{name}("));
         let (before, _) = body
@@ -1727,17 +1799,20 @@ fn a_barred_partition_makes_its_array_unique_once() {
 
 /// A loop makes the arrays it writes unique before it starts. `f`'s raw IR, split at each
 /// `loop.body` label: the count of `unique` calls before the first loop body, then in each
-/// piece from a loop body on. Code after a loop lands in that loop's piece (`loop.end` follows
-/// `loop.body`), so no `f` writes after its last loop.
+/// piece from a loop body on. The blocks are in mir's order, where a loop's exit block may sit
+/// in another loop's piece, so no `f` writes after a loop.
 #[test]
 fn a_loop_makes_its_written_arrays_unique_before_it_starts() {
-    use super::hoist::tests::{APPEND, BOTH_WRITE, GRID, OUTER_BARRED_INNER_HOISTS, PARTITION};
-    let cases: [(&str, &str, &[usize]); 5] = [
+    use crate::mir::tests::hoist::{
+        APPEND, B6, BOTH_WRITE, GRID, OUTER_BARRED_INNER_HOISTS, PARTITION,
+    };
+    let cases: [(&str, &str, &[usize]); 6] = [
         ("partition", PARTITION, &[1, 0]),
         ("grid", GRID, &[1, 1]),
         ("nested_both_write", BOTH_WRITE, &[1, 0, 0]),
         ("outer_barred", OUTER_BARRED_INNER_HOISTS, &[0, 1, 0]),
         ("append", APPEND, &[1, 0]),
+        ("b6", B6, &[1, 0]),
     ];
     let mut found = Vec::new();
     let mut irs = Vec::new();

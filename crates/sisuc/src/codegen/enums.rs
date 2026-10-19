@@ -25,7 +25,7 @@ use inkwell::values::{
 use super::layout::HeapBlock;
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED};
-use crate::tir::{Enum, EnumId, Expr, Payload, Type, TypeKind};
+use crate::tir::{Enum, EnumId, Payload, Type, TypeKind};
 
 /// An enum's LLVM types.
 pub(super) struct EnumLayout<'ctx> {
@@ -311,22 +311,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.phi(llvm_ty, &[(self.empty(ty), absent), (present, some)])
     }
 
-    /// `Variant`: each argument, left to right, then the value: the tag and each field stored
-    /// into a scratch slot, which is loaded whole. The slot is zeroed first, so that the whole
-    /// load never reads a byte that no store gave a value, and a boxed `F?` field given `None`
-    /// keeps its `null`. A boxed field's argument moves into a new box with count 1.
-    pub(super) fn build_variant(
-        &mut self,
-        id: EnumId,
-        variant: usize,
-        args: &[Expr],
-    ) -> BasicValueEnum<'ctx> {
-        let values: Vec<_> = args.iter().map(|a| self.operand(a)).collect();
-        self.variant_value(id, variant, &values)
-    }
-
-    /// The value of variant `variant` of enum `id` with the evaluated `values` as its fields.
-    pub(super) fn variant_value(
+    /// The value of variant `variant` of enum `id` with the evaluated `values` as its fields:
+    /// the tag and each field stored into a scratch slot, which is loaded whole. The slot is
+    /// zeroed first, so that the whole load never reads a byte that no store gave a value, and
+    /// a boxed `F?` field given `None` keeps its `null`. A boxed field's value moves into a new
+    /// box with count 1.
+    pub(super) fn variant(
         &self,
         id: EnumId,
         variant: usize,

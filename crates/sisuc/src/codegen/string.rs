@@ -17,7 +17,7 @@ use super::layout::{BYTES, CAP, HeapBlock, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::source::Span;
-use crate::tir::{Align, Expr, Format, Pad, Place, Stream, Type};
+use crate::tir::{Align, Format, Pad, Stream, Type};
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// The `i64` header field `index` of `string`.
@@ -94,34 +94,6 @@ impl<'ctx> Codegen<'ctx, '_> {
                 )
                 .expect(POSITIONED)
         }
-    }
-
-    /// `Concat`: evaluates `lhs`, then `rhs`, and joins them with `concat`.
-    pub(super) fn concat_expr(&mut self, lhs: &Expr, rhs: &Expr) -> PointerValue<'ctx> {
-        let (l, r) = (self.operand(lhs), self.operand(rhs));
-        self.concat(l.into_pointer_value(), r.into_pointer_value())
-    }
-
-    /// `Append { place, value }`, in the order that gives `P + value` its left-to-right meaning:
-    /// the place's operands; a bounds-checked read of `P`, retained; `value`; the walk that
-    /// makes the path unique; the release of the place's own reference, so that `concat` checks
-    /// the count last; the store of the result; and the release of a field root's base.
-    pub(super) fn append(&mut self, place: &Place, value: &Expr) {
-        let operands = self.place_operands(place).expect(
-            "the checker should only make an append whose indexes are locals or literals, which cannot exit",
-        );
-        let ptr_type = self.context.ptr_type(AddressSpace::default()).into();
-        let slot = self.read_slot(operands.slot, operands.ty, &operands.indexes);
-        let read = self.load(ptr_type, slot);
-        self.retain(read, Type::STRING);
-        let text = self
-            .expr(value)
-            .expect("the checker should only make an append whose value cannot exit");
-        let (slot, _) = self.element_slot(&operands);
-        self.release(self.load(ptr_type, slot), Type::STRING);
-        let result = self.concat(read.into_pointer_value(), text.into_pointer_value());
-        self.store(slot, result.into());
-        operands.release_object(self);
     }
 
     /// `sisu_realloc(ptr, old_size, align, new_size) -> ptr` from the runtime, declared on
@@ -245,31 +217,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         string
     }
 
-    /// `Interpolate`: evaluates every part, left to right, then writes them (see
-    /// `interpolate_value`) and releases the `string` parts. `None` when a part exits: nothing
-    /// is allocated yet, and the checker bound every counted part before it to a local, which
-    /// the exit releases.
-    pub(super) fn interpolate(
-        &mut self,
-        parts: &[Expr],
-        formats: &[Format],
-    ) -> Option<BasicValueEnum<'ctx>> {
-        let mut values = Vec::with_capacity(parts.len());
-        for part in parts {
-            values.push((self.expr(part)?, part.ty));
-        }
-        let result = self.interpolate_value(&values, formats);
-        for (value, ty) in values {
-            self.discard(Some(value), ty);
-        }
-        Some(result.into())
-    }
-
     /// The string of the evaluated `parts`, each with its type, in one pass: allocates one
     /// block with room for the most text each part can give, writes each part at the running
     /// offset, pads it there when its format has a width, and stores the length written. The
     /// caller releases the `string` parts.
-    pub(super) fn interpolate_value(
+    pub(super) fn interpolate(
         &self,
         parts: &[(BasicValueEnum<'ctx>, Type)],
         formats: &[Format],
@@ -367,27 +319,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         result
     }
 
-    /// `base`, a string or an array, borrowed when it is a local, and whether it was: the
-    /// caller releases it otherwise. For a read that ends before anything can replace the base.
-    fn borrow_pointer(&mut self, base: &Expr) -> (PointerValue<'ctx>, bool) {
-        let (value, borrowed) = self.borrow_or_expr(base);
-        let value = value.expect("the checker should only give these nodes a string or an array, which lower to a pointer");
-        (value.into_pointer_value(), borrowed)
-    }
-
-    /// `Chars`: sizes the `[char]` by `sisu_utf8_count`, allocates it, and has
-    /// `sisu_utf8_decode` fill it. The string is released after.
-    pub(super) fn chars(&mut self, base: &Expr) -> PointerValue<'ctx> {
-        let (string, borrowed) = self.borrow_pointer(base);
-        let array = self.chars_value(string);
-        if !borrowed {
-            self.release(string.into(), base.ty);
-        }
-        array
-    }
-
     /// The `[char]` of `string`.
-    pub(super) fn chars_value(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn chars(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
         let count = self.utf8_size("sisu_utf8_count", bytes, len);
         let array = self.alloc_array(Type::CHAR, count, None);
@@ -396,19 +329,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         array
     }
 
-    /// `Bytes`: a `[u8]` as long as the string, with its bytes copied in. The string is
-    /// released after.
-    pub(super) fn bytes(&mut self, base: &Expr) -> PointerValue<'ctx> {
-        let (string, borrowed) = self.borrow_pointer(base);
-        let array = self.bytes_value(string);
-        if !borrowed {
-            self.release(string.into(), base.ty);
-        }
-        array
-    }
-
     /// The `[u8]` of `string`.
-    pub(super) fn bytes_value(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn bytes(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let len = self.string_len(string);
         let array = self.alloc_array(Type::U8, len, None);
         let first = self.element_ptr(Type::U8, array, self.context.i64_type().const_zero());
@@ -416,38 +338,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         array
     }
 
-    /// `Len` of `Words`: the `sisu_words_count` that `words` starts with, and nothing else. The
-    /// `[string]` would be released as soon as its length is read, so it is never built. The
-    /// string is released after, as `words` releases it.
-    pub(super) fn word_count(&mut self, base: &Expr) -> IntValue<'ctx> {
-        let (string, borrowed) = self.borrow_pointer(base);
-        let count = self.len_words_value(string);
-        if !borrowed {
-            self.release(string.into(), base.ty);
-        }
-        count
-    }
-
     /// The number of words in `string`.
-    pub(super) fn len_words_value(&self, string: PointerValue<'ctx>) -> IntValue<'ctx> {
+    pub(super) fn len_words(&self, string: PointerValue<'ctx>) -> IntValue<'ctx> {
         let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
         self.call_word_function("sisu_words_count", &[bytes.into(), len.into()])
     }
 
-    /// `Words`: counts the words with `sisu_words_count`, allocates the `[string]`, and fills
-    /// each element from a `sisu_word_next` call that starts where the last word ended, so the
-    /// work is linear. The string is released after.
-    pub(super) fn words(&mut self, base: &Expr) -> PointerValue<'ctx> {
-        let (string, borrowed) = self.borrow_pointer(base);
-        let array = self.words_value(string);
-        if !borrowed {
-            self.release(string.into(), base.ty);
-        }
-        array
-    }
-
     /// The `[string]` of the words of `string`.
-    pub(super) fn words_value(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn words(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let i64_type = self.context.i64_type();
         let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
         let count = self.call_word_function("sisu_words_count", &[bytes.into(), len.into()]);
@@ -495,19 +393,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_int_value()
     }
 
-    /// `FromChars`: sizes the string by `sisu_utf8_len`, allocates it, and has
-    /// `sisu_utf8_encode` fill it. The `[char]` is released after.
-    pub(super) fn string_from_chars(&mut self, base: &Expr) -> PointerValue<'ctx> {
-        let (array, borrowed) = self.borrow_pointer(base);
-        let string = self.string_from_chars_value(array);
-        if !borrowed {
-            self.release(array.into(), base.ty);
-        }
-        string
-    }
-
     /// The string of the `[char]` `array`.
-    pub(super) fn string_from_chars_value(&self, array: PointerValue<'ctx>) -> PointerValue<'ctx> {
+    pub(super) fn string_from_chars(&self, array: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let zero = self.context.i64_type().const_zero();
         let (chars, count) = (
             self.element_ptr(Type::CHAR, array, zero),
@@ -617,12 +504,6 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `panic(message)` at `span`: `sisu_panic_message(at, at_len, bytes, len)`, then
     /// `unreachable`. The message is not released: the process exits.
-    pub(super) fn panic_string(&mut self, message: &Expr, span: Span) {
-        let string = self.operand(message).into_pointer_value();
-        self.panic_value(string, span);
-    }
-
-    /// `panic(string)` at `span`, as `panic_string`.
     pub(super) fn panic_value(&self, string: PointerValue<'ctx>, span: Span) {
         let at = self.location(span);
         let at_ptr = self

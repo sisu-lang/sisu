@@ -16,7 +16,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `ReadLine`: the next line of standard input as a new string, copied at once, before
     /// anything can call `sisu_read_line` again; `null`, which is `None`, at the end of input.
-    pub(super) fn read_line(&mut self) -> PointerValue<'ctx> {
+    pub(super) fn read_line(&self) -> PointerValue<'ctx> {
         let i64_type = self.context.i64_type();
         let len_slot = self.entry_alloca(i64_type.into(), "len");
         let bytes = self

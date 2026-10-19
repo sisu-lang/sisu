@@ -8,29 +8,14 @@ use inkwell::{FloatPredicate, IntPredicate};
 use super::{Codegen, POSITIONED};
 use crate::diagnostic::Panic;
 use crate::source::Span;
-use crate::tir::{BinaryOp, CompareOp, Expr, ExprKind, Type, TypeKind};
+use crate::tir::{BinaryOp, CompareOp, Type, TypeKind};
 
 impl<'ctx> Codegen<'ctx, '_> {
-    /// `span` is the operator expression's: arithmetic panics point at its start.
-    pub(super) fn binary(
-        &mut self,
-        op: BinaryOp,
-        lhs: &Expr,
-        rhs: &Expr,
-        span: Span,
-    ) -> BasicValueEnum<'ctx> {
-        if matches!(op, BinaryOp::And | BinaryOp::Or) {
-            return self.short_circuit(op == BinaryOp::And, lhs, rhs).into();
-        }
-        let (l, r) = (self.operand(lhs), self.operand(rhs));
-        self.binary_value(op, lhs.ty, l, r, span)
-    }
-
     /// `lhs op rhs` on two evaluated operands of type `ty`: an `i64` or `u8` op that panics at
     /// `span` on overflow or a zero divisor, or an `f64` op to IEEE 754, with no such check
     /// and no fast-math flag. `&&` and `||` here are the eager `and` and `or` of two computed
-    /// `bool`s; `binary` branches for the source's short-circuit.
-    pub(super) fn binary_value(
+    /// `bool`s: lowering branches for the source's short-circuit.
+    pub(super) fn binary(
         &self,
         op: BinaryOp,
         ty: Type,
@@ -199,7 +184,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// One step of a comparison chain: `lhs op rhs` on two evaluated operands of type `ty`. On
     /// two strings it is `sisu_str_compare`'s result against 0 under `op`'s signed predicate.
-    pub(super) fn compare_value(
+    pub(super) fn compare(
         &self,
         op: CompareOp,
         ty: Type,
@@ -246,23 +231,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `i64(u8)`, `i64(char)`, `i64(f64)`, `u8(i64)`, `char(i64)` and `f64(i64)`, the type
-    /// `e.ty` saying which. A `u8?` or `char?` is a `{ i1, T }` pair of whether the value fits
+    /// `ty` saying which. A `u8?` or `char?` is a `{ i1, T }` pair of whether the value fits
     /// and the value truncated, with no branch: `u8` fits `0..=255`, and `char` a scalar value.
     /// One unsigned compare also catches the negatives. An `i64?` comes from an `f64`.
-    pub(super) fn convert(&mut self, e: &Expr) -> BasicValueEnum<'ctx> {
-        let ExprKind::Convert(operand) = &e.kind else {
-            unreachable!("`convert` should be called on a `Convert` node");
-        };
-        let value = self.operand(operand);
-        self.convert_value(e.ty, value)
-    }
-
-    /// `value` converted to `ty`, as `convert` says.
-    pub(super) fn convert_value(
-        &self,
-        ty: Type,
-        value: BasicValueEnum<'ctx>,
-    ) -> BasicValueEnum<'ctx> {
+    pub(super) fn convert(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
         let kind = ty.kind();
         if kind == TypeKind::Optional(Type::I64) {
             let (fits, n) = self.float_to_int(value.into_float_value());

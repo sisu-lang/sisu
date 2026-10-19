@@ -6,20 +6,15 @@ use inkwell::values::{BasicValueEnum, FloatValue, FunctionValue, IntValue};
 use inkwell::{FloatPredicate, IntPredicate};
 
 use super::{Codegen, POSITIONED};
-use crate::tir::{Expr, MathOp, Type};
+use crate::tir::{MathOp, Type};
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// `operands[0].op(operands[1..])`, the operands evaluated left to right. `min`, `max` and
     /// `clamp` on `f64` are `minimumnum` and `maximumnum`, never `minnum` or `maxnum`: those
     /// leave the sign of a zero result unspecified, and LLVM picks it differently at `-O0` and
-    /// `-O2`. With `lo` above `hi`, `clamp` gives `hi`, as `min(max(x, lo), hi)` does.
-    pub(super) fn math(&mut self, op: MathOp, operands: &[Expr]) -> BasicValueEnum<'ctx> {
-        let values: Vec<_> = operands.iter().map(|e| self.operand(e)).collect();
-        self.math_value(op, operands[0].ty, &values)
-    }
-
-    /// `op` on the evaluated `operands`, whose type is `ty`, `i64` or `f64`.
-    pub(super) fn math_value(
+    /// `-O2`. With `lo` above `hi`, `clamp` gives `hi`, as `min(max(x, lo), hi)` does. `ty` is
+    /// the operands' type, `i64` or `f64`.
+    pub(super) fn math(
         &self,
         op: MathOp,
         ty: Type,
