@@ -495,7 +495,8 @@ fn f64_constant_errors() {
 #[test]
 fn shadowed_type_path() {
     let src = "fn main() {\n    let f64 = 1\n    let _ = f64.pi\n}";
-    // The fixture `E0063-shadowed-type` pins the wording: a field of the local's `i64`, no constant.
+    // The fixture `E0063-shadowed-type` pins the wording: a field of the local's `i64`, no
+    // constant.
     diagnostic(src, Code::NoMember, (3, 17, "pi"), &[]);
 }
 

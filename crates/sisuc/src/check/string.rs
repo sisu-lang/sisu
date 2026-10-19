@@ -131,10 +131,10 @@ impl Checker<'_> {
     }
 
     /// The operand `e` of the `+` over `operands`, of type `got`, which is not the `string` the
-    /// other operand makes it; that operand gets a secondary label. A value that interpolation prints gets the unsafe fix to
-    /// interpolate it, unless the `+` is a `compound` assignment's or a constant's, a comment between the
-    /// operands would go with the text the unsafe fix removes, or an operand spans a line break,
-    /// which a string literal cannot hold.
+    /// other operand makes it; that operand gets a secondary label. A value that interpolation
+    /// prints gets the unsafe fix to interpolate it, unless the `+` is a `compound` assignment's or
+    /// a constant's, a comment between the operands would go with the text the unsafe fix removes,
+    /// or an operand spans a line break, which a string literal cannot hold.
     pub(super) fn concat_mismatch(
         &self,
         e: &ast::Expr,

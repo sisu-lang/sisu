@@ -483,7 +483,8 @@ fn check_reads_a_pipe() {
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
 }
 
-/// Runs `sisuc --check` on a file named `name` that holds `bytes`; returns the exit code and stderr.
+/// Runs `sisuc --check` on a file named `name` that holds `bytes`; returns the exit code and
+/// stderr.
 fn check_bytes(name: &str, bytes: &[u8]) -> (Option<i32>, String) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join(name), bytes).expect("writes");

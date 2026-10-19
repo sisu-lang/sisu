@@ -86,7 +86,8 @@ fn loop_variable_ends_with_the_loop() {
     );
 }
 
-/// The outer `x` is `bool`, the loop's is `i64`: each typed use clean pins which one it resolves to.
+/// The outer `x` is `bool`, the loop's is `i64`: each typed use clean pins which one it resolves
+/// to.
 #[test]
 fn loop_variable_shadows_an_outer_binding() {
     clean(

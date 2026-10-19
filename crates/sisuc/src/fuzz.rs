@@ -37,8 +37,8 @@ pub fn front_end(data: &[u8]) -> String {
     String::from_utf8(out).expect("the reports should be UTF-8, as the source they quote is")
 }
 
-/// Prints `program` as a typed tree, then compiles it, without and with `--rc-checks`, and asserts that
-/// LLVM verifies each module. No pass runs and nothing links: `-O2` changes only the pipeline,
+/// Prints `program` as a typed tree, then compiles it, without and with `--rc-checks`, and asserts
+/// that LLVM verifies each module. No pass runs and nothing links: `-O2` changes only the pipeline,
 /// not the module codegen makes.
 fn assert_compiles(program: &Program, source: &str) {
     // The printer's only check is that it does not panic.

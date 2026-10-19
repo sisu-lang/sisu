@@ -19,8 +19,9 @@
 //! met twice is solved once. Each `|` is interned apart, by its span, so a matrix met twice holds
 //! the same alternatives, and reaching one is recorded once for the whole check. A solved matrix
 //! whose rows took an alternative's values, or whose children's did, keeps those takers by its own
-//! rows. Once the solve ends, one pass from the top renames each such matrix's rows to the arms they
-//! come from on every path to it, so the arm that covers an alternative comes out of the one solve.
+//! rows. Once the solve ends, one pass from the top renames each such matrix's rows to the arms
+//! they come from on every path to it, so the arm that covers an alternative comes out of the one
+//! solve.
 //!
 //! shortcut: usefulness can meet exponentially many distinct matrices when payload patterns are
 //! correlated across fields (arm i needs fields `x_i` and `y_i`, with every x before every y);
@@ -605,9 +606,10 @@ impl Solver<'_> {
         takers
     }
 
-    /// The first unguarded row of `rows`, interned as `pats`, with the variant of `top`, a missing value, at
-    /// the top, or an `|` by its first alternative with it: that pattern's span, the pattern,
-    /// and its payload. With a value missing, no row is a wildcard: one would match every value.
+    /// The first unguarded row of `rows`, interned as `pats`, with the variant of `top`, a missing
+    /// value, at the top, or an `|` by its first alternative with it: that pattern's span, the
+    /// pattern, and its payload. With a value missing, no row is a wildcard: one would match every
+    /// value.
     fn partly(
         &self,
         top: PatId,

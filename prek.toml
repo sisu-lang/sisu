@@ -51,13 +51,19 @@ language = "system"
 entry = "scripts/check-test-wording.sh"
 types = ["rust"]
 
-# Rust's `{:?}` escapes a value the Rust way; diagnostic text quotes Sisu source.
 [[repos.hooks]]
 id = "registry-no-debug-format"
 name = "diagnostic text does not use {:?}"
 language = "system"
-entry = '''perl -ne 'last if /^#\[cfg\(test\)\]/; if (/:\?\}/) { print "$ARGV:$.: diagnostic text uses {:?}; escape the Sisu way\n"; $bad = 1 } END { exit($bad ? 1 : 0) }' '''
+entry = "python3 scripts/registry_debug_format.py"
 files = '^crates/sisuc/src/diagnostic/registry\.rs$'
+
+[[repos.hooks]]
+id = "comment-width"
+name = "comments fit in 100 columns"
+language = "system"
+entry = "python3 scripts/comment_width.py"
+types = ["rust"]
 
 [[repos.hooks]]
 id = "typos"

@@ -91,8 +91,8 @@ fn interpolation_spills() {
     );
 }
 
-/// Each part that is not an `i64`, `u8`, `f64`, `bool`, `char` or `string` is reported at the part; one
-/// whose type is unknown reports nothing more.
+/// Each part that is not an `i64`, `u8`, `f64`, `bool`, `char` or `string` is reported at the part;
+/// one whose type is unknown reports nothing more.
 #[test]
 fn cannot_interpolate() {
     let params = "xs: [i64], m: [i64]?, n: i64?, p: P";
@@ -176,8 +176,8 @@ fn with_items(src: &str) -> String {
 }
 
 /// A `string` joined to a `print`ed value that is not one: in each row, the statement on line 2,
-/// the operand reported, the other operand's secondary label, and the statement the unsafe fix makes
-/// of line 2, if there is one.
+/// the operand reported, the other operand's secondary label, and the statement the unsafe fix
+/// makes of line 2, if there is one.
 type ConcatRow<'a> = (
     &'a str,
     (usize, usize, &'a str),
@@ -621,7 +621,8 @@ fn string_call() {
             (2, 18, "n + 1"),
             Some(("print(\"{n + 1}\")", false)),
         ),
-        // A line break after the argument is deleted with the `)`, and leaves a literal on one line.
+        // A line break after the argument is deleted with the `)`, and leaves a literal on one
+        // line.
         (
             "print(string(n\n    ))",
             Code::Mismatch,

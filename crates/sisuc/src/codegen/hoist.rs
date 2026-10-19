@@ -17,13 +17,13 @@ use crate::tir::{Block, Expr, ExprKind, LocalId, Place, Stmt, Type};
 ///   bars `L`: a `Local(L)` read, which retains it; a `Move(L)` read, which retains nothing
 ///   (`move_local` transfers the reference and clears the slot) but is barred anyway, since
 ///   the slot no longer holds the block; an `Assign` or `Append` to `Place::Local(L)`; and a
-///   node that binds `L` (`Let`, `IfSome`'s `bind`, `Match`'s `temp` and its arms' bindings), since `L` has no value before the loop
-///   then. Two positions borrow `L` without retaining it, and do not bar, as codegen's
-///   `borrowed_index_base` and `borrowed_local` decide: the base of an `Index` whose index
-///   passes `leaves_locals` (otherwise `index` retains the base while the index runs, and a
-///   write inside it must copy), and the operand of `Len`.
-///   Every other read bars: `Sum` and `Contains`, which retain their base, and `Field`,
-///   `Chars`, `Bytes`, `Words` and `FromChars`, which codegen borrows too.
+///   node that binds `L` (`Let`, `IfSome`'s `bind`, `Match`'s `temp` and its arms' bindings), since
+///   `L` has no value before the loop then. Two positions borrow `L` without retaining it, and do
+///   not bar, as codegen's `borrowed_index_base` and `borrowed_local` decide: the base of an
+///   `Index` whose index passes `leaves_locals` (otherwise `index` retains the base while the index
+///   runs, and a write inside it must copy), and the operand of `Len`. Every other read bars: `Sum`
+///   and `Contains`, which retain their base, and `Field`, `Chars`, `Bytes`, `Words` and
+///   `FromChars`, which codegen borrows too.
 ///
 /// The matches below have no `_` arm, so a node kind added later gets its arm from this rule.
 pub(super) fn unique_roots(body: &Block) -> Vec<LocalId> {
@@ -92,7 +92,8 @@ impl Walk {
         }
     }
 
-    /// Walks `e`: a read of a local bars it, unless it is an `Index` base or a `Len` operand that codegen borrows.
+    /// Walks `e`: a read of a local bars it, unless it is an `Index` base or a `Len` operand that
+    /// codegen borrows.
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
             ExprKind::Int(_)

@@ -1075,7 +1075,8 @@ mod tests {
         }
     }
 
-    /// `(if (!= x#1 2) (block (print (< 1 n#0 <= 9))))` and `(loop (block (if true (block (break)) (block))))`.
+    /// `(if (!= x#1 2) (block (print (< 1 n#0 <= 9))))` and
+    /// `(loop (block (if true (block (break)) (block))))`.
     fn if_and_loop() -> (Expr, Expr) {
         let x_ne_2 = expr(
             ExprKind::Equal {

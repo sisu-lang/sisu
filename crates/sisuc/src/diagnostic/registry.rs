@@ -362,7 +362,8 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         suggestion: Option<Suggestion>,
     },
-    /// A `kind` definition named `name`, at `at`, after an earlier definition of that name, `first`.
+    /// A `kind` definition named `name`, at `at`, after an earlier definition of that name,
+    /// `first`.
     DefinedTwice {
         kind: Definition,
         name: String,
@@ -642,8 +643,8 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         fix: Option<TypedLiteral>,
     },
-    /// The expression statement, or branch or body tail, at `at`, whose value of type `ty` nothing uses.
-    /// `arm` when it is a `match` arm's whole body, which takes no statement outside a block.
+    /// The expression statement, or branch or body tail, at `at`, whose value of type `ty` nothing
+    /// uses. `arm` when it is a `match` arm's whole body, which takes no statement outside a block.
     UnusedValue { ty: String, at: Span, arm: bool },
     /// The built-in type or class `name`, at `at`, read as a value.
     TypeAsValue { name: String, at: Span },
