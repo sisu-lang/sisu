@@ -499,9 +499,14 @@ fn separate(source: &str, tokens: &mut Vec<Token>, semicolons: bool) -> Vec<Diag
                         && matches!(next, Some(Fn | Class | Enum | Const)))
                 {
                     Judgement::Redundant
-                } else if open.is_empty() && next == Some(&LBrace) {
-                    // No item starts with `{`: as a separator, the `;` would make the `{` a
-                    // second error, after the one at the `;` (`fn main(); { }`).
+                } else if open.is_empty()
+                    && self_ending
+                    && prev.is_some_and(|p| p.kind != RBrace)
+                    && next == Some(&LBrace)
+                {
+                    // The `;` cuts an item's header, and no item starts with `{`: as a separator,
+                    // the `;` would make the `{` a second error, after the one at the `;`
+                    // (`fn main(); { }`). After a `const` or an item's `}`, it separates.
                     Judgement::Kept
                 } else {
                     Judgement::Separator
@@ -516,9 +521,8 @@ fn separate(source: &str, tokens: &mut Vec<Token>, semicolons: bool) -> Vec<Diag
                     Judgement::Kept => i + 1,
                 };
                 warnings.extend(
-                    tokens[redundant..end]
-                        .iter()
-                        .map(|t| redundant_semicolon(source, t.span)),
+                    (tokens[redundant..end].iter().enumerate())
+                        .map(|(k, t)| redundant_semicolon(source, t.span, k == 0)),
                 );
                 i = end;
                 continue;
@@ -532,13 +536,17 @@ fn separate(source: &str, tokens: &mut Vec<Token>, semicolons: bool) -> Vec<Diag
     warnings
 }
 
-/// The W0007 of the redundant `;` at `at`. Its fix leaves a space when the `;` touches code on
-/// each side, so that removing it joins no two tokens.
-fn redundant_semicolon(source: &str, at: Span) -> Diagnostic {
+/// The W0007 of the redundant `;` at `at`, the `first` of its run to be removed. Its fix leaves
+/// a space when the `;`s it touches, with it, touch code on each side, so that removing them all
+/// joins no two tokens. Of `;`s that touch, only the first removed leaves the space, so removing
+/// them all leaves one.
+fn redundant_semicolon(source: &str, at: Span, first: bool) -> Diagnostic {
     let solid = |b: Option<&u8>| b.is_some_and(|b| !b.is_ascii_whitespace());
     let bytes = source.as_bytes();
-    let space =
-        solid(at.start().checked_sub(1).and_then(|b| bytes.get(b))) && solid(bytes.get(at.end()));
+    let before = at.start().checked_sub(1).and_then(|b| bytes.get(b));
+    // Every `;` after a removed one in its run is removed too.
+    let after = bytes[at.end()..].iter().find(|&&b| b != b';');
+    let space = (first || before != Some(&b';')) && solid(before) && solid(after);
     DiagnosticKind::RedundantSemicolon { at, space }.into()
 }
 

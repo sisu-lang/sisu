@@ -772,16 +772,18 @@ impl<'a> Parser<'a> {
     }
 
     /// The error for the comma at the next token, which ends a `member`. Its fix deletes a comma
-    /// that is the last on its line (or is followed by the `}`), and replaces any other with a `;`
-    /// that keeps the spaces after it. A `;` there would be redundant, which is W0007. The edit
-    /// covers the comma alone, so text the lexer skipped after it stays.
+    /// that a line break, the `}` or a `;` follows, since a `;` in its place would be redundant
+    /// (W0007), and replaces any other with a `;` that keeps the spaces after it. The edit covers
+    /// the comma alone, so text the lexer skipped after it stays.
     fn member_comma(&self, member: diagnostic::Member) -> Diagnostic {
         let comma = self.peek().span;
         // A comma is not `Eof`, so the token after it exists.
         let next = &self.tokens[self.pos + 1];
-        let ends_line = matches!(next.kind, TokenKind::RBrace | TokenKind::Eof)
-            || self.source[comma.end()..next.span.start()].contains('\n');
-        let replacement = if ends_line { "" } else { ";" }.to_string();
+        let separated = matches!(
+            next.kind,
+            TokenKind::RBrace | TokenKind::Eof | TokenKind::Semicolon
+        ) || self.source[comma.end()..next.span.start()].contains('\n');
+        let replacement = if separated { "" } else { ";" }.to_string();
         DiagnosticKind::FieldComma {
             at: comma,
             member,
@@ -1230,11 +1232,12 @@ impl<'a> Parser<'a> {
             TokenKind::LBrace | TokenKind::If
         );
         // `lacks_else` means the statement ends with the `}` just before the `else` and any
-        // line breaks. The join deletes the gap, so a comment in it makes the join unsafe.
+        // line breaks. The join deletes the gap, so a comment or a dropped `;` in it, which has
+        // its own W0007, makes the join unsafe.
         let gap = self.last_code_end()..at.start();
         let join = (lacks_else && takes_block).then(|| Join {
             gap: Span::new(gap.start, gap.end),
-            safe: !self.comments.iter().any(|c| gap.contains(c)),
+            safe: self.source[gap.clone()].trim().is_empty(),
         });
         DiagnosticKind::ElseOnNewLine { at, join }.into()
     }
@@ -1788,7 +1791,8 @@ impl<'a> Parser<'a> {
     }
 
     /// `ArmSplit` when the line ends here and the next line with code starts with one of
-    /// `continues`, so continues the arm. The fix joins the lines, unless a comment lies between.
+    /// `continues`, so continues the arm. The fix joins the lines, unless a comment, or a dropped
+    /// `;` with its own W0007, lies between.
     /// A `;` that separates ends the arm on purpose, so the parser reports what follows it.
     fn arm_split(&self, continues: &[TokenKind]) -> Result<(), Diagnostic> {
         if !self.at(&TokenKind::Newline) || !self.peek().span.range().is_empty() {
@@ -1802,8 +1806,10 @@ impl<'a> Parser<'a> {
             return Ok(());
         };
         let gap = self.last_code_end()..next.span.start();
-        let join =
-            (!self.comments.iter().any(|c| gap.contains(c))).then(|| Span::new(gap.start, gap.end));
+        let join = self.source[gap.clone()]
+            .trim()
+            .is_empty()
+            .then(|| Span::new(gap.start, gap.end));
         Err(DiagnosticKind::ArmSplit {
             at: next.span,
             join,
@@ -4386,6 +4392,52 @@ mod tests {
         }
     }
 
+    /// Removing every `;` of a run leaves one space where the run touches code on each side, and
+    /// none at the end of a line; removing any one alone also keeps the tokens apart.
+    #[test]
+    fn a_run_of_redundant_semicolons_leaves_one_space() {
+        for (src, alone, all) in [
+            (
+                "fn main() {\n    let x = 1;;\n}",
+                vec!["fn main() {\n    let x = 1;\n}"; 2],
+                "fn main() {\n    let x = 1\n}",
+            ),
+            (
+                "fn main() { return;;else { } }",
+                vec![
+                    "fn main() { return ;else { } }",
+                    "fn main() { return;else { } }",
+                ],
+                "fn main() { return else { } }",
+            ),
+            // The first `;` separates and stays; the space goes after it.
+            (
+                "fn main() { a;;b }",
+                vec!["fn main() { a; b }"],
+                "fn main() { a; b }",
+            ),
+            (
+                "fn f() {};;fn main() {}",
+                vec!["fn f() {} ;fn main() {}", "fn f() {};fn main() {}"],
+                "fn f() {} fn main() {}",
+            ),
+        ] {
+            let ds: Vec<_> = (parsed(src).diagnostics.into_iter())
+                .filter(|d| d.code() == Code::RedundantSemicolon)
+                .collect();
+            let each: Vec<_> = ds.iter().map(|d| apply_fix(src, d)).collect();
+            assert_eq!(each, alone, "{src}");
+            assert!(
+                (ds.iter()).all(|d| fix_edits(d).is_some_and(|(safe, _)| safe)),
+                "{src}"
+            );
+            let edits: Vec<_> = (ds.iter())
+                .flat_map(|d| d.fixes().iter().flat_map(diagnostic::Fix::edits))
+                .collect();
+            assert_eq!(diagnostic::explanations::apply(src, &edits), all, "{src}");
+        }
+    }
+
     #[test]
     fn semicolon_in_an_interpolation_is_an_error() {
         // An interpolation holds one expression: its `;` separates nothing.
@@ -4405,6 +4457,13 @@ mod tests {
     fn semicolon_before_a_top_level_brace_is_kept() {
         // One error at the `;`: the `{ }` after it is not taken for a second, broken item.
         assert_eq!(parse_err("fn main(); { }"), (Code::Expected, 1, 10));
+        assert_eq!(parse_err("enum E; { A }"), (Code::Expected, 1, 7));
+        // After a complete `const` or item the `;` separates, so the error is at the `{`.
+        assert_eq!(
+            parse_err("const X = 1; { }\nfn main() {}"),
+            (Code::Expected, 1, 14)
+        );
+        assert_eq!(parse_err("fn main() {}; { }"), (Code::Expected, 1, 15));
     }
 
     #[test]
@@ -4424,6 +4483,40 @@ mod tests {
             parse_err("fn main() {\n    if true { print(1) }; else { print(2) }\n}"),
             (Code::RedundantSemicolon, 2, 25)
         );
+    }
+
+    /// A join deletes its gap, so over a redundant `;` it would delete that `;`'s W0007 too:
+    /// the `else` join is unsafe there, and no arm join is offered.
+    #[test]
+    fn join_over_a_redundant_semicolon() {
+        for (src, semicolon, code, at, safe) in [
+            (
+                "fn main() {\n    if a {\n    };\n    else {\n    }\n}",
+                (3, 6),
+                Code::ElseOnNewLine,
+                (4, 5),
+                Some(false),
+            ),
+            (
+                "fn main() {\n    match e {\n        A;\n        => 1\n    }\n}",
+                (3, 10),
+                Code::ArmSplit,
+                (4, 9),
+                None,
+            ),
+        ] {
+            let ds = parsed(src).diagnostics;
+            let found: Vec<_> = (ds.iter())
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(
+                found,
+                [(Code::RedundantSemicolon, semicolon), (code, at)],
+                "{src}"
+            );
+            let safe_join = fix_edits(&ds[1]).map(|(safe, _)| safe);
+            assert_eq!(safe_join, safe, "{src}");
+        }
     }
 
     #[test]
@@ -4713,6 +4806,12 @@ mod tests {
             ("enum E { A, B }", (1, 11), "enum E { A; B }"),
             ("enum E { A,   B(i64) }", (1, 11), "enum E { A;   B(i64) }"),
             ("enum E { A, }", (1, 11), "enum E { A }"),
+            // A `;` after the comma already separates.
+            (
+                "class C { x: i64,; y: i64 }",
+                (1, 17),
+                "class C { x: i64; y: i64 }",
+            ),
             (
                 "enum E {\n    A, // c\n    B\n}",
                 (2, 6),

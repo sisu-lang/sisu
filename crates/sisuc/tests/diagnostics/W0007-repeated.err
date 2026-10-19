@@ -7,7 +7,7 @@ warning[W0007]: unnecessary `;`
 help: remove the `;`
   |
 2 -     let x = 1;;
-2 +     let x = 1 ;
+2 +     let x = 1;
   |
 
 warning[W0007]: unnecessary `;`
