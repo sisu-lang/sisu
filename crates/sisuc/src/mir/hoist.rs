@@ -37,9 +37,6 @@ pub(super) fn unique_roots(function: &Function, lp: &Loop) -> Vec<LocalId> {
 pub(super) fn hoist(function: &mut Function) {
     for i in (0..function.loops.len()).rev() {
         let roots = unique_roots(function, &function.loops[i]);
-        if roots.is_empty() {
-            continue;
-        }
         let lp = &function.loops[i];
         for block in &lp.blocks {
             function.blocks[block.0]

@@ -214,43 +214,85 @@ fn unique_roots_of_each_loop() {
 }
 
 /// The printed text of block `id` in `f`, a function as `function` gives it: from its label
-/// to the next label or the closing `}`.
+/// to the next label, or to the end for the last block.
 fn block_text(f: &str, id: BlockId) -> &str {
     let label = format!("\n  bb{}:\n", id.0);
     let start = f
         .find(&label)
         .unwrap_or_else(|| panic!("no {label:?} in\n{f}"));
     let rest = &f[start + label.len()..];
-    let end = rest
-        .find("\n  bb")
-        .or_else(|| rest.find("\n}"))
-        .unwrap_or(rest.len());
+    let end = rest.find("\n  bb").unwrap_or(rest.len());
     &rest[..end]
 }
 
-#[test]
-fn hoisted_unique_sits_in_the_pre_header() {
-    let program = checked(PARTITION);
+/// The printed pre-header of the only loop of `f` in `src` after `build`, and its loop blocks.
+fn pre_header_and_loop(src: &str) -> (String, String) {
+    let program = checked(src);
     let mir = build(&program);
     let f = mir
         .functions
         .iter()
         .find(|function| function.name == "f")
-        .expect("PARTITION should define `f`");
+        .expect("each case should define `f`");
     let printed = function(&print(&mir, &program), "f");
     let [lp] = f.loops.as_slice() else {
-        panic!("PARTITION should have one loop:\n{printed}");
+        panic!("the case should have one loop:\n{printed}");
     };
-    assert!(
-        block_text(&printed, lp.pre_header).contains("make_unique a#"),
-        "{printed}"
-    );
-    // The writes stay in the loop, with their checks and without their `make_unique`.
-    let in_loop: String = lp
+    let in_loop = lp
         .blocks
         .iter()
         .map(|&block| block_text(&printed, block))
         .collect();
-    assert_eq!(in_loop.matches("check a#").count(), 2, "{printed}");
-    assert!(!in_loop.contains("make_unique"), "{printed}");
+    (block_text(&printed, lp.pre_header).to_owned(), in_loop)
+}
+
+#[test]
+fn hoisted_unique_sits_in_the_pre_header() {
+    let (pre_header, in_loop) = pre_header_and_loop(PARTITION);
+    assert!(pre_header.contains("make_unique a#"), "{pre_header}");
+    // The writes stay in the loop, with their checks and without their `make_unique`.
+    assert_eq!(in_loop.matches("check a#").count(), 2, "{in_loop}");
+    assert!(!in_loop.contains("make_unique"), "{in_loop}");
+    // Only the root moves: a grid's row is still made unique at the write.
+    let (pre_header, in_loop) = pre_header_and_loop(GRID);
+    assert!(pre_header.contains("make_unique g#"), "{pre_header}");
+    assert_eq!(in_loop.matches("make_unique").count(), 1, "{in_loop}");
+    assert!(in_loop.contains("make_unique g#1["), "{in_loop}");
+}
+
+/// `f(s, c)` with one loop, `bb1` and `bb2`: `bb1` makes `s` unique and branches on `c`, and
+/// `bb2` ends with `exit`.
+fn loop_ending_in(exit: Terminator) -> Function {
+    let mut b = Builder::new("f");
+    let s = b.param("s", Type::STRING);
+    let c = b.param("c", Type::BOOL);
+    let whole = |local| Place {
+        local,
+        projections: Vec::new(),
+        borrow: false,
+        guard: false,
+    };
+    b.block(Vec::new(), Terminator::Goto(BlockId(1)));
+    b.block(
+        vec![Statement::MakeUnique(whole(s))],
+        Terminator::Branch {
+            cond: Operand::Read(whole(c)),
+            then: BlockId(1),
+            else_: BlockId(2),
+        },
+    );
+    b.block(Vec::new(), exit);
+    b.add_loop(BlockId(0), BlockId(1), vec![BlockId(1), BlockId(2)]);
+    b.finish()
+}
+
+/// A move in a terminator bars its local, as one in a statement does. Lowering moves a return
+/// value into a temporary first, so only a hand-built function reaches this.
+#[test]
+fn terminator_move_bars() {
+    let s = LocalId(0);
+    let f = loop_ending_in(Terminator::Return(None));
+    assert_eq!(unique_roots(&f, &f.loops[0]), [s]);
+    let f = loop_ending_in(Terminator::Return(Some(Operand::Move(s))));
+    assert_eq!(unique_roots(&f, &f.loops[0]), []);
 }
