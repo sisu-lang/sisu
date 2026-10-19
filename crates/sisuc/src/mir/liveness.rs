@@ -10,6 +10,8 @@
 
 use rustc_hash::FxHashMap;
 
+use self::entries::{Mention, Stamps};
+
 use super::{
     BlockId, Function, LocalId, Operand, Place, Projection, Rvalue, Statement, Terminator,
 };
@@ -19,25 +21,72 @@ pub(super) struct Liveness {
     after: FxHashMap<(LocalId, BlockId, usize), bool>,
 }
 
-/// A statement that reads or writes a local. One that does both is noted twice, its read
-/// first, as an assignment evaluates its value before it writes its destination.
-#[derive(Clone, Copy)]
-struct Mention {
-    block: BlockId,
-    at: usize,
-    reads: bool,
-}
-
 #[cfg(test)]
 thread_local! {
-    /// How many answers liveness has looked up on this thread: one per question the pass
-    /// asks, and one per predecessor the walk examines.
+    /// How many liveness entries have been read on this thread: a mention's field, a block's
+    /// stamp or a stored answer. A search counts each entry it compares, a lookup one.
     pub(super) static CONSULTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
+/// Counts one read of a liveness entry.
 fn consulted() {
+    #[cfg(test)]
     CONSULTED.set(CONSULTED.get() + 1);
+}
+
+/// The entries liveness searches. Their fields are private, so every read goes through a
+/// counted accessor.
+mod entries {
+    use super::{BlockId, consulted};
+
+    /// A statement that reads or writes a local. One that does both is noted twice, its read
+    /// first, as an assignment evaluates its value before it writes its destination.
+    #[derive(Clone, Copy)]
+    pub(super) struct Mention {
+        block: BlockId,
+        at: usize,
+        reads: bool,
+    }
+
+    impl Mention {
+        pub(super) fn new(block: BlockId, at: usize, reads: bool) -> Self {
+            Self { block, at, reads }
+        }
+
+        pub(super) fn block(self) -> BlockId {
+            consulted();
+            self.block
+        }
+
+        pub(super) fn at(self) -> usize {
+            consulted();
+            self.at
+        }
+
+        pub(super) fn reads(self) -> bool {
+            consulted();
+            self.reads
+        }
+    }
+
+    /// Per block, the last local (as its index plus one) stamped there: each local's walk
+    /// reads and writes only the blocks it reaches, and nothing is cleared between locals.
+    pub(super) struct Stamps(Vec<usize>);
+
+    impl Stamps {
+        pub(super) fn new(blocks: usize) -> Self {
+            Self(vec![0; blocks])
+        }
+
+        pub(super) fn has(&self, block: BlockId, stamp: usize) -> bool {
+            consulted();
+            self.0[block.0] == stamp
+        }
+
+        pub(super) fn set(&mut self, block: BlockId, stamp: usize) {
+            self.0[block.0] = stamp;
+        }
+    }
 }
 
 impl Liveness {
@@ -45,7 +94,6 @@ impl Liveness {
     /// anything writes it whole. Statement `at` (a block's length for its terminator) must
     /// mention `local`.
     pub(super) fn live_after(&self, local: LocalId, at: (BlockId, usize)) -> bool {
-        #[cfg(test)]
         consulted();
         *self
             .after
@@ -62,11 +110,7 @@ pub(super) fn liveness(function: &Function) -> Liveness {
         let block_id = BlockId(b);
         let mut note = |at: usize, local: LocalId, reads: bool| {
             if function.locals[local.0].counted {
-                mentions[local.0].push(Mention {
-                    block: block_id,
-                    at,
-                    reads,
-                });
+                mentions[local.0].push(Mention::new(block_id, at, reads));
             }
         };
         for (at, stmt) in block.stmts.iter().enumerate() {
@@ -82,32 +126,28 @@ pub(super) fn liveness(function: &Function) -> Liveness {
             preds[to.0].push(block_id);
         }
     }
-    // Per block, the last local (as its index plus one) that mentions it or is live out of
-    // it: each local's walk reads and writes only the blocks it reaches.
-    let mut mentioned = vec![0; function.blocks.len()];
-    let mut live_out = vec![0; function.blocks.len()];
+    let mut mentioned = Stamps::new(function.blocks.len());
+    let mut live_out = Stamps::new(function.blocks.len());
     let mut stack = Vec::new();
     let mut after = FxHashMap::default();
     for (local, list) in mentions.iter().enumerate() {
         let stamp = local + 1;
         let local = LocalId(local);
-        for block in list.chunk_by(|a, b| a.block == b.block) {
+        for block in list.chunk_by(|a, b| a.block() == b.block()) {
             let first = block[0];
-            mentioned[first.block.0] = stamp;
+            mentioned.set(first.block(), stamp);
             // A read before any write: the local is live on entry to the block.
-            if first.reads {
-                stack.push(first.block);
+            if first.reads() {
+                stack.push(first.block());
             }
         }
         while let Some(block) = stack.pop() {
             for &pred in &preds[block.0] {
-                #[cfg(test)]
-                consulted();
                 // A predecessor that mentions the local either read it first, and was
                 // pushed above, or writes it before any read, which ends the walk.
-                if live_out[pred.0] != stamp {
-                    live_out[pred.0] = stamp;
-                    if mentioned[pred.0] != stamp {
+                if !live_out.has(pred, stamp) {
+                    live_out.set(pred, stamp);
+                    if !mentioned.has(pred, stamp) {
                         stack.push(pred);
                     }
                 }
@@ -117,15 +157,16 @@ pub(super) fn liveness(function: &Function) -> Liveness {
         // block, or whether the local is live out of the block.
         let mut next: Option<Mention> = None;
         for statement in list
-            .chunk_by(|a, b| (a.block, a.at) == (b.block, b.at))
+            .chunk_by(|a, b| (a.block(), a.at()) == (b.block(), b.at()))
             .rev()
         {
             let m = statement[0];
+            let (block, at) = (m.block(), m.at());
             let live = match next {
-                Some(n) if n.block == m.block => n.reads,
-                _ => live_out[m.block.0] == stamp,
+                Some(n) if n.block() == block => n.reads(),
+                _ => live_out.has(block, stamp),
             };
-            after.insert((local, m.block, m.at), live);
+            after.insert((local, block, at), live);
             next = Some(m);
         }
     }

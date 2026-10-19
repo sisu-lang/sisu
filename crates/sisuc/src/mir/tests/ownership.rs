@@ -501,23 +501,35 @@ fn pass_leaves_no_use_or_mark() {
     }
 }
 
-/// Liveness answers each question of the pass in one lookup, and the walk checks each edge it
-/// crosses in one lookup, not a search of the local's mentions: `n` borrow sites of `a` in a
-/// row cost `n`, and `n` of them under `if`s cost `n` and the 3 edges of each `if`, less the
-/// last join's 2, which `a` is not live into.
+/// Liveness reads its entries (mentions, block stamps, answers) a bounded number of times per
+/// statement and per edge, never a search of a local's mentions per question: for `n` borrow
+/// sites of `a` in a row, and for `n` under `if`s, the reads grow by the same amount from `n`
+/// to `2n` as from `2n` to `3n`.
 #[test]
-fn liveness_answers_in_one_lookup() {
-    let n = 200;
-    let line = format!("fn f(a: [i64]) {{\n{}}}", "    print(a.len())\n".repeat(n));
-    let branch = format!(
-        "fn g(a: [i64], c: bool) {{\n{}}}",
-        "    if c { print(a.len()) }\n".repeat(n)
-    );
-    for (src, lookups) in [(line, n), (branch, n + 3 * n - 2)] {
-        let program = checked(&src);
-        CONSULTED.set(0);
-        let printed = print(&build(&program), &program);
-        assert_eq!(CONSULTED.get(), lookups, "{src}");
-        assert_eq!(printed.matches("len a#").count(), n - 1, "{printed}");
+fn liveness_reads_grow_linearly() {
+    let line = |n: usize| format!("fn f(a: [i64]) {{\n{}}}", "    print(a.len())\n".repeat(n));
+    let branch = |n: usize| {
+        format!(
+            "fn g(a: [i64], c: bool) {{\n{}}}",
+            "    if c { print(a.len()) }\n".repeat(n)
+        )
+    };
+    for shape in [&line as &dyn Fn(usize) -> String, &branch] {
+        let reads = |n: usize| {
+            let program = checked(&shape(n));
+            CONSULTED.set(0);
+            let printed = print(&build(&program), &program);
+            assert_eq!(printed.matches("len a#").count(), n - 1, "{printed}");
+            CONSULTED.get()
+        };
+        let n = 100;
+        let (one, two, three) = (reads(n), reads(2 * n), reads(3 * n));
+        assert_eq!(
+            three - two,
+            two - one,
+            "{one}, {two}, {three} reads for {n}, {}, {}",
+            2 * n,
+            3 * n
+        );
     }
 }
