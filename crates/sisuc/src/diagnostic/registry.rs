@@ -607,8 +607,13 @@ pub(crate) enum DiagnosticKind {
     /// The `char` literal at `at`, which holds no code point or more than one; `string` when its
     /// text holds no `"`, `{` or `}`, which a string literal would read differently.
     NotOneCodePoint { at: Span, string: bool },
-    /// The literal of `kind` that starts at `at` and stops at a line break or the end of the file.
-    LiteralNotClosed { kind: LiteralKind, at: Span },
+    /// The literal of `kind` that starts at `at` and stops at a line break or the end of the file;
+    /// `interpolation` when an interpolation's `{` is open there.
+    LiteralNotClosed {
+        kind: LiteralKind,
+        at: Span,
+        interpolation: bool,
+    },
     /// Arithmetic on the `char` at `at`.
     ArithmeticOnChar { at: Span },
     /// The `}` at `at` in the text of a string literal, which no interpolation opened.
@@ -2206,10 +2211,18 @@ impl From<DiagnosticKind> for Diagnostic {
                     d
                 }
             }
-            DiagnosticKind::LiteralNotClosed { kind, at } => match kind {
+            DiagnosticKind::LiteralNotClosed {
+                kind,
+                at,
+                interpolation,
+            } => match kind {
                 LiteralKind::Char => Diagnostic::coded(code, at, "`char` literal is not closed"),
                 LiteralKind::String => Diagnostic::coded(code, at, "string literal is not closed")
-                    .with_help(r"write `\n` for a line break"),
+                    .with_help(if interpolation {
+                        r"a `{` starts an interpolation: end it with `}`, or write `\{` for a literal brace"
+                    } else {
+                        r"write `\n` for a line break"
+                    }),
             },
             DiagnosticKind::ArithmeticOnChar { at } => {
                 Diagnostic::coded(code, at, "arithmetic does not apply to `char`").with_help(
