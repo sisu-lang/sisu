@@ -15,6 +15,9 @@
 //! root in place unless that is the root's last use, when the root moves into a temporary that
 //! is released after the statement. A `match` binding read in its arm's test or guard is
 //! borrowed, so it is copied or read in place whatever liveness says.
+//!
+//! The hoist (`hoist.rs`) then moves the `make_unique` of an array that a loop writes, and never
+//! shares or replaces, to the loop's pre-header (ADR 0021).
 
 use rustc_hash::FxHashMap;
 
@@ -23,6 +26,7 @@ use crate::tir::{self, BinaryOp, ClassId, CompareOp, EnumId, Format, FuncId, Mat
 pub(crate) use crate::tir::{LocalId, Type, UnaryOp};
 
 mod certify;
+mod hoist;
 mod liveness;
 mod lower;
 mod ownership;
@@ -48,10 +52,6 @@ pub(crate) struct Function {
     /// `blocks[0]` is the entry.
     pub(crate) blocks: Vec<Block>,
     /// In pre-order: an outer loop before the loops inside it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 5's hoist reads the loops")
-    )]
     pub(crate) loops: Vec<Loop>,
     /// Each `match` binding, and the scrutinee local it borrows from.
     pub(crate) owners: FxHashMap<LocalId, LocalId>,
@@ -80,15 +80,12 @@ pub(crate) struct Block {
 
 /// A loop: the block that enters it, its head, and every block inside it, the head included.
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Task 5's hoist reads a loop's pre-header and header"
-    )
-)]
 pub(crate) struct Loop {
     pub(crate) pre_header: BlockId,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Task 7's codegen names a loop's header block")
+    )]
     pub(crate) header: BlockId,
     pub(crate) blocks: Vec<BlockId>,
 }
@@ -339,12 +336,14 @@ impl Terminator {
     }
 }
 
-/// The mir of `program`, with its copies, moves and releases placed. For now it lowers and
-/// places them. A debug build certifies each function and panics on a violation.
+/// The mir of `program`, with its copies, moves and releases placed, and each loop's
+/// `make_unique` of the arrays it writes hoisted to its pre-header. A debug build certifies
+/// each function and panics on a violation.
 pub(crate) fn build(program: &tir::Program) -> Program {
     let mut mir = lower(program);
     for function in &mut mir.functions {
         ownership::place(function);
+        hoist::hoist(function);
         if cfg!(debug_assertions) {
             certified(function);
         }
@@ -366,4 +365,4 @@ fn certified(function: &Function) {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

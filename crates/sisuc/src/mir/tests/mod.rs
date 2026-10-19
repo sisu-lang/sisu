@@ -3,6 +3,7 @@ use crate::check::check;
 use crate::parser::parse_ok;
 
 mod certify;
+pub(crate) mod hoist;
 mod lower;
 mod ownership;
 mod pattern;

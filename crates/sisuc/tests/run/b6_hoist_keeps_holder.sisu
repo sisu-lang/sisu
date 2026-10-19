@@ -1,0 +1,17 @@
+// The loop's only read of `a` is `string(a)`, a borrow, so the hoist makes `a` unique once,
+// before the loop starts. `holder` still shares the array then: the copy keeps its letters.
+fn f(xs: [char]) -> [char] {
+    let mut a = xs
+    for j in 0..2 {
+        print(string(a))    // abc, then xbc
+        a[j] = 'x'
+    }
+    a
+}
+
+fn main() {
+    let holder = ['a', 'b', 'c']
+    let out = f(holder)
+    print(string(out))       // xxc
+    print(string(holder))    // abc
+}
