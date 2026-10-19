@@ -2,6 +2,7 @@ use rustc_hash::FxHashMap;
 
 use super::*;
 use crate::mir::lower::{Mentions, WALKED};
+use crate::mir::print::EXAMINED;
 
 /// Calls run in source order, and an `i64` is returned by a read, not moved.
 #[test]
@@ -706,4 +707,21 @@ fn interpolation_prints_each_format_with_its_part() {
         "f",
         &["interp(fmt(a#0, \">3\"), b#1, fmt(c#2, \"<2\"), fmt(d#3, \">4\"))"],
     );
+}
+
+/// The printer meets the formats in one pass: a wide interpolation examines one format entry
+/// per part, not a search of the formats from the start for each part.
+#[test]
+fn interpolation_examines_each_format_once() {
+    let parts = 200;
+    let src = format!(
+        "fn f(a: i64) {{\n    print(\"{}\")\n}}",
+        "{a:>3}".repeat(parts)
+    );
+    let program = checked(&src);
+    let mir = lower(&program);
+    EXAMINED.set(0);
+    let printed = print::print(&mir, &program);
+    assert_eq!(EXAMINED.get(), parts);
+    assert_eq!(printed.matches(", \">3\")").count(), parts);
 }

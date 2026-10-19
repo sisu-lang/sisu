@@ -23,6 +23,12 @@ pub(crate) fn print(mir: &Program, tir: &tir::Program) -> String {
     out
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many format entries the printer has examined on this thread.
+    pub(super) static EXAMINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 struct Printer<'a> {
     out: &'a mut String,
     tir: &'a tir::Program,
@@ -146,7 +152,11 @@ impl Printer<'_> {
                     .enumerate()
                     .map(|(i, part)| {
                         let part = self.operand(part);
-                        match formats.next_if(|format| format.part == i) {
+                        match formats.next_if(|format| {
+                            #[cfg(test)]
+                            EXAMINED.set(EXAMINED.get() + 1);
+                            format.part == i
+                        }) {
                             Some(format) => format!("fmt({part}, \"{format}\")"),
                             None => part,
                         }
