@@ -6,10 +6,11 @@
 //! place never bars a local. That covers all six borrow positions, where `codegen/hoist.rs`
 //! covered only an `Index` base and a `Len` operand.
 //!
-//! The pass reads each block in a loop once, to list what the block writes and bars, and
-//! rewrites each block at most once. A local barred in a loop is barred in every loop around
-//! it, so the loops are solved bottom up: each loop's states start from its largest inner
-//! loop's, and the smaller ones merge into them.
+//! The pass reads each block in a loop once, to list what the block writes and bars. A local
+//! barred in a loop is barred in every loop around it, so the loops are solved bottom up: each
+//! loop's states start from its largest inner loop's, and the smaller ones merge into them.
+//! Then one pass drops the `make_unique` statements that leave each block, and one appends
+//! them to the pre-headers.
 
 use self::seam::{Blocks, BlocksMut, Roots, State, States};
 use super::{Function, LocalId, Loop, Operand, Place, Rvalue, Statement, Terminator};
@@ -50,10 +51,9 @@ pub(super) fn hoist(function: &mut Function) {
     let mut blocks = BlocksMut::new(&mut function.blocks);
     for (block, lp) in innermost.iter().enumerate() {
         let Some(lp) = *lp else { continue };
-        blocks
-            .get_mut(block)
-            .stmts
-            .retain(|stmt| level_0(stmt).is_none_or(|local| !leave[lp].contains(local)));
+        blocks.retain(block, |stmt| {
+            level_0(stmt).is_none_or(|local| !leave[lp].contains(local))
+        });
     }
     let mut arrive: Vec<(usize, LocalId)> = arrive
         .into_iter()
@@ -61,15 +61,17 @@ pub(super) fn hoist(function: &mut Function) {
         .collect();
     arrive.sort_unstable_by_key(|&(block, local)| (block, local.0));
     for group in arrive.chunk_by(|a, b| a.0 == b.0) {
-        let stmts = &mut blocks.get_mut(group[0].0).stmts;
-        stmts.extend(group.iter().map(|&(_, local)| {
-            Statement::MakeUnique(Place {
-                local,
-                projections: Vec::new(),
-                borrow: false,
-                guard: false,
-            })
-        }));
+        blocks.append(
+            group[0].0,
+            group.iter().map(|&(_, local)| {
+                Statement::MakeUnique(Place {
+                    local,
+                    projections: Vec::new(),
+                    borrow: false,
+                    guard: false,
+                })
+            }),
+        );
     }
 }
 
@@ -91,11 +93,7 @@ fn plan(blocks: &Blocks<'_>, loops: &[Loop], top: Option<usize>) -> Plan {
     for (block, lp) in nest.innermost.iter().enumerate() {
         let Some(lp) = *lp else { continue };
         if nest.range.contains(&lp) {
-            let block = blocks.get(block);
-            for stmt in &block.stmts {
-                own[lp].stmt(stmt);
-            }
-            own[lp].term(&block.term);
+            blocks.walk(block, &mut own[lp]);
         }
     }
     let (leave, arrive) = solve(&nest, &own);
@@ -346,24 +344,27 @@ impl Walk {
 
 #[cfg(test)]
 thread_local! {
-    /// How many blocks the hoist has fetched on this thread, to read or to rewrite.
-    pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many lookups, insertions and entries handed out the hoist's `States` and `Roots`
-    /// have done on this thread.
+    /// How many statements and terminators the hoist has stepped through on this thread,
+    /// counted where the blocks hand them out: each one walked, each one kept or dropped and
+    /// each one appended.
+    pub(super) static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many keys the hoist's `States` and `Roots` have touched on this thread, counted at
+    /// the key: each one made to hash for a lookup or an insertion, each comparison of two and
+    /// each read of the local in one.
     pub(super) static PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Counts a block fetched.
+/// Counts a statement or terminator stepped through.
 #[cfg_attr(
     not(test),
     expect(clippy::missing_const_for_fn, reason = "counts only in tests")
 )]
-fn visit() {
+fn step() {
     #[cfg(test)]
-    VISITS.set(VISITS.get() + 1);
+    STEPS.set(STEPS.get() + 1);
 }
 
-/// Counts one probe of a `States` or a `Roots`.
+/// Counts a key touched.
 #[cfg_attr(
     not(test),
     expect(clippy::missing_const_for_fn, reason = "counts only in tests")
@@ -373,13 +374,55 @@ fn probe() {
     PROBES.set(PROBES.get() + 1);
 }
 
-/// The data the hoist reads and writes. The fields are private, so every block fetched and
-/// every probe of a set is counted.
+/// The data the hoist reads and writes. The fields are private and no block or statement
+/// reference leaves the module, so every statement stepped through and every key touched is
+/// counted.
 mod seam {
     use rustc_hash::{FxHashMap, FxHashSet};
 
-    use super::{probe, visit};
-    use crate::mir::{Block, LocalId};
+    use self::key::Key;
+    use super::{Walk, step};
+    use crate::mir::{Block, LocalId, Statement};
+
+    /// A local as the key of a `States` or a `Roots`. Its field is private, so a scan of a set
+    /// counts each key it compares or reads.
+    mod key {
+        use std::hash::{Hash, Hasher};
+
+        use super::super::probe;
+        use crate::mir::LocalId;
+
+        #[derive(Clone, Copy)]
+        pub(super) struct Key(LocalId);
+
+        impl Key {
+            /// The key of `local`, made to look it up or to insert it.
+            pub(super) fn new(local: LocalId) -> Self {
+                probe();
+                Self(local)
+            }
+
+            pub(super) fn local(self) -> LocalId {
+                probe();
+                self.0
+            }
+        }
+
+        impl PartialEq for Key {
+            fn eq(&self, other: &Self) -> bool {
+                probe();
+                self.0 == other.0
+            }
+        }
+
+        impl Eq for Key {}
+
+        impl Hash for Key {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.0.hash(state);
+            }
+        }
+    }
 
     pub(super) struct Blocks<'a> {
         blocks: &'a [Block],
@@ -394,9 +437,15 @@ mod seam {
             self.blocks.len()
         }
 
-        pub(super) fn get(&self, block: usize) -> &'a Block {
-            visit();
-            &self.blocks[block]
+        /// Adds what `block`'s statements and terminator write and bar to `walk`.
+        pub(super) fn walk(&self, block: usize, walk: &mut Walk) {
+            let block = &self.blocks[block];
+            for stmt in &block.stmts {
+                step();
+                walk.stmt(stmt);
+            }
+            step();
+            walk.term(&block.term);
         }
     }
 
@@ -409,9 +458,17 @@ mod seam {
             Self { blocks }
         }
 
-        pub(super) fn get_mut(&mut self, block: usize) -> &mut Block {
-            visit();
-            &mut self.blocks[block]
+        /// Drops the statements of `block` that `keep` refuses.
+        pub(super) fn retain(&mut self, block: usize, mut keep: impl FnMut(&Statement) -> bool) {
+            self.blocks[block].stmts.retain(|stmt| {
+                step();
+                keep(stmt)
+            });
+        }
+
+        /// Appends `stmts` to the end of `block`'s statements.
+        pub(super) fn append(&mut self, block: usize, stmts: impl Iterator<Item = Statement>) {
+            self.blocks[block].stmts.extend(stmts.inspect(|_| step()));
         }
     }
 
@@ -425,7 +482,7 @@ mod seam {
     /// A loop's state for each local its blocks write or bar.
     #[derive(Default)]
     pub(super) struct States {
-        map: FxHashMap<LocalId, State>,
+        map: FxHashMap<Key, State>,
     }
 
     impl States {
@@ -434,38 +491,31 @@ mod seam {
         }
 
         pub(super) fn get(&self, local: LocalId) -> Option<State> {
-            probe();
-            self.map.get(&local).copied()
+            self.map.get(&Key::new(local)).copied()
         }
 
         pub(super) fn insert(&mut self, local: LocalId, state: State) -> Option<State> {
-            probe();
-            self.map.insert(local, state)
+            self.map.insert(Key::new(local), state)
         }
 
         pub(super) fn iter(&self) -> impl Iterator<Item = (LocalId, State)> + '_ {
-            self.map.iter().map(|(&local, &state)| {
-                probe();
-                (local, state)
-            })
+            self.map.iter().map(|(key, &state)| (key.local(), state))
         }
     }
 
     /// The locals whose `make_unique` leaves a loop's blocks.
     #[derive(Default)]
     pub(super) struct Roots {
-        set: FxHashSet<LocalId>,
+        set: FxHashSet<Key>,
     }
 
     impl Roots {
         pub(super) fn insert(&mut self, local: LocalId) {
-            probe();
-            self.set.insert(local);
+            self.set.insert(Key::new(local));
         }
 
         pub(super) fn contains(&self, local: LocalId) -> bool {
-            probe();
-            self.set.contains(&local)
+            self.set.contains(&Key::new(local))
         }
     }
 }

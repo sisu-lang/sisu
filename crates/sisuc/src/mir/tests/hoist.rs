@@ -2,7 +2,7 @@
 //! is `codegen/hoist.rs`'s, ported unchanged, with the rows that a borrowed read widens.
 
 use super::*;
-use crate::mir::hoist::{PROBES, VISITS, hoist, unique_roots};
+use crate::mir::hoist::{PROBES, STEPS, hoist, unique_roots};
 use crate::mir::ownership;
 
 /// The `partition` row: quicksort's partition loop.
@@ -405,31 +405,43 @@ fn level_0_uniques(f: &Function) -> Vec<usize> {
         .collect()
 }
 
-/// Hoists `f` of `src` and gives `f`, with the blocks the hoist fetched and its set probes.
-fn hoisted_with_work(src: &str) -> (Function, usize, usize) {
+/// Hoists `f` of `src` and gives `f`, with the statements and terminators `f` had, those the
+/// hoist stepped through, and the keys it touched.
+fn hoisted_with_work(src: &str) -> (Function, usize, usize, usize) {
     let mut f = placed_f(src);
-    VISITS.set(0);
+    let size = f.blocks.iter().map(|block| block.stmts.len() + 1).sum();
+    STEPS.set(0);
     PROBES.set(0);
     hoist(&mut f);
-    (f, VISITS.get(), PROBES.get())
+    (f, size, STEPS.get(), PROBES.get())
 }
 
-/// The hoist reads each block once and rewrites it at most once, however deep the loops nest:
-/// an outer loop does not walk its inner loops' blocks again.
+/// The statements and terminators in `lp`'s blocks.
+fn loop_size(f: &Function, lp: &Loop) -> usize {
+    lp.blocks
+        .iter()
+        .map(|block| f.blocks[block.0].stmts.len() + 1)
+        .sum()
+}
+
+/// The hoist steps through each statement a bounded number of times, however deep the loops
+/// nest: an outer loop does not walk its inner loops' statements again.
 #[test]
-fn nested_loops_fetch_each_block_at_most_twice() {
+fn nested_loops_step_through_each_statement_a_bounded_number_of_times() {
     for depth in [8, 16, 32] {
-        let (f, visits, _) = hoisted_with_work(&nested(depth));
+        let (f, size, steps, _) = hoisted_with_work(&nested(depth));
         // Every write's `make_unique` reaches the outermost pre-header as one statement.
         let uniques = level_0_uniques(&f);
         assert_eq!(uniques.iter().sum::<usize>(), 1, "depth {depth}");
         assert_eq!(uniques[f.loops[0].pre_header.0], 1, "depth {depth}");
-        // Each block of the outer loop is read at least once.
-        assert!(visits >= f.loops[0].blocks.len(), "depth {depth}: {visits}");
+        // Each statement left in the outer loop was walked.
         assert!(
-            visits <= 2 * f.blocks.len(),
-            "depth {depth}: {visits} fetches of {} blocks",
-            f.blocks.len()
+            steps >= loop_size(&f, &f.loops[0]),
+            "depth {depth}: {steps}"
+        );
+        assert!(
+            steps <= 2 * size,
+            "depth {depth}: {steps} steps through {size} statements and terminators"
         );
     }
 }
@@ -439,16 +451,19 @@ fn nested_loops_fetch_each_block_at_most_twice() {
 #[test]
 fn many_roots_probe_linearly() {
     for roots in [16, 32, 64] {
-        let (f, visits, probes) = hoisted_with_work(&many_roots(roots));
+        let (f, size, steps, probes) = hoisted_with_work(&many_roots(roots));
         let uniques = level_0_uniques(&f);
         assert_eq!(uniques[f.loops[0].pre_header.0], roots, "{roots} roots");
         assert_eq!(uniques.iter().sum::<usize>(), roots, "{roots} roots");
-        // Each root's `make_unique` is probed at least once.
+        // Each root's `make_unique` is looked up at least once.
         assert!(probes >= roots, "{roots} roots: {probes} probes");
-        assert!(probes <= 8 * roots, "{roots} roots: {probes} probes");
         assert!(
-            visits <= 2 * f.blocks.len(),
-            "{roots} roots: {visits} fetches"
+            probes <= 2 * size,
+            "{roots} roots: {probes} probes, size {size}"
+        );
+        assert!(
+            steps <= 2 * size,
+            "{roots} roots: {steps} steps, size {size}"
         );
     }
 }
@@ -478,12 +493,15 @@ fn nested_with_siblings(depth: usize) -> String {
 #[test]
 fn sibling_loops_merge_into_the_largest() {
     for depth in [8, 16, 32] {
-        let (f, _, probes) = hoisted_with_work(&nested_with_siblings(depth));
+        let (f, size, _, probes) = hoisted_with_work(&nested_with_siblings(depth));
         // Every array reaches the outermost pre-header.
         let uniques = level_0_uniques(&f);
         assert_eq!(uniques[f.loops[0].pre_header.0], depth, "depth {depth}");
         assert_eq!(uniques.iter().sum::<usize>(), depth, "depth {depth}");
-        assert!(probes <= 40 * depth, "depth {depth}: {probes} probes");
+        assert!(
+            probes <= 2 * size,
+            "depth {depth}: {probes} probes, size {size}"
+        );
     }
 }
 
@@ -510,7 +528,7 @@ fn sibling_bars(pad_writer: bool) -> String {
 #[test]
 fn a_sibling_loop_bars_the_outer_loop() {
     for pad_writer in [false, true] {
-        let (f, _, _) = hoisted_with_work(&sibling_bars(pad_writer));
+        let (f, _, _, _) = hoisted_with_work(&sibling_bars(pad_writer));
         let uniques = level_0_uniques(&f);
         assert_eq!(
             uniques[f.loops[1].pre_header.0], 1,
@@ -518,4 +536,86 @@ fn a_sibling_loop_bars_the_outer_loop() {
         );
         assert_eq!(uniques.iter().sum::<usize>(), 1, "pad_writer {pad_writer}");
     }
+}
+
+/// Loops four deep, with a sibling at the second and third levels. Each of `a` to `h` is
+/// written in the innermost loop, and all but `a` and `e` are barred at one level:
+///
+/// ```text
+/// L0  bars d          (loops[0])
+///   L1  bars c        (loops[1])
+///     L2  bars b      (loops[2])
+///       L3  writes a, b, c, d, g, h   (loops[3])
+///     L2' bars h      (loops[4])
+///   L1' bars g, writes e   (loops[5])
+/// ```
+const TREE: &str = "fn f(xs: [i64]) {
+    let mut a = xs
+    let mut b = [0]
+    let mut c = [0]
+    let mut d = [0]
+    let mut e = [0]
+    let mut g = [0]
+    let mut h = [0]
+    let mut kb = [0]
+    let mut kc = [0]
+    let mut kd = [0]
+    let mut kg = [0]
+    let mut kh = [0]
+    for i in 0..2 {
+        kd = d
+        for j in 0..2 {
+            kc = c
+            for k in 0..2 {
+                kb = b
+                for m in 0..2 {
+                    a[m] = 1
+                    b[m] = 1
+                    c[m] = 1
+                    d[m] = 1
+                    g[m] = 1
+                    h[m] = 1
+                }
+            }
+            for k2 in 0..2 {
+                kh = h
+            }
+        }
+        for j2 in 0..2 {
+            kg = g
+            e[j2] = 1
+        }
+    }
+    print(a[0] + kb[0] + kc[0] + kd[0] + kg[0] + kh[0])
+}";
+
+/// Each root stops at the pre-header of the outermost loop around its write that does not bar
+/// it, whether the bar is in a loop around the write or in a sibling's subtree.
+#[test]
+fn roots_stop_at_different_ancestors_of_a_tree() {
+    let (f, _, _, _) = hoisted_with_work(TREE);
+    let at = |lp: usize| -> Vec<String> {
+        let mut names: Vec<String> = f.blocks[f.loops[lp].pre_header.0]
+            .stmts
+            .iter()
+            .filter_map(|stmt| {
+                let Statement::MakeUnique(place) = stmt else {
+                    return None;
+                };
+                if place.projections.is_empty() {
+                    f.locals[place.local.0].name.clone()
+                } else {
+                    None
+                }
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    let expected: [&[&str]; 6] = [&["a", "e"], &["d", "g"], &["c", "h"], &["b"], &[], &[]];
+    for (lp, names) in expected.iter().enumerate() {
+        assert_eq!(at(lp), *names, "loops[{lp}]");
+    }
+    // Each `make_unique` has left the loops.
+    assert_eq!(level_0_uniques(&f).iter().sum::<usize>(), 7);
 }
