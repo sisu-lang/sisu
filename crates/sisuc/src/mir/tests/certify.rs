@@ -785,22 +785,37 @@ fn scalar_store_needs_no_take() {
     assert_eq!(certify(&b.finish()), Ok(()));
 }
 
-/// `a[0] = None` on a `[string?]` overwrites the element's reference, so it needs a `take`.
+/// `a[0] = None` on an array of optional strings, objects or arrays overwrites the element's
+/// reference, so it needs a `take`.
 #[test]
 fn none_stored_with_no_take() {
-    let mut b = Builder::new("f");
-    let a = b.param("a", Type::array(Type::optional(Type::STRING)));
-    b.block(
-        vec![
-            Statement::Store {
-                place: first(a),
-                value: Operand::Const(Const::None(Type::optional(Type::STRING))),
-            },
-            Statement::Release(a),
-        ],
-        ret(),
-    );
-    rejects(&b.finish(), 0, a, Rule::Take);
+    for payload in [
+        Type::STRING,
+        Type::intern(TypeKind::Class(ClassId(0))),
+        Type::array(Type::I64),
+    ] {
+        let mut b = Builder::new("f");
+        let a = b.param("a", Type::array(Type::optional(payload)));
+        b.block(
+            vec![
+                Statement::Store {
+                    place: first(a),
+                    value: Operand::Const(Const::None(Type::optional(payload))),
+                },
+                Statement::Release(a),
+            ],
+            ret(),
+        );
+        assert_eq!(
+            certify(&b.finish()),
+            Err(Violation {
+                block: BlockId(0),
+                local: a,
+                rule: Rule::Take
+            }),
+            "{payload:?}"
+        );
+    }
 }
 
 /// The tag test fails before the arm assigns its binding, and the failure edge ends it.
