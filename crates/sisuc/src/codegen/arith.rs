@@ -197,7 +197,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         .expect(POSITIONED)
     }
 
-    /// One step of a comparison chain: `lhs op rhs` on two evaluated operands of type `ty`.
+    /// One step of a comparison chain: `lhs op rhs` on two evaluated operands of type `ty`. On
+    /// two strings it is `sisu_str_compare`'s result against 0 under `op`'s signed predicate.
     pub(super) fn compare_value(
         &self,
         op: CompareOp,
@@ -206,11 +207,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         rhs: BasicValueEnum<'ctx>,
     ) -> IntValue<'ctx> {
         if ty == Type::STRING {
-            return self.compare_strings_value(
-                op,
-                lhs.into_pointer_value(),
-                rhs.into_pointer_value(),
-            );
+            let order = self.str_compare(lhs.into_pointer_value(), rhs.into_pointer_value());
+            let zero = self.context.i64_type().const_zero();
+            return self.compare_pair(op, true, order.into(), zero.into());
         }
         self.compare_pair(op, !matches!(ty, Type::U8 | Type::CHAR), lhs, rhs)
     }

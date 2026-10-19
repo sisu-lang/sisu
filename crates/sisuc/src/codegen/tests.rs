@@ -1185,6 +1185,26 @@ fn field_accesses_carry_their_fields_tbaa_tag() {
     );
 }
 
+/// A string's length is its own field, read without a tag; an array's is the header's `i64`,
+/// which carries the "count and length" tag. `len` picks by the base's type.
+#[test]
+fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn size(s: string, a: [i64]) -> i64 {\n    s.len() + a.len()\n}\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = function_body(&ir, "define internal i64 @sisu.size(ptr");
+    let loads: Vec<_> = body
+        .lines()
+        .filter(|l| l.contains("load i64"))
+        .map(|l| l.contains("!tbaa").then(|| tbaa_name(&ir, l)))
+        .collect();
+    assert_eq!(loads, [None, Some("count and length")], "{body}");
+}
+
 /// `words()` of a string that is not a local releases it, once the words are copied out; of a
 /// local it leaves the string to its owner.
 #[test]

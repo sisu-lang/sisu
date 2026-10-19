@@ -1093,7 +1093,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             let ([lhs, rhs], [op]) = (operands, ops) else {
                 unreachable!("the checker should split a comparison chain of strings into pairs")
             };
-            return self.compare_strings(*op, lhs, rhs);
+            let (l, r) = (self.operand(lhs), self.operand(rhs));
+            let holds = self.compare_value(*op, Type::STRING, l, r);
+            self.release(l, lhs.ty);
+            self.release(r, rhs.ty);
+            return holds;
         }
         let (last_op, first_ops) = ops
             .split_last()

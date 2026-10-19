@@ -17,7 +17,7 @@ use super::layout::{BYTES, CAP, HeapBlock, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::source::Span;
-use crate::tir::{Align, CompareOp, Expr, Format, Pad, Place, Stream, Type};
+use crate::tir::{Align, Expr, Format, Pad, Place, Stream, Type};
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// The `i64` header field `index` of `string`.
@@ -584,7 +584,11 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `sisu_str_compare` on the bytes of `a` and `b`: -1, 0 or 1.
-    fn str_compare(&self, a: PointerValue<'ctx>, b: PointerValue<'ctx>) -> IntValue<'ctx> {
+    pub(super) fn str_compare(
+        &self,
+        a: PointerValue<'ctx>,
+        b: PointerValue<'ctx>,
+    ) -> IntValue<'ctx> {
         let args = [
             self.string_field(a, BYTES).into(),
             self.string_len(a).into(),
@@ -598,34 +602,6 @@ impl<'ctx> Codegen<'ctx, '_> {
             .basic()
             .expect("`sisu_str_compare` should return an `i64`, as the runtime declares it")
             .into_int_value()
-    }
-
-    /// `lhs op rhs` on two strings: `sisu_str_compare`'s result against 0 under `op`'s signed
-    /// predicate. Then both are released.
-    pub(super) fn compare_strings(
-        &mut self,
-        op: CompareOp,
-        lhs: &Expr,
-        rhs: &Expr,
-    ) -> IntValue<'ctx> {
-        let (l, r) = (self.operand(lhs), self.operand(rhs));
-        let holds = self.compare_strings_value(op, l.into_pointer_value(), r.into_pointer_value());
-        self.release(l, lhs.ty);
-        self.release(r, rhs.ty);
-        holds
-    }
-
-    /// `lhs op rhs` on two strings: `sisu_str_compare`'s result against 0 under `op`'s signed
-    /// predicate.
-    pub(super) fn compare_strings_value(
-        &self,
-        op: CompareOp,
-        lhs: PointerValue<'ctx>,
-        rhs: PointerValue<'ctx>,
-    ) -> IntValue<'ctx> {
-        let order = self.str_compare(lhs, rhs);
-        let zero = self.context.i64_type().const_zero();
-        self.compare_pair(op, true, order.into(), zero.into())
     }
 
     /// `print` or `eprint` of a string: `sisu_print_str(bytes, len)`, or `sisu_eprint_str`.
