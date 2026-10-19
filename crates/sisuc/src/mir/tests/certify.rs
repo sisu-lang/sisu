@@ -1189,11 +1189,14 @@ fn unmentioned_parameter_reaches_a_return() {
     rejects(&b.finish(), 0, s, Rule::Return);
 }
 
-/// A local lowering never reached, in dead code after a `return`, is empty throughout.
+/// A local lowering never reached, scoped in dead code after a `return`, is never checked: its
+/// scope block is in no region.
 #[test]
 fn unmentioned_local_is_ignored() {
     let mut b = Builder::new("f");
-    b.local("s", Type::STRING);
+    let s = b.local("s", Type::STRING);
+    b.scope(s, BlockId(1));
+    b.block(vec![], ret());
     b.block(vec![], ret());
     assert_eq!(certify(&b.finish()), Ok(()));
 }
@@ -1430,10 +1433,11 @@ fn double_release_before_a_panic() {
     rejects(&b.finish(), 0, s, Rule::Consume);
 }
 
-/// A debug build panics on the first violation, naming the function, the block and the local.
+/// `certified`, the check `build` runs in a debug build, panics on the first violation with a
+/// message naming the function, the block, the local and the rule.
 #[test]
 #[should_panic(expected = "mir certifier: fn f, bb0, s#0: may still own a reference at `return`")]
-fn violation_panics_in_a_debug_build() {
+fn violation_message_names_where_and_what() {
     let mut b = Builder::new("f");
     let s = b.local("s", Type::STRING);
     b.block(vec![fresh(s)], ret());
