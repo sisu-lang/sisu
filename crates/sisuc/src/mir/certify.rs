@@ -21,8 +21,9 @@ use rustc_hash::FxHashMap;
 
 use self::graph::Graph;
 use super::{
-    BlockId, Function, LocalId, Operand, Place, Projection, Rvalue, Statement, Terminator,
+    BlockId, Const, Function, LocalId, Operand, Place, Projection, Rvalue, Statement, Terminator,
 };
+use crate::tir::TypeKind;
 
 /// The first point where a function breaks a rule, and the local that breaks it.
 #[derive(Debug, PartialEq, Eq)]
@@ -649,6 +650,16 @@ fn counted_value(function: &Function, value: &Operand) -> bool {
         Operand::Read(place) => {
             place.projections.is_empty() && function.locals[place.local.0].counted
         }
+        // shortcut: whether an enum is counted needs the enum table, which the certifier does
+        // not have, so a `None` of an enum optional counts as uncounted; pass the table in if
+        // lowering ever stores one without a take.
+        Operand::Const(Const::None(ty)) => matches!(
+            ty.kind(),
+            TypeKind::Optional(payload) if matches!(
+                payload.kind(),
+                TypeKind::String | TypeKind::Class(_) | TypeKind::Array(_)
+            )
+        ),
         Operand::Const(_) | Operand::Use(_) | Operand::Guarded(_) => false,
     }
 }
