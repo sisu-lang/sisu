@@ -888,28 +888,73 @@ fn components(graph: &Graph, tree: &Tree) -> Vec<usize> {
 /// a range of positions whose values lie in a range, each query in time proportional to its
 /// answers and the bits of a value, and the whole in a bit and an item per position.
 pub(in crate::mir) mod wavelet {
-    pub(in crate::mir) struct Wavelet {
-        levels: Vec<Level>,
-        /// The items in the order the last level sorted them.
-        items: Vec<usize>,
-    }
+    use self::matrix::{Level, Matrix};
 
-    struct Level {
-        words: Vec<u64>,
-        /// The ones before each word.
-        ones: Vec<usize>,
-        zeros: usize,
-    }
-
-    impl Level {
-        fn zeros_before(&self, at: usize) -> usize {
-            let (word, bit) = (at / 64, at % 64);
-            let below = self
-                .words
-                .get(word)
-                .map_or(0, |&w| (w & ((1 << bit) - 1)).count_ones() as usize);
-            at - self.ones[word] - below
+    /// The levels and items. Their fields are private, so every read, `report`'s too, is
+    /// counted.
+    mod matrix {
+        pub(super) struct Matrix {
+            levels: Vec<Level>,
+            /// The items in the order the last level sorted them.
+            items: Vec<usize>,
         }
+
+        pub(super) struct Level {
+            words: Vec<u64>,
+            /// The ones before each word.
+            ones: Vec<usize>,
+            zeros: usize,
+        }
+
+        impl Level {
+            pub(super) fn new(words: Vec<u64>, zeros: usize) -> Self {
+                let mut ones = Vec::with_capacity(words.len() + 1);
+                ones.push(0);
+                for &word in &words {
+                    ones.push(ones[ones.len() - 1] + word.count_ones() as usize);
+                }
+                Level { words, ones, zeros }
+            }
+        }
+
+        impl Matrix {
+            pub(super) fn new(levels: Vec<Level>, items: Vec<usize>) -> Self {
+                super::super::count((levels.len() + 1) * items.len());
+                Matrix { levels, items }
+            }
+
+            /// How many bit levels there are.
+            pub(super) fn levels(&self) -> usize {
+                self.levels.len()
+            }
+
+            /// The zeros of level `level`.
+            pub(super) fn zeros(&self, level: usize) -> usize {
+                super::super::count(1);
+                self.levels[level].zeros
+            }
+
+            /// The zeros of level `level` before position `at`.
+            pub(super) fn zeros_before(&self, level: usize, at: usize) -> usize {
+                super::super::count(1);
+                let this = &self.levels[level];
+                let (word, bit) = (at / 64, at % 64);
+                let below = this
+                    .words
+                    .get(word)
+                    .map_or(0, |&w| (w & ((1 << bit) - 1)).count_ones() as usize);
+                at - this.ones[word] - below
+            }
+
+            pub(super) fn item(&self, at: usize) -> usize {
+                super::super::count(1);
+                self.items[at]
+            }
+        }
+    }
+
+    pub(in crate::mir) struct Wavelet {
+        matrix: Matrix,
     }
 
     impl Wavelet {
@@ -918,29 +963,24 @@ pub(in crate::mir) mod wavelet {
             let mut order: Vec<usize> = (0..values.len()).collect();
             let mut levels = Vec::with_capacity(bits as usize);
             for bit in (0..bits).rev() {
-                super::count(values.len());
                 let one = |at: usize| values[at] >> bit & 1 == 1;
                 let mut words = vec![0u64; values.len().div_ceil(64)];
-                let mut ones = Vec::with_capacity(words.len() + 1);
                 for (i, &at) in order.iter().enumerate() {
                     if one(at) {
                         words[i / 64] |= 1 << (i % 64);
                     }
-                }
-                ones.push(0);
-                for &word in &words {
-                    ones.push(ones[ones.len() - 1] + word.count_ones() as usize);
                 }
                 let (mut low, high): (Vec<usize>, Vec<usize>) =
                     order.iter().partition(|&&at| !one(at));
                 let zeros = low.len();
                 low.extend(high);
                 order = low;
-                levels.push(Level { words, ones, zeros });
+                levels.push(Level::new(words, zeros));
             }
-            super::count(values.len());
             let items = order.iter().map(|&at| items[at]).collect();
-            Wavelet { levels, items }
+            Wavelet {
+                matrix: Matrix::new(levels, items),
+            }
         }
 
         /// Calls `f` with the item at each position of `from..to` whose value lies in
@@ -954,7 +994,7 @@ pub(in crate::mir) mod wavelet {
             stack: &mut Vec<(usize, usize, usize, u64)>,
             mut f: impl FnMut(usize),
         ) {
-            let bits = self.levels.len();
+            let bits = self.matrix.levels();
             stack.clear();
             stack.push((0, from, to, 0));
             while let Some((level, from, to, base)) = stack.pop() {
@@ -963,19 +1003,22 @@ pub(in crate::mir) mod wavelet {
                 if from >= to || base > u64::from(high) || base + width <= u64::from(low) {
                     continue;
                 }
-                let Some(this) = self.levels.get(level) else {
-                    for &item in &self.items[from..to] {
-                        super::count(1);
-                        f(item);
+                if level == bits {
+                    for at in from..to {
+                        f(self.matrix.item(at));
                     }
                     continue;
-                };
-                let (from0, to0) = (this.zeros_before(from), this.zeros_before(to));
+                }
+                let (from0, to0) = (
+                    self.matrix.zeros_before(level, from),
+                    self.matrix.zeros_before(level, to),
+                );
+                let zeros = self.matrix.zeros(level);
                 stack.push((level + 1, from0, to0, base));
                 stack.push((
                     level + 1,
-                    this.zeros + from - from0,
-                    this.zeros + to - to0,
+                    zeros + from - from0,
+                    zeros + to - to0,
                     base + width / 2,
                 ));
             }
