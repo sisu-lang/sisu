@@ -2150,7 +2150,7 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::ConstantNotKnown { at, interpolation } => if interpolation {
                 Diagnostic::coded(code, at, "a constant's value cannot use interpolation")
-                    .with_help("join strings with `+`, or use a `let` in a function")
+                    .with_help("join `string` constants with `+`, or use a `let` in a function")
             } else {
                 Diagnostic::coded(code, at, "a constant's value must be known at compile time")
                     .with_help("use literals, operators and earlier constants")
