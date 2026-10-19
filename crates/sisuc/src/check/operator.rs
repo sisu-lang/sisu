@@ -149,7 +149,8 @@ impl Checker<'_> {
     /// when `expected` is `u8` or `u8?`, and `f64` when it is `f64` or `f64?`. Otherwise the
     /// first concrete operand (of `rank` 0) is checked first, with no expected type, and gives
     /// it: `u8` beside a `u8`, `f64` beside an `f64`, `char` beside a `char` in a comparison,
-    /// else `i64`. With none, it is `i64`, so `None + 1` expects an `i64`. An `f64` after an
+    /// else `i64`; that `i64` beside a `char` in arithmetic is no type the later operands are
+    /// checked against. With none, it is `i64`, so `None + 1` expects an `i64`. An `f64` after an
     /// `i64` or `u8` first operand makes the type `f64`, and that operand is reported against
     /// it, as an operand before a `string` is in `+`. When `expected` is `i64` or `i64?`, an
     /// `f64` first operand gives `i64`, not `f64`, and that first operand is checked against
@@ -193,6 +194,7 @@ impl Checker<'_> {
             Some(Type::I64)
         };
         let (mut want, leader) = (ty, first.as_ref().map(|(k, _)| *k));
+        let by_char = arithmetic && first.as_ref().and_then(|f| type_of(&f.1)) == Some(Type::CHAR);
         let (mut checked, mut mismatched) = (Vec::with_capacity(operands.len()), false);
         // The diagnostics of the operator's type: mismatches, and a literal's, which that type
         // types. They wait until a `char` operand is ruled out.
@@ -205,7 +207,7 @@ impl Checker<'_> {
             let start = self.diagnostics.len();
             let value = match first.take_if(|(k, _)| *k == i) {
                 Some((_, operand)) => operand,
-                None => self.value(e, Some(want.unwrap_or(UNKNOWN))),
+                None => self.value(e, Some(want.filter(|_| !by_char).unwrap_or(UNKNOWN))),
             };
             if rank(e) != 0 {
                 deferred.extend(self.diagnostics.drain(start..));
