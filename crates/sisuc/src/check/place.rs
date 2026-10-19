@@ -164,7 +164,9 @@ impl Checker<'_> {
             None => Err(Poisoned::typed(ty)),
         };
         let value = if ty == Type::STRING && op == tir::BinaryOp::Add {
+            let start = self.diagnostics.len();
             let checked = self.value(value, Some(ty));
+            self.label_join_literals(start, [target, value]);
             let got = type_of(&checked).filter(|&got| got != ty);
             let (value, mismatched) = match got {
                 // As in `binary`: the place is the `string` that the value is joined to.

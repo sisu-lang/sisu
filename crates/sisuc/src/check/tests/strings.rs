@@ -298,6 +298,22 @@ fn join_literal_after_another_mismatch() {
     );
 }
 
+/// A compound `+=` on an element joins as `+` does: the `None` or `[]` points at the element.
+#[test]
+fn join_literal_in_element_compound() {
+    let src = with_items(&body(
+        "",
+        "let mut xs = [\"a\"]\n    xs[0] += None\n    xs[0] += []",
+    ));
+    assert_eq!(
+        found(&src),
+        [
+            (Code::Mismatch, (3, 14), vec![(3, 5)]),
+            (Code::Mismatch, (4, 14), vec![(4, 5)]),
+        ]
+    );
+}
+
 /// Literals, comments, line breaks and statements around the operands decide the unsafe fix.
 #[test]
 fn concat_mismatch_layout() {

@@ -152,8 +152,8 @@ impl Checker<'_> {
     /// first concrete operand (of `rank` 0) is checked first, with no expected type, and gives
     /// it: `u8` beside a `u8`, `f64` beside an `f64`, `char` beside a `char` in a comparison,
     /// else `i64`; beside a `char` in arithmetic that `i64` is not passed on, and the later
-    /// operands are checked with no expected type. With none, it is `i64`, so `None + 1` expects an `i64`. An `f64` after an
-    /// `i64` or `u8` first operand makes the type `f64`, and that operand is reported against
+    /// operands are checked with no expected type. With none, it is `i64`, so `None + 1`
+    /// expects an `i64`. An `f64` after an `i64` or `u8` first operand makes the type `f64`, and that operand is reported against
     /// it, as an operand before a `string` is in `+`. When `expected` is `i64` or `i64?`, an
     /// `f64` first operand gives `i64`, not `f64`, and that first operand is checked against
     /// `expected`, so an `f64` is reported in either order and at any depth.
