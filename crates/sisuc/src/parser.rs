@@ -39,6 +39,10 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         comments,
         breaks,
     } = lexed;
+    debug_assert!(
+        diagnostics.is_sorted_by_key(|d| d.span().start()),
+        "`lexer_in` searches the lexer's diagnostics by where they start"
+    );
     Parser {
         source,
         tokens: &tokens,
@@ -522,7 +526,13 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
         diagnostics.append(&mut self.specs);
-        let outside = |at: &usize| !covered.iter().any(|r| r.contains(at));
+        // Items come in source order and do not overlap, so only the last to start at or before
+        // `at` can hold it.
+        debug_assert!(covered.windows(2).all(|w| w[0].end <= w[1].start));
+        let outside = |at: &usize| {
+            let i = covered.partition_point(|r| r.start <= *at);
+            i == 0 || !covered[i - 1].contains(at)
+        };
         diagnostics.extend(
             self.lexer
                 .iter()
@@ -643,9 +653,9 @@ impl<'a> Parser<'a> {
 
     /// The lexer diagnostics that start in `bytes`, in order.
     fn lexer_in(&self, bytes: Range<usize>) -> impl Iterator<Item = &Diagnostic> {
-        self.lexer
-            .iter()
-            .filter(move |d| bytes.contains(&d.span().start()))
+        let at = |end: usize| self.lexer.partition_point(|d| d.span().start() < end);
+        let start = at(bytes.start);
+        self.lexer[start..at(bytes.end).max(start)].iter()
     }
 
     /// Parses with `parse` the item or member that starts here and runs to `end`. Its error is
