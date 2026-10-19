@@ -200,13 +200,16 @@ fn certifies(path: &Path) {
     let mir = String::from_utf8_lossy(&out.stdout);
     for function in mir.split("\nfn ") {
         let first = function.lines().next().unwrap_or_default();
-        // Each block's successors, from its last line: its terminator.
+        // Each block's successors, from its last statement line: its terminator. The
+        // function's closing `}` is not one.
         let mut successors: Vec<Vec<usize>> = Vec::new();
         for line in function.lines() {
             if let Some(label) = line.strip_prefix("  bb") {
                 assert!(label.ends_with(':'), "{line}");
                 successors.push(Vec::new());
-            } else if let Some(block) = successors.last_mut() {
+            } else if line.starts_with("    ")
+                && let Some(block) = successors.last_mut()
+            {
                 *block = line
                     .split_whitespace()
                     .filter_map(|token| token.trim_matches([',', '[', ']']).strip_prefix("bb"))
