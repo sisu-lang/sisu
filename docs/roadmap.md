@@ -498,7 +498,7 @@ part is its own branch and PR. Part 1 runs before M8 part 2; parts 2 to 5
 follow it, ahead of the rest of milestone 8.
 
 1. The switch-over: `tir` lowers to mir, one pass places every count, codegen
-   obeys, the certifier checks. In progress.
+   obeys, the certifier checks. Done.
 2. Path-precise releases.
 3. Retain/release pair removal.
 4. Borrowed-parameter inference (replaces ADR 0012).
@@ -509,8 +509,7 @@ lowering: it rewrites a feature with simpler parts, so the stages below
 never see it. Rust has the same split: its HIR is a desugared tree, close
 to `tir`, and its MIR is a control-flow graph of basic blocks. Swift's SIL and
 Zig's AIR sit at the same level. `tir` only records what the checker
-understood; it does not optimize, and codegen lowers it straight to LLVM IR
-today.
+understood; it does not optimize. Codegen emits LLVM IR from `mir`.
 
 `mir` is worth its cost only for what LLVM cannot know: the language's
 rules. General optimization (inlining, loops, constants) stays with LLVM,
@@ -529,12 +528,13 @@ which does it better. The first of these needs introduces `mir`:
   owner does. Valgrind and `--rc-checks` stay, because the checker cannot
   see the runtime or how LLVM IR is emitted.
 
-Milestone 7 compiles `match` without `mir`: arms are tested in order,
-straight into basic blocks, with backtracking for nested alternatives.
+Milestone 7 compiled `match` before `mir` existed: arms are tested in order,
+straight into basic blocks, with backtracking for nested alternatives. `mir`
+lowering keeps that scheme.
 
-It brings its own `--emit mir` printer, and desugaring moves out of
-codegen into the `tir`-to-`mir` step. The name follows `tir`; `sil` would
-clash with Swift's.
+`--emit mir` prints it. Desugaring moves out of codegen into the
+`tir`-to-`mir` step: `&&`, `||` and comparison chains are already branches in
+`mir`. The name follows `tir`; `sil` would clash with Swift's.
 
 ### Benchmarks keep up
 
@@ -1017,8 +1017,8 @@ These do not make code nicer to write, so they wait:
   changes. The last case keeps ADR 0007's handover: a borrowed array has
   count 2, so the first write would copy it. Recursive functions are solved
   together, one strongly connected group of the call graph at a time. The
-  result is one flag per parameter on `tir`, computed as last use is, so it
-  needs no `mir`. Last use must not move a borrowed parameter. Callers keep
+  result is one flag per parameter, inferred on `mir` (its part 4), and the
+  ownership pass must not move a borrowed parameter. Callers keep
   ADR 0012's rule: they add 1 to an argument read from a `mut` field, a weak
   field or an array element. A function called through a closure keeps owned
   parameters.

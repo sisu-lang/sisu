@@ -8,7 +8,7 @@ system C compiler `cc`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="architecture/sisu-pipeline-dark.svg">
-  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker and codegen to LLVM, and the link step combines the object file with sisu-runtime into an executable." src="architecture/sisu-pipeline-light.svg">
+  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker, mir and codegen to LLVM, and the link step combines the object file with sisu-runtime into an executable." src="architecture/sisu-pipeline-light.svg">
 </picture>
 
 This page stays at the level of stages and the data between them. The code
@@ -25,10 +25,10 @@ fuzzer calls the library too:
 `fuzz.rs` runs the `--check` path on raw bytes and asserts that every
 diagnostic span and fix edit is well formed, and that every safe fix, applied
 alone, deletes no comment and removes its diagnostic and no other. For an
-input that checks clean, it also prints the typed tree and runs codegen, and
-LLVM must verify the module. The `--emit` and `--check` flags stop
-the pipeline early, as [Developing Sisu](development.md#look-inside-the-compiler)
-lists. `--format json` switches the diagnostics to JSON Lines, and
+input that checks clean, it also prints the typed tree, builds its mir and
+runs codegen, and LLVM must verify the module. The `--emit` and `--check`
+flags stop the pipeline early, as
+[Developing Sisu](development.md#look-inside-the-compiler) lists. `--format json` switches the diagnostics to JSON Lines, and
 `--explain <code>` prints the explanation of a code and runs no stage.
 
 **Lexer** (`lexer/`). Turns source text into tokens. A line break that can
@@ -161,15 +161,16 @@ recursion. It joins a pending list, linked through its dead count word, and
 `sisu_rc.drain.<Enum>` frees the boxes on the list one by one, so the stack
 stays the same size for a value of any depth.
 
-`codegen/matching.rs` compiles a `match`. It evaluates the scrutinee once into
+`mir/lower/pattern.rs` lowers a `match`. It evaluates the scrutinee once into
 a temporary that the `match` owns, then tests the arms' patterns against it in
 order, reading a boxed field through its box. An arm with alternatives tries
 them in order, and an arm with a guard that fails falls through to the next
 alternative, and then the next arm. The first arm that matches adds
-1 to each value it binds, releases the temporary and runs its body. The arms'
-values join in a `phi`. After the last arm, the `match` calls `llvm.trap`: the
-checker has proved that some arm matches, and a checker bug must not become
-undefined behaviour.
+1 to each value it binds, releases the temporary and runs its body. Each arm
+assigns its value to the same local. `codegen/matching.rs` emits the switches
+on a tag or a value that the tests become, and after the last arm a call to
+`llvm.trap`: the checker has proved that some arm matches, and a checker bug
+must not become undefined behaviour.
 
 An array is one counted heap block too: a header of two `i64`s, the count and
 the length, then the elements. Each array type gets the same helpers, such as
