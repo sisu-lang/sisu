@@ -3,6 +3,7 @@ use crate::check::check;
 use crate::parser::parse_ok;
 
 mod lower;
+mod pattern;
 
 /// The typed tree of `src`, which checks without an error, with an empty `main` added when it
 /// has none, and with its last uses marked, as the build passes it on.
@@ -26,7 +27,7 @@ pub(super) fn lowered_program(src: &str) -> Program {
 /// The printed mir of `src` as lowering leaves it, before any pass.
 pub(super) fn lowered(src: &str) -> String {
     let program = checked(src);
-    print::print(&lower(&program), &program)
+    print(&lower(&program), &program)
 }
 
 /// The printed function `name`, from its `fn` line through its closing `}`, with every

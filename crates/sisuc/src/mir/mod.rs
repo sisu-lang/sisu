@@ -20,6 +20,7 @@ mod lower;
 mod print;
 
 pub(crate) use lower::lower;
+pub(crate) use print::print;
 
 /// A program's functions, in `tir`'s order.
 #[derive(Debug)]
@@ -38,8 +39,16 @@ pub(crate) struct Function {
     /// `blocks[0]` is the entry.
     pub(crate) blocks: Vec<Block>,
     /// In pre-order: an outer loop before the loops inside it.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Task 5's hoist reads the loops")
+    )]
     pub(crate) loops: Vec<Loop>,
     /// Each `match` binding, and the scrutinee local it borrows from.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Task 4's certifier reads the owners")
+    )]
     pub(crate) owners: FxHashMap<LocalId, LocalId>,
 }
 
@@ -66,6 +75,13 @@ pub(crate) struct Block {
 
 /// A loop: the block that enters it, its head, and every block inside it, the head included.
 #[derive(Debug)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Task 5's hoist reads a loop's pre-header and header"
+    )
+)]
 pub(crate) struct Loop {
     pub(crate) pre_header: BlockId,
     pub(crate) header: BlockId,
@@ -75,11 +91,14 @@ pub(crate) struct Loop {
 /// A local and a path into it: a class field, a payload field under a known variant, an
 /// element. `borrow` marks a borrow site: a statement reads the counted root in place, and the
 /// ownership pass decides whether the root stays put or is moved into a temporary first.
+/// `guard` marks a borrow site whose root is a `match` binding inside its arm's test or guard,
+/// where the binding is borrowed: it always reads in place.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Place {
     pub(crate) local: LocalId,
     pub(crate) projections: Vec<Projection>,
     pub(crate) borrow: bool,
+    pub(crate) guard: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,6 +123,8 @@ pub(crate) enum Const {
     Bool(bool),
     Char(char),
     None(Type),
+    /// A string pattern's literal, which a test compares with in place.
+    Str(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,6 +137,9 @@ pub(crate) enum Operand {
     /// A consuming read of a whole counted local, which the ownership pass turns into a move
     /// or a copy.
     Use(LocalId),
+    /// A `Use` of a `match` binding inside its arm's test or guard, where the binding is
+    /// borrowed: the ownership pass makes it a copy, whatever liveness says.
+    Guarded(LocalId),
 }
 
 /// The right side of an assignment. The count work inside one is the emitter's: the rows of
@@ -149,6 +173,7 @@ pub(crate) enum Rvalue {
     ArrayFill {
         value: Operand,
         len: Operand,
+        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     Wrap(Operand),
@@ -171,6 +196,7 @@ pub(crate) enum Rvalue {
     /// An overflow panics at `span`.
     Sum {
         base: Operand,
+        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     Contains {
@@ -187,6 +213,7 @@ pub(crate) enum Rvalue {
     Unary {
         op: UnaryOp,
         operand: Operand,
+        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     /// An overflow or a division by zero panics at `span`.
@@ -194,6 +221,7 @@ pub(crate) enum Rvalue {
         op: BinaryOp,
         lhs: Operand,
         rhs: Operand,
+        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     /// One step of a comparison chain.
@@ -272,6 +300,7 @@ pub(crate) enum Terminator {
     /// Ends the program; the message is consumed.
     Panic {
         message: Operand,
+        #[expect(dead_code, reason = "Task 7's codegen reads the span it panics at")]
         span: Span,
     },
     Unreachable,

@@ -1,4 +1,4 @@
-//! `tir` to mir, for every node but the patterns of `IfSome` and `Match`.
+//! `tir` to mir. The patterns of `IfSome` and `Match` are in `pattern.rs`.
 //!
 //! Operands are evaluated in source order, as codegen evaluates them today. Each helper returns
 //! `None` once the code it lowered cannot fall through (a `return`, `break`, `continue` or
@@ -10,6 +10,8 @@
 //! one scope-releases (`release?`) the locals above the mark, newest first. Lowering's own
 //! temporaries never join it: the checker's `spill` binds every counted operand before a later
 //! operand that can exit to a `let` local, so no temporary is owned across an exit.
+
+mod pattern;
 
 use std::ptr;
 
@@ -53,14 +55,22 @@ struct Lowering<'a> {
     frames: Vec<Frame>,
     /// Where the function's body mentions each local, which the pin rule asks.
     mentions: Mentions,
+    /// Each `match` binding, and the scrutinee local it borrows from.
+    owners: FxHashMap<LocalId, LocalId>,
+    /// The bindings of the arms whose test or guard is being lowered, outermost first: they
+    /// are borrowed, so an edge that leaves the test or guard ends them.
+    guard: Vec<LocalId>,
+    /// The failure targets of the patterns lowered so far (`pattern.rs`).
+    targets: Vec<pattern::Lazy>,
 }
 
 /// A loop being lowered: where `continue` goes, where `break` goes once one has, and the
-/// height of the scope stack outside it.
+/// heights of the scope stack and of the guard bindings outside it.
 struct Frame {
     header: BlockId,
     exit: Option<BlockId>,
     mark: usize,
+    guards: usize,
 }
 
 /// Whether a local of type `ty` holds anything: `unit` and `never` do not.
@@ -74,6 +84,7 @@ fn whole(local: LocalId) -> MirPlace {
         local,
         projections: Vec::new(),
         borrow: false,
+        guard: false,
     }
 }
 
@@ -127,6 +138,9 @@ impl<'a> Lowering<'a> {
             scope: Vec::new(),
             frames: Vec::new(),
             mentions: Mentions::of(&f.body, f.locals.len()),
+            owners: FxHashMap::default(),
+            guard: Vec::new(),
+            targets: Vec::new(),
         };
         lowering.current = Some(lowering.new_block());
         for (i, param) in f.params.iter().enumerate() {
@@ -156,7 +170,7 @@ impl<'a> Lowering<'a> {
             locals: lowering.locals,
             blocks: lowering.blocks,
             loops: lowering.loops,
-            owners: FxHashMap::default(),
+            owners: lowering.owners,
         }
     }
 
@@ -223,13 +237,22 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// A consuming read of the source local `local`: `Use` when it is counted, a read
-    /// otherwise.
+    /// A consuming read of the source local `local`: `Use` when it is counted, marked when it
+    /// is a binding of a guard being lowered, and a read otherwise.
     fn read(&self, local: LocalId) -> Operand {
-        if self.locals[local.0].counted {
-            Operand::Use(local)
-        } else {
+        if !self.locals[local.0].counted {
             Operand::Read(whole(local))
+        } else if self.guard.contains(&local) {
+            Operand::Guarded(local)
+        } else {
+            Operand::Use(local)
+        }
+    }
+
+    /// The `end` of each guard binding above `mark`: an edge leaves their test or guard.
+    fn end_guards(&mut self, mark: usize) {
+        for i in mark..self.guard.len() {
+            self.push(Statement::End(self.guard[i]));
         }
     }
 
@@ -352,7 +375,7 @@ impl<'a> Lowering<'a> {
     /// statement sees the value the local had here ("When an operand reads").
     fn pinned(&mut self, op: Operand, later: &[&Expr]) -> Operand {
         let local = match &op {
-            Operand::Use(local) => *local,
+            Operand::Use(local) | Operand::Guarded(local) => *local,
             // An operand reads a whole local: `operand` never gives a projection.
             Operand::Read(place) => place.local,
             Operand::Const(_) | Operand::Move(_) => return op,
@@ -400,6 +423,7 @@ impl<'a> Lowering<'a> {
         if borrow && let Some(local) = local_of(base) {
             let place = MirPlace {
                 borrow: true,
+                guard: self.guard.contains(&local),
                 ..whole(local)
             };
             return Some((place, None));
@@ -596,21 +620,50 @@ impl<'a> Lowering<'a> {
                 cond,
                 then_block,
                 else_block,
-            } => return self.if_expr(cond, then_block, else_block.as_ref(), e.ty, dest),
-            ExprKind::IfSome { .. } => panic!("IfSome lands in Task 2"),
-            ExprKind::Match { .. } => panic!("Match lands in Task 2"),
+            } => {
+                let cond = self.operand(cond)?;
+                return self.branches(
+                    |then, else_| Terminator::Branch { cond, then, else_ },
+                    None,
+                    then_block,
+                    else_block.as_ref(),
+                    e.ty,
+                    dest,
+                );
+            }
+            ExprKind::IfSome {
+                bind,
+                scrutinee,
+                then_block,
+                else_block,
+            } => {
+                return self.if_some(
+                    *bind,
+                    scrutinee,
+                    then_block,
+                    else_block.as_ref(),
+                    e.ty,
+                    dest,
+                );
+            }
+            ExprKind::Match {
+                scrutinee,
+                temp,
+                arms,
+            } => return self.match_expr(scrutinee, *temp, arms, e.ty, dest),
             ExprKind::Loop(body) => return self.loop_expr(body),
             ExprKind::Break => {
                 let frame = self
                     .frames
                     .last()
                     .expect("the checker should reject `break` outside a loop");
-                let (exit, mark) = (frame.exit, frame.mark);
+                let (exit, mark, guards) = (frame.exit, frame.mark, frame.guards);
                 let exit = exit.unwrap_or_else(|| self.new_block());
                 self.frames
                     .last_mut()
                     .expect("the loop's frame should still be there")
                     .exit = Some(exit);
+                self.end_guards(guards);
                 self.release_scope(mark);
                 self.goto(exit);
                 return None;
@@ -620,7 +673,8 @@ impl<'a> Lowering<'a> {
                     .frames
                     .last()
                     .expect("the checker should reject `continue` outside a loop");
-                let (header, mark) = (frame.header, frame.mark);
+                let (header, mark, guards) = (frame.header, frame.mark, frame.guards);
+                self.end_guards(guards);
                 self.release_scope(mark);
                 self.goto(header);
                 return None;
@@ -630,6 +684,7 @@ impl<'a> Lowering<'a> {
                     Some(value) => self.into(value, None)?.map(|value| self.owned(value)),
                     None => None,
                 };
+                self.end_guards(0);
                 self.release_scope(0);
                 self.terminate(Terminator::Return(value));
                 return None;
@@ -754,43 +809,66 @@ impl<'a> Lowering<'a> {
         Some(Some(result))
     }
 
-    /// `if cond { then } else { else_ }`: a branch, each block's value into one destination
-    /// when the `if` has a value, and a join that exists only if an edge reaches it. Without
-    /// an `else`, the else edge goes straight to the join.
-    fn if_expr(
+    /// `if` and `if let`: the two-way branch `term` makes from the then and else blocks, each
+    /// block's value into one destination when the `if` has a value, and a join that exists
+    /// only if an edge reaches it. Without an `else`, the else edge goes straight to the join.
+    /// `bind`, an `if let`'s binding and the optional it unwraps, takes the payload at the
+    /// start of the then block and is in scope there.
+    fn branches(
         &mut self,
-        cond: &Expr,
+        term: impl FnOnce(BlockId, BlockId) -> Terminator,
+        bind: Option<(LocalId, LocalId)>,
         then_block: &Block,
         else_block: Option<&Block>,
         ty: Type,
         dest: Option<LocalId>,
     ) -> Lowered {
-        let cond = self.operand(cond)?;
         let dest = valued(ty).then(|| dest.unwrap_or_else(|| self.temp(ty)));
         let (then, else_) = (self.new_block(), self.new_block());
-        self.terminate(Terminator::Branch { cond, then, else_ });
+        self.terminate(term(then, else_));
         self.current = Some(then);
+        let mark = self.scope.len();
+        if let Some((bind, optional)) = bind {
+            self.locals[bind.0].scope = then;
+            let payload = Rvalue::Unwrap(self.owned(optional));
+            self.push(Statement::Assign {
+                dest: Some(bind),
+                value: payload,
+            });
+            if self.locals[bind.0].counted {
+                self.scope.push(bind);
+            }
+        }
         let mut join = else_block.is_none().then_some(else_);
-        self.arm(then_block, dest, &mut join);
+        self.arm(mark, then_block, dest, &mut join);
         if let Some(else_block) = else_block {
             self.current = Some(else_);
-            self.arm(else_block, dest, &mut join);
+            self.arm(self.scope.len(), else_block, dest, &mut join);
         }
         self.current = join;
         join.map(|_| dest)
     }
 
-    /// One block of an `if`: its value into `dest`, or discarded when the `if` has none, then
-    /// a jump to the join, made on the first jump.
-    fn arm(&mut self, block: &Block, dest: Option<LocalId>, join: &mut Option<BlockId>) {
-        let Some(value) = self.block(block, dest) else {
-            return;
-        };
-        if dest.is_none() {
-            self.discard(value);
+    /// One block of an `if` or a `match`: its value into `dest`, or discarded when there is
+    /// none, then the scope releases of the locals above `mark` that the block did not declare,
+    /// the bindings of its arm, then a jump to the join, made on the first jump. The locals
+    /// above `mark` leave the scope stack.
+    fn arm(
+        &mut self,
+        mark: usize,
+        block: &Block,
+        dest: Option<LocalId>,
+        join: &mut Option<BlockId>,
+    ) {
+        if let Some(value) = self.block(block, dest) {
+            if dest.is_none() {
+                self.discard(value);
+            }
+            self.release_scope(mark);
+            let to = *join.get_or_insert_with(|| self.new_block());
+            self.goto(to);
         }
-        let to = *join.get_or_insert_with(|| self.new_block());
-        self.goto(to);
+        self.scope.truncate(mark);
     }
 
     /// `loop`: the current block enters the header, the body runs and jumps back to it, and
@@ -810,6 +888,7 @@ impl<'a> Lowering<'a> {
             header,
             exit: None,
             mark: self.scope.len(),
+            guards: self.guard.len(),
         });
         if let Some(value) = self.block(body, None) {
             self.discard(value);

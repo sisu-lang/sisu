@@ -1,0 +1,41 @@
+// A committed `match` binding that leaves its arm by `break`, `continue` or `return` inside a
+// loop is released exactly once, a binding whose borrow ended is never released, and the
+// scrutinee is never released again after its commit (mir part 1, Review Focus 3). Each arm
+// prints its binding and the `return` arm returns another value, so its binding is still owned
+// on that exit. The strings are built at run time, so Valgrind and `--rc-checks` see every one
+// of them released once.
+enum Step {
+    Stop(string)
+    Skip(string)
+    Done(string)
+}
+
+// One arm `break`s, one `continue`s and one `return`s, each after printing its own binding.
+fn walk(steps: [Step]) -> i64 {
+    let mut n = 0
+    for step in steps {
+        n += 1
+        match step {
+            Stop(a) => {
+                print(a)
+                break
+            }
+            Skip(b) => {
+                print(b)
+                continue
+            }
+            Done(c) => {
+                print(c)
+                return n
+            }
+        }
+    }
+    -n
+}
+
+fn main() {
+    // skip1, then stop2 and the `break`, then -2
+    print(walk([Step.Skip("skip" + "1"), Step.Stop("stop" + "2"), Step.Done("never" + "3")]))
+    // skip4, then done5 and the `return` of 2
+    print(walk([Step.Skip("skip" + "4"), Step.Done("done" + "5"), Step.Stop("never" + "6")]))
+}

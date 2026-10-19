@@ -200,9 +200,10 @@ fn assert_usage_errors(cases: &[&[&str]]) {
 /// `--rc-checks` is accepted only right after an optional `-O2`, and only for a build or IR.
 #[test]
 fn rc_checks_is_build_or_ir_only() {
-    let cases: [&[&str]; 8] = [
+    let cases: [&[&str]; 9] = [
         &["--rc-checks", "--explain", "E0001"],
         &["--rc-checks", "--emit", "tir", "f.sisu"],
+        &["--rc-checks", "--emit", "mir", "f.sisu"],
         &["--rc-checks", "--emit", "tokens", "f.sisu"],
         &["--rc-checks", "--check", "f.sisu"],
         &["--rc-checks", "-O2", "f.sisu", "out"],
@@ -676,6 +677,44 @@ fn emit_tir_shows_moves() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("(move xs#0)"));
 }
 
+/// `--emit mir` prints every function's blocks.
+#[test]
+fn emit_mir() {
+    let out = run_on(
+        "emit_mir",
+        "enum E {\n    A(string)\n    B\n}\n\nfn name(e: E) -> string {\n    match e {\n        A(s) => s\n        B => \"b\"\n    }\n}\n\nfn main() {\n    print(name(E.A(\"a\")))\n}\n",
+        &["--emit", "mir"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("fn main(") && stdout.contains("bb0:"),
+        "{stdout}"
+    );
+}
+
+/// A stage `--emit` does not know is a usage error, and the usage lists `mir`.
+#[test]
+fn emit_unknown_stage_lists_mir() {
+    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+        .current_dir(env!("CARGO_TARGET_TMPDIR"))
+        .args(["--emit", "bogus", "f.sisu"])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with("usage: sisuc"), "{stderr}");
+    assert!(
+        stderr.contains("--emit tokens|ast|tir|mir <input.sisu>"),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn emit_with_an_error_prints_nothing_on_stdout() {
     let flags: [(&[&str], &str); 2] = [
@@ -732,8 +771,9 @@ const FIB: &str = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1)
 
 #[test]
 fn o2_combinations_are_usage_errors() {
-    let cases: [&[&str]; 14] = [
+    let cases: [&[&str]; 15] = [
         &["-O2", "--explain", "E0001"],
+        &["-O2", "--emit", "mir", "f.sisu"],
         &["--explain", "E0001", "-O2"],
         &["-O2", "--check", "f.sisu"],
         &["-O2", "--emit", "tokens", "f.sisu"],

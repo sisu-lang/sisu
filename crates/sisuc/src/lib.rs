@@ -9,7 +9,6 @@ mod fuzz;
 mod last_use;
 mod lexer;
 mod link;
-#[expect(dead_code, reason = "Task 2 wires mir into `--emit mir` and the build")]
 mod mir;
 mod parser;
 mod report;
@@ -33,7 +32,7 @@ use tir::Program;
 
 pub use fuzz::front_end as fuzz_front_end;
 
-const USAGE: &str = "usage: sisuc [--format text|json] ([-O2|-O3] [--rc-checks] [--linker bfd|gold|lld|mold] <input.sisu> <output> | [-O2|-O3] [--rc-checks] --emit ir <input.sisu> | [--rc-checks] --emit ir-raw <input.sisu> | --emit tokens|ast|tir <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
+const USAGE: &str = "usage: sisuc [--format text|json] ([-O2|-O3] [--rc-checks] [--linker bfd|gold|lld|mold] <input.sisu> <output> | [-O2|-O3] [--rc-checks] --emit ir <input.sisu> | [--rc-checks] --emit ir-raw <input.sisu> | --emit tokens|ast|tir|mir <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
 
 /// The reporter `cli` writes stderr through.
 type Report = Reporter<Stderr>;
@@ -67,11 +66,25 @@ enum Stage {
     Tokens,
     Ast,
     Tir,
+    Mir,
     Ir,
     IrRaw,
 }
 
 /// The format and the mode the command line asks for.
+/// The stage `--emit` names.
+fn emit_stage(name: &OsString) -> Result<Stage, String> {
+    match name.to_str() {
+        Some("tokens") => Ok(Stage::Tokens),
+        Some("ast") => Ok(Stage::Ast),
+        Some("tir") => Ok(Stage::Tir),
+        Some("mir") => Ok(Stage::Mir),
+        Some("ir") => Ok(Stage::Ir),
+        Some("ir-raw") => Ok(Stage::IrRaw),
+        _ => Err(USAGE.to_string()),
+    }
+}
+
 fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
     // `--format` is accepted only as the first two arguments.
     let (format, args) = match args {
@@ -111,22 +124,12 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
         return Err(USAGE.to_string());
     }
     let mode = match args {
-        [flag, stage, input] if flag == "--emit" => {
-            let stage = match stage.to_str() {
-                Some("tokens") => Stage::Tokens,
-                Some("ast") => Stage::Ast,
-                Some("tir") => Stage::Tir,
-                Some("ir") => Stage::Ir,
-                Some("ir-raw") => Stage::IrRaw,
-                _ => return Err(USAGE.to_string()),
-            };
-            Ok(Mode::Emit {
-                stage,
-                input: PathBuf::from(input),
-                level,
-                rc_checks,
-            })
-        }
+        [flag, stage, input] if flag == "--emit" => Ok(Mode::Emit {
+            stage: emit_stage(stage)?,
+            input: PathBuf::from(input),
+            level,
+            rc_checks,
+        }),
         [flag, input] if flag == "--check" => Ok(Mode::Check {
             input: PathBuf::from(input),
         }),
@@ -326,6 +329,13 @@ fn emit(
         Stage::Tir => match front_end(reporter, &path, &source) {
             Some(program) => {
                 println!("{program}");
+                ExitCode::SUCCESS
+            }
+            None => ExitCode::FAILURE,
+        },
+        Stage::Mir => match front_end(reporter, &path, &source) {
+            Some(program) => {
+                print!("{}", mir::print(&mir::build(&program), &program));
                 ExitCode::SUCCESS
             }
             None => ExitCode::FAILURE,

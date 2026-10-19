@@ -103,7 +103,8 @@ impl Printer<'_> {
             Operand::Const(c) => constant(c),
             Operand::Read(place) => self.place(place),
             Operand::Move(local) => format!("move {}", self.local(*local)),
-            Operand::Use(local) => format!("use {}", self.local(*local)),
+            // The guard mark does not print, as the borrow-site flag does not.
+            Operand::Use(local) | Operand::Guarded(local) => format!("use {}", self.local(*local)),
         }
     }
 
@@ -285,5 +286,6 @@ fn constant(c: &Const) -> String {
         Const::Bool(b) => format!("{b}"),
         Const::Char(c) => format!("{c:?}"),
         Const::None(_) => "None".to_owned(),
+        Const::Str(text) => format!("{text:?}"),
     }
 }
