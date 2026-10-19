@@ -14,6 +14,11 @@ reference counting and optionals from Swift. Programs read top to
 bottom, the compiler catches mistakes before a program runs, and memory is
 freed without a garbage collector.
 
+Sisu is for command-line tools, scripts and server-side software that should
+be fast, small and reliable, and for code that agents write and people must
+verify. [ADR 0027](docs/adr/0027-what-sisu-is-for.md) (proposed) records what
+Sisu is for and proposes what 1.0 means.
+
 Types are checked at compile time and inferred for local variables. There is
 no null: a value that may be missing has an optional type such as `Tree?`, and
 the checker makes the program handle `None`.

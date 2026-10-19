@@ -960,7 +960,9 @@ These do not make code nicer to write, so they wait:
     object it captures.
 
   An attribute such as `@allow(unused)` could later silence one declaration.
-- Debug info (DWARF), so `gdb` steps through Sisu source.
+- Debug info (DWARF), so `gdb` steps through Sisu source. Stepping does not
+  enter runtime functions such as a reference-count update, as Mojo keeps
+  the debugger out of its built-in operators.
 - A mid-level IR, `mir`, between `tir` and LLVM IR. Each step down is a
   lowering: it rewrites a feature with simpler parts, so the stages below
   never see it. Rust has the same split: its HIR is a desugared tree, close
@@ -1112,12 +1114,11 @@ a milestone or a done-when test yet. Some items appear above under "Later and
 stretch goals" with no date. Each gap gets a milestone once a definition of
 1.0 says it is needed.
 
-- **Target domain.** The roadmap does not say what Sisu is for. Command-line
-  tools and scripts need a fast `sisu run`, a standard library for files,
-  processes, regular expressions and JSON, and builds for several platforms.
-  Network services need sockets, many connections per thread, and a panic
-  that ends one task instead of the program. The answer orders every gap
-  below, so decide it first.
+- **Target domain.** [ADR 0027](adr/0027-what-sisu-is-for.md) (proposed)
+  answers it: command-line tools and scripts, and server-side software. Its
+  three acceptance programs, a file-processing tool, a script that drives
+  other programs and a small service, order the gaps below, and its "Still to
+  decide" lists the choices they need.
 - **A language reference.** Milestone specs are not published, so the
   compiler and its tests define the language today. Users and tool authors
   need a reference that says what a program means, apart from what `sisuc`
@@ -1189,10 +1190,11 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
   programs need the runtime built for `x86_64-unknown-linux-musl` and a link
   against musl's C library.
 
-The first step is a definition of 1.0, recorded as an ADR: the target
-domain, the platforms, the stability promise, the tools it requires (a
-language server, `sisu fmt`, `sisu test`, debug info), C FFI and the minimum
-standard library. The milestones after 12 then follow from it.
+[ADR 0027](adr/0027-what-sisu-is-for.md) (proposed) is the definition of 1.0:
+what Sisu is for, three acceptance programs, what 1.0 requires and leaves
+out, and what is still to decide, among it the platforms, the stability
+promise and C FFI. The milestones after 12 follow from it once it is
+accepted.
 
 ## Deliberately avoided
 
