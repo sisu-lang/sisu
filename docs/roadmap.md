@@ -117,7 +117,8 @@ These came out of the review of the milestone 1 spec and are now part of it:
 - `let` immutable by default, `var` mutable (ADR 0002), with local type
   inference. Milestone 4 renamed `var` to `let mut` (ADR 0011).
 - `if` is an expression.
-- No semicolons; statements end at newlines (ADR 0001).
+- No semicolons; statements end at newlines (ADR 0001). Since ADR 0028 a `;` may stand in for
+  a line break between two statements, fields, variants or arms on one line.
 - One built-in `print(e)` for `i64` and `bool` instead of `print_int`.
 - Compound assignment `+= -= *= /= %=`, desugared by the checker (moved from
   the parser in milestone 2).
