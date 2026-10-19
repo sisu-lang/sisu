@@ -138,6 +138,18 @@ fn char_arithmetic_reports_once() {
         ),
         &[(Code::Mismatch, (2, 11)), (Code::Mismatch, (3, 11))],
     );
+    // A `None` or `[]` inside the operand beside the `char` reports itself, which has no type to
+    // take, and a mixed `if` joins to `f64`.
+    codes(
+        &with_main(
+            "fn f(c: char) {\n    print(c + { None })\n    print(c + { [] })\n    print(c + if true { 1.0 } else { 2 })\n}",
+        ),
+        &[
+            (Code::CannotInfer, (2, 17)),
+            (Code::CannotInfer, (3, 17)),
+            (Code::Mismatch, (4, 11)),
+        ],
+    );
     // A `u8` or an `i64` beside the `char` is not reported as well, on either side.
     codes(
         &with_main(
