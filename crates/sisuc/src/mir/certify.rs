@@ -340,21 +340,22 @@ fn dominators(graph: &Graph) -> Vec<usize> {
     let mut number = vec![NONE; n];
     let mut vertex = Vec::new();
     let mut parent = Vec::new();
-    let mut stack = vec![(0, NONE, 0)];
-    while let Some((block, from, next)) = stack.pop() {
-        if next == 0 {
-            if number[block] != NONE {
-                continue;
-            }
-            number[block] = vertex.len();
-            vertex.push(block);
-            parent.push(from);
-        }
-        if let Some(&to) = graph.succs(block).get(next) {
-            stack.push((block, from, next + 1));
+    // Each block's successors are fetched once, so a switch of many arms costs its arms once.
+    number[0] = 0;
+    vertex.push(0);
+    parent.push(NONE);
+    let mut stack = vec![(0, graph.succs(0), 0)];
+    while let Some(&mut (block, succs, ref mut next)) = stack.last_mut() {
+        if let Some(&to) = succs.get(*next) {
+            *next += 1;
             if number[to] == NONE {
-                stack.push((to, number[block], 0));
+                number[to] = vertex.len();
+                vertex.push(to);
+                parent.push(number[block]);
+                stack.push((to, graph.succs(to), 0));
             }
+        } else {
+            stack.pop();
         }
     }
     let count = vertex.len();

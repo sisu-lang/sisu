@@ -1563,6 +1563,44 @@ fn nested_loop_conditions_read_linearly() {
     assert_near_linear(reads(10), reads(20), reads(30));
 }
 
+/// A chain of `n` blocks that each read the parameter `s`, then a switch back to every one of
+/// them: each chain block is a join with an edge from the switch, so a frontier search that
+/// searched a subtree twice would find those edges again, `n` of them each time. The exit is
+/// also reached from `bb0`, so the switch is the last block of every chain block's subtree.
+#[test]
+fn switch_back_to_every_block_reads_linearly() {
+    let reads = |n: usize| {
+        let mut b = Builder::new("f");
+        let c = b.param("c", Type::BOOL);
+        let key = b.param("key", Type::I64);
+        let s = b.param("s", Type::STRING);
+        b.block(vec![show(read(s))], branch(c, 1, n + 1));
+        for i in 1..n {
+            b.block(vec![show(read(s))], goto(i + 1));
+        }
+        let arms = (0..n)
+            .map(|i| {
+                let value = i64::try_from(i).expect("a block number should fit an i64");
+                (Const::Int(value, Type::I64), BlockId(i))
+            })
+            .collect();
+        b.block(
+            vec![],
+            Terminator::SwitchValue {
+                operand: read(key),
+                arms,
+                otherwise: Some(BlockId(n + 1)),
+            },
+        );
+        b.block(vec![Statement::Release(s)], ret());
+        let f = b.finish();
+        READS.set(0);
+        assert_eq!(certify(&f), Ok(()));
+        READS.get()
+    };
+    assert_near_linear(reads(100), reads(200), reads(300));
+}
+
 // The ported timeout tests, now through lowering, the ownership pass and the certifier. Their
 // keep-alive overrides are in `.config/nextest.toml`.
 
