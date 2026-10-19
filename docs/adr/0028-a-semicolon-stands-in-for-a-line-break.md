@@ -1,6 +1,7 @@
 # A `;` stands in for a line break
 
-Status: accepted, 2026-10-19. It amends [ADR 0001](0001-newline-terminated-statements.md).
+Status: accepted, 2026-10-19. It amends
+[ADR 0001](0001-newline-terminated-statements.md).
 
 A `;` is a separator where the two things around it, on one line, would
 otherwise need a line break between them: two statements in a block, two

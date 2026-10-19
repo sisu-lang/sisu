@@ -338,7 +338,7 @@ impl<'a> Parser<'a> {
     }
 
     /// What must follow a statement or a class member: a line break, a `;` that stands in for
-    /// one, or the closing `}`. The one place that says "expected end of line".
+    /// one, or the closing `}`. The one place that says "expected end of line or `;`".
     fn end_of_line(&self) -> Diagnostic {
         self.expected("end of line or `;`")
     }
