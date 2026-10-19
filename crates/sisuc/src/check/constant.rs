@@ -298,7 +298,10 @@ impl Checker<'_> {
                 false
             }
             _ => {
-                self.report(DiagnosticKind::ConstantNotKnown { at: e.span });
+                self.report(DiagnosticKind::ConstantNotKnown {
+                    at: e.span,
+                    interpolation: matches!(e.kind, ExprKind::Interpolate(_)),
+                });
                 false
             }
         }
