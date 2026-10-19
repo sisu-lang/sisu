@@ -526,9 +526,9 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
         diagnostics.append(&mut self.specs);
-        // Items come in source order and do not overlap, so only the last to start at or before
-        // `at` can hold it.
-        debug_assert!(covered.windows(2).all(|w| w[0].end <= w[1].start));
+        // An unnamed item starts where its line does, inside the item before, but neither starts
+        // nor ends go back: the last item to start at or before `at` holds it if any does.
+        debug_assert!(covered.is_sorted_by(|a, b| a.start <= b.start && a.end <= b.end));
         let outside = |at: &usize| {
             let i = covered.partition_point(|r| r.start <= *at);
             i == 0 || !covered[i - 1].contains(at)

@@ -3011,6 +3011,21 @@ mod tests {
         );
     }
 
+    /// Diagnostics come in source order, from literals, interpolations, escapes and stray text
+    /// alike: the parser finds an item's diagnostics by binary search.
+    #[test]
+    fn diagnostics_come_in_source_order() {
+        for src in [
+            "fn main() {\n    print(\"{1:zz} {0X1}\") // c $\n    let c = 'ab' $ \"q\n}\n",
+            "fn main() {\n    let s = \"\\q {0X1:>} \\z\n    print(0X2)\n}\n",
+            "fn main() {\n    print(\"a{\"b{0X1}\"}\" $ 0B1)\n}\n",
+        ] {
+            let lexed = lex(src).expect("the lexer recovers");
+            let starts: Vec<usize> = lexed.diagnostics.iter().map(|d| d.span().start()).collect();
+            assert!(starts.len() > 2 && starts.is_sorted(), "{src}: {starts:?}");
+        }
+    }
+
     #[test]
     fn bad_literal_lexes_as_zero() {
         let lexed = lex("let a = 1_\nlet b = 2").expect("the lexer recovers");

@@ -259,6 +259,19 @@ fn main() {
         );
     }
 
+    /// The unnamed `const enum` starts where its line does, inside the unnamed `1` before it;
+    /// the `$` between them is reported once.
+    #[test]
+    fn overlapping_unnamed_items() {
+        assert_eq!(
+            codes("1\n$\nconst enum{}"),
+            [
+                (Code::Expected, (1, 1)),
+                (Code::UnexpectedCharacter, (2, 1))
+            ]
+        );
+    }
+
     #[test]
     fn lexer_error_hides_its_parse_error() {
         let src = "fn main() {\n    let n: i64 = $\n}\n";
