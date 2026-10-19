@@ -61,8 +61,13 @@ fn else_of_branch_on(f: &Function, cond: LocalId) -> BlockId {
     else_
 }
 
-/// The `switch` on `tried` that ends `block`, if one does: its arms and its otherwise.
-fn switch_on(f: &Function, block: BlockId, tried: LocalId) -> Option<(Vec<BlockId>, BlockId)> {
+/// The `switch` on `tried` that ends `block`, if one does: its arms, each with the value of
+/// `tried` it takes, and its otherwise.
+fn switch_on(
+    f: &Function,
+    block: BlockId,
+    tried: LocalId,
+) -> Option<(Vec<(i64, BlockId)>, BlockId)> {
     if let Terminator::SwitchValue {
         operand: Operand::Read(place),
         arms,
@@ -70,7 +75,16 @@ fn switch_on(f: &Function, block: BlockId, tried: LocalId) -> Option<(Vec<BlockI
     } = &f.blocks[block.0].term
         && place.local == tried
     {
-        Some((arms.iter().map(|(_, to)| *to).collect(), *otherwise))
+        let arms = arms
+            .iter()
+            .map(|(key, to)| {
+                let Const::Int(key, _) = key else {
+                    panic!("a switch on `tried` should take integers, not {key:?}")
+                };
+                (*key, *to)
+            })
+            .collect();
+        Some((arms, *otherwise))
     } else {
         None
     }
@@ -366,11 +380,13 @@ fn order_of_nested_alternatives() {
     assert_ne!(last_exhausted, dispatch_of(f, first));
     for tried in [first, last] {
         let (starts, _) = switch_on(f, dispatch_of(f, tried), tried).expect("a dispatch switches");
-        let fields: Vec<_> = starts
+        let mut fields: Vec<_> = starts
             .iter()
-            .map(|&start| borrowed_field(f, start))
+            .map(|&(key, start)| (key, borrowed_field(f, start)))
             .collect();
-        assert_eq!(fields, [0, 1], "`T(x, _)` is tried before `T(_, x)`");
+        fields.sort_unstable();
+        // `tried = 0` starts at `T(x, _)`, which binds field 0, and `tried = 1` at `T(_, x)`.
+        assert_eq!(fields, [(0, 0), (1, 1)]);
     }
 }
 

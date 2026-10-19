@@ -254,10 +254,12 @@ impl<'a> Lowering<'a> {
 
     /// Whether `local` is a binding of an arm whose test or guard is being lowered.
     fn is_guarded(&self, local: LocalId) -> bool {
-        #[cfg(test)]
-        PROBED.set(PROBED.get() + 1);
         // A temporary is never a binding, and its id is past the source locals.
-        self.guarded.get(local.0).copied().unwrap_or(false)
+        self.guarded.get(local.0).is_some_and(|&flag| {
+            #[cfg(test)]
+            PROBED.set(PROBED.get() + 1);
+            flag
+        })
     }
 
     /// Puts `bindings` on the guard stack: their arm's test and guard are being lowered.
@@ -1177,7 +1179,8 @@ fn mentions(e: &Expr, found: &mut Mentions) {
 thread_local! {
     /// How many expressions `mentions` has walked on this thread.
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many guard bindings `is_guarded` has examined on this thread.
+    /// How many guard-membership records `is_guarded` has read on this thread: one flag per
+    /// question about a source local.
     pub(super) static PROBED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
