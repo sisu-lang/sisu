@@ -285,13 +285,11 @@ pub(crate) enum DiagnosticKind {
     Var { at: Span, field: bool },
     /// The type `ty`, then `?` again, from `at`.
     OptionalNests { ty: String, at: Span },
-    /// A `,` at `at` after a `member`. `remove` is the comma, and the spaces after it unless the
-    /// comma ends its line; `replacement` is what takes it: nothing, or a line break and the
-    /// indentation of the line.
+    /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
+    /// its line or comes before `}`, and `;` otherwise.
     FieldComma {
         at: Span,
         member: Member,
-        remove: Span,
         replacement: String,
     },
     /// A `let` at `at` in front of a field.
@@ -1372,17 +1370,24 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::FieldComma {
                 at,
                 member,
-                remove,
                 replacement,
             } => {
-                let article = if matches!(member, Member::Arm) { "an" } else { "a" };
-                Diagnostic::coded(code, at, format!("{article} {member} ends at the end of the line"))
+                let message = if replacement.is_empty() {
+                    "remove the `,`"
+                } else {
+                    "replace the `,` with `;`"
+                };
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("{member}s are separated by a line break or `;`, not `,`"),
+                )
                 .with_help(format!("put each {member} on its own line"))
                 .with_fix(Fix {
-                    message: "remove the comma and break the line".to_string(),
+                    message: message.to_string(),
                     safe: true,
                     edits: vec![Edit {
-                        span: remove,
+                        span: at,
                         replacement,
                     }],
                 })

@@ -22,7 +22,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0011](E0011.md) | error | token where something else belongs |
 | [E0013](E0013.md) | error | `var` instead of `let mut` |
 | [E0014](E0014.md) | error | optional of an optional |
-| [E0015](E0015.md) | error | field, variant or arm list on one line |
+| [E0015](E0015.md) | error | `,` between fields, variants or arms |
 | [E0016](E0016.md) | error | `let` in front of a field |
 | [E0017](E0017.md) | error | method without `self` |
 | [E0018](E0018.md) | error | `mut self` on a method |

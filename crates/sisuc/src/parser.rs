@@ -340,7 +340,7 @@ impl<'a> Parser<'a> {
     /// What must follow a statement or a class member: a line break, a `;` that stands in for
     /// one, or the closing `}`. The one place that says "expected end of line".
     fn end_of_line(&self) -> Diagnostic {
-        self.expected("end of line")
+        self.expected("end of line or `;`")
     }
 
     /// "expected <what>, found <the next token>", pointing at the next token.
@@ -772,38 +772,19 @@ impl<'a> Parser<'a> {
     }
 
     /// The error for the comma at the next token, which ends a `member`. Its fix deletes a comma
-    /// that is the last on its line (or is followed by the `}`), and replaces any other, with the
-    /// spaces and tabs right after it, with a line break and the indentation of the line. The edit
-    /// never reaches past those, so text the lexer skipped after the comma stays.
+    /// that is the last on its line (or is followed by the `}`), and replaces any other with a `;`
+    /// that keeps the spaces after it. A `;` there would be redundant, which is W0007. The edit
+    /// covers the comma alone, so text the lexer skipped after it stays.
     fn member_comma(&self, member: diagnostic::Member) -> Diagnostic {
         let comma = self.peek().span;
         // A comma is not `Eof`, so the token after it exists.
         let next = &self.tokens[self.pos + 1];
         let ends_line = matches!(next.kind, TokenKind::RBrace | TokenKind::Eof)
             || self.source[comma.end()..next.span.start()].contains('\n');
-        let (remove, replacement) = if ends_line {
-            (comma, String::new())
-        } else {
-            let line = self.source[..comma.start()]
-                .rfind('\n')
-                .map_or(0, |i| i + 1);
-            let indent = self.source[line..]
-                .chars()
-                .take_while(|c| matches!(c, ' ' | '\t'))
-                .collect::<String>();
-            let spaces = self.source[comma.end()..]
-                .chars()
-                .take_while(|c| matches!(c, ' ' | '\t'))
-                .count();
-            (
-                Span::new(comma.start(), comma.end() + spaces),
-                format!("\n{indent}"),
-            )
-        };
+        let replacement = if ends_line { "" } else { ";" }.to_string();
         DiagnosticKind::FieldComma {
             at: comma,
             member,
-            remove,
             replacement,
         }
         .into()
@@ -3886,7 +3867,7 @@ mod tests {
                 Code::FieldComma,
                 (3, 15, ","),
                 true,
-                main("    match e {\n        A => 1\n        B => 2\n    }"),
+                main("    match e {\n        A => 1; B => 2\n    }"),
             ),
         ];
         for (src, code, (line, col, text), safe, expected) in rows {
@@ -4717,21 +4698,20 @@ mod tests {
 
     #[test]
     fn comma_between_members() {
-        // The fix is safe: it deletes a comma that ends its line, and replaces any other with a
-        // line break and the line's indentation.
+        // The fix is safe: it deletes a comma that ends its line, and replaces any other with `;`.
         for (src, at, expected) in [
             (
                 "class P {\n    x: i64, y: i64\n}",
                 (2, 11),
-                "class P {\n    x: i64\n    y: i64\n}",
+                "class P {\n    x: i64; y: i64\n}",
             ),
             (
                 "enum E {\n    A,\n    B\n}",
                 (2, 6),
                 "enum E {\n    A\n    B\n}",
             ),
-            ("enum E { A, B }", (1, 11), "enum E { A\nB }"),
-            ("enum E { A,   B(i64) }", (1, 11), "enum E { A\nB(i64) }"),
+            ("enum E { A, B }", (1, 11), "enum E { A; B }"),
+            ("enum E { A,   B(i64) }", (1, 11), "enum E { A;   B(i64) }"),
             ("enum E { A, }", (1, 11), "enum E { A }"),
             (
                 "enum E {\n    A, // c\n    B\n}",
@@ -4759,6 +4739,24 @@ mod tests {
     }
 
     #[test]
+    fn comma_fix_parses_clean() {
+        // Each fix, applied to the one comma error, leaves a program that parses clean.
+        for src in [
+            "class P { x: i64, y: i64 }",
+            "fn main() { match 1 { 0 => 1, _ => 2 } }",
+            "class P {\n    x: i64,\n    y: i64\n}",
+        ] {
+            parse_ok(&fixed(src));
+        }
+        // A comma before `}` goes, because a `;` there would be a redundant one.
+        let src = "enum E { A, B, }";
+        assert_eq!(parse_err(src), (Code::FieldComma, 1, 11));
+        let src = fixed(src);
+        assert_eq!(parse_err(&src), (Code::FieldComma, 1, 14));
+        parse_ok(&fixed(&src));
+    }
+
+    #[test]
     fn comma_fix_keeps_the_text_the_lexer_skipped() {
         // The `$` is a lexer error; the fix must not delete it.
         let src = "enum E { A, $B }";
@@ -4768,7 +4766,7 @@ mod tests {
             .iter()
             .find(|d| d.code() == Code::FieldComma)
             .expect("a comma error");
-        assert_eq!(apply_fix(src, comma), "enum E { A\n$B }");
+        assert_eq!(apply_fix(src, comma), "enum E { A; $B }");
         let lexed = lex(src).expect("source lexes");
         assert!(
             lexed

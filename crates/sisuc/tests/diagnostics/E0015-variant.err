@@ -1,11 +1,11 @@
-error[E0015]: a variant ends at the end of the line
+error[E0015]: variants are separated by a line break or `;`, not `,`
  --> E0015-variant.sisu:2:6
   |
 2 |     A,
   |      ^
   |
   = help: put each variant on its own line
-help: remove the comma and break the line
+help: remove the `,`
   |
 2 -     A,
 2 +     A
