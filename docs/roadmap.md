@@ -27,6 +27,8 @@ enums with `match`.
 - `i64` and `bool`, with `let` for immutable bindings, `let mut` for
   variables, and inferred types
 - functions and recursion
+- statements, fields, variants and arms that end at a line break, or at a `;`
+  before the next one on the same line; an unnecessary `;` warns (`W0007`)
 - `if` as an expression, `while`, `break`, `continue` and `return`
 - comparison chains such as `0 <= i < n`, and short-circuit `&&` and `||`
 - integer arithmetic that panics on overflow and division by zero instead of
@@ -43,9 +45,10 @@ enums with `match`.
   and a recursive enum such as `Add(Expr, Expr)` works with no annotation,
   its recursive fields stored behind counted boxes; enum values never change
 - `match` on an enum, `i64`, `u8`, `bool`, `char` or `string`, as an
-  expression or a statement, with one arm per line; a pattern is a variant,
-  bare or through its enum (`Num(n)`, `Expr.Num(n)`), whose sub-patterns
-  nest, or a name that binds, or `_`; a pattern is also a literal (`0`, `'a'`,
+  expression or a statement, with one arm per line or a `;` between arms; a
+  pattern is a variant, bare or through its enum (`Num(n)`, `Expr.Num(n)`),
+  whose sub-patterns nest, or a name that binds, or `_`; a pattern is also a
+  literal (`0`, `'a'`,
   `"x"`, `true`) on `i64`, `u8`, `char`, `bool` and `string`,
   or a range (`'A'..='Z'`, `0..10`) on `i64`, `u8` and `char`, while at a
   class, array or optional position it is only a name or `_`; patterns may
@@ -117,9 +120,9 @@ These came out of the review of the milestone 1 spec and are now part of it:
 - `let` immutable by default, `var` mutable (ADR 0002), with local type
   inference. Milestone 4 renamed `var` to `let mut` (ADR 0011).
 - `if` is an expression.
-- No semicolons; statements end at newlines (ADR 0001). Since ADR 0028 a `;` may
-  stand in for a line break between two statements, fields, variants or arms on
-  one line.
+- Statements end at newlines, and no line needs a `;` (ADR 0001). A `;` may
+  stand in for a line break between two statements, fields, variants or arms
+  on one line (ADR 0028).
 - One built-in `print(e)` for `i64` and `bool` instead of `print_int`.
 - Compound assignment `+= -= *= /= %=`, desugared by the checker (moved from
   the parser in milestone 2).

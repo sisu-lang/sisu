@@ -12,10 +12,13 @@ separates them exactly as a line break does: `let x = 2; print(x * 21)`,
 
 Every other `;` is redundant: at the end of a line, before `}`, at the end of
 the file, at the start of a line, right after `{`, every extra `;` in `;;`,
-and between two top-level items, which need no separator. A redundant `;`
-compiles, with warning W0007 and the safe fix "remove the `;`". Inside `( )`
-and `[ ]`, where line breaks separate nothing, a `;` is still a syntax error.
-`[value; length]` is unchanged.
+and after a top-level `fn`, `class` or `enum`, which ends at its `}` and needs
+no separator before the next item. A `;` after a top-level `const` separates
+it from an item after it on the same line, as a line break does:
+`const X = 1; fn main() {}`. A redundant `;` compiles, with warning W0007 and
+the safe fix "remove the `;`". Inside `( )` and `[ ]`, where line breaks
+separate nothing, a `;` is still a syntax error. `[value; length]` is
+unchanged.
 
 ## Why
 
