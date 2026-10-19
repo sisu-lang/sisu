@@ -14,6 +14,19 @@ fn straight_line_call_order() {
     );
 }
 
+/// An `i64` operand is pinned as a string one is: `g` gets the `n` from before the `if`.
+#[test]
+fn uncounted_operand_read_before_a_later_sibling_assigns() {
+    let printed = lowered(
+        "fn g(a: i64, b: i64) -> i64 { a }\nfn f(c: bool) -> i64 {\n    let mut n = 1\n    g(n, if c {\n        n = 2\n        1\n    } else { 2 })\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &["n#1 = 1", "_ = n#1", "branch c#0", "_ = call g(_, _)"],
+    );
+}
+
 /// `x` is read into a temporary before the `if` that assigns it, so `g` gets the old `x`.
 #[test]
 fn operand_read_before_a_later_sibling_assigns() {
@@ -405,6 +418,7 @@ fn lowers_every_kind_of_node() {
         &printed,
         "f",
         &[
+            "fn f(o#0: O, p#1: O, xs#2: [i64], s#3: string, cs#4: [char], c#5: bool, x#6: f64, k#7: char) -> unit {",
             "_ = copy \"\"",
             "m#8 = new O(1, move _)",
             "v#9 = variant E.V(2)",
@@ -571,4 +585,65 @@ fn code_after_an_exit_is_not_lowered() {
     }
     has(&printed, "h", &["_ = 1\n    return _\n}"]);
     has(&printed, "k", &["bb2:\n    goto bb4", "panic move _\n}"]);
+}
+
+/// The place a statement reads in place is marked a borrow site; a place on a temporary that
+/// owns the base is not.
+#[test]
+fn borrow_sites_are_marked() {
+    let program = lowered_program(
+        "fn g(x: i64) -> i64 { x }\n\
+         fn borrowed(xs: [i64], i: i64) -> i64 { xs[i] }\n\
+         fn copied(xs: [i64], i: i64) -> i64 { xs[g(i)] }",
+    );
+    let read_place = |name: &str| {
+        let f = program
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .expect("the source should define the function");
+        f.blocks[0]
+            .stmts
+            .iter()
+            .find_map(|stmt| match stmt {
+                Statement::Assign {
+                    value: Rvalue::Use(Operand::Read(place)),
+                    ..
+                } if !place.projections.is_empty() => Some(place.clone()),
+                _ => None,
+            })
+            .expect("the function should read an element")
+    };
+    assert!(read_place("borrowed").borrow);
+    assert!(!read_place("copied").borrow);
+}
+
+/// Each loop records the block that enters it, its header, and its blocks, the exit not
+/// among them; an outer loop comes before the loop inside it.
+#[test]
+fn loops_record_their_blocks() {
+    let program = lowered_program(
+        "fn f(c: bool, d: bool) {\n    while c {\n        while d { break }\n        print(1)\n    }\n}",
+    );
+    let f = program
+        .functions
+        .iter()
+        .find(|f| f.name == "f")
+        .expect("the source should define `f`");
+    let loops: Vec<_> = f
+        .loops
+        .iter()
+        .map(|l| {
+            (
+                l.pre_header.0,
+                l.header.0,
+                l.blocks.iter().map(|b| b.0).collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    // bb3, the `while`'s else, breaks to bb9; bb5 and bb6 break to bb7.
+    assert_eq!(
+        loops,
+        [(0, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]), (2, 4, vec![4, 5, 6])]
+    );
 }

@@ -348,8 +348,9 @@ impl<'a> Lowering<'a> {
     fn pinned(&mut self, op: Operand, later: &[&Expr]) -> Operand {
         let local = match &op {
             Operand::Use(local) => *local,
-            Operand::Read(place) if place.projections.is_empty() => place.local,
-            Operand::Const(_) | Operand::Read(_) | Operand::Move(_) => return op,
+            // An operand reads a whole local: `operand` never gives a projection.
+            Operand::Read(place) => place.local,
+            Operand::Const(_) | Operand::Move(_) => return op,
         };
         // shortcut: each pin walks the later operands, so right-deep nesting is quadratic;
         // collect the mentions once per statement if that shows up in a profile.
