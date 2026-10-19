@@ -37,8 +37,9 @@ pub(crate) struct Violation {
 pub(crate) enum Rule {
     /// A block that its scope block does not dominate mentions the local.
     Scope,
-    /// Rule 1: a scope release of a local that may be borrowed or ended, or another consume
-    /// of one that may not be owned.
+    /// Rule 1: a scope release of a local that may be borrowed or ended, another consume of
+    /// one that may not be owned, or a consuming operand that reads a whole local in place and
+    /// so hands on a reference the local keeps.
     Consume,
     /// Rule 2: a read of a local that may be empty or ended.
     Read,
@@ -359,6 +360,8 @@ enum Effect {
     Read,
     /// A read of the root of a place that the statement uses in place.
     ReadInPlace,
+    /// A whole local read in place where the operand is consumed: an error for a counted one.
+    ReadConsumed,
     /// A `release` or a move.
     Consume,
     ScopeRelease,
@@ -375,7 +378,7 @@ impl Effect {
             Effect::Consume | Effect::ScopeRelease | Effect::Assign | Effect::AssignBorrowed => {
                 true
             }
-            Effect::Read | Effect::ReadInPlace | Effect::End => false,
+            Effect::Read | Effect::ReadInPlace | Effect::ReadConsumed | Effect::End => false,
         }
     }
 }
@@ -412,7 +415,7 @@ fn statement<'a>(stmt: &'a Statement, f: &mut impl FnMut(LocalId, Effect, Option
         }
         Statement::Store { place, value } => {
             self::place(place, Effect::ReadInPlace, f);
-            operand(value, f);
+            consumed(value, f);
         }
         Statement::Release(local) => f(*local, Effect::Consume, None),
         Statement::ScopeRelease(local) => f(*local, Effect::ScopeRelease, None),
@@ -423,18 +426,19 @@ fn statement<'a>(stmt: &'a Statement, f: &mut impl FnMut(LocalId, Effect, Option
     }
 }
 
+/// The spec's table of operands: a consuming one hands its reference to the receiver.
 fn rvalue<'a>(value: &'a Rvalue, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
     match value {
-        Rvalue::Use(op)
-        | Rvalue::Unwrap(op)
-        | Rvalue::Wrap(op)
-        | Rvalue::Chars(op)
+        // `l = use op` makes `l` own what `op` hands on.
+        Rvalue::Use(op) | Rvalue::Unwrap(op) | Rvalue::Wrap(op) | Rvalue::Sum { base: op, .. } => {
+            consumed(op, f);
+        }
+        Rvalue::Chars(op)
         | Rvalue::Bytes(op)
         | Rvalue::Words(op)
         | Rvalue::FromChars(op)
         | Rvalue::Len(op)
         | Rvalue::LenWords(op)
-        | Rvalue::Sum { base: op, .. }
         | Rvalue::Convert(op)
         | Rvalue::Unary { operand: op, .. }
         | Rvalue::Print { operand: op, .. } => operand(op, f),
@@ -445,23 +449,29 @@ fn rvalue<'a>(value: &'a Rvalue, f: &mut impl FnMut(LocalId, Effect, Option<&'a 
         | Rvalue::New { args, .. }
         | Rvalue::Variant { args, .. }
         | Rvalue::ArrayLit(args)
-        | Rvalue::Interpolate { parts: args, .. }
-        | Rvalue::Math { operands: args, .. } => {
+        | Rvalue::Interpolate { parts: args, .. } => {
             for op in args {
+                consumed(op, f);
+            }
+        }
+        Rvalue::Math { operands, .. } => {
+            for op in operands {
                 operand(op, f);
             }
         }
-        Rvalue::ArrayFill {
-            value: lhs,
-            len: rhs,
-            ..
+        Rvalue::ArrayFill { value, len, .. } => {
+            consumed(value, f);
+            operand(len, f);
         }
-        | Rvalue::Concat { lhs, rhs }
+        Rvalue::Concat { lhs, rhs }
         | Rvalue::Contains {
             base: lhs,
             value: rhs,
+        } => {
+            consumed(lhs, f);
+            consumed(rhs, f);
         }
-        | Rvalue::Binary { lhs, rhs, .. }
+        Rvalue::Binary { lhs, rhs, .. }
         | Rvalue::Compare { lhs, rhs, .. }
         | Rvalue::Equal { lhs, rhs, .. }
         | Rvalue::Is { lhs, rhs } => {
@@ -473,10 +483,10 @@ fn rvalue<'a>(value: &'a Rvalue, f: &mut impl FnMut(LocalId, Effect, Option<&'a 
 
 fn terminator<'a>(term: &'a Terminator, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
     match term {
-        Terminator::Branch { cond: op, .. }
-        | Terminator::SwitchValue { operand: op, .. }
-        | Terminator::Return(Some(op))
-        | Terminator::Panic { message: op, .. } => operand(op, f),
+        Terminator::Branch { cond: op, .. } | Terminator::SwitchValue { operand: op, .. } => {
+            operand(op, f);
+        }
+        Terminator::Return(Some(op)) | Terminator::Panic { message: op, .. } => consumed(op, f),
         Terminator::IfPresent { optional, .. } => f(*optional, Effect::Read, None),
         Terminator::SwitchTag { place, .. } => self::place(place, Effect::ReadInPlace, f),
         Terminator::Goto(_) | Terminator::Return(None) | Terminator::Unreachable => {}
@@ -491,6 +501,22 @@ fn operand<'a>(op: &'a Operand, f: &mut impl FnMut(LocalId, Effect, Option<&'a P
             panic!("the ownership pass should leave no `use` and no guard mark")
         }
         Operand::Const(_) => {}
+    }
+}
+
+/// An operand in a consuming position. Only a move or a copy hands on a reference, so a whole
+/// local read in place there hands on one it keeps; a value read through a projection is
+/// uncounted, or a copy would have made it owned.
+fn consumed<'a>(op: &'a Operand, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
+    match op {
+        Operand::Read(place) if place.projections.is_empty() => {
+            f(place.local, Effect::ReadConsumed, Some(place));
+        }
+        Operand::Read(_)
+        | Operand::Move(_)
+        | Operand::Use(_)
+        | Operand::Guarded(_)
+        | Operand::Const(_) => operand(op, f),
     }
 }
 
@@ -522,11 +548,20 @@ fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violati
             if !function.locals[local.0].counted {
                 return;
             }
-            if effect.kills() && in_place.contains(&local) && found.is_none() {
+            let rule = if effect == Effect::ReadConsumed {
+                Some(Rule::Consume)
+            } else if effect.kills() && in_place.contains(&local) {
+                Some(Rule::Borrow)
+            } else {
+                None
+            };
+            if let Some(rule) = rule
+                && found.is_none()
+            {
                 found = Some(Violation {
                     block: BlockId(b),
                     local,
-                    rule: Rule::Borrow,
+                    rule,
                 });
             }
             if effect == Effect::ReadInPlace {
@@ -1097,7 +1132,10 @@ impl Region<'_> {
     /// One effect on the set, checked against rules 1, 2, 5 and the end of a borrow.
     fn apply(&self, block: usize, effect: Effect, states: States) -> Result<States, Violation> {
         let (bad, rule, after) = match effect {
-            Effect::Read | Effect::ReadInPlace => (EMPTY | ENDED, Rule::Read, states),
+            // `mentions` rejects a counted `ReadConsumed` before any region is checked.
+            Effect::Read | Effect::ReadInPlace | Effect::ReadConsumed => {
+                (EMPTY | ENDED, Rule::Read, states)
+            }
             Effect::Consume => (EMPTY | BORROWED | ENDED, Rule::Consume, EMPTY),
             Effect::ScopeRelease => (BORROWED | ENDED, Rule::Consume, EMPTY),
             Effect::Assign => (OWNED, Rule::Assign, OWNED),

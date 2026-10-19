@@ -76,6 +76,17 @@ fn call(args: Vec<Operand>) -> Statement {
     }
 }
 
+/// `print(op)`: a borrowed operand.
+fn show(op: Operand) -> Statement {
+    Statement::Assign {
+        dest: None,
+        value: Rvalue::Print {
+            stream: Stream::Stdout,
+            operand: op,
+        },
+    }
+}
+
 fn borrow(binding: LocalId, owner: LocalId) -> Statement {
     assign(binding, Rvalue::Borrow(payload(owner)))
 }
@@ -161,7 +172,7 @@ fn read_after_move() {
         vec![
             literal(s),
             assign(t, Rvalue::Use(Operand::Move(s))),
-            call(vec![read(s)]),
+            show(read(s)),
             Statement::Release(t),
         ],
         ret(),
@@ -176,12 +187,7 @@ fn read_after_move_before_a_panic() {
     let s = b.local("s", Type::STRING);
     let m = b.local("m", Type::STRING);
     b.block(
-        vec![
-            literal(s),
-            Statement::Release(s),
-            call(vec![read(s)]),
-            literal(m),
-        ],
+        vec![literal(s), Statement::Release(s), show(read(s)), literal(m)],
         Terminator::Panic {
             message: Operand::Move(m),
             span: Span::new(0, 0),
@@ -254,13 +260,51 @@ fn copy_never_released() {
     rejects(&b.finish(), 0, t, Rule::Return);
 }
 
-/// `f(s.len_in_place, s)`: the first operand reads `s` in place, and the second moves it.
+/// `f(a[0], move a)`: the first operand reads `a` in place, and the second moves it.
 #[test]
 fn borrowed_operand_whose_owner_a_later_sibling_consumes() {
     let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::I64));
+    b.block(
+        vec![call(vec![Operand::Read(first(a)), Operand::Move(a)])],
+        ret(),
+    );
+    rejects(&b.finish(), 0, a, Rule::Borrow);
+}
+
+/// `f(s)` passes `s` without a copy or a move, so `f` and `s` would both own its reference.
+#[test]
+fn consuming_argument_read_in_place() {
+    let mut b = Builder::new("f");
     let s = b.param("s", Type::STRING);
-    b.block(vec![call(vec![read(s), Operand::Move(s)])], ret());
-    rejects(&b.finish(), 0, s, Rule::Borrow);
+    b.block(vec![call(vec![read(s)]), Statement::Release(s)], ret());
+    rejects(&b.finish(), 0, s, Rule::Consume);
+}
+
+/// `a[0] = s` stores `s` without a copy or a move.
+#[test]
+fn stored_value_read_in_place() {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::STRING));
+    let s = b.param("s", Type::STRING);
+    let old = b.local("old", Type::STRING);
+    b.block(
+        vec![
+            Statement::Take {
+                dest: old,
+                place: first(a),
+            },
+            Statement::Store {
+                place: first(a),
+                value: read(s),
+            },
+            Statement::Release(old),
+            Statement::Release(s),
+            Statement::Release(a),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, s, Rule::Consume);
 }
 
 /// `a[0] = t` with the old element taken and never released.
@@ -398,11 +442,7 @@ fn read_of_a_binding_after_its_arm_fails() {
     b.owner(x, s);
     b.block(vec![fresh(s), borrow(x, s)], branch(c, 1, 2));
     b.block(
-        vec![
-            Statement::End(x),
-            call(vec![read(x)]),
-            Statement::Release(s),
-        ],
+        vec![Statement::End(x), show(read(x)), Statement::Release(s)],
         ret(),
     );
     b.block(vec![Statement::End(x), Statement::Release(s)], ret());
@@ -441,7 +481,7 @@ fn read_between_take_and_store() {
                 dest: old,
                 place: first(a),
             },
-            call(vec![read(a)]),
+            show(read(a)),
             Statement::Store {
                 place: first(a),
                 value: Operand::Move(t),
@@ -466,7 +506,7 @@ fn borrowed_or_empty(read_it: bool) -> (Function, LocalId) {
     b.block(vec![], goto(3));
     let mut join = vec![Statement::End(x), Statement::Release(s)];
     if read_it {
-        join.insert(0, call(vec![read(x)]));
+        join.insert(0, show(read(x)));
     }
     b.block(join, ret());
     (b.finish(), x)
@@ -561,7 +601,7 @@ fn read_in_a_loop_of_a_local_assigned_before() {
     let mut b = Builder::new("f");
     let x = b.local("x", Type::STRING);
     b.block(vec![fresh(x)], goto(1));
-    b.block(vec![call(vec![read(x)])], goto(1));
+    b.block(vec![show(read(x))], goto(1));
     assert_eq!(certify(&b.finish()), Ok(()));
 }
 
