@@ -16,7 +16,8 @@ _Avoid_: mutable binding, `var` (the keyword before milestone 4)
 **Place**:
 An expression that names storage and can stand on the left of `=`: a
 variable, a `mut` field, or an element of an array held in a place, such as
-`grid[i][j]`.
+`grid[i][j]`. In mir, a place can also name a payload field under a known
+variant, which only `match` reads.
 _Avoid_: lvalue
 
 **Block value**:
@@ -84,7 +85,7 @@ _Avoid_: lazy copy
 A read of a local after which the local is not read again before it is
 reassigned or goes out of scope. A last use hands over its reference instead
 of sharing it, so a write that follows can skip the copy.
-_Avoid_: move (the compiler's name for the node, not the language rule)
+_Avoid_: move (see **Move**: the compiler's name for how mir hands it over, not the language rule)
 
 **Range**:
 `a..b`, covering `a` up to but not including `b`, or `a..=b`, which includes
@@ -347,8 +348,42 @@ and its interface values support `is` and `weak`.
 
 **Typed tree (`tir`)**:
 The program as the checker understood it: names resolved, every expression
-typed, sugar such as `while` and `?.` lowered. Codegen reads only this.
+typed, sugar such as `while` and `?.` lowered. mir is lowered from this.
 _Avoid_: IR (that is LLVM's), HIR
+
+**mir**:
+The mid-level IR between the typed tree and LLVM IR: a control-flow graph of
+**Basic blocks** whose statements hold every count (copy, release, move).
+Codegen lowers it as written. `--emit mir` prints it.
+_Avoid_: MIR (write it in lower case, like `tir`), IR (that is LLVM's)
+
+**Basic block**:
+A run of mir statements with one entry and one terminator (a jump, a branch,
+a return) that says where control goes next.
+_Avoid_: node, label
+
+**Certifier**:
+The check, run on every function in debug builds of `sisuc`, that mir's
+counts are sound: each owned reference is consumed exactly once, no empty
+local is read, and no borrow outlives its owner.
+_Avoid_: verifier, linter
+
+**Scope release**:
+A release of a local at the end of its scope, made only if the local still
+owns its reference.
+_Avoid_: drop (that is freeing an object)
+
+**Move**:
+How mir hands over a **Last use**: a consuming read that leaves the local
+empty.
+_Avoid_: transfer
+
+**Borrowed read**:
+A read of a local that uses its value without a reference of its own,
+because nothing can release or replace the local before the use ends: the
+length of an array, a field of an object, an element at an index that calls
+nothing. It costs no retain and no release.
+_Avoid_: borrow (Rust's checked borrow, which Sisu does not have)
 
 **Symbol**:
 A name as the parser and checker hold it: a small integer that stands for the
