@@ -9,6 +9,8 @@ mod fuzz;
 mod last_use;
 mod lexer;
 mod link;
+#[expect(dead_code, reason = "Task 2 wires mir into `--emit mir` and the build")]
+mod mir;
 mod parser;
 mod report;
 mod source;

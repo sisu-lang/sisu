@@ -1,0 +1,11 @@
+fn noisy(n: i64) -> i64 {
+    print(n)
+    n
+}
+
+// The value runs before the bounds check of the index it is stored at, so its output comes
+// first. Guards the order mir's codegen must keep.
+fn main() {
+    let mut c = [0]
+    c[5] = noisy(3)
+}
