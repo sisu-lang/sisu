@@ -1194,10 +1194,9 @@ impl Region<'_> {
             let (out, back) = self.transfer(s, i, states)?;
             if back & ENDED != 0 && from_outside & ENDED == 0 {
                 from_outside |= ENDED;
-                if !s.queued[0] {
-                    s.queued[0] = true;
-                    s.queue.push(Reverse(0));
-                }
+                // The queue takes the least node first, so the scope block is never queued here.
+                s.queued[0] = true;
+                s.queue.push(Reverse(0));
             }
             if out != s.out[i] {
                 s.out[i] = out;

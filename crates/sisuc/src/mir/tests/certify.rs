@@ -1174,22 +1174,53 @@ fn unmentioned_parameter_reaches_a_return() {
     rejects(&b.finish(), 0, s, Rule::Return);
 }
 
-/// Sol's case: `b` leaves `bb1` ended, and no path comes back to `bb1`.
+/// A local lowering never reached, in dead code after a `return`, is empty throughout.
+#[test]
+fn unmentioned_local_is_ignored() {
+    let mut b = Builder::new("f");
+    b.local("s", Type::STRING);
+    b.block(vec![], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// Sol's case: `x` leaves `bb2` ended, and no path comes back to `bb2`. With `covered`, it
+/// leaves from `bb4`, a block of `bb2`'s that does not mention `x`.
 #[test]
 fn ended_binding_leaves_and_never_comes_back() {
+    for covered in [false, true] {
+        let mut b = Builder::new("f");
+        let c = b.param("c", Type::BOOL);
+        let s = b.param("s", Type::STRING);
+        let x = b.local("x", Type::STRING);
+        b.scope(x, BlockId(2));
+        b.owner(x, s);
+        b.block(vec![], goto(1));
+        b.block(vec![], branch(c, 2, 3));
+        b.block(
+            vec![Statement::ScopeRelease(x), borrow(x, s), Statement::End(x)],
+            goto(if covered { 4 } else { 3 }),
+        );
+        b.block(vec![Statement::Release(s)], ret());
+        b.block(vec![], goto(3));
+        assert_eq!(certify(&b.finish()), Ok(()), "covered {covered}");
+    }
+}
+
+/// `bb4`, below `x`'s scope block `bb3`, joins `bb2`, a block as deep as `bb3` beside it and
+/// before it in the dominator tree's pre-order. `bb2` stays out of the region, so `bb3`, first
+/// in it, still takes the empty `x` from outside.
+#[test]
+fn join_beside_the_scope_block_stays_outside() {
     let mut b = Builder::new("f");
     let c = b.param("c", Type::BOOL);
-    let s = b.param("s", Type::STRING);
     let x = b.local("x", Type::STRING);
-    b.scope(x, BlockId(1));
-    b.owner(x, s);
-    b.block(vec![], branch(c, 1, 2));
-    b.block(
-        vec![Statement::ScopeRelease(x), borrow(x, s), Statement::End(x)],
-        goto(2),
-    );
-    b.block(vec![Statement::Release(s)], ret());
-    assert_eq!(certify(&b.finish()), Ok(()));
+    b.scope(x, BlockId(3));
+    b.block(vec![], goto(1));
+    b.block(vec![], branch(c, 3, 2));
+    b.block(vec![], ret());
+    b.block(vec![show(read(x))], goto(4));
+    b.block(vec![show(read(x))], goto(2));
+    rejects(&b.finish(), 3, x, Rule::Read);
 }
 
 /// A loop whose body `bb2` borrows into `x` and ends it. With `release`, `bb2` also scope-releases
@@ -1394,8 +1425,8 @@ fn violation_panics_in_a_debug_build() {
     certified(&b.finish());
 }
 
-/// Every range of a pseudo-random array against a scan: its least value, and the positions
-/// whose values lie in a range.
+/// Every range of a pseudo-random array, and of a falling one, against a scan: its least
+/// value, and the positions whose values lie in a range.
 #[test]
 fn range_queries_match_a_scan() {
     let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
@@ -1407,16 +1438,21 @@ fn range_queries_match_a_scan() {
             u32::try_from(seed % 40).expect("a value under 40 should fit")
         })
         .collect();
-    let least = RangeMin::new(values.clone());
-    for from in 0..values.len() {
-        for to in from..values.len() {
-            let at = least.argmin(from, to);
-            assert!((from..=to).contains(&at), "{from}..={to}");
-            assert_eq!(
-                Some(&values[at]),
-                values[from..=to].iter().min(),
-                "{from}..={to}"
-            );
+    // Falling values put each range's least at its end, where a query that reads past the
+    // range finds a lesser one.
+    for values in [values.clone(), (0..600).rev().collect()] {
+        let least = RangeMin::new(values.clone());
+        for from in 0..values.len() {
+            for to in from..values.len() {
+                let at = least.argmin(from, to);
+                assert!((from..=to).contains(&at), "{from}..={to}");
+                assert_eq!(least.min(from, to), values[at], "{from}..={to}");
+                assert_eq!(
+                    Some(&values[at]),
+                    values[from..=to].iter().min(),
+                    "{from}..={to}"
+                );
+            }
         }
     }
     let wavelet = Wavelet::new(&values, &(0..values.len()).collect::<Vec<_>>());
