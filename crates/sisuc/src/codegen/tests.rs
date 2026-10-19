@@ -1,6 +1,7 @@
 use super::*;
 use crate::check::check;
 use crate::parser::parse_ok;
+use crate::tir::BinaryOp;
 
 /// Lexes, parses, checks (no errors allowed), marks last uses in and compiles `src`, then
 /// verifies the module.
@@ -1185,8 +1186,59 @@ fn field_accesses_carry_their_fields_tbaa_tag() {
     );
 }
 
-/// A string's length is its own field, read without a tag; an array's is the header's `i64`,
-/// which carries the "count and length" tag. `len` picks by the base's type.
+/// `binary_value` takes `&&` and `||` as the eager `and` and `or` of two computed `bool`s, which
+/// is what a range pattern's test is in mir: no branch, no second block.
+#[test]
+fn binary_value_takes_and_and_or_of_two_computed_bools() {
+    let context = Context::create();
+    let src = "fn main() {}";
+    let (program, diagnostics) = check(&parse_ok(src), src);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let codegen = Codegen::new(&context, &program, "test.sisu", src, &machine, false);
+    let bool_type = context.bool_type();
+    let fn_type = bool_type.fn_type(&[bool_type.into(), bool_type.into()], false);
+    let function = codegen.module.add_function("both", fn_type, None);
+    codegen
+        .builder
+        .position_at_end(context.append_basic_block(function, "entry"));
+    let operand = |n| {
+        function
+            .get_nth_param(n)
+            .expect("the function should have two parameters")
+    };
+    let span = Span::new(0, 0);
+    let both = codegen.binary_value(BinaryOp::And, Type::BOOL, operand(0), operand(1), span);
+    let either = codegen.binary_value(BinaryOp::Or, Type::BOOL, both, operand(1), span);
+    codegen
+        .builder
+        .build_return(Some(&either))
+        .expect(POSITIONED);
+    let ir = codegen.module.print_to_string().to_string();
+    let body = function_body(&ir, "define i1 @both(i1 %0, i1 %1)");
+    let ops: Vec<_> = body
+        .lines()
+        .skip(2)
+        .map(|l| l.split_once(" = ").map_or(l, |(_, op)| op).trim())
+        .collect();
+    assert_eq!(
+        ops,
+        ["and i1 %0, %1", "or i1 %and, %1", "ret i1 %or"],
+        "{body}"
+    );
+}
+
+/// The text of `line` after the first `start` and before the next `end`.
+fn between<'a>(line: &'a str, start: &str, end: &str) -> &'a str {
+    let (_, rest) = line
+        .split_once(start)
+        .unwrap_or_else(|| panic!("no {start:?} in {line}"));
+    rest.split_once(end).map_or(rest, |(text, _)| text)
+}
+
+/// A string's length is field 1 of its header, read without a tag; an array's is field 1 of
+/// its own header, the `i64` that carries the "count and length" tag. Each load reads the
+/// field of the pointer its own parameter gave: `len` picks by the base's type.
 #[test]
 fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
     let context = Context::create();
@@ -1197,12 +1249,40 @@ fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
     .print_to_string()
     .to_string();
     let body = function_body(&ir, "define internal i64 @sisu.size(ptr");
-    let loads: Vec<_> = body
-        .lines()
+    let lines: Vec<_> = body.lines().map(str::trim).collect();
+    let defining = |id: &str| {
+        *lines
+            .iter()
+            .find(|l| l.starts_with(&format!("{id} = ")))
+            .unwrap_or_else(|| panic!("no {id} in\n{body}"))
+    };
+    let loads: Vec<_> = lines
+        .iter()
         .filter(|l| l.contains("load i64"))
-        .map(|l| l.contains("!tbaa").then(|| tbaa_name(&ir, l)))
+        .map(|load| {
+            let gep = defining(between(load, "load i64, ptr ", ","));
+            let base = defining(between(gep, ", ptr ", ","));
+            let slot = between(base, "load ptr, ptr ", ",");
+            let stored = lines
+                .iter()
+                .find(|l| l.starts_with("store ptr %") && l.contains(&format!(", ptr {slot},")))
+                .unwrap_or_else(|| panic!("no store to {slot} in\n{body}"));
+            (
+                between(gep, "nuw ", ", ptr"),
+                gep.rsplit_once("i32 ").map(|(_, field)| field),
+                between(stored, "store ptr ", ","),
+                load.contains("!tbaa").then(|| tbaa_name(&ir, load)),
+            )
+        })
         .collect();
-    assert_eq!(loads, [None, Some("count and length")], "{body}");
+    assert_eq!(
+        loads,
+        [
+            ("{ i64, i64, i64, [0 x i8] }", Some("1"), "%0", None),
+            ("{ i64, i64 }", Some("1"), "%1", Some("count and length")),
+        ],
+        "{body}"
+    );
 }
 
 /// `words()` of a string that is not a local releases it, once the words are copied out; of a

@@ -28,7 +28,8 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `lhs op rhs` on two evaluated operands of type `ty`: an `i64` or `u8` op that panics at
     /// `span` on overflow or a zero divisor, or an `f64` op to IEEE 754, with no such check
-    /// and no fast-math flag. `&&` and `||` are branches, so they never reach here.
+    /// and no fast-math flag. `&&` and `||` here are the eager `and` and `or` of two computed
+    /// `bool`s; `binary` branches for the source's short-circuit.
     pub(super) fn binary_value(
         &self,
         op: BinaryOp,
@@ -59,9 +60,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             BinaryOp::Sub => self.checked(&intrinsic("sub"), l, r, span),
             BinaryOp::Mul => self.checked(&intrinsic("mul"), l, r, span),
             BinaryOp::Div | BinaryOp::Rem => self.division(op == BinaryOp::Rem, signed, l, r, span),
-            BinaryOp::And | BinaryOp::Or => unreachable!(
-                "`binary` should send `and` and `or` to `short_circuit` before this match"
-            ),
+            BinaryOp::And => self.builder.build_and(l, r, "and").expect(POSITIONED),
+            BinaryOp::Or => self.builder.build_or(l, r, "or").expect(POSITIONED),
         }
         .into()
     }

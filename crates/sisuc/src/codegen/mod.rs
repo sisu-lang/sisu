@@ -45,6 +45,84 @@ use crate::tir::{
 const POSITIONED: &str =
     "the builder should be positioned in a block while a function body is emitted";
 
+impl<'ctx, 'src> Codegen<'ctx, 'src> {
+    /// An empty module for `program`, with the runtime's declarations and no function defined.
+    fn new(
+        context: &'ctx Context,
+        program: &'src Program,
+        path: &'src str,
+        source: &'src str,
+        machine: &TargetMachine,
+        rc_checks: bool,
+    ) -> Self {
+        let module = context.create_module("main");
+        // The passes and the object file both read the target from the module.
+        let target_data = machine.get_target_data();
+        module.set_triple(&machine.get_triple());
+        module.set_data_layout(&target_data.get_data_layout());
+        let ptr_type = context.ptr_type(AddressSpace::default());
+        let void = context.void_type();
+
+        // `sisu_alloc(size, align)` and `sisu_free(ptr, size, align)`, from the runtime.
+        let alloc = abi::declare(&module, abi::row("sisu_alloc"));
+        let free = abi::declare(&module, abi::row("sisu_free"));
+        // `@sisu_rc.retain(object)`; see `define_helpers`.
+        let rc_retain = module.add_function(
+            "sisu_rc.retain",
+            void.fn_type(&[ptr_type.into()], false),
+            Some(Linkage::Internal),
+        );
+
+        // The runtime's print functions, one set for each `Stream`; `Stream::index` indexes them.
+        let printers = [Stream::Stdout, Stream::Stderr]
+            .map(|stream| declare_printers(&module, stream.symbol_prefix()));
+        let str_compare = abi::declare(&module, abi::row("sisu_str_compare"));
+        // `sisu_panic(msg, len)` prints the message and exits; `sisu_panic_bounds(msg, len,
+        // index, length)` prints a bounds panic and exits; `sisu_panic_message(at, at_len, msg,
+        // msg_len)` prints a `panic` call's panic and exits.
+        let panic = abi::declare(&module, abi::row("sisu_panic"));
+        let panic_bounds = abi::declare(&module, abi::row("sisu_panic_bounds"));
+        let panic_message = abi::declare(&module, abi::row("sisu_panic_message"));
+        // Declared only with the checks, so that a plain build's module stays as it was.
+        let rc_fault = rc_checks.then(|| abi::declare(&module, abi::row("sisu_rc_fault")));
+        let tbaa_root = context.metadata_node(&[context.metadata_string("sisu").into()]);
+
+        Codegen {
+            context,
+            module,
+            builder: context.create_builder(),
+            printers,
+            str_compare,
+            panic,
+            panic_bounds,
+            panic_message,
+            alloc,
+            free,
+            rc_retain,
+            rc_fault,
+            tbaa_kind: context.get_kind_id("tbaa"),
+            header_tag: tbaa_tag(context, tbaa_root, "count and length"),
+            element_tag: tbaa_tag(context, tbaa_root, "array element"),
+            tbaa_root,
+            program,
+            helpers: RefCell::new(FxHashMap::default()),
+            pending: RefCell::new(Vec::new()),
+            target_data,
+            path,
+            source,
+            lines: LineIndex::new(source),
+            classes: Vec::new(),
+            enums: Vec::new(),
+            functions: Vec::new(),
+            locals: Vec::new(),
+            types: Vec::new(),
+            live: Vec::new(),
+            loops: Vec::new(),
+            unique_locals: Vec::new(),
+        }
+    }
+}
+
 /// Compiles a program that passed `check` into an LLVM module for `machine`. With `rc_checks`,
 /// a retain or release of an object whose count is below 1 calls `sisu_rc_fault`, and `@main`
 /// calls `sisu_rc_check_exit` after `sisu.main` returns. `@main` always calls
@@ -57,71 +135,7 @@ pub(crate) fn compile<'ctx>(
     machine: &TargetMachine,
     rc_checks: bool,
 ) -> Module<'ctx> {
-    let module = context.create_module("main");
-    // The passes and the object file both read the target from the module.
-    let target_data = machine.get_target_data();
-    module.set_triple(&machine.get_triple());
-    module.set_data_layout(&target_data.get_data_layout());
-    let ptr_type = context.ptr_type(AddressSpace::default());
-    let void = context.void_type();
-
-    // `sisu_alloc(size, align)` and `sisu_free(ptr, size, align)`, from the runtime.
-    let alloc = abi::declare(&module, abi::row("sisu_alloc"));
-    let free = abi::declare(&module, abi::row("sisu_free"));
-    // `@sisu_rc.retain(object)`; see `define_helpers`.
-    let rc_retain = module.add_function(
-        "sisu_rc.retain",
-        void.fn_type(&[ptr_type.into()], false),
-        Some(Linkage::Internal),
-    );
-
-    // The runtime's print functions, one set for each `Stream`; `Stream::index` indexes them.
-    let printers = [Stream::Stdout, Stream::Stderr]
-        .map(|stream| declare_printers(&module, stream.symbol_prefix()));
-    let str_compare = abi::declare(&module, abi::row("sisu_str_compare"));
-    // `sisu_panic(msg, len)` prints the message and exits; `sisu_panic_bounds(msg, len,
-    // index, length)` prints a bounds panic and exits; `sisu_panic_message(at, at_len, msg,
-    // msg_len)` prints a `panic` call's panic and exits.
-    let panic = abi::declare(&module, abi::row("sisu_panic"));
-    let panic_bounds = abi::declare(&module, abi::row("sisu_panic_bounds"));
-    let panic_message = abi::declare(&module, abi::row("sisu_panic_message"));
-    // Declared only with the checks, so that a plain build's module stays as it was.
-    let rc_fault = rc_checks.then(|| abi::declare(&module, abi::row("sisu_rc_fault")));
-    let tbaa_root = context.metadata_node(&[context.metadata_string("sisu").into()]);
-
-    let mut codegen = Codegen {
-        context,
-        module,
-        builder: context.create_builder(),
-        printers,
-        str_compare,
-        panic,
-        panic_bounds,
-        panic_message,
-        alloc,
-        free,
-        rc_retain,
-        rc_fault,
-        tbaa_kind: context.get_kind_id("tbaa"),
-        header_tag: tbaa_tag(context, tbaa_root, "count and length"),
-        element_tag: tbaa_tag(context, tbaa_root, "array element"),
-        tbaa_root,
-        program,
-        helpers: RefCell::new(FxHashMap::default()),
-        pending: RefCell::new(Vec::new()),
-        target_data,
-        path,
-        source,
-        lines: LineIndex::new(source),
-        classes: Vec::new(),
-        enums: Vec::new(),
-        functions: Vec::new(),
-        locals: Vec::new(),
-        types: Vec::new(),
-        live: Vec::new(),
-        loops: Vec::new(),
-        unique_locals: Vec::new(),
-    };
+    let mut codegen = Codegen::new(context, program, path, source, machine, rc_checks);
     codegen.lay_out_types();
     // Every class gets its helpers, used or not, as in milestone 2.
     for helper in [Helper::Release, Helper::Eq] {
@@ -426,11 +440,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn call_value(
         &self,
         func: FuncId,
-        args: &[BasicValueEnum<'ctx>],
+        args: &[BasicMetadataValueEnum<'ctx>],
     ) -> Option<BasicValueEnum<'ctx>> {
-        let args: Vec<BasicMetadataValueEnum> = args.iter().map(|&a| a.into()).collect();
         self.builder
-            .build_call(self.functions[func.0], &args, "call")
+            .build_call(self.functions[func.0], args, "call")
             .expect(POSITIONED)
             .try_as_basic_value()
             .basic()
@@ -795,7 +808,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             ExprKind::Move(local) => return Some(self.move_local(*local)),
             ExprKind::Call { func, args } => {
-                let args: Vec<_> = args.iter().map(|a| self.operand(a)).collect();
+                let args: Vec<_> = args.iter().map(|a| self.operand(a).into()).collect();
                 return self.call_value(*func, &args);
             }
             ExprKind::Print { stream, operand } => {
