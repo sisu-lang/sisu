@@ -2865,7 +2865,7 @@ fn similar(d: Diagnostic, at: Span, suggestion: Option<Suggestion>) -> Diagnosti
 }
 
 /// Whether `c` is a character the user cannot see.
-fn invisible(c: char) -> bool {
+pub(crate) fn invisible(c: char) -> bool {
     c.is_whitespace() || c.is_control() || is_format(c)
 }
 

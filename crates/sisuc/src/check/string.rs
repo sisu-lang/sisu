@@ -12,7 +12,7 @@ use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, InterpolateHelp, MismatchFix, MismatchSource,
-    Operand,
+    Operand, invisible,
 };
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -449,7 +449,8 @@ impl Checker<'_> {
     }
 }
 
-/// A string literal, for the message, in Sisu's escapes: no other literal is named.
+/// A string literal, for the message, in Sisu's escapes, and a character the user cannot see
+/// but a space by its code point: no other literal is named.
 fn literal(e: &ast::Expr) -> Option<String> {
     let ExprKind::Str(text) = &e.kind else {
         return None;
@@ -462,7 +463,7 @@ fn literal(e: &ast::Expr) -> Option<String> {
             '\t' => quoted.push_str("\\t"),
             '\r' => quoted.push_str("\\r"),
             '\0' => quoted.push_str("\\0"),
-            c if c.is_control() => write!(quoted, "\\u{{{:X}}}", u32::from(c))
+            c if c != ' ' && invisible(c) => write!(quoted, "\\u{{{:X}}}", u32::from(c))
                 .expect("writing to a `String` should never fail"),
             c => quoted.push(c),
         }
@@ -564,6 +565,7 @@ mod tests {
             "a\nb\tc\rd\0e",
             "\u{7}\u{1B}\u{7F}\u{85}",
             "é😀",
+            "a b\u{AD}\u{2028}\u{FEFF}",
         ] {
             let e = ast::Expr {
                 kind: ExprKind::Str(text.to_string()),
@@ -577,6 +579,7 @@ mod tests {
                 "{name}"
             );
             assert!(lexed.diagnostics.is_empty(), "{name}");
+            assert!(!name.chars().any(|c| c != ' ' && invisible(c)), "{name}");
         }
     }
 }
