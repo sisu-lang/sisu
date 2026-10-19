@@ -5,7 +5,7 @@ use crate::parser::parse_ok;
 mod lower;
 
 /// The typed tree of `src`, which checks without an error, with an empty `main` added when it
-/// has none.
+/// has none, and with its last uses marked, as the build passes it on.
 fn checked(src: &str) -> tir::Program {
     let src = if src.contains("fn main") {
         src.to_owned()
@@ -13,7 +13,9 @@ fn checked(src: &str) -> tir::Program {
         format!("{src}\nfn main() {{}}")
     };
     let (program, diagnostics) = check(&parse_ok(&src), &src);
-    program.unwrap_or_else(|| panic!("{diagnostics:?}"))
+    let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    crate::last_use::mark(&mut program);
+    program
 }
 
 /// The mir of `src` as lowering leaves it, before any pass.

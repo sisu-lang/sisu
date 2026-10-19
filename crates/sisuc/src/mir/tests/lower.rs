@@ -359,3 +359,216 @@ fn mentions_every_kind_of_node() {
         }
     }
 }
+
+/// Each kind of expression lowers to its statement: borrowed operands go to temporaries
+/// released after, consumed ones are `use`d or moved, and a chain or `&&` branches.
+#[test]
+fn lowers_every_kind_of_node() {
+    let printed = lowered(
+        "class O {\n    mut n: i64\n    mut s: string\n}\n\
+         enum E {\n    V(i64)\n    W\n}\n\
+         fn g(x: i64) -> i64 { x }\n\
+         fn name() -> string { \"n\" }\n\
+         fn f(o: O, p: O, xs: [i64], s: string, cs: [char], c: bool, x: f64, k: char) {\n\
+             let m = O(n: 1, s: \"\")\n\
+             let v = E.V(2)\n\
+             let w: i64? = g(3)\n\
+             let none: i64? = None\n\
+             let b = u8(o.n)\n\
+             print(x.abs())\n\
+             print(-o.n)\n\
+             print(1.5 * x)\n\
+             print(k == 'a')\n\
+             print(s != \"t\")\n\
+             print(o is p)\n\
+             print(1 < xs[0] < 3)\n\
+             print(c && xs.len() > 0)\n\
+             print(c || false)\n\
+             print(xs.contains(2))\n\
+             print([4; 2].sum())\n\
+             print(s.words().len())\n\
+             let ws = s.words()\n\
+             let bs = s.bytes()\n\
+             let chs = s.chars()\n\
+             print(string(cs))\n\
+             print(\"{x:>8}\")\n\
+             let line = read_line()\n\
+             eprint(1)\n\
+             name()\n\
+             for i in 0..2 {\n\
+                 if c { continue }\n\
+                 print(i)\n\
+             }\n\
+         }",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "_ = copy \"\"",
+            "m#8 = new O(1, move _)",
+            "v#9 = variant E.V(2)",
+            "_ = call g(3)",
+            "w#10 = wrap _",
+            "none#11 = None",
+            "_ = o#0.0",
+            "b#12 = convert _",
+            "_ = math abs(x#6)",
+            "call print(_)",
+            "_ = o#0.0",
+            "_ = -_",
+            "_ = 1.5 * x#6",
+            "_ = k#7 == 'a'",
+            "_ = use s#3",
+            "_ = copy \"t\"",
+            "_ = _ != _\n    release _\n    release _",
+            "_ = use o#0",
+            "_ = use p#1",
+            "_ = _ is _\n    release _\n    release _",
+            "_ = xs#2[0]",
+            "_ = 1 < _",
+            "branch _ bb1 bb2",
+            "_ = _ < 3",
+            "_ = c#5",
+            "branch _ bb3 bb4",
+            "_ = len xs#2",
+            "_ = _ > 0",
+            "_ = c#5",
+            "branch _ bb6 bb5",
+            "_ = false",
+            "_ = contains(use xs#2, 2)",
+            "_ = array[4; 2]",
+            "_ = sum move _",
+            "_ = len_words s#3",
+            "ws#13 = words s#3",
+            "bs#14 = bytes s#3",
+            "chs#15 = chars s#3",
+            "_ = string cs#4\n    call print(_)\n    release _",
+            "_ = interp(fmt(x#6, \">8\"))",
+            "line#16 = call read_line()",
+            "call eprint(1)",
+            "_ = call name()\n    release _",
+            "branch c#5 bb10 bb11",
+            "bb10:\n    goto bb7",
+            "release? line#16",
+            "return",
+        ],
+    );
+}
+
+/// A comparison chain branches past its later steps, `&&` and `||` skip their right side, two
+/// strings compare as borrowed operands, and `return` and `panic` end their block.
+#[test]
+fn lowers_chains_and_exits() {
+    let printed = lowered(
+        "const NAN = 0.0 / 0.0\n\
+         fn q(s: string, x: i64) -> bool {\n\
+             print(s)\n\
+             print(NAN)\n\
+             let small: u8 = 5\n\
+             let lt = 1 < x\n\
+             let either = lt || x > 2\n\
+             print(1 < 2 < x <= 9)\n\
+             print(lt && s < \"u\")\n\
+             panic(s)\n\
+         }\n\
+         fn r(c: bool) {\n\
+             if c { return }\n\
+             print(1)\n\
+         }",
+    );
+    has(
+        &printed,
+        "q",
+        &[
+            "_ = use s#0\n    call print(_)\n    release _",
+            "call print(nan)",
+            "small#2 = 5u8",
+            "lt#3 = 1 < x#1",
+            "_ = lt#3",
+            "branch _ bb2 bb1",
+            "_ = x#1 > 2",
+            "bb2:\n    either#4 = _",
+            "_ = 1 < 2",
+            "branch _ bb3 bb4",
+            "_ = 2 < x#1",
+            "branch _ bb5 bb4",
+            "_ = lt#3",
+            "bb5:\n    _ = x#1 <= 9\n    goto bb4",
+            "_ = use s#0",
+            "_ = copy \"u\"",
+            "_ = _ < _\n    release _\n    release _",
+            "panic use s#0",
+        ],
+    );
+    has(
+        &printed,
+        "r",
+        &[
+            "branch c#0 bb1 bb2",
+            "bb1:\n    return\n",
+            "bb2:\n    call print(1)\n    return\n}",
+        ],
+    );
+}
+
+/// An element read reads its base in place when the index leaves every local as it was
+/// (B1), and a field store its base when the value does (B5); otherwise the base is read
+/// into a temporary first, and released after.
+#[test]
+fn base_borrowed_when_the_sibling_leaves_locals() {
+    let printed = lowered(
+        "class P {\n    mut n: i64\n    mut b: bool\n}\n\
+         fn g(x: i64) -> i64 { x }\n\
+         fn borrowed(xs: [i64], p: P, i: i64, u: u8) {\n\
+             print(xs[-i])\n\
+             print(xs[i64(u)])\n\
+             print(xs[xs.len() - 1])\n\
+             print(xs[p.n])\n\
+             p.b = 1 < i\n\
+         }\n\
+         fn copied(xs: [i64], p: P, i: i64) {\n\
+             print(xs[g(i)])\n\
+             print(xs[i + g(1)])\n\
+             p.b = 1 < g(i)\n\
+         }",
+    );
+    has(
+        &printed,
+        "borrowed",
+        &[
+            "_ = -i#2\n    _ = xs#0[_]",
+            "_ = convert u#3\n    _ = xs#0[_]",
+            "_ = len xs#0\n    _ = _ - 1\n    _ = xs#0[_]",
+            "_ = p#1.0\n    _ = xs#0[_]",
+            "_ = 1 < i#2\n    p#1.1 = _",
+        ],
+    );
+    assert!(!function(&printed, "borrowed").contains("use"));
+    has(
+        &printed,
+        "copied",
+        &[
+            "_ = use xs#0\n    _ = call g(i#2)\n    _ = _[_]\n    release _",
+            "_ = use xs#0\n    _ = call g(1)\n    _ = i#2 + _\n    _ = _[_]\n    release _",
+            "_ = use p#1\n    _ = call g(i#2)\n    _ = 1 < _\n    _.1 = _\n    release _",
+        ],
+    );
+}
+
+/// Lowering stops at an exit: the statements after it, which the checker keeps and warns
+/// about, are not lowered.
+#[test]
+fn code_after_an_exit_is_not_lowered() {
+    let printed = lowered(
+        "fn f(c: bool) -> i64 {\n    if c { return 1 } else { return 2 }\n    print(3)\n    4\n}\n\
+         fn h() -> i64 {\n    return 1\n    print(3)\n    4\n}\n\
+         fn k(c: bool) -> i64 {\n    while c {\n        break\n        print(3)\n    }\n    panic(\"p\")\n    4\n}",
+    );
+    for name in ["f", "h", "k"] {
+        let f = function(&printed, name);
+        assert!(!f.contains("print") && !f.contains("= 4"), "{f}");
+    }
+    has(&printed, "h", &["_ = 1\n    return _\n}"]);
+    has(&printed, "k", &["bb2:\n    goto bb4", "panic move _\n}"]);
+}

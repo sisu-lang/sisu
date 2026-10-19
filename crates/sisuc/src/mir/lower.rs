@@ -328,14 +328,18 @@ impl<'a> Lowering<'a> {
 
     /// `e` as an operand: a constant, a read of a source local, or a temporary.
     fn operand(&mut self, e: &Expr) -> Option<Operand> {
-        if let Some(constant) = constant(e) {
-            return Some(Operand::Const(constant));
-        }
-        if let Some(local) = local_of(e) {
-            return Some(self.read(local));
+        if let Some(leaf) = self.leaf(e) {
+            return Some(leaf);
         }
         let value = self.temp_of(e)?;
         Some(self.owned(value))
+    }
+
+    /// `e` as an operand when it is a constant or a read of a source local.
+    fn leaf(&self, e: &Expr) -> Option<Operand> {
+        constant(e)
+            .map(Operand::Const)
+            .or_else(|| local_of(e).map(|local| self.read(local)))
     }
 
     /// `op`, an operand of a statement whose later operands are `later`. A read of a whole
@@ -452,7 +456,10 @@ impl<'a> Lowering<'a> {
             | ExprKind::Char(_)
             | ExprKind::None
             | ExprKind::Local(_)
-            | ExprKind::Move(_) => Rvalue::Use(self.operand(e)?),
+            | ExprKind::Move(_) => Rvalue::Use(
+                self.leaf(e)
+                    .expect("a constant or a local should be a leaf operand"),
+            ),
             ExprKind::Str(text) => Rvalue::CopyStr(text.clone()),
             ExprKind::Call { func, args } => Rvalue::Call {
                 func: *func,
