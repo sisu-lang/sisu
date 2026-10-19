@@ -4458,6 +4458,10 @@ mod tests {
         // One error at the `;`: the `{ }` after it is not taken for a second, broken item.
         assert_eq!(parse_err("fn main(); { }"), (Code::Expected, 1, 10));
         assert_eq!(parse_err("enum E; { A }"), (Code::Expected, 1, 7));
+    }
+
+    #[test]
+    fn semicolon_after_a_complete_item_separates_from_a_top_level_brace() {
         // After a complete `const` or item the `;` separates, so the error is at the `{`.
         assert_eq!(
             parse_err("const X = 1; { }\nfn main() {}"),

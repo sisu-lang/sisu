@@ -544,9 +544,11 @@ fn redundant_semicolon(source: &str, at: Span, first: bool) -> Diagnostic {
     let solid = |b: Option<&u8>| b.is_some_and(|b| !b.is_ascii_whitespace());
     let bytes = source.as_bytes();
     let before = at.start().checked_sub(1).and_then(|b| bytes.get(b));
-    // Every `;` after a removed one in its run is removed too.
-    let after = bytes[at.end()..].iter().find(|&&b| b != b';');
-    let space = (first || before != Some(&b';')) && solid(before) && solid(after);
+    // Every `;` after a removed one in its run is removed too. The scan runs last, so only the
+    // first `;` of touching ones makes it, which keeps a run of n `;`s linear, not quadratic.
+    let space = (first || before != Some(&b';'))
+        && solid(before)
+        && solid(bytes[at.end()..].iter().find(|&&b| b != b';'));
     DiagnosticKind::RedundantSemicolon { at, space }.into()
 }
 
