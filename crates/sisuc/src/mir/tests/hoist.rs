@@ -602,11 +602,8 @@ fn roots_stop_at_different_ancestors_of_a_tree() {
                 let Statement::MakeUnique(place) = stmt else {
                     return None;
                 };
-                if place.projections.is_empty() {
-                    f.locals[place.local.0].name.clone()
-                } else {
-                    None
-                }
+                // A pre-header holds no other `make_unique`, so a projected one fails too.
+                f.locals[place.local.0].name.clone()
             })
             .collect();
         names.sort();
