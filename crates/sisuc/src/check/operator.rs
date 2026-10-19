@@ -146,22 +146,22 @@ impl Checker<'_> {
         self.integers(operands, None, operator)
     }
 
-    /// The operands of one number operator, checked in source order; the type they share,
-    /// `None` when it is `Error`; and whether one was reported against it. The type is `u8`
-    /// when `expected` is `u8` or `u8?`, and `f64` when it is `f64` or `f64?`. Otherwise the
-    /// first concrete operand (of `rank` 0) is checked first, with no expected type, and gives
-    /// it: `u8` beside a `u8`, `f64` beside an `f64`, `char` beside a `char` in a comparison,
-    /// else `i64`; beside a `char` in arithmetic that `i64` is not passed on, and the later
-    /// operands are checked with no expected type. With none, it is `i64`, so `None + 1`
-    /// expects an `i64`. An `f64` after an `i64` or `u8` first operand makes the type `f64`, and that operand is reported against
-    /// it, as an operand before a `string` is in `+`. When `expected` is `i64` or `i64?`, an
-    /// `f64` first operand gives `i64`, not `f64`, and that first operand is checked against
-    /// `expected`, so an `f64` is reported in either order and at any depth.
-    /// Once an operand is `Error`, the later ones are checked against `Error`. An operand of
-    /// `arithmetic` that is a `char` is left unreported, as the poison `typed` `char`: its
-    /// caller reports the operator, so what the operator's type finds wrong with the other
-    /// operands is dropped, in either order. In a comparison, a `char` after a number reports
-    /// that number, as a `char` before one reports the number.
+    /// The operands of one number operator, checked in source order; the type they share, `None`
+    /// when it is `Error`; and whether one was reported against it. The type is `u8` when
+    /// `expected` is `u8` or `u8?`, and `f64` when it is `f64` or `f64?`. Otherwise the first
+    /// concrete operand (of `rank` 0) is checked first, with no expected type, and gives it: `u8`
+    /// beside a `u8`, `f64` beside an `f64`, `char` beside a `char` in a comparison, else `i64`;
+    /// beside a `char` in arithmetic that `i64` is not passed on, and the later operands are
+    /// checked with no expected type. With none, it is `i64`, so `None + 1` expects an `i64`. An
+    /// `f64` after an `i64` or `u8` first operand makes the type `f64`, and that operand is
+    /// reported against it, as an operand before a `string` is in `+`. When `expected` is `i64` or
+    /// `i64?`, an `f64` first operand gives `i64`, not `f64`, and that first operand is checked
+    /// against `expected`, so an `f64` is reported in either order and at any depth. Once an
+    /// operand is `Error`, the later ones are checked against `Error`. An operand of `arithmetic`
+    /// that is a `char` is left unreported, as the poison `typed` `char`: its caller reports the
+    /// operator, so what the operator's type finds wrong with the other operands is dropped, in
+    /// either order. In a comparison, a `char` after a number reports that number, as a `char`
+    /// before one reports the number.
     ///
     /// The type is `string` beside a `string`, in a comparison and in `+`. In `+` a `string`
     /// drives from either side: an operand of another type is reported against `string`, with
