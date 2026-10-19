@@ -267,9 +267,11 @@ fn concat_mismatch() {
             Some("let b: u8 = \"{(1 + n)}{s}\""),
         ),
         // A `[]` or a `None` has no type of its own: it is the literal that cannot be a
-        // `string`, with no other operand to point at.
-        ("let b: u8 = [] + s", (2, 17, "[]"), &[], None),
-        ("let b: u8 = None + s", (2, 17, "None"), &[], None),
+        // `string`, beside the `string` it would join, in either place.
+        ("let b: u8 = [] + s", (2, 17, "[]"), &[(2, 22)], None),
+        ("let b: u8 = None + s", (2, 17, "None"), &[(2, 24)], None),
+        ("print(s + [])", (2, 15, "[]"), &[(2, 11)], None),
+        ("print(s + None)", (2, 15, "None"), &[(2, 11)], None),
         (
             "let b: u8 = 300 + s",
             (2, 17, "300"),

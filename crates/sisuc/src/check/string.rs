@@ -11,7 +11,8 @@ use super::expr::{local, no_member, path, typed};
 use super::{Checked, Checker, Poisoned, block_expr, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{
-    Definition, Diagnostic, DiagnosticKind, InterpolateHelp, MismatchFix, MismatchSource, Operand,
+    Code, Definition, Diagnostic, DiagnosticKind, InterpolateHelp, MismatchFix, MismatchSource,
+    Operand,
 };
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
@@ -176,6 +177,33 @@ impl Checker<'_> {
             conversion: false,
         }
         .into()
+    }
+
+    /// The mismatch of a `None` or `[]` operand of the join `lhs + rhs`, among the diagnostics
+    /// from `start`, made the one a typed operand gets, with the label on the `string`.
+    pub(super) fn label_join_literals(&mut self, start: usize, [lhs, rhs]: [&ast::Expr; 2]) {
+        for (e, other) in [(lhs, rhs), (rhs, lhs)] {
+            let got = match &e.kind {
+                ExprKind::NoneLit => "None",
+                ExprKind::ArrayLit(elements) if elements.is_empty() => "[]",
+                _ => continue,
+            };
+            let want = vec![self.type_name(Type::STRING)];
+            if let Some(d) = self.diagnostics[start..]
+                .iter_mut()
+                .find(|d| d.code() == Code::Mismatch && d.span() == e.span)
+            {
+                *d = DiagnosticKind::Mismatch {
+                    want,
+                    got: got.to_string(),
+                    at: e.span,
+                    source: Some(MismatchSource::Concat(other.span)),
+                    fix: None,
+                    conversion: false,
+                }
+                .into();
+            }
+        }
     }
 
     /// Whether `span` holds no line break, which a string literal cannot hold. A comment inside

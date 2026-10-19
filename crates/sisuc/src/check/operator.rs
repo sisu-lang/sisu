@@ -91,6 +91,7 @@ impl Checker<'_> {
         } else {
             Operator::Arithmetic
         };
+        let start = self.diagnostics.len();
         let (checked, ty, mismatched) = self.binary_operands(span, &[lhs, rhs], expected, operator);
         if checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
             self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
@@ -100,6 +101,7 @@ impl Checker<'_> {
             .try_into()
             .unwrap_or_else(|_| panic!("`integers` should return one result per operand"));
         if ty == Some(Type::STRING) {
+            self.label_join_literals(start, [lhs, rhs]);
             return self.concat(span, l, r, mismatched);
         }
         let kind = l.ok().zip(r.ok()).map(|(l, r)| tir::ExprKind::Binary {
