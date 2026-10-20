@@ -1472,7 +1472,7 @@ fn len_and_field_of_a_local_skip_base_count() {
         "class O {\n    n: i64\n    a: [i64]\n}\n\
          fn len(xs: [i64]) -> [i64] {\n    print(xs.len() + xs.len())\n    xs\n}\n\
          fn field(o: O) -> O {\n    print(o.n + o.n)\n    o\n}\n\
-         fn keep(xs: [i64]) {}\n\
+         fn keep(xs: [i64]) {\n    let kept = xs\n}\n\
          fn counted(o: O) -> O {\n    let a = o.a\n    print(a[0])\n    keep(a)\n    o\n}\n\
          fn main() {}",
     )
@@ -1806,12 +1806,12 @@ fn words_releases_a_base_that_is_not_a_local() {
     let ir = compiled(
         &context,
         "fn make() -> string { \"a \" + \"b\" }\nfn value() -> [string] { make().words() }\n\
-         fn local(s: string) -> i64 {\n    let ws = s.words()\n    s.len()\n}\nfn main() {}",
+         fn local() -> i64 {\n    let s = make()\n    let ws = s.words()\n    s.len()\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
     let value = function_body(&ir, "define internal ptr @sisu.value()");
-    let local = function_body(&ir, "define internal i64 @sisu.local(ptr");
+    let local = function_body(&ir, "define internal i64 @sisu.local()");
     let release = "@sisu_rc.release.string(";
     assert_eq!(value.matches(release).count(), 1, "{value}");
     // The local's one release is its scope end: `words()` itself released nothing.
@@ -1875,7 +1875,7 @@ fn general_path_releases_base() {
 }
 
 /// An index built only from whitelisted nodes reads the base in place; one with a call copies
-/// the base, which is released before the element is printed. `call` indexes a field, `q.xs`:
+/// the base, which is released before the element is printed. `call` indexes a `mut` field, `q.xs`:
 /// a borrow of a whole local survives a call, so pair removal (`mir/pairs.rs`) would make a
 /// copy of a whole local a borrow. In `moved` the index's read of `ys` is its last use, which
 /// the ownership pass makes a move, and `xs` is still read in place:
@@ -1885,7 +1885,7 @@ fn fast_path_follows_the_index_whitelist() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class O {\n    n: i64\n}\nclass Q {\n    xs: [i64]\n}\nfn g() -> i64 { 0 }\n\
+        "class O {\n    n: i64\n}\nclass Q {\n    mut xs: [i64]\n}\nfn g() -> i64 { 0 }\n\
          fn unary(xs: [i64], i: i64) -> [i64] {\n    print(xs[-i + 1])\n    xs\n}\n\
          fn convert(xs: [i64], b: u8) -> [i64] {\n    print(xs[i64(b)])\n    xs\n}\n\
          fn field(xs: [i64], o: O) -> [i64] {\n    print(xs[o.n])\n    print(o.n)\n    xs\n}\n\
@@ -1989,7 +1989,7 @@ fn conditional_release_keeps_null_store() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "fn keep(p: [i64]) {}\nfn f(xs: [i64], c: bool) {\n    if c {\n        keep(xs)\n    }\n}\nfn main() {}",
+        "fn keep(p: [i64]) {\n    let kept = p\n}\nfn f(xs: [i64], c: bool) {\n    if c {\n        keep(xs)\n    }\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();

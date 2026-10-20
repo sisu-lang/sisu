@@ -5,7 +5,7 @@ use super::*;
 use crate::mir::certify::{Rule, Violation, certify};
 use crate::mir::elaborate::elaborate;
 
-const KEEP: &str = "fn keep(p: [i64]) {}\nfn name() -> string { \"n\" }\n";
+const KEEP: &str = "fn keep(p: [i64]) {\n    let kept = p\n}\nfn name() -> string { \"n\" }\n";
 
 /// Moved on every path: the scope release is removed.
 #[test]

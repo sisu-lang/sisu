@@ -32,7 +32,8 @@ fn assign_from_own_call() {
 
 #[test]
 fn two_reads_in_one_call() {
-    let printed = built("fn g(a: [i64], b: [i64]) {}\nfn f(x: [i64]) { g(x, x) }");
+    let printed =
+        built("fn g(a: [i64], b: [i64]) {\n    let kept = [a, b]\n}\nfn f(x: [i64]) { g(x, x) }");
     has(&printed, "f", &["_ = copy x#0", "call g(move _, move x#0)"]);
 }
 
@@ -80,9 +81,9 @@ fn concat_lhs_then_rhs() {
 /// A comparison chain evaluates its operands in order, so only the last read moves.
 #[test]
 fn comparison_chain_reads() {
-    let printed = built("fn f(xs: [i64]) -> bool { 0 < xs.len() }");
+    let printed = built("fn f() -> bool {\n    let xs = [1]\n    0 < xs.len()\n}");
     has(&printed, "f", &["_ = move xs#0", "_ = len _", "0 < _"]);
-    let printed = built("fn f(xs: [i64]) -> bool { 0 < xs.len() < xs.len() }");
+    let printed = built("fn f() -> bool {\n    let xs = [1]\n    0 < xs.len() < xs.len()\n}");
     has(
         &printed,
         "f",
@@ -102,7 +103,7 @@ fn read_in_loop_body() {
 #[test]
 fn read_before_return() {
     let printed = built(
-        "fn f(xs: [i64], c: bool) -> i64 {\n    if c {\n        return xs.len()\n    }\n    xs.len()\n}",
+        "fn f() -> i64 {\n    let xs = [1]\n    let c = true\n    if c {\n        return xs.len()\n    }\n    xs.len()\n}",
     );
     assert_eq!(count(&printed, "f", "move xs#0"), 2, "{printed}");
 }
@@ -110,7 +111,7 @@ fn read_before_return() {
 #[test]
 fn read_before_panic() {
     let printed = built(
-        "fn f(xs: [i64], c: bool) -> i64 {\n    if c {\n        panic(\"{xs.len()}\")\n    }\n    xs.len()\n}",
+        "fn f() -> i64 {\n    let xs = [1]\n    let c = true\n    if c {\n        panic(\"{xs.len()}\")\n    }\n    xs.len()\n}",
     );
     assert_eq!(count(&printed, "f", "move xs#0"), 2, "{printed}");
 }
@@ -118,7 +119,7 @@ fn read_before_panic() {
 #[test]
 fn read_in_branch_then_after() {
     let printed = built(
-        "fn f(xs: [i64], c: bool) -> i64 {\n    if c {\n        print(xs.len())\n    }\n    xs.len()\n}",
+        "fn f() -> i64 {\n    let xs = [1]\n    let c = true\n    if c {\n        print(xs.len())\n    }\n    xs.len()\n}",
     );
     has(
         &printed,
@@ -145,7 +146,7 @@ fn element_write_roots() {
          fn compound() {\n    let mut xs = [1]\n    xs[0] += 1\n}\n\
          fn during_for() {\n    let mut xs = [1]\n    for x in xs { xs[0] = 1 }\n}\n\
          fn reads_len() {\n    let mut xs = [1]\n    xs[0] = xs.len()\n}\n\
-         fn g(v: [i64]) -> i64 { 0 }\n\
+         fn g(v: [i64]) -> i64 {\n    let kept = v\n    0\n}\n\
          fn passes() {\n    let mut xs = [1]\n    xs[0] = g(xs)\n}",
     );
     has(
@@ -194,7 +195,7 @@ fn short_circuits() {
 #[test]
 fn objects_self_and_if_let() {
     let printed = built(
-        "class N {\n    v: i64\n    fn get(self) -> i64 { self.v }\n}\nfn f(m: N?) -> i64 {\n    if let n = m { n.v } else { 0 }\n}",
+        "class N {\n    v: i64\n    fn get(self) -> i64 {\n        let _ = [self]\n        self.v\n    }\n}\nfn f(m: N?) -> i64 {\n    if let n = m { n.v } else { 0 }\n}",
     );
     has(&printed, "N.get", &["_ = move self#0", "= _.0"]);
     has(&printed, "f", &["_ = move n#1", "= _.0"]);
@@ -207,9 +208,9 @@ fn objects_self_and_if_let() {
 fn place_operands() {
     let printed = built(
         "class O {\n    mut n: i64\n}\nclass B {\n    mut xs: [i64]\n}\n\
-         fn field(o: O) {\n    print(o.n)\n    o.n = 1\n}\n\
-         fn root(b: B) {\n    print(b.xs.len())\n    b.xs[0] = 1\n}\n\
-         fn index(xs: [i64]) {\n    let mut ys = [1, 2]\n    print(xs.len())\n    ys[xs.len() - 1] = 5\n}",
+         fn field() {\n    let o = O(n: 0)\n    print(o.n)\n    o.n = 1\n}\n\
+         fn root() {\n    let b = B(xs: [1])\n    print(b.xs.len())\n    b.xs[0] = 1\n}\n\
+         fn index() {\n    let xs = [3]\n    let mut ys = [1, 2]\n    print(xs.len())\n    ys[xs.len() - 1] = 5\n}",
     );
     has(
         &printed,
@@ -233,7 +234,7 @@ fn place_operands() {
 #[test]
 fn append_order() {
     let printed = built(
-        "class P {\n    mut name: string\n}\nfn field(p: P) {\n    p.name = p.name + p.name\n}\nfn element() {\n    let mut xs = [\"a\"]\n    xs[0] = xs[0] + xs[0]\n}",
+        "class P {\n    mut name: string\n}\nfn field() {\n    let p = P(name: \"a\")\n    p.name = p.name + p.name\n}\nfn element() {\n    let mut xs = [\"a\"]\n    xs[0] = xs[0] + xs[0]\n}",
     );
     has(
         &printed,
@@ -248,7 +249,7 @@ fn append_order() {
 #[test]
 fn read_after_break() {
     let printed = built(
-        "fn f(xs: [i64], c: bool) {\n    print(xs.len())\n    while c {\n        break\n    }\n    print(xs.len())\n}",
+        "fn f() {\n    let xs = [1]\n    let c = true\n    print(xs.len())\n    while c {\n        break\n    }\n    print(xs.len())\n}",
     );
     has(
         &printed,
@@ -262,7 +263,7 @@ fn read_after_break() {
 #[test]
 fn nested_loops() {
     let printed = built(
-        "fn f(xs: [i64], c: bool) {\n    while c {\n        while c {\n            print(xs.len())\n        }\n    }\n    print(xs.len())\n}",
+        "fn f() {\n    let xs = [1]\n    let c = true\n    while c {\n        while c {\n            print(xs.len())\n        }\n    }\n    print(xs.len())\n}",
     );
     has(
         &printed,
@@ -276,7 +277,7 @@ fn nested_loops() {
 #[test]
 fn move_in_inner_loop() {
     let printed = built(
-        "fn f(xs: [i64], c: bool) {\n    while c {\n        while c {\n            print(xs.len())\n            return\n        }\n    }\n}",
+        "fn f() {\n    let xs = [1]\n    let c = true\n    while c {\n        while c {\n            print(xs.len())\n            return\n        }\n    }\n}",
     );
     has(&printed, "f", &["_ = move xs#0", "_ = len _"]);
 }
@@ -295,7 +296,7 @@ fn guard_reads() {
     assert!(!returning.contains("move s#1"), "{returning}");
     // An outer `t`, read only in a guard: it can run again with an `Or`, so it never moves;
     // without one, it moves when no later arm reads it.
-    let decls = "enum E {\n    V(i64)\n    W(i64)\n    Z\n}\nfn keep(t: string) -> bool { true }\n";
+    let decls = "enum E {\n    V(i64)\n    W(i64)\n    Z\n}\nfn keep(t: string) -> bool { [t].len() > 0 }\n";
     let guarded = |src: String, parts: &[&str]| has(&built(&format!("{decls}{src}")), "f", parts);
     guarded(
         "fn f(e: E, t: string) -> i64 {\n    match e {\n        V(_) | W(_) if keep(t) => 1\n        _ => 0\n    }\n}".to_owned(),
@@ -372,7 +373,7 @@ fn scalars_never_move() {
 #[test]
 fn borrow_site_at_last_use_moves_and_releases() {
     let printed = built(
-        "fn f(a: [i64]) -> i64 { a.len() }\n\
+        "fn f() -> i64 {\n    let a = [1]\n    a.len()\n}\n\
          fn g(a: [i64]) -> i64 {\n    let n = a.len()\n    a[0] + n\n}",
     );
     has(&printed, "f", &["_ = move a#0", "_ = len _", "release _"]);
@@ -519,7 +520,7 @@ fn guard_borrow_site_on_a_returning_path() {
 fn guard_use_of_binding_never_moves() {
     let printed = built(
         "enum E {\n    S(string)\n    T(string)\n    U\n}\n\
-         fn keep(s: string) -> bool { true }\n\
+         fn keep(s: string) -> bool { [s].len() > 0 }\n\
          fn f(e: E) -> i64 {\n    match e {\n        S(x) | T(x) if keep(x) => 0\n        _ => 1\n    }\n}",
     );
     let f = function(&printed, "f");
@@ -550,7 +551,7 @@ fn guard_return_of_binding_copies() {
 #[test]
 fn projection_write_is_a_use() {
     let printed = built(
-        "fn h(xs: [i64]) -> i64 {\n    xs[0]\n}\n\
+        "fn h(xs: [i64]) -> i64 {\n    let ys = xs\n    ys[0]\n}\n\
          fn k(xs: [i64]) {\n    let mut a = xs\n    print(h(a))\n    a[0] = 1\n}",
     );
     has(&printed, "k", &["_ = copy a#1", "call h(move _)"]);
@@ -561,8 +562,9 @@ fn projection_write_is_a_use() {
 /// old value: the `take` and the store read the one moved root.
 #[test]
 fn field_store_take_and_store_share_one_root() {
-    let printed =
-        built("class O {\n    mut s: string\n}\nfn f(o: O, name: string) {\n    o.s = name\n}");
+    let printed = built(
+        "class O {\n    mut s: string\n}\nfn f() {\n    let o = O(s: \"a\")\n    let name = \"b\"\n    o.s = name\n}",
+    );
     has(
         &printed,
         "f",
@@ -619,10 +621,15 @@ fn pass_leaves_no_use_or_mark() {
 /// to `2n` as from `2n` to `3n`.
 #[test]
 fn liveness_reads_grow_linearly() {
-    let line = |n: usize| format!("fn f(a: [i64]) {{\n{}}}", "    print(a.len())\n".repeat(n));
+    let line = |n: usize| {
+        format!(
+            "fn f() {{\n    let a = [1]\n{}}}",
+            "    print(a.len())\n".repeat(n)
+        )
+    };
     let branch = |n: usize| {
         format!(
-            "fn g(a: [i64], c: bool) {{\n{}}}",
+            "fn g(c: bool) {{\n    let a = [1]\n{}}}",
             "    if c { print(a.len()) }\n".repeat(n)
         )
     };

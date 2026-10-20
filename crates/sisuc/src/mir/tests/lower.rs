@@ -533,7 +533,8 @@ fn base_borrowed_when_the_sibling_leaves_locals() {
 /// the sibling condition sees a read, not a move, so `xs` is borrowed, not copied.
 #[test]
 fn base_borrowed_when_the_sibling_moves_another_local() {
-    let src = "fn moved(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    xs\n}";
+    let src =
+        "fn moved(xs: [i64]) -> [i64] {\n    let ys = [true]\n    print(xs[ys.len()])\n    xs\n}";
     has(&lowered(src), "moved", &["_ = len ys#1\n    _ = xs#0[_]"]);
     // The ownership pass then moves `ys`, its last use, and still reads `xs` in place.
     has(
