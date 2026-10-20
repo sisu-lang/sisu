@@ -141,6 +141,66 @@ fn unused_value_fix() {
     clean(&fixed);
 }
 
+/// Every warning of one statement carries the fix that drops all of the statement's values, so
+/// applying any one of them leaves no branch without a value beside one with a value.
+#[test]
+fn unused_value_fix_drops_every_branch() {
+    type Warned<'a> = (usize, usize, &'a str);
+    let rows: &[(&str, &[Warned])] = &[
+        ("if c { 1 } else { 2 }", &[(10, 12, "1"), (10, 23, "2")]),
+        (
+            "if let v = o { v } else { 0 }",
+            &[(10, 20, "v"), (10, 31, "0")],
+        ),
+        (
+            "if c { if d { 1 } else { 2 } } else { 3 }",
+            &[(10, 19, "1"), (10, 30, "2"), (10, 43, "3")],
+        ),
+        (
+            "match n {\n        0 => {\n            1\n        }\n        _ => 2\n    }",
+            &[(12, 13, "1"), (14, 14, "2")],
+        ),
+    ];
+    for (body, expected) in rows {
+        let src = in_body(body);
+        warns(&src, expected);
+        for d in &diags(&src) {
+            clean(&applied(&src, d));
+        }
+    }
+}
+
+/// The fix's edits: one per value, or two around an arm's whole body, the same on each warning.
+#[test]
+fn unused_value_fix_edits_every_branch() {
+    type Edit = (usize, usize, &'static str, String);
+    let rows: &[(&str, Vec<Edit>)] = &[
+        (
+            "if c { 1 } else { 2 }",
+            vec![
+                (10, 12, "", "let _ = ".into()),
+                (10, 23, "", "let _ = ".into()),
+            ],
+        ),
+        (
+            "match n {\n        0 => {\n            1\n        }\n        _ => 2\n    }",
+            vec![
+                (12, 13, "", "let _ = ".into()),
+                (14, 14, "", "{ let _ = ".into()),
+                (14, 15, "", " }".into()),
+            ],
+        ),
+    ];
+    for (body, edits) in rows {
+        let src = in_body(body);
+        let ds = diags(&src);
+        assert_eq!(ds.len(), 2, "{ds:?}");
+        for d in &ds {
+            assert_eq!(fixes(&src, d), [(false, edits.clone())], "{src}");
+        }
+    }
+}
+
 /// A `match` statement is not itself the value: each arm's is.
 #[test]
 fn match_unused_value() {

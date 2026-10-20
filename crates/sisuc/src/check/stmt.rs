@@ -100,13 +100,25 @@ impl Checker<'_> {
 
     /// Warns "unused value" at `source`, whose checked form is `checked`, unless its type is
     /// `unit` or `never`. An `if`, an `if let`, a `match` or a block is not itself the value: the
-    /// tail of each branch or arm is.
+    /// tail of each branch or arm is. The warnings of one statement share one fix, which drops
+    /// all of its values: a branch with no value beside one with a value is an error.
     pub(super) fn discard(&mut self, source: &ast::Expr, checked: &tir::Expr) {
-        self.discarded(source, checked, false);
+        let mut unused = Vec::new();
+        self.collect(source, checked, false, &mut unused);
+        self.report_unused(unused);
     }
 
-    /// `discard`, where `arm` is whether `source` is a `match` arm's whole body.
-    fn discarded(&mut self, source: &ast::Expr, checked: &tir::Expr, arm: bool) {
+    /// The `(type, span, arm)` of each value under `source` that `discard` warns about, pushed to
+    /// `unused` in source order, where `arm` is whether `source` is a `match` arm's whole body.
+    /// Only the roots, `discard` and `discard_tail`, report, so an inner `if` joins its statement's
+    /// fix.
+    fn collect(
+        &mut self,
+        source: &ast::Expr,
+        checked: &tir::Expr,
+        arm: bool,
+        unused: &mut Vec<(String, Span, bool)>,
+    ) {
         // An optional join wraps a whole branch value, an inner `if` too.
         let checked = match &checked.kind {
             ExprKind::Wrap(inner) => inner,
@@ -137,9 +149,9 @@ impl Checker<'_> {
                     ..
                 },
             ) => {
-                self.discard_tail(then_block, then_checked);
+                self.collect_tail(then_block, then_checked, unused);
                 if let (Some(source), Some(checked)) = (else_block, else_checked) {
-                    self.discard_tail(source, checked);
+                    self.collect_tail(source, checked, unused);
                 }
             }
             (
@@ -150,24 +162,24 @@ impl Checker<'_> {
                 },
                 ExprKind::Match { arms, .. },
             ) => {
-                self.discard_tail(then_block, &arms[0].body);
+                self.collect_tail(then_block, &arms[0].body, unused);
                 if let Some(source) = else_block {
-                    self.discard_tail(source, &arms[1].body);
+                    self.collect_tail(source, &arms[1].body, unused);
                 }
             }
             (ast::ExprKind::Match { arms: sources, .. }, ExprKind::Match { arms, .. }) => {
                 for (source, arm) in sources.iter().zip(arms) {
                     if let ast::ExprKind::Block(source) = &source.body.kind {
-                        self.discard_tail(source, &arm.body);
+                        self.collect_tail(source, &arm.body, unused);
                     } else {
                         let value = arm.body.value.as_ref();
                         let value = value.expect("an expression arm should keep its value");
-                        self.discarded(&source.body, value, true);
+                        self.collect(&source.body, value, true, unused);
                     }
                 }
             }
             (ast::ExprKind::Block(source), ExprKind::Block(checked)) => {
-                self.discard_tail(source, checked);
+                self.collect_tail(source, checked, unused);
             }
             _ => {
                 debug_assert!(
@@ -181,11 +193,7 @@ impl Checker<'_> {
                 );
                 if !matches!(checked.ty, Type::UNIT | Type::NEVER) {
                     let ty = self.type_name(checked.ty);
-                    self.report(DiagnosticKind::UnusedValue {
-                        ty,
-                        at: source.span,
-                        arm,
-                    });
+                    unused.push((ty, source.span, arm));
                 }
             }
         }
@@ -193,8 +201,33 @@ impl Checker<'_> {
 
     /// `discard` of the value of `block`, whose checked form is `checked`, if it has one.
     pub(super) fn discard_tail(&mut self, block: &ast::Block, checked: &tir::Block) {
+        let mut unused = Vec::new();
+        self.collect_tail(block, checked, &mut unused);
+        self.report_unused(unused);
+    }
+
+    /// `collect` of the value of `block`, whose checked form is `checked`, if it has one.
+    fn collect_tail(
+        &mut self,
+        block: &ast::Block,
+        checked: &tir::Block,
+        unused: &mut Vec<(String, Span, bool)>,
+    ) {
         if let (Some(source), Some(value)) = (tail(block), &checked.value) {
-            self.discard(source, value);
+            self.collect(source, value, false, unused);
+        }
+    }
+
+    /// Reports each of `unused`, one statement's values, with the fix that drops them all.
+    fn report_unused(&mut self, unused: Vec<(String, Span, bool)>) {
+        let sites: Vec<_> = unused.iter().map(|&(_, at, arm)| (at, arm)).collect();
+        for (ty, at, arm) in unused {
+            self.report(DiagnosticKind::UnusedValue {
+                ty,
+                at,
+                arm,
+                sites: sites.clone(),
+            });
         }
     }
 
