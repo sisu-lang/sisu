@@ -2169,6 +2169,25 @@ fn a_barred_partition_makes_its_array_unique_once() {
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
 }
 
+/// `[true; n]` and `[b; n]` fill with one `memset` at `-O2`, as `[0; n]` does: the fill stores
+/// a byte, which LLVM's loop-idiom pass turns into a `memset`, and an `i1` store it does not.
+#[test]
+fn a_bool_fill_is_a_memset_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn f(n: i64) -> [bool] {\n    [true; n]\n}\n\nfn g(b: bool, n: i64) -> [bool] {\n    [b; n]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    print(f(n).len() + g(n > 1, n).len())\n}",
+    );
+    keep_functions(&module, "f,g");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    for name in ["f", "g"] {
+        let body = function_body(&ir, &format!("@sisu.{name}("));
+        assert!(body.contains("@llvm.memset"), "{body}");
+    }
+}
+
 /// A loop makes the arrays it writes unique before it starts. `f`'s raw IR, split at each
 /// `loop.body` label: the count of `unique` calls before the first loop body, then in each
 /// piece from a loop body on. The blocks are in mir's order, where a loop's exit block may sit
