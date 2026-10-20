@@ -6,9 +6,10 @@
 //! A local's region is the blocks its scope block dominates, and its nodes are the blocks
 //! that mention it, its `None` edge targets, its scope block and their iterated dominance
 //! frontier within the region. Every other block of the region holds the set of its nearest
-//! dominating node, so a node answers for the returns, the exits and the root's kills of the
-//! blocks it covers with range queries over the dominator tree's pre-order. The work per local
-//! is its nodes and their edges, not the blocks between them.
+//! dominating node, so a node answers for the returns, the exits, the root's kills and, for a
+//! local that borrows through a field or an element, the clobbers of the blocks it covers, with
+//! range queries over the dominator tree's pre-order. The work per local is its nodes and their
+//! edges, not the blocks between them.
 //!
 //! An owned or borrowed value that leaves its region is an error, so a cycle that leaks is
 //! caught whether or not `Function::loops` records it.
@@ -164,8 +165,8 @@ pub(super) fn scope_release_states(
 
 /// Builds what the regions share, then runs `each` on the region of each counted local that
 /// `wanted` takes, in order, up to its first error. Only with `clobbers` does a region check
-/// rule 3's clobbers: they never change a set, only reject one, and the elaboration, which
-/// runs in release builds too, needs only the sets.
+/// rule 3's clobbers. Only `certify` builds them, so the elaboration, which runs in release
+/// builds too, skips their cost.
 fn regions(
     function: &Function,
     wanted: impl Fn(LocalId) -> bool,
@@ -259,6 +260,8 @@ struct Clobbers {
 impl Clobbers {
     fn new(function: &Function, tree: &Tree) -> Self {
         let locals = function.locals.len();
+        // Each local is marked as it is queued, so it is queued, and its edges walked, once.
+        let mut unstable = vec![false; locals];
         let mut work = Vec::new();
         // Each borrow, as the local it reads to the local it assigns.
         let mut edges = Vec::new();
@@ -283,7 +286,9 @@ impl Clobbers {
                                         projection,
                                         Projection::Field(_) | Projection::Index { .. }
                                     )
-                                }) {
+                                }) && !unstable[dest.0]
+                                {
+                                    unstable[dest.0] = true;
                                     work.push(dest.0);
                                 }
                                 edges.push((place.local.0, dest.0));
@@ -337,14 +342,11 @@ impl Clobbers {
         }
         pres.sort_unstable();
         // Instability flows along borrows in any block order, so from the seeds over the edges.
-        let mut unstable = vec![false; locals];
-        for &local in &work {
-            unstable[local] = true;
-        }
         let (mut at, mut next) = (Vec::new(), Vec::new());
         group(&edges, locals, &mut at, &mut next);
         while let Some(local) = work.pop() {
             for &to in &next[at[local]..at[local + 1]] {
+                count(1);
                 if !unstable[to] {
                     unstable[to] = true;
                     work.push(to);

@@ -1069,6 +1069,7 @@ fn object() -> Type {
 #[test]
 fn borrow_is_ended_by_a_write_to_its_root() {
     for store in [false, true] {
+        let label = if store { "xs[0] = 1" } else { "make_unique xs" };
         let mut b = Builder::new("f");
         let xs = b.param("xs", Type::array(Type::I64));
         let x = b.local("b", Type::array(Type::I64));
@@ -1088,7 +1089,15 @@ fn borrow_is_ended_by_a_write_to_its_root() {
             ],
             ret(),
         );
-        rejects(&b.finish(), 0, x, Rule::Borrow);
+        assert_eq!(
+            certify(&b.finish()),
+            Err(Violation {
+                block: BlockId(0),
+                local: x,
+                rule: Rule::Borrow
+            }),
+            "{label}"
+        );
     }
 }
 
@@ -1112,8 +1121,9 @@ fn borrow_through_an_element_is_ended_by_a_call() {
     rejects(&b.finish(), 0, x, Rule::Borrow);
 }
 
-/// `b = borrow o.0`, then `p.0 = move s`, which frees `o.0`'s string when `p` is `o`. The take
-/// comes before the borrow, so only the store can end it.
+/// `_t = take p.0`, `b = borrow o.0`, then `p.0 = move s` and `release _t`: when `p` is `o`,
+/// the take moved `o.0`'s string into `_t`, and `release _t` frees it before `b` is read. The
+/// take comes before the borrow, so only the store can end it.
 #[test]
 fn borrow_through_a_field_is_ended_by_a_counted_store() {
     let mut b = Builder::new("f");
@@ -1245,6 +1255,76 @@ fn instability_reaches_a_borrow_in_an_earlier_block() {
     );
     b.block(vec![assign(t, Rvalue::Borrow(field(o)))], goto(1));
     rejects(&b.finish(), 1, u, Rule::Borrow);
+}
+
+/// `b = borrow o.0`, then `_t = take p.0` and `release _t`, which frees `o.0`'s string when `p`
+/// is `o`. The store that puts a value back comes after `end b`, so only the take can end it.
+#[test]
+fn borrow_through_a_field_is_ended_by_a_counted_take() {
+    let mut b = Builder::new("f");
+    let o = b.param("o", object());
+    let p = b.param("p", object());
+    let x = b.local("b", Type::STRING);
+    let value = b.local("s", Type::STRING);
+    let old = b.local("_t", Type::STRING);
+    b.owner(x, o);
+    b.block(
+        vec![
+            fresh(value),
+            assign(x, Rvalue::Borrow(field(o))),
+            Statement::Take {
+                dest: old,
+                place: field(p),
+            },
+            Statement::Release(old),
+            show(read(x)),
+            Statement::End(x),
+            Statement::Store {
+                place: field(p),
+                value: Operand::Move(value),
+            },
+            Statement::Release(o),
+            Statement::Release(p),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, x, Rule::Borrow);
+}
+
+/// `b = borrow xs[0]`, then a call at the end of `bb0`, and the read in `bb1`: the gap after
+/// `b`'s last event in `bb0` holds the call.
+#[test]
+fn clobber_after_the_last_event_of_a_block() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    let x = b.local("b", Type::STRING);
+    b.owner(x, xs);
+    b.block(
+        vec![assign(x, Rvalue::Borrow(first(xs))), call(vec![])],
+        goto(1),
+    );
+    b.block(
+        vec![show(read(x)), Statement::End(x), Statement::Release(xs)],
+        ret(),
+    );
+    rejects(&b.finish(), 0, x, Rule::Borrow);
+}
+
+/// `b = borrow xs[0]` in `bb0`, a call in `bb1`, which does not mention `b`, and the read in
+/// `bb2`: `bb0` covers `bb1`, so the call is found there.
+#[test]
+fn clobber_in_a_covered_block() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    let x = b.local("b", Type::STRING);
+    b.owner(x, xs);
+    b.block(vec![assign(x, Rvalue::Borrow(first(xs)))], goto(1));
+    b.block(vec![call(vec![])], goto(2));
+    b.block(
+        vec![show(read(x)), Statement::End(x), Statement::Release(xs)],
+        ret(),
+    );
+    rejects(&b.finish(), 1, x, Rule::Borrow);
 }
 
 /// `p.0 = 1` stores no reference, so it frees nothing a borrow of `o.0` reads.
@@ -2032,6 +2112,37 @@ fn clobbers_before_many_borrows_read_linearly() {
         let f = b.finish();
         READS.set(0);
         assert_eq!(certify(&f), Ok(()));
+        READS.get()
+    };
+    assert_near_linear(reads(100), reads(200), reads(300));
+}
+
+/// `t = borrow o.0; u = borrow t; end u; end t`, `n` times in one block: `t` is a seed `n`
+/// times over, and `t`'s `n` edges are walked once, not once per seed. The reads grow near
+/// linearly with `n`.
+#[test]
+fn repeated_borrows_into_one_local_read_linearly() {
+    let reads = |n: usize| {
+        let mut b = Builder::new("f");
+        let o = b.param("o", object());
+        let t = b.local("t", Type::STRING);
+        let u = b.local("u", Type::STRING);
+        b.owner(t, o);
+        b.owner(u, o);
+        let mut stmts = Vec::new();
+        for _ in 0..n {
+            stmts.extend([
+                assign(t, Rvalue::Borrow(field(o))),
+                assign(u, Rvalue::Borrow(whole(t))),
+                Statement::End(u),
+                Statement::End(t),
+            ]);
+        }
+        stmts.push(Statement::Release(o));
+        b.block(stmts, ret());
+        let function = b.finish();
+        READS.set(0);
+        assert_eq!(certify(&function), Ok(()));
         READS.get()
     };
     assert_near_linear(reads(100), reads(200), reads(300));
