@@ -1,10 +1,12 @@
 // A `match` or an `if let` on a borrowed place borrows its scrutinee and counts nothing.
 // One whose binding is returned, or that reads through a `mut` field or an element, copies.
 // `-O2` inlines every non-recursive callee into `main`; the markers check that the recursive
-// borrowed forms, `Node.check`'s `if let`s and `eval`'s `match`, still take values across calls.
+// borrowed forms, `Node.check`'s `if let`s and `eval`'s `match`, still take values across calls,
+// and that `replaced`'s arm still calls `reset`, which frees the `o.e` the arm matched on.
 // The plain build calls every function.
 // o2-calls: main Node.check 1
 // o2-calls: main eval 6
+// o2-calls: main reset 1
 class Node {
     left: Node?
     right: Node?
@@ -73,15 +75,19 @@ class O {
     mut e: Expr
 }
 
-fn reset(o: O) {
-    o.e = Expr.Num(0)
+// Recursive, with work after the call, so `-O2` keeps the call.
+fn reset(o: O, depth: i64) {
+    if depth > 0 {
+        reset(o, depth - 1)
+    }
+    o.e = Expr.Num(depth)
 }
 
 // `reset` frees the old `o.e` while the arm still reads `a`: only the copy keeps `a` alive.
 fn replaced(o: O) -> i64 {
     match o.e {
         Add(a, b) => {
-            reset(o)
+            reset(o, 2)
             eval(a)
         }
         _ => 0

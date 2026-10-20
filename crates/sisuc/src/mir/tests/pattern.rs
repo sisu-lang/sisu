@@ -549,20 +549,59 @@ fn field_binding_returned_stays_owned() {
     );
 }
 
-/// An `if let` that only reads its binding leaves the parameter borrowed, with no count but the
-/// literal's; `??` assigns its result on two paths, a join, which consumes the parameter.
+/// An `if let` that only reads its binding leaves the parameter borrowed: nothing copies or
+/// releases the parameter, the optional's borrow or the binding, and `print` reads `s` in place.
+/// `??` assigns its result on two paths, a join, which consumes the parameter.
 #[test]
 fn optional_read_in_both_arms_stays_borrowed() {
     let printed = built(
         "fn show(p: string?) {\n    if let s = p {\n        print(s)\n    } else {\n        print(\"none\")\n    }\n}\n\
          fn show_default(p: string?) {\n    print(p ?? \"none\")\n}",
     );
-    has(&printed, "show", &["fn show(p#0: borrow string?)"]);
+    has(
+        &printed,
+        "show",
+        &["fn show(p#0: borrow string?)", "call print(s#1)"],
+    );
     let show = function(&printed, "show");
-    // The literal `"none"` is the one copy, and its temporary the one release.
-    assert_eq!(show.matches("copy").count(), 1, "{show}");
-    assert!(show.contains("copy \"none\""), "{show}");
-    assert_eq!(show.matches("release").count(), 1, "{show}");
+    for line in show
+        .lines()
+        .filter(|line| line.contains("copy") || line.contains("release"))
+    {
+        assert!(
+            !line.contains("p#0") && !line.contains("s#1"),
+            "`{line}` in\n{show}"
+        );
+    }
+    // The printer spells every temporary `_`: find the optional's borrow in the mir itself.
+    let f = built_function(
+        "fn show(p: string?) {\n    if let s = p {\n        print(s)\n    } else {\n        print(\"none\")\n    }\n}",
+        "show",
+    );
+    let stmts = || f.blocks.iter().flat_map(|block| &block.stmts);
+    let optional = stmts()
+        .find_map(|stmt| match stmt {
+            Statement::Assign {
+                dest: Some(dest),
+                value: Rvalue::Borrow(place),
+            } if place.local == LocalId(0) => Some(*dest),
+            _ => None,
+        })
+        .expect("`p` should be borrowed into a temporary");
+    // Only borrows from it and its `end` name the optional: no copy, move or release.
+    let mention = format!("{optional:?}");
+    for stmt in stmts().filter(|stmt| format!("{stmt:?}").contains(&mention)) {
+        assert!(
+            matches!(
+                stmt,
+                Statement::Assign {
+                    value: Rvalue::Borrow(_),
+                    ..
+                } | Statement::End(_)
+            ),
+            "{stmt:?} in {f:?}"
+        );
+    }
     has(&printed, "show_default", &["fn show_default(p#0: string?)"]);
 }
 
