@@ -1,0 +1,7 @@
+fn main() {
+    let mut o: string? = "a"
+    o += true
+    let mut zs: [string?] = ["a"]
+    zs[0] += true
+    print(zs.len())
+}

@@ -1,0 +1,11 @@
+fn main() {
+    let p = true
+    let x: i64 = p + p
+    let y: f64 = p + p
+    let z: f64 = -p
+    let mut q = true
+    q += true
+    print(x)
+    print(y)
+    print(z)
+}

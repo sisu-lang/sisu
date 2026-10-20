@@ -601,8 +601,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// The operation at `at` in a constant's value, which would `panic` at run time.
     ConstantPanics { panic: Panic, at: Span },
-    /// The escape `\` and `found`, at `at`, which is none of the escapes.
-    UnknownEscape { found: char, at: Span },
+    /// The escape `\` and `found`, at `at` in a `literal`, which is none of the escapes.
+    UnknownEscape {
+        found: char,
+        at: Span,
+        literal: LiteralKind,
+    },
     /// The `\u` escape at `at`, as far as it reaches, which is not 1 to 6 hex digits in braces.
     MalformedUnicodeEscape { at: Span },
     /// The `\u{...}` escape `escape`, as written, at `at`, whose value is not a Unicode scalar
@@ -612,11 +616,13 @@ pub(crate) enum DiagnosticKind {
     /// text holds no `"`, `{` or `}`, which a string literal would read differently.
     NotOneCodePoint { at: Span, string: bool },
     /// The literal of `kind` that starts at `at` and stops at a line break or the end of the file;
-    /// `interpolation` when an interpolation's `{` is open there.
+    /// `interpolation` when an interpolation's `{` is open there; `end_of_file` when the end of
+    /// the file, not a line break, stopped it.
     LiteralNotClosed {
         kind: LiteralKind,
         at: Span,
         interpolation: bool,
+        end_of_file: bool,
     },
     /// Arithmetic on the `char` at `at`.
     ArithmeticOnChar { at: Span },
@@ -862,7 +868,7 @@ pub(crate) struct VariantLabels {
     pub(crate) labels: Vec<Span>,
 }
 
-/// What a literal that is not closed is the literal of.
+/// What a literal is the literal of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LiteralKind {
     Char,
@@ -2153,21 +2159,25 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::ConstantPanics { panic, at } => {
                 Diagnostic::coded(code, at, panic.message())
             }
-            DiagnosticKind::UnknownEscape { found, at } => {
+            DiagnosticKind::UnknownEscape { found, at, literal } => {
                 let escape = if invisible(found) {
                     format!("`\\` followed by {}", shown(found))
                 } else {
                     format!("`\\{found}`")
                 };
-                Diagnostic::coded(code, at, format!("unknown escape {escape}"))
+                let diagnostic = Diagnostic::coded(code, at, format!("unknown escape {escape}"))
                     .with_help(
                         r#"the escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`, `\{`, `\}` and `\u{...}`"#,
-                    )
-                    .with_fix(unsafe_fix(
+                    );
+                // In a `char` literal a second backslash would make two code points.
+                match literal {
+                    LiteralKind::String => diagnostic.with_fix(unsafe_fix(
                         r"if you meant a backslash, write `\\`",
                         Span::new(at.start(), at.start()),
                         "\\",
-                    ))
+                    )),
+                    LiteralKind::Char => diagnostic,
+                }
             }
             DiagnosticKind::MalformedUnicodeEscape { at } => {
                 Diagnostic::coded(code, at, r"malformed `\u` escape")
@@ -2197,14 +2207,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 kind,
                 at,
                 interpolation,
+                end_of_file,
             } => match kind {
                 LiteralKind::Char => Diagnostic::coded(code, at, "`char` literal is not closed"),
-                LiteralKind::String => Diagnostic::coded(code, at, "string literal is not closed")
-                    .with_help(if interpolation {
-                        r"a `{` starts an interpolation: end it with `}`, or write `\{` for a literal brace"
+                LiteralKind::String => {
+                    let d = Diagnostic::coded(code, at, "string literal is not closed");
+                    if interpolation {
+                        d.with_help(r"a `{` starts an interpolation: end it with `}`, or write `\{` for a literal brace")
+                    } else if end_of_file {
+                        d
                     } else {
-                        r"write `\n` for a line break"
-                    }),
+                        d.with_help(r"write `\n` for a line break")
+                    }
+                }
             },
             DiagnosticKind::ArithmeticOnChar { at } => {
                 Diagnostic::coded(code, at, "arithmetic does not apply to `char`").with_help(

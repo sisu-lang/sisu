@@ -186,7 +186,7 @@ type ConcatRow<'a> = (
 );
 
 fn concat_rows(rows: &[ConcatRow]) {
-    let params = "s: string, c: char, n: i64, xs: [i64], p: P";
+    let params = "s: string, o: string?, c: char, n: i64, xs: [i64], p: P";
     for &(statement, pos, other, fixed) in rows {
         let src = with_items(&body(params, statement));
         let d = diagnostic(&src, Code::Mismatch, pos, other);
@@ -237,6 +237,10 @@ fn concat_mismatch() {
             Some("print(\"{n} items\")"),
         ),
         ("print(s + xs)", (2, 15, "xs"), &[(2, 11)], None),
+        // A `string?` makes the `+` a join and is the one reported; the other operand is no
+        // `string`, so it gets no label.
+        ("print(o + 1)", (2, 11, "o"), &[], None),
+        ("print(1 + o)", (2, 11, "1"), &[], Some("print(\"{1}{o}\")")),
         // A `string` after an operand that is no number still drives.
         (
             "print(true + s)",

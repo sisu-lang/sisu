@@ -1,0 +1,26 @@
+error[E0032]: expected `i64`, found `bool`
+ --> E0032-operator-expected.sisu:3:18
+  |
+3 |     let x: i64 = p + p
+  |                  ^
+
+error[E0032]: expected `f64`, found `bool`
+ --> E0032-operator-expected.sisu:4:18
+  |
+4 |     let y: f64 = p + p
+  |                  ^
+
+error[E0032]: expected `i64` or `f64`, found `bool`
+ --> E0032-operator-expected.sisu:5:19
+  |
+5 |     let z: f64 = -p
+  |                   ^
+
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
+ --> E0032-operator-expected.sisu:7:5
+  |
+7 |     q += true
+  |     ^
+
+sisuc: 4 errors
+sisuc: for more on a code, run `sisuc --explain <code>`: E0032

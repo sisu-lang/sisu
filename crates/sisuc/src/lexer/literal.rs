@@ -236,6 +236,7 @@ fn char_literal(source: &str, start: usize, chars: &mut Chars) -> Result<TokenKi
                     kind: LiteralKind::Char,
                     at: Span::new(start, start + 1),
                     interpolation: false,
+                    end_of_file: chars.peek().is_none(),
                 }
                 .into()
             }));
@@ -244,7 +245,7 @@ fn char_literal(source: &str, start: usize, chars: &mut Chars) -> Result<TokenKi
             '\'' => break i + 1,
             // A `\` at the line end is followed by the "not closed" error of a later turn.
             '\\' if line_ends(source, chars) => {}
-            '\\' => match escape(source, i, chars) {
+            '\\' => match escape(source, i, chars, LiteralKind::Char) {
                 Ok(c) => points.push(c),
                 Err(d) => {
                     error.get_or_insert(d);
@@ -322,7 +323,7 @@ pub(super) fn string_text(
             }
             // A `\` at the line end is followed by the "not closed" error of a later turn.
             '\\' if line_ends(source, chars) => {}
-            '\\' => match escape(source, i, chars) {
+            '\\' => match escape(source, i, chars, LiteralKind::String) {
                 Ok(c) => text.push(c),
                 Err(d) => {
                     error.get_or_insert(d);
@@ -336,12 +337,14 @@ pub(super) fn string_text(
 }
 
 /// The error for a string literal whose `"` stands at `quote` and that a line break or the end
-/// of the file stops, where an interpolation's `{` is open if `interpolation`.
-pub(super) fn not_closed(quote: usize, interpolation: bool) -> Diagnostic {
+/// of the file stops, where an interpolation's `{` is open if `interpolation`, and the end of the
+/// file stops it if `end_of_file`.
+pub(super) fn not_closed(quote: usize, interpolation: bool, end_of_file: bool) -> Diagnostic {
     DiagnosticKind::LiteralNotClosed {
         kind: LiteralKind::String,
         at: Span::new(quote, quote + 1),
         interpolation,
+        end_of_file,
     }
     .into()
 }
@@ -355,10 +358,13 @@ fn line_ends(source: &str, chars: &mut Chars) -> bool {
 
 /// Decodes the escape after a `\`, which `chars` has just consumed at `backslash`. A char that is
 /// not a line break must follow: the caller reports a literal that ends there as not closed.
+/// `literal` is the kind of literal the escape is in, which decides whether an unknown escape
+/// gets the backslash fix.
 pub(super) fn escape(
     source: &str,
     backslash: usize,
     chars: &mut Chars,
+    literal: LiteralKind,
 ) -> Result<char, Diagnostic> {
     let Some((at, c)) = chars.next() else {
         unreachable!("the caller checked that a char follows the backslash")
@@ -373,6 +379,7 @@ pub(super) fn escape(
         _ => Err(DiagnosticKind::UnknownEscape {
             found: c,
             at: Span::new(backslash, at + c.len_utf8()),
+            literal,
         }
         .into()),
     }

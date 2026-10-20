@@ -1,0 +1,13 @@
+fn main() {
+    let a = [1.5]
+    let b = [2.5]
+    print(a < b)
+    let p = true
+    print(p + p)
+    let s = "x"
+    print(s - s)
+    print(-p)
+    let o: bool? = p
+    print(o * 2)
+    print(1 + p)
+}

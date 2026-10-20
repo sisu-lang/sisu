@@ -1,0 +1,38 @@
+error[E0032]: expected `i64`, `u8`, `f64`, `char` or `string`, found `[f64]`
+ --> E0032-operator-types.sisu:4:11
+  |
+4 |     print(a < b)
+  |           ^
+
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
+ --> E0032-operator-types.sisu:6:11
+  |
+6 |     print(p + p)
+  |           ^
+
+error[E0032]: expected `i64`, `u8` or `f64`, found `string`
+ --> E0032-operator-types.sisu:8:11
+  |
+8 |     print(s - s)
+  |           ^
+
+error[E0032]: expected `i64` or `f64`, found `bool`
+ --> E0032-operator-types.sisu:9:12
+  |
+9 |     print(-p)
+  |            ^
+
+error[E0032]: expected `i64`, `u8` or `f64`, found `bool?`
+  --> E0032-operator-types.sisu:11:11
+   |
+11 |     print(o * 2)
+   |           ^
+
+error[E0032]: expected `i64`, found `bool`
+  --> E0032-operator-types.sisu:12:15
+   |
+12 |     print(1 + p)
+   |               ^
+
+sisuc: 6 errors
+sisuc: for more on a code, run `sisuc --explain <code>`: E0032
