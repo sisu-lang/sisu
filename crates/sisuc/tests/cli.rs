@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -1072,18 +1071,25 @@ fn format_usage_errors() {
 fn json_link_failure_stays_json() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("json_link_failure.sisu"), "fn main() {}\n").expect("writes");
-    // A directory `ld` cannot write to: sisuc finds a missing one before it compiles.
-    let readonly = dir.join("json_link_failure_dir");
-    let _ = fs::remove_dir_all(&readonly);
-    fs::create_dir(&readonly).expect("creates");
-    fs::set_permissions(&readonly, fs::Permissions::from_mode(0o555)).expect("sets");
+    // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
+    let only_cc = dir.join("json_link_failure_path");
+    let _ = fs::remove_dir_all(&only_cc);
+    fs::create_dir(&only_cc).expect("creates");
+    let cc = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("cc"))
+        .find(|cc| cc.is_file())
+        .expect("cc is on PATH");
+    std::os::unix::fs::symlink(cc, only_cc.join("cc")).expect("links cc");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
+        .env("PATH", &only_cc)
         .args([
             "--format",
             "json",
+            "--linker",
+            "mold",
             "json_link_failure.sisu",
-            "json_link_failure_dir/out",
+            "json_link_failure_out",
         ])
         .output()
         .expect("sisuc starts");
@@ -1106,12 +1112,12 @@ fn json_link_failure_stays_json() {
     let [message] = messages.as_slice() else {
         panic!("one tool error in {stderr}");
     };
-    // cc's own stderr follows the status, and names the output it could not write.
+    // cc's own stderr follows the status.
     let (status, detail) = message
         .split_once('\n')
         .expect("cc's output after a newline");
-    assert!(status.starts_with("cc failed: "), "{message}");
-    assert!(detail.contains("json_link_failure_dir/out"), "{message}");
+    assert!(status.ends_with("cc failed: exit status: 1"), "{message}");
+    assert!(!detail.is_empty(), "{message}");
     assert_eq!(detail, detail.trim(), "{message}");
 }
 

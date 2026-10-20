@@ -5,7 +5,6 @@
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -1138,18 +1137,17 @@ fn existing_object_file_survives_a_build() {
 fn failed_link_leaves_no_object_file() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("link_fails.sisu"), "fn main() {}\n").expect("writes");
-    // `ld` cannot write into a read-only directory, and sisuc cannot see that before the link.
-    let output = empty_dir("link_fails");
-    fs::set_permissions(&output, fs::Permissions::from_mode(0o555)).expect("sets");
-    let output = output.join("out");
+    // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
+    let output = empty_dir("link_fails").join("out");
     let tmp = empty_dir("link_fails_tmp");
-    let out = support::sisuc(dir, "link_fails.sisu", &output, &[])
+    let out = support::sisuc(dir, "link_fails.sisu", &output, &["--linker", "mold"])
         .env("TMPDIR", &tmp)
+        .env("PATH", only_cc("link_fails_path"))
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("sisuc: cc failed: "), "{stderr}");
+    assert!(stderr.contains("cc failed: "), "{stderr}");
     assert_empty(&tmp);
     assert!(!dir.join("link_fails.o").exists());
 }

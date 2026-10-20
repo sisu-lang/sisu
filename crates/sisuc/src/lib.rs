@@ -540,9 +540,7 @@ fn check_output(output: &Path) -> Result<(), String> {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
-    let shown = output
-        .parent()
-        .map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+    let shown = parent.to_string_lossy();
     match fs::metadata(parent) {
         Ok(meta) if meta.is_dir() => {}
         Ok(_) => return Err(format!("output directory {shown} is not a directory")),
