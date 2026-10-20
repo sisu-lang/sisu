@@ -464,7 +464,8 @@ fn fill_case(value: &str, len: &str, col: usize) -> (String, String) {
 /// The largest block the size checks allow, `i64::MAX` rounded down to the alignment of 8,
 /// passes them and reaches the allocator, which cannot provide it: `sisu_alloc` calls
 /// `handle_alloc_error` rather than aborting on an invalid layout, which prints nothing. The
-/// program reads every element because at `-O2` LLVM may delete an allocation that nothing reads.
+/// program loops over the elements: LLVM cannot work out the loads from the fill, so the allocation
+/// stays at `-O2`, while a single `xs[0]` read lets it vanish.
 #[test]
 fn largest_array_reaches_the_allocator() {
     // 16 + 9_223_372_036_854_775_784 bytes is 9_223_372_036_854_775_800.

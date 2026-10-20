@@ -388,14 +388,14 @@ pub(super) fn declare<'ctx>(module: &Module<'ctx>, row: &RuntimeFn) -> FunctionV
     if row.attrs.noreturn {
         function.add_attribute(AttributeLoc::Function, attribute("noreturn", 0));
     }
-    let family = context.create_string_attribute("alloc-family", "sisu");
+    let family = || context.create_string_attribute("alloc-family", "sisu");
     match row.attrs.allocator {
         Allocator::None => {}
         Allocator::Alloc => {
             function.add_attribute(AttributeLoc::Return, attribute("noalias", 0));
             // `AllocFnKind` `Alloc` 1 | `Uninitialized` 8.
             function.add_attribute(AttributeLoc::Function, attribute("allockind", 0b1001));
-            function.add_attribute(AttributeLoc::Function, family);
+            function.add_attribute(AttributeLoc::Function, family());
         }
         Allocator::Free => {
             function.add_attribute(AttributeLoc::Param(0), attribute("allocptr", 0));
@@ -403,7 +403,7 @@ pub(super) fn declare<'ctx>(module: &Module<'ctx>, row: &RuntimeFn) -> FunctionV
             function.add_attribute(AttributeLoc::Param(0), attribute("captures", 0));
             // `AllocFnKind` `Free` 4.
             function.add_attribute(AttributeLoc::Function, attribute("allockind", 0b100));
-            function.add_attribute(AttributeLoc::Function, family);
+            function.add_attribute(AttributeLoc::Function, family());
         }
     }
     function

@@ -2305,6 +2305,9 @@ fn objects_that_stay_local_are_not_allocated_at_o2() {
         "class Point {\n    x: i64\n    y: i64\n}\n\nfn dist(a: Point, b: Point) -> i64 {\n    (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)\n}\n\nfn f(n: i64) -> i64 {\n    let mut total = 0\n    for i in 0..n {\n        let p = Point(x: i, y: i + 1)\n        let q = Point(x: 2 * i, y: 3)\n        total += dist(p, q) % 7\n        let xs = [i, i + 1, i + 2]\n        total += xs[1] % 5\n    }\n    total\n}\n\nfn main() {\n    print(f(10))\n}",
     );
     keep_functions(&module, "f");
+    let ir = module.print_to_string().to_string();
+    let f = function_body(&ir, "@sisu.f(");
+    assert_eq!(f.matches("@sisu_alloc(").count(), 3, "{f}");
     let machine = target_machine(OptLevel::O2).expect("the host is a target");
     optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
     let ir = module.print_to_string().to_string();
