@@ -171,21 +171,17 @@ impl<'ctx> Codegen<'ctx, '_> {
             |(_, phi)| phi.as_basic_value().into_pointer_value(),
         );
         let fields = &self.program.classes[id.0].fields;
-        let load_field = |index: usize| {
-            let llvm_ty = self.llvm_type(fields[index].ty).expect(
-                "the checker should give every class field a value type, never `unit` or `never`",
-            );
-            self.builder
-                .build_load(llvm_ty, self.field_ptr(id, object, index), "field")
-                .expect(POSITIONED)
-        };
         for (index, field) in fields.iter().enumerate() {
             if field.ty.is_counted(&self.program.enums) && chain != Some(index) {
-                self.release(load_field(index), field.ty);
+                self.release_at(self.field_ptr(id, object, index), field.ty);
             }
         }
         // Loaded before the free, which ends the object.
-        let next = chain.map(|index| load_field(index).into_pointer_value());
+        let next = chain.map(|index| {
+            let place = self.field_ptr(id, object, index);
+            self.load_value(fields[index].ty, place)
+                .into_pointer_value()
+        });
         let (size, align) = self.heap_size(&HeapBlock::Class(id));
         self.call(self.free, &[object.into(), size.into(), align.into()]);
         if let (Some(next), Some((body, phi))) = (next, looped) {
@@ -245,16 +241,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             if chain == Some(index) {
                 continue;
             }
-            let llvm_ty = self.llvm_type(field.ty).expect(
-                "the checker should give every class field a value type, never `unit` or `never`",
-            );
-            let load = |object| {
-                self.builder
-                    .build_load(llvm_ty, self.field_ptr(id, object, index), "field")
-                    .expect(POSITIONED)
-            };
+            let place = |object| self.field_ptr(id, object, index);
             let next = block("next");
-            branch(self.equal(field.ty, load(a), load(b)), next, unequal);
+            branch(self.equal_at(field.ty, place(a), place(b)), next, unequal);
             self.builder.position_at_end(next);
         }
         let (Some(index), Some((body, pa, pb))) = (chain, looped) else {
@@ -399,8 +388,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         let payload = match ty.kind() {
             TypeKind::Enum(_) => {
-                let (a, b) = (self.enum_slot(lhs), self.enum_slot(rhs));
-                return self.call_eq(ty, a.into(), b.into());
+                return self.equal_at(ty, self.enum_slot(lhs), self.enum_slot(rhs));
             }
             TypeKind::Optional(payload) => payload,
             _ => return self.scalar_equal(lhs, rhs),
@@ -444,6 +432,30 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED);
         self.builder
             .build_and(flags, values, "equal")
+            .expect(POSITIONED)
+    }
+
+    /// Whether the values of type `ty` at `a` and `b` are equal, as `equal` says. An enum goes
+    /// to its helper by address, with no copy; any other type is loaded.
+    pub(super) fn equal_at(
+        &self,
+        ty: Type,
+        a: PointerValue<'ctx>,
+        b: PointerValue<'ctx>,
+    ) -> IntValue<'ctx> {
+        if let TypeKind::Enum(_) = ty.kind() {
+            return self.call_eq(ty, a.into(), b.into());
+        }
+        self.equal(ty, self.load_value(ty, a), self.load_value(ty, b))
+    }
+
+    /// The value of type `ty` at `place`.
+    fn load_value(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
+        let llvm_ty = self
+            .llvm_type(ty)
+            .expect("the checker should give every field a value type, never `unit` or `never`");
+        self.builder
+            .build_load(llvm_ty, place, "field")
             .expect(POSITIONED)
     }
 
@@ -609,6 +621,26 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.retain_or_release(Helper::Release, value, ty);
     }
 
+    /// `retain` of the value of type `ty` at `place`.
+    pub(super) fn retain_at(&self, place: PointerValue<'ctx>, ty: Type) {
+        self.retain_or_release_at(Helper::Retain, place, ty);
+    }
+
+    /// `release` of the value of type `ty` at `place`.
+    pub(super) fn release_at(&self, place: PointerValue<'ctx>, ty: Type) {
+        self.retain_or_release_at(Helper::Release, place, ty);
+    }
+
+    /// `retain_or_release` of the value of type `ty` at `place`. An enum goes to its helper by
+    /// address, with no copy; any other type is loaded.
+    fn retain_or_release_at(&self, kind: Helper, place: PointerValue<'ctx>, ty: Type) {
+        if let TypeKind::Enum(_) = ty.kind() {
+            self.call(self.helper(kind, ty), &[place.into()]);
+        } else {
+            self.retain_or_release(kind, self.load_value(ty, place), ty);
+        }
+    }
+
     /// `retain` or `release`, as `kind` says. A string, object or array is the pointer itself,
     /// `null` for `None`; an enum goes to its helper by address; an enum optional's payload is
     /// counted only when its flag is set.
@@ -625,7 +657,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             return;
         }
         match ty.kind() {
-            TypeKind::Enum(_) => self.call(self.helper(kind, ty), &[self.enum_slot(value).into()]),
+            TypeKind::Enum(_) => self.retain_or_release_at(kind, self.enum_slot(value), ty),
             TypeKind::Optional(payload) => {
                 let function = self.current_function();
                 let some = self.context.append_basic_block(function, "some");

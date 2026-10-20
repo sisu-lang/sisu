@@ -460,6 +460,55 @@ fn drop_loops_on_the_chain_field() {
     assert!(!tree.contains("@sisu_rc.drop.Tree("), "{tree}");
 }
 
+/// The helpers of an enum and of a class hand an inline enum field to its own helper by
+/// address. A copy in a stack slot makes each frame as large as the field, so a chain of
+/// nested enums needs stack quadratic in its depth.
+#[test]
+fn helpers_pass_inline_enum_fields_by_address() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, c: Holder, d: Holder, e: Tree, f: Tree) -> bool { a == b && c == d && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    for (header, callee) in [
+        (
+            "define internal i1 @sisu_rc.eq.Outer(ptr",
+            "@sisu_rc.eq.Inner(",
+        ),
+        (
+            "define internal void @sisu_rc.release.Outer(ptr",
+            "@sisu_rc.release.Inner(",
+        ),
+        (
+            "define internal void @sisu_rc.retain.Outer(ptr",
+            "@sisu_rc.retain.Inner(",
+        ),
+        (
+            "define internal i1 @sisu_rc.eq.Holder(ptr",
+            "@sisu_rc.eq.Inner(",
+        ),
+        (
+            "define internal void @sisu_rc.drop.Holder(ptr",
+            "@sisu_rc.release.Inner(",
+        ),
+        (
+            "define internal void @sisu_rc.walk.Tree(ptr",
+            "@sisu_rc.release.Inner(",
+        ),
+        (
+            "define internal i1 @sisu_rc.eq_component.Tree(i32",
+            "@sisu_rc.eq.Inner(",
+        ),
+    ] {
+        let body = function_body(&ir, header);
+        assert!(body.contains(callee), "{header}: no {callee}\n{body}");
+        assert!(!body.contains("load %sisu.Inner"), "{header}:\n{body}");
+        assert!(!body.contains("alloca %sisu.Inner"), "{header}:\n{body}");
+    }
+}
+
 /// A drop frees a block with the size and alignment it was allocated with. `sisu_free` hands
 /// both to the allocator, which here ignores them, so Valgrind and the RC checks cannot notice
 /// a wrong value.

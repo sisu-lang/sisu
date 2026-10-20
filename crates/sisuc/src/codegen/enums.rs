@@ -439,7 +439,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let boxed = self.load_box(value, id, variant, field);
                 self.call(self.rc_retain, &[boxed.into()]);
             } else {
-                self.retain(self.payload_value(value, id, variant, field), payload.ty);
+                self.retain_at(self.payload_place(value, id, variant, field), payload.ty);
             }
         });
     }
@@ -455,7 +455,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let (value, done) = self.enum_entry(function);
         let Some(members) = self.component(id) else {
             self.for_each_counted_field(id, value, done, |variant, field, payload| {
-                self.release(self.payload_value(value, id, variant, field), payload.ty);
+                self.release_at(self.payload_place(value, id, variant, field), payload.ty);
             });
             return;
         };
@@ -510,7 +510,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         self.for_each_counted_field(id, value, done, |variant, field, payload| {
             if !payload.boxed {
-                self.release(self.payload_value(value, id, variant, field), payload.ty);
+                self.release_at(self.payload_place(value, id, variant, field), payload.ty);
                 return;
             }
             let block = |name| self.context.append_basic_block(function, name);
@@ -615,10 +615,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             equal,
             |_| true,
             |variant, field, payload| {
-                let pair = self.equal(
+                let pair = self.equal_at(
                     payload.ty,
-                    self.payload_value(a, id, variant, field),
-                    self.payload_value(b, id, variant, field),
+                    self.payload_place(a, id, variant, field),
+                    self.payload_place(b, id, variant, field),
                 );
                 let next = block("next");
                 self.branch_on(pair, next, unequal);
@@ -740,10 +740,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                         ];
                         self.call_component(function, &args)
                     } else {
-                        self.equal(
+                        self.equal_at(
                             payload.ty,
-                            self.payload_value(a, id, variant, field),
-                            self.payload_value(b, id, variant, field),
+                            self.payload_place(a, id, variant, field),
+                            self.payload_place(b, id, variant, field),
                         )
                     };
                     self.branch_on(pair, next, unequal);
