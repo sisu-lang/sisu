@@ -31,6 +31,8 @@ LLVM 23 lives inside the repository. `scripts/install-llvm.sh` downloads the
 official release (2.0 GB) and keeps only what the build needs in `.llvm/23`
 (about 570 MB). `.cargo/config.toml` points the build at it, and any system
 LLVM is left alone. [Upgrading LLVM](llvm.md) covers moving to a new major.
+`make audit-setup` adds `opt` and `clang`, with the ASan runtime, for the
+audit-sisu skill's probes; `.llvm/23` then takes about 1.2 GB.
 
 ## Set up a clone
 

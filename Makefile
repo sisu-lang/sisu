@@ -7,10 +7,10 @@ SECS =
 BENCH =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build test bless lint deny miri check coverage mutants verify fuzz bench callgrind site
+.PHONY: help setup audit-setup build test bless lint deny miri check coverage mutants verify fuzz bench callgrind site
 
 help: ## List the targets
-	@awk 'BEGIN { FS = ":.*## " } /^[a-z]+:.*## / { printf "  %-10s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo
 	@echo 'BASE=<commit> sets where the changes start: by default where HEAD left main.'
 	@echo 'On a stacked branch, pass the stage below, so its changes stay out.'
@@ -21,6 +21,9 @@ setup: ## Once per clone: LLVM 23, the pre-commit hook, cargo-mutants, cargo-llv
 	cargo install --locked cargo-mutants
 	cargo install --locked cargo-llvm-cov
 	cargo install --locked cargo-fuzz@0.13.2
+
+audit-setup: ## For the audit-sisu skill: add opt and clang, with the ASan runtime, to .llvm/23
+	scripts/install-llvm.sh --audit
 
 build: ## Build sisuc and the runtime library
 	cargo build --workspace

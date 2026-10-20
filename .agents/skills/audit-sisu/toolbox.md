@@ -7,10 +7,11 @@ calls, so begin each command with the literal paths:
 $ S=<repo>/target/debug/sisuc L=<repo>/.llvm/23/bin D=<RUN>/<area>/<probe>; mkdir -p $D
 ```
 
-The commands below assume that line, with `p.sisu` written in `$D`. They
-name every file through `$D` and never `cd`: in Claude Code, a `cd` out of
-the repository moves the session's working directory, and later commands
-run in the wrong checkout.
+`$L/opt` and `$L/clang` come from `make audit-setup`; `make setup` leaves
+them out. The commands below assume that line, with `p.sisu` written in
+`$D`. They name every file through `$D` and never `cd`: in Claude Code, a
+`cd` out of the repository moves the session's working directory, and later
+commands run in the wrong checkout.
 
 ## Exit codes
 
@@ -74,7 +75,7 @@ or alignment. The layout shim does:
 
 ```console
 $ timeout 20 $S --emit ir-raw $D/p.sisu > $D/p.ll
-$ $L/clang $D/p.ll <repo>/.agents/skills/audit-sisu/layout-shim.c <repo>/target/debug/libsisu_runtime.a -Wl,--wrap=sisu_alloc,--wrap=sisu_free -o $D/p.shim
+$ $L/clang $D/p.ll <repo>/.agents/skills/audit-sisu/layout-shim.c <repo>/target/debug/libsisu_runtime.a -Wl,--wrap=sisu_alloc,--wrap=sisu_free,--wrap=sisu_realloc -o $D/p.shim
 $ timeout 20 $D/p.shim        # aborts with "layout-shim: ..." on a mismatch
 ```
 
