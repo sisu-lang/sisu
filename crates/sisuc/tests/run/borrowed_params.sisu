@@ -1,3 +1,15 @@
+// Each callee below recurses to a depth that `-O2` does not know (the loop's `i % 2 + 1`, or
+// the argument count) and works after its recursive call, so that it is not a tail call: the
+// inliner cannot fold the calls these markers count, and each value crosses a real call. `-O2`
+// unrolls the three iterations of `keeps` and `gives`, so each holds three calls.
+// args: a
+// o2-calls: keeps keep 3
+// o2-calls: gives give 3
+// o2-calls: main name_of 1
+// o2-calls: main a 1
+// o2-calls: main len 1
+// o2-calls: main look 1
+// o2-calls: main slen 1
 class W {
     s: string
 }
@@ -7,26 +19,58 @@ class B {
 }
 
 // `keep` and `give` own their parameter: each returns it, `keep` through a named local.
-fn keep(p: [i64]) -> [i64] {
-    let q = p
+fn keep(p: [i64], depth: i64) -> [i64] {
+    let mut q = p
+    if depth > 0 {
+        q = keep(q, depth - 1)
+    }
+    if q.len() == 0 {
+        q = [0]
+    }
     q
 }
 
-fn give(p: [i64]) -> [i64] { p }
+fn give(p: [i64], depth: i64) -> [i64] {
+    if depth > 0 && give(p, depth - 1).len() == 0 {
+        return [0]
+    }
+    p
+}
 
 // Each of these only reads its parameter, so it is borrowed.
-fn name_of(w: W) -> string { w.s }
+fn name_of(w: W, depth: i64) -> string {
+    if depth > 0 && name_of(w, depth - 1) == "" {
+        return ""
+    }
+    w.s
+}
 
-fn len(s: string) -> i64 {
-    print(s)
+// Prints `s` once, at the deepest level.
+fn len(s: string, depth: i64) -> i64 {
+    if depth > 0 && len(s, depth - 1) < 0 {
+        return -1
+    }
+    if depth == 0 {
+        print(s)
+    }
     s.len()
 }
 
 fn size(xs: [i64]) -> i64 { xs.len() }
 
-fn look(xs: [i64]) -> i64 { size(xs) }
+fn look(xs: [i64], depth: i64) -> i64 {
+    if depth > 0 && look(xs, depth - 1) < 0 {
+        return -1
+    }
+    size(xs)
+}
 
-fn slen(s: string) -> i64 { s.len() }
+fn slen(s: string, depth: i64) -> i64 {
+    if depth > 0 && slen(s, depth - 1) < 0 {
+        return -1
+    }
+    s.len()
+}
 
 // `a` stores `p`, and `b` passes it to `a`, so both own it.
 fn a(p: string, n: i64) -> B {
@@ -34,6 +78,9 @@ fn a(p: string, n: i64) -> B {
         B(s: p)
     } else {
         let r = b(p, n - 1)
+        if r.s == "" {
+            return B(s: "")
+        }
         r
     }
 }
@@ -48,7 +95,7 @@ fn keeps() {
     while i < 3 {
         xs[i] = 1
         print(saved[i])
-        saved = keep(xs)
+        saved = keep(xs, i % 2 + 1)
         i += 1
     }
     print(saved[2])
@@ -61,20 +108,21 @@ fn gives() {
     while i < 3 {
         xs[i] = 1
         print(saved[i])
-        saved = give(xs)
+        saved = give(xs, i % 2 + 1)
         i += 1
     }
     print(saved[2])
 }
 
-fn main() {
+fn main(args: [string]) {
+    let d = args.len()
     keeps()                          // 0, 0, 0, then 1
     gives()                          // 0, 0, 0, then 1
     let k = 4
-    print(name_of(W(s: "n{k}")))     // n4
+    print(name_of(W(s: "n{k}"), d))  // n4
     let n = 3
-    print(a("p{n}", n).s)            // p3
-    print(len("v{k}"))               // v4, then 2
-    print(look([1, k]))              // 2
-    print(slen("w{k}{k}"))           // 3
+    print(a("p{n}", d).s)            // p3
+    print(len("v{k}", d))            // v4, then 2
+    print(look([1, k], d))           // 2
+    print(slen("w{k}{k}", d))        // 3
 }
