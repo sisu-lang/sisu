@@ -2117,6 +2117,34 @@ fn clobbers_before_many_borrows_read_linearly() {
     assert_near_linear(reads(100), reads(200), reads(300));
 }
 
+/// `n` writes to `xs`, then `n` short borrows of `xs`, all in one block, as pair removal makes
+/// of `xs[0] = i` lines and then `print(xs == xs)` lines: a walk over the root's kills from
+/// the block's start for each borrow is quadratic. The reads grow near linearly with `n`.
+#[test]
+fn root_writes_before_many_borrows_read_linearly() {
+    let reads = |n: usize| {
+        let mut b = Builder::new("f");
+        let xs = b.param("xs", Type::array(Type::STRING));
+        let mut stmts: Vec<Statement> = (0..n).map(|_| Statement::MakeUnique(whole(xs))).collect();
+        for i in 0..n {
+            let x = b.local(&format!("b_{i}"), Type::array(Type::STRING));
+            b.owner(x, xs);
+            stmts.extend([
+                assign(x, Rvalue::Borrow(whole(xs))),
+                show(read(x)),
+                Statement::End(x),
+            ]);
+        }
+        stmts.push(Statement::Release(xs));
+        b.block(stmts, ret());
+        let f = b.finish();
+        READS.set(0);
+        assert_eq!(certify(&f), Ok(()));
+        READS.get()
+    };
+    assert_near_linear(reads(100), reads(200), reads(300));
+}
+
 /// `t = borrow o.0; u = borrow t; end u; end t`, `n` times in one block: `t` is a seed `n`
 /// times over, and `t`'s `n` edges are walked once, not once per seed. The reads grow near
 /// linearly with `n`.

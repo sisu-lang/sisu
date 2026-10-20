@@ -366,9 +366,9 @@ thread_local! {
     /// How much of the function's structure the certifier has touched on this thread, counted
     /// where the data is read or written: each control-flow edge handed out, each read of the
     /// dominator tree, each entry of a range table or wavelet matrix built or read, each step
-    /// of a wavelet query or of a dominator search's path, and each read of the `return`
-    /// counts. Reads of a `Shape` vector that go with a counted edge or query (`component`,
-    /// `join_at`) are not counted again.
+    /// of a wavelet query or of a dominator search's path, each kill of a root walked, and
+    /// each read of the `return` counts. Reads of a `Shape` vector that go with a counted edge
+    /// or query (`component`, `join_at`) are not counted again.
     pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -1711,7 +1711,16 @@ impl Region<'_> {
         let kills = self
             .root
             .map_or(&[][..], |root| by_block(&root.events, block));
-        let mut kills = kills.iter().peekable();
+        let events = &self.events[s.from[block]..s.to[block]];
+        // The kills up to the first event's statement all meet the entry set, so one test
+        // stands for them, and a region walks only the kills inside its own events.
+        let skip = events
+            .first()
+            .map_or(0, |first| kills.partition_point(|kill| kill.at <= first.at));
+        if skip > 0 && states & BORROWED != 0 {
+            return Err(self.violation(block, Rule::Borrow));
+        }
+        let mut kills = kills[skip..].iter().peekable();
         // Whether a clobber lies in statements `from..to`, one test per gap between events.
         let prefix = self.clobbers.map(|clobbers| &clobbers.prefix[block]);
         let clobbered = |from: usize, to: usize| {
@@ -1721,10 +1730,11 @@ impl Region<'_> {
             })
         };
         let mut previous = 0;
-        for event in &self.events[s.from[block]..s.to[block]] {
+        for event in events {
             // The root's kills in a statement come before the statement's own effects, and its
             // clobber after them: a call reads its arguments first.
             while kills.next_if(|kill| kill.at <= event.at).is_some() {
+                count(1);
                 if states & BORROWED != 0 {
                     return Err(self.violation(block, Rule::Borrow));
                 }
