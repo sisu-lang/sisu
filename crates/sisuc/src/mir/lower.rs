@@ -24,9 +24,11 @@
 //!
 //! The scope stack holds the counted locals that `tir` declares and that are in scope, oldest
 //! first. A block, a loop's body and the function each mark its height; an edge that leaves
-//! one scope-releases (`release?`) the locals above the mark, newest first. Lowering's own
-//! temporaries never join it: the checker's `spill` binds every counted operand before a later
-//! operand that can exit to a `let` local, so no temporary is owned across an exit.
+//! one scope-releases (`release?`) the locals above the mark, newest first, and ends the
+//! borrowed ones: the bindings of a `match` or an `if let` on a borrowed place, and the `if
+//! let`'s optional. Lowering's other temporaries never join it: the checker's `spill` binds
+//! every counted operand before a later operand that can exit to a `let` local, so no temporary
+//! is owned across an exit.
 
 mod pattern;
 
@@ -66,7 +68,7 @@ pub(super) fn function(
         f.params.len(),
         "a function should have one flag per parameter"
     );
-    (Lowering::function(program, f), vec![false; f.params.len()])
+    Lowering::function(program, f, borrowed)
 }
 
 /// What lowering an expression gave: `None` when it cannot fall through, and otherwise the
@@ -79,18 +81,24 @@ type WrittenRoot<'p> = (MirPlace, Vec<(&'p Expr, Operand)>, Option<LocalId>);
 
 struct Lowering<'a> {
     program: &'a tir::Program,
+    /// Per parameter, whether lowering takes it as borrowed.
+    borrowed: &'a [bool],
+    /// Per parameter, whether its flag decided the form of a `match` or an `if let`.
+    consulted: Vec<bool>,
     locals: Vec<Local>,
     blocks: Vec<MirBlock>,
     loops: Vec<Loop>,
     /// The block statements go to; `None` after an expression that cannot fall through.
     current: Option<BlockId>,
-    /// The counted `tir` locals in scope, oldest first.
-    scope: Vec<LocalId>,
+    /// The counted locals in scope, oldest first, each with whether it is borrowed: an edge that
+    /// leaves the scope ends a borrowed one, and scope-releases any other.
+    scope: Vec<(LocalId, bool)>,
     /// The loops around the code being lowered, innermost last.
     frames: Vec<Frame>,
     /// Where the function's body mentions each local, which the pin rule asks.
     mentions: Mentions,
-    /// Each `match` binding, and the scrutinee local it borrows from.
+    /// Each binding of a `match` or a borrowed `if let`, and the local it borrows from; and a
+    /// borrowed `if let`'s optional, and the root of the place it borrows.
     owners: FxHashMap<LocalId, LocalId>,
     /// The bindings of the arms whose test or guard is being lowered, outermost first: they
     /// are borrowed, so an edge that leaves the test or guard ends them.
@@ -155,7 +163,11 @@ fn local_of(e: &Expr) -> Option<LocalId> {
 }
 
 impl<'a> Lowering<'a> {
-    fn function(program: &'a tir::Program, f: &tir::Function) -> Function {
+    fn function(
+        program: &'a tir::Program,
+        f: &tir::Function,
+        borrowed: &'a [bool],
+    ) -> (Function, Vec<bool>) {
         let locals = f
             .locals
             .iter()
@@ -168,6 +180,8 @@ impl<'a> Lowering<'a> {
             .collect();
         let mut lowering = Lowering {
             program,
+            borrowed,
+            consulted: vec![false; f.params.len()],
             locals,
             blocks: Vec::new(),
             loops: Vec::new(),
@@ -184,7 +198,7 @@ impl<'a> Lowering<'a> {
         for (i, param) in f.params.iter().enumerate() {
             assert_eq!(param.0, i, "the checker should number the parameters first");
             if lowering.locals[i].counted {
-                lowering.scope.push(*param);
+                lowering.scope.push((*param, false));
             }
         }
         if let Some(value) = lowering.block(&f.body, None) {
@@ -201,7 +215,7 @@ impl<'a> Lowering<'a> {
             let value = value.map(|value| lowering.owned(value));
             lowering.terminate(Terminator::Return(value));
         }
-        Function {
+        let function = Function {
             name: f.name.clone(),
             params: f.params.len(),
             borrowed: vec![false; f.params.len()],
@@ -210,7 +224,8 @@ impl<'a> Lowering<'a> {
             blocks: lowering.blocks,
             loops: lowering.loops,
             owners: lowering.owners,
-        }
+        };
+        (function, lowering.consulted)
     }
 
     fn counted(&self, ty: Type) -> bool {
@@ -345,10 +360,16 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// Scope-releases the locals above `mark`, newest first, without popping them.
+    /// Scope-releases the locals above `mark`, or ends the borrowed ones, newest first, without
+    /// popping them.
     fn release_scope(&mut self, mark: usize) {
         for i in (mark..self.scope.len()).rev() {
-            self.push(Statement::ScopeRelease(self.scope[i]));
+            let (local, borrowed) = self.scope[i];
+            self.push(if borrowed {
+                Statement::End(local)
+            } else {
+                Statement::ScopeRelease(local)
+            });
         }
     }
 
@@ -381,7 +402,7 @@ impl<'a> Lowering<'a> {
                 let dest = valued(self.locals[local.0].ty).then_some(*local);
                 self.into(init, dest)?;
                 if self.locals[local.0].counted {
-                    self.scope.push(*local);
+                    self.scope.push((*local, false));
                 }
             }
             Stmt::Assign {
@@ -475,17 +496,19 @@ impl<'a> Lowering<'a> {
 
     /// The operands of a statement that reads them without consuming them. A counted one is
     /// read into a temporary that owns it, which the caller releases after the statement, as
-    /// codegen releases these operands today.
+    /// codegen releases these operands today; a borrowed binding is read in place.
     fn borrowed(&mut self, es: &[&Expr]) -> Option<(Vec<Operand>, Vec<LocalId>)> {
         let (mut ops, mut temps) = (Vec::with_capacity(es.len()), Vec::new());
         for (i, e) in es.iter().enumerate() {
-            if self.counted(e.ty) {
+            if !self.counted(e.ty) {
+                let op = self.operand(e)?;
+                ops.push(self.pinned(op, &es[i + 1..]));
+            } else if let Some(local) = local_of(e).filter(|&local| self.is_guarded(local)) {
+                ops.push(Operand::Read(whole(local)));
+            } else {
                 let temp = self.temp_of(e)?;
                 temps.push(temp);
                 ops.push(Operand::Read(whole(temp)));
-            } else {
-                let op = self.operand(e)?;
-                ops.push(self.pinned(op, &es[i + 1..]));
             }
         }
         Some((ops, temps))
@@ -887,12 +910,13 @@ impl<'a> Lowering<'a> {
     /// `if` and `if let`: the two-way branch `term` makes from the then and else blocks, each
     /// block's value into one destination when the `if` has a value, and a join that exists
     /// only if an edge reaches it. Without an `else`, the else edge goes straight to the join.
-    /// `bind`, an `if let`'s binding and the optional it unwraps, takes the payload at the
-    /// start of the then block and is in scope there.
+    /// `bind`, an `if let`'s binding, the optional it unwraps and whether that optional is
+    /// borrowed, takes the payload at the start of the then block and is in scope there. From a
+    /// borrowed optional it borrows the payload, and is borrowed through the then block.
     fn branches(
         &mut self,
         term: impl FnOnce(BlockId, BlockId) -> Terminator,
-        bind: Option<(LocalId, LocalId)>,
+        bind: Option<(LocalId, LocalId, bool)>,
         then_block: &Block,
         else_block: Option<&Block>,
         ty: Type,
@@ -903,19 +927,31 @@ impl<'a> Lowering<'a> {
         self.terminate(term(then, else_));
         self.current = Some(then);
         let mark = self.scope.len();
-        if let Some((bind, optional)) = bind {
+        if let Some((bind, optional, borrowed)) = bind {
             self.locals[bind.0].scope = then;
-            let payload = Rvalue::Unwrap(self.owned(optional));
+            let payload = if borrowed {
+                self.owners.insert(bind, optional);
+                self.guarded[bind.0] = true;
+                Rvalue::Borrow(MirPlace {
+                    projections: vec![Projection::Some],
+                    ..whole(optional)
+                })
+            } else {
+                Rvalue::Unwrap(self.owned(optional))
+            };
             self.push(Statement::Assign {
                 dest: Some(bind),
                 value: payload,
             });
             if self.locals[bind.0].counted {
-                self.scope.push(bind);
+                self.scope.push((bind, borrowed));
             }
         }
         let mut join = else_block.is_none().then_some(else_);
         self.arm(mark, then_block, dest, &mut join);
+        if let Some((bind, _, true)) = bind {
+            self.guarded[bind.0] = false;
+        }
         if let Some(else_block) = else_block {
             self.current = Some(else_);
             self.arm(self.scope.len(), else_block, dest, &mut join);

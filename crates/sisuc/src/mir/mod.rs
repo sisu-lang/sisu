@@ -21,7 +21,8 @@
 //! the local when nothing reads it later and copies it otherwise, and a borrow site reads its
 //! root in place unless that is the root's last use, when the root moves into a temporary that
 //! is released after the statement. A `match` binding read in its arm's test or guard is
-//! borrowed, so it is copied or read in place whatever liveness says.
+//! borrowed, as is a binding of a `match` or an `if let` on a borrowed place through its arm, so
+//! it is copied or read in place whatever liveness says.
 //!
 //! The hoist (`hoist.rs`) then moves the `make_unique` of an array that a loop writes, and never
 //! shares or replaces, to the loop's pre-header (ADR 0021).
@@ -116,9 +117,10 @@ pub(crate) struct Loop {
 /// A local and a path into it: a class field, a payload field under a known variant, an
 /// element. `borrow` marks a borrow site: a statement reads the counted root in place, and the
 /// ownership pass decides whether the root stays put or is moved into a temporary first.
-/// `guard` marks a borrow site whose root is a `match` binding inside its arm's test or guard,
-/// where the binding is borrowed: it always reads in place, as a borrow site rooted at a borrowed
-/// parameter does without the mark.
+/// `guard` marks a borrow site whose root is a borrowed binding: a `match` binding inside its
+/// arm's test or guard, or a binding of a `match` or an `if let` on a borrowed place inside its
+/// arm. It always reads in place, as a borrow site rooted at a borrowed parameter does without
+/// the mark.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Place {
     pub(crate) local: LocalId,
@@ -144,13 +146,6 @@ pub(crate) enum Projection {
         span: Span,
     },
     /// The payload of an optional that holds one; only ever the last projection.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "lowering builds it for a borrowed `if let`, in Task 3"
-        )
-    )]
     Some,
 }
 
@@ -189,9 +184,8 @@ pub(crate) enum Operand {
     /// A consuming read of a whole counted local, which the ownership pass turns into a move
     /// or a copy.
     Use(LocalId),
-    /// A `Use` of a `match` binding inside its arm's test or guard, where the binding is
-    /// borrowed: the ownership pass makes it a copy, whatever liveness says, as it makes a `Use`
-    /// of a borrowed parameter without the mark.
+    /// A `Use` of a borrowed binding (see `Place::guard`): the ownership pass makes it a copy,
+    /// whatever liveness says, as it makes a `Use` of a borrowed parameter without the mark.
     Guarded(LocalId),
 }
 

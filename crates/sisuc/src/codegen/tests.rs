@@ -2252,6 +2252,25 @@ fn partition_makes_its_array_unique_once() {
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
 }
 
+/// `binary_trees`' `Node.check` borrows `self.left` and `self.right` and passes each payload in
+/// place: its `-O2` IR calls no counting helper.
+#[test]
+fn optional_field_method_counts_nothing() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "class Node {\n    left: Node?\n    right: Node?\n\n    fn check(self) -> i64 {\n        1 + (self.left?.check() ?? 0) + (self.right?.check() ?? 0)\n    }\n}\n\n\
+         fn make(depth: i64) -> Node {\n    if depth == 0 {\n        Node(left: None, right: None)\n    } else {\n        Node(left: make(depth - 1), right: make(depth - 1))\n    }\n}\n\n\
+         fn main() {\n    print(make(4).check())\n}",
+    );
+    keep_functions(&module, "Node.check");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let check = function_body(&ir, "define internal fastcc i64 @sisu.Node.check(");
+    assert!(!check.contains("@sisu_rc."), "{check}");
+}
+
 /// `partition_makes_its_array_unique_once` with a `return a` in the loop, which bars the hoist:
 /// the writes in the loop call `unique` again, so the copy path that the TBAA tags and
 /// `unique`'s early release fold away is still there to guard. Same assertions.

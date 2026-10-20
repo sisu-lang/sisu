@@ -119,6 +119,30 @@ fn tail_call_with_a_fresh_argument_makes_the_parameter_owned() {
     signature(&printed, "walk2", "fn walk2(s#0: borrow string");
 }
 
+/// The tail rule for a borrowed binding: `leftmost` passes `a`, which borrows from `e`, to its
+/// own borrowed parameter in tail position, so `e` stays borrowed.
+#[test]
+fn tail_call_with_a_borrowed_binding_keeps_the_parameter_borrowed() {
+    let printed = built(&format!(
+        "{EXPR}\nfn leftmost(e: Expr) -> i64 {{\n    match e {{\n        Add(a, b) => leftmost(a)\n        Mul(a, b) => leftmost(a)\n        Num(n) => n\n    }}\n}}"
+    ));
+    signature(&printed, "leftmost", "fn leftmost(e#0: borrow Expr");
+}
+
+/// The tail rule's other side: `f` owns `e` (it hands `e` to `own`) and passes `a`, which
+/// borrows from `e`, to `g` in tail position, so `g`'s `x` is owned: `f` hands `a`'s reference
+/// over instead of releasing `e` after the call.
+#[test]
+fn tail_call_from_an_owned_root_hands_a_borrowed_binding_over() {
+    let printed = built(&format!(
+        "{EXPR}\nfn own(e: Expr) -> Expr {{\n    e\n}}\n\
+         fn f(e: Expr, k: i64) -> i64 {{\n    if k == 0 {{\n        let o = own(e)\n        return 0\n    }}\n    match e {{\n        Add(a, _) => g(a, k - 1)\n        Mul(a, _) => g(a, k - 1)\n        Num(n) => n\n    }}\n}}\n\
+         fn g(x: Expr, k: i64) -> i64 {{\n    f(Expr.Num(k), k)\n}}"
+    ));
+    signature(&printed, "f", "fn f(e#0: Expr");
+    signature(&printed, "g", "fn g(x#0: Expr");
+}
+
 /// With `g`'s `s` owned, `f` hands its fresh string over and has nothing left to release. With
 /// `+ 0`, the call is not in tail position: `s` is borrowed, and `f` releases the string.
 #[test]

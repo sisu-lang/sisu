@@ -123,7 +123,7 @@ fn dispatch_of(f: &Function, tried: LocalId) -> BlockId {
 #[test]
 fn ifsome_moves_the_payload() {
     let printed = lowered(
-        "fn unwrap(p: string?) -> string { if let q = p { q } else { return \"none\" } }\n\
+        "fn unwrap(p: string?) -> string {\n    let r = p\n    if let q = r { q } else { return \"none\" }\n}\n\
          fn count(m: i64?) -> i64 { if let q = m { q } else { 0 } }",
     );
     has(
@@ -136,10 +136,10 @@ fn ifsome_moves_the_payload() {
         &printed,
         "unwrap",
         &[
-            "_ = use p#0",
+            "_ = use r#1",
             "if_present _ bb1 bb2",
             "bb1:",
-            "q#1 = unwrap move _",
+            "q#2 = unwrap move _",
         ],
     );
     let f = function(&printed, "unwrap");
@@ -201,10 +201,10 @@ fn range_and_bool_patterns() {
 #[test]
 fn literals_switch_on_the_value() {
     let printed = lowered(
-        "fn f(n: i64, b: u8, s: string, c: char) -> i64 {\n\
+        "fn f(n: i64, b: u8, ss: [string], c: char) -> i64 {\n\
              let x = match n {\n        3 => 1\n        _ => 0\n    }\n\
              let y = match b {\n        7 => 1\n        _ => 0\n    }\n\
-             let z = match s {\n        \"hi\" => 1\n        _ => 0\n    }\n\
+             let z = match ss[0] {\n        \"hi\" => 1\n        _ => 0\n    }\n\
              let w = match c {\n        'a'..='z' => 1\n        _ => 0\n    }\n\
              x + y + z + w\n}",
     );
@@ -227,7 +227,7 @@ fn literals_switch_on_the_value() {
 #[test]
 fn bindings_borrow_then_commit_copies() {
     let src = "enum Box {\n    Full(string)\n    Empty\n}\n\
-         fn f(b: Box, c: bool) -> string {\n    match b {\n        Full(x) => {\n            if c {\n                return x\n            }\n            x\n        }\n        Empty => \"\"\n    }\n}";
+         fn f(bs: [Box], c: bool) -> string {\n    match bs[0] {\n        Full(x) => {\n            if c {\n                return x\n            }\n            x\n        }\n        Empty => \"\"\n    }\n}";
     let printed = lowered(src);
     has(
         &printed,
@@ -399,7 +399,7 @@ fn wide_guard_probes_once_per_read() {
     let reads: Vec<_> = names.iter().map(|name| format!("keep({name})")).collect();
     let src = format!(
         "enum W {{\n    V({})\n    N\n}}\nfn keep(s: string) -> bool {{ true }}\n\
-         fn f(w: W) -> i64 {{\n    match w {{\n        V({}) if {} => 1\n        _ => 0\n    }}\n}}",
+         fn f() -> i64 {{\n    let w = W.N\n    match w {{\n        V({}) if {} => 1\n        _ => 0\n    }}\n}}",
         vec!["string"; wide].join(", "),
         names.join(", "),
         reads.join(" && "),
@@ -420,4 +420,265 @@ fn wide_guard_probes_once_per_read() {
         })
         .count();
     assert_eq!(marked, wide, "each guard read is marked");
+}
+
+/// `binary_trees`' `Node`.
+const NODE: &str = "class Node {\n    left: Node?\n    right: Node?\n\n    fn check(self) -> i64 {\n        1 + (self.left?.check() ?? 0) + (self.right?.check() ?? 0)\n    }\n}";
+
+/// `enum_match`'s `Expr` and `eval`.
+const EVAL: &str = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n    Mul(Expr, Expr)\n}\n\
+    fn eval(e: Expr) -> i64 {\n    match e {\n        Num(n) => n\n        Add(a, b) => eval(a) + eval(b)\n        Mul(a, b) => (eval(a) * eval(b)) % 1_000_003\n    }\n}";
+
+/// The mir of `src` as `build` gives it, and its function `name`.
+fn built_function(src: &str, name: &str) -> Function {
+    build(&checked(src))
+        .functions
+        .into_iter()
+        .find(|f| f.name == name)
+        .unwrap_or_else(|| panic!("no function {name}"))
+}
+
+/// How many `end`s of `local` `block` holds.
+fn ends(f: &Function, block: BlockId, local: LocalId) -> usize {
+    f.blocks[block.0]
+        .stmts
+        .iter()
+        .filter(|stmt| matches!(stmt, Statement::End(ended) if *ended == local))
+        .count()
+}
+
+/// The blocks of `f` that leave an arm inside its one loop by `return`, `break` or `continue`
+/// and end one of `locals` on the way.
+fn arm_exits(f: &Function, locals: &[LocalId]) -> Vec<BlockId> {
+    let inside = &f.loops[0];
+    blocks_where(f, |term| match term {
+        Terminator::Return(_) => true,
+        Terminator::Goto(to) => *to == inside.header || !inside.blocks.contains(to),
+        _ => false,
+    })
+    .into_iter()
+    .filter(|&block| inside.blocks.contains(&block))
+    .filter(|&block| locals.iter().any(|&local| ends(f, block, local) > 0))
+    .collect()
+}
+
+/// `self.left?.check()` borrows the field and the payload in place: nothing is counted, and each
+/// `?.` ends the binding and the optional's borrow.
+#[test]
+fn method_on_an_optional_field_counts_nothing() {
+    let printed = built(NODE);
+    has(
+        &printed,
+        "Node.check",
+        &[
+            "fn Node.check(self#0: borrow Node)",
+            "_ = borrow self#0.0",
+            "= borrow (_ as some)",
+        ],
+    );
+    let f = function(&printed, "Node.check");
+    for absent in ["copy", "release"] {
+        assert!(!f.contains(absent), "`{absent}` in\n{f}");
+    }
+    assert_eq!(f.matches("end _").count(), 4, "{f}");
+}
+
+/// `eval`'s `match e` tests the parameter in place, and its arms pass their bindings in place.
+#[test]
+fn match_on_a_borrowed_parameter_counts_nothing() {
+    let printed = built(EVAL);
+    has(
+        &printed,
+        "eval",
+        &[
+            "fn eval(e#0: borrow Expr)",
+            "switch tag e#0",
+            "a#2 = borrow (e#0 as 1).0",
+            "call eval(a#2)",
+        ],
+    );
+    let f = function(&printed, "eval");
+    for absent in ["copy", "release"] {
+        assert!(!f.contains(absent), "`{absent}` in\n{f}");
+    }
+}
+
+/// The spec's `pick`: returning the binding consumes the optional it borrows from.
+#[test]
+fn binding_returned_from_a_borrowed_if_let_makes_the_parameter_owned() {
+    let printed = built("fn pick(p: [i64]?) -> [i64] { if let q = p { q } else { [] } }");
+    has(&printed, "pick", &["fn pick(p#0: [i64]?)", "unwrap move"]);
+}
+
+/// Returning a binding makes `e` owned, and `first` is lowered again in the owned form: the
+/// commit copies the binding.
+#[test]
+fn binding_returned_from_a_borrowed_match_makes_the_parameter_owned() {
+    let printed = built(&format!(
+        "{EVAL}\nfn first(e: Expr) -> Expr {{\n    match e {{\n        Add(a, b) => a\n        Mul(a, b) => b\n        Num(n) => Expr.Num(n)\n    }}\n}}"
+    ));
+    has(
+        &printed,
+        "first",
+        &["fn first(e#0: Expr)", "a#1 = copy a#1"],
+    );
+}
+
+/// Review Focus 3: a scrutinee read through a `mut` field is copied, so a call in the arm that
+/// replaces the field cannot free what the arm reads.
+#[test]
+fn match_through_a_mut_field_copies() {
+    let printed = built(&format!(
+        "{EVAL}\nclass O {{\n    mut e: Expr\n}}\n\
+         fn f(o: O) -> i64 {{\n    match o.e {{\n        Num(n) => n\n        _ => 0\n    }}\n}}"
+    ));
+    has(&printed, "f", &["fn f(o#0: borrow O)", "copy o#0.0"]);
+}
+
+/// Sol's `pick`: the borrowed form returns `s`, which consumes `w`; the owned form, lowered
+/// again, copies the field, and `w` stays owned.
+#[test]
+fn field_binding_returned_stays_owned() {
+    let printed = built(
+        "class W {\n    s: string?\n}\nfn pick(w: W) -> string { if let s = w.s { s } else { \"\" } }",
+    );
+    has(
+        &printed,
+        "pick",
+        &["fn pick(w#0: W)", "_ = move w#0", "copy _.0", "unwrap move"],
+    );
+}
+
+/// An `if let` that only reads its binding leaves the parameter borrowed, with no count but the
+/// literal's; `??` assigns its result on two paths, a join, which consumes the parameter.
+#[test]
+fn optional_read_in_both_arms_stays_borrowed() {
+    let printed = built(
+        "fn show(p: string?) {\n    if let s = p {\n        print(s)\n    } else {\n        print(\"none\")\n    }\n}\n\
+         fn show_default(p: string?) {\n    print(p ?? \"none\")\n}",
+    );
+    has(&printed, "show", &["fn show(p#0: borrow string?)"]);
+    let show = function(&printed, "show");
+    // The literal `"none"` is the one copy, and its temporary the one release.
+    assert_eq!(show.matches("copy").count(), 1, "{show}");
+    assert!(show.contains("copy \"none\""), "{show}");
+    assert_eq!(show.matches("release").count(), 1, "{show}");
+    has(&printed, "show_default", &["fn show_default(p#0: string?)"]);
+}
+
+/// `let k = e` moves `e` while `a` borrows from it, under the assumed flag. `e` comes out owned,
+/// and `split` is lowered again in the owned form, which the certifier accepts.
+#[test]
+fn re_lowering_keeps_a_consumed_root_sound() {
+    let printed = built(&format!(
+        "{EVAL}\nfn split(e: Expr) -> i64 {{\n    match e {{\n        Add(a, b) => {{\n            let k = e\n            eval(a) + eval(k)\n        }}\n        Mul(a, b) => 0\n        Num(n) => n\n    }}\n}}"
+    ));
+    has(&printed, "split", &["fn split(e#0: Expr)"]);
+}
+
+/// Review Focus 3: an element is no borrowed place, so `if let` copies it.
+#[test]
+fn if_let_on_an_element_copies() {
+    let printed = built(&format!(
+        "{NODE}\nfn f(ns: [Node?]) -> i64 {{ if let n = ns[0] {{ n.check() }} else {{ 0 }} }}"
+    ));
+    has(&printed, "f", &["copy ns#0[0]", "n#1 = unwrap move"]);
+}
+
+/// Review Focus 2: each `return`, `break` and `continue` out of a borrowed arm ends that arm's
+/// bindings once, and the certifier accepts `f`.
+#[test]
+fn borrowed_arm_exits_end_its_bindings() {
+    let src = format!(
+        "{EVAL}\nfn f(e: Expr, c: bool) -> i64 {{\n    let mut k = 0\n    while k < 3 {{\n        k += 1\n        match e {{\n            Add(a, b) => {{\n                if c {{\n                    return eval(a)\n                }}\n                break\n            }}\n            Mul(a, b) => {{\n                continue\n            }}\n            Num(n) => {{\n                k += n\n            }}\n        }}\n    }}\n    k\n}}"
+    );
+    has(&built(&src), "f", &["fn f(e#0: borrow Expr"]);
+    let f = built_function(&src, "f");
+    let (a, b) = (all_named(&f, "a"), all_named(&f, "b"));
+    let arms = [[a[0], b[0]], [a[1], b[1]]];
+    let exits = arm_exits(&f, &[a[0], b[0], a[1], b[1]]);
+    assert_eq!(
+        exits.len(),
+        3,
+        "a return, a break and a continue: {exits:?}"
+    );
+    for block in exits {
+        let arm = arms
+            .iter()
+            .find(|arm| ends(&f, block, arm[0]) > 0)
+            .unwrap_or_else(|| panic!("bb{} should end an arm's first binding", block.0));
+        for &binding in arm {
+            assert_eq!(ends(&f, block, binding), 1, "bb{}: {f:?}", block.0);
+        }
+    }
+}
+
+/// Review Focus 2: each `return` and `break` out of a borrowed `if let`'s `Some` arm ends the
+/// binding and the optional once; an exit from the `None` arm ends the optional at most once.
+#[test]
+fn borrowed_if_let_exits_end_its_temporary() {
+    let src = "class T {\n    l: T?\n    v: i64\n}\n\
+               fn g(t: T, c: bool) -> i64 {\n    let mut k = 0\n    while k < 3 {\n        if let x = t.l {\n            if c {\n                return x.v\n            }\n            break\n        } else {\n            if c {\n                continue\n            }\n            k += 1\n        }\n    }\n    k\n}";
+    has(&built(src), "g", &["fn g(t#0: borrow T"]);
+    let g = built_function(src, "g");
+    let x = named(&g, "x");
+    let optional = g
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .find_map(|stmt| match stmt {
+            Statement::Assign {
+                dest: Some(dest),
+                value: Rvalue::Borrow(place),
+            } if place.local == LocalId(0) => Some(*dest),
+            _ => None,
+        })
+        .expect("`t.l` should be borrowed into a temporary");
+    let exits = arm_exits(&g, &[x, optional]);
+    let some = exits
+        .iter()
+        .filter(|&&block| ends(&g, block, x) > 0)
+        .count();
+    assert_eq!(
+        some, 2,
+        "a return and a break from the `Some` arm: {exits:?}"
+    );
+    for block in exits {
+        if ends(&g, block, x) > 0 {
+            assert_eq!(ends(&g, block, x), 1, "bb{}: {g:?}", block.0);
+            assert_eq!(ends(&g, block, optional), 1, "bb{}: {g:?}", block.0);
+        } else {
+            assert!(ends(&g, block, optional) <= 1, "bb{}: {g:?}", block.0);
+        }
+    }
+}
+
+/// A borrowed `if let` whose arms both return has no join: each `return` ends the optional
+/// once, and nothing else ends it.
+#[test]
+fn borrowed_if_let_with_no_join_ends_the_optional_at_each_return() {
+    let src = "fn size(q: string?) -> i64 {\n    if let s = q {\n        return s.len()\n    } else {\n        return 0\n    }\n}";
+    has(&built(src), "size", &["fn size(q#0: borrow string?)"]);
+    let f = built_function(src, "size");
+    let optional = f
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .find_map(|stmt| match stmt {
+            Statement::Assign {
+                dest: Some(dest),
+                value: Rvalue::Borrow(place),
+            } if place.local == LocalId(0) => Some(*dest),
+            _ => None,
+        })
+        .expect("`q` should be borrowed into a temporary");
+    let returns = blocks_where(&f, |term| matches!(term, Terminator::Return(_)));
+    assert_eq!(returns.len(), 2, "{f:?}");
+    for &block in &returns {
+        assert_eq!(ends(&f, block, optional), 1, "bb{}: {f:?}", block.0);
+    }
+    let all = (0..f.blocks.len())
+        .map(|b| ends(&f, BlockId(b), optional))
+        .sum::<usize>();
+    assert_eq!(all, 2, "{f:?}");
 }

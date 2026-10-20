@@ -196,7 +196,7 @@ fn short_circuits() {
 #[test]
 fn objects_self_and_if_let() {
     let printed = built(
-        "class N {\n    v: i64\n    fn get(self) -> i64 {\n        let _ = [self]\n        self.v\n    }\n}\nfn f(m: N?) -> i64 {\n    if let n = m { n.v } else { 0 }\n}",
+        "class N {\n    v: i64\n    fn get(self) -> i64 {\n        let _ = [self]\n        self.v\n    }\n}\nfn f(ms: [N?]) -> i64 {\n    if let n = ms[0] { n.v } else { 0 }\n}",
     );
     has(&printed, "N.get", &["_ = move self#0", "= _.0"]);
     has(&printed, "f", &["_ = move n#1", "= _.0"]);
@@ -500,7 +500,7 @@ fn enum_countedness() {
 fn guard_borrow_site_on_a_returning_path() {
     let printed = built(
         "enum E {\n    S(string)\n    T(string)\n}\n\
-         fn f(e: E, c: bool) -> i64 {\n    match e {\n        S(x) | T(x) if if c { return x.len() } else { false } => 1\n        _ => 0\n    }\n}",
+         fn f(es: [E], c: bool) -> i64 {\n    match es[0] {\n        S(x) | T(x) if if c { return x.len() } else { false } => 1\n        _ => 0\n    }\n}",
     );
     let f = function(&printed, "f");
     let returning = block_with(&f, &["end x#2", "return _"]);

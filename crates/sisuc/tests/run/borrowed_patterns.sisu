@@ -1,0 +1,191 @@
+// A `match` or an `if let` on a borrowed place borrows its scrutinee and counts nothing.
+// One whose binding is returned, or that reads through a `mut` field or an element, copies.
+// `-O2` inlines every non-recursive callee into `main`; the markers check that the recursive
+// borrowed forms, `Node.check`'s `if let`s and `eval`'s `match`, still take values across calls.
+// The plain build calls every function.
+// o2-calls: main Node.check 1
+// o2-calls: main eval 6
+class Node {
+    left: Node?
+    right: Node?
+
+    fn check(self) -> i64 {
+        1 + (self.left?.check() ?? 0) + (self.right?.check() ?? 0)
+    }
+}
+
+fn make(depth: i64) -> Node {
+    if depth == 0 {
+        Node(left: None, right: None)
+    } else {
+        Node(left: make(depth - 1), right: make(depth - 1))
+    }
+}
+
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+fn tree(depth: i64, k: i64) -> Expr {
+    if depth == 0 {
+        Expr.Num(k % 7 + 1)
+    } else if depth % 2 == 0 {
+        Expr.Add(tree(depth - 1, k + 1), tree(depth - 1, k + 2))
+    } else {
+        Expr.Mul(tree(depth - 1, k), Expr.Num(2))
+    }
+}
+
+fn eval(e: Expr) -> i64 {
+    match e {
+        Num(n) => n
+        Add(a, b) => eval(a) + eval(b)
+        Mul(a, b) => (eval(a) * eval(b)) % 1_000_003
+    }
+}
+
+// A binding passed on in tail position borrows from `e`, so `e` stays borrowed.
+fn leftmost(e: Expr) -> i64 {
+    match e {
+        Add(a, b) => leftmost(a)
+        Mul(a, b) => leftmost(a)
+        Num(n) => n
+    }
+}
+
+// Returning the binding consumes the optional, so `p` is owned.
+fn pick(p: [i64]?) -> [i64] {
+    if let q = p { q } else { [] }
+}
+
+// Returning a binding consumes `e`, so `first` copies it.
+fn first(e: Expr) -> Expr {
+    match e {
+        Add(a, b) => a
+        Mul(a, b) => b
+        Num(n) => Expr.Num(n)
+    }
+}
+
+class O {
+    mut e: Expr
+}
+
+fn reset(o: O) {
+    o.e = Expr.Num(0)
+}
+
+// `reset` frees the old `o.e` while the arm still reads `a`: only the copy keeps `a` alive.
+fn replaced(o: O) -> i64 {
+    match o.e {
+        Add(a, b) => {
+            reset(o)
+            eval(a)
+        }
+        _ => 0
+    }
+}
+
+fn f(e: Expr, c: bool) -> i64 {
+    let mut k = 0
+    while k < 3 {
+        k += 1
+        match e {
+            Add(a, b) => {
+                if c {
+                    return eval(a)
+                }
+                break
+            }
+            Mul(a, b) => {
+                continue
+            }
+            Num(n) => {
+                k += n
+            }
+        }
+    }
+    k
+}
+
+class T {
+    l: T?
+    v: i64
+}
+
+fn g(t: T, c: bool) -> i64 {
+    let mut k = 0
+    while k < 3 {
+        if let x = t.l {
+            if c {
+                return x.v
+            }
+            break
+        } else {
+            if c {
+                continue
+            }
+            k += 1
+        }
+    }
+    k
+}
+
+class W {
+    s: string?
+}
+
+fn pick_field(w: W) -> string {
+    if let s = w.s { s } else { "" }
+}
+
+fn w_of(n: i64) -> W {
+    if n > 0 { W(s: "field") } else { W(s: None) }
+}
+
+fn show(p: string?) {
+    if let s = p {
+        print(s)
+    } else {
+        print("none")
+    }
+}
+
+fn show_default(p: string?) {
+    print(p ?? "none")
+}
+
+fn split(e: Expr) -> i64 {
+    match e {
+        Add(a, b) => {
+            let k = e
+            eval(a) + eval(k)
+        }
+        Mul(a, b) => 0
+        Num(n) => n
+    }
+}
+
+fn main() {
+    print(make(3).check()) // 15
+    print(eval(tree(4, 0))) // 64
+    print(leftmost(tree(4, 0))) // 3
+    print(pick([1, 2])[1]) // 2
+    print(pick(None).len()) // 0
+    print(eval(first(tree(4, 0)))) // 28
+    print(replaced(O(e: tree(2, 0)))) // 4
+    print(f(tree(2, 0), true)) // 4
+    print(f(tree(2, 0), false)) // 1
+    let t = T(l: T(l: None, v: 5), v: 1)
+    print(g(t, true)) // 5
+    print(g(t, false)) // 0
+    print(pick_field(w_of(1))) // field
+    print(pick_field(w_of(0))) // (empty)
+    show("some") // some
+    show(None) // none
+    show_default("some") // some
+    show_default(None) // none
+    print(split(tree(2, 0))) // 4 + 10 = 14
+}
