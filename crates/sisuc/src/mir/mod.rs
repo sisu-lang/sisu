@@ -23,6 +23,12 @@
 //! certifier's dataflow says reaches it: it removes one where the local is empty on every path,
 //! makes one where it is owned on every path a plain `release`, and keeps every other one as
 //! `release?`.
+//!
+//! Pair removal (`pairs.rs`) then turns a copy that is only read within its block, and released
+//! there, into a borrow, and its release into `end`s: the retain and the release are gone. It
+//! keeps a copy whose root may change while the copy is open, one that a call or a counted write
+//! may free when it came through a field or an element, and one that is written when it is an
+//! array or a string, which copy-on-write must still copy.
 
 use rustc_hash::FxHashMap;
 
@@ -36,6 +42,7 @@ mod hoist;
 mod liveness;
 mod lower;
 mod ownership;
+mod pairs;
 mod print;
 
 pub(crate) use elaborate::flagged;
@@ -60,7 +67,8 @@ pub(crate) struct Function {
     pub(crate) blocks: Vec<Block>,
     /// In pre-order: an outer loop before the loops inside it.
     pub(crate) loops: Vec<Loop>,
-    /// Each `match` binding, and the scrutinee local it borrows from.
+    /// Each `match` binding, and the scrutinee local it borrows from; and each member of a pair
+    /// that pair removal made a borrow, and the local its copy read.
     pub(crate) owners: FxHashMap<LocalId, LocalId>,
 }
 
@@ -335,14 +343,16 @@ impl Terminator {
 }
 
 /// The mir of `program`, with its copies, moves and releases placed, and each loop's
-/// `make_unique` of the arrays it writes hoisted to its pre-header, and each scope release
-/// elaborated. A debug build certifies each function and panics on a violation.
+/// `make_unique` of the arrays it writes hoisted to its pre-header, each scope release
+/// elaborated, and each retain/release pair within a block removed. A debug build certifies
+/// each function and panics on a violation.
 pub(crate) fn build(program: &tir::Program) -> Program {
     let mut mir = lower(program);
     for function in &mut mir.functions {
         ownership::place(function);
         hoist::hoist(function);
         elaborate::elaborate(function);
+        pairs::remove_pairs(function);
         if cfg!(debug_assertions) {
             certified(function);
         }

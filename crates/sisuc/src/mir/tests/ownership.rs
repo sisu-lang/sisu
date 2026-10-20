@@ -201,7 +201,8 @@ fn objects_self_and_if_let() {
 }
 
 /// A field assignment's base, a field root's base and an element write's index are reads
-/// like any other: the last of them moves.
+/// like any other: the last of them moves. The earlier read of `b.xs` is only read within its
+/// block, so pair removal (`mir/pairs.rs`) makes its copy a borrow.
 #[test]
 fn place_operands() {
     let printed = built(
@@ -218,7 +219,7 @@ fn place_operands() {
     has(
         &printed,
         "root",
-        &["_ = copy b#0.0", "_ = move b#0", "check _.0[0]"],
+        &["_ = borrow b#0.0", "end _", "_ = move b#0", "check _.0[0]"],
     );
     has(
         &printed,
@@ -348,14 +349,15 @@ fn guard_reads() {
     );
     // `break` and `continue` in a guard reach the `while`, whose exit and head read `t`;
     // every other path from the first `print(t)` returns, so only the guard's jump keeps
-    // `t` live there.
+    // `t` live there. That read is only read within its block, so pair removal
+    // (`mir/pairs.rs`) makes its copy a borrow.
     for jump in ["break", "continue"] {
         has(
             &built(&format!(
                 "enum AB {{\n    A\n    B\n    C\n}}\nfn f(e: AB, c: bool, t: string) {{\n    while c {{\n        print(t)\n        let _ = match e {{\n            A | B if (if c {{ {jump} }} else {{ true }}) => 0\n            _ => 1\n        }}\n        return\n    }}\n    print(t)\n}}"
             )),
             "f",
-            &["_ = copy t#2", "call print(_)"],
+            &["_ = borrow t#2", "call print(_)", "end _"],
         );
     }
 }
@@ -574,14 +576,16 @@ fn field_store_take_and_store_share_one_root() {
     assert_eq!(count(&printed, "f", "o#0."), 0, "{printed}");
 }
 
-/// A panic reads its message in the terminator, so an earlier read copies it.
+/// A panic reads its message in the terminator, so an earlier read does not move it. That
+/// read is only read within its block, so pair removal (`mir/pairs.rs`) makes its copy a
+/// borrow.
 #[test]
 fn panic_reads_its_message() {
     let printed = built("fn die(m: string) {\n    print(m)\n    panic(m)\n}");
     has(
         &printed,
         "die",
-        &["_ = copy m#0", "call print(_)", "panic move m#0"],
+        &["_ = borrow m#0", "call print(_)", "end _", "panic move m#0"],
     );
 }
 

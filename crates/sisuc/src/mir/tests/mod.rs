@@ -7,6 +7,7 @@ mod elaborate;
 pub(crate) mod hoist;
 mod lower;
 mod ownership;
+mod pairs;
 mod pattern;
 
 /// A program whose `f` holds every kind of expression and statement lowering handles.

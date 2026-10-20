@@ -616,7 +616,7 @@ fn eval(
 
 /// What a statement does to one local, in the order its operands run.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Effect {
+pub(super) enum Effect {
     /// A read that leaves the value in place for a copy or a scalar result.
     Read,
     /// A read of the root of a place that the statement uses in place.
@@ -638,7 +638,7 @@ enum Effect {
 
 impl Effect {
     /// Whether the effect consumes, assigns or releases the local.
-    fn kills(self) -> bool {
+    pub(super) fn kills(self) -> bool {
         match self {
             Effect::Consume
             | Effect::Release
@@ -663,7 +663,10 @@ struct Event {
 }
 
 /// Calls `f` with each local `stmt` mentions, its effect and the place it is the root of.
-fn statement<'a>(stmt: &'a Statement, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
+pub(super) fn statement<'a>(
+    stmt: &'a Statement,
+    f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
+) {
     match stmt {
         Statement::Assign { dest, value } => {
             rvalue(value, f);
@@ -751,7 +754,10 @@ fn rvalue<'a>(value: &'a Rvalue, f: &mut impl FnMut(LocalId, Effect, Option<&'a 
     }
 }
 
-fn terminator<'a>(term: &'a Terminator, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
+pub(super) fn terminator<'a>(
+    term: &'a Terminator,
+    f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
+) {
     match term {
         Terminator::Branch { cond: op, .. } | Terminator::SwitchValue { operand: op, .. } => {
             operand(op, f);
@@ -919,7 +925,7 @@ fn takes(function: &Function, tree: &Tree) -> Result<(), Violation> {
 }
 
 /// Whether a store of `value` moves a counted reference into its place.
-fn counted_value(function: &Function, value: &Operand) -> bool {
+pub(super) fn counted_value(function: &Function, value: &Operand) -> bool {
     match value {
         Operand::Move(local) => function.locals[local.0].counted,
         Operand::Read(place) => {
