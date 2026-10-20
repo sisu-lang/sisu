@@ -1064,6 +1064,27 @@ fn object() -> Type {
     Type::intern(TypeKind::Class(ClassId(0)))
 }
 
+/// `b = borrow xs` in one block, then `make_unique xs` and a read of `b` in the next: the
+/// write comes before `b`'s first mention in its block, while `b` is borrowed on entry.
+#[test]
+fn borrow_is_ended_by_a_write_before_its_first_mention_in_a_block() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::I64));
+    let x = b.local("b", Type::array(Type::I64));
+    b.owner(x, xs);
+    b.block(vec![assign(x, Rvalue::Borrow(whole(xs)))], goto(1));
+    b.block(
+        vec![
+            Statement::MakeUnique(whole(xs)),
+            show(read(x)),
+            Statement::End(x),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 1, x, Rule::Borrow);
+}
+
 /// `b = borrow xs`, then `make_unique xs` or `xs[0] = 1`, then a read of `b`: copy-on-write
 /// may give `xs` a new buffer and release the one `b` reads.
 #[test]
