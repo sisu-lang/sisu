@@ -228,3 +228,19 @@ fn copy_moved_into_a_call_is_kept() {
     let f = function(&printed, "moved");
     assert!(f.contains("t#1 = copy s#0"), "{f}");
 }
+
+/// ir-2: a row read through a nested index is borrowed, both for its length and for each
+/// element, so the loop retains nothing.
+#[test]
+fn row_of_a_nested_index_is_borrowed() {
+    let f = function(
+        &built(
+            "fn total_index(g: [[i64]]) -> i64 {\n    let mut s = 0\n    for i in 0..g.len() {\n        for j in 0..g[i].len() {\n            s += g[i][j]\n        }\n    }\n    s\n}",
+        ),
+        "total_index",
+    );
+    assert_eq!(f.matches("= borrow g#0[").count(), 2, "{f}");
+    assert!(!f.contains("= copy g#0["), "{f}");
+    // Only the parameter's release is left.
+    assert_eq!(f.matches("release ").count(), 1, "{f}");
+}
