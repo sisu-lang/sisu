@@ -38,11 +38,11 @@ With no argument, run all nine; otherwise run the named ones.
 
 From the repository root:
 
-1. `cargo build --workspace`. Every probe uses this checkout's `target/debug/sisuc`.
+1. `cargo build --workspace`. Every probe uses this checkout's `target/debug/sisuc`. Then `make audit-setup`, which adds `opt` and `clang` to `.llvm/23/bin` for the ASan, lint and layout-shim recipes; it does nothing when they are there.
 2. `mktemp -d "${TMPDIR:-/tmp}/sisu-audit-XXXXXXXX"` makes the run directory, `RUN`. Shell variables do not survive between tool calls, so from here on write `RUN`, the repository root and the tool paths as literal paths.
 3. Write `RUN/known-tickets.md`: the title and path of every ticket under `.scratch/*/issues/` whose `Status:` is not `wontfix` or `resolved`, or "none" when `.scratch/` does not exist. `.scratch/` is untracked, so read it in the main checkout, the first path `git worktree list` prints.
 
-Done when `sisuc` builds and `RUN/known-tickets.md` exists.
+Done when `sisuc` builds, `.llvm/23/bin/opt` and `.llvm/23/bin/clang` run, and `RUN/known-tickets.md` exists.
 
 ### 2. Explore
 
