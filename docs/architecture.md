@@ -113,6 +113,10 @@ array it holds can skip the copy
 ([ADR 0007](adr/0007-arrays-are-values.md)). The hoist (`hoist.rs`) moves the
 `make_unique` of an array a loop writes to the loop's pre-header
 ([ADR 0021](adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md)).
+Elaboration (`elaborate.rs`) then removes each scope release that only empty
+paths reach and makes one that only owned paths reach a plain release, so
+codegen stores the zero value on a move only for a local that a conditional
+release still tests (for every local under `--rc-checks`).
 Debug builds of the compiler end with the certifier (`certify.rs`), which
 checks on every path that each owned reference is moved or released once.
 `tir` carries no moves. `--emit mir` prints the result.
