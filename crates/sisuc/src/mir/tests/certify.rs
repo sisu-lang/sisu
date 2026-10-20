@@ -1700,8 +1700,8 @@ fn switch_back_to_every_block_reads_linearly() {
     assert_near_linear(reads(100), reads(200), reads(300));
 }
 
-// The ported timeout tests, now through lowering, the ownership pass and the certifier. Their
-// keep-alive overrides are in `.config/nextest.toml`.
+// The ported timeout tests, now through lowering, the ownership pass and the certifier, sized
+// to check correctness; counted tests pin their cost.
 
 /// `match e` over `variants` variants, each arm `V{i}(s) {guard} => s`, with `head` before it.
 fn wide_match(
@@ -1729,21 +1729,21 @@ fn moves_of_s(src: &str) -> usize {
     print(&build(&program), &program).matches("move s#").count()
 }
 
-/// Sized to run in under a second; the counted tests `wide_guard_probes_once_per_read`
-/// (lowering) and `liveness_reads_grow_linearly` (ownership) pin the same passes' cost.
+/// The counted tests `wide_guard_probes_once_per_read` (lowering) and
+/// `liveness_reads_grow_linearly` (ownership) pin the cost of these passes.
 #[test]
-fn many_guarded_arms_mark_last_uses_in_linear_time() {
-    const VARIANTS: usize = 6_000;
+fn many_guarded_arms_mark_last_uses() {
+    const VARIANTS: usize = 100;
     let src = wide_match(VARIANTS, ", keep: bool", "", |_| " if keep".to_owned());
     // Each arm's `s` is read once, in its body, so every read is its last use.
     assert_eq!(moves_of_s(&src), VARIANTS);
 }
 
-/// Sized to run in under a second; the counted tests `liveness_reads_grow_linearly`
-/// (ownership) and `scope_release_gap_is_sparse` (certifier) pin the same passes' cost.
+/// The counted tests `liveness_reads_grow_linearly` (ownership) and
+/// `scope_release_gap_is_sparse` (certifier) pin the cost of these passes.
 #[test]
-fn many_guards_of_distinct_locals_mark_last_uses_in_linear_time() {
-    const VARIANTS: usize = 10_000;
+fn many_guards_of_distinct_locals_mark_last_uses() {
+    const VARIANTS: usize = 100;
     let locals = (0..VARIANTS)
         .map(|i| format!("    let g{i} = c\n"))
         .collect::<Vec<_>>()
@@ -1752,8 +1752,10 @@ fn many_guards_of_distinct_locals_mark_last_uses_in_linear_time() {
     assert_eq!(moves_of_s(&src), VARIANTS);
 }
 
+/// A guard walked again inside each guard around it is exponential in the depth, so this test
+/// hangs instead of failing; its keep-alive override is in `.config/nextest.toml`.
 #[test]
-fn nested_guards_mark_last_uses_in_linear_time() {
+fn nested_guards_mark_last_uses() {
     const DEPTH: usize = 48;
     let guard = (0..DEPTH).fold("c".to_owned(), |inner, _| {
         format!("match c {{\n true if {inner} => true\n _ => false\n }}")
@@ -1764,24 +1766,40 @@ fn nested_guards_mark_last_uses_in_linear_time() {
     assert_eq!(moves_of_s(&src), 1);
 }
 
-/// Arm `i`'s test hangs off arm `i - 1`'s failure edge, and the join has one predecessor per
-/// arm: iterative dominators are quadratic here. Sized to run in under a second; the counted
-/// `switch_back_to_every_block_reads_linearly` (certifier) pins the cost of a join with many
-/// predecessors, but no counted test covers the dominators of an arm chain.
-#[test]
-fn many_arms_mark_last_uses_in_linear_time() {
-    const VARIANTS: usize = 16_000;
-    let variants = (0..VARIANTS)
+/// `match e` over `variants` variants, each arm `V{i}(s) => s`. Arm `i`'s test hangs off arm
+/// `i - 1`'s failure edge, and the join has one predecessor per arm.
+fn many_arms(variants: usize) -> String {
+    let variant_list = (0..variants)
         .map(|i| format!("    V{i}(string)\n"))
         .collect::<Vec<_>>()
         .concat();
-    let arms = (0..VARIANTS)
+    let arms = (0..variants)
         .map(|i| format!("        V{i}(s) => s\n"))
         .collect::<Vec<_>>()
         .concat();
-    let src = format!(
-        "enum E {{\n{variants}}}\nfn f(e: E) -> string {{\n    match e {{\n{arms}    }}\n}}"
-    );
+    format!(
+        "enum E {{\n{variant_list}}}\nfn f(e: E) -> string {{\n    match e {{\n{arms}    }}\n}}"
+    )
+}
+
+/// `arm_chain_reads_linearly` pins the cost of this shape.
+#[test]
+fn many_arms_mark_last_uses() {
+    const VARIANTS: usize = 100;
     // Each arm's `s` is read once, so every read is its last use.
-    assert_eq!(moves_of_s(&src), VARIANTS);
+    assert_eq!(moves_of_s(&many_arms(VARIANTS)), VARIANTS);
+}
+
+/// The dominators of an arm chain: iterative dominators, or a dominator search without path
+/// compression, are quadratic in the arms. The reads grow near linearly with them.
+#[test]
+fn arm_chain_reads_linearly() {
+    let reads = |n: usize| {
+        let program = build(&checked(&many_arms(n)));
+        let f = &program.functions[0];
+        READS.set(0);
+        assert_eq!(certify(f), Ok(()));
+        READS.get()
+    };
+    assert_near_linear(reads(100), reads(200), reads(300));
 }
