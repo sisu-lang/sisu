@@ -186,6 +186,19 @@ fn call_followed_by_work_is_not_a_tail_call() {
     signature(&printed, "stroll", "fn stroll(s#0: borrow string");
 }
 
+/// A `for` loop reads `es` into a temporary that the loop's blocks use and its exit releases.
+/// Pairs cannot drop a copy whose release is in another block, so the read consumes `es`;
+/// `len_of`'s temporary lives in one block and stays an alias.
+#[test]
+fn temporary_used_in_another_block_consumes_its_local() {
+    let printed = built(
+        "fn count(es: [i64]) -> i64 {\n    let mut n = 0\n    for e in es {\n        n += e\n    }\n    n\n}\n\
+         fn len_of(es: [i64]) -> i64 { es.len() }",
+    );
+    signature(&printed, "count", "fn count(es#0: [i64])");
+    signature(&printed, "len_of", "fn len_of(es#0: borrow [i64])");
+}
+
 /// An `if` expression's result is assigned on each path, so each assignment consumes.
 #[test]
 fn join_result_makes_the_parameter_owned() {

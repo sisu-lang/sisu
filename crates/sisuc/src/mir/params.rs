@@ -7,10 +7,12 @@
 //! operand, such as `concat`. One graph covers the whole program. Its nodes are each function's
 //! locals, and an edge `u → v` means that if `u` is consumed, so is `v`:
 //!
-//! - **alias:** `d = use l`, where `d` is a temporary that this statement alone assigns, gives
-//!   `d → l`. Lowering reads a value a statement only reads into such a temporary: `print(s)` is
-//!   `_1 = use s; print(_1); release _1`. A named `d`, or one assigned on several paths to a
-//!   join, consumes `l` instead.
+//! - **alias:** `d = use l`, where `d` is a temporary that this statement alone assigns and that
+//!   only its own block mentions, gives `d → l`. Lowering reads a value a statement only reads
+//!   into such a temporary: `print(s)` is `_1 = use s; print(_1); release _1`. A named `d`, one
+//!   assigned on several paths to a join, or one used or released in another block, such as a
+//!   `for` loop's array, consumes `l` instead: pairs (part 3) cannot drop a copy whose release
+//!   is in another block.
 //! - **owners:** a borrowed binding consumes the local it borrows from (the backward rule).
 //! - **call:** an argument naming `l` at position `i` of a call to `g` gives `(g, i) → l`.
 //! - **tail:** a call is in tail position when only scope releases and `end`s, through `goto`s,
@@ -236,14 +238,21 @@ impl Walk<'_> {
 
     fn run(&mut self) {
         let function = self.function;
-        // How many statements assign each local, whether only by `borrow`, and the local a
-        // `d = use l` reads.
+        // How many statements assign each local, whether only by `borrow`, the local a
+        // `d = use l` reads, and whether the local is mentioned in more than one block.
         let mut assigned = vec![0_usize; function.locals.len()];
         let mut borrows = vec![true; function.locals.len()];
         let mut reads = vec![None; function.locals.len()];
-        for block in &function.blocks {
+        let mut home = vec![None; function.locals.len()];
+        let mut spread = vec![false; function.locals.len()];
+        for (b, block) in function.blocks.iter().enumerate() {
+            let mut mention = |local: LocalId| {
+                spread[local.0] |= *home[local.0].get_or_insert(b) != b;
+            };
+            certify::terminator(&block.term, true, &mut |local, _, _| mention(local));
             for stmt in &block.stmts {
                 certify::statement(stmt, true, &mut |local, effect, _| {
+                    mention(local);
                     if matches!(effect, Effect::Assign | Effect::AssignBorrowed) {
                         assigned[local.0] += 1;
                         borrows[local.0] &= effect == Effect::AssignBorrowed;
@@ -258,10 +267,14 @@ impl Walk<'_> {
                 }
             }
         }
-        // The local a temporary that only pins it stands for.
+        // The local a temporary that only pins it stands for: pairs can drop the temporary's
+        // copy only when its release is in the same block.
         let alias = |local: LocalId| {
-            reads[local.0]
-                .filter(|_| function.locals[local.0].name.is_none() && assigned[local.0] == 1)
+            reads[local.0].filter(|_| {
+                function.locals[local.0].name.is_none()
+                    && assigned[local.0] == 1
+                    && !spread[local.0]
+            })
         };
         let mut exits = None;
         for (b, block) in function.blocks.iter().enumerate() {
