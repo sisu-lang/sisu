@@ -372,7 +372,8 @@ _Avoid_: node, label
 **Certifier**:
 The check, run on every function in debug builds of `sisuc`, that mir's
 counts are sound: each owned reference is consumed exactly once, no empty
-local is read, and no borrow outlives its owner.
+local is read, no borrow outlives its owner, and nothing writes or changes what
+a borrow reads.
 _Avoid_: verifier, linter
 
 **Scope release**:
@@ -388,8 +389,9 @@ _Avoid_: transfer
 **Borrowed read**:
 A read of a local that uses its value without a reference of its own,
 because nothing can release or replace the local before the use ends: the
-length of an array, a field of an object, an element at an index that calls
-nothing. It costs no retain and no release.
+length of an array, a field of an object, an element or a field while
+nothing calls a function, writes a counted value or makes an array unique. It
+costs no retain and no release.
 _Avoid_: borrow (Rust's checked borrow, which Sisu does not have)
 
 **Symbol**:

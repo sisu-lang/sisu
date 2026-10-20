@@ -117,8 +117,11 @@ Elaboration (`elaborate.rs`) then removes each scope release that only empty
 paths reach and makes one that only owned paths reach a plain release, so
 codegen stores the zero value on a move only for a local that a conditional
 release still tests (for every local under `--rc-checks`).
+Pair removal (`pairs.rs`) then turns a copy that is only borrowed within a block
+into a borrow, and its release into an `end`.
 Debug builds of the compiler end with the certifier (`certify.rs`), which
-checks on every path that each owned reference is moved or released once.
+checks on every path that each owned reference is moved or released once and
+that nothing writes or changes what a borrow reads.
 `tir` carries no moves. `--emit mir` prints the result.
 
 **Codegen** (`codegen/`). Walks `mir` and builds an LLVM module through the
