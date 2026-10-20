@@ -225,8 +225,9 @@ thread_local! {
     /// How much of the function's structure the certifier has touched on this thread, counted
     /// where the data is read or written: each control-flow edge handed out, each read of the
     /// dominator tree, each entry of a range table or wavelet matrix built or read, each step
-    /// of a wavelet query and each read of the `return` counts. Reads of a `Shape` vector that
-    /// go with a counted edge or query (`component`, `join_at`) are not counted again.
+    /// of a wavelet query or of a dominator search's path, and each read of the `return`
+    /// counts. Reads of a `Shape` vector that go with a counted edge or query (`component`,
+    /// `join_at`) are not counted again.
     pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -457,6 +458,7 @@ fn eval(
     }
     let mut x = v;
     while ancestor[ancestor[x]] != NONE {
+        count(1);
         path.push(x);
         x = ancestor[x];
     }

@@ -65,13 +65,6 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'test(many_unreachable_rows_check_in_linear_time)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
-# Each arm once copied and joined the set of every local in the function, so last use was
-# quadratic in the arms. In mir, a dense certifier region (every block for every local) or
-# iterative dominators would be quadratic in the arms too, so this test hangs instead of failing.
-[[profile.default.overrides]]
-filter = 'test(many_arms_mark_last_uses_in_linear_time)'
-slow-timeout = { period = "10s", terminate-after = 3 }
-
 # A variant pattern once copied its variant's field types before checking its form, so short
 # malformed patterns of a wide variant were quadratic and this test hangs instead of failing.
 [[profile.default.overrides]]
@@ -102,13 +95,10 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'test(forty_alternatives)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
-# A set live on each guard's failure edge, copied densely per arm or replayed whole per guard,
-# is quadratic in the arms, and a guard walked again inside each guard around it is exponential
-# in the depth. In mir, liveness kept densely per block, or a dense certifier region (every block
-# for every local), would be quadratic in the arms or locals too, so these tests hang instead of
-# failing.
+# A guard walked again inside each guard around it is exponential in the depth, so this test
+# hangs instead of failing.
 [[profile.default.overrides]]
-filter = 'test(many_guarded_arms_mark_last_uses_in_linear_time) | test(many_guards_of_distinct_locals_mark_last_uses_in_linear_time) | test(nested_guards_mark_last_uses_in_linear_time)'
+filter = 'test(nested_guards_mark_last_uses)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # A harness that writes all of standard input before it reads the output would fill both pipes
