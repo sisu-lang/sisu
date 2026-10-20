@@ -236,6 +236,7 @@ fn char_literal(source: &str, start: usize, chars: &mut Chars) -> Result<TokenKi
                     kind: LiteralKind::Char,
                     at: Span::new(start, start + 1),
                     interpolation: false,
+                    end_of_file: chars.peek().is_none(),
                 }
                 .into()
             }));
@@ -336,12 +337,14 @@ pub(super) fn string_text(
 }
 
 /// The error for a string literal whose `"` stands at `quote` and that a line break or the end
-/// of the file stops, where an interpolation's `{` is open if `interpolation`.
-pub(super) fn not_closed(quote: usize, interpolation: bool) -> Diagnostic {
+/// of the file stops, where an interpolation's `{` is open if `interpolation`, and the end of the
+/// file stops it if `end_of_file`.
+pub(super) fn not_closed(quote: usize, interpolation: bool, end_of_file: bool) -> Diagnostic {
     DiagnosticKind::LiteralNotClosed {
         kind: LiteralKind::String,
         at: Span::new(quote, quote + 1),
         interpolation,
+        end_of_file,
     }
     .into()
 }

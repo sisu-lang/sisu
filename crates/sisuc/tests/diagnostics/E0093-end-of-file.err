@@ -1,0 +1,8 @@
+error[E0093]: string literal is not closed
+ --> E0093-end-of-file.sisu:2:11
+  |
+2 |     print("abc\
+  |           ^
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0093

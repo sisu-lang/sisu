@@ -324,7 +324,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
             ' ' | '\t' | '\r' => continue,
             '\n' => {
                 breaks.push(start);
-                let cut = brackets.end_line(start, &mut tokens, &mut diagnostics);
+                let cut = brackets.end_line(start, false, &mut tokens, &mut diagnostics);
                 skipped = cut.or(skipped);
                 line_start = true;
                 // Look ahead only where a `Newline` would be pushed: the next newlines of a
@@ -404,7 +404,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
         brackets.count(separator);
         semicolons |= separator;
     }
-    brackets.end_line(source.len(), &mut tokens, &mut diagnostics);
+    brackets.end_line(source.len(), true, &mut tokens, &mut diagnostics);
     if let Some(&(bracket, at)) = brackets.open.last() {
         let unclosed = DiagnosticKind::UnclosedBracket { bracket, at };
         return Err(first_or(diagnostics, unclosed.into()));
@@ -621,16 +621,17 @@ impl Brackets {
     }
 
     /// Ends every open interpolation at the line end or the end of the file at `at`, and returns
-    /// `at`, or `None` when none is open.
+    /// `at`, or `None` when none is open. `end_of_file` when the end of the file stops them.
     fn end_line(
         &mut self,
         at: usize,
+        end_of_file: bool,
         tokens: &mut Vec<Token>,
         diagnostics: &mut Vec<Diagnostic>,
     ) -> Option<usize> {
         // A literal cut off before its first `{` is a frame whose brace is not open.
         let interpolation = self.frames.iter().any(|f| f.brace < self.open.len());
-        let d = |quote| literal::not_closed(quote, interpolation);
+        let d = |quote| literal::not_closed(quote, interpolation, end_of_file);
         self.cut(at, d, tokens, diagnostics)
     }
 
@@ -725,7 +726,7 @@ impl Brackets {
             End::Open => {
                 self.frames.push(frame);
                 let pushed = self.frames.first().is_some_and(|f| f.token < tokens.len());
-                let cut = self.end_line(start, tokens, diagnostics);
+                let cut = self.end_line(start, chars.peek().is_none(), tokens, diagnostics);
                 return ((!pushed).then_some(kind), cut);
             }
             End::Quote => {}
@@ -746,7 +747,10 @@ impl Brackets {
     ) -> (Option<TokenKind>, Option<usize>) {
         let Some(end) = spec_end(source, start) else {
             while chars.next_if(|&(_, c)| c != '\n').is_some() {}
-            return (None, self.end_line(start, tokens, diagnostics));
+            return (
+                None,
+                self.end_line(start, chars.peek().is_none(), tokens, diagnostics),
+            );
         };
         while chars.next_if(|&(i, _)| i < end).is_some() {}
         (
