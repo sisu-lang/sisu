@@ -42,8 +42,10 @@ class SlowTests(unittest.TestCase):
 
     def test_with_diff_only_mentioned_tests_are_listed_and_the_rest_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
-            # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point git at this repository.
-            env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+            # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point git at this
+            # repository, and under CI GITHUB_ACTIONS adds a workflow warning line per slow test.
+            env = {key: value for key, value in os.environ.items()
+                   if not key.startswith('GIT_') and key != 'GITHUB_ACTIONS'}
             git = lambda *args: subprocess.run(['git', '-C', tmp, *args], check=True, capture_output=True, env=env)
             git('init', '-q')
             source = os.path.join(tmp, 'a.rs')
