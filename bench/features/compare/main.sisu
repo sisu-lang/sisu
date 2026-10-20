@@ -1,0 +1,50 @@
+// Compares counted values that stay live after the comparison: the string
+// elements of an array against each other, and a class's string field
+// against a key, in loops that go on reading both.
+class Entry {
+    name: string
+    mut hits: i64
+}
+
+fn word(k: i64) -> string {
+    "w{k * 7_919 % 251}"
+}
+
+fn repeats(xs: [string]) -> i64 {
+    let mut n = 0
+    for i in 0..xs.len() {
+        for j in 0..i {
+            if xs[i] == xs[j] { n += 1 }
+        }
+    }
+    n
+}
+
+fn lookups(entries: [Entry], keys: [string]) -> i64 {
+    let mut found = 0
+    for key in keys {
+        for e in entries {
+            if e.name == key {
+                e.hits += 1
+                found += 1
+            }
+        }
+    }
+    found
+}
+
+fn main() {
+    let n = 1_000
+    let mut xs = [""; n]
+    for i in 0..n { xs[i] = word(i) }
+    print(repeats(xs))
+    let entries = [Entry(name: word(1), hits: 0), Entry(name: word(2), hits: 0), Entry(name: word(3), hits: 0), Entry(name: word(5), hits: 0), Entry(name: word(8), hits: 0), Entry(name: word(13), hits: 0), Entry(name: word(21), hits: 0), Entry(name: word(34), hits: 0)]
+    let mut total = 0
+    for round in 0..20 {
+        total += lookups(entries, xs)
+    }
+    print(total)
+    let mut weighted = 0
+    for i in 0..entries.len() { weighted += entries[i].hits * (i + 1) }
+    print(weighted)
+}

@@ -307,6 +307,7 @@ This table lists each feature or path and the benchmark that measures it:
 | Class allocation and release, `?.` and `??` | binary_trees |
 | Writes to an array with one holder, passed and returned | quicksort |
 | Copy-on-write of an array with a live copy | shared_arrays |
+| String `==` on array elements and class fields that stay live | compare |
 | `f64` arithmetic | nbody, mandelbrot |
 | Short loops over small arrays | fannkuch_redux |
 | String `+=`, interpolation with format specs, `words`, `chars`, `bytes`, non-ASCII text | strings |
