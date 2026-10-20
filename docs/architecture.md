@@ -8,7 +8,7 @@ system C compiler `cc`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="architecture/sisu-pipeline-dark.svg">
-  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker and codegen to LLVM, and the link step combines the object file with sisu-runtime into an executable." src="architecture/sisu-pipeline-light.svg">
+  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker, mir and codegen to LLVM, and the link step combines the object file with sisu-runtime into an executable." src="architecture/sisu-pipeline-light.svg">
 </picture>
 
 This page stays at the level of stages and the data between them. The code
@@ -25,11 +25,12 @@ fuzzer calls the library too:
 `fuzz.rs` runs the `--check` path on raw bytes and asserts that every
 diagnostic span and fix edit is well formed, and that every safe fix, applied
 alone, deletes no comment and removes its diagnostic and no other. For an
-input that checks clean, it also prints the typed tree and runs codegen, and
-LLVM must verify the module. The `--emit` and `--check` flags stop
-the pipeline early, as [Developing Sisu](development.md#look-inside-the-compiler)
-lists. `--format json` switches the diagnostics to JSON Lines, and
-`--explain <code>` prints the explanation of a code and runs no stage.
+input that checks clean, it also prints the typed tree, builds its mir and
+runs codegen, and LLVM must verify the module. The `--emit` and `--check`
+flags stop the pipeline early, as
+[Developing Sisu](development.md#look-inside-the-compiler) lists.
+`--format json` switches the diagnostics to JSON Lines, and `--explain <code>`
+prints the explanation of a code and runs no stage.
 
 **Lexer** (`lexer/`). Turns source text into tokens. A line break that can
 end a statement becomes a `Newline` token, because statements end at
@@ -61,9 +62,9 @@ optional `if` guard, `=>` and a body; a pattern is one or more alternatives
 joined by `|`. `if let` and `while let` take a pattern too. It rejects an item that nests deeper than
 256 levels, because every later stage walks the tree recursively.
 
-**Front end** (`front_end.rs`). Runs the lexer, parser, checker and last-use
-pass in order and returns the program and every diagnostic, in position
-order: the checker's are merged in by position. The checker runs only when
+**Front end** (`front_end.rs`). Runs the lexer, parser and checker in order and
+returns the program and every diagnostic, in position order: the checker's are
+merged in by position. The checker runs only when
 every item has a name.
 
 **Checker** (`check/`, `tir.rs`). Resolves every name, types every expression
@@ -95,18 +96,26 @@ their branch types, `check/call.rs` calls, method calls and constructors, and
 `check/member.rs` fields and methods found through `.` and `?.`. The checker
 reports every error in one run: an expression that already failed gets the
 poison type, so one mistake produces one diagnostic. A program with no errors comes out as the
-typed tree, `tir`, which is all that codegen reads. A type in `tir` is a
+typed tree, `tir`, which `mir` is built from. A type in `tir` is a
 4-byte `Type` handle into one table (`types.rs`), as a name is a `Symbol`;
 its `kind()` gives the structure, and equal structures get the same handle.
 
-**Last use** (`last_use.rs`). Walks each function in `tir` backward and turns
-every read of a counted local that is its last use into a move. A move hands
-over the local's reference instead of sharing it, so a later write to the
+**mir** (`mir/`). The mid-level IR between `tir` and LLVM IR
+([ADR 0025](adr/0025-mir-holds-every-count.md)), built on the build path only,
+so `--check` does not pay for it. `mir::build` lowers each function of `tir` to
+typed locals and basic blocks in which every copy, move and release is its own
+statement (`lower.rs`). The ownership pass (`ownership.rs`) then decides each
+read of a counted local by liveness (`liveness.rs`): a read that is the local's
+last use moves its reference instead of sharing it, so a later write to the
 array it holds can skip the copy
-([ADR 0007](adr/0007-arrays-are-values.md)). The pass reports nothing; the
-driver runs it after the checker finds no errors.
+([ADR 0007](adr/0007-arrays-are-values.md)). The hoist (`hoist.rs`) moves the
+`make_unique` of an array a loop writes to the loop's pre-header
+([ADR 0021](adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md)).
+Debug builds of the compiler end with the certifier (`certify.rs`), which
+checks on every path that each owned reference is moved or released once.
+`tir` carries no moves. `--emit mir` prints the result.
 
-**Codegen** (`codegen/`). Walks `tir` and builds an LLVM module through the
+**Codegen** (`codegen/`). Walks `mir` and builds an LLVM module through the
 [inkwell](https://github.com/TheDan64/inkwell) bindings. Each Sisu function
 becomes an LLVM function named `sisu.<name>`, and each method of a class or an
 enum one named `sisu.<Type>.<method>`. Codegen also emits a `main` with the C
@@ -153,15 +162,16 @@ recursion. It joins a pending list, linked through its dead count word, and
 `sisu_rc.drain.<Enum>` frees the boxes on the list one by one, so the stack
 stays the same size for a value of any depth.
 
-`codegen/matching.rs` compiles a `match`. It evaluates the scrutinee once into
+`mir/lower/pattern.rs` lowers a `match`. It evaluates the scrutinee once into
 a temporary that the `match` owns, then tests the arms' patterns against it in
 order, reading a boxed field through its box. An arm with alternatives tries
 them in order, and an arm with a guard that fails falls through to the next
 alternative, and then the next arm. The first arm that matches adds
-1 to each value it binds, releases the temporary and runs its body. The arms'
-values join in a `phi`. After the last arm, the `match` calls `llvm.trap`: the
-checker has proved that some arm matches, and a checker bug must not become
-undefined behaviour.
+1 to each value it binds, releases the temporary and runs its body. Each arm
+assigns its value to the same local. `codegen/matching.rs` emits the switches
+on a tag or a value that the tests become, and after the last arm a call to
+`llvm.trap`: the checker has proved that some arm matches, and a checker bug
+must not become undefined behaviour.
 
 An array is one counted heap block too: a header of two `i64`s, the count and
 the length, then the elements. Each array type gets the same helpers, such as

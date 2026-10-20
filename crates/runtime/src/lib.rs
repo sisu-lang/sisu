@@ -476,8 +476,9 @@ pub extern "C" fn sisu_rc_check_exit() {
 }
 
 /// Reports a reference-count fault and exits with code 102. Kind 0 is a retain of an
-/// object whose count is 0, kind 1 a release of one. Codegen names the kinds `RC_FAULT_RETAIN`
-/// and `RC_FAULT_RELEASE` in `crates/sisuc/src/codegen/abi.rs`.
+/// object whose count is 0, kind 1 a release of one, kind 2 a read of a local after it was
+/// moved. Codegen names the kinds `RC_FAULT_RETAIN`, `RC_FAULT_RELEASE` and `RC_FAULT_MOVED`
+/// in `crates/sisuc/src/codegen/abi.rs`.
 #[expect(
     unsafe_code,
     reason = "generated code calls this function by its unmangled symbol name"
@@ -493,6 +494,10 @@ pub extern "C" fn sisu_rc_fault(kind: u32) -> ! {
         1 => writeln!(
             std::io::stderr(),
             "sisu: rc check: release of an object whose count is 0"
+        ),
+        2 => writeln!(
+            std::io::stderr(),
+            "sisu: rc check: read of a local after it was moved"
         ),
         other => writeln!(std::io::stderr(), "sisu: rc check: fault {other}"),
     };
@@ -811,6 +816,7 @@ mod tests {
             }
             "fault1" => sisu_rc_fault(1),
             "fault0" => sisu_rc_fault(0),
+            "fault2" => sisu_rc_fault(2),
             "fault7" => sisu_rc_fault(7),
             "print_then_fault" => {
                 sisu_print_int(5);
@@ -1025,6 +1031,11 @@ mod tests {
             "fault0",
             Some(102),
             "sisu: rc check: retain of an object whose count is 0\n",
+        );
+        assert_rc_exit(
+            "fault2",
+            Some(102),
+            "sisu: rc check: read of a local after it was moved\n",
         );
         assert_rc_exit("fault7", Some(102), "sisu: rc check: fault 7\n");
     }

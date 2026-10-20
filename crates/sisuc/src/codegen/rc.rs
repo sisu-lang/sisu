@@ -11,10 +11,10 @@ use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 use rustc_hash::FxHashSet;
 
-use super::abi::{RC_FAULT_RELEASE, RC_FAULT_RETAIN};
+use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
 use super::layout::HeapBlock;
 use super::{Codegen, POSITIONED};
-use crate::tir::{Program, Type, TypeKind};
+use crate::tir::{LocalId, Program, Type, TypeKind};
 
 /// A kind of helper that a counted type has.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -520,12 +520,38 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `object` is below 1: `RC_FAULT_RETAIN` for a retain or a fill's sharing,
     /// `RC_FAULT_RELEASE` for a release or `unique`. Continues in a fresh block.
     pub(super) fn check_count(&self, object: PointerValue<'ctx>, kind: u64) {
+        if self.rc_fault.is_none() {
+            return;
+        }
+        let count = self.load_count(object, "old");
+        let dead = self.int_compare(
+            IntPredicate::SLT,
+            count,
+            self.context.i64_type().const_int(1, false),
+        );
+        self.fault_if(dead, kind);
+    }
+
+    /// With the RC checks, calls `sisu_rc_fault(RC_FAULT_MOVED)` when `local` is a whole
+    /// `string`, class or array local whose slot is `null`: a read of a local after it was
+    /// moved. A scope release reads such a slot by design and does not come here. Enums and
+    /// optionals are not checked: an enum is not a pointer, and `None` is `null`.
+    pub(super) fn check_not_moved(&self, local: LocalId) {
+        let ty = self.types[local.0];
+        if self.rc_fault.is_none() || counted_core(ty) != Some(ty) {
+            return;
+        }
+        let slot = self.load_local(local).into_pointer_value();
+        let null = self.builder.build_is_null(slot, "moved").expect(POSITIONED);
+        self.fault_if(null, RC_FAULT_MOVED);
+    }
+
+    /// Branches on `dead` to a block that calls `sisu_rc_fault(kind)`, which never returns, and
+    /// continues in a fresh block. Does nothing without the RC checks.
+    fn fault_if(&self, dead: IntValue<'ctx>, kind: u64) {
         let Some(fault) = self.rc_fault else {
             return;
         };
-        let i64_type = self.context.i64_type();
-        let count = self.load_count(object, "old");
-        let dead = self.int_compare(IntPredicate::SLT, count, i64_type.const_int(1, false));
         let function = self.current_function();
         let fault_block = self.context.append_basic_block(function, "rc.fault");
         let ok = self.context.append_basic_block(function, "rc.ok");

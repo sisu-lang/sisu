@@ -3,7 +3,10 @@
 Status: accepted, 2026-10-15. Milestone 7 builds it. It builds on
 [ADR 0005](0005-reference-counting.md)'s reference counts, and it is the
 enum half of [ADR 0011](0011-let-mut-marks-what-can-change.md)'s
-self-containment rule.
+self-containment rule. On 2026-10-18,
+[ADR 0025](0025-mir-holds-every-count.md) superseded its statement that
+`match` stays in `tir` with no `mir`: `match` now lowers to `mir`, which keeps
+the same scheme of arms in order and backtracking choice points.
 
 An enum is a value: a tag plus the payload of the variant it holds, stored
 inline, with no heap block of its own. Every value of an enum is one of its

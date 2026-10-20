@@ -315,10 +315,12 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
     },
 ];
 
-/// `sisu_rc_fault`'s `kind` for a retain of an object whose count is below 1, and for a
-/// release of one. The runtime reads `kind` in `sisu_rc_fault` (`crates/runtime/src/lib.rs`).
+/// `sisu_rc_fault`'s `kind` for a retain of an object whose count is below 1, for a release of
+/// one, and for a read of a local after it was moved. The runtime reads `kind` in
+/// `sisu_rc_fault` (`crates/runtime/src/lib.rs`).
 pub(super) const RC_FAULT_RETAIN: u64 = 0;
 pub(super) const RC_FAULT_RELEASE: u64 = 1;
+pub(super) const RC_FAULT_MOVED: u64 = 2;
 
 /// `sisu_pad`'s `align`: the text goes on the left, on the right, or in the centre. The runtime
 /// reads `align` in `sisu_pad` (`crates/runtime/src/text.rs`).

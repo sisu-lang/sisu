@@ -4,7 +4,6 @@
 use std::fmt::Write as _;
 
 use super::*;
-use crate::front_end::front_end;
 
 /// `decls` with an empty `main`.
 fn with_main(decls: &str) -> String {
@@ -77,34 +76,6 @@ fn boxes_follow_components() {
         .0
         .expect("A and B should check clean");
     assert_eq!(program.enums[0].cycle, program.enums[1].cycle);
-}
-
-#[test]
-fn enum_countedness() {
-    // Each row: the declarations of `E`, and whether `E` is counted.
-    let rows = [
-        ("enum E {\n    A\n    B\n}", false),
-        ("enum E {\n    A(i64, bool)\n    B(char)\n}", false),
-        ("enum E {\n    A(string)\n}", true),
-        ("class C { n: i64 }\nenum E {\n    A(C)\n}", true),
-        ("enum E {\n    A\n    B(E)\n}", true),
-        ("enum S {\n    A(string)\n}\nenum E {\n    B(S)\n}", true),
-        ("enum S {\n    A(i64)\n}\nenum E {\n    B(S)\n}", false),
-    ];
-    for (decls, counted) in rows {
-        let src = with_main(&format!(
-            "{decls}\nfn f(e: E) {{\n    let a = e\n    let b = e\n    print(1)\n}}"
-        ));
-        let (program, ds) = front_end(&src);
-        assert!(ds.is_empty(), "{ds:?}");
-        let printed = program.expect("the row should check clean").to_string();
-        let second = if counted {
-            "(let b#2 (move e#0))"
-        } else {
-            "(let b#2 e#0)"
-        };
-        assert!(printed.contains(second), "{decls}: {second} in {printed}");
-    }
 }
 
 #[test]

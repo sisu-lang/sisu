@@ -1,6 +1,10 @@
 # A loop makes its written arrays unique before it starts
 
-Status: accepted, 2026-10-16.
+Status: accepted, 2026-10-16. On 2026-10-18,
+[ADR 0025](0025-mir-holds-every-count.md) moved the hoist from codegen to
+`mir` (`mir/hoist.rs`) and widened it: inside the loop, only a copy, a move
+or a whole assignment of the local keeps the check, and a read in place does
+not, where codegen's hoist allowed only an index base and `len`.
 
 When a loop writes elements of a local array, and nothing in the loop
 shares that local, codegen makes the array unique once, before the first

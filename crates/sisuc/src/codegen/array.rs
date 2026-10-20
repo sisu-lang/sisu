@@ -9,71 +9,16 @@ use inkwell::{AddressSpace, IntPredicate};
 use super::abi::{RC_FAULT_RELEASE, RC_FAULT_RETAIN};
 use super::layout::HeapBlock;
 use super::rc::{Helper, counted_core, param};
-use super::{Codegen, POSITIONED, Slot, class_of};
+use super::{Codegen, POSITIONED};
 use crate::source::Span;
-use crate::tir::{Expr, ExprKind, LocalId, Place, Type, TypeKind};
-
-/// A field or element place with its own operands evaluated.
-pub(super) struct PlaceOperands<'p, 'ctx> {
-    /// The root's slot: a local's `alloca`, or the field's address in a field root's base.
-    pub(super) slot: PointerValue<'ctx>,
-    /// The type of the value the root's slot holds.
-    pub(super) ty: Type,
-    /// A field root's base and its type, which the write releases last.
-    object: Option<(PointerValue<'ctx>, Type)>,
-    /// Each index with its value, from the root outwards.
-    pub(super) indexes: Vec<(&'p Expr, IntValue<'ctx>)>,
-    /// Whether the root is a local that an enclosing loop made unique before it started, so
-    /// that a write skips `unique` at the root.
-    pub(super) unique_root: bool,
-}
-
-impl<'ctx> PlaceOperands<'_, 'ctx> {
-    /// Releases a field root's base, which kept the object alive through the write.
-    pub(super) fn release_object(self, codegen: &Codegen<'ctx, '_>) {
-        if let Some((object, ty)) = self.object {
-            codegen.release(object.into(), ty);
-        }
-    }
-}
+use crate::tir::{Type, TypeKind};
 
 /// The element type of `ty`, an array type.
-fn element_of(ty: Type) -> Type {
+pub(super) fn element_of(ty: Type) -> Type {
     let TypeKind::Array(element) = ty.kind() else {
         unreachable!("the checker should give an array node an array type")
     };
     element
-}
-
-/// Whether evaluating `expr` leaves every local as it was, so a local read before it still
-/// holds the same block after it. A whitelist of node kinds that call nothing, bind nothing and
-/// move nothing: a node kind added later is excluded until it is listed here.
-pub(super) fn leaves_locals(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::Int(_) | ExprKind::Local(_) => true,
-        ExprKind::Unary { operand, .. }
-        | ExprKind::Convert(operand)
-        | ExprKind::Len(operand)
-        | ExprKind::Field { base: operand, .. } => leaves_locals(operand),
-        ExprKind::Binary { lhs, rhs, .. } => leaves_locals(lhs) && leaves_locals(rhs),
-        ExprKind::Compare { operands, .. } => operands.iter().all(leaves_locals),
-        _ => false,
-    }
-}
-
-/// The local that a read of `base` loads without retaining it, as `borrow_or_expr` does: the
-/// local keeps the block alive, so codegen skips its retain and release.
-pub(super) fn borrowed_local(base: &Expr) -> Option<LocalId> {
-    match base.kind {
-        ExprKind::Local(local) => Some(local),
-        _ => None,
-    }
-}
-
-/// The local that `Codegen::index` loads without retaining it: a local `base`, while the
-/// parameter `index` passes `leaves_locals`.
-pub(super) fn borrowed_index_base(base: &Expr, index: &Expr) -> Option<LocalId> {
-    borrowed_local(base).filter(|_| leaves_locals(index))
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
@@ -213,17 +158,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
-    /// `ArrayLit`: every element first, left to right, then the block, which takes each
-    /// element's reference. Allocating last means an element that exits leaves no block.
-    pub(super) fn array_lit(&mut self, ty: Type, elements: &[Expr]) -> PointerValue<'ctx> {
-        let values: Vec<_> = elements
-            .iter()
-            .map(|e| {
-                self.expr(e).expect(
-                    "the checker should give every array element a value type, never `unit` or `never`",
-                )
-            })
-            .collect();
+    /// The block of an array literal of type `ty`, which takes each of the evaluated `values`.
+    pub(super) fn array_lit(
+        &self,
+        ty: Type,
+        values: &[BasicValueEnum<'ctx>],
+    ) -> PointerValue<'ctx> {
         let element = element_of(ty);
         let i64_type = self.context.i64_type();
         let len = u64::try_from(values.len())
@@ -231,21 +171,23 @@ impl<'ctx> Codegen<'ctx, '_> {
         let array = self.alloc_array(element, i64_type.const_int(len, false), None);
         for (index, value) in (0..).zip(values) {
             let slot = self.element_ptr(element, array, i64_type.const_int(index, false));
-            self.store_tagged(slot, value, self.element_tag);
+            self.store_tagged(slot, *value, self.element_tag);
         }
         array
     }
 
-    /// `ArrayFill`: `value`, then `len`, then the block, with `value` in every slot. A
-    /// counted pointer `value` gains `len - 1` references in one step, or loses its one when
-    /// `len` is 0. A counted enum `value` is retained once per slot, then released.
-    pub(super) fn array_fill(&mut self, ty: Type, value: &Expr, len: &Expr) -> PointerValue<'ctx> {
+    /// The block of `[filler; count]` of type `ty`; a negative or oversized `count` panics at
+    /// `span`. A counted pointer `filler` gains `count - 1` references in one step, or loses its
+    /// one when `count` is 0. A counted enum `filler` is retained once per slot, then released.
+    pub(super) fn array_fill(
+        &self,
+        filler: BasicValueEnum<'ctx>,
+        count: IntValue<'ctx>,
+        ty: Type,
+        span: Span,
+    ) -> PointerValue<'ctx> {
         let element = element_of(ty);
-        let filler = self.expr(value).expect(
-            "the checker should give the value of `[v; n]` a value type, never `unit` or `never`",
-        );
-        let count = self.value(len);
-        let array = self.alloc_array(element, count, Some(len.span));
+        let array = self.alloc_array(element, count, Some(span));
         self.count_loop(count, |index| {
             self.store_tagged(
                 self.element_ptr(element, array, index),
@@ -301,59 +243,25 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
-    /// `Index`: `base`, then `index`, the bounds check, then the element, retained. The base
-    /// is released after the load, unless it is a local read whose index leaves every local
-    /// as it was: the local then keeps the block alive, so codegen skips its retain and
-    /// release.
-    pub(super) fn index(&mut self, ty: Type, base: &Expr, index: &Expr) -> BasicValueEnum<'ctx> {
-        let local = borrowed_index_base(base, index);
-        let array = match local {
-            Some(local) => self.load_local(local),
-            None => self.expr(base),
-        }
-        .expect("the checker should only index an array, which lowers to a pointer")
-        .into_pointer_value();
-        let at = self.value(index);
-        self.check_bounds(array, at, index.span);
-        let value = self.load_element(ty, array, at);
-        self.retain(value, ty);
-        if local.is_none() {
-            self.release(array.into(), base.ty);
-        }
-        value
-    }
-
-    /// `Len`: the length of `base`, an array or a string, which is then released, unless it is
-    /// a local: the local keeps the block alive, so codegen skips its retain and release.
-    /// `s.words().len()` counts the words without building them (see `word_count`).
-    pub(super) fn len(&mut self, base: &Expr) -> IntValue<'ctx> {
-        if let ExprKind::Words(string) = &base.kind {
-            return self.word_count(string);
-        }
-        let (array, borrowed) = self.borrow_or_expr(base);
-        let array = array
-            .expect("the checker should only call `len` on an array or a string, which lower to a pointer")
-            .into_pointer_value();
-        let len = if base.ty == Type::STRING {
+    /// The length of `array`, of type `ty`, an array or a string.
+    pub(super) fn len(&self, array: PointerValue<'ctx>, ty: Type) -> IntValue<'ctx> {
+        if ty == Type::STRING {
             self.string_len(array)
         } else {
             self.array_len(array)
-        };
-        if !borrowed {
-            self.release(array.into(), base.ty);
         }
-        len
     }
 
-    /// `Sum`: the elements of `base`, an `[i64]` or an `[f64]` as `ty` says, added in order
-    /// from zero; then the base is released. An `i64` adds with the checked add of `+`, which
-    /// panics at `span`, and an `f64` with `fadd` from `+0.0`, so an empty `[f64]` sums to
-    /// `0.0` and the order of the additions is the order of the elements.
-    pub(super) fn sum(&mut self, ty: Type, base: &Expr, span: Span) -> BasicValueEnum<'ctx> {
-        let array = self
-            .expr(base)
-            .expect("the checker should only call `sum` on an array, which lowers to a pointer")
-            .into_pointer_value();
+    /// The elements of `array`, an `[i64]` or an `[f64]` as `ty` says, added in order from
+    /// zero. An `i64` adds with the checked add of `+`, which panics at `span`, and an `f64`
+    /// with `fadd` from `+0.0`, so an empty `[f64]` sums to `0.0` and the order of the additions
+    /// is the order of the elements.
+    pub(super) fn sum(
+        &self,
+        ty: Type,
+        array: PointerValue<'ctx>,
+        span: Span,
+    ) -> BasicValueEnum<'ctx> {
         let llvm_type = self.array_layout(ty).element;
         let total = self.entry_alloca(llvm_type, "total");
         self.store(total, llvm_type.const_zero());
@@ -376,22 +284,17 @@ impl<'ctx> Codegen<'ctx, '_> {
             };
             self.store(total, added);
         });
-        let sum = self.load(llvm_type, total);
-        self.release(array.into(), base.ty);
-        sum
+        self.load(llvm_type, total)
     }
 
-    /// `Contains`: `base`, then `value`; whether some element of `base` is `==` to `value`,
-    /// stopping at the first that is. Then both are released.
-    pub(super) fn contains(&mut self, base: &Expr, value: &Expr) -> IntValue<'ctx> {
-        let element = element_of(base.ty);
-        let array = self
-            .expr(base)
-            .expect(
-                "the checker should only call `contains` on an array, which lowers to a pointer",
-            )
-            .into_pointer_value();
-        let needle = self.operand(value);
+    /// Whether some element of `array`, whose element type is `element`, is `==` to `needle`,
+    /// stopping at the first that is.
+    pub(super) fn contains(
+        &self,
+        element: Type,
+        array: PointerValue<'ctx>,
+        needle: BasicValueEnum<'ctx>,
+    ) -> IntValue<'ctx> {
         let function = self.current_function();
         let found = self.context.append_basic_block(function, "contains.found");
         let end = self.context.append_basic_block(function, "contains.end");
@@ -409,151 +312,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.branch_to(end);
         self.builder.position_at_end(end);
         let bool_type = self.context.bool_type();
-        let hit = self
-            .phi(
-                bool_type,
-                &[
-                    (bool_type.const_zero(), missed),
-                    (bool_type.const_int(1, false), found),
-                ],
-            )
-            .into_int_value();
-        self.release(array.into(), base.ty);
-        self.release(needle, value.ty);
-        hit
-    }
-
-    /// The operands of a field or element `place`, evaluated left to right: a field root's
-    /// base, then each index from the root outwards. `None` when an index exits, which ends
-    /// the statement: `spill` bound every counted operand before it to a local, so nothing is
-    /// left to release.
-    pub(super) fn place_operands<'p>(
-        &mut self,
-        place: &'p Place,
-    ) -> Option<PlaceOperands<'p, 'ctx>> {
-        let mut indexes = Vec::new();
-        let mut root = place;
-        while let Place::Index { base, index } = root {
-            indexes.push(index);
-            root = base;
-        }
-        indexes.reverse();
-        let object = match root {
-            Place::Field { base, .. } => Some((
-                self.expr(base)
-                    .expect("the checker should only make a field place on a class-typed base, which lowers to a pointer")
-                    .into_pointer_value(),
-                base.ty,
-            )),
-            _ => None,
-        };
-        let mut at = Vec::with_capacity(indexes.len());
-        for index in indexes {
-            at.push((index, self.expr(index)?.into_int_value()));
-        }
-        let (slot, ty) = match root {
-            Place::Local(local) => (self.variable_slot(*local), self.types[local.0]),
-            Place::Field { base, index } => {
-                let class = class_of(base.ty);
-                let (object, _) =
-                    object.expect("a field root's base should have been evaluated above");
-                (
-                    self.field_ptr(class, object, *index),
-                    self.program.classes[class.0].fields[*index].ty,
-                )
-            }
-            Place::Index { .. } => unreachable!("the loop above should stop at the root"),
-        };
-        Some(PlaceOperands {
-            slot,
-            ty,
-            object,
-            indexes: at,
-            unique_root: matches!(root, Place::Local(local) if self.unique_locals[local.0]),
-        })
-    }
-
-    /// The `alloca` of the variable `local`.
-    pub(super) fn variable_slot(&self, local: LocalId) -> PointerValue<'ctx> {
-        let Some(Slot::Alloca(ptr, _)) = self.locals[local.0] else {
-            unreachable!(
-                "the checker should only let a variable be written, and every variable has an `alloca`"
-            )
-        };
-        ptr
-    }
-
-    /// Walks the indexes of `operands` from its root slot (bounds check, then `unique`, per
-    /// level) and returns the final slot and its type. A root that an enclosing loop made
-    /// unique skips `unique` at the root.
-    pub(super) fn element_slot(
-        &mut self,
-        operands: &PlaceOperands<'_, 'ctx>,
-    ) -> (PointerValue<'ctx>, Type) {
-        let unique_from = usize::from(operands.unique_root);
-        self.walk(operands.slot, operands.ty, &operands.indexes, unique_from)
-    }
-
-    /// Walks `place`'s indexes as `element_slot` does, but makes nothing unique: the slot that
-    /// a read of the place loads.
-    pub(super) fn read_slot(
-        &self,
-        root_slot: PointerValue<'ctx>,
-        root_ty: Type,
-        indexes: &[(&Expr, IntValue<'ctx>)],
-    ) -> PointerValue<'ctx> {
-        self.walk(root_slot, root_ty, indexes, indexes.len()).0
-    }
-
-    /// The walk from `slot`, of type `ty`: at each level, load the array, check the index
-    /// against its length, make the array unique if the level is at or past `unique_from`, and
-    /// take the element's address as the next slot. Checking first means a level whose index
-    /// is out of bounds copies nothing; an outer level may already have copied. In a hoisted
-    /// write, the root level was made unique by the enclosing loop, so a level whose index is
-    /// out of bounds may also follow that copy. A read passes
-    /// `indexes.len()`, so it makes no level unique, even of a shared array.
-    fn walk(
-        &self,
-        mut slot: PointerValue<'ctx>,
-        mut ty: Type,
-        indexes: &[(&Expr, IntValue<'ctx>)],
-        unique_from: usize,
-    ) -> (PointerValue<'ctx>, Type) {
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        for (level, &(index, at)) in indexes.iter().enumerate() {
-            let mut array = self
-                .builder
-                .build_load(ptr_type, slot, "array")
-                .expect(POSITIONED)
-                .into_pointer_value();
-            self.check_bounds(array, at, index.span);
-            if level >= unique_from {
-                array = self.unique(slot, ty);
-            }
-            ty = element_of(ty);
-            slot = self.element_ptr(ty, array, at);
-        }
-        (slot, ty)
-    }
-
-    /// `Assign { place: Index { .. }, value }`. The place's own operands come first, from
-    /// `place_operands`. Then `value`, so that a value which stores the array elsewhere makes
-    /// `element_slot`'s walk copy it. Last, the store, the release of the old element, and the
-    /// release of a field root's base.
-    pub(super) fn assign_index(&mut self, place: &Place, value: &Expr) {
-        let Some(operands) = self.place_operands(place) else {
-            return;
-        };
-        let Some(value) = self.expr(value) else {
-            return;
-        };
-        let (slot, ty) = self.element_slot(&operands);
-        let old = ty
-            .is_counted(&self.program.enums)
-            .then(|| self.load_tagged(value.get_type(), slot, "old", self.element_tag));
-        self.store_tagged(slot, value, self.element_tag);
-        self.discard(old, ty);
-        operands.release_object(self);
+        self.phi(
+            bool_type,
+            &[
+                (bool_type.const_zero(), missed),
+                (bool_type.const_int(1, false), found),
+            ],
+        )
+        .into_int_value()
     }
 
     /// The body of `@sisu_rc.drop.[T]`, `@sisu_rc.eq.[T]` or `@sisu_rc.unique.[T]`, `T`

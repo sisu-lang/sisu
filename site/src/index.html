@@ -63,9 +63,8 @@ Sisu is a small, statically typed language that compiles to native x86-64 code t
       <li><b>Lexer</b><span class="io">text <em>→</em> tokens</span><span class="what">Splits the UTF-8 source into names, numbers and symbols.</span></li>
       <li><b>Parser</b><span class="io">tokens <em>→</em> AST</span><span class="what">Builds the syntax tree: the program as you wrote it.</span></li>
       <li><b>Checker</b><span class="io">AST <em>→</em> TIR</span><span class="what">Resolves every name and types every expression. Rewrites shorthand such as <code>for</code> and <code>??</code> into simpler forms, and reports every error in one run. Its output is the typed tree, TIR.</span></li>
-      <li><b>Last use</b><span class="io">TIR <em>→</em> TIR</span><span class="what">Finds the last read of each counted value and hands over its reference there, so an array can change in place without a copy.</span></li>
-      <li class="planned"><b>MIR</b><span class="io">TIR <em>→</em> MIR</span><span class="what"><span class="soon" style="margin-right:6px">planned</span>A mid-level form in which every reference-count change is its own statement, so the compiler can remove the pairs that cancel out and check the rest.</span></li>
-      <li><b>Codegen</b><span class="io">TIR <em>→</em> LLVM IR</span><span class="what">Writes the program in LLVM's language. Once MIR exists, codegen reads MIR instead.</span></li>
+      <li><b>MIR</b><span class="io">TIR <em>→</em> MIR</span><span class="what">A mid-level form in which every reference-count change is its own statement. It hands over each counted value's reference at its last read, so an array can change in place without a copy, and debug builds check every function. Removing the pairs that cancel out is planned.</span></li>
+      <li><b>Codegen</b><span class="io">MIR <em>→</em> LLVM IR</span><span class="what">Writes the program in LLVM's language.</span></li>
       <li><b>LLVM</b><span class="io">LLVM IR <em>→</em> object</span><span class="what">Optimizes and writes x86-64 machine code.</span></li>
       <li><b>Link</b><span class="io">object <em>→</em> executable</span><span class="what">The system C compiler, <code>cc</code>, links it with the Sisu runtime.</span></li>
     </ol>

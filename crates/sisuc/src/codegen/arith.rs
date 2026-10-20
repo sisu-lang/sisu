@@ -8,22 +8,28 @@ use inkwell::{FloatPredicate, IntPredicate};
 use super::{Codegen, POSITIONED};
 use crate::diagnostic::Panic;
 use crate::source::Span;
-use crate::tir::{BinaryOp, CompareOp, Expr, ExprKind, Type, TypeKind};
+use crate::tir::{BinaryOp, CompareOp, Type, TypeKind};
 
 impl<'ctx> Codegen<'ctx, '_> {
-    /// `span` is the operator expression's: arithmetic panics point at its start.
+    /// `lhs op rhs` on two evaluated operands of type `ty`: an `i64` or `u8` op that panics at
+    /// `span` on overflow or a zero divisor, or an `f64` op to IEEE 754, with no such check
+    /// and no fast-math flag. `&&` and `||` here are the eager `and` and `or` of two computed
+    /// `bool`s: lowering branches for the source's short-circuit.
     pub(super) fn binary(
-        &mut self,
+        &self,
         op: BinaryOp,
-        lhs: &Expr,
-        rhs: &Expr,
+        ty: Type,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
         span: Span,
-    ) -> IntValue<'ctx> {
-        if matches!(op, BinaryOp::And | BinaryOp::Or) {
-            return self.short_circuit(op == BinaryOp::And, lhs, rhs);
+    ) -> BasicValueEnum<'ctx> {
+        if ty == Type::F64 {
+            return self
+                .float_binary(op, lhs.into_float_value(), rhs.into_float_value())
+                .into();
         }
-        let signed = lhs.ty != Type::U8;
-        let (l, r) = (self.value(lhs), self.value(rhs));
+        let (l, r) = (lhs.into_int_value(), rhs.into_int_value());
+        let signed = ty != Type::U8;
         let intrinsic = |name| {
             format!(
                 "llvm.{}{name}.with.overflow",
@@ -39,21 +45,20 @@ impl<'ctx> Codegen<'ctx, '_> {
             BinaryOp::Sub => self.checked(&intrinsic("sub"), l, r, span),
             BinaryOp::Mul => self.checked(&intrinsic("mul"), l, r, span),
             BinaryOp::Div | BinaryOp::Rem => self.division(op == BinaryOp::Rem, signed, l, r, span),
-            BinaryOp::And | BinaryOp::Or => unreachable!(
-                "`binary` should send `and` and `or` to `short_circuit` before this match"
-            ),
+            BinaryOp::And => self.builder.build_and(l, r, "and").expect(POSITIONED),
+            BinaryOp::Or => self.builder.build_or(l, r, "or").expect(POSITIONED),
         }
+        .into()
     }
 
     /// `lhs op rhs` on `f64`s, to IEEE 754: no overflow or zero divisor check, and no fast-math
     /// flag. `%` is `frem`, whose result has the sign of `lhs`, as C's `fmod`.
-    pub(super) fn float_binary(
-        &mut self,
+    fn float_binary(
+        &self,
         op: BinaryOp,
-        lhs: &Expr,
-        rhs: &Expr,
+        l: FloatValue<'ctx>,
+        r: FloatValue<'ctx>,
     ) -> FloatValue<'ctx> {
-        let (l, r) = (self.float(lhs), self.float(rhs));
         let b = &self.builder;
         match op {
             BinaryOp::Add => b.build_float_add(l, r, "sum"),
@@ -177,6 +182,23 @@ impl<'ctx> Codegen<'ctx, '_> {
         .expect(POSITIONED)
     }
 
+    /// One step of a comparison chain: `lhs op rhs` on two evaluated operands of type `ty`. On
+    /// two strings it is `sisu_str_compare`'s result against 0 under `op`'s signed predicate.
+    pub(super) fn compare(
+        &self,
+        op: CompareOp,
+        ty: Type,
+        lhs: BasicValueEnum<'ctx>,
+        rhs: BasicValueEnum<'ctx>,
+    ) -> IntValue<'ctx> {
+        if ty == Type::STRING {
+            let order = self.str_compare(lhs.into_pointer_value(), rhs.into_pointer_value());
+            let zero = self.context.i64_type().const_zero();
+            return self.compare_pair(op, true, order.into(), zero.into());
+        }
+        self.compare_pair(op, !matches!(ty, Type::U8 | Type::CHAR), lhs, rhs)
+    }
+
     /// `lhs op rhs` on two integers, `signed` or not, or on two `f64`s, ordered: false beside a
     /// NaN.
     pub(super) fn compare_pair(
@@ -209,20 +231,16 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `i64(u8)`, `i64(char)`, `i64(f64)`, `u8(i64)`, `char(i64)` and `f64(i64)`, the type
-    /// `e.ty` saying which. A `u8?` or `char?` is a `{ i1, T }` pair of whether the value fits
+    /// `ty` saying which. A `u8?` or `char?` is a `{ i1, T }` pair of whether the value fits
     /// and the value truncated, with no branch: `u8` fits `0..=255`, and `char` a scalar value.
     /// One unsigned compare also catches the negatives. An `i64?` comes from an `f64`.
-    pub(super) fn convert(&mut self, e: &Expr) -> BasicValueEnum<'ctx> {
-        let ExprKind::Convert(operand) = &e.kind else {
-            unreachable!("`convert` should be called on a `Convert` node");
-        };
-        let kind = e.ty.kind();
+    pub(super) fn convert(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
+        let kind = ty.kind();
         if kind == TypeKind::Optional(Type::I64) {
-            let x = self.float(operand);
-            let (fits, n) = self.float_to_int(x);
-            return self.optional(e.ty, fits, n.into());
+            let (fits, n) = self.float_to_int(value.into_float_value());
+            return self.optional(ty, fits, n.into());
         }
-        let value = self.value(operand);
+        let value = value.into_int_value();
         let (fits, payload) = match kind {
             TypeKind::F64 => {
                 return self
@@ -249,13 +267,13 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
                 ty => unreachable!("the checker should give no conversion to `{ty}?`"),
             },
-            _ => unreachable!("the checker should give no conversion to `{}`", e.ty),
+            _ => unreachable!("the checker should give no conversion to `{ty}`"),
         };
         let narrowed = self
             .builder
             .build_int_truncate(value, payload, "narrowed")
             .expect(POSITIONED);
-        self.optional(e.ty, fits, narrowed.into())
+        self.optional(ty, fits, narrowed.into())
     }
 
     /// Whether `x` is a whole number in `i64`'s range, and that number, with no branch.

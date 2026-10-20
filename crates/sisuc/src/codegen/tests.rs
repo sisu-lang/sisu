@@ -1,8 +1,10 @@
 use super::*;
 use crate::check::check;
 use crate::parser::parse_ok;
+use crate::tir::BinaryOp;
+use inkwell::values::{AnyValue, InstructionOpcode, InstructionValue, Operand};
 
-/// Lexes, parses, checks (no errors allowed), marks last uses in and compiles `src`, then
+/// Lexes, parses, checks (no errors allowed), builds the mir of and compiles `src`, then
 /// verifies the module.
 fn compiled<'ctx>(context: &'ctx Context, src: &str) -> Module<'ctx> {
     compiled_with(context, src, false)
@@ -10,12 +12,32 @@ fn compiled<'ctx>(context: &'ctx Context, src: &str) -> Module<'ctx> {
 
 /// `compiled`, with the RC checks if `rc_checks`.
 fn compiled_with<'ctx>(context: &'ctx Context, src: &str, rc_checks: bool) -> Module<'ctx> {
+    compiled_from(context, src, rc_checks, |_| {})
+}
+
+/// `compiled_with`, after `edit` changes the mir that `build` gives: a test uses it to put in
+/// mir that lowering cannot produce.
+fn compiled_from<'ctx>(
+    context: &'ctx Context,
+    src: &str,
+    rc_checks: bool,
+    edit: impl FnOnce(&mut mir::Program),
+) -> Module<'ctx> {
     let program = parse_ok(src);
     let (program, diagnostics) = check(&program, src);
-    let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-    crate::last_use::mark(&mut program);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let mut mir = mir::build(&program);
+    edit(&mut mir);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
-    let module = compile(context, &program, "test.sisu", src, &machine, rc_checks);
+    let module = compile(
+        context,
+        &program,
+        &mir,
+        "test.sisu",
+        src,
+        &machine,
+        rc_checks,
+    );
     if let Err(e) = module.verify() {
         panic!("{e}\n{}", module.print_to_string());
     }
@@ -45,6 +67,8 @@ fn verifies_chain_and_short_circuit() {
     );
 }
 
+/// An `if` with one returning branch: that branch returns on its own, and the block after the
+/// `if` is reached only from the other.
 #[test]
 fn verifies_one_returning_branch() {
     let context = Context::create();
@@ -53,10 +77,15 @@ fn verifies_one_returning_branch() {
         "fn a(c: bool) -> i64 {\n    if c { return 1 } else { 2 }\n}\nfn b(c: bool) -> i64 {\n    if c { 1 } else { return 2 }\n}\nfn main() {\n    print(a(true))\n}",
     );
     let ir = module.print_to_string().to_string();
-    let phis: Vec<_> = ir.lines().filter(|l| l.contains(" = phi ")).collect();
-    assert_eq!(phis.len(), 2, "{ir}");
-    for phi in phis {
-        assert_eq!(phi.matches('[').count(), 1, "{phi}");
+    for name in ["a", "b"] {
+        let body = function_body(&ir, &format!("define internal i64 @sisu.{name}("));
+        assert_eq!(body.matches("\n  ret i64 ").count(), 2, "{body}");
+        let preds: Vec<_> = body
+            .lines()
+            .filter_map(|l| l.split_once("; preds = ").map(|(_, preds)| preds))
+            .collect();
+        assert!(!preds.is_empty(), "{body}");
+        assert!(preds.iter().all(|p| !p.contains(',')), "{body}");
     }
 }
 
@@ -646,8 +675,11 @@ fn field_read_retains_before_releasing_base() {
             .position(|l| wanted(l))
             .unwrap_or_else(|| panic!("no {what} in\n{main}"))
     };
-    let (_, next, _) = instruction(&lines, &|t| t.starts_with("load ptr, ptr "))
-        .unwrap_or_else(|| panic!("no load of `next` in\n{main}"));
+    // The field's load carries its TBAA tag; a local's slot has none.
+    let (_, next, _) = instruction(&lines, &|t| {
+        t.starts_with("load ptr, ptr ") && t.contains("!tbaa")
+    })
+    .unwrap_or_else(|| panic!("no load of `next` in\n{main}"));
     let order = [
         at(&|l| l.starts_with(&format!("{next} = load ptr")), "load"),
         at(
@@ -690,6 +722,13 @@ fn assert_count_checked(body: &str, kind: u32, step: &dyn Fn(&str) -> bool) {
             && count_owner(&lines, t) == Some(object)
     })
     .unwrap_or_else(|| panic!("no signed test of {object}'s count against 1 in\n{body}"));
+    let branch_at = assert_faults_on(&lines, dead, kind, body);
+    assert!([test_at, branch_at, step_at].is_sorted(), "{body}");
+}
+
+/// Asserts that the branch on `dead` in `lines` goes, when `dead` holds, to a block that
+/// calls `sisu_rc_fault(i32 <kind>)`; returns the branch's line index.
+fn assert_faults_on(lines: &[&str], dead: &str, kind: u32, body: &str) -> usize {
     let branch = format!("br i1 {dead}, label %");
     let branch_at = lines
         .iter()
@@ -708,7 +747,7 @@ fn assert_count_checked(body: &str, kind: u32, step: &dyn Fn(&str) -> bool) {
         Some(format!("call void @sisu_rc_fault(i32 {kind})").as_str()),
         "{body}"
     );
-    assert!([test_at, branch_at, step_at].is_sorted(), "{body}");
+    branch_at
 }
 
 #[test]
@@ -742,6 +781,219 @@ fn rc_checks_guard_retain_release_and_exit() {
         .split_once("call void @sisu_rc_check_exit()")
         .unwrap_or_else(|| panic!("no exit check in\n{main}"));
     assert!(after_check.contains("ret i32 0"), "{main}");
+}
+
+/// `fn main() { let s = "hi"; take(move s); print(s) }`: the mir of a read after a move, which
+/// the certifier would reject.
+fn print_after_move() -> mir::Function {
+    let whole = |local| Place {
+        local,
+        projections: Vec::new(),
+        borrow: false,
+        guard: false,
+    };
+    let assign = |dest, value| Statement::Assign { dest, value };
+    let mut b = mir::tests::Builder::new("main");
+    let s = b.local("s", Type::STRING);
+    b.block(
+        vec![
+            assign(Some(s), Rvalue::CopyStr("hi".to_owned())),
+            assign(
+                None,
+                Rvalue::Call {
+                    func: FuncId(0),
+                    args: vec![mir::Operand::Move(s)],
+                },
+            ),
+            assign(
+                None,
+                Rvalue::Print {
+                    stream: Stream::Stdout,
+                    operand: mir::Operand::Read(whole(s)),
+                },
+            ),
+            Statement::ScopeRelease(s),
+        ],
+        Terminator::Return(None),
+    );
+    b.finish()
+}
+
+#[test]
+fn read_after_move_faults() {
+    let context = Context::create();
+    let module = compiled_from(
+        &context,
+        "fn take(s: string) {}
+fn main() {}",
+        true,
+        |mir| {
+            let main = mir.functions.iter_mut().find(|f| f.name == "main");
+            *main.expect("the source should define `main`") = print_after_move();
+        },
+    );
+    let ir = module.print_to_string().to_string();
+    let main = function_body(&ir, "@sisu.main(");
+    let lines: Vec<&str> = main.lines().map(str::trim).collect();
+    // The move empties `s`'s slot; the print then reads the slot, and null tests what it loaded.
+    let moved_at = lines
+        .iter()
+        .position(|l| l.starts_with("store ptr null, ptr "))
+        .unwrap_or_else(|| panic!("no move in\n{main}"));
+    let slot = lines[moved_at]["store ptr null, ptr ".len()..]
+        .split(',')
+        .next()
+        .expect("a store should name its address");
+    let print_at = lines
+        .iter()
+        .position(|l| l.starts_with("call void @sisu_print_str("))
+        .unwrap_or_else(|| panic!("no print in\n{main}"));
+    let between = &lines[moved_at..print_at];
+    let (_, loaded, _) = instruction(between, &|t| {
+        t.starts_with(&format!("load ptr, ptr {slot},"))
+    })
+    .unwrap_or_else(|| panic!("the print should read {slot} in\n{main}"));
+    let (_, null, _) = instruction(between, &|t| t == format!("icmp eq ptr {loaded}, null"))
+        .unwrap_or_else(|| panic!("no null test of {loaded} in\n{main}"));
+    let branch_at = assert_faults_on(&lines, null, 2, main);
+    assert!(branch_at < print_at, "{main}");
+}
+
+const MOVED_ROOT_SOURCE: &str = "enum Shape {\n    Dot\n    Circle(i64)\n}\nclass Holder {\n    mut n: i64\n    mut xs: [i64]\n    mut shape: Shape\n}\nfn make_holder() -> Holder { Holder(n: 1, xs: [1, 2], shape: Shape.Dot) }\nfn make_array() -> [i64] { [1, 2] }\nfn take_holder(h: Holder) {}\nfn take_array(xs: [i64]) {}\nfn main() {}";
+
+/// Builds `main` as `r = make(); take(move r); <what>(r)`, which the certifier would reject, and
+/// asserts that `<what>` reaches `r`'s root slot only after a null test that calls
+/// `sisu_rc_fault(2)`: the first instructions after the call to `take` are that test.
+/// `what` gives the statements after the move and the terminator of `bb0`; `bb1` returns.
+fn assert_root_read_faults(
+    root: Type,
+    (make, take): (&str, &str),
+    what: impl FnOnce(LocalId) -> (Vec<Statement>, Terminator),
+) {
+    let context = Context::create();
+    let module = compiled_from(&context, MOVED_ROOT_SOURCE, true, |mir| {
+        let func = |name: &str| {
+            let at = mir.functions.iter().position(|f| f.name == name);
+            FuncId(at.expect("the source should define the function"))
+        };
+        let call = |func, args| Statement::Assign {
+            dest: None,
+            value: Rvalue::Call { func, args },
+        };
+        let mut b = mir::tests::Builder::new("main");
+        let r = b.local("r", root);
+        let (after, term) = what(r);
+        let mut stmts = vec![
+            Statement::Assign {
+                dest: Some(r),
+                value: Rvalue::Call {
+                    func: func(make),
+                    args: Vec::new(),
+                },
+            },
+            call(func(take), vec![mir::Operand::Move(r)]),
+        ];
+        stmts.extend(after);
+        b.block(stmts, term);
+        b.block(Vec::new(), Terminator::Return(None));
+        let main = mir.functions.iter_mut().find(|f| f.name == "main");
+        *main.expect("the source should define `main`") = b.finish();
+    });
+    let ir = module.print_to_string().to_string();
+    let main = function_body(&ir, "@sisu.main(");
+    let lines: Vec<&str> = main.lines().map(str::trim).collect();
+    let take_at = lines
+        .iter()
+        .position(|l| l.starts_with("call void @sisu.take_"))
+        .unwrap_or_else(|| panic!("no call to take in\n{main}"));
+    let slot = lines[..take_at]
+        .iter()
+        .rev()
+        .find_map(|l| l.strip_prefix("store ptr null, ptr "))
+        .and_then(|rest| rest.split(',').next())
+        .unwrap_or_else(|| panic!("no move in\n{main}"));
+    let after = &lines[take_at + 1..];
+    let (load_at, loaded, _) =
+        instruction(after, &|t| t.starts_with(&format!("load ptr, ptr {slot},")))
+            .unwrap_or_else(|| panic!("no load of {slot} after the move in\n{main}"));
+    let (null_at, null, _) = instruction(after, &|t| t == format!("icmp eq ptr {loaded}, null"))
+        .unwrap_or_else(|| panic!("no null test of {loaded} in\n{main}"));
+    assert_eq!((load_at, null_at), (0, 1), "{main}");
+    let branch_at = assert_faults_on(&lines, null, 2, main);
+    assert_eq!(branch_at, take_at + 3, "{main}");
+}
+
+fn whole_place(local: LocalId) -> Place {
+    Place {
+        local,
+        projections: Vec::new(),
+        borrow: false,
+        guard: false,
+    }
+}
+
+#[test]
+fn store_to_a_moved_root_faults() {
+    let holder = Type::intern(TypeKind::Class(ClassId(0)));
+    assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
+        let place = Place {
+            projections: vec![Projection::Field(0)],
+            ..whole_place(r)
+        };
+        let value = mir::Operand::Const(Const::Int(5, Type::I64));
+        (
+            vec![Statement::Store { place, value }],
+            Terminator::Goto(BlockId(1)),
+        )
+    });
+}
+
+#[test]
+fn make_unique_of_a_moved_array_faults() {
+    let array = Type::intern(TypeKind::Array(Type::I64));
+    assert_root_read_faults(array, ("make_array", "take_array"), |r| {
+        (
+            vec![Statement::MakeUnique(whole_place(r))],
+            Terminator::Goto(BlockId(1)),
+        )
+    });
+}
+
+#[test]
+fn check_of_a_moved_array_faults() {
+    let array = Type::intern(TypeKind::Array(Type::I64));
+    assert_root_read_faults(array, ("make_array", "take_array"), |r| {
+        let element = Place {
+            projections: vec![Projection::Index {
+                index: mir::Operand::Const(Const::Int(0, Type::I64)),
+                span: Span::new(0, 0),
+            }],
+            ..whole_place(r)
+        };
+        (
+            vec![Statement::Check(element)],
+            Terminator::Goto(BlockId(1)),
+        )
+    });
+}
+
+/// An enum local is not a pointer, so a moved one is not checked; a switch on the tag of an
+/// enum field reads the class that holds it.
+#[test]
+fn switch_on_a_field_of_a_moved_class_faults() {
+    let holder = Type::intern(TypeKind::Class(ClassId(0)));
+    assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
+        let shape = Place {
+            projections: vec![Projection::Field(2)],
+            ..whole_place(r)
+        };
+        let term = Terminator::SwitchTag {
+            place: shape,
+            arms: vec![(0, BlockId(1))],
+            otherwise: Some(BlockId(1)),
+        };
+        (Vec::new(), term)
+    });
 }
 
 #[test]
@@ -1162,10 +1414,20 @@ fn field_accesses_carry_their_fields_tbaa_tag() {
     .print_to_string()
     .to_string();
     let body = function_body(&ir, "define internal void @sisu.f(ptr");
-    let accesses: Vec<_> = body
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.contains(" double"))
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    // The loads and stores of `double`s, less those of the locals' slots.
+    let accesses: Vec<_> = lines
+        .iter()
+        .filter(|l| l.contains(" double") && !l.contains(" alloca "))
+        .filter(|l| {
+            let address = l
+                .split_once(", ptr ")
+                .and_then(|(_, rest)| rest.split(',').next())
+                .unwrap_or_else(|| panic!("no address in {l}"));
+            !lines
+                .iter()
+                .any(|m| m.starts_with(&format!("{address} = alloca ")))
+        })
         .map(|l| {
             (
                 l.split(' ').find(|w| *w == "load" || *w == "store"),
@@ -1182,6 +1444,181 @@ fn field_accesses_carry_their_fields_tbaa_tag() {
             (Some("store"), "P.y"),
         ],
         "{body}"
+    );
+}
+
+/// The instructions of `function`'s entry block, in order.
+fn entry_instructions(function: FunctionValue<'_>) -> Vec<InstructionValue<'_>> {
+    let first = function
+        .get_first_basic_block()
+        .and_then(BasicBlock::get_first_instruction);
+    std::iter::successors(first, |i| i.get_next_instruction()).collect()
+}
+
+/// Every instruction of `function`, block by block, in order.
+fn instructions(function: FunctionValue<'_>) -> Vec<InstructionValue<'_>> {
+    function
+        .get_basic_block_iter()
+        .flat_map(|block| {
+            std::iter::successors(block.get_first_instruction(), |i| i.get_next_instruction())
+        })
+        .collect()
+}
+
+/// Where `value` came from through the slots of locals in `code`, straight-line instructions in
+/// order: while it is a load of an `alloca`, the value of the last store into that slot before
+/// the load.
+fn stored_origin<'ctx>(
+    code: &[InstructionValue<'ctx>],
+    mut value: BasicValueEnum<'ctx>,
+) -> BasicValueEnum<'ctx> {
+    while let Some(load) = value.as_instruction_value().filter(|i| {
+        i.get_opcode() == InstructionOpcode::Load
+            && operand_of(*i, 0)
+                .into_pointer_value()
+                .as_instruction()
+                .is_some_and(|slot| slot.get_opcode() == InstructionOpcode::Alloca)
+    }) {
+        let slot = operand_of(load, 0);
+        let before = code
+            .iter()
+            .position(|i| *i == load)
+            .expect("the load should be among the instructions");
+        let store = code[..before]
+            .iter()
+            .rev()
+            .find(|i| i.get_opcode() == InstructionOpcode::Store && operand_of(**i, 1) == slot)
+            .expect("a slot should be stored before it is loaded");
+        value = operand_of(*store, 0);
+    }
+    value
+}
+
+/// Operand `n` of `instruction`, which should be a value, not a block.
+fn operand_of(instruction: InstructionValue<'_>, n: u32) -> BasicValueEnum<'_> {
+    let Some(Operand::Value(value)) = instruction.get_operand(n) else {
+        panic!("operand {n} of {instruction:?} should be a value")
+    };
+    value
+}
+
+/// The instruction whose result is pointer operand `n` of `instruction`.
+fn address_of(instruction: InstructionValue<'_>, n: u32) -> InstructionValue<'_> {
+    operand_of(instruction, n)
+        .into_pointer_value()
+        .as_instruction()
+        .expect("the pointer should be an instruction's result")
+}
+
+/// `binary` takes `&&` and `||` as the eager `and` and `or` of two computed `bool`s, which
+/// is what a range pattern's test is in mir: no branch, no second block.
+#[test]
+fn binary_takes_and_and_or_of_two_computed_bools() {
+    let context = Context::create();
+    let src = "fn main() {}";
+    let (program, diagnostics) = check(&parse_ok(src), src);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let codegen = Codegen::new(&context, &program, "test.sisu", src, &machine, false);
+    let bool_type = context.bool_type();
+    let fn_type = bool_type.fn_type(&[bool_type.into(), bool_type.into()], false);
+    let function = codegen.module.add_function("both", fn_type, None);
+    codegen
+        .builder
+        .position_at_end(context.append_basic_block(function, "entry"));
+    let param = |n| {
+        function
+            .get_nth_param(n)
+            .expect("the function should have two parameters")
+    };
+    let span = Span::new(0, 0);
+    let both = codegen.binary(BinaryOp::And, Type::BOOL, param(0), param(1), span);
+    let either = codegen.binary(BinaryOp::Or, Type::BOOL, both, param(1), span);
+    codegen
+        .builder
+        .build_return(Some(&either))
+        .expect(POSITIONED);
+    let instructions = entry_instructions(function);
+    let opcodes: Vec<_> = instructions.iter().map(|i| i.get_opcode()).collect();
+    assert_eq!(
+        opcodes,
+        [
+            InstructionOpcode::And,
+            InstructionOpcode::Or,
+            InstructionOpcode::Return
+        ]
+    );
+    let [and, or, ret] = instructions[..] else {
+        unreachable!("the opcodes should have three entries")
+    };
+    assert_eq!(
+        [operand_of(and, 0), operand_of(and, 1)],
+        [param(0), param(1)]
+    );
+    assert_eq!([operand_of(or, 0), operand_of(or, 1)], [both, param(1)]);
+    assert_eq!(operand_of(ret, 0), either);
+}
+
+/// A string's length is field 1 of its header, read without a tag; an array's is field 1 of
+/// its own header, the `i64` that carries the "count and length" tag. Each load reads the
+/// field of the pointer its own parameter gave, through the slots it moved through: `len`
+/// picks by the base's type.
+#[test]
+fn len_reads_a_string_by_its_field_and_an_array_by_its_header() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn size(s: string, a: [i64]) -> i64 {\n    s.len() + a.len()\n}\nfn main() {}",
+    );
+    let ir = module.print_to_string().to_string();
+    let function = module
+        .get_function("sisu.size")
+        .expect("the module should define `size`");
+    let param = |n| {
+        function
+            .get_nth_param(n)
+            .expect("the function should have two parameters")
+    };
+    let entry = entry_instructions(function);
+    let loads: Vec<_> = entry
+        .iter()
+        .filter(|i| {
+            i.get_opcode() == InstructionOpcode::Load
+                && address_of(**i, 0).get_opcode() == InstructionOpcode::GetElementPtr
+        })
+        .map(|&load| {
+            let gep = address_of(load, 0);
+            let text = load.print_to_string().to_string();
+            (
+                gep.get_gep_source_element_type()
+                    .expect("a GEP should have a source element type")
+                    .print_to_string()
+                    .to_string(),
+                operand_of(gep, 2)
+                    .into_int_value()
+                    .get_zero_extended_constant(),
+                stored_origin(&entry, operand_of(gep, 0)),
+                text.contains("!tbaa").then(|| tbaa_name(&ir, &text)),
+            )
+        })
+        .collect();
+    assert_eq!(
+        loads,
+        [
+            (
+                "{ i64, i64, i64, [0 x i8] }".to_string(),
+                Some(1),
+                param(0),
+                None
+            ),
+            (
+                "{ i64, i64 }".to_string(),
+                Some(1),
+                param(1),
+                Some("count and length")
+            ),
+        ],
+        "{ir}"
     );
 }
 
@@ -1227,34 +1664,44 @@ fn nested_array_helpers_are_defined() {
 #[test]
 fn general_path_releases_base() {
     let context = Context::create();
-    let ir = compiled(
+    let module = compiled(
         &context,
         "fn make() -> [i64] { [1] }\nfn f() -> i64 { make()[0] }\nfn main() {}",
-    )
-    .print_to_string()
-    .to_string();
-    let body = function_body(&ir, "define internal i64 @sisu.f()");
-    let lines: Vec<&str> = body.lines().map(str::trim).collect();
-    // `f` returns the element it loaded.
-    let element = lines
+    );
+    let ir = module.print_to_string().to_string();
+    let f = module
+        .get_function("sisu.f")
+        .expect("the module should define `f`");
+    let all = instructions(f);
+    let ret = all
         .iter()
-        .find_map(|l| l.strip_prefix("ret i64 "))
-        .unwrap_or_else(|| panic!("no `ret i64` in\n{body}"));
-    let load = lines
-        .iter()
-        .position(|l| l.starts_with(&format!("{element} = load i64, ptr ")))
-        .unwrap_or_else(|| panic!("no load of {element} in\n{body}"));
-    let release = lines
-        .iter()
-        .position(|l| l.starts_with("call void @\"sisu_rc.release.[i64]\"(ptr "))
-        .unwrap_or_else(|| panic!("no release of the base in\n{body}"));
-    assert!(load < release, "{body}");
+        .find(|i| i.get_opcode() == InstructionOpcode::Return)
+        .unwrap_or_else(|| panic!("no `ret` in\n{ir}"));
+    // `f` returns the element it loaded, through its locals' slots.
+    let element = stored_origin(&all, operand_of(*ret, 0))
+        .as_instruction_value()
+        .unwrap_or_else(|| panic!("`f` should return a loaded value in\n{ir}"));
+    assert_eq!(
+        address_of(element, 0).get_opcode(),
+        InstructionOpcode::GetElementPtr,
+        "{ir}"
+    );
+    let at = |wanted: &dyn Fn(&InstructionValue<'_>) -> bool| all.iter().position(wanted);
+    let load = at(&|i| *i == element);
+    let release = at(&|i| {
+        i.get_opcode() == InstructionOpcode::Call
+            && i.print_to_string()
+                .to_string()
+                .contains("@\"sisu_rc.release.[i64]\"(")
+    })
+    .unwrap_or_else(|| panic!("no release of the base in\n{ir}"));
+    assert!(load.is_some_and(|load| load < release), "{ir}");
 }
 
-/// An index built only from whitelisted nodes keeps the fast path; one with a call or a move
-/// takes the general path, which releases the base before the element is printed. `o` and
-/// `ys` are read again later in `field` and `length`, so those indexes read them without a
-/// move; in `moved` the index's read of `ys` is its last use, which the whitelist excludes.
+/// An index built only from whitelisted nodes reads the base in place; one with a call copies
+/// the base, which is released before the element is printed. In `moved` the index's read of
+/// `ys` is its last use, which the ownership pass makes a move, and `xs` is still read in place:
+/// `base_borrowed_when_the_sibling_moves_another_local` (`mir/tests/lower.rs`) covers that rule.
 #[test]
 fn fast_path_follows_the_index_whitelist() {
     let context = Context::create();
@@ -1276,7 +1723,7 @@ fn fast_path_follows_the_index_whitelist() {
         ("field", true),
         ("length", true),
         ("call", false),
-        ("moved", false),
+        ("moved", true),
     ] {
         let body = function_body(&ir, &format!("define internal ptr @sisu.{name}("));
         let (before, _) = body
@@ -1584,17 +2031,20 @@ fn a_barred_partition_makes_its_array_unique_once() {
 
 /// A loop makes the arrays it writes unique before it starts. `f`'s raw IR, split at each
 /// `loop.body` label: the count of `unique` calls before the first loop body, then in each
-/// piece from a loop body on. Code after a loop lands in that loop's piece (`loop.end` follows
-/// `loop.body`), so no `f` writes after its last loop.
+/// piece from a loop body on. The blocks are in mir's order, where a loop's exit block may sit
+/// in another loop's piece, so no `f` writes after a loop.
 #[test]
 fn a_loop_makes_its_written_arrays_unique_before_it_starts() {
-    use super::hoist::tests::{APPEND, BOTH_WRITE, GRID, OUTER_BARRED_INNER_HOISTS, PARTITION};
-    let cases: [(&str, &str, &[usize]); 5] = [
+    use crate::mir::tests::hoist::{
+        APPEND, B6, BOTH_WRITE, GRID, OUTER_BARRED_INNER_HOISTS, PARTITION,
+    };
+    let cases: [(&str, &str, &[usize]); 6] = [
         ("partition", PARTITION, &[1, 0]),
         ("grid", GRID, &[1, 1]),
         ("nested_both_write", BOTH_WRITE, &[1, 0, 0]),
         ("outer_barred", OUTER_BARRED_INNER_HOISTS, &[0, 1, 0]),
         ("append", APPEND, &[1, 0]),
+        ("b6", B6, &[1, 0]),
     ];
     let mut found = Vec::new();
     let mut irs = Vec::new();
@@ -1619,4 +2069,50 @@ fn a_loop_makes_its_written_arrays_unique_before_it_starts() {
         .collect();
     let irs = irs.join("\n");
     assert_eq!(found, expected, "{irs}");
+}
+
+/// Each block is named after its mir index (`bbN`), or after its loop role: `loop.pre` for a
+/// pre-header, `loop.body` for a header. Loop blocks compare by role prefix, since the digits
+/// LLVM appends to repeated names are its own.
+#[test]
+fn blocks_are_named_after_their_index_or_loop_role() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn f() {\n    for i in 0..2 {\n        for j in 0..3 {\n            print(j)\n        }\n    }\n\
+             for k in 0..4 {\n        print(k)\n    }\n}\nfn main() {}",
+    );
+    let f = module
+        .get_function("sisu.f")
+        .expect("`f` should be defined");
+    let names: Vec<String> = f
+        .get_basic_block_iter()
+        .map(|b| b.get_name().to_string_lossy().into_owned())
+        .map(|n| {
+            if n.starts_with("loop.") {
+                n.trim_end_matches(|c: char| c.is_ascii_digit()).to_owned()
+            } else {
+                n
+            }
+        })
+        .collect();
+    let expected = [
+        "loop.pre",
+        "loop.body",
+        "loop.pre",
+        "bb3",
+        "loop.body",
+        "bb5",
+        "bb6",
+        "bb7",
+        "bb8",
+        "bb9",
+        "loop.pre",
+        "loop.body",
+        "bb12",
+        "bb13",
+        "bb14",
+        "bb15",
+    ];
+    assert_eq!(names, expected, "{}", f.print_to_string());
 }
