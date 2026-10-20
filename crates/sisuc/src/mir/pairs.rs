@@ -248,7 +248,7 @@ fn allowed(
         Effect::Consume => {
             current && matches!(*kind, Kind::Step(u, m) if m == member && !open.contains_key(&u))
         }
-        Effect::Release => current && matches!(*kind, Kind::Release(x) if x == member),
+        Effect::Release => current,
         Effect::ReadConsumed
         | Effect::ScopeRelease
         | Effect::Assign

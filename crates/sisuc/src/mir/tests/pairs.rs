@@ -206,6 +206,18 @@ fn string_store_through_an_alias_is_kept() {
     assert!(f.contains("t#3 = copy a#0.0"), "{f}");
 }
 
+/// `None` is not counted, so its store clobbers nothing: only the `take` through the alias
+/// `b` does, and with `a` and `b` the same object its release frees the payload `t` holds.
+#[test]
+fn none_store_into_an_enum_optional_through_an_alias_is_kept() {
+    let printed = built(
+        "enum E {\n    V(string)\n    W\n}\nclass B {\n    mut e: E?\n}\n\
+         fn h(a: B, b: B, k: E?) {\n    let t = a.e\n    b.e = None\n    print(t == k)\n    print(a.e == None)\n}",
+    );
+    let f = function(&printed, "h");
+    assert!(f.contains("t#3 = copy a#0.0"), "{f}");
+}
+
 /// Review Focus 5: a copy that a call consumes is not a pair, and neither is the result.
 #[test]
 fn copy_moved_into_a_call_is_kept() {

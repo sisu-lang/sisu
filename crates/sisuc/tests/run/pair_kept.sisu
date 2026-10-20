@@ -4,6 +4,15 @@ class SBox {
     mut s: string
 }
 
+enum E {
+    V(string)
+    W
+}
+
+class OBox {
+    mut e: E?
+}
+
 class ABox {
     mut xs: [i64]
 }
@@ -47,6 +56,15 @@ fn g(a: SBox, b: SBox, k: i64) {
     print(a.s)
 }
 
+// With `a` and `b` the same object, storing `None` frees the payload the copy holds: the
+// `take` is the only clobber, since `None` is not counted.
+fn h(a: OBox, b: OBox, k: E?) {
+    let t = a.e
+    b.e = None
+    print(t == k)
+    print(a.e == None)
+}
+
 // The root is moved, then assigned, while the copy is open.
 fn reassigned(k: i64) {
     let mut x = name(k)
@@ -65,4 +83,6 @@ fn main() {
     let q = SBox(s: name(3))
     g(q, q, 9)                                      // n3, then m9
     reassigned(1)                                   // n1, n1, then n2
+    let r = OBox(e: E.V(name(3)))
+    h(r, r, E.V(name(3)))                           // true, then true
 }
