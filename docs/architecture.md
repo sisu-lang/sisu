@@ -154,8 +154,9 @@ Objects live on the heap, with a reference count in front of their fields
 largest alignment first, and fields of equal alignment in declared order, so
 less padding sits between them; `tir` and every diagnostic keep declared
 order. Codegen emits the helpers that
-manage them: `sisu_rc.retain`, and for each class `sisu_rc.release.<Class>`,
-`sisu_rc.drop.<Class>` and `sisu_rc.eq.<Class>`, which `==` calls. A field
+manage them: `sisu_rc.retain`, and for each class `sisu_rc.release.<Class>`
+and `sisu_rc.drop.<Class>`. A class that `==` compares also gets
+`sisu_rc.eq.<Class>`, made the first time the compiler needs it. A field
 read and a field assignment tag their load and store with a TBAA tag of that
 field's own, `<Class>.<field>`, so LLVM knows that writing one field changes
 no other field, and no count, length or element.
@@ -210,7 +211,9 @@ change it, and `main` calls `sisu_rc_check_exit` before it returns.
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it
 emits x86-64 object code for the machine `sisuc` runs on.
 
-**Link step** (`link.rs`). Writes the object code to a fresh temporary file
+**Link step** (`link.rs`). Before it compiles, the driver checks that
+`libsisu_runtime.a` and the output's directory exist, so a missing one fails
+at once. The link step writes the object code to a fresh temporary file
 and runs `cc` on it together with `libsisu_runtime.a`. `cc` adds the C
 startup code and libc and writes the executable, through its default linker
 or the one `--linker` names. The temporary file is removed whether or not the
