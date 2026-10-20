@@ -109,6 +109,12 @@ exactly that to stderr. Without the file, stderr must stay empty. The Valgrind
 runs' stderr holds Valgrind's own log, so they check only stdout and the exit
 code. To add the file to a case, `touch` it like any expected file.
 
+The runs go in order: plain and `-O2` without Valgrind, then both under
+Valgrind, then `--rc-checks`, and the first failure ends the case. A double
+free usually aborts in the plain run, so Valgrind never reports it there. To
+show what Valgrind says about a broken build, run its binary under
+`valgrind --error-exitcode=1` yourself.
+
 A `run/` case whose output depends on a value crossing a real call says so
 with a marker line, `// o2-calls: <caller> <callee> <count>`. The test then
 checks that the `-O2` IR of `<caller>` holds exactly `<count>` calls to
@@ -158,7 +164,9 @@ it.
 `make coverage [BASE=<base>]` runs the tests under `cargo-llvm-cov` and prints
 a `Coverage:` line, then two lists. "Uncovered regions touching changed code"
 names regions that a changed line touches. "Other uncovered regions in changed
-files (advisory)" names the rest of those files. It never fails on low
+files (advisory)" names the rest of those files. Test code is left out:
+`crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
+or under `src/**/tests/`. It never fails on low
 coverage. Agents run it before the mutants. Commit new files, or
 `git add -N` them, so the diff sees them.
 

@@ -10,7 +10,8 @@ import subprocess
 import sys
 from typing import Callable, NamedTuple
 
-TEST_DIR = re.compile(r'^crates/[^/]+/tests/')
+# Integration tests, and unit-test modules in their own file (src/**/tests.rs, src/**/tests/).
+TEST_DIR = re.compile(r'^crates/[^/]+/(?:tests/|src/(?:.+/)?tests(?:\.rs$|/))')
 HUNK = re.compile(r'^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
 
 
@@ -23,7 +24,7 @@ class Region(NamedTuple):
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
-    """The new-side line numbers of added lines, per Rust file outside crates/*/tests/."""
+    """The new-side line numbers of added lines, per Rust file that is not test code (`TEST_DIR`)."""
     result: dict[str, set[int]] = {}
     path = None
     line = old_left = new_left = 0

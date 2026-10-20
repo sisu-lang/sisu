@@ -72,6 +72,20 @@ class ChangedLines(unittest.TestCase):
         )
         self.assertEqual(cr.changed_lines(d), {})
 
+    def test_changed_lines_skips_unit_test_modules_in_their_own_file(self):
+        def added(path):
+            return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+x\n"
+        d = "".join(added(p) for p in (
+            "crates/sisuc/src/codegen/tests.rs",
+            "crates/sisuc/src/mir/tests/certify.rs",
+            "crates/sisuc/src/mir/certify.rs",
+            "crates/sisuc/src/mir/tests_helper.rs",
+        ))
+        self.assertEqual(
+            cr.changed_lines(d),
+            {"crates/sisuc/src/mir/certify.rs": {1}, "crates/sisuc/src/mir/tests_helper.rs": {1}},
+        )
+
 
 class Report(unittest.TestCase):
     def test_a_multiline_region_touching_one_changed_line_is_listed_first(self):
