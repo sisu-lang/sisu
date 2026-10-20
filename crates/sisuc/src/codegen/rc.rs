@@ -621,18 +621,19 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.retain_or_release(Helper::Release, value, ty);
     }
 
-    /// `retain` of the value of type `ty` at `place`.
+    /// `retain` of the value of type `ty` at `place`; `ty` must be a counted type.
     pub(super) fn retain_at(&self, place: PointerValue<'ctx>, ty: Type) {
         self.retain_or_release_at(Helper::Retain, place, ty);
     }
 
-    /// `release` of the value of type `ty` at `place`.
+    /// `release` of the value of type `ty` at `place`; `ty` must be a counted type.
     pub(super) fn release_at(&self, place: PointerValue<'ctx>, ty: Type) {
         self.retain_or_release_at(Helper::Release, place, ty);
     }
 
     /// `retain_or_release` of the value of type `ty` at `place`. An enum goes to its helper by
-    /// address, with no copy; any other type is loaded.
+    /// address, with no copy; any other type is loaded. `ty` must be a counted
+    /// type: unlike `retain_or_release`, this does not check.
     fn retain_or_release_at(&self, kind: Helper, place: PointerValue<'ctx>, ty: Type) {
         if let TypeKind::Enum(_) = ty.kind() {
             self.call(self.helper(kind, ty), &[place.into()]);

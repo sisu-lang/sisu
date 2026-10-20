@@ -6,6 +6,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+mod scratch_path;
+
 #[test]
 fn emit_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -1072,14 +1074,7 @@ fn json_link_failure_stays_json() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("json_link_failure.sisu"), "fn main() {}\n").expect("writes");
     // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
-    let only_cc = dir.join("json_link_failure_path");
-    let _ = fs::remove_dir_all(&only_cc);
-    fs::create_dir(&only_cc).expect("creates");
-    let cc = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|dir| dir.join("cc"))
-        .find(|cc| cc.is_file())
-        .expect("cc is on PATH");
-    std::os::unix::fs::symlink(cc, only_cc.join("cc")).expect("links cc");
+    let only_cc = scratch_path::only_cc("json_link_failure_path");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
         .env("PATH", &only_cc)
