@@ -283,5 +283,8 @@ change to the pipeline:
    **Export → SVG · Dark** in headless Chrome. Without Chrome, open the HTML
    and use those two menu items by hand.
 
+The SVGs show the nodes and edges only; the JSON's `cards` appear in the HTML
+viewer. A change to cards alone needs step 1 and nothing more.
+
 The rendered HTML is not committed. It is over the 500 KB limit of the
 `check-added-large-files` hook, and the JSON regenerates it.

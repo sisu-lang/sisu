@@ -109,6 +109,12 @@ exactly that to stderr. Without the file, stderr must stay empty. The Valgrind
 runs' stderr holds Valgrind's own log, so they check only stdout and the exit
 code. To add the file to a case, `touch` it like any expected file.
 
+The runs go in order: plain and `-O2` without Valgrind, then both under
+Valgrind, then `--rc-checks`, and the first failure ends the case. A double
+free usually aborts in the plain run, so Valgrind never reports it there. To
+show what Valgrind says about a broken build, run its binary under
+`valgrind --error-exitcode=1` yourself.
+
 A `run/` case whose output depends on a value crossing a real call says so
 with a marker line, `// o2-calls: <caller> <callee> <count>`. The test then
 checks that the `-O2` IR of `<caller>` holds exactly `<count>` calls to
