@@ -1608,6 +1608,23 @@ fn lowered_use_and_guard_consume_their_local() {
     }
 }
 
+/// The certifier reads mir after the ownership pass, where no `use` is left: one there is a bug.
+#[test]
+#[should_panic(expected = "the ownership pass should leave no `use` and no guard mark")]
+fn use_after_the_ownership_pass_panics() {
+    let mut b = Builder::new("f");
+    let s = b.param("s", Type::STRING);
+    let t = b.local("t", Type::STRING);
+    b.block(
+        vec![
+            assign(t, Rvalue::Use(Operand::Use(s))),
+            Statement::Release(t),
+        ],
+        ret(),
+    );
+    let _ = certify(&b.finish());
+}
+
 /// `make_unique b` with `b` a borrow of the array `xs` finds the buffer unique, though `xs`
 /// holds it too, and so writes into `xs` in place.
 #[test]
