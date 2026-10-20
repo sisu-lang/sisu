@@ -468,7 +468,7 @@ fn helpers_pass_inline_enum_fields_by_address() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, c: Holder, d: Holder, e: Tree, f: Tree) -> bool { a == b && c == d && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn main() {}",
+        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, c: Holder, d: Holder, e: Tree, f: Tree) -> bool { a == b && c == d && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn drop(o: Outer, t: Tree) {\n    let k = o\n    let u = t\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
