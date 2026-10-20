@@ -201,6 +201,40 @@ fn unused_value_fix_edits_every_branch() {
     }
 }
 
+/// An `if let` on an enum lowers to a `match`: its warnings share one fix too.
+#[test]
+fn unused_value_fix_drops_every_enum_if_let_branch() {
+    let src = "enum E {\n    A\n    B\n}\nfn main() {\n    let e = E.A\n    if let A = e { 1 } else { 2 }\n    print(1)\n}";
+    warns(src, &[(7, 20, "1"), (7, 31, "2")]);
+    let ds = diags(src);
+    let edits = vec![
+        (7, 20, "", "let _ = ".into()),
+        (7, 31, "", "let _ = ".into()),
+    ];
+    for d in &ds {
+        assert_eq!(fixes(src, d), [(false, edits.clone())], "{src}");
+        clean(&applied(src, d));
+    }
+}
+
+/// Two statements never share a fix: each fix drops only its own statement's values.
+#[test]
+fn unused_value_fix_stays_within_its_statement() {
+    let src = in_body("if c { 1 } else { 2 }\n    if d { 3 } else { 4 }");
+    warns(
+        &src,
+        &[(10, 12, "1"), (10, 23, "2"), (11, 12, "3"), (11, 23, "4")],
+    );
+    let ds = diags(&src);
+    for (d, line) in ds.iter().zip([10, 10, 11, 11]) {
+        let edits = vec![
+            (line, 12, "", "let _ = ".into()),
+            (line, 23, "", "let _ = ".into()),
+        ];
+        assert_eq!(fixes(&src, d), [(false, edits)], "{src}");
+    }
+}
+
 /// A `match` statement is not itself the value: each arm's is.
 #[test]
 fn match_unused_value() {
