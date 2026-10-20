@@ -105,9 +105,10 @@ fn heap_allocs(exe: &Path) -> (String, u64) {
     )
 }
 
-/// Builds `<name>.sisu` with its first line `fn iterations() -> i64 { 1000 }` as it is and with
-/// `1000` changed to `0`, at `-O2` if `o2`, and returns both builds' stdout and the difference in
-/// allocations. The zero-iteration build is the baseline: the runtime's own allocations cancel.
+/// Builds `<name>.sisu` twice, with its first line `fn iterations() -> i64 { 1000 }` replaced by
+/// `fn iterations() -> i64 { (read_line() ?? "").len() + k }`, for `k` = 1000 and `k` = 0, at `-O2`
+/// if `o2`. Returns both builds' stdout and the difference in allocations. The `k` = 0 build is
+/// the baseline: the runtime's own allocations cancel.
 fn extra_allocs(name: &str, o2: bool) -> (String, String, i64) {
     const FIRST_LINE: &str = "fn iterations() -> i64 { 1000 }\n";
     let source =
