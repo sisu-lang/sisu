@@ -48,7 +48,7 @@ Expected: <what should happen, and the source that says so: docs/roadmap.md "Wha
 
 Root cause: <file:line and function>, <confirmed by reading the code | guess>
 Suggested fix: <what to change, where; small enough to judge>
-Suggested test: <path, such as crates/sisuc/tests/run/<name>.sisu, and its full text with the expected .out or .err; or a unit test in the module's tests>
+Suggested test: <path, such as crates/sisuc/tests/run/<name>.sisu, and its full text with the expected .out or .err; or a unit test in the module's tests. Write it to the rules in CODING_STANDARDS.md, Tests>
 Test checked: <how you showed the test behaves as required below>
 ````
 
