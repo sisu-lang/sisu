@@ -164,7 +164,9 @@ it.
 `make coverage [BASE=<base>]` runs the tests under `cargo-llvm-cov` and prints
 a `Coverage:` line, then two lists. "Uncovered regions touching changed code"
 names regions that a changed line touches. "Other uncovered regions in changed
-files (advisory)" names the rest of those files. It never fails on low
+files (advisory)" names the rest of those files. Test code is left out:
+`crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
+or under `src/**/tests/`. It never fails on low
 coverage. Agents run it before the mutants. Commit new files, or
 `git add -N` them, so the diff sees them.
 
