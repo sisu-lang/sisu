@@ -1,7 +1,10 @@
 //! Assignment: places, which root may be written, the temps of compound operators, and spills.
 
 use super::expr::{literal_type, local, operator};
-use super::{BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, type_of};
+use super::operator::Operator;
+use super::{
+    BindingKind, Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, payload, type_of,
+};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Immutable};
 use crate::source::Span;
@@ -75,7 +78,9 @@ impl Checker<'_> {
     /// `Block { let t = e; Assign { p[t], p[t] op v } }`. The root binding is never copied, and
     /// neither is an operand that is an immutable local, which `v` cannot change: `p[i] op= v`
     /// is `Assign { p[i], p[i] op v }`.
-    /// `op` takes `u8`s when the place holds a `u8`, else `i64`s; `+=` on a `string` joins. `op`
+    /// `op` takes `u8`s when the place holds a `u8`, else `i64`s; `+=` on a `string` joins. A place
+    /// of any other type than `op` takes is reported as `binary` reports a local of that type: a
+    /// `string?` beside `+=` against `string`, any other against all the types `op` takes. `op`
     /// comes with its token's span.
     pub(super) fn compound_assign(
         &mut self,
@@ -132,7 +137,6 @@ impl Checker<'_> {
         let (op, _) = operator(op).expect(
             "the parser should produce only arithmetic operators for a compound assignment",
         );
-        let want = literal_type(Some(ty));
         let mut lets = Vec::new();
         let path = place.path.map(|path| {
             let temps: Vec<_> = path
@@ -163,32 +167,67 @@ impl Checker<'_> {
             Some((root, temps)) => Ok(self.read(build(*root, reads(temps)), target.span)),
             None => Err(Poisoned::typed(ty)),
         };
-        let value = if ty == Type::STRING && op == tir::BinaryOp::Add {
-            let start = self.diagnostics.len();
-            let checked = self.value(value, Some(ty));
-            self.label_join_literals(start, [target, value]);
-            let got = type_of(&checked).filter(|&got| got != ty);
-            let (value, mismatched) = match got {
-                // As in `binary`: the place is the `string` that the value is joined to.
-                // A rejected expected type leaves no type, so `got` is the value's own.
-                Some(got) => {
-                    let d = self.concat_mismatch(value, got, &[target, value], true);
-                    self.diagnostics.push(d);
-                    (Err(Poisoned::error()), true)
-                }
-                _ => self.settled(value, checked, Some(ty)),
-            };
-            self.concat(span, read, value, mismatched)
-        } else {
-            let read = self.against(target, read, Some(want));
-            self.arithmetic(span, (op, op_span), want, read, value)
-        };
+        let value = self.compound_value(span, (op, op_span), target, value, read);
         let (Some((root, temps)), Ok(value), true) = (path, value, place.writable) else {
             return Err(unit());
         };
         let operands = reads(&temps);
         lets.push(self.write(span, root, operands, value));
         Ok(tir::Stmt::Expr(block_expr(lets, None, Type::UNIT, span)))
+    }
+
+    /// The operator `op` of a compound assignment over the place `target`, whose current value is
+    /// `read`, and `value`: a join if the place holds a `string`, else a number operator.
+    fn compound_value(
+        &mut self,
+        span: Span,
+        (op, op_span): (tir::BinaryOp, Span),
+        target: &ast::Expr,
+        value: &ast::Expr,
+        read: Checked,
+    ) -> Checked {
+        let ty = type_of(&read).expect("a place with a type should have a typed read");
+        let want = literal_type(Some(ty));
+        let operator = if op == tir::BinaryOp::Add {
+            Operator::Plus { compound: true }
+        } else {
+            Operator::Arithmetic
+        };
+        if payload(ty) == Type::STRING && op == tir::BinaryOp::Add {
+            let start = self.diagnostics.len();
+            // A `string?` place is what `binary` reports first, and the value is checked with no
+            // expected type.
+            let checked = self.value(value, Some(if ty == Type::STRING { ty } else { UNKNOWN }));
+            self.label_join_literals(start, [target, value]);
+            let (value, mismatched) = if ty != Type::STRING {
+                let d = self.concat_mismatch(target, ty, &[target, value], true, type_of(&checked));
+                self.diagnostics.insert(start, d);
+                (Err(Poisoned::error()), true)
+            } else if let Some(got) = type_of(&checked).filter(|&got| got != ty) {
+                // As in `binary`: the place is the `string` that the value is joined to.
+                // A rejected expected type leaves no type, so `got` is the value's own.
+                let d = self.concat_mismatch(value, got, &[target, value], true, Some(ty));
+                self.diagnostics.push(d);
+                (Err(Poisoned::error()), true)
+            } else {
+                self.settled(value, checked, Some(ty))
+            };
+            self.concat(span, read, value, mismatched)
+        } else if !operator.takes().contains(&payload(ty)) {
+            // As in `integers`: the place is reported, once, and the value is checked after it.
+            let d = self.takes_mismatch(target.span, operator.takes(), ty);
+            self.diagnostics.push(d);
+            self.arithmetic(
+                span,
+                (op, op_span),
+                want,
+                (Err(Poisoned::error()), true),
+                value,
+            )
+        } else {
+            let read = self.against(target, read, Some(want));
+            self.arithmetic(span, (op, op_span), want, read, value)
+        }
     }
 
     /// Reports the compound assignment, at its operator `op_span`, to a `char` place, and checks

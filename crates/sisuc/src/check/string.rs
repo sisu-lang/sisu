@@ -134,13 +134,16 @@ impl Checker<'_> {
     /// other operand makes it; that operand gets a secondary label. A value that interpolation
     /// prints gets the unsafe fix to interpolate it, unless the `+` is a `compound` assignment's or
     /// a constant's, a comment between the operands would go with the text the unsafe fix removes,
-    /// or an operand spans a line break, which a string literal cannot hold.
+    /// or an operand spans a line break, which a string literal cannot hold. The label is there
+    /// only if the other operand's type, `beside` if known, is `string`: when `e` is a `string?`
+    /// that makes the `+` a join, the other may be any type.
     pub(super) fn concat_mismatch(
         &self,
         e: &ast::Expr,
         got: Type,
         operands: &[&ast::Expr],
         compound: bool,
+        beside: Option<Type>,
     ) -> Diagnostic {
         let printed = matches!(
             got,
@@ -169,7 +172,7 @@ impl Checker<'_> {
             want: vec![self.type_name(Type::STRING)],
             got: self.type_name(got),
             at: e.span,
-            source: Some(MismatchSource::Concat(other)),
+            source: (beside == Some(Type::STRING)).then_some(MismatchSource::Concat(other)),
             fix: unsafe_fix.then(|| MismatchFix::Interpolate {
                 lhs: operand(lhs),
                 rhs: operand(rhs),

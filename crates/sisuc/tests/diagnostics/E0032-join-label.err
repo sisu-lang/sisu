@@ -1,0 +1,14 @@
+error[E0032]: expected `string`, found `string?`
+ --> E0032-join-label.sisu:3:5
+  |
+3 |     o += true
+  |     ^
+
+error[E0032]: expected `string`, found `string?`
+ --> E0032-join-label.sisu:5:5
+  |
+5 |     zs[0] += true
+  |     ^^^^^
+
+sisuc: 2 errors
+sisuc: for more on a code, run `sisuc --explain <code>`: E0032

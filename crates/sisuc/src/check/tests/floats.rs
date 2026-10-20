@@ -141,6 +141,16 @@ fn int_to_float() {
     );
 }
 
+/// A `char` after an `f64` that rejected the integer before it reports nothing more: that
+/// integer, the one converted, was reported already.
+#[test]
+fn char_after_a_rejected_integer_adds_no_error() {
+    codes(
+        "fn main() {\n    let n = 1\n    print(n < 1.5 < 'c')\n}",
+        &[(Code::Mismatch, (3, 11))],
+    );
+}
+
 /// Where the context wants an `i64`, the `f64` is the operand reported, with no fix: a compound
 /// assignment's target and a declared type are not what changes. The `f64` is reported in
 /// either order.

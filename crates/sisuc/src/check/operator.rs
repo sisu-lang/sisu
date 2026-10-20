@@ -181,8 +181,9 @@ impl Checker<'_> {
     /// The type is `string` beside a `string`, in a comparison and in `+`. In `+` a `string`
     /// drives from either side: an operand of another type is reported against `string`, with
     /// the unsafe fix to interpolate, the one before a `string` included, in place of what its own
-    /// type was found to lack. A join after an `Error` is `Error`. An expected `u8` or `f64` is
-    /// `binary_operands`' to drop.
+    /// type was found to lack. A `string?` first operand makes the `+` a join and is reported
+    /// against `string`, its label under the other operand only if that is a `string`. A join
+    /// after an `Error` is `Error`. An expected `u8` or `f64` is `binary_operands`' to drop.
     fn integers(
         &mut self,
         operands: &[&ast::Expr],
@@ -221,6 +222,9 @@ impl Checker<'_> {
         // The type of the operand checked last, as it was found, before it was held to `want`; and
         // whether a concrete operand was `Error` as found, which its own diagnostic reported.
         let (mut before, mut failed) = (None, false);
+        // A mismatch of the first operand, in `deferred` at the index, that waits to be labelled
+        // by the second operand, if that is a `string`.
+        let mut unlabelled = None;
         for (i, e) in operands.iter().enumerate() {
             let start = self.diagnostics.len();
             let value = match first.take_if(|(k, _)| *k == i) {
@@ -232,11 +236,17 @@ impl Checker<'_> {
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
             let got = type_of(&value);
+            if let (Some(at), Some(found)) = (unlabelled.take(), before) {
+                deferred[at] = self.concat_mismatch(operands[0], found, operands, compound, got);
+            }
             let joins = matches!(operator, Operator::Plus { .. });
             let (operand, m) = if let Some(got) =
                 got.filter(|&got| joins && want == Some(Type::STRING) && got != Type::STRING)
             {
-                deferred.push(self.concat_mismatch(e, got, operands, compound));
+                // The other operand's type is known if it is checked already.
+                let beside = [first.as_ref().and_then(|f| type_of(&f.1)), before][i.min(1)];
+                unlabelled = beside.is_none().then_some(deferred.len());
+                deferred.push(self.concat_mismatch(e, got, operands, compound, beside));
                 (Err(Poisoned::error()), true)
             } else if joins && !compound && got == Some(Type::STRING) && ty != Some(Type::STRING) {
                 // A `string` in `+` makes it a join, whatever the operand before it, if any, was
@@ -247,7 +257,7 @@ impl Checker<'_> {
                 if let Some(other) = before.take() {
                     // All that is deferred is that operand's, the first of two.
                     deferred.clear();
-                    let d = self.concat_mismatch(operands[0], other, operands, false);
+                    let d = self.concat_mismatch(operands[0], other, operands, false, ty);
                     self.diagnostics.push(d);
                     checked[0] = Err(Poisoned::error());
                     want = None;
@@ -262,11 +272,7 @@ impl Checker<'_> {
                 char_value && !arithmetic && matches!(want, Some(Type::I64 | Type::U8 | Type::F64))
             }) {
                 // A `char` after a number in a comparison: the number is the one converted.
-                if let Some(got) = type_of(&checked[k]) {
-                    let d = self.mismatch(operands[k].span, Some(operands[k]), Type::CHAR, got);
-                    self.diagnostics.push(d);
-                }
-                checked[k] = Err(Poisoned::error());
+                self.reject_leader(operands[k], &mut checked[k], Type::CHAR);
                 want = None;
                 (Err(Poisoned::error()), true)
             } else if let Some(k) = leader.filter(|_| {
@@ -274,11 +280,7 @@ impl Checker<'_> {
             }) {
                 // An `f64` after an integer: the integer is the one converted, and the operands
                 // after this one are held to `f64`.
-                if let Some(found) = type_of(&checked[k]) {
-                    let d = self.mismatch(operands[k].span, Some(operands[k]), Type::F64, found);
-                    self.diagnostics.push(d);
-                }
-                checked[k] = Err(Poisoned::error());
+                self.reject_leader(operands[k], &mut checked[k], Type::F64);
                 ty = Some(Type::F64);
                 want = Some(Type::F64);
                 (value, true)
@@ -307,6 +309,16 @@ impl Checker<'_> {
             ty = None;
         }
         (checked, ty, mismatched)
+    }
+
+    /// The operand `e`, checked as `checked`, reported against `ty`, the type of a later operand,
+    /// and dropped to `Error`.
+    fn reject_leader(&mut self, e: &ast::Expr, checked: &mut Checked, ty: Type) {
+        if let Some(found) = type_of(checked) {
+            let d = self.mismatch(e.span, Some(e), ty, found);
+            self.diagnostics.push(d);
+        }
+        *checked = Err(Poisoned::error());
     }
 
     /// `lhs op rhs`, its `lhs` already checked against `want`, the type `op` takes; `op` comes
