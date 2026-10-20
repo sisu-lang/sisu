@@ -20,8 +20,10 @@ pub(super) fn token(
     let (literal, placeholder) = if source[start..].starts_with('\'') {
         (char_literal(source, start, chars), TokenKind::Char('\0'))
     } else {
+        // A `;` between is dropped later, so it must not change how the digits lex.
         let after_dot = tokens
-            .last()
+            .iter()
+            .rfind(|t| t.kind != TokenKind::Semicolon)
             .is_some_and(|t| matches!(t.kind, TokenKind::Dot | TokenKind::QuestionDot));
         (number(source, start, chars, after_dot), TokenKind::Int(0))
     };
