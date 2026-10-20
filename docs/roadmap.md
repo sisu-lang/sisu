@@ -1023,9 +1023,10 @@ These do not make code nicer to write, so they wait:
   which keeps ADR 0007's handover to a `let mut`. The result is one flag per
   parameter, and the ownership pass never moves a borrowed parameter. Callers
   copy an argument read from a `mut` field, a weak field or an array element
-  before the call. Two limits remain: a function called through a closure
-  keeps owned parameters, and a `for` over a parameter keeps it owned, because
-  the loop's iterable is a temporary that outlives its block.
+  before the call. Among the limits that remain: a function called through a
+  closure keeps owned parameters, and a `for` over a parameter keeps it owned,
+  as does a `match` on a binding of a borrowed `match`, because the loop's
+  iterable or the inner scrutinee is a temporary that outlives its block.
 - Reusing a box in `match`. Milestone 7 boxes the enum fields that close a
   cycle. When a `match` takes apart the last reference to a box, and its arm
   builds a box of the same enum type, as

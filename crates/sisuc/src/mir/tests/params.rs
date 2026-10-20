@@ -335,7 +335,7 @@ fn infer_visits_each_edge_once() {
         }
         count
     };
-    let (fifty, _, two_hundred) = (followed(50), followed(100), followed(200));
+    let (fifty, two_hundred) = (followed(50), followed(200));
     assert!(
         two_hundred <= 5 * fifty,
         "{fifty} edges for 50, {two_hundred} for 200"

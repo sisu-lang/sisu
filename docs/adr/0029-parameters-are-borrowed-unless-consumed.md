@@ -15,9 +15,11 @@ parameter is owned when the function consumes it, which is any of these uses:
 - selecting it into the result of an `if`, `match` or `??`: a destination
   that is assigned in more than one statement is a join, and the assignment
   consumes the parameter. A temporary that is assigned once and only reads the
-  parameter, such as the operand of `print(s)`, consumes nothing;
+  parameter, such as the operand of `print(s)`, consumes nothing when every
+  use of it is in its own block; a temporary used in another block, such as a
+  `for` loop's iterable, consumes it;
 - consuming a binding or a projection borrowed out of it, such as returning
-  the binding of an `if let` on it (the backward rule);
+  the binding of an `if let` on it (the backward rule).
 
 One more rule runs from the caller to the callee, the tail rule. Within one
 recursive group, an owned argument to a tail call makes the callee's
