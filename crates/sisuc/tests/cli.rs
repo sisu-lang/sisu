@@ -1083,6 +1083,7 @@ fn json_link_failure_stays_json() {
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
         .env("PATH", &only_cc)
+        .env_remove("COMPILER_PATH")
         .args([
             "--format",
             "json",

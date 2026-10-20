@@ -1085,6 +1085,7 @@ fn a_missing_linker_is_named() {
     let exe = empty.join("loops");
     let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "mold"])
         .env("PATH", only_cc("only_cc_on_path"))
+        .env_remove("COMPILER_PATH")
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
@@ -1143,6 +1144,7 @@ fn failed_link_leaves_no_object_file() {
     let out = support::sisuc(dir, "link_fails.sisu", &output, &["--linker", "mold"])
         .env("TMPDIR", &tmp)
         .env("PATH", only_cc("link_fails_path"))
+        .env_remove("COMPILER_PATH")
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
