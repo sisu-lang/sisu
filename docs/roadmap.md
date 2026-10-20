@@ -1108,6 +1108,8 @@ These do not make code nicer to write, so they wait:
     serialized into globals.
   - No I/O at compile time, so builds stay reproducible.
   - A step or time limit, so a loop that never ends cannot hang the compiler.
+  - Whether such functions are marked; see "Compile-time evaluation and
+    reflection" in "Open decisions".
 - `@inline` and `@noinline` on functions. They set LLVM's `alwaysinline` and
   `noinline` attributes, as codegen already sets `noreturn` on `sisu_panic`.
   An attribute alone changes nothing: without `-O2`, `sisuc` must run
@@ -1225,15 +1227,12 @@ accepted.
 - Inheritance. A `class` is a reference type, not a hierarchy. Composition,
   enums (milestone 7) and interfaces (milestone 8) cover polymorphism, as in
   Rust and Go.
-- Zig-style `comptime`, with types as compile-time values, and macros.
-  Generics and interfaces (milestone 8) cover the same ground, and errors
-  stay plain when type checking does not depend on running code. Macros
-  hide code from error messages, the formatter and the language server. The
-  other jobs macros do have other answers: generated conformances on request
-  (milestone 10), `const` initializers and attributes (later goals), and, for
-  serialization or bindings, a script that writes ordinary `.sisu` files
-  that are committed, as Go's `go generate` does. Runtime reflection is
-  avoided for the same reason, and because it costs at run time.
+- Macros. They hide code from error messages, the formatter and the
+  language server. Their jobs have other answers: generated conformances on
+  request (milestone 10), `const` initializers and attributes (later goals),
+  and, for bindings, a script that writes ordinary `.sisu` files that are
+  committed, as Go's `go generate` does. Compile-time evaluation and
+  reflection are an open decision ("Open decisions").
 - Variadic parameters. An array costs two characters, `sum([1, 2, 3])`, and
   uses a type that already exists. `print` is built in, and formatting uses
   string interpolation.
@@ -1462,3 +1461,27 @@ accepted.
   arithmetic in the language, since the runtime's `Hasher` holds it. `u64` and
   wrapping operators wait for the first Sisu code that needs them (ADR 0003),
   and other widths, such as `i32`, for the FFI.
+- **Compile-time evaluation and reflection.** Open, to revisit once Sisu has
+  grown (the user's decision, 2026-10-20); it was in "Deliberately avoided".
+  Zig, C++, Rust and Mojo evaluate code at compile time, and Zig, C++26 and
+  Mojo also reflect over types at compile time; Rust has a proposed project
+  goal for it. These are two questions:
+  - Compile-time evaluation. Today a `const` folds literals, operators and
+    other constants. Each extension only accepts more programs, as C++'s
+    `constexpr` grew from C++11 to C++20, so it can come in steps; the first,
+    calls to plain functions, is in "Later and stretch goals". Decide before
+    that step whether such functions are marked, as Rust's `const fn` is (the
+    mark is a promise to callers), or any function without I/O may run, as in
+    Zig (a change to a body can then break a distant constant); and whether
+    LLVM's JIT or a mir interpreter runs them.
+  - Reflection. From narrowest to widest: generated conformances only
+    (milestone 10); compile-time reflection that generates typed code;
+    compile-time reflection that produces a type description for run-time
+    code to walk; run-time reflection with metadata in the binary, as Go has.
+    The case for it is serialization, such as JSON for servers (ADR 0027),
+    without a code-generation script. Any design must report an error at the
+    call, not inside a generic body (ADR 0023), keep private fields private
+    (milestone 11's `pub`), and keep code reviewable (ADR 0027).
+  - Specialization and type tests on `T`, such as `if T is i64`, belong to
+    the same question. Until it is decided, a generic body is checked once,
+    at its definition (ADR 0023).

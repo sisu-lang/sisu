@@ -11,7 +11,7 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit 18b6be6</p>
+    <p class="meta">{{adr-count}} records · at commit ed7624d</p>
   </div></section>
   <!-- source: docs/adr/ (27 files, 0001 to 0025, 0027 and 0028), README.md ("Read why a design choice was made") -->
 
@@ -111,8 +111,7 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><strong>Header files.</strong></li>
         <li><strong>Unrestricted operator overloading.</strong></li>
         <li><strong>Inheritance.</strong> A <code>class</code> is a reference type, not a hierarchy; composition, enums and interfaces cover polymorphism, as in Rust and Go.</li>
-        <li><strong><code>comptime</code> and macros.</strong> Generics and interfaces cover the same ground, and errors stay plain when type checking does not depend on running code.</li>
-        <li><strong>Runtime reflection.</strong> Avoided for the same reason as macros, and because it costs at run time.</li>
+        <li><strong>Macros.</strong> They hide code from error messages, the formatter and the language server. Generated conformances, <code>const</code> initializers, attributes and committed generated files do their jobs.</li>
         <li><strong>Variadic parameters.</strong> An array costs two characters, <code>sum([1, 2, 3])</code>, and uses a type that already exists.</li>
         <li><strong>Pointers in Sisu code.</strong> A class is already a reference, and arrays are values.</li>
         <li><strong>Formatter options.</strong> One style ends style debates.</li>
@@ -126,7 +125,8 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><strong>A package registry, for a long time.</strong> A registry means hosting, security and name squatting.</li>
       </ul>
       <p>Interfaces and generic code are <span class="soon">planned</span>. Planned work has no promised date and may change.</p>
-      <!-- source: docs/roadmap.md "Deliberately avoided", "Proposed milestones 8 to 12"; docs/adr/0010-tasks-share-no-objects.md; README.md (generics proposed) -->
+      <p>Compile-time evaluation and reflection are left open, to decide once Sisu has grown; the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#open-decisions">Open decisions</a> lists what has to be settled first.</p>
+      <!-- source: docs/roadmap.md "Deliberately avoided", "Open decisions" ("Compile-time evaluation and reflection"), "Proposed milestones 8 to 12"; docs/adr/0010-tasks-share-no-objects.md; README.md (generics proposed) -->
 
       <h2 id="propose">Proposing a change</h2>
       <p>Open a <a href="https://github.com/sisu-lang/sisu/issues">GitHub issue</a> that names the record and the change you propose. A change that is accepted becomes a new record that supersedes the old one. See <a href="contribute.html">how to contribute</a>.</p>
