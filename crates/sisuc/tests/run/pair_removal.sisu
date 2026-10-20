@@ -1,0 +1,69 @@
+// Pair removal: a copy that is only read within its block becomes a borrow, and its release an
+// `end`. Every string these functions compare is built at run time, so Valgrind sees a read of a
+// freed string if a removal is wrong.
+class Entry {
+    name: string
+}
+
+class P {
+    mut x: f64
+}
+
+fn w(k: i64) -> string {
+    "w{k % 3}"
+}
+
+// Short and long words alternate.
+fn word(k: i64) -> string {
+    if k % 2 == 0 {
+        w(k)
+    } else {
+        "long{k % 3}"
+    }
+}
+
+// Both compared elements are borrowed.
+fn repeats(xs: [string]) -> i64 {
+    let mut n = 0
+    for i in 0..xs.len() {
+        for j in 0..i {
+            if xs[i] == xs[j] { n += 1 }
+        }
+    }
+    n
+}
+
+// The element, the temporary it moves into, and the key are borrowed.
+fn count(es: [Entry], key: string) -> i64 {
+    let mut n = 0
+    for e in es { if e.name == key { n += 1 } }
+    n
+}
+
+// The element is borrowed around the `f64` store through its copy.
+fn nudge(ps: [P]) {
+    for j in 0..ps.len() {
+        let p = ps[j]
+        p.x = p.x + 1.0
+        print(p.x)
+    }
+}
+
+fn long_words(ws: [string]) -> i64 {
+    let mut n = 0
+    for w in ws { if w.len() > 4 { n += 1 } }
+    n
+}
+
+fn main() {
+    // w0 w1 w2 w0 w1: the last two repeat an earlier word.
+    print(repeats([w(0), w(1), w(2), w(3), w(4)]))  // 2
+    let es = [Entry(name: w(0)), Entry(name: w(1)), Entry(name: w(2)), Entry(name: w(4))]
+    print(count(es, w(1)))                          // 2
+    let ps = [P(x: 1.5), P(x: 2.0)]
+    nudge(ps)                                       // 2.5, then 3.0
+    print(ps[0].x)                                  // 2.5
+    print(ps[1].x)                                  // 3.0
+    // w0 long1 w2 long0 w1
+    print(long_words([word(0), word(1), word(2), word(3), word(4)]))  // 2
+}

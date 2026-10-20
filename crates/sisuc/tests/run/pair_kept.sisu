@@ -1,0 +1,88 @@
+// Copies that pair removal must keep. Each would read a freed or overwritten value as a borrow:
+// every string is built at run time, so Valgrind sees a read of a freed one.
+class SBox {
+    mut s: string
+}
+
+enum E {
+    V(string)
+    W
+}
+
+class OBox {
+    mut e: E?
+}
+
+class ABox {
+    mut xs: [i64]
+}
+
+fn name(k: i64) -> string {
+    "n{k}"
+}
+
+fn swap(b: SBox, k: i64) {
+    b.s = "new{k}"
+}
+
+// The call replaces the field the copy came from.
+fn across_call(b: SBox, k: i64) {
+    let t = b.s
+    swap(b, k)
+    print(t)
+    print(b.s)
+}
+
+// Copy-on-write must copy: `xs` keeps its first element.
+fn arr(xs: [i64]) -> i64 {
+    let mut ys = xs
+    ys[0] = 5
+    ys[0] + xs[0]
+}
+
+// With `a` and `b` the same object, `make_unique` must see the count the copy holds.
+fn f(a: ABox, b: ABox) {
+    let t = a.xs
+    b.xs[0] = 5
+    print(t[0])
+    print(a.xs[0])
+}
+
+// With `a` and `b` the same object, the store frees the string the copy holds.
+fn g(a: SBox, b: SBox, k: i64) {
+    let t = a.s
+    b.s = "m{k}"
+    print(t)
+    print(a.s)
+}
+
+// With `a` and `b` the same object, storing `None` frees the payload the copy holds: the
+// `take` is the only clobber, since `None` is not counted.
+fn h(a: OBox, b: OBox, k: E?) {
+    let t = a.e
+    b.e = None
+    print(t == k)
+    print(a.e == None)
+}
+
+// The root is moved, then assigned, while the copy is open.
+fn reassigned(k: i64) {
+    let mut x = name(k)
+    let t = x
+    print(x)
+    x = name(k + 1)
+    print(t)
+    print(x)
+}
+
+fn main() {
+    across_call(SBox(s: name(5)), 7)                // n5, then new7
+    print(arr([1, 2]))                              // 6
+    let o = ABox(xs: [1, 2])
+    f(o, o)                                         // 1, then 5
+    let q = SBox(s: name(3))
+    g(q, q, 9)                                      // n3, then m9
+    reassigned(1)                                   // n1, n1, then n2
+    let r = OBox(e: E.V(name(3)))
+    h(r, r, E.V(name(3)))                           // true, then true
+}

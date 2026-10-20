@@ -1359,7 +1359,8 @@ fn args_declarations_carry_memory_effects() {
 }
 
 /// `xs.len()` and `o.n` on a local neither retain nor release the base: the local keeps it
-/// alive. A counted field read still retains the field.
+/// alive. A counted field read that escapes still retains the field: `counted` hands `a` to
+/// `keep`. A copy that is only read is a pair, which `mir/pairs.rs` makes a borrow.
 #[test]
 fn len_and_field_of_a_local_skip_base_count() {
     let context = Context::create();
@@ -1368,7 +1369,8 @@ fn len_and_field_of_a_local_skip_base_count() {
         "class O {\n    n: i64\n    a: [i64]\n}\n\
          fn len(xs: [i64]) -> [i64] {\n    print(xs.len() + xs.len())\n    xs\n}\n\
          fn field(o: O) -> O {\n    print(o.n + o.n)\n    o\n}\n\
-         fn counted(o: O) -> O {\n    let a = o.a\n    print(a[0])\n    o\n}\n\
+         fn keep(xs: [i64]) {}\n\
+         fn counted(o: O) -> O {\n    let a = o.a\n    print(a[0])\n    keep(a)\n    o\n}\n\
          fn main() {}",
     )
     .print_to_string()
@@ -1770,20 +1772,22 @@ fn general_path_releases_base() {
 }
 
 /// An index built only from whitelisted nodes reads the base in place; one with a call copies
-/// the base, which is released before the element is printed. In `moved` the index's read of
-/// `ys` is its last use, which the ownership pass makes a move, and `xs` is still read in place:
+/// the base, which is released before the element is printed. `call` indexes a field, `q.xs`:
+/// a borrow of a whole local survives a call, so pair removal (`mir/pairs.rs`) would make a
+/// copy of a whole local a borrow. In `moved` the index's read of `ys` is its last use, which
+/// the ownership pass makes a move, and `xs` is still read in place:
 /// `base_borrowed_when_the_sibling_moves_another_local` (`mir/tests/lower.rs`) covers that rule.
 #[test]
 fn fast_path_follows_the_index_whitelist() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class O {\n    n: i64\n}\nfn g() -> i64 { 0 }\n\
+        "class O {\n    n: i64\n}\nclass Q {\n    xs: [i64]\n}\nfn g() -> i64 { 0 }\n\
          fn unary(xs: [i64], i: i64) -> [i64] {\n    print(xs[-i + 1])\n    xs\n}\n\
          fn convert(xs: [i64], b: u8) -> [i64] {\n    print(xs[i64(b)])\n    xs\n}\n\
          fn field(xs: [i64], o: O) -> [i64] {\n    print(xs[o.n])\n    print(o.n)\n    xs\n}\n\
          fn length(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    print(ys.len())\n    xs\n}\n\
-         fn call(xs: [i64]) -> [i64] {\n    print(xs[1 + g()])\n    xs\n}\n\
+         fn call(q: Q) -> Q {\n    print(q.xs[1 + g()])\n    q\n}\n\
          fn moved(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    xs\n}\nfn main() {}",
     )
     .print_to_string()
@@ -2186,6 +2190,24 @@ fn a_bool_fill_is_a_memset_at_o2() {
         let body = function_body(&ir, &format!("@sisu.{name}("));
         assert!(body.contains("@llvm.memset"), "{body}");
     }
+}
+
+/// `compare`'s `repeats`: pair removal borrows both elements that the inner loop compares, so
+/// at `-O2` the function retains nothing. Before it, each comparison retained both. `-O2`
+/// inlines `@sisu_rc.retain`, so the test also rejects its inlined blocks (`sisu_rc.retain.exit`).
+#[test]
+fn element_comparison_in_a_loop_retains_nothing() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn repeats(xs: [string]) -> i64 {\n    let mut n = 0\n    for i in 0..xs.len() {\n        for j in 0..i {\n            if xs[i] == xs[j] { n += 1 }\n        }\n    }\n    n\n}\n\nfn main() {\n    print(repeats([\"a\", \"b\", \"a\"]))\n}",
+    );
+    keep_functions(&module, "repeats");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let repeats = function_body(&ir, "@sisu.repeats(");
+    assert!(!repeats.contains("sisu_rc.retain"), "{repeats}");
 }
 
 /// A loop makes the arrays it writes unique before it starts. `f`'s raw IR, split at each

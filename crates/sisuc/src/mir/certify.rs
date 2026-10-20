@@ -6,12 +6,17 @@
 //! A local's region is the blocks its scope block dominates, and its nodes are the blocks
 //! that mention it, its `None` edge targets, its scope block and their iterated dominance
 //! frontier within the region. Every other block of the region holds the set of its nearest
-//! dominating node, so a node answers for the returns, the exits and the root's kills of the
-//! blocks it covers with range queries over the dominator tree's pre-order. The work per local
-//! is its nodes and their edges, not the blocks between them.
+//! dominating node, so a node answers for the returns, the exits, the root's kills and, for a
+//! local that borrows through a field or an element, the clobbers of the blocks it covers, with
+//! range queries over the dominator tree's pre-order. The work per local is its nodes and their
+//! edges, not the blocks between them.
 //!
 //! An owned or borrowed value that leaves its region is an error, so a cycle that leaks is
 //! caught whether or not `Function::loops` records it.
+//!
+//! Rule 3 ends a borrow through a field or an element at any call, as the spec says for a `mut`
+//! or weak field, but for every field: there is no class table here, and weak fields come in
+//! milestone 9. The stricter rule is never unsound.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
@@ -47,13 +52,19 @@ pub(crate) enum Rule {
     Consume,
     /// Rule 2: a read of a local that may be empty or ended.
     Read,
-    /// Rule 3: the root of the local's borrow is consumed, assigned or released while it is
-    /// borrowed, or a statement reads a root in place and then consumes, assigns or releases it.
+    /// Rule 3: the root of the local's borrow is consumed, assigned, released or written while
+    /// it is borrowed, or a call, a counted write or a `make_unique` happens while it borrows
+    /// through a field or an element; or a statement reads a root in place and then consumes,
+    /// assigns or releases it.
     Borrow,
     /// Rule 4: a `return` where the local may be owned.
     Return,
     /// Rule 5: an assignment to a local that may be owned.
     Assign,
+    /// Rule 3: a `take`, a store or a `make_unique` writes through a local that may be
+    /// borrowed and is not an object. An array or a string with a second holder is copied on
+    /// write, but a borrow holds no count, so the write would go into its root's value.
+    WriteBorrowed,
     /// Rule 6: a `take` and the store to its place are not one pair in one block.
     Take,
     /// The borrow of a local that may be owned ends.
@@ -73,10 +84,15 @@ impl fmt::Display for Rule {
             Rule::Consume => "consumed where it may not own a reference",
             Rule::Read => "read where it may be empty or ended",
             Rule::Borrow => {
-                "its borrow's root is consumed, assigned or released while it is borrowed"
+                "its borrow's root is consumed, assigned, released or written while it is \
+                 borrowed, or a call, a counted write or a `make_unique` happens while it \
+                 borrows through a field or an element"
             }
             Rule::Return => "may still own a reference at `return`",
             Rule::Assign => "assigned where it may own a reference",
+            Rule::WriteBorrowed => {
+                "a write goes into it while it is borrowed, and it is not an object"
+            }
             Rule::Take => "a `take` without exactly one store to its place in its block",
             Rule::End => "its borrow ends where it may own a reference",
             Rule::Unended => "still borrowed outside its arm",
@@ -105,6 +121,7 @@ pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
     regions(
         function,
         |_| true,
+        true,
         |region, scratch| region.check(scratch, &mut |_, _| {}),
     )
 }
@@ -129,6 +146,7 @@ pub(super) fn scope_release_states(
     let _ = regions(
         function,
         |local| named[local.0],
+        false,
         |region, scratch| {
             seen.clear();
             let observed = region.check(scratch, &mut |event, set| {
@@ -146,10 +164,13 @@ pub(super) fn scope_release_states(
 }
 
 /// Builds what the regions share, then runs `each` on the region of each counted local that
-/// `wanted` takes, in order, up to its first error.
+/// `wanted` takes, in order, up to its first error. Only with `clobbers` does a region check
+/// rule 3's clobbers. Only `certify` builds them, so the elaboration, which runs in release
+/// builds too, skips their cost.
 fn regions(
     function: &Function,
     wanted: impl Fn(LocalId) -> bool,
+    clobbers: bool,
     mut each: impl FnMut(&Region<'_>, &mut Scratch) -> Result<(), Violation>,
 ) -> Result<(), Violation> {
     let graph = Graph::new(function);
@@ -157,6 +178,7 @@ fn regions(
     takes(function, &tree)?;
     let mentions = mentions(function, &tree)?;
     let shape = Shape::new(function, &graph, &tree);
+    let clobbers = clobbers.then(|| Clobbers::new(function, &tree));
     let mut roots = FxHashMap::default();
     let mut scratch = Scratch::new(function.blocks.len());
     for (i, local) in function.locals.iter().enumerate() {
@@ -177,6 +199,7 @@ fn regions(
                 scope: function.locals[i].scope.0,
                 events: &mentions[i],
                 root,
+                clobbers: clobbers.as_ref().filter(|clobbers| clobbers.unstable[i]),
             };
             each(&region, &mut scratch)?;
         }
@@ -198,7 +221,7 @@ fn root(function: &Function, local: LocalId) -> Option<LocalId> {
     Some(root)
 }
 
-/// Where a binding's root is consumed, assigned or released.
+/// Where a binding's root is consumed, assigned, released or written.
 struct Kills {
     /// In block and statement order.
     events: Vec<Event>,
@@ -210,7 +233,7 @@ impl Kills {
     fn new(events: &[Event], tree: &Tree) -> Self {
         let events: Vec<Event> = events
             .iter()
-            .filter(|event| event.effect.kills())
+            .filter(|event| event.effect.kills() || event.effect == Effect::Write)
             .copied()
             .collect();
         let mut pres: Vec<usize> = events.iter().map(|event| tree.pre(event.block)).collect();
@@ -220,14 +243,132 @@ impl Kills {
     }
 }
 
+/// Rule 3's clobbers: the statements that may free or change what a borrow through a field or
+/// an element reads. A call can replace any field or element; a `take` into a counted local and
+/// a store of a counted value can free one; and a `make_unique` decides on a count that a
+/// borrow does not hold.
+struct Clobbers {
+    /// Whether each local borrows through a field or an element, or from a local that does.
+    unstable: Vec<bool>,
+    /// The pre-order numbers of the clobbers' blocks, sorted.
+    pres: Vec<usize>,
+    /// Per block, the clobbers before each statement: `prefix[block][at]` for statement `at`,
+    /// and the terminator's at the block's length.
+    prefix: Vec<Vec<usize>>,
+}
+
+impl Clobbers {
+    fn new(function: &Function, tree: &Tree) -> Self {
+        let locals = function.locals.len();
+        // Each local is marked as it is queued, so it is queued, and its edges walked, once.
+        let mut unstable = vec![false; locals];
+        let mut work = Vec::new();
+        // Each borrow, as the local it reads to the local it assigns.
+        let mut edges = Vec::new();
+        let mut pres = Vec::new();
+        let mut prefix = Vec::with_capacity(function.blocks.len());
+        for (b, block) in function.blocks.iter().enumerate() {
+            if !tree.reachable(b) {
+                prefix.push(Vec::new());
+                continue;
+            }
+            let mut before = Vec::with_capacity(block.stmts.len() + 1);
+            let mut so_far = 0;
+            for stmt in &block.stmts {
+                before.push(so_far);
+                let clobbers = match stmt {
+                    Statement::Assign { dest, value } => match value {
+                        Rvalue::Call { .. } => true,
+                        Rvalue::Borrow(place) => {
+                            if let Some(dest) = *dest {
+                                if place.projections.iter().any(|projection| {
+                                    matches!(
+                                        projection,
+                                        Projection::Field(_) | Projection::Index { .. }
+                                    )
+                                }) && !unstable[dest.0]
+                                {
+                                    unstable[dest.0] = true;
+                                    work.push(dest.0);
+                                }
+                                edges.push((place.local.0, dest.0));
+                            }
+                            false
+                        }
+                        Rvalue::Use(_)
+                        | Rvalue::Copy(_)
+                        | Rvalue::CopyStr(_)
+                        | Rvalue::Unwrap(_)
+                        | Rvalue::New { .. }
+                        | Rvalue::Variant { .. }
+                        | Rvalue::ArrayLit(_)
+                        | Rvalue::ArrayFill { .. }
+                        | Rvalue::Wrap(_)
+                        | Rvalue::Concat { .. }
+                        | Rvalue::Interpolate { .. }
+                        | Rvalue::ReadLine
+                        | Rvalue::Chars(_)
+                        | Rvalue::Bytes(_)
+                        | Rvalue::Words(_)
+                        | Rvalue::FromChars(_)
+                        | Rvalue::Len(_)
+                        | Rvalue::LenWords(_)
+                        | Rvalue::Sum { .. }
+                        | Rvalue::Contains { .. }
+                        | Rvalue::Convert(_)
+                        | Rvalue::Math { .. }
+                        | Rvalue::Unary { .. }
+                        | Rvalue::Binary { .. }
+                        | Rvalue::Compare { .. }
+                        | Rvalue::Equal { .. }
+                        | Rvalue::Is { .. }
+                        | Rvalue::Print { .. } => false,
+                    },
+                    Statement::Take { dest, .. } => function.locals[dest.0].counted,
+                    Statement::Store { value, .. } => counted_value(function, value),
+                    Statement::MakeUnique(_) => true,
+                    Statement::Release(_)
+                    | Statement::ScopeRelease(_)
+                    | Statement::Check(_)
+                    | Statement::End(_) => false,
+                };
+                so_far += usize::from(clobbers);
+            }
+            before.push(so_far);
+            if so_far > 0 {
+                pres.push(tree.pre(b));
+            }
+            prefix.push(before);
+        }
+        pres.sort_unstable();
+        // Instability flows along borrows in any block order, so from the seeds over the edges.
+        let (mut at, mut next) = (Vec::new(), Vec::new());
+        group(&edges, locals, &mut at, &mut next);
+        while let Some(local) = work.pop() {
+            for &to in &next[at[local]..at[local + 1]] {
+                count(1);
+                if !unstable[to] {
+                    unstable[to] = true;
+                    work.push(to);
+                }
+            }
+        }
+        Clobbers {
+            unstable,
+            pres,
+            prefix,
+        }
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     /// How much of the function's structure the certifier has touched on this thread, counted
     /// where the data is read or written: each control-flow edge handed out, each read of the
     /// dominator tree, each entry of a range table or wavelet matrix built or read, each step
-    /// of a wavelet query or of a dominator search's path, and each read of the `return`
-    /// counts. Reads of a `Shape` vector that go with a counted edge or query (`component`,
-    /// `join_at`) are not counted again.
+    /// of a wavelet query or of a dominator search's path, each kill of a root walked, and
+    /// each read of the `return` counts. Reads of a `Shape` vector that go with a counted edge
+    /// or query (`component`, `join_at`) are not counted again.
     pub(super) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -475,7 +616,7 @@ fn eval(
 
 /// What a statement does to one local, in the order its operands run.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Effect {
+pub(super) enum Effect {
     /// A read that leaves the value in place for a copy or a scalar result.
     Read,
     /// A read of the root of a place that the statement uses in place.
@@ -490,18 +631,25 @@ enum Effect {
     /// `b = borrow p`.
     AssignBorrowed,
     End,
+    /// The root of a place that a `take`, a store or a `make_unique` writes through. It reads
+    /// the local in place, as `ReadInPlace` does, and also ends a borrow of it.
+    Write,
 }
 
 impl Effect {
     /// Whether the effect consumes, assigns or releases the local.
-    fn kills(self) -> bool {
+    pub(super) fn kills(self) -> bool {
         match self {
             Effect::Consume
             | Effect::Release
             | Effect::ScopeRelease
             | Effect::Assign
             | Effect::AssignBorrowed => true,
-            Effect::Read | Effect::ReadInPlace | Effect::ReadConsumed | Effect::End => false,
+            Effect::Read
+            | Effect::ReadInPlace
+            | Effect::ReadConsumed
+            | Effect::End
+            | Effect::Write => false,
         }
     }
 }
@@ -515,7 +663,10 @@ struct Event {
 }
 
 /// Calls `f` with each local `stmt` mentions, its effect and the place it is the root of.
-fn statement<'a>(stmt: &'a Statement, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
+pub(super) fn statement<'a>(
+    stmt: &'a Statement,
+    f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
+) {
     match stmt {
         Statement::Assign { dest, value } => {
             rvalue(value, f);
@@ -533,18 +684,17 @@ fn statement<'a>(stmt: &'a Statement, f: &mut impl FnMut(LocalId, Effect, Option
             }
         }
         Statement::Take { dest, place } => {
-            self::place(place, Effect::ReadInPlace, f);
+            self::place(place, Effect::Write, f);
             f(*dest, Effect::Assign, None);
         }
         Statement::Store { place, value } => {
-            self::place(place, Effect::ReadInPlace, f);
+            self::place(place, Effect::Write, f);
             consumed(value, f);
         }
         Statement::Release(local) => f(*local, Effect::Release, None),
         Statement::ScopeRelease(local) => f(*local, Effect::ScopeRelease, None),
-        Statement::MakeUnique(place) | Statement::Check(place) => {
-            self::place(place, Effect::ReadInPlace, f);
-        }
+        Statement::MakeUnique(place) => self::place(place, Effect::Write, f),
+        Statement::Check(place) => self::place(place, Effect::ReadInPlace, f),
         Statement::End(local) => f(*local, Effect::End, None),
     }
 }
@@ -604,7 +754,10 @@ fn rvalue<'a>(value: &'a Rvalue, f: &mut impl FnMut(LocalId, Effect, Option<&'a 
     }
 }
 
-fn terminator<'a>(term: &'a Terminator, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
+pub(super) fn terminator<'a>(
+    term: &'a Terminator,
+    f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
+) {
     match term {
         Terminator::Branch { cond: op, .. } | Terminator::SwitchValue { operand: op, .. } => {
             operand(op, f);
@@ -687,7 +840,7 @@ fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violati
                     rule,
                 });
             }
-            if effect == Effect::ReadInPlace {
+            if matches!(effect, Effect::ReadInPlace | Effect::Write) {
                 in_place.push(local);
             }
             events[local.0].push(Event {
@@ -772,7 +925,7 @@ fn takes(function: &Function, tree: &Tree) -> Result<(), Violation> {
 }
 
 /// Whether a store of `value` moves a counted reference into its place.
-fn counted_value(function: &Function, value: &Operand) -> bool {
+pub(super) fn counted_value(function: &Function, value: &Operand) -> bool {
     match value {
         Operand::Move(local) => function.locals[local.0].counted,
         Operand::Read(place) => {
@@ -1327,6 +1480,8 @@ struct Region<'a> {
     events: &'a [Event],
     /// Where the root of a `match` binding is killed.
     root: Option<&'a Kills>,
+    /// The function's clobbers, when the local is unstable.
+    clobbers: Option<&'a Clobbers>,
 }
 
 impl Region<'_> {
@@ -1556,18 +1711,43 @@ impl Region<'_> {
         let kills = self
             .root
             .map_or(&[][..], |root| by_block(&root.events, block));
-        let mut kills = kills.iter().peekable();
-        for event in &self.events[s.from[block]..s.to[block]] {
-            // The root's kills in a statement come before the statement's own effects.
+        let events = &self.events[s.from[block]..s.to[block]];
+        // The kills up to the first event's statement all meet the entry set, so one test
+        // stands for them, and a region walks only the kills inside its own events.
+        let skip = events
+            .first()
+            .map_or(0, |first| kills.partition_point(|kill| kill.at <= first.at));
+        if skip > 0 && states & BORROWED != 0 {
+            return Err(self.violation(block, Rule::Borrow));
+        }
+        let mut kills = kills[skip..].iter().peekable();
+        // Whether a clobber lies in statements `from..to`, one test per gap between events.
+        let prefix = self.clobbers.map(|clobbers| &clobbers.prefix[block]);
+        let clobbered = |from: usize, to: usize| {
+            prefix.is_some_and(|prefix| {
+                count(1);
+                prefix[to] != prefix[from]
+            })
+        };
+        let mut previous = 0;
+        for event in events {
+            // The root's kills in a statement come before the statement's own effects, and its
+            // clobber after them: a call reads its arguments first.
             while kills.next_if(|kill| kill.at <= event.at).is_some() {
+                count(1);
                 if states & BORROWED != 0 {
                     return Err(self.violation(block, Rule::Borrow));
                 }
             }
+            if clobbered(previous, event.at) && states & BORROWED != 0 {
+                return Err(self.violation(block, Rule::Borrow));
+            }
+            previous = event.at;
             observe(event, states);
             states = self.apply(block, event.effect, states)?;
         }
-        if kills.next().is_some() && states & BORROWED != 0 {
+        let end = self.function.blocks[block].stmts.len();
+        if (kills.next().is_some() || clobbered(previous, end)) && states & BORROWED != 0 {
             return Err(self.violation(block, Rule::Borrow));
         }
         if let Terminator::Return(_) = self.function.blocks[block].term {
@@ -1608,12 +1788,14 @@ impl Region<'_> {
     /// kills, the returns and the exits. The states that leave the region from them along a
     /// path back to the scope block.
     fn cover(&self, from: usize, to: usize, states: States) -> Result<States, Violation> {
-        if states & BORROWED != 0
-            && let Some(Kills { pres: kills, .. }) = self.root
-        {
-            let at = kills.partition_point(|&pre| pre < from);
-            if kills.get(at).is_some_and(|&pre| pre <= to) {
-                return Err(self.violation(self.tree.at(kills[at]), Rule::Borrow));
+        if states & BORROWED != 0 {
+            let root = self.root.map(|root| &root.pres);
+            let clobbers = self.clobbers.map(|clobbers| &clobbers.pres);
+            for kills in root.into_iter().chain(clobbers) {
+                let at = kills.partition_point(|&pre| pre < from);
+                if kills.get(at).is_some_and(|&pre| pre <= to) {
+                    return Err(self.violation(self.tree.at(kills[at]), Rule::Borrow));
+                }
             }
         }
         // Only a violation needs its block, which a search over the range finds.
@@ -1637,11 +1819,12 @@ impl Region<'_> {
         }
     }
 
-    /// One effect on the set, checked against rules 1, 2, 5 and the end of a borrow.
+    /// One effect on the set, checked against rules 1, 2, 5, a write while borrowed and the end
+    /// of a borrow.
     fn apply(&self, block: usize, effect: Effect, states: States) -> Result<States, Violation> {
         let (bad, rule, after) = match effect {
             // `mentions` rejects a counted `ReadConsumed` before any region is checked.
-            Effect::Read | Effect::ReadInPlace | Effect::ReadConsumed => {
+            Effect::Read | Effect::ReadInPlace | Effect::ReadConsumed | Effect::Write => {
                 (EMPTY | ENDED, Rule::Read, states)
             }
             Effect::Consume => (EMPTY | BORROWED | ENDED, Rule::Consume, EMPTY),
@@ -1659,6 +1842,15 @@ impl Region<'_> {
         };
         if states & bad != 0 {
             return Err(self.violation(block, rule));
+        }
+        if effect == Effect::Write
+            && states & BORROWED != 0
+            && !matches!(
+                self.function.locals[self.local.0].ty.kind(),
+                TypeKind::Class(_)
+            )
+        {
+            return Err(self.violation(block, Rule::WriteBorrowed));
         }
         Ok(after)
     }
