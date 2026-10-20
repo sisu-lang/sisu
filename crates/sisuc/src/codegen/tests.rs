@@ -1772,10 +1772,10 @@ fn general_path_releases_base() {
 }
 
 /// An index built only from whitelisted nodes reads the base in place; one with a call copies
-/// the base, which is released before the element is printed. That base is a field: a copy of
-/// a whole local across a call is a pair, which `mir/pairs.rs` makes a borrow, because a call
-/// cannot change a local. In `moved` the index's read of
-/// `ys` is its last use, which the ownership pass makes a move, and `xs` is still read in place:
+/// the base, which is released before the element is printed. `call` indexes a field, `q.xs`:
+/// a borrow of a whole local survives a call, so pair removal (`mir/pairs.rs`) would make a
+/// copy of a whole local a borrow. In `moved` the index's read of `ys` is its last use, which
+/// the ownership pass makes a move, and `xs` is still read in place:
 /// `base_borrowed_when_the_sibling_moves_another_local` (`mir/tests/lower.rs`) covers that rule.
 #[test]
 fn fast_path_follows_the_index_whitelist() {

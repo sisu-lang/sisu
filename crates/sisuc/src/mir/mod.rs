@@ -164,7 +164,8 @@ pub(crate) enum Rvalue {
     Copy(Place),
     /// A string literal's global, with a reference added.
     CopyStr(String),
-    /// A `match` binding's read of a part of its scrutinee, in place.
+    /// A read of a place in place, with no count: a `match` binding's, or a copy that pair
+    /// removal turned into one.
     Borrow(Place),
     /// The payload of an optional that holds one.
     Unwrap(Operand),
@@ -277,7 +278,7 @@ pub(crate) enum Statement {
     MakeUnique(Place),
     /// The bounds check of the place's last index.
     Check(Place),
-    /// A `match` binding's borrow ends.
+    /// A borrow ends.
     End(LocalId),
 }
 
