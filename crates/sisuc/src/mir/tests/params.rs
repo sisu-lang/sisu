@@ -174,6 +174,18 @@ fn unit_tail_call_makes_the_parameter_owned() {
     signature(&printed, "walk", "fn walk(s#0: string");
 }
 
+/// Work after the call, in its block (`walk`) or in a block it reaches (`stroll`), means the call
+/// is not in tail position, so passing a fresh string leaves `s` borrowed.
+#[test]
+fn call_followed_by_work_is_not_a_tail_call() {
+    let printed = built(
+        "fn walk(s: string, n: i64) {\n    if n > 0 {\n        walk(\"x{n}\", n - 1)\n        print(n)\n    } else {\n        print(s)\n    }\n}\n\
+         fn stroll(s: string, n: i64) {\n    if n > 0 {\n        stroll(\"x{n}\", n - 1)\n    } else {\n        print(s)\n    }\n    print(n)\n}",
+    );
+    signature(&printed, "walk", "fn walk(s#0: borrow string");
+    signature(&printed, "stroll", "fn stroll(s#0: borrow string");
+}
+
 /// An `if` expression's result is assigned on each path, so each assignment consumes.
 #[test]
 fn join_result_makes_the_parameter_owned() {
