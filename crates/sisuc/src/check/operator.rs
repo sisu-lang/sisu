@@ -12,8 +12,8 @@ use crate::tir::{self, Type, TypeKind};
 impl Checker<'_> {
     /// The type of unary `-`, its operand, `expected` passed down, and whether it was reported. A
     /// `u8` operand is an error; an `f64` keeps its type, and an `f64?` is checked against `f64`;
-    /// any other is checked against `i64`. Unless `expected` is an `i64`, an operand that is none
-    /// of the types `-` takes is reported against all of them; a `char` is not, so that its
+    /// any other is checked against `i64`. Unless `expected` is an `i64` or `i64?`, an operand that
+    /// is none of the types `-` takes is reported against all of them; a `char` is not, so that its
     /// message keeps the conversion to `i64`.
     pub(super) fn negated(
         &mut self,
@@ -164,19 +164,19 @@ impl Checker<'_> {
     /// concrete operand (of `rank` 0) is checked first, with no expected type, and gives it: `u8`
     /// beside a `u8`, `f64` beside an `f64`, `char` beside a `char` in a comparison, else `i64`;
     /// beside a `char` in arithmetic that `i64` is not passed on, and the later operands are
-    /// checked with no expected type. Where `expected` is no `i64`, that operand, if it is none of
-    /// the types the operator takes, is reported against all of them, not against `i64`, unless a
-    /// `string` or `char` rule below reports it, or the first operand in source order is an integer
-    /// literal. With none, it is `i64`, so `None + 1` expects an
-    /// `i64`. An `f64` after an `i64` or `u8` first operand makes the type `f64`, and that operand
-    /// is reported against it, as an operand before a `string` is in `+`. When `expected` is `i64`
-    /// or `i64?`, an `f64` first operand gives `i64`, not `f64`, and that first operand is checked
-    /// against `expected`, so an `f64` is reported in either order and at any depth. Once an
-    /// operand is `Error`, the later ones are checked against `Error`. An operand of `arithmetic`
-    /// that is a `char` is left unreported, as the poison `typed` `char`: its caller reports the
-    /// operator, so what the operator's type finds wrong with the other operands is dropped, in
-    /// either order. In a comparison, a `char` after a number reports that number, as a `char`
-    /// before one reports the number.
+    /// checked with no expected type. Where `expected` is neither `i64` nor `i64?`, that operand,
+    /// if it is none of the types the operator takes, is reported against all of them, not against
+    /// `i64`, unless a `string` or `char` rule below reports it, an earlier operand has failed, or
+    /// the first operand in source order is an integer literal. With none, it is `i64`, so
+    /// `None + 1` expects an `i64`. An `f64` after an `i64` or `u8` first operand makes the type
+    /// `f64`, and that operand is reported against it, as an operand before a `string` is in `+`.
+    /// When `expected` is `i64` or `i64?`, an `f64` first operand gives `i64`, not `f64`, and that
+    /// first operand is checked against `expected`, so an `f64` is reported in either order and at
+    /// any depth. Once an operand is `Error`, the later ones are checked against `Error`. An
+    /// operand of `arithmetic` that is a `char` is left unreported, as the poison `typed` `char`:
+    /// its caller reports the operator, so what the operator's type finds wrong with the other
+    /// operands is dropped, in either order. In a comparison, a `char` after a number reports that
+    /// number, as a `char` before one reports the number.
     ///
     /// The type is `string` beside a `string`, in a comparison and in `+`. In `+` a `string`
     /// drives from either side: an operand of another type is reported against `string`, with
@@ -211,7 +211,7 @@ impl Checker<'_> {
             Some(Type::I64)
         };
         let (mut want, leader) = (ty, first.as_ref().map(|(k, _)| *k));
-        // A number first is the operator's `i64`, as is an `i64` wanted: neither lists the types.
+        // An integer literal first is the operator's `i64`, as is an `i64` wanted: no list then.
         let takes = (!wants_i64 && !int_literal(operands[0])).then(|| operator.takes());
         let by_char = arithmetic && first.as_ref().and_then(|f| type_of(&f.1)) == Some(Type::CHAR);
         let (mut checked, mut mismatched) = (Vec::with_capacity(operands.len()), false);
@@ -345,7 +345,9 @@ impl Checker<'_> {
         want: Option<Type>,
         takes: Option<&[Type]>,
     ) -> (Checked, bool) {
+        // An operand before it that failed has left `want` unset: one error is enough.
         if let Some(takes) = takes
+            && want.is_some()
             && let Some(got) = type_of(&checked).filter(|&got| !takes.contains(&payload(got)))
         {
             let d = self.takes_mismatch(e.span, takes, got);

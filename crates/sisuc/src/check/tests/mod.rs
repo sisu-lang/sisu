@@ -961,7 +961,7 @@ fn block_after_return_is_never() {
 }
 
 #[test]
-fn neg_needs_i64() {
+fn neg_needs_a_signed_number() {
     codes("fn main() { print(-true) }", &[(Code::Mismatch, (1, 20))]);
     // An unknown name is reported once: the minus adds nothing beside it.
     codes(
@@ -976,6 +976,15 @@ fn less_needs_an_ordered_operand() {
         "fn main() { print(true < false) }",
         &[(Code::Mismatch, (1, 19))],
     );
+}
+
+/// An operand that fails first leaves the later ones unchecked: one error per operator.
+#[test]
+fn operator_after_a_failed_operand_reports_once() {
+    for operator in ["None + p", "[] - p", "[] < a"] {
+        let src = format!("fn main() {{ let p = true; let a = [1]; print({operator}) }}");
+        codes(&src, &[(Code::Mismatch, (1, 46))]);
+    }
 }
 
 #[test]
