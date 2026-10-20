@@ -110,6 +110,11 @@ fn assert_spans(source: &str, diagnostics: &[Diagnostic]) {
     }
 }
 
+/// How many fixes `assert_safe_fixes` and `assert_fixes_keep_syntax` apply alone: each costs a
+/// pass over the source, so a source of hundreds of W0007s would take minutes.
+// shortcut: fixes past the first `ALONE` go unchecked; raise it if a bug hides behind one.
+const ALONE: usize = 64;
+
 /// Asserts that each safe fix of `diagnostics`, which the front end reports for `source`, keeps
 /// ADR 0013's promise when applied alone: it deletes no comment, removes its diagnostic (none of
 /// its code spans what it did), and keeps every diagnostic of another code, among those the
@@ -127,60 +132,63 @@ fn assert_safe_fixes(source: &str, diagnostics: &[Diagnostic]) {
     let first = |ds: &[Diagnostic]| ds.iter().map(|e| e.span().start()).min();
     let (lexer_diagnostics, comments) = lexed(source);
     let stop = first(&lexer_diagnostics).unwrap_or(usize::MAX);
-    for d in diagnostics {
+    let safe = diagnostics
+        .iter()
+        .flat_map(|d| d.fixes().iter().filter(|f| f.safe()).map(move |f| (d, f)));
+    for (d, fix) in safe.take(ALONE) {
         let code = d.code();
-        for fix in d.fixes().iter().filter(|f| f.safe()) {
-            for edit in fix.edits() {
-                let span = edit.span();
-                assert!(
-                    !comments.iter().any(|c| span.range().contains(c)),
-                    "{code:?}: a safe fix deletes a comment in {span:?}"
-                );
-            }
-            let fixed = fix.apply(source);
-            let after = crate::front_end::front_end(&fixed).1;
-            // Where a span of `source` would be in `fixed`: the edits before its ends move it.
-            let moved = |at: usize| {
-                let before = fix.edits().iter().filter(|e| e.span().end() <= at);
-                let (added, removed) = before.fold((0, 0), |(added, removed), e| {
-                    (
-                        added + e.replacement().len(),
-                        removed + e.span().range().len(),
-                    )
-                });
-                at + added - removed
-            };
-            let moved_span = |s: Span| (moved(s.start()), moved(s.end()));
-            // A diagnostic within `e`'s span reports the same problem, or one that stops the
-            // checker before it reaches `e`'s.
-            let spans_it = |e: &Diagnostic| {
-                let (start, end) = moved_span(e.span());
-                after
-                    .iter()
-                    .any(|a| start <= a.span().start() && a.span().end() <= end)
-            };
-            let (fixed_lexer_diagnostics, _) = lexed(&fixed);
-            let fixed_stop = first(&fixed_lexer_diagnostics).unwrap_or(usize::MAX);
-            let before_stops =
-                |e: &Diagnostic| e.span().start() < stop && moved(e.span().start()) < fixed_stop;
-            let unplaced: Vec<Code> = diagnostics
-                .iter()
-                .filter(|e| before_stops(e) && !spans_it(e))
-                .map(Diagnostic::code)
-                .collect();
-            keeps_others(code, &unplaced, &mut codes(&after), &fixed);
-            keeps_others(
-                code,
-                &codes(&lexer_diagnostics),
-                &mut codes(&fixed_lexer_diagnostics),
-                &fixed,
-            );
+        for edit in fix.edits() {
+            let span = edit.span();
             assert!(
-                !after.iter().any(|e| e.code() == code
-                    && (e.span().start(), e.span().end()) == moved_span(d.span())),
-                "{code:?}: a safe fix leaves its diagnostic:\n{fixed}"
+                !comments.iter().any(|c| span.range().contains(c)),
+                "{code:?}: a safe fix deletes a comment in {span:?}"
             );
         }
+        let fixed = fix.apply(source);
+        let after = crate::front_end::front_end(&fixed).1;
+        // Where a span of `source` would be in `fixed`: the edits before its ends move it.
+        let moved = |at: usize| {
+            let before = fix.edits().iter().filter(|e| e.span().end() <= at);
+            let (added, removed) = before.fold((0, 0), |(added, removed), e| {
+                (
+                    added + e.replacement().len(),
+                    removed + e.span().range().len(),
+                )
+            });
+            at + added - removed
+        };
+        let moved_span = |s: Span| (moved(s.start()), moved(s.end()));
+        // A diagnostic within `e`'s span reports the same problem, or one that stops the
+        // checker before it reaches `e`'s.
+        let spans_it = |e: &Diagnostic| {
+            let (start, end) = moved_span(e.span());
+            after
+                .iter()
+                .any(|a| start <= a.span().start() && a.span().end() <= end)
+        };
+        let (fixed_lexer_diagnostics, _) = lexed(&fixed);
+        let fixed_stop = first(&fixed_lexer_diagnostics).unwrap_or(usize::MAX);
+        let before_stops =
+            |e: &Diagnostic| e.span().start() < stop && moved(e.span().start()) < fixed_stop;
+        let unplaced: Vec<Code> = diagnostics
+            .iter()
+            .filter(|e| before_stops(e) && !spans_it(e))
+            .map(Diagnostic::code)
+            .collect();
+        keeps_others(code, &unplaced, &mut codes(&after), &fixed);
+        keeps_others(
+            code,
+            &codes(&lexer_diagnostics),
+            &mut codes(&fixed_lexer_diagnostics),
+            &fixed,
+        );
+        assert!(
+            !after
+                .iter()
+                .any(|e| e.code() == code
+                    && (e.span().start(), e.span().end()) == moved_span(d.span())),
+            "{code:?}: a safe fix leaves its diagnostic:\n{fixed}"
+        );
     }
 }
 
@@ -189,15 +197,16 @@ fn assert_safe_fixes(source: &str, diagnostics: &[Diagnostic]) {
 /// unjudged.
 fn assert_fixes_keep_syntax(source: &str, diagnostics: &[Diagnostic]) {
     let before = crate::front_end::syntax_errors(source);
-    for d in diagnostics {
-        for fix in d.fixes() {
-            let fixed = fix.apply(source);
-            assert!(
-                crate::front_end::syntax_errors(&fixed) <= before,
-                "{:?}: a fix breaks the syntax:\n{fixed}",
-                d.code()
-            );
-        }
+    let shown = diagnostics
+        .iter()
+        .flat_map(|d| d.fixes().iter().map(move |f| (d, f)));
+    for (d, fix) in shown.take(ALONE) {
+        let fixed = fix.apply(source);
+        assert!(
+            crate::front_end::syntax_errors(&fixed) <= before,
+            "{:?}: a fix breaks the syntax:\n{fixed}",
+            d.code()
+        );
     }
 }
 
