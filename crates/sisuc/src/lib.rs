@@ -24,7 +24,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use codegen::OptLevel;
-use diagnostic::{Code, Diagnostic};
+use diagnostic::{Code, Diagnostic, RETIRED, Severity};
 use inkwell::context::Context;
 use report::{Format, Reporter};
 use tir::Program;
@@ -232,10 +232,14 @@ fn run(reporter: &mut Report, mode: Mode) -> ExitCode {
     }
 }
 
-/// Prints the explanation of `code`, in any case, or that there is no such code.
+/// Prints the explanation of `code`, in any case, retired or not, or that there is no such code.
 fn explain(reporter: &mut Report, code: &str) -> ExitCode {
-    if let Some(code) = Code::parse(code) {
-        print!("{}", code.explanation());
+    let retired = || {
+        let (_, text) = RETIRED.iter().find(|(c, _)| c.eq_ignore_ascii_case(code))?;
+        Some(*text)
+    };
+    if let Some(text) = Code::parse(code).map(Code::explanation).or_else(retired) {
+        print!("{text}");
         ExitCode::SUCCESS
     } else {
         reporter.tool_error(&format!("unknown diagnostic code `{code}`"));
@@ -313,13 +317,18 @@ fn emit(
                 reporter.diagnostics(&path, &source, &lexed.diagnostics);
                 return ExitCode::FAILURE;
             }
+            reporter.diagnostics(&path, &source, &lexed.warnings);
             print!("{}", lexer::dump(&source, &lexed.tokens));
             ExitCode::SUCCESS
         }
         Stage::Ast => {
             let parsed = parser::parse(lexed);
-            if !parsed.diagnostics.is_empty() {
-                reporter.diagnostics(&path, &source, &parsed.diagnostics);
+            reporter.diagnostics(&path, &source, &parsed.diagnostics);
+            if parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.severity() == Severity::Error)
+            {
                 return ExitCode::FAILURE;
             }
             println!("{}", parsed.program);

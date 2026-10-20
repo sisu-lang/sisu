@@ -416,6 +416,23 @@ fn explain_prints_the_explanation() {
     }
 }
 
+/// A retired code's page is still served, in either case, and says it is retired.
+#[test]
+fn explain_prints_a_retired_explanation() {
+    for code in ["E0012", "e0012"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .args(["--explain", code])
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(0), "{code}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.lines().any(|l| l.starts_with("Status: retired")),
+            "{code}: {stdout}"
+        );
+    }
+}
+
 #[test]
 fn explain_rejects_an_unknown_code() {
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
@@ -641,6 +658,25 @@ fn emit_ir_warning_still_prints_ir() {
             .starts_with("warning[W0002]: `count` is never reassigned")
     );
     ir_sections(&String::from_utf8_lossy(&out.stdout));
+}
+
+/// A warning does not stop `--emit tokens` or `--emit ast`, as it does not stop `--check`.
+#[test]
+fn emit_with_a_redundant_semicolon_still_prints() {
+    for (stage, first) in [("tokens", "1:1 Fn fn\n"), ("ast", "(fn main ")] {
+        let out = run_on(
+            "emit_with_a_redundant_semicolon_still_prints",
+            "fn main() {\n    print(1);\n}\n",
+            &["--emit", stage],
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{stage}: {stderr}");
+        assert!(stderr.starts_with("warning[W0007]"), "{stage}: {stderr}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).starts_with(first),
+            "{stage}"
+        );
+    }
 }
 
 #[test]

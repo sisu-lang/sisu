@@ -20,10 +20,9 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0009](E0009.md) | error | integer literal too large for `i64` |
 | [E0010](E0010.md) | error | character that Sisu does not use |
 | [E0011](E0011.md) | error | token where something else belongs |
-| [E0012](E0012.md) | error | `;` at the end of a statement |
 | [E0013](E0013.md) | error | `var` instead of `let mut` |
 | [E0014](E0014.md) | error | optional of an optional |
-| [E0015](E0015.md) | error | field, variant or arm list on one line |
+| [E0015](E0015.md) | error | `,` between fields, variants or arms |
 | [E0016](E0016.md) | error | `let` in front of a field |
 | [E0017](E0017.md) | error | method without `self` |
 | [E0018](E0018.md) | error | `mut self` on a method |
@@ -151,6 +150,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [W0004](W0004.md) | warning | unused value |
 | [W0005](W0005.md) | warning | comparison with `f64.nan` |
 | [W0006](W0006.md) | warning | unreachable arm |
+| [W0007](W0007.md) | warning | unnecessary `;` |
 
 ## Explanations
 
@@ -166,10 +166,12 @@ both, and apply every safe fix to the Broken program.
 A new code takes the next free number in its series, in the order codes land
 on `main`. A code is never reused or renumbered.
 
-No code has retired yet. When the compiler stops reporting one, its variant
-will leave `DiagnosticKind`, its file will stay here and gain a
-`Status: retired in <stage>` line, and `sisuc --explain` will serve it from a
-table of retired codes.
+E0012 is the first retired code. When the compiler stops reporting a code,
+its variant leaves `DiagnosticKind` and its row leaves the table above. Its
+file stays here and gains a `Status: retired` line after its title, naming
+the ADR that retired it, and `sisuc --explain` serves it from `RETIRED`, the
+table of retired codes in `crates/sisuc/src/diagnostic/registry.rs`. The site
+leaves it out.
 
 ## JSON output
 

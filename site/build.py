@@ -137,8 +137,9 @@ def adr_files() -> list[Path]:
 
 
 def explanation_codes() -> list[str]:
-    """The codes that docs/diagnostics/ explains."""
-    return sorted(path.stem for path in (ROOT / 'docs/diagnostics').glob('[EW][0-9][0-9][0-9][0-9].md'))
+    """The codes that docs/diagnostics/ explains, without the retired ones, which the site leaves out."""
+    return sorted(path.stem for path in (ROOT / 'docs/diagnostics').glob('[EW][0-9][0-9][0-9][0-9].md')
+                  if not any(line.startswith('Status: retired') for line in path.read_text(encoding='utf-8').splitlines()))
 
 
 def diagnostic_count() -> str:

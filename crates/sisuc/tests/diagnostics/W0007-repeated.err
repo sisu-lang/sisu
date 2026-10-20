@@ -1,0 +1,26 @@
+warning[W0007]: unnecessary `;`
+ --> W0007-repeated.sisu:2:14
+  |
+2 |     let x = 1;;
+  |              ^
+  |
+help: remove the `;`
+  |
+2 -     let x = 1;;
+2 +     let x = 1;
+  |
+
+warning[W0007]: unnecessary `;`
+ --> W0007-repeated.sisu:2:15
+  |
+2 |     let x = 1;;
+  |               ^
+  |
+help: remove the `;`
+  |
+2 -     let x = 1;;
+2 +     let x = 1;
+  |
+
+sisuc: 2 warnings
+sisuc: for more on a code, run `sisuc --explain <code>`: W0007

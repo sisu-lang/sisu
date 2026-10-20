@@ -13,7 +13,7 @@ The design decisions behind Sisu, each written down as a short record with its r
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
     <p class="meta">{{adr-count}} records · at commit 18b6be6</p>
   </div></section>
-  <!-- source: docs/adr/ (26 files, 0001 to 0025 and 0027), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (27 files, 0001 to 0025, 0027 and 0028), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -52,12 +52,13 @@ The design decisions behind Sisu, each written down as a short record with its r
 
       <h2 id="syntax">Syntax and names</h2>
       <ul class="rows">
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0001-newline-terminated-statements.md"><span class="num">0001</span><b>Statements end at newlines, not semicolons</b><span>A line break ends a statement, except inside parentheses. No statement ends with <code>;</code>.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0001-newline-terminated-statements.md"><span class="num">0001</span><b>Statements end at newlines, not semicolons</b><span>A line break ends a statement, except inside parentheses. No statement needs a <code>;</code>.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md"><span class="num">0028</span><b>A <code>;</code> stands in for a line break</b><span>Two statements, fields, variants or arms can share a line with a <code>;</code> between them; an unnecessary <code>;</code> is a warning.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md"><span class="num">0015</span><b>The prelude holds only what almost every program uses</b><span>A name is visible in every file without an import only if almost every program uses it, or the language depends on it.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0019-enums-are-values-named-through-their-enum.md"><span class="num">0019</span><b>Enums are values named through their enum</b><span>An enum is an inline value built as <code>Expr.Num(2)</code>; a pattern can use the bare name, and <code>match</code> must cover every variant.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0020-labels-belong-to-the-declaration.md"><span class="num">0020</span><b>Labels belong to the declaration</b><span>A variant labels every field or none, and is built with its labels in declared order.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md -->
+      <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md -->
 
       <h2 id="change">Values and change</h2>
       <ul class="rows">

@@ -67,7 +67,6 @@ codes! {
     IntegerTooLarge = "E0009",
     UnexpectedCharacter = "E0010",
     Expected = "E0011",
-    Semicolon = "E0012",
     Var = "E0013",
     OptionalNests = "E0014",
     FieldComma = "E0015",
@@ -194,7 +193,15 @@ codes! {
     AlternativeBindings = "E0136",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
+    RedundantSemicolon = "W0007",
 }
+
+/// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
+/// "Numbers"). `sisuc --explain` still prints them.
+pub(crate) const RETIRED: &[(&str, &str)] = &[(
+    "E0012",
+    include_str!("../../../../docs/diagnostics/E0012.md"),
+)];
 
 impl Code {
     /// The code `text` names, in either case.
@@ -274,19 +281,15 @@ pub(crate) enum DiagnosticKind {
         found: String,
         at: Span,
     },
-    /// A `;` at `at`.
-    Semicolon { at: Span, place: SemicolonPlace },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
     /// The type `ty`, then `?` again, from `at`.
     OptionalNests { ty: String, at: Span },
-    /// A `,` at `at` after a `member`. `remove` is the comma, and the spaces after it unless the
-    /// comma ends its line; `replacement` is what takes it: nothing, or a line break and the
-    /// indentation of the line.
+    /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
+    /// its line or comes before `}`, and `;` otherwise.
     FieldComma {
         at: Span,
         member: Member,
-        remove: Span,
         replacement: String,
     },
     /// A `let` at `at` in front of a field.
@@ -785,6 +788,9 @@ pub(crate) enum DiagnosticKind {
         covered_by: Option<Span>,
         remove: Span,
     },
+    /// A `;` at `at` that separates nothing. `space` when it touches a token on each side, so
+    /// that removing it would join them.
+    RedundantSemicolon { at: Span, space: bool },
     /// The pattern at `at` of `keyword`, which every value of its enum matches.
     AlwaysMatches { keyword: Unwrap, at: Span },
     /// A range written another language's way, with its operator at `at`.
@@ -1013,17 +1019,6 @@ pub(crate) struct Join {
     pub(crate) gap: Span,
     /// Whether the move is always right, not only likely.
     pub(crate) safe: bool,
-}
-
-/// What a `;` follows, and so what can be done about it.
-#[derive(Clone, Copy)]
-pub(crate) enum SemicolonPlace {
-    /// It ends a complete statement or member, and a line break or `}` follows.
-    EndsLine,
-    /// It ends a complete statement or member, and more code follows on the line.
-    MidLine,
-    /// It ends a complete statement or member, and another `;` follows.
-    Repeated,
 }
 
 /// What a comma follows, in a list that puts each on its own line.
@@ -1360,27 +1355,6 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::Expected { what, found, at } => {
                 Diagnostic::coded(code, at, format!("expected {what}, found {found}"))
             }
-            DiagnosticKind::Semicolon { at, place } => {
-                let d = Diagnostic::coded(
-                    code,
-                    at,
-                    "a statement ends at the end of its line, not with `;`",
-                );
-                match place {
-                    SemicolonPlace::EndsLine => d.with_fix(Fix {
-                        message: "remove the `;`".to_string(),
-                        safe: true,
-                        edits: vec![Edit {
-                            span: at,
-                            replacement: String::new(),
-                        }],
-                    }),
-                    SemicolonPlace::MidLine => {
-                        d.with_help("put the next statement on its own line")
-                    }
-                    SemicolonPlace::Repeated => d,
-                }
-            }
             DiagnosticKind::Var { at, field } => {
                 let d = Diagnostic::coded(code, at, "there is no `var` in Sisu");
                 if field {
@@ -1396,17 +1370,24 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::FieldComma {
                 at,
                 member,
-                remove,
                 replacement,
             } => {
-                let article = if matches!(member, Member::Arm) { "an" } else { "a" };
-                Diagnostic::coded(code, at, format!("{article} {member} ends at the end of the line"))
+                let message = if replacement.is_empty() {
+                    "remove the `,`"
+                } else {
+                    "replace the `,` with `;`"
+                };
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("{member}s are separated by a line break or `;`, not `,`"),
+                )
                 .with_help(format!("put each {member} on its own line"))
                 .with_fix(Fix {
-                    message: "remove the comma and break the line".to_string(),
+                    message: message.to_string(),
                     safe: true,
                     edits: vec![Edit {
-                        span: remove,
+                        span: at,
                         replacement,
                     }],
                 })
@@ -2726,6 +2707,13 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
                 .with_fix(unsafe_fix(&format!("remove the {what}"), remove, ""))
+            }
+            DiagnosticKind::RedundantSemicolon { at, space } => {
+                Diagnostic::coded(code, at, "unnecessary `;`").with_fix(safe_fix(
+                    "remove the `;`",
+                    at,
+                    if space { " " } else { "" },
+                ))
             }
             DiagnosticKind::AlwaysMatches { keyword, at } => match keyword {
                 Unwrap::IfLet => Diagnostic::coded(code, at, "`if let` always matches here")

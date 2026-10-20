@@ -34,12 +34,14 @@ prints the explanation of a code and runs no stage.
 
 **Lexer** (`lexer/`). Turns source text into tokens. A line break that can
 end a statement becomes a `Newline` token, because statements end at
-newlines, not semicolons
-([ADR 0001](adr/0001-newline-terminated-statements.md)). It decodes a `char`
-literal and its escapes into one scalar value, and a string literal into its
-text, so later stages never see the escape text. An integer literal's token
-holds only its value; a diagnostic that quotes the literal as written slices
-the source with its span. A string with `{expr}` parts
+newlines ([ADR 0001](adr/0001-newline-terminated-statements.md)). A `;`
+between two statements on one line becomes a `Newline` too, and an
+unnecessary one, such as a `;` at the end of a line, is dropped with W0007
+([ADR 0028](adr/0028-a-semicolon-stands-in-for-a-line-break.md)). It
+decodes a `char` literal and its escapes into one scalar value, and a string
+literal into its text, so later stages never see the escape text. An integer
+literal's token holds only its value; a diagnostic that quotes the literal as
+written slices the source with its span. A string with `{expr}` parts
 becomes a `StrHead` token, the expression's tokens, and `StrMiddle` or
 `StrTail` tokens for the text between and after them. A `:` that ends an
 interpolation's expression starts a `FormatSpec` token, which holds the spec's

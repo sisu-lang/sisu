@@ -402,8 +402,10 @@ class Build(unittest.TestCase):
                     self.assertTrue(all(path in problem for problem in found) and found, found)
 
     def test_counts(self):
+        # A retired code's page is not counted.
         fake_site(self, {}, {f'docs/adr/{name}.md': '# T' for name in ('0001-a', '0002-b')}
-                  | {f'docs/diagnostics/{name}.md': '' for name in ('E0001', 'W0002', 'README')})
+                  | {f'docs/diagnostics/{name}.md': '' for name in ('E0001', 'W0002', 'README')}
+                  | {'docs/diagnostics/E0003.md': '# E0003: t\n\nStatus: retired in ADR 0028.\n'})
         self.assertEqual(build.expand('{{adr-count}} {{diagnostic-count}}', {}), '2 2')
 
     def test_adr_list(self):
@@ -618,8 +620,12 @@ class Pages(unittest.TestCase):
     def test_diagnostic_pages(self):
         built = {p.stem for p in (self.out / 'diagnostics').glob('*.html')}
         explained = {p.stem for p in (build.ROOT / 'docs/diagnostics').glob('*.md')} - {'README'}
+        # A retired code's page is left out.
+        retired = {p.stem for p in (build.ROOT / 'docs/diagnostics').glob('*.md')
+                   if '\nStatus: retired' in p.read_text(encoding='utf-8')}
         self.assertTrue(explained)
-        self.assertEqual(built, explained)
+        self.assertIn('E0012', retired)
+        self.assertEqual(built, explained - retired)
         self.assertTrue((self.out / 'diagnostics.html').is_file())
         self.assertIn('href="/sisu/diagnostics.html"', self.page('404.html'))
         # The first paragraph of E0130 quotes the error, so the description escapes a `"`.

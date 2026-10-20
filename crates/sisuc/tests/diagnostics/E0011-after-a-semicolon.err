@@ -1,0 +1,20 @@
+warning[W0007]: unnecessary `;`
+ --> E0011-after-a-semicolon.sisu:1:12
+  |
+1 | fn helper();
+  |            ^
+  |
+help: remove the `;`
+  |
+1 - fn helper();
+1 + fn helper()
+  |
+
+error[E0011]: expected `{`, found end of line
+ --> E0011-after-a-semicolon.sisu:1:13
+  |
+1 | fn helper();
+  |             ^
+
+sisuc: 1 error, 1 warning
+sisuc: for more on a code, run `sisuc --explain <code>`: E0011, W0007

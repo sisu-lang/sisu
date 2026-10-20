@@ -1,0 +1,85 @@
+warning[W0007]: unnecessary `;`
+ --> W0007-places.sisu:2:11
+  |
+2 |     x: i64;
+  |           ^
+  |
+help: remove the `;`
+  |
+2 -     x: i64;
+2 +     x: i64
+  |
+
+warning[W0007]: unnecessary `;`
+ --> W0007-places.sisu:5:16
+  |
+5 | fn show(p: P) {;
+  |                ^
+  |
+help: remove the `;`
+  |
+5 - fn show(p: P) {;
+5 + fn show(p: P) {
+  |
+
+warning[W0007]: unnecessary `;`
+ --> W0007-places.sisu:7:5
+  |
+7 |     ; print(p.x + 1)
+  |     ^
+  |
+help: remove the `;`
+  |
+7 -     ; print(p.x + 1)
+7 +      print(p.x + 1)
+  |
+
+warning[W0007]: unnecessary `;`
+ --> W0007-places.sisu:8:28
+  |
+8 |     if p.x > 0 { print(1) }; else { print(2) }
+  |                            ^
+  |
+help: remove the `;`
+  |
+8 -     if p.x > 0 { print(1) }; else { print(2) }
+8 +     if p.x > 0 { print(1) } else { print(2) }
+  |
+
+warning[W0007]: unnecessary `;`
+ --> W0007-places.sisu:9:13
+  |
+9 |     print(3); }
+  |             ^
+  |
+help: remove the `;`
+  |
+9 -     print(3); }
+9 +     print(3) }
+  |
+
+warning[W0007]: unnecessary `;`
+  --> W0007-places.sisu:11:15
+   |
+11 | fn helper() {}; fn main() {
+   |               ^
+   |
+help: remove the `;`
+   |
+11 - fn helper() {}; fn main() {
+11 + fn helper() {} fn main() {
+   |
+
+warning[W0007]: unnecessary `;`
+  --> W0007-places.sisu:14:1
+   |
+14 | ;
+   | ^
+   |
+help: remove the `;`
+   |
+14 - ;
+   |
+
+sisuc: 7 warnings
+sisuc: for more on a code, run `sisuc --explain <code>`: W0007

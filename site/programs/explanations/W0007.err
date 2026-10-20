@@ -1,0 +1,14 @@
+warning[W0007]: unnecessary `;`
+ --> W0007.sisu:2:14
+  |
+2 |     let x = 1;
+  |              ^
+  |
+help: remove the `;`
+  |
+2 -     let x = 1;
+2 +     let x = 1
+  |
+
+sisuc: 1 warning
+sisuc: for more on a code, run `sisuc --explain <code>`: W0007

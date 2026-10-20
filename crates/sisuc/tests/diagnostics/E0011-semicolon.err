@@ -1,7 +1,7 @@
-error[E0011]: expected `{`, found `;`
- --> E0011-semicolon.sisu:1:12
+error[E0011]: expected `)`, found `;`
+ --> E0011-semicolon.sisu:2:12
   |
-1 | fn helper();
+2 |     print(1; 2)
   |            ^
 
 sisuc: 1 error

@@ -38,6 +38,10 @@ impl<W: Write> Reporter<W> {
 
     /// Writes each of `diagnostics` about `source`, read from `path`.
     pub(crate) fn diagnostics(&mut self, path: &str, source: &str, diagnostics: &[Diagnostic]) {
+        // A clean source, as `--emit` passes it, needs no line index.
+        if diagnostics.is_empty() {
+            return;
+        }
         let lines = LineIndex::new(source);
         for d in &front_end::sound_fixes(source, diagnostics) {
             match d.severity() {

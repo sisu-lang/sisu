@@ -1,4 +1,4 @@
-error[E0011]: expected end of line, found `2.5`
+error[E0011]: expected end of line or `;`, found `2.5`
  --> E0011-float.sisu:2:17
   |
 2 |     let x = 1.5 2.5

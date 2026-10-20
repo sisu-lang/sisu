@@ -58,7 +58,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
       <h3>Lexer</h3>
       <p class="files"><code>crates/sisuc/src/lexer/</code>, <code>symbol.rs</code></p>
-      <p>A line break that can end a statement becomes a <code>Newline</code> token: statements end at newlines, not semicolons. Escapes in a string or <code>char</code> literal are decoded here, so later stages never see them. A string with <code>{expr}</code> parts becomes a run of tokens around the expression's own tokens.</p>
+      <p>A line break that can end a statement becomes a <code>Newline</code> token: statements end at newlines. A <code>;</code> between two statements on one line becomes a <code>Newline</code> too, and an unnecessary one, such as a <code>;</code> at the end of a line, is dropped with W0007 (ADR 0028). Escapes in a string or <code>char</code> literal are decoded here, so later stages never see them. A string with <code>{expr}</code> parts becomes a run of tokens around the expression's own tokens.</p>
       <p>Each name is interned into a <code>Symbol</code>, so the parser and checker compare and hash names as integers. After most errors the lexer skips the bad text and goes on, so it records every error. An unclosed or mismatched bracket is the exception: the run reports one diagnostic and stops.</p>
 
       <h3>Parser</h3>

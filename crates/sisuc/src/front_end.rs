@@ -48,11 +48,14 @@ pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>)
 /// the fuzz target asserts that every fix shown keeps the syntax, the checker's included.
 /// Judging one lexes and parses the whole source again, so judging every checker fix made N
 /// warnings cost N parses. For the same reason only the first `JUDGED` syntax fixes are judged;
-/// later ones are dropped.
+/// later ones are dropped. A W0007 fix is safe by construction (`lexer::separate`), so it is kept
+/// as it is: neither judged, counted nor demoted.
 pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
     let mut sound = diagnostics.to_vec();
+    // Skipping the reparse for W0007s alone only saves work, so no test pins it.
+    let syntax_fix = |d: &Diagnostic| d.code() != Code::RedundantSemicolon;
     // Judging a fix lexes and parses `source` again, so skip that when no diagnostic has one.
-    if sound.iter().any(|d| !d.fixes().is_empty()) {
+    if sound.iter().any(|d| syntax_fix(d) && !d.fixes().is_empty()) {
         let syntax = syntax(source);
         let before = badness(&syntax);
         // Past a bracket error, the worst there is, no fix is worse: only the parser's reports
@@ -62,7 +65,7 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
             .collect();
         let marks = marks(source);
         let mut judged = 0;
-        for d in &mut sound {
+        for d in sound.iter_mut().filter(|d| syntax_fix(d)) {
             if reported.contains(&(d.code(), d.span())) {
                 d.retain_fixes(|fix| {
                     judged += 1;
@@ -126,6 +129,8 @@ mod tests {
     use crate::diagnostic::Code;
     use crate::diagnostic::explanations::{apply_fix, fix_edits};
     use crate::source::line_col;
+    use std::fs;
+    use std::path::Path;
 
     /// The code and `(line, col)` of every diagnostic `src` reports, in order.
     fn codes(src: &str) -> Vec<(Code, (usize, usize))> {
@@ -640,20 +645,142 @@ fn main() {
         }
     }
 
-    /// A `;` after an item's `}` ends its line, as it does in a block, and the checker still runs.
+    /// A `;` after an item's `}` is redundant, as it is in a block, and the checker still runs.
     #[test]
     fn semicolon_after_an_item() {
         let src = "class C {\n    x: i64\n};\nfn main() {\n    let b: bool = 1\n}\n";
         assert_eq!(
             codes(src),
-            [(Code::Semicolon, (3, 2)), (Code::Mismatch, (5, 19))]
+            [
+                (Code::RedundantSemicolon, (3, 2)),
+                (Code::Mismatch, (5, 19))
+            ]
         );
         let d = &front_end(src).1[0];
         assert!(fix_edits(d).is_some_and(|(safe, _)| safe));
         let fixed = apply_fix(src, d);
         assert_eq!(codes(&fixed), [(Code::Mismatch, (5, 19))]);
-        // Anywhere else, a `;` is not an item.
-        assert_eq!(codes(";\nfn main() {}\n"), [(Code::Expected, (1, 1))]);
+        // So is one before the first item.
+        assert_eq!(
+            codes(";\nfn main() {}\n"),
+            [(Code::RedundantSemicolon, (1, 1))]
+        );
+    }
+
+    /// `{ x; }` gives `x`: with no value, the checker would report a mismatch with `i64`.
+    #[test]
+    fn block_value_survives_a_semicolon() {
+        let src = "fn f() -> i64 { let x = 1; let y = { x; }; y }\nfn main() { print(f()) }\n";
+        assert_eq!(codes(src), [(Code::RedundantSemicolon, (1, 39))]);
+    }
+
+    /// The warning survives the item it stands in, which is broken.
+    #[test]
+    fn redundant_semicolon_in_a_broken_item() {
+        assert_eq!(
+            codes("fn helper();\nfn main() {}\n"),
+            [
+                (Code::RedundantSemicolon, (1, 12)),
+                (Code::Expected, (1, 13))
+            ]
+        );
+    }
+
+    /// A W0007 fix is not judged, so it does not count against `JUDGED`.
+    #[test]
+    fn sound_fixes_keep_every_redundant_semicolon_fix() {
+        let src = format!("fn main() {{\n{}}}\n", "    print(1);\n".repeat(150));
+        let shown = sound_fixes(&src, &front_end(&src).1);
+        assert_eq!(shown.len(), 150);
+        for d in &shown {
+            assert_eq!(d.code(), Code::RedundantSemicolon);
+            assert!(fix_edits(d).is_some_and(|(safe, _)| safe), "{d:?}");
+        }
+    }
+
+    /// Applying one W0007 fix alone leaves every other diagnostic of the lexer and of the front
+    /// end where it was, up to the `;`'s own length. The lexer's list catches what the front end
+    /// hides when an item is broken.
+    #[test]
+    fn redundant_semicolon_fix_changes_nothing_else() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics");
+        let mut sources: Vec<String> = [
+            "fn main() {\n    let x = 1;\n    {\n    }\n}\n",
+            "fn main() {\n    let x = 1\n    ; { }\n}\n",
+            "fn main() {\n    if true\n    ; { }\n}\n",
+            "fn main() {\n    let t = 1\n    ; - 2\n}\n",
+            "fn f() -> i64 {\n;\n- 1\n}\nfn main() { print(f()) }\n",
+            "fn helper();\nfn main() {}\n",
+            "class C {\n    x: i64;\n}\nfn main() {}\n",
+            "fn main() {\n    if true { print(1) }; else { print(2) }\n}\n",
+            "fn main() {\n    let x = 1 $\n    ; - 2\n}\n",
+            "fn main() { return;else { } }\n",
+            "class C;fn main() {}\n",
+            "fn main() {\n    if c;\n    ; { }\n}\n",
+            "fn main() {\n    let a = 1 &\n    ; { }\n}\n",
+        ]
+        .map(String::from)
+        .into();
+        let before = sources.len();
+        for entry in fs::read_dir(fixtures).expect("tests/diagnostics should be readable") {
+            let path = entry.expect("an entry should be readable").path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if name.starts_with("W0007") && path.extension().is_some_and(|e| e == "sisu") {
+                sources.push(fs::read_to_string(&path).expect("a fixture should be readable"));
+            }
+        }
+        assert!(sources.len() > before, "no W0007 fixture");
+        let lexed = |src: &str| -> Vec<(Code, usize)> {
+            let lexed = lexer::lex(src).expect("the source should lex without a bracket error");
+            starts(&lexed.diagnostics)
+        };
+        for src in &sources {
+            let all = front_end(src).1;
+            let mut fixed_any = false;
+            for (i, d) in all.iter().enumerate() {
+                if d.code() != Code::RedundantSemicolon {
+                    continue;
+                }
+                let [fix] = d.fixes() else {
+                    panic!("{src}: a W0007 should have one fix")
+                };
+                let [edit] = fix.edits() else {
+                    panic!("{src}: a W0007 fix should have one edit")
+                };
+                let semicolon = d.span().start();
+                let moved = |pairs: Vec<(Code, usize)>| -> Vec<(Code, usize)> {
+                    (pairs.into_iter())
+                        .map(|(c, at)| {
+                            let at = if at > semicolon {
+                                at - 1 + edit.replacement().len()
+                            } else {
+                                at
+                            };
+                            (c, at)
+                        })
+                        .collect()
+                };
+                let result = fix.apply(src);
+                assert_eq!(lexed(&result), moved(lexed(src)), "{result}");
+                let mut others = all.clone();
+                others.remove(i);
+                assert_eq!(
+                    starts(&front_end(&result).1),
+                    moved(starts(&others)),
+                    "{result}"
+                );
+                fixed_any = true;
+            }
+            assert!(fixed_any, "{src} has no W0007");
+        }
+    }
+
+    /// The code and start of each of `ds`.
+    fn starts(ds: &[Diagnostic]) -> Vec<(Code, usize)> {
+        ds.iter().map(|d| (d.code(), d.span().start())).collect()
     }
 
     #[test]
