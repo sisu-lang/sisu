@@ -1435,8 +1435,9 @@ fn borrow_of_a_whole_local_survives_a_call() {
     assert_eq!(certify(&b.finish()), Ok(()));
 }
 
-/// The counted-store case above, with the borrow through a field that is not `mut`: no store
-/// can replace it, so the store does not end the borrow.
+/// The counted-store case above, with the borrow through a field that is not `mut`. The borrow's
+/// place decides stability, whatever field the store writes: no store can replace the field the
+/// borrow reads, so the store does not end the borrow.
 #[test]
 fn borrow_through_a_fixed_field_survives_a_counted_store() {
     let mut b = Builder::new("f");

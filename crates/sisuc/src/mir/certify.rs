@@ -732,6 +732,11 @@ fn rvalue<'a>(
         // A borrowed argument is read in place, and a move into one hands on nothing: the
         // caller still owns the value after the call.
         Rvalue::Call { args, borrowed, .. } => {
+            debug_assert_eq!(
+                args.len(),
+                borrowed.len(),
+                "a call should carry one flag per argument"
+            );
             for (op, &borrowed) in args.iter().zip(borrowed) {
                 match op {
                     Operand::Move(local) if borrowed => f(*local, Effect::ReadInPlace, None),
