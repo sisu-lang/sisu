@@ -11,9 +11,9 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit ed7624d</p>
+    <p class="meta">{{adr-count}} records · at commit 95e8236</p>
   </div></section>
-  <!-- source: docs/adr/ (27 files, 0001 to 0025, 0027 and 0028), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (28 files, 0001 to 0025 and 0027 to 0029), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -73,11 +73,12 @@ The design decisions behind Sisu, each written down as a short record with its r
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0005-reference-counting.md"><span class="num">0005</span><b>Memory is managed by reference counting</b><span>Every heap object carries a count of its references and is freed when the count reaches 0.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0008-weak-references.md"><span class="num">0008</span><b>Weak references break cycles</b><span>A <code>weak mut</code> field does not keep its object alive, and reads as <code>None</code> once the object is gone.</span></a></li>
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0012-methods-borrow-self.md"><span class="num">0012</span><b>Methods borrow <code>self</code><small>proposed</small></b><span>A method receives <code>self</code> without changing its count, and the caller keeps it alive for the call.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0012-methods-borrow-self.md"><span class="num">0012</span><b>Methods borrow <code>self</code><small>superseded by 0029</small></b><span>A method receives <code>self</code> without changing its count, and the caller keeps it alive for the call.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md"><span class="num">0021</span><b>A loop makes its written arrays unique before it starts</b><span>A loop that writes a local array makes it unique once, before the first iteration, so its writes skip the count check.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0025-mir-holds-every-count.md"><span class="num">0025</span><b>mir holds every count</b><span>Copies and releases are explicit statements in a mid-level IR, moves are consuming operands, and a debug-build check certifies each function.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0029-parameters-are-borrowed-unless-consumed.md"><span class="num">0029</span><b>Parameters are borrowed unless the function consumes them</b><span>A function that only reads a counted parameter borrows it: the caller keeps its reference, and neither side counts it.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0008-weak-references.md, docs/adr/0012-methods-borrow-self.md, docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0025-mir-holds-every-count.md -->
+      <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0008-weak-references.md, docs/adr/0012-methods-borrow-self.md, docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0025-mir-holds-every-count.md, docs/adr/0029-parameters-are-borrowed-unless-consumed.md -->
 
       <h2 id="types">Types</h2>
       <ul class="rows">

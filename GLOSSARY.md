@@ -394,6 +394,13 @@ nothing calls a function, writes a counted value or makes an array unique. It
 costs no retain and no release.
 _Avoid_: borrow (Rust's checked borrow, which Sisu does not have)
 
+**Borrowed parameter**:
+A counted parameter that the function only reads, never keeps: the caller
+holds its reference for the whole call, and neither side counts it. The
+compiler decides this for each parameter; one that the function stores,
+returns or hands on to a function that keeps it is owned instead.
+_Avoid_: reference parameter, `&` parameter
+
 **Symbol**:
 A name as the parser and checker hold it: a small integer that stands for the
 name's text. The lexer interns each name, so equal names get the same symbol.

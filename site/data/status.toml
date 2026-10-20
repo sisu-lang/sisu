@@ -1,6 +1,6 @@
 # The status board and tables, one [[area]] per area in page order. See site/build.py (status_board, status_tables).
 
-# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and "Modules", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024
+# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and "Modules", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024, 0029
 [[area]]
 id = "language"
 name = "Language"
@@ -20,7 +20,7 @@ notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 [[area.feature]]
 text = "Classes with fields and methods"
 state = "works"
-notes = [["ADR 0012 (proposed)", "docs/adr/0012-methods-borrow-self.md"], ["Roadmap: classes and optionals", "docs/roadmap.md"]]
+notes = [["ADR 0029", "docs/adr/0029-parameters-are-borrowed-unless-consumed.md"], ["Roadmap: classes and optionals", "docs/roadmap.md"]]
 
 [[area.feature]]
 text = "Optionals instead of null"

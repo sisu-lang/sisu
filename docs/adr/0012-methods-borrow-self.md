@@ -1,6 +1,6 @@
 # Methods borrow `self`
 
-Status: proposed, 2026-10-13. It is accepted when codegen implements it.
+Status: superseded by ADR 0029 before it was built, 2026-10-20.
 
 A method receives `self` borrowed: the caller keeps its reference for the
 whole call, and the method neither adds 1 to the count of `self` nor
