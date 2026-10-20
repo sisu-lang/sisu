@@ -671,7 +671,6 @@ pub(super) fn reaching_f64(program: &Program) -> Vec<bool> {
     let node_count = classes + program.enums.len();
     let mut reaches = vec![false; node_count];
     let mut holders: Vec<Vec<usize>> = vec![Vec::new(); node_count];
-    let mut work = Vec::new();
     let class_fields = program
         .classes
         .iter()
@@ -685,15 +684,14 @@ pub(super) fn reaching_f64(program: &Program) -> Vec<bool> {
         #[cfg(test)]
         super::TYPE_READS.set(super::TYPE_READS.get() + 1);
         match unwrapped(ty).kind() {
-            TypeKind::F64 if !reaches[node] => {
-                reaches[node] = true;
-                work.push(node);
-            }
+            TypeKind::F64 => reaches[node] = true,
             TypeKind::Class(id) => holders[id.0].push(node),
             TypeKind::Enum(id) => holders[classes + id.0].push(node),
             _ => {}
         }
     }
+    // Each seed is queued once, however many `f64` fields it has.
+    let mut work: Vec<usize> = (0..node_count).filter(|&node| reaches[node]).collect();
     while let Some(done) = work.pop() {
         for &holder in &holders[done] {
             if !reaches[holder] {
