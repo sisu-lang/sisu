@@ -1,6 +1,7 @@
 use super::*;
 use crate::diagnostic::explanations::apply;
 use crate::diagnostic::{Code, Fix};
+use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::source::line_col;
 
@@ -1308,6 +1309,23 @@ fn never_constructed_fix_follows_the_type_closely() {
     let d = diagnostic(src, Code::NeverConstructed, (2, 9, "next"), &[]);
     assert_eq!(fixes(src, &d), [(false, vec![(2, 18, "", "?".to_owned())])]);
     clean(&applied(src, &d));
+}
+
+/// The class-cycle search reads each field once: a walk from every class, or a table of
+/// which class reaches which, reads a chain of classes quadratically.
+#[test]
+fn class_cycle_search_reads_linearly() {
+    let reads = |n: usize| {
+        let classes = (0..n)
+            .map(|i| format!("class C{i} {{\n    x: C{}\n}}\n", i + 1))
+            .collect::<Vec<_>>()
+            .concat();
+        let src = format!("{classes}class C{n} {{}}\nfn main() {{}}");
+        FIELD_READS.set(0);
+        assert!(checked(&src).0.is_some());
+        FIELD_READS.get()
+    };
+    assert_near_linear(reads(100), reads(200), reads(300));
 }
 
 #[test]

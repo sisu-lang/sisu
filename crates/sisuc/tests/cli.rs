@@ -6,6 +6,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+mod scratch_path;
+
 #[test]
 fn emit_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -175,6 +177,26 @@ fn lexer_error_exits_1() {
             .contains("error[E0010]: unexpected character `&`\n --> lexer_error_exits_1.sisu:1:3"),
         "{stderr}"
     );
+}
+
+/// A source the lexer cannot finish (a stray bracket) fails `--emit tokens` and `--emit ast`.
+#[test]
+fn unlexable_source_exits_1_for_tokens_and_ast() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join("unlexable_source.sisu"), ")\n").expect("writes");
+    for stage in ["tokens", "ast"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(dir)
+            .args(["--emit", stage, "unlexable_source.sisu"])
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(1), "{stage}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            at_severity(&stderr, "error") == Some(0),
+            "{stage}: {stderr}"
+        );
+    }
 }
 
 /// A mode flag with too few arguments, or with the arguments of another mode.
@@ -1051,13 +1073,19 @@ fn format_usage_errors() {
 fn json_link_failure_stays_json() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("json_link_failure.sisu"), "fn main() {}\n").expect("writes");
+    // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
+    let only_cc = scratch_path::only_cc("json_link_failure_path");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
+        .env("PATH", &only_cc)
+        .env_remove("COMPILER_PATH")
         .args([
             "--format",
             "json",
+            "--linker",
+            "mold",
             "json_link_failure.sisu",
-            "missing-dir/out",
+            "json_link_failure_out",
         ])
         .output()
         .expect("sisuc starts");
@@ -1080,12 +1108,12 @@ fn json_link_failure_stays_json() {
     let [message] = messages.as_slice() else {
         panic!("one tool error in {stderr}");
     };
-    // cc's own stderr follows the status, and names the output it could not write.
+    // cc's own stderr follows the status.
     let (status, detail) = message
         .split_once('\n')
         .expect("cc's output after a newline");
-    assert!(status.starts_with("cc failed: "), "{message}");
-    assert!(detail.contains("missing-dir/out"), "{message}");
+    assert!(status.ends_with("cc failed: exit status: 1"), "{message}");
+    assert!(!detail.is_empty(), "{message}");
     assert_eq!(detail, detail.trim(), "{message}");
 }
 
@@ -1277,5 +1305,64 @@ fn enum_layouts_follow_the_target() {
         "%sisu.Wide = type { i16 }",
     ] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
+    }
+}
+
+/// A `sisuc` with no runtime library beside it says so before it compiles: with no
+/// temporary directory, a compile would fail at the object file first.
+#[test]
+fn missing_runtime_is_found_before_the_compile() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing_runtime");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("creates");
+    let sisuc = dir.join("sisuc");
+    fs::hard_link(env!("CARGO_BIN_EXE_sisuc"), &sisuc).expect("links");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    let out = Command::new(&sisuc)
+        .current_dir(&dir)
+        .env("TMPDIR", dir.join("absent"))
+        .args(["one.sisu", "one"])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.starts_with("sisuc: runtime library not found at "),
+        "{stderr}"
+    );
+}
+
+/// An output whose directory does not exist, or that is a directory, is reported before
+/// the compile.
+#[test]
+fn bad_output_path_is_found_before_the_compile() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bad_output_path");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("outdir")).expect("creates");
+    fs::write(dir.join("regular"), "").expect("writes");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    for (output, expected) in [
+        (
+            "missing/one",
+            "sisuc: output directory missing does not exist\n",
+        ),
+        ("outdir", "sisuc: output outdir is a directory\n"),
+        (
+            "regular/one",
+            "sisuc: output directory regular is not a directory\n",
+        ),
+        (
+            "regular/sub/one",
+            "sisuc: cannot access output directory regular/sub: Not a directory (os error 20)\n",
+        ),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(&dir)
+            .env("TMPDIR", dir.join("absent"))
+            .args(["one.sisu", output])
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(1), "{output}");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), expected);
     }
 }

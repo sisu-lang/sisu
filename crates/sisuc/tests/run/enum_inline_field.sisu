@@ -1,0 +1,16 @@
+// An inline enum field of an enum with boxes goes to its own helpers by address: the copy
+// retains `Inner`'s string, `==` compares it, and both releases free it. The string is built at
+// run time, so a leak or a double free shows under Valgrind.
+enum Inner {
+    P(string)
+    Q
+}
+enum Tree {
+    Leaf
+    Node(Tree, Inner)
+}
+fn main() {
+    let t = Tree.Node(Tree.Leaf, Inner.P("a" + "b"))
+    let copy = t
+    print(copy == t) // true: `t` stays live past the copy
+}

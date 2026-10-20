@@ -431,7 +431,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `@sisu_rc.retain.<E>(ptr)`: switches on the tag of the value at `ptr`, and retains each
     /// counted field of its variant: a box through `@sisu_rc.retain`, which skips `null`, any
-    /// other field through `retain`.
+    /// other field through `retain_at`.
     fn define_enum_retain(&self, id: EnumId, function: FunctionValue<'ctx>) {
         let (value, done) = self.enum_entry(function);
         self.for_each_counted_field(id, value, done, |variant, field, payload| {
@@ -439,14 +439,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let boxed = self.load_box(value, id, variant, field);
                 self.call(self.rc_retain, &[boxed.into()]);
             } else {
-                self.retain(self.payload_value(value, id, variant, field), payload.ty);
+                self.retain_at(self.payload_place(value, id, variant, field), payload.ty);
             }
         });
     }
 
     /// `@sisu_rc.release.<E>(ptr)`: releases each counted part of the value at `ptr`. Without
     /// boxes, it switches on the tag and releases each counted field of the variant through
-    /// `release`. With boxes, it walks the value with one empty pending list per member of
+    /// `release_at`. With boxes, it walks the value with one empty pending list per member of
     /// `E`'s component, held in its own frame, then drains them. Releasing the zero value, which
     /// a `Move` of a flagged local leaves in a slot, releases nothing: it is variant 0 with
     /// every field zero, and `release` and `walk` skip a `null` string, object, array or box,
@@ -455,7 +455,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let (value, done) = self.enum_entry(function);
         let Some(members) = self.component(id) else {
             self.for_each_counted_field(id, value, done, |variant, field, payload| {
-                self.release(self.payload_value(value, id, variant, field), payload.ty);
+                self.release_at(self.payload_place(value, id, variant, field), payload.ty);
             });
             return;
         };
@@ -495,7 +495,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// from its box's count, and at zero the box becomes the head of its enum's list in
     /// `heads`, linked to the old head through its count word, the word `load_count` reads.
     /// Nothing else reaches a listed box, so no RC check reads that word. Every other counted
-    /// field goes through `release`, which may drain another component's lists in a frame of
+    /// field goes through `release_at`, which may drain another component's lists in a frame of
     /// its own.
     fn define_walk(&self, id: EnumId, function: FunctionValue<'ctx>) {
         let (value, done) = self.enum_entry(function);
@@ -510,7 +510,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         self.for_each_counted_field(id, value, done, |variant, field, payload| {
             if !payload.boxed {
-                self.release(self.payload_value(value, id, variant, field), payload.ty);
+                self.release_at(self.payload_place(value, id, variant, field), payload.ty);
                 return;
             }
             let block = |name| self.context.append_basic_block(function, name);
@@ -615,10 +615,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             equal,
             |_| true,
             |variant, field, payload| {
-                let pair = self.equal(
+                let pair = self.equal_at(
                     payload.ty,
-                    self.payload_value(a, id, variant, field),
-                    self.payload_value(b, id, variant, field),
+                    self.payload_place(a, id, variant, field),
+                    self.payload_place(b, id, variant, field),
                 );
                 let next = block("next");
                 self.branch_on(pair, next, unequal);
@@ -740,10 +740,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                         ];
                         self.call_component(function, &args)
                     } else {
-                        self.equal(
+                        self.equal_at(
                             payload.ty,
-                            self.payload_value(a, id, variant, field),
-                            self.payload_value(b, id, variant, field),
+                            self.payload_place(a, id, variant, field),
+                            self.payload_place(b, id, variant, field),
                         )
                     };
                     self.branch_on(pair, next, unequal);

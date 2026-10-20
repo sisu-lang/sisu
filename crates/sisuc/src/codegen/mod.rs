@@ -46,6 +46,13 @@ use crate::tir::{ClassId, EnumId, FuncId, LocalId, Program, Stream, Type, TypeKi
 const POSITIONED: &str =
     "the builder should be positioned in a block while a function body is emitted";
 
+#[cfg(test)]
+thread_local! {
+    /// How many class fields and enum payload fields the reflexivity analysis has read on this
+    /// thread.
+    static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'ctx, 'src> Codegen<'ctx, 'src> {
     /// An empty module for `program`, with the runtime's declarations and no function defined.
     fn new(
@@ -106,6 +113,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             element_tag: tbaa_tag(context, tbaa_root, "array element"),
             tbaa_root,
             program,
+            reaches_f64: rc::reaching_f64(program),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
             target_data,
@@ -140,11 +148,9 @@ pub(crate) fn compile<'ctx>(
 ) -> Module<'ctx> {
     let mut codegen = Codegen::new(context, program, path, source, machine, rc_checks);
     codegen.lay_out_types();
-    // Every class gets its helpers, used or not, as in milestone 2.
-    for helper in [Helper::Release, Helper::Eq] {
-        for id in 0..program.classes.len() {
-            codegen.helper(helper, Type::intern(TypeKind::Class(ClassId(id))));
-        }
+    // Every class gets its release helper, used or not; an `eq` helper is made on first use.
+    for id in 0..program.classes.len() {
+        codegen.helper(Helper::Release, Type::intern(TypeKind::Class(ClassId(id))));
     }
     // Declare every function first so that calls can refer to functions defined later.
     for f in &mir.functions {
@@ -240,6 +246,9 @@ struct Codegen<'ctx, 'src> {
     /// through a field, carry no tag.
     tbaa_root: MetadataValue<'ctx>,
     program: &'src Program,
+    /// Whether each class, then each enum, reaches an `f64` through its fields; see
+    /// `rc::reaching_f64`.
+    reaches_f64: Vec<bool>,
     /// The helpers declared so far, by kind and counted type; see `rc::helper`.
     helpers: RefCell<FxHashMap<(Helper, Type), FunctionValue<'ctx>>>,
     /// The helpers declared but not yet defined; `define_helpers` empties it.
@@ -1114,7 +1123,9 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
     }
 }
 
-/// Verifies `module`, then runs the pipeline.
+/// Verifies `module`, then runs the pipeline. This is the build's only verifier run: a pass
+/// pipeline that broke the IR reaches instruction selection instead of a clean error, which would
+/// be an LLVM bug.
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,
@@ -1126,12 +1137,11 @@ pub(crate) fn optimize(
         .map_err(|e| e.to_string())
 }
 
-/// Compiles `module` to object code for `machine`, in memory.
+/// Compiles `module`, which `optimize` verified, to object code for `machine`, in memory.
 pub(crate) fn object_code(
     module: &Module<'_>,
     machine: &TargetMachine,
 ) -> Result<MemoryBuffer<'static>, String> {
-    module.verify().map_err(|e| e.to_string())?;
     machine
         .write_to_memory_buffer(module, FileType::Object)
         .map_err(|e| e.to_string())

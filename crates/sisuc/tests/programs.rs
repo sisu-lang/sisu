@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 
+mod scratch_path;
 mod support;
+
+use scratch_path::{empty_dir, only_cc};
 
 const PROGRAMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/programs");
 const RUN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run");
@@ -1045,17 +1048,6 @@ fn linker_lld_links_with_lld() {
     assert!(!bfd.windows(11).any(|w| w == b"Linker: LLD"));
 }
 
-/// A directory that holds only a link to `cc`, for a `PATH` with no linker on it.
-fn only_cc(name: &str) -> PathBuf {
-    let dir = empty_dir(name);
-    let cc = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|dir| dir.join("cc"))
-        .find(|cc| cc.is_file())
-        .expect("cc is on PATH");
-    std::os::unix::fs::symlink(cc, dir.join("cc")).expect("links cc");
-    dir
-}
-
 /// gcc finds a linker in `COMPILER_PATH` too, so `--linker` does not require it on `PATH`.
 #[test]
 fn linker_off_path_links_when_cc_finds_it() {
@@ -1085,6 +1077,7 @@ fn a_missing_linker_is_named() {
     let exe = empty.join("loops");
     let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "mold"])
         .env("PATH", only_cc("only_cc_on_path"))
+        .env_remove("COMPILER_PATH")
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
@@ -1094,15 +1087,6 @@ fn a_missing_linker_is_named() {
         Some("sisuc: linker ld.mold not found on PATH; cc failed: exit status: 1")
     );
     assert_empty(&empty);
-}
-
-/// An empty directory under the target tmp dir, for `sisuc` to use as `TMPDIR`.
-fn empty_dir(name: &str) -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-    // It is absent on the first run, so a failure here is expected and harmless.
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir(&dir).expect("creates the directory");
-    dir
 }
 
 fn assert_empty(dir: &Path) {
@@ -1137,16 +1121,18 @@ fn existing_object_file_survives_a_build() {
 fn failed_link_leaves_no_object_file() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("link_fails.sisu"), "fn main() {}\n").expect("writes");
-    // `cc` cannot write an executable over a directory.
-    let output = empty_dir("link_fails");
+    // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
+    let output = empty_dir("link_fails").join("out");
     let tmp = empty_dir("link_fails_tmp");
-    let out = support::sisuc(dir, "link_fails.sisu", &output, &[])
+    let out = support::sisuc(dir, "link_fails.sisu", &output, &["--linker", "mold"])
         .env("TMPDIR", &tmp)
+        .env("PATH", only_cc("link_fails_path"))
+        .env_remove("COMPILER_PATH")
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("sisuc: cc failed: "), "{stderr}");
+    assert!(stderr.contains("cc failed: "), "{stderr}");
     assert_empty(&tmp);
     assert!(!dir.join("link_fails.o").exists());
 }
