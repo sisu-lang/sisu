@@ -50,13 +50,21 @@ fn each_exit_edge_is_elaborated_on_its_own() {
 }
 
 /// Review Focus 5: the scope release sees {owned}, but the region fails later, at the second
-/// release. A failing region contributes nothing, so the scope release stays for the certifier.
+/// release. A failing region contributes nothing, so the scope release stays for the certifier,
+/// and `t`, checked after `s`, is elaborated from its own observations only.
 #[test]
 fn release_in_a_failing_region_is_kept() {
     let mut b = Builder::new("f");
     let s = b.local("s", Type::STRING);
+    let t = b.local("t", Type::STRING);
     b.block(
-        vec![fresh(s), Statement::ScopeRelease(s), Statement::Release(s)],
+        vec![
+            fresh(s),
+            Statement::ScopeRelease(s),
+            Statement::Release(s),
+            fresh(t),
+            Statement::ScopeRelease(t),
+        ],
         ret(),
     );
     let mut f = b.finish();
@@ -69,7 +77,11 @@ fn release_in_a_failing_region_is_kept() {
     assert!(
         !stmts[..at]
             .iter()
-            .any(|stmt| matches!(stmt, Statement::Release(local) if *local == s)),
+            .any(|stmt| matches!(stmt, Statement::Release(_))),
+        "{stmts:?}"
+    );
+    assert!(
+        matches!(stmts.last(), Some(Statement::Release(local)) if *local == t),
         "{stmts:?}"
     );
     assert_eq!(
