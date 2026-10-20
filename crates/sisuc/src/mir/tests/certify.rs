@@ -182,6 +182,105 @@ fn double_release() {
     rejects(&b.finish(), 0, s, Rule::Consume);
 }
 
+/// A release leaves the freed pointer in the slot, so a scope release after it would free it
+/// again; a move leaves the slot null, which a scope release skips.
+#[test]
+fn scope_release_after_a_release() {
+    for first in [Statement::Release, Statement::ScopeRelease] {
+        let mut b = Builder::new("f");
+        let s = b.local("s", Type::STRING);
+        b.block(
+            vec![literal(s), first(s), Statement::ScopeRelease(s)],
+            ret(),
+        );
+        rejects(&b.finish(), 0, s, Rule::Consume);
+    }
+}
+
+/// A move needs an owned local: one moved or released before is rejected.
+#[test]
+fn move_after_a_move_or_a_release() {
+    for moved in [false, true] {
+        let mut b = Builder::new("f");
+        let s = b.local("s", Type::STRING);
+        let t = b.local("t", Type::STRING);
+        let u = b.local("u", Type::STRING);
+        let mut body = vec![literal(s)];
+        if moved {
+            body.extend([
+                assign(u, Rvalue::Use(Operand::Move(s))),
+                Statement::Release(u),
+            ]);
+        } else {
+            body.push(Statement::Release(s));
+        }
+        body.extend([
+            assign(t, Rvalue::Use(Operand::Move(s))),
+            Statement::Release(t),
+        ]);
+        b.block(body, ret());
+        rejects(&b.finish(), 0, s, Rule::Consume);
+    }
+}
+
+/// A scope release of a moved local frees nothing and leaves the slot null, so another may follow.
+#[test]
+fn scope_release_twice_after_a_move() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    let t = b.local("t", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            assign(t, Rvalue::Use(Operand::Move(s))),
+            Statement::Release(t),
+            Statement::ScopeRelease(s),
+            Statement::ScopeRelease(s),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// `release? s` before an assignment, as lowering emits it, leaves `s` free to assign.
+#[test]
+fn assignment_after_a_scope_release() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    b.block(
+        vec![
+            literal(s),
+            Statement::ScopeRelease(s),
+            literal(s),
+            Statement::ScopeRelease(s),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// `s`, scoped at the loop body `bb2`, is released there and comes back round the loop to
+/// `bb2`'s scope release still holding the freed pointer.
+#[test]
+fn released_local_comes_back_to_a_scope_release() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::BOOL);
+    let s = b.local("s", Type::STRING);
+    b.scope(s, BlockId(2));
+    b.block(vec![], goto(1));
+    b.block(vec![], branch(c, 2, 3));
+    b.block(
+        vec![
+            Statement::ScopeRelease(s),
+            literal(s),
+            Statement::Release(s),
+        ],
+        goto(1),
+    );
+    b.block(vec![], ret());
+    rejects(&b.finish(), 2, s, Rule::Consume);
+}
+
 #[test]
 fn read_after_move() {
     let mut b = Builder::new("f");

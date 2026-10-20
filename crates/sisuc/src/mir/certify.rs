@@ -90,6 +90,8 @@ type States = u8;
 const OWNED: States = 1;
 const EMPTY: States = 2;
 const BORROWED: States = 4;
+/// The slot holds a pointer the local does not own: a borrow that ended, or a value that
+/// `release x` or `release? x` freed. Unlike an empty (null) slot, a scope release would free it.
 const ENDED: States = 8;
 
 /// No block, or no number.
@@ -427,8 +429,9 @@ enum Effect {
     ReadInPlace,
     /// A whole local read in place where the operand is consumed: an error for a counted one.
     ReadConsumed,
-    /// A `release` or a move.
+    /// A move.
     Consume,
+    Release,
     ScopeRelease,
     Assign,
     /// `b = borrow p`.
@@ -440,9 +443,11 @@ impl Effect {
     /// Whether the effect consumes, assigns or releases the local.
     fn kills(self) -> bool {
         match self {
-            Effect::Consume | Effect::ScopeRelease | Effect::Assign | Effect::AssignBorrowed => {
-                true
-            }
+            Effect::Consume
+            | Effect::Release
+            | Effect::ScopeRelease
+            | Effect::Assign
+            | Effect::AssignBorrowed => true,
             Effect::Read | Effect::ReadInPlace | Effect::ReadConsumed | Effect::End => false,
         }
     }
@@ -482,7 +487,7 @@ fn statement<'a>(stmt: &'a Statement, f: &mut impl FnMut(LocalId, Effect, Option
             self::place(place, Effect::ReadInPlace, f);
             consumed(value, f);
         }
-        Statement::Release(local) => f(*local, Effect::Consume, None),
+        Statement::Release(local) => f(*local, Effect::Release, None),
         Statement::ScopeRelease(local) => f(*local, Effect::ScopeRelease, None),
         Statement::MakeUnique(place) | Statement::Check(place) => {
             self::place(place, Effect::ReadInPlace, f);
@@ -1296,7 +1301,7 @@ impl Region<'_> {
         let count = s.blocks.len();
         let init = if param { OWNED } else { EMPTY };
         // What reaches the scope block from outside the region: empty, and ended once a
-        // borrow leaves it ended along a path that comes back.
+        // borrow's end or a release leaves it ended along a path that comes back.
         let mut from_outside = if outside { EMPTY } else { 0 };
         s.out.clear();
         s.out.resize(count, 0);
@@ -1580,7 +1585,13 @@ impl Region<'_> {
                 (EMPTY | ENDED, Rule::Read, states)
             }
             Effect::Consume => (EMPTY | BORROWED | ENDED, Rule::Consume, EMPTY),
-            Effect::ScopeRelease => (BORROWED | ENDED, Rule::Consume, EMPTY),
+            Effect::Release => (EMPTY | BORROWED | ENDED, Rule::Consume, ENDED),
+            // A null slot stays null; only an owned value is freed and left in the slot.
+            Effect::ScopeRelease => (
+                BORROWED | ENDED,
+                Rule::Consume,
+                states & EMPTY | if states & OWNED == 0 { 0 } else { ENDED },
+            ),
             Effect::Assign => (OWNED, Rule::Assign, OWNED),
             Effect::AssignBorrowed => (OWNED, Rule::Assign, BORROWED),
             Effect::End => (OWNED, Rule::End, ENDED),
