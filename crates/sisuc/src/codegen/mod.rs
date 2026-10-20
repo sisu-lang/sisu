@@ -1114,7 +1114,9 @@ pub(crate) fn keep_functions(module: &Module<'_>, names: &str) {
     }
 }
 
-/// Verifies `module`, then runs the pipeline.
+/// Verifies `module`, then runs the pipeline. This is the build's only verifier run: a pass
+/// pipeline that broke the IR reaches instruction selection instead of a clean error, which would
+/// be an LLVM bug.
 pub(crate) fn optimize(
     module: &Module<'_>,
     machine: &TargetMachine,
@@ -1126,12 +1128,11 @@ pub(crate) fn optimize(
         .map_err(|e| e.to_string())
 }
 
-/// Compiles `module` to object code for `machine`, in memory.
+/// Compiles `module`, which `optimize` verified, to object code for `machine`, in memory.
 pub(crate) fn object_code(
     module: &Module<'_>,
     machine: &TargetMachine,
 ) -> Result<MemoryBuffer<'static>, String> {
-    module.verify().map_err(|e| e.to_string())?;
     machine
         .write_to_memory_buffer(module, FileType::Object)
         .map_err(|e| e.to_string())
