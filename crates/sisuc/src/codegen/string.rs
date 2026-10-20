@@ -17,7 +17,7 @@ use super::layout::{BYTES, CAP, HeapBlock, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::source::Span;
-use crate::tir::{Align, CompareOp, Expr, Format, Pad, Place, Stream, Type};
+use crate::tir::{Align, Format, Pad, Stream, Type};
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// The `i64` header field `index` of `string`.
@@ -94,34 +94,6 @@ impl<'ctx> Codegen<'ctx, '_> {
                 )
                 .expect(POSITIONED)
         }
-    }
-
-    /// `Concat`: evaluates `lhs`, then `rhs`, and joins them with `concat`.
-    pub(super) fn concat_expr(&mut self, lhs: &Expr, rhs: &Expr) -> PointerValue<'ctx> {
-        let (l, r) = (self.operand(lhs), self.operand(rhs));
-        self.concat(l.into_pointer_value(), r.into_pointer_value())
-    }
-
-    /// `Append { place, value }`, in the order that gives `P + value` its left-to-right meaning:
-    /// the place's operands; a bounds-checked read of `P`, retained; `value`; the walk that
-    /// makes the path unique; the release of the place's own reference, so that `concat` checks
-    /// the count last; the store of the result; and the release of a field root's base.
-    pub(super) fn append(&mut self, place: &Place, value: &Expr) {
-        let operands = self.place_operands(place).expect(
-            "the checker should only make an append whose indexes are locals or literals, which cannot exit",
-        );
-        let ptr_type = self.context.ptr_type(AddressSpace::default()).into();
-        let slot = self.read_slot(operands.slot, operands.ty, &operands.indexes);
-        let read = self.load(ptr_type, slot);
-        self.retain(read, Type::STRING);
-        let text = self
-            .expr(value)
-            .expect("the checker should only make an append whose value cannot exit");
-        let (slot, _) = self.element_slot(&operands);
-        self.release(self.load(ptr_type, slot), Type::STRING);
-        let result = self.concat(read.into_pointer_value(), text.into_pointer_value());
-        self.store(slot, result.into());
-        operands.release_object(self);
     }
 
     /// `sisu_realloc(ptr, old_size, align, new_size) -> ptr` from the runtime, declared on
@@ -245,20 +217,15 @@ impl<'ctx> Codegen<'ctx, '_> {
         string
     }
 
-    /// `Interpolate`, in one pass: evaluates every part, left to right, then allocates one
+    /// The string of the evaluated `parts`, each with its type, in one pass: allocates one
     /// block with room for the most text each part can give, writes each part at the running
-    /// offset, pads it there when its format has a width, stores the length written and
-    /// releases the `string` parts. `None` when a part exits: nothing is allocated yet, and the
-    /// checker bound every counted part before it to a local, which the exit releases.
+    /// offset, pads it there when its format has a width, and stores the length written. The
+    /// caller releases the `string` parts.
     pub(super) fn interpolate(
-        &mut self,
-        parts: &[Expr],
+        &self,
+        parts: &[(BasicValueEnum<'ctx>, Type)],
         formats: &[Format],
-    ) -> Option<BasicValueEnum<'ctx>> {
-        let mut values = Vec::with_capacity(parts.len());
-        for part in parts {
-            values.push(self.expr(part)?);
-        }
+    ) -> PointerValue<'ctx> {
         let i64_type = self.context.i64_type();
         let add = |a, b| {
             self.builder
@@ -271,11 +238,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         // The most bytes each part's text takes: see `sisu_write_int`, `_f64`, `_f64_fixed`,
         // `_bool` and `_char`, plus the width when it is padded. A string's length is below
         // 2^47 on x86-64, so the sum cannot overflow.
-        let cap = parts.iter().zip(&values).enumerate().fold(
-            i64_type.const_zero(),
-            |cap, (i, (part, value))| {
+        let cap = parts
+            .iter()
+            .enumerate()
+            .fold(i64_type.const_zero(), |cap, (i, &(value, ty))| {
                 let format = formats_in_order.next_if(|format| format.part == i);
-                let text = match part.ty {
+                let text = match ty {
                     Type::STRING => self.string_len(value.into_pointer_value()),
                     Type::I64 => bound(20),
                     Type::U8 => bound(3),
@@ -295,15 +263,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                     Some(pad) => add(cap, bound(u64::from(pad.width))),
                     None => cap,
                 }
-            },
-        );
+            });
         let result = self.new_string(cap);
         let mut formats_in_order = formats.iter().peekable();
         let mut len = i64_type.const_zero();
-        for (i, (part, value)) in parts.iter().zip(&values).enumerate() {
+        for (i, &(value, ty)) in parts.iter().enumerate() {
             let format = formats_in_order.next_if(|format| format.part == i);
             let at = self.string_byte(result, len);
-            let written = match part.ty {
+            let written = match ty {
                 Type::STRING => {
                     let string = value.into_pointer_value();
                     let part_len = self.string_len(string);
@@ -317,17 +284,17 @@ impl<'ctx> Codegen<'ctx, '_> {
                         .expect(POSITIONED);
                     self.write_text("sisu_write_int", &[widened.into(), at.into()])
                 }
-                Type::I64 => self.write_text("sisu_write_int", &[*value, at.into()]),
+                Type::I64 => self.write_text("sisu_write_int", &[value, at.into()]),
                 Type::F64 => match format.and_then(|format| format.precision) {
                     Some(precision) => {
                         let precision = self.context.i8_type().const_int(precision.into(), false);
-                        let args = [*value, precision.into(), at.into()];
+                        let args = [value, precision.into(), at.into()];
                         self.write_text("sisu_write_f64_fixed", &args)
                     }
-                    None => self.write_text("sisu_write_f64", &[*value, at.into()]),
+                    None => self.write_text("sisu_write_f64", &[value, at.into()]),
                 },
-                Type::BOOL => self.write_text("sisu_write_bool", &[*value, at.into()]),
-                _ => self.write_text("sisu_write_char", &[*value, at.into()]),
+                Type::BOOL => self.write_text("sisu_write_bool", &[value, at.into()]),
+                _ => self.write_text("sisu_write_char", &[value, at.into()]),
             };
             let written = match format.and_then(|format| format.pad) {
                 Some(Pad { align, width }) => {
@@ -349,67 +316,36 @@ impl<'ctx> Codegen<'ctx, '_> {
             len = add(len, written);
         }
         self.store(self.string_field(result, LEN), len.into());
-        for (part, value) in parts.iter().zip(values) {
-            self.discard(Some(value), part.ty);
-        }
-        Some(result.into())
+        result
     }
 
-    /// `base`, a string or an array, borrowed when it is a local, and whether it was: the
-    /// caller releases it otherwise. For a read that ends before anything can replace the base.
-    fn borrow_pointer(&mut self, base: &Expr) -> (PointerValue<'ctx>, bool) {
-        let (value, borrowed) = self.borrow_or_expr(base);
-        let value = value.expect("the checker should only give these nodes a string or an array, which lower to a pointer");
-        (value.into_pointer_value(), borrowed)
-    }
-
-    /// `Chars`: sizes the `[char]` by `sisu_utf8_count`, allocates it, and has
-    /// `sisu_utf8_decode` fill it. The string is released after.
-    pub(super) fn chars(&mut self, base: &Expr) -> PointerValue<'ctx> {
-        let (string, borrowed) = self.borrow_pointer(base);
+    /// The `[char]` of `string`.
+    pub(super) fn chars(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
         let count = self.utf8_size("sisu_utf8_count", bytes, len);
         let array = self.alloc_array(Type::CHAR, count, None);
         let first = self.element_ptr(Type::CHAR, array, self.context.i64_type().const_zero());
         self.utf8_fill("sisu_utf8_decode", bytes, len, first);
-        if !borrowed {
-            self.release(string.into(), base.ty);
-        }
         array
     }
 
-    /// `Bytes`: a `[u8]` as long as the string, with its bytes copied in. The string is
-    /// released after.
-    pub(super) fn bytes(&mut self, base: &Expr) -> PointerValue<'ctx> {
-        let (string, borrowed) = self.borrow_pointer(base);
+    /// The `[u8]` of `string`.
+    pub(super) fn bytes(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let len = self.string_len(string);
         let array = self.alloc_array(Type::U8, len, None);
         let first = self.element_ptr(Type::U8, array, self.context.i64_type().const_zero());
         self.copy_bytes(first, string, len);
-        if !borrowed {
-            self.release(string.into(), base.ty);
-        }
         array
     }
 
-    /// `Len` of `Words`: the `sisu_words_count` that `words` starts with, and nothing else. The
-    /// `[string]` would be released as soon as its length is read, so it is never built. The
-    /// string is released after, as `words` releases it.
-    pub(super) fn word_count(&mut self, base: &Expr) -> IntValue<'ctx> {
-        let (string, borrowed) = self.borrow_pointer(base);
+    /// The number of words in `string`.
+    pub(super) fn len_words(&self, string: PointerValue<'ctx>) -> IntValue<'ctx> {
         let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
-        let count = self.call_word_function("sisu_words_count", &[bytes.into(), len.into()]);
-        if !borrowed {
-            self.release(string.into(), base.ty);
-        }
-        count
+        self.call_word_function("sisu_words_count", &[bytes.into(), len.into()])
     }
 
-    /// `Words`: counts the words with `sisu_words_count`, allocates the `[string]`, and fills
-    /// each element from a `sisu_word_next` call that starts where the last word ended, so the
-    /// work is linear. The string is released after.
-    pub(super) fn words(&mut self, base: &Expr) -> PointerValue<'ctx> {
-        let (string, borrowed) = self.borrow_pointer(base);
+    /// The `[string]` of the words of `string`.
+    pub(super) fn words(&self, string: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let i64_type = self.context.i64_type();
         let (bytes, len) = (self.string_field(string, BYTES), self.string_len(string));
         let count = self.call_word_function("sisu_words_count", &[bytes.into(), len.into()]);
@@ -437,9 +373,6 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.store(slot, word.into());
             self.store(from, end.into());
         });
-        if !borrowed {
-            self.release(string.into(), base.ty);
-        }
         array
     }
 
@@ -460,10 +393,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_int_value()
     }
 
-    /// `FromChars`: sizes the string by `sisu_utf8_len`, allocates it, and has
-    /// `sisu_utf8_encode` fill it. The `[char]` is released after.
-    pub(super) fn string_from_chars(&mut self, base: &Expr) -> PointerValue<'ctx> {
-        let (array, borrowed) = self.borrow_pointer(base);
+    /// The string of the `[char]` `array`.
+    pub(super) fn string_from_chars(&self, array: PointerValue<'ctx>) -> PointerValue<'ctx> {
         let zero = self.context.i64_type().const_zero();
         let (chars, count) = (
             self.element_ptr(Type::CHAR, array, zero),
@@ -478,9 +409,6 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.string_byte(string, zero),
         );
         self.store(self.string_field(string, LEN), len.into());
-        if !borrowed {
-            self.release(array.into(), base.ty);
-        }
         string
     }
 
@@ -543,7 +471,11 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `sisu_str_compare` on the bytes of `a` and `b`: -1, 0 or 1.
-    fn str_compare(&self, a: PointerValue<'ctx>, b: PointerValue<'ctx>) -> IntValue<'ctx> {
+    pub(super) fn str_compare(
+        &self,
+        a: PointerValue<'ctx>,
+        b: PointerValue<'ctx>,
+    ) -> IntValue<'ctx> {
         let args = [
             self.string_field(a, BYTES).into(),
             self.string_len(a).into(),
@@ -559,27 +491,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_int_value()
     }
 
-    /// `lhs op rhs` on two strings: `sisu_str_compare`'s result against 0 under `op`'s signed
-    /// predicate. Then both are released.
-    pub(super) fn compare_strings(
-        &mut self,
-        op: CompareOp,
-        lhs: &Expr,
-        rhs: &Expr,
-    ) -> IntValue<'ctx> {
-        let (l, r) = (self.operand(lhs), self.operand(rhs));
-        let order = self.str_compare(l.into_pointer_value(), r.into_pointer_value());
-        let zero = self.context.i64_type().const_zero();
-        let holds = self.compare_pair(op, true, order.into(), zero.into());
-        self.release(l, lhs.ty);
-        self.release(r, rhs.ty);
-        holds
-    }
-
-    /// `print` or `eprint` of a string: `sisu_print_str(bytes, len)`, or `sisu_eprint_str`, then
-    /// the release.
-    pub(super) fn print_string(&mut self, stream: Stream, operand: &Expr) {
-        let string = self.operand(operand).into_pointer_value();
+    /// `print` or `eprint` of a string: `sisu_print_str(bytes, len)`, or `sisu_eprint_str`.
+    pub(super) fn print_string(&self, stream: Stream, string: PointerValue<'ctx>) {
         self.call(
             self.printers[stream.index()].str,
             &[
@@ -587,13 +500,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.string_len(string).into(),
             ],
         );
-        self.release(string.into(), operand.ty);
     }
 
     /// `panic(message)` at `span`: `sisu_panic_message(at, at_len, bytes, len)`, then
     /// `unreachable`. The message is not released: the process exits.
-    pub(super) fn panic_string(&mut self, message: &Expr, span: Span) {
-        let string = self.operand(message).into_pointer_value();
+    pub(super) fn panic_value(&self, string: PointerValue<'ctx>, span: Span) {
         let at = self.location(span);
         let at_ptr = self
             .builder

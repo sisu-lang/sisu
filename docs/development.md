@@ -402,6 +402,7 @@ These flags run the pipeline up to one stage and stop there.
 | `sisuc --emit tokens file.sisu` | The lexer's tokens |
 | `sisuc --emit ast file.sisu` | The parser's syntax tree |
 | `sisuc --emit tir file.sisu` | The checker's typed tree, `tir` |
+| `sisuc --emit mir file.sisu` | The mid-level IR, `mir`, after the ownership pass and the hoist: every copy, move and release is a statement |
 | `sisuc --emit ir file.sisu` | The LLVM IR, before and after `mem2reg` |
 | `sisuc -O2 --emit ir file.sisu` | The LLVM IR, before and after LLVM's `default<O2>` pipeline |
 | `sisuc -O3 --emit ir file.sisu` | The same, with the `default<O3>` pipeline |
@@ -428,7 +429,9 @@ directory on `PATH`, or in gcc's `COMPILER_PATH`, for the `--linker lld` tests.
 
 `sisuc --rc-checks file.sisu out` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is
-at least 1. At a normal exit, it checks that no object is still allocated.
+at least 1. Before each read of a string, class or array local, it checks that
+the local still holds a reference, which a compiler bug could have moved out.
+At a normal exit, it checks that no object is still allocated.
 A failed check prints a line that starts with `sisu: rc check:` and exits
 with code 102. `--rc-checks` comes after `-O2` or `-O3`, if given, and works
 only when building an executable or with `--emit ir` and `--emit ir-raw`,

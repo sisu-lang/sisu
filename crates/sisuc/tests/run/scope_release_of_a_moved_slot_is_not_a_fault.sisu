@@ -1,0 +1,18 @@
+// A `string` local that one branch moves is released at the end of its block on both paths: on
+// the path that moved it, the release reads the emptied slot. Every case here is built with
+// --rc-checks, where a read of a moved local faults, so this exits 0 only because a scope
+// release does not count as a read.
+fn take(s: string) -> i64 {
+    s.len()
+}
+
+fn pick(c: bool) -> i64 {
+    let s = "moved" + "!"
+    let n = if c { take(s) } else { 0 }
+    n
+}
+
+fn main() {
+    print(pick(true))                 // 6
+    print(pick(false))                // 0
+}

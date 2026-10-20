@@ -1,0 +1,67 @@
+class Holder {
+    mut v: i64
+}
+
+class Box {
+    mut xs: [i64]
+}
+
+fn noisy(n: i64) -> i64 {
+    print(n)
+    n
+}
+
+fn get(h: Holder, n: i64) -> Holder {
+    print(n)
+    h
+}
+
+// Guards the order of an element or field write against its value, which mir's codegen must
+// keep: a field root's base, then the indexes, then the value, then each level's bounds check
+// and copy-if-shared, then the store.
+fn main() {
+    // The value copies `a` into `b` before the write makes `a` unique, so `b` keeps its element.
+    let mut a = [1, 2]
+    let mut b = [0]
+    a[0] = if true {
+        b = a
+        10
+    } else {
+        20
+    }
+    print(b[0])   // 1: `b` shares the old array, which the write copied away from
+    print(a[0])   // 10
+
+    // The index runs before the value.
+    let mut c = [0]
+    c[noisy(0)] = noisy(7) // 0, then 7
+    print(c[0])   // 7
+
+    // The value replaces the root array, and the write goes into the new one.
+    let mut d = [1, 2]
+    d[0] = if true {
+        d = [5, 6]
+        9
+    } else {
+        0
+    }
+    print(d[0])   // 9
+    print(d[1])   // 6: the new array's
+
+    // A field root's base is read before the value, so the write goes into the old object.
+    let mut o = Box(xs: [1])
+    let old = o
+    o.xs[0] = if true {
+        o = Box(xs: [2])
+        3
+    } else {
+        0
+    }
+    print(old.xs[0]) // 3
+    print(o.xs[0])   // 2: the new object is untouched
+
+    // A field store's base runs before the value.
+    let h = Holder(v: 0)
+    get(h, 1).v = noisy(2) // 1, then 2
+    print(h.v)    // 2
+}

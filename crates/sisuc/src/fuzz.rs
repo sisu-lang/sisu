@@ -6,11 +6,11 @@
 use inkwell::context::Context;
 use inkwell::module::Module;
 
-use crate::codegen;
 use crate::diagnostic::{Code, Diagnostic, Edit, Fix};
 use crate::report::{Format, Reporter};
 use crate::source::Span;
 use crate::tir::Program;
+use crate::{codegen, mir};
 
 /// Runs `sisuc --check` on `data` as the file `input.sisu`, reports it as colored text and then
 /// as JSON, and asserts that every span of every diagnostic is well formed and that every safe
@@ -45,9 +45,18 @@ fn assert_compiles(program: &Program, source: &str) {
     drop(program.to_string());
     let machine = codegen::target_machine(codegen::OptLevel::O0)
         .expect("LLVM should have a target machine for the host sisuc runs on");
+    let mir = mir::build(program);
     for rc_checks in [false, true] {
         let context = Context::create();
-        let module = codegen::compile(&context, program, "input.sisu", source, &machine, rc_checks);
+        let module = codegen::compile(
+            &context,
+            program,
+            &mir,
+            "input.sisu",
+            source,
+            &machine,
+            rc_checks,
+        );
         assert_verified(&module, rc_checks);
     }
 }

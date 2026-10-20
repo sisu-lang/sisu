@@ -243,7 +243,7 @@ These came out of the milestone 2 design and are now part of its spec:
   ([ADR 0020](adr/0020-labels-belong-to-the-declaration.md)).
 - `match` owns its scrutinee and moves nothing out of it: arms are tested in
   order, straight into basic blocks, with backtracking for alternatives and
-  guards, so there is no `mir`. A part the scrutinee held alone is counted up
+  guards. A part the scrutinee held alone is counted up
   and down once; reusing a box waits for a benchmark.
 - `match` is checked for exhaustiveness and reachability in one pass. A
   guarded arm may not match, so it never covers a value. `i64`, `u8` and
@@ -496,6 +496,51 @@ Order matters in these places:
   (ADR 0009). Opening, reading and writing files waits for `Result` in
   milestone 12, so no I/O signature changes later.
 
+### mir
+
+A mid-level IR between `tir` and LLVM IR, replacing architecture plan 4. Each
+part is its own branch and PR. Part 1 runs before M8 part 2; parts 2 to 5
+follow it, ahead of the rest of milestone 8.
+
+1. The switch-over: `tir` lowers to mir, one pass places every count, codegen
+   obeys, the certifier checks. Done.
+2. Path-precise releases.
+3. Retain/release pair removal.
+4. Borrowed-parameter inference (replaces ADR 0012).
+5. Reuse of freed boxes.
+
+Each step down from `tir` to LLVM IR is a
+lowering: it rewrites a feature with simpler parts, so the stages below
+never see it. Rust has the same split: its HIR is a desugared tree, close
+to `tir`, and its MIR is a control-flow graph of basic blocks. Swift's SIL and
+Zig's AIR sit at the same level. `tir` only records what the checker
+understood; it does not optimize. Codegen emits LLVM IR from `mir`.
+
+`mir` is worth its cost only for what LLVM cannot know: the language's
+rules. General optimization (inlining, loops, constants) stays with LLVM,
+which does it better. The first of these needs introduces `mir`:
+- Reference-count elision: removing increment and decrement pairs that
+  cancel out, which is why Swift has SIL. ADR 0012 (proposed) removes the
+  pair around a method's `self` without it.
+- Explicit count statements. Codegen once decided where to add and
+  subtract 1 while it emitted LLVM IR, and a separate last-use pass had to
+  repeat codegen's evaluation order by hand. In `mir`, lowering writes every
+  retain, release and move as a statement, the ownership pass places the
+  moves, and LLVM emission follows them.
+  Debug builds of the compiler then check each function, as Swift's ownership
+  verifier does: on every path, each owned reference is moved or released
+  once, nothing is used after its release, and a borrow ends before its
+  owner does. Valgrind and `--rc-checks` stay, because the checker cannot
+  see the runtime or how LLVM IR is emitted.
+
+Milestone 7 compiled `match` before `mir` existed: arms are tested in order,
+straight into basic blocks, with backtracking for nested alternatives. `mir`
+lowering keeps that scheme.
+
+`--emit mir` prints it. Desugaring moves out of codegen into the
+`tir`-to-`mir` step: `&&`, `||` and comparison chains are already branches in
+`mir`. The name follows `tir`; `sil` would clash with Swift's.
+
 ### Benchmarks keep up
 
 A milestone that adds a feature with a run-time cost adds a program under
@@ -674,7 +719,7 @@ Each is small once its milestone's main feature exists:
   designed on it once.
 - Milestone 9: `for` over any iterator. Milestone 3's `for` lowers to a loop
   over an array or a range. An iterator `for` lowers to a loop that calls
-  `next()` until it returns `None`, before the last-use pass runs, so a
+  `next()` until it returns `None`, before `mir` is built, so a
   `break` or `return` inside it still releases what the loop holds. A range
   then becomes a value that can be passed and stored, so the glossary's
   "range" entry changes with it.
@@ -968,36 +1013,6 @@ These do not make code nicer to write, so they wait:
 - Debug info (DWARF), so `gdb` steps through Sisu source. Stepping does not
   enter runtime functions such as a reference-count update, as Mojo keeps
   the debugger out of its built-in operators.
-- A mid-level IR, `mir`, between `tir` and LLVM IR. Each step down is a
-  lowering: it rewrites a feature with simpler parts, so the stages below
-  never see it. Rust has the same split: its HIR is a desugared tree, close
-  to `tir`, and its MIR is a control-flow graph of basic blocks. Swift's SIL and
-  Zig's AIR sit at the same level. `tir` only records what the checker
-  understood; it does not optimize, and codegen lowers it straight to LLVM IR
-  today.
-
-  `mir` is worth its cost only for what LLVM cannot know: the language's
-  rules. General optimization (inlining, loops, constants) stays with LLVM,
-  which does it better. The first of these needs introduces `mir`:
-  - Reference-count elision: removing increment and decrement pairs that
-    cancel out, which is why Swift has SIL. ADR 0012 (proposed) removes the
-    pair around a method's `self` without it.
-  - Explicit count statements. Today codegen decides where to add and
-    subtract 1 while it emits LLVM IR, and `last_use.rs` must repeat
-    codegen's evaluation order by hand. In `mir`, one pass writes every
-    retain, release and move as a statement, and LLVM emission follows them.
-    Debug builds of the compiler then check each function, as Roc's borrow
-    certifier does: on every path, each owned reference is moved or released
-    once, nothing is used after its release, and a borrow ends before its
-    owner does. Valgrind and `--rc-checks` stay, because the checker cannot
-    see the runtime or how LLVM IR is emitted.
-
-  Milestone 7 compiles `match` without `mir`: arms are tested in order,
-  straight into basic blocks, with backtracking for nested alternatives.
-
-  It brings its own `--emit mir` printer, and desugaring moves out of
-  codegen into the `tir`-to-`mir` step. The name follows `tir`; `sil` would
-  clash with Swift's.
 - Borrowing every counted parameter, after ADR 0012 is built and measured.
   ADR 0012 borrows only `self`, and leaves the other parameters until a
   benchmark shows that argument counting matters. Then infer it, as Lean 4
@@ -1007,8 +1022,8 @@ These do not make code nicer to write, so they wait:
   changes. The last case keeps ADR 0007's handover: a borrowed array has
   count 2, so the first write would copy it. Recursive functions are solved
   together, one strongly connected group of the call graph at a time. The
-  result is one flag per parameter on `tir`, computed as last use is, so it
-  needs no `mir`. Last use must not move a borrowed parameter. Callers keep
+  result is one flag per parameter, inferred on `mir` (its part 4), and the
+  ownership pass must not move a borrowed parameter. Callers keep
   ADR 0012's rule: they add 1 to an argument read from a `mut` field, a weak
   field or an array element. A function called through a closure keeps owned
   parameters.
@@ -1381,8 +1396,8 @@ accepted.
     different order;
   - whether labels and default values belong to a function type, so a call
     through a closure keeps them. Swift dropped labels from function types;
-  - that arguments are still evaluated left to right as written, which the
-    last-use pass already assumes, even when labels reorder them.
+  - that arguments are still evaluated left to right as written, which
+    `mir` lowering already assumes, even when labels reorder them.
 - **Closure syntax.** Resolved for `match` in milestone 7; the rest stays
   with milestone 9. The arm's pattern comes before its `=>` and an expression
   after it, so a closure inside an arm body, `n => xs.filter(x => x > n)`,

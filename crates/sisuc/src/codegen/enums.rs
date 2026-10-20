@@ -25,7 +25,7 @@ use inkwell::values::{
 use super::layout::HeapBlock;
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED};
-use crate::tir::{Enum, EnumId, Expr, Payload, Type, TypeKind};
+use crate::tir::{Enum, EnumId, Payload, Type, TypeKind};
 
 /// An enum's LLVM types.
 pub(super) struct EnumLayout<'ctx> {
@@ -311,17 +311,17 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.phi(llvm_ty, &[(self.empty(ty), absent), (present, some)])
     }
 
-    /// `Variant`: each argument, left to right, then the value: the tag and each field stored
-    /// into a scratch slot, which is loaded whole. The slot is zeroed first, so that the whole
-    /// load never reads a byte that no store gave a value, and a boxed `F?` field given `None`
-    /// keeps its `null`. A boxed field's argument moves into a new box with count 1.
-    pub(super) fn build_variant(
-        &mut self,
+    /// The value of variant `variant` of enum `id` with the evaluated `values` as its fields:
+    /// the tag and each field stored into a scratch slot, which is loaded whole. The slot is
+    /// zeroed first, so that the whole load never reads a byte that no store gave a value, and
+    /// a boxed `F?` field given `None` keeps its `null`. A boxed field's value moves into a new
+    /// box with count 1.
+    pub(super) fn variant(
+        &self,
         id: EnumId,
         variant: usize,
-        args: &[Expr],
+        values: &[BasicValueEnum<'ctx>],
     ) -> BasicValueEnum<'ctx> {
-        let values: Vec<_> = args.iter().map(|a| self.operand(a)).collect();
         let layout = self.enum_layout(id);
         let (ty, tag) = (layout.ty, layout.tag);
         let slot = self.entry_alloca(ty.into(), "variant");
@@ -332,7 +332,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             tag.const_int(tag_value, false).into(),
         );
         let fields = &self.program.enums[id.0].variants[variant].fields;
-        for (field, (value, payload)) in values.into_iter().zip(fields).enumerate() {
+        for (field, (&value, payload)) in values.iter().zip(fields).enumerate() {
             let place = self.field_slot(slot, id, variant, field);
             if payload.boxed {
                 self.store_boxed(place, value, payload.ty);

@@ -30,6 +30,7 @@ run in the wrong checkout.
 - `timeout 20` on every `sisuc` call and plain program run.
 - `timeout 120` under Valgrind, ASan or Miri.
 - `limits` timing probes: `timeout 60`, as its guide says.
+- `compile-time` runs of `sisuc` under callgrind or DHAT: `timeout 600`.
 - Cargo commands get no timeout.
 - Any probe that allocates in proportion to an input you grow runs under `ulimit -v 4194304` (4 GiB) in a subshell: `(ulimit -v 4194304; timeout 20 $D/p)`. Other subagents share the machine.
 
@@ -121,8 +122,8 @@ the LLVM prefix must be absolute, and `-o` keeps its output out of the
 repository:
 
 ```console
-$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/last_use.rs --list
-$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/last_use.rs -j 4 -o <RUN>/coverage/last_use
+$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/mir/ownership.rs --list
+$ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/mir/ownership.rs -j 4 -o <RUN>/coverage/ownership
 ```
 
 Each mutant runs the whole test suite, Valgrind cases included, so a file

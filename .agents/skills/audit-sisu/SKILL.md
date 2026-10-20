@@ -1,6 +1,6 @@
 ---
 name: audit-sisu
-description: Exploratory audit of sisuc and the runtime. Probes IR quality, reference counting, crashes, miscompiles, runtime unsafe code, limits, diagnostics and test blind spots; reports reproduced findings with a suggested fix and test each. `/audit-sisu` runs every area, `/audit-sisu <area>` one.
+description: Exploratory audit of sisuc and the runtime. Probes IR quality, reference counting, crashes, miscompiles, runtime unsafe code, limits, diagnostics, test blind spots and compile time; reports reproduced findings with a suggested fix and test each. `/audit-sisu` runs every area, `/audit-sisu <area>` one.
 disable-model-invocation: true
 ---
 
@@ -28,8 +28,9 @@ in Codex, `$audit-sisu [area...]`.
 | `limits` | Deep recursion, huge values, long programs, overflow edges | [areas/limits.md](areas/limits.md) |
 | `diagnostics` | Bad programs that get no diagnostic, a wrong span, or a confusing message | [areas/diagnostics.md](areas/diagnostics.md) |
 | `coverage` | Compiler paths no test reaches, surviving mutants | [areas/coverage.md](areas/coverage.md) |
+| `compile-time` | `sisuc` doing avoidable work: repeated steps, allocations on hot paths, IR LLVM only deletes, failing late | [areas/compile-time.md](areas/compile-time.md) |
 
-With no argument, run all eight; otherwise run the named ones.
+With no argument, run all nine; otherwise run the named ones.
 
 ## Steps
 

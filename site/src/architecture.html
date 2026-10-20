@@ -15,7 +15,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisuc</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit d0d6011 · x86-64 Linux only</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit 5ab0cea · x86-64 Linux only</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 Linux only) -->
 
@@ -49,13 +49,12 @@ How the Sisu compiler turns source text into a native executable, one stage at a
         <li><b>Lexer</b><span class="io">text <em>→</em> tokens</span><span class="what">Splits the UTF-8 source into names, numbers and symbols.</span></li>
         <li><b>Parser</b><span class="io">tokens <em>→</em> AST</span><span class="what">Builds the syntax tree: the program as you wrote it.</span></li>
         <li><b>Checker</b><span class="io">AST <em>→</em> TIR</span><span class="what">Resolves every name and types every expression. Rewrites shorthand such as <code>for</code> and <code>??</code> into simpler forms, and reports every error in one run. Its output is the typed tree, TIR.</span></li>
-        <li><b>Last use</b><span class="io">TIR <em>→</em> TIR</span><span class="what">Finds the last read of each counted value and hands over its reference there, so an array can change in place without a copy.</span></li>
-        <li class="planned"><b>MIR</b><span class="io">TIR <em>→</em> MIR</span><span class="what"><span class="soon" style="margin-right:6px">planned</span>A mid-level form in which every reference-count change is its own statement, so the compiler can remove the pairs that cancel out and check the rest.</span></li>
-        <li><b>Codegen</b><span class="io">TIR <em>→</em> LLVM IR</span><span class="what">Writes the program in LLVM's language. Once MIR exists, codegen reads MIR instead.</span></li>
+        <li><b>MIR</b><span class="io">TIR <em>→</em> MIR</span><span class="what">A mid-level form in which every reference-count change is its own statement. It hands over each counted value's reference at its last read, so an array can change in place without a copy, and debug builds check every function. Removing the pairs that cancel out is planned.</span></li>
+        <li><b>Codegen</b><span class="io">MIR <em>→</em> LLVM IR</span><span class="what">Writes the program in LLVM's language.</span></li>
         <li><b>LLVM</b><span class="io">LLVM IR <em>→</em> object</span><span class="what">Optimizes and writes x86-64 machine code.</span></li>
         <li><b>Link</b><span class="io">object <em>→</em> executable</span><span class="what">The system C compiler, <code>cc</code>, links it with the Sisu runtime.</span></li>
       </ol>
-      <p>The first four stages are the front end. <code>front_end.rs</code> runs them in order and returns the program with every diagnostic, sorted by position. <code>--check</code> stops there. <code>--emit</code> stops later and prints what a stage produced: tokens, the AST, TIR or LLVM IR.</p>
+      <p>The first three stages are the front end. <code>front_end.rs</code> runs them in order and returns the program with every diagnostic, sorted by position. <code>--check</code> stops there. <code>--emit</code> stops later and prints what a stage produced: tokens, the AST, TIR, MIR or LLVM IR.</p>
 
       <h3>Lexer</h3>
       <p class="files"><code>crates/sisuc/src/lexer/</code>, <code>symbol.rs</code></p>
@@ -69,18 +68,15 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <h3>Checker</h3>
       <p class="files"><code>crates/sisuc/src/check/</code>, <code>tir.rs</code>, <code>types.rs</code></p>
       <p>The checker resolves names, types every expression and lowers shorthand: <code>while</code> and <code>for</code> become loops, <code>?.</code> and <code>??</code> become <code>if let</code>, and <code>x += 1</code> becomes <code>x = x + 1</code>. It folds each <code>const</code> to a literal. <code>check/exhaust.rs</code> runs Maranget's usefulness algorithm over each <code>match</code>: a missed value is an error that names it as a pattern, and an arm no value reaches is a warning.</p>
-      <p>An expression that already failed gets a poison type, so one mistake produces one diagnostic. A program with no errors comes out as TIR, the typed tree, which is all codegen reads. A type in TIR is a 4-byte handle into one table, and equal types get the same handle.</p>
+      <p>An expression that already failed gets a poison type, so one mistake produces one diagnostic. A program with no errors comes out as TIR, the typed tree, which MIR is built from. A type in TIR is a 4-byte handle into one table, and equal types get the same handle.</p>
 
-      <h3>Last use</h3>
-      <p class="files"><code>crates/sisuc/src/last_use.rs</code></p>
-      <p>This pass walks each function backward and finds every read of a counted local that is its last. At that read, the local hands over its reference instead of sharing it. A later write to the array can then skip the copy. The pass reports nothing, and runs only when the checker found no errors.</p>
-
-      <h3>MIR <span class="soon">planned</span></h3>
-      <p>Today codegen lowers TIR straight to LLVM IR, and decides where to add and subtract counts as it goes. A planned mid-level form, MIR, would sit between them, as Rust's MIR and Swift's SIL do. In MIR, one pass would write every retain, release and move as a statement. The compiler could then remove the pairs that cancel out, and debug builds could check that each owned reference is moved or released once on every path. General optimization stays with LLVM. This is planned work, with no date, and it may change.</p>
+      <h3>MIR</h3>
+      <p class="files"><code>crates/sisuc/src/mir/</code></p>
+      <p>MIR sits between TIR and LLVM IR, as Rust's MIR and Swift's SIL do. Each function becomes a list of typed locals and basic blocks, and every retain, release and move is its own statement. The ownership pass (<code>mir/ownership.rs</code>) uses liveness to find every read of a counted local that is its last, and makes that read a move: the local hands over its reference instead of sharing it, so a later write to the array can skip the copy. A loop that writes an array nothing in it shares makes the array unique once, before the first iteration. In debug builds the compiler also checks each function: on every path, each owned reference is moved or released once. MIR is built on the build path only, so <code>--check</code> does not pay for it. Removing the pairs of counts that cancel out is planned work, with no date, and it may change. General optimization stays with LLVM.</p>
 
       <h3>Codegen</h3>
       <p class="files"><code>crates/sisuc/src/codegen/</code></p>
-      <p>Codegen walks TIR and builds an LLVM module through the inkwell bindings. Each Sisu function becomes an LLVM function named <code>sisu.&lt;name&gt;</code>. Codegen also emits a C <code>main</code>, which runs <code>sisu.main</code>. Integer overflow and division by zero call the runtime's panic instead of wrapping.</p>
+      <p>Codegen walks MIR and builds an LLVM module through the inkwell bindings. Each Sisu function becomes an LLVM function named <code>sisu.&lt;name&gt;</code>. Codegen also emits a C <code>main</code>, which runs <code>sisu.main</code>. Integer overflow and division by zero call the runtime's panic instead of wrapping.</p>
       <p>Codegen lays out every value in memory:</p>
       <ul>
         <li>An object lives on the heap, with a reference count in front of its fields.</li>
@@ -88,7 +84,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
         <li>A string is one counted block: the count, the length, the capacity, then the UTF-8 bytes.</li>
         <li>An enum value has no heap block of its own: it is a tag and its variant's payload, held inline. A field that would make an enum contain itself goes behind a counted box.</li>
       </ul>
-      <p>For each type it emits the helpers that retain, release and compare it. It tags loads and stores with type-based alias information, so LLVM knows that writing a field or an element leaves every count and length alone. <code>codegen/matching.rs</code> compiles <code>match</code>: it tests the arms in order, and traps after the last one. The checker has proved that some arm matches, and a bug in the checker must not become undefined behaviour.</p>
+      <p>For each type it emits the helpers that retain, release and compare it. It tags loads and stores with type-based alias information, so LLVM knows that writing a field or an element leaves every count and length alone. MIR tests the arms of a <code>match</code> in order, and <code>codegen/matching.rs</code> traps after the last one. The checker has proved that some arm matches, and a bug in the checker must not become undefined behaviour.</p>
 
       <h3>LLVM</h3>
       <p class="files">LLVM 23, linked as a library</p>
@@ -110,7 +106,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
       <h3>What last use buys</h3>
       <p>When a local is read for the last time, its reference moves instead of being shared. So in <code>xs = f(xs)</code>, when nothing else holds the array, <code>f</code> holds the only reference and its writes happen in place. This is a language rule, not an optimizer pass, and it never causes an error. The quicksort benchmark shows it: Sisu holds 77.6 MiB, as C does for its one array of 10 000 000 integers.</p>
-      <p>A loop goes one step further. When it writes a local array that nothing in the loop shares, codegen makes the array unique once, before the first iteration. The writes inside the loop then skip the count check.</p>
+      <p>A loop goes one step further. When it writes a local array that nothing in the loop shares, the compiler makes the array unique once, before the first iteration. The writes inside the loop then skip the count check.</p>
       <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0008-weak-references.md (status planned per site.js AREAS / roadmap), docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/benchmarks.md (quicksort on an array value), GLOSSARY.md (Last use, Copy-on-write) -->
 
       <h2 id="runtime">The runtime</h2>

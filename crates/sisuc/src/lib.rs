@@ -6,9 +6,9 @@ mod codegen;
 mod diagnostic;
 mod front_end;
 mod fuzz;
-mod last_use;
 mod lexer;
 mod link;
+mod mir;
 mod parser;
 mod report;
 mod source;
@@ -31,7 +31,7 @@ use tir::Program;
 
 pub use fuzz::front_end as fuzz_front_end;
 
-const USAGE: &str = "usage: sisuc [--format text|json] ([-O2|-O3] [--rc-checks] [--linker bfd|gold|lld|mold] <input.sisu> <output> | [-O2|-O3] [--rc-checks] --emit ir <input.sisu> | [--rc-checks] --emit ir-raw <input.sisu> | --emit tokens|ast|tir <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
+const USAGE: &str = "usage: sisuc [--format text|json] ([-O2|-O3] [--rc-checks] [--linker bfd|gold|lld|mold] <input.sisu> <output> | [-O2|-O3] [--rc-checks] --emit ir <input.sisu> | [--rc-checks] --emit ir-raw <input.sisu> | --emit tokens|ast|tir|mir <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
 
 /// The reporter `cli` writes stderr through.
 type Report = Reporter<Stderr>;
@@ -65,8 +65,22 @@ enum Stage {
     Tokens,
     Ast,
     Tir,
+    Mir,
     Ir,
     IrRaw,
+}
+
+/// The stage `--emit` names.
+fn emit_stage(name: &OsString) -> Result<Stage, String> {
+    match name.to_str() {
+        Some("tokens") => Ok(Stage::Tokens),
+        Some("ast") => Ok(Stage::Ast),
+        Some("tir") => Ok(Stage::Tir),
+        Some("mir") => Ok(Stage::Mir),
+        Some("ir") => Ok(Stage::Ir),
+        Some("ir-raw") => Ok(Stage::IrRaw),
+        _ => Err(USAGE.to_string()),
+    }
 }
 
 /// The format and the mode the command line asks for.
@@ -109,22 +123,12 @@ fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
         return Err(USAGE.to_string());
     }
     let mode = match args {
-        [flag, stage, input] if flag == "--emit" => {
-            let stage = match stage.to_str() {
-                Some("tokens") => Stage::Tokens,
-                Some("ast") => Stage::Ast,
-                Some("tir") => Stage::Tir,
-                Some("ir") => Stage::Ir,
-                Some("ir-raw") => Stage::IrRaw,
-                _ => return Err(USAGE.to_string()),
-            };
-            Ok(Mode::Emit {
-                stage,
-                input: PathBuf::from(input),
-                level,
-                rc_checks,
-            })
-        }
+        [flag, stage, input] if flag == "--emit" => Ok(Mode::Emit {
+            stage: emit_stage(stage)?,
+            input: PathBuf::from(input),
+            level,
+            rc_checks,
+        }),
         [flag, input] if flag == "--check" => Ok(Mode::Check {
             input: PathBuf::from(input),
         }),
@@ -337,6 +341,13 @@ fn emit(
             }
             None => ExitCode::FAILURE,
         },
+        Stage::Mir => match front_end(reporter, &path, &source) {
+            Some(program) => {
+                print!("{}", mir::print(&mir::build(&program), &program));
+                ExitCode::SUCCESS
+            }
+            None => ExitCode::FAILURE,
+        },
         Stage::Ir => emit_ir(reporter, &path, &source, level, rc_checks),
         Stage::IrRaw => emit_ir_raw(reporter, &path, &source, rc_checks),
     }
@@ -353,10 +364,11 @@ fn emit_ir(
     let Some(program) = front_end(reporter, path, source) else {
         return ExitCode::FAILURE;
     };
+    let mir = mir::build(&program);
     let context = Context::create();
     let pipeline = codegen::pipeline(level);
     let printed = codegen::target_machine(level).and_then(|machine| {
-        let module = codegen::compile(&context, &program, path, source, &machine, rc_checks);
+        let module = codegen::compile(&context, &program, &mir, path, source, &machine, rc_checks);
         // For the `o2-calls` check in the tests (`docs/development.md`); `--emit ir` only, so
         // no executable is affected, and not in the usage text.
         if let Ok(names) = std::env::var("SISU_KEEP_FUNCTIONS") {
@@ -392,11 +404,13 @@ fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str, rc_checks: bool)
     let Some(program) = front_end(reporter, path, source) else {
         return ExitCode::FAILURE;
     };
+    let mir = mir::build(&program);
     let context = Context::create();
     print_or_report(
         reporter,
         codegen::target_machine(OptLevel::O0).and_then(|machine| {
-            let module = codegen::compile(&context, &program, path, source, &machine, rc_checks);
+            let module =
+                codegen::compile(&context, &program, &mir, path, source, &machine, rc_checks);
             module.verify().map_err(|e| e.to_string())?;
             Ok(module.print_to_string().to_string())
         }),
@@ -512,9 +526,10 @@ fn compile(
     rc_checks: bool,
     linker: Option<&str>,
 ) -> Result<(), String> {
+    let mir = mir::build(program);
     let context = Context::create();
     let machine = codegen::target_machine(level)?;
-    let module = codegen::compile(&context, program, path, source, &machine, rc_checks);
+    let module = codegen::compile(&context, program, &mir, path, source, &machine, rc_checks);
     codegen::optimize(&module, &machine, level)?;
     let code = codegen::object_code(&module, &machine)?;
     // A name of its own, so a user's `<output>.o` is left alone; the nanoseconds pick a

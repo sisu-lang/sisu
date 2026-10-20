@@ -1,6 +1,6 @@
 // Evaluation order: each operand prints its marker when it runs. docs/ states the order only for
 // call arguments: docs/roadmap.md, "Argument labels", says "arguments are evaluated left to
-// right as written, which the last-use pass already assumes". `values.sisu` and
+// right as written, which `mir` lowering already assumes". `values.sisu` and
 // `field_order.sisu` pin index writes and field assignments. Everything here is left to right.
 class Obj {
     v: i64

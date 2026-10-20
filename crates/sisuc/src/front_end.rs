@@ -4,7 +4,7 @@ use rustc_hash::FxHashSet;
 
 use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Severity};
 use crate::source::Span;
-use crate::{check, last_use, lexer, parser, tir};
+use crate::{check, lexer, parser, tir};
 
 /// The source in `bytes`. Bytes that are not UTF-8 are an error at the first invalid one, with
 /// the text to render it over: the valid text before it, then U+FFFD in its place, so the
@@ -21,7 +21,7 @@ pub(crate) fn decode(bytes: Vec<u8>) -> Result<String, Box<(String, Diagnostic)>
     })
 }
 
-/// Lexes, parses, checks and marks last uses in `source`. Returns every diagnostic, sorted by
+/// Lexes, parses and checks `source`. Returns every diagnostic, sorted by
 /// position, and the program unless one is an error. The checker runs only when every item is
 /// named: it checks the intact items, and treats a broken one as declared.
 pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
@@ -38,11 +38,7 @@ pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>)
     diagnostics.extend(checked);
     diagnostics.sort_by_key(|d| d.span().start());
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
-    let program = program.filter(|_| !failed).map(|mut program| {
-        last_use::mark(&mut program);
-        program
-    });
-    (program, diagnostics)
+    (program.filter(|_| !failed), diagnostics)
 }
 
 /// `diagnostics` without each fix of a lexer or parser diagnostic that leaves `source` lexing or
