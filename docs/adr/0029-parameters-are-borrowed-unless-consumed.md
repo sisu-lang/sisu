@@ -15,8 +15,8 @@ parameter is owned when the function consumes it, which is any of these uses:
 - selecting it into the result of an `if`, `match` or `??`: a destination
   that is assigned in more than one statement is a join, and the assignment
   consumes the parameter. A temporary that is assigned once and only reads the
-  parameter, such as the operand of `print(s)`, consumes nothing when every
-  use of it is in its own block; a temporary used in another block, such as a
+  parameter, such as the operand of `print(s)`, consumes nothing when it is
+  assigned and used in one block; a temporary used in another block, such as a
   `for` loop's iterable, consumes it;
 - consuming a binding or a projection borrowed out of it, such as returning
   the binding of an `if let` on it (the backward rule).
