@@ -304,15 +304,11 @@ fn emit(
     let Some(source) = read(reporter, input) else {
         return ExitCode::FAILURE;
     };
-    let lexed = match lexer::lex(&source) {
-        Ok(lexed) => lexed,
-        Err(d) => {
-            reporter.diagnostics(&path, &source, &[d]);
-            return ExitCode::FAILURE;
-        }
-    };
     match stage {
         Stage::Tokens => {
+            let Some(lexed) = lex(reporter, &path, &source) else {
+                return ExitCode::FAILURE;
+            };
             if !lexed.diagnostics.is_empty() {
                 reporter.diagnostics(&path, &source, &lexed.diagnostics);
                 return ExitCode::FAILURE;
@@ -322,6 +318,9 @@ fn emit(
             ExitCode::SUCCESS
         }
         Stage::Ast => {
+            let Some(lexed) = lex(reporter, &path, &source) else {
+                return ExitCode::FAILURE;
+            };
             let parsed = parser::parse(lexed);
             reporter.diagnostics(&path, &source, &parsed.diagnostics);
             if parsed
@@ -350,6 +349,17 @@ fn emit(
         },
         Stage::Ir => emit_ir(reporter, &path, &source, level, rc_checks),
         Stage::IrRaw => emit_ir_raw(reporter, &path, &source, rc_checks),
+    }
+}
+
+/// Lexes `source`, reporting the error and returning `None` when it cannot be lexed.
+fn lex<'a>(reporter: &mut Report, path: &str, source: &'a str) -> Option<lexer::Lexed<'a>> {
+    match lexer::lex(source) {
+        Ok(lexed) => Some(lexed),
+        Err(d) => {
+            reporter.diagnostics(path, source, &[d]);
+            None
+        }
     }
 }
 

@@ -177,6 +177,26 @@ fn lexer_error_exits_1() {
     );
 }
 
+/// A source the lexer cannot finish (a stray bracket) fails `--emit tokens` and `--emit ast`.
+#[test]
+fn unlexable_source_exits_1_for_tokens_and_ast() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join("unlexable_source.sisu"), ")\n").expect("writes");
+    for stage in ["tokens", "ast"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(dir)
+            .args(["--emit", stage, "unlexable_source.sisu"])
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(1), "{stage}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            at_severity(&stderr, "error") == Some(0),
+            "{stage}: {stderr}"
+        );
+    }
+}
+
 /// A mode flag with too few arguments, or with the arguments of another mode.
 #[test]
 fn mode_with_the_wrong_arguments_is_a_usage_error() {
