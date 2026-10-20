@@ -1630,12 +1630,12 @@ fn words_releases_a_base_that_is_not_a_local() {
     let ir = compiled(
         &context,
         "fn make() -> string { \"a \" + \"b\" }\nfn value() -> [string] { make().words() }\n\
-         fn local(s: string) -> string {\n    let ws = s.words()\n    s\n}\nfn main() {}",
+         fn local(s: string) -> i64 {\n    let ws = s.words()\n    s.len()\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
     let value = function_body(&ir, "define internal ptr @sisu.value()");
-    let local = function_body(&ir, "define internal ptr @sisu.local(ptr");
+    let local = function_body(&ir, "define internal i64 @sisu.local(ptr");
     let release = "@sisu_rc.release.string(";
     assert_eq!(value.matches(release).count(), 1, "{value}");
     // The local's one release is its scope end: `words()` itself released nothing.

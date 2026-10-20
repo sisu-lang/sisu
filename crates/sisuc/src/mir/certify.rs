@@ -86,9 +86,9 @@ impl fmt::Display for Rule {
 }
 
 /// The states a local may be in at a point, as bits; no bit is a point not reached yet.
-type States = u8;
-const OWNED: States = 1;
-const EMPTY: States = 2;
+pub(super) type States = u8;
+pub(super) const OWNED: States = 1;
+pub(super) const EMPTY: States = 2;
 const BORROWED: States = 4;
 /// The slot holds a pointer the local does not own: a borrow that ended, or a value that
 /// `release x` or `release? x` freed. Unlike an empty (null) slot, a scope release would free it.
@@ -101,6 +101,58 @@ const NONE: usize = usize::MAX;
 /// first, then the statements that read a root in place and then kill it, then each counted
 /// local in order.
 pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
+    regions(
+        function,
+        |_| true,
+        |region, scratch| region.check(scratch, &mut |_, _| {}),
+    )
+}
+
+/// The set that reaches each scope release, keyed by its block and its statement's index there,
+/// for the elaboration. A local whose region breaks a rule is left out, and so is every local
+/// when the function breaks rule 6 or a statement reads a root in place and then kills it.
+///
+/// A region's sets only grow while its fixpoint runs, so the union of every set observed at a
+/// scope release is the set the fixpoint ends with there.
+pub(super) fn scope_release_states(function: &Function) -> FxHashMap<(BlockId, usize), States> {
+    let mut named = vec![false; function.locals.len()];
+    for stmt in function.blocks.iter().flat_map(|block| &block.stmts) {
+        if let Statement::ScopeRelease(local) = stmt {
+            named[local.0] = true;
+        }
+    }
+    let mut states = FxHashMap::default();
+    if !named.contains(&true) {
+        return states;
+    }
+    let mut seen = FxHashMap::default();
+    // When `takes` or `mentions` fails, no region runs and the map stays empty.
+    let _ = regions(
+        function,
+        |local| named[local.0],
+        |region, scratch| {
+            seen.clear();
+            let observed = region.check(scratch, &mut |event, set| {
+                if event.effect == Effect::ScopeRelease {
+                    *seen.entry((BlockId(event.block), event.at)).or_insert(0) |= set;
+                }
+            });
+            if observed.is_ok() {
+                states.extend(seen.drain());
+            }
+            Ok(())
+        },
+    );
+    states
+}
+
+/// Builds what the regions share, then runs `each` on the region of each counted local that
+/// `wanted` takes, in order, up to its first error.
+fn regions(
+    function: &Function,
+    wanted: impl Fn(LocalId) -> bool,
+    mut each: impl FnMut(&Region<'_>, &mut Scratch) -> Result<(), Violation>,
+) -> Result<(), Violation> {
     let graph = Graph::new(function);
     let tree = Tree::new(&graph);
     takes(function, &tree)?;
@@ -109,7 +161,7 @@ pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
     let mut roots = FxHashMap::default();
     let mut scratch = Scratch::new(function.blocks.len());
     for (i, local) in function.locals.iter().enumerate() {
-        if local.counted {
+        if local.counted && wanted(LocalId(i)) {
             let local = LocalId(i);
             let root = root(function, local);
             let root = root.map(|root| {
@@ -127,7 +179,7 @@ pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
                 events: &mentions[i],
                 root,
             };
-            region.check(&mut scratch)?;
+            each(&region, &mut scratch)?;
         }
     }
     Ok(())
@@ -1285,7 +1337,12 @@ impl Region<'_> {
         }
     }
 
-    fn check(&self, scratch: &mut Scratch) -> Result<(), Violation> {
+    /// Runs the region's fixpoint. `observe` sees each event with the set it is applied to.
+    fn check(
+        &self,
+        scratch: &mut Scratch,
+        observe: &mut impl FnMut(&Event, States),
+    ) -> Result<(), Violation> {
         let param = self.local.0 < self.function.params;
         if self.events.is_empty() && !param {
             // Lowering never reached the local: dead code after a `return`.
@@ -1320,7 +1377,7 @@ impl Region<'_> {
             for &(from, pred) in &s.inputs[s.input_at[i]..s.input_at[i + 1]] {
                 states |= self.edge(s.blocks[from], s.out[from], pred, block);
             }
-            let (out, back) = self.transfer(s, i, states)?;
+            let (out, back) = self.transfer(s, i, states, observe)?;
             if back & ENDED != 0 && from_outside & ENDED == 0 {
                 from_outside |= ENDED;
                 // The queue takes the least node first, so the scope block is never queued here.
@@ -1492,6 +1549,7 @@ impl Region<'_> {
         s: &Scratch,
         i: usize,
         mut states: States,
+        observe: &mut impl FnMut(&Event, States),
     ) -> Result<(States, States), Violation> {
         let block = s.blocks[i];
         let kills = self
@@ -1505,6 +1563,7 @@ impl Region<'_> {
                     return Err(self.violation(block, Rule::Borrow));
                 }
             }
+            observe(event, states);
             states = self.apply(block, event.effect, states)?;
         }
         if kills.next().is_some() && states & BORROWED != 0 {

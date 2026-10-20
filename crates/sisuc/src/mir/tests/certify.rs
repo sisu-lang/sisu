@@ -4,20 +4,11 @@
 use super::*;
 use crate::mir::certify::range::RangeMin;
 use crate::mir::certify::wavelet::Wavelet;
-use crate::mir::certify::{READS, Rule, Violation, certify};
+use crate::mir::certify::{READS, Rule, Violation, certify, scope_release_states};
 use crate::source::Span;
 use crate::tir::TypeKind;
 
 // Statements and operands, written short.
-
-fn whole(local: LocalId) -> Place {
-    Place {
-        local,
-        projections: Vec::new(),
-        borrow: false,
-        guard: false,
-    }
-}
 
 /// `(local as 0).0`, a `match` binding's place.
 fn payload(local: LocalId) -> Place {
@@ -39,33 +30,6 @@ fn first(local: LocalId) -> Place {
         }],
         ..whole(local)
     }
-}
-
-fn read(local: LocalId) -> Operand {
-    Operand::Read(whole(local))
-}
-
-fn assign(dest: LocalId, value: Rvalue) -> Statement {
-    Statement::Assign {
-        dest: Some(dest),
-        value,
-    }
-}
-
-/// `dest = call fresh()`: an owned value.
-fn fresh(dest: LocalId) -> Statement {
-    assign(
-        dest,
-        Rvalue::Call {
-            func: FuncId(0),
-            args: Vec::new(),
-        },
-    )
-}
-
-/// `dest = copy "x"`.
-fn literal(dest: LocalId) -> Statement {
-    assign(dest, Rvalue::CopyStr("x".to_owned()))
 }
 
 /// `call f(args)`, with a `unit` result.
@@ -97,22 +61,6 @@ fn borrow(binding: LocalId, owner: LocalId) -> Statement {
 /// The commit of a binding: `b = copy b`.
 fn commit(binding: LocalId) -> Statement {
     assign(binding, Rvalue::Copy(whole(binding)))
-}
-
-fn goto(block: usize) -> Terminator {
-    Terminator::Goto(BlockId(block))
-}
-
-fn branch(cond: LocalId, then: usize, else_: usize) -> Terminator {
-    Terminator::Branch {
-        cond: read(cond),
-        then: BlockId(then),
-        else_: BlockId(else_),
-    }
-}
-
-fn ret() -> Terminator {
-    Terminator::Return(None)
 }
 
 fn rejects(f: &Function, block: usize, local: LocalId, rule: Rule) {
@@ -964,7 +912,8 @@ fn end_of_an_owned_binding() {
     rejects(&b.finish(), 0, x, Rule::End);
 }
 
-/// The `return` arm of Task 2's program, with the binding's `release?` taken off its edge.
+/// The `return` arm of Task 2's program, with the binding's release, which elaboration made a
+/// plain `release` since `c` is owned there, taken off its edge.
 #[test]
 fn committed_binding_released_on_every_exit() {
     let src = include_str!("../../../tests/run/committed_binding_leaves_loop_once.sisu");
@@ -983,12 +932,12 @@ fn committed_binding_released_on_every_exit() {
                 && block
                     .stmts
                     .iter()
-                    .any(|stmt| matches!(stmt, Statement::ScopeRelease(local) if *local == c))
+                    .any(|stmt| matches!(stmt, Statement::Release(local) if *local == c))
         })
         .expect("the `return` arm should release `c` on its way out");
     walk.blocks[exit]
         .stmts
-        .retain(|stmt| !matches!(stmt, Statement::ScopeRelease(local) if *local == c));
+        .retain(|stmt| !matches!(stmt, Statement::Release(local) if *local == c));
     rejects(walk, exit, c, Rule::Return);
 }
 
@@ -1660,6 +1609,33 @@ fn scope_release_gap_is_sparse() {
     };
     let n = 100;
     assert_near_linear(edges(n), edges(2 * n), edges(3 * n));
+}
+
+/// Each `s_i` is moved on one arm of its `if`, so it keeps a conditional release at the
+/// function's end. Only the locals a scope release names are run, so the reads grow near
+/// linearly with them.
+#[test]
+fn scope_release_states_are_sparse() {
+    let source = |n: usize| {
+        let body = (0..n)
+            .map(|i| format!("    let s_{i} = \"x\"\n    if c {{ keep(s_{i}) }}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        format!("fn keep(s: string) {{}}\nfn f(c: bool) {{\n{body}}}")
+    };
+    let reads = |n: usize| {
+        let program = build(&checked(&source(n)));
+        let f = program
+            .functions
+            .iter()
+            .find(|f| f.name == "f")
+            .expect("the program should have `f`");
+        READS.set(0);
+        assert_eq!(scope_release_states(f).len(), n);
+        READS.get()
+    };
+    let n = 100;
+    assert_near_linear(reads(n), reads(2 * n), reads(3 * n));
 }
 
 /// `while D_n {} print(s)`, with `D_0 = c` and `D_{n+1} = { while D_n {} c }`: block `k` of

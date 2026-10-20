@@ -18,6 +18,11 @@
 //!
 //! The hoist (`hoist.rs`) then moves the `make_unique` of an array that a loop writes, and never
 //! shares or replaces, to the loop's pre-header (ADR 0021).
+//!
+//! Elaboration (`elaborate.rs`) then decides each scope release by the set of states that the
+//! certifier's dataflow says reaches it: it removes one where the local is empty on every path,
+//! makes one where it is owned on every path a plain `release`, and keeps every other one as
+//! `release?`.
 
 use rustc_hash::FxHashMap;
 
@@ -26,6 +31,7 @@ use crate::tir::{self, BinaryOp, ClassId, CompareOp, EnumId, Format, FuncId, Mat
 pub(crate) use crate::tir::{LocalId, Type, UnaryOp};
 
 mod certify;
+mod elaborate;
 mod hoist;
 mod liveness;
 mod lower;
@@ -328,13 +334,14 @@ impl Terminator {
 }
 
 /// The mir of `program`, with its copies, moves and releases placed, and each loop's
-/// `make_unique` of the arrays it writes hoisted to its pre-header. A debug build certifies
-/// each function and panics on a violation.
+/// `make_unique` of the arrays it writes hoisted to its pre-header, and each scope release
+/// elaborated. A debug build certifies each function and panics on a violation.
 pub(crate) fn build(program: &tir::Program) -> Program {
     let mut mir = lower(program);
     for function in &mut mir.functions {
         ownership::place(function);
         hoist::hoist(function);
+        elaborate::elaborate(function);
         if cfg!(debug_assertions) {
             certified(function);
         }
