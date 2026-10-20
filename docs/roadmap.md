@@ -504,7 +504,7 @@ follow it, ahead of the rest of milestone 8.
 
 1. The switch-over: `tir` lowers to mir, one pass places every count, codegen
    obeys, the certifier checks. Done.
-2. Path-precise releases.
+2. Path-precise releases. Built; awaits its measured verdict.
 3. Retain/release pair removal.
 4. Borrowed-parameter inference (replaces ADR 0012).
 5. Reuse of freed boxes.

@@ -3,6 +3,7 @@ use crate::check::check;
 use crate::parser::parse_ok;
 
 mod certify;
+mod elaborate;
 pub(crate) mod hoist;
 mod lower;
 mod ownership;
@@ -210,4 +211,58 @@ impl Builder {
     pub(crate) fn finish(self) -> Function {
         self.function
     }
+}
+
+// Statements and operands for hand-built mir, written short.
+
+pub(super) fn whole(local: LocalId) -> Place {
+    Place {
+        local,
+        projections: Vec::new(),
+        borrow: false,
+        guard: false,
+    }
+}
+
+pub(super) fn read(local: LocalId) -> Operand {
+    Operand::Read(whole(local))
+}
+
+pub(super) fn assign(dest: LocalId, value: Rvalue) -> Statement {
+    Statement::Assign {
+        dest: Some(dest),
+        value,
+    }
+}
+
+/// `dest = call fresh()`: an owned value.
+pub(super) fn fresh(dest: LocalId) -> Statement {
+    assign(
+        dest,
+        Rvalue::Call {
+            func: FuncId(0),
+            args: Vec::new(),
+        },
+    )
+}
+
+/// `dest = copy "x"`.
+pub(super) fn literal(dest: LocalId) -> Statement {
+    assign(dest, Rvalue::CopyStr("x".to_owned()))
+}
+
+pub(super) fn goto(block: usize) -> Terminator {
+    Terminator::Goto(BlockId(block))
+}
+
+pub(super) fn branch(cond: LocalId, then: usize, else_: usize) -> Terminator {
+    Terminator::Branch {
+        cond: read(cond),
+        then: BlockId(then),
+        else_: BlockId(else_),
+    }
+}
+
+pub(super) fn ret() -> Terminator {
+    Terminator::Return(None)
 }

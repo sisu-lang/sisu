@@ -217,7 +217,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The box pointer of boxed payload field `field` of variant `variant` in the enum `id` at
-    /// `value_addr`: `null` for a `None` of `F?`, and in the zero value that a `Move` leaves.
+    /// `value_addr`: `null` for a `None` of `F?`, and in the zero value that a `Move` of a
+    /// flagged local leaves.
     fn load_box(
         &self,
         value_addr: PointerValue<'ctx>,
@@ -447,9 +448,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// boxes, it switches on the tag and releases each counted field of the variant through
     /// `release`. With boxes, it walks the value with one empty pending list per member of
     /// `E`'s component, held in its own frame, then drains them. Releasing the zero value, which
-    /// a `Move` leaves in a slot, releases nothing: it is variant 0 with every field zero, and
-    /// `release` and `walk` skip a `null` string, object, array or box, an optional whose flag
-    /// is clear, and a zero enum in turn.
+    /// a `Move` of a flagged local leaves in a slot, releases nothing: it is variant 0 with
+    /// every field zero, and `release` and `walk` skip a `null` string, object, array or box,
+    /// an optional whose flag is clear, and a zero enum in turn.
     fn define_enum_release(&self, id: EnumId, function: FunctionValue<'ctx>) {
         let (value, done) = self.enum_entry(function);
         let Some(members) = self.component(id) else {

@@ -116,6 +116,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             enums: Vec::new(),
             functions: Vec::new(),
             slots: Vec::new(),
+            flagged: Vec::new(),
             types: Vec::new(),
             blocks: Vec::new(),
         }
@@ -259,6 +260,9 @@ struct Codegen<'ctx, 'src> {
     /// The current function's locals, indexed by `LocalId`: each one's `alloca` and its LLVM
     /// type, `None` for `unit`.
     slots: Vec<Option<(PointerValue<'ctx>, BasicTypeEnum<'ctx>)>>,
+    /// The current function's flagged locals, indexed by `LocalId`: a `Move` of one leaves the
+    /// zero value in its slot (every local is flagged under the RC checks, which test it).
+    flagged: Vec<bool>,
     /// The current function's local types, indexed by `LocalId`.
     types: Vec<Type>,
     /// The current function's blocks, indexed by `BlockId`.
@@ -319,13 +323,16 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_load(ty, ptr, &name).expect(POSITIONED)
     }
 
-    /// `Move`: the value of `local`, whose reference leaves its slot without a retain. The
-    /// slot then holds the zero value, which releasing skips.
+    /// `Move`: the value of `local`, whose reference leaves its slot without a retain. A
+    /// flagged local's slot then holds the zero value, which releasing skips; no other local's
+    /// slot is read again.
     fn move_local(&self, local: LocalId) -> BasicValueEnum<'ctx> {
         self.check_not_moved(local);
         let (ptr, ty) = self.slot(local);
         let value = self.builder.build_load(ty, ptr, "moved").expect(POSITIONED);
-        self.store(ptr, ty.const_zero());
+        if self.flagged[local.0] {
+            self.store(ptr, ty.const_zero());
+        }
         value
     }
 
@@ -444,6 +451,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             .collect();
         self.builder.position_at_end(self.blocks[0]);
         self.types = f.locals.iter().map(|local| local.ty).collect();
+        self.flagged = if self.rc_fault.is_some() {
+            vec![true; f.locals.len()]
+        } else {
+            mir::flagged(f)
+        };
         self.slots = f
             .locals
             .iter()
@@ -505,9 +517,13 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let tag = tag.expect("a store's place should end in a field or an element");
                 self.store_tagged(address, value, tag);
             }
-            // `release?` is the same code: releasing the zero value a `Move` leaves releases
-            // nothing.
-            Statement::Release(local) | Statement::ScopeRelease(local) => {
+            Statement::Release(local) => {
+                self.check_not_moved(*local);
+                self.release(self.load_local(*local), self.types[local.0]);
+            }
+            // The slot may hold the zero value that a `Move` of a flagged local leaves, and
+            // releasing it releases nothing, so there is no moved check.
+            Statement::ScopeRelease(local) => {
                 self.release(self.load_local(*local), self.types[local.0]);
             }
             Statement::MakeUnique(place) => {

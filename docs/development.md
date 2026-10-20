@@ -402,7 +402,7 @@ These flags run the pipeline up to one stage and stop there.
 | `sisuc --emit tokens file.sisu` | The lexer's tokens |
 | `sisuc --emit ast file.sisu` | The parser's syntax tree |
 | `sisuc --emit tir file.sisu` | The checker's typed tree, `tir` |
-| `sisuc --emit mir file.sisu` | The mid-level IR, `mir`, after the ownership pass and the hoist: every copy, move and release is a statement |
+| `sisuc --emit mir file.sisu` | The mid-level IR, `mir`, after the ownership pass, the hoist and elaboration: every copy, move and release is a statement |
 | `sisuc --emit ir file.sisu` | The LLVM IR, before and after `mem2reg` |
 | `sisuc -O2 --emit ir file.sisu` | The LLVM IR, before and after LLVM's `default<O2>` pipeline |
 | `sisuc -O3 --emit ir file.sisu` | The same, with the `default<O3>` pipeline |

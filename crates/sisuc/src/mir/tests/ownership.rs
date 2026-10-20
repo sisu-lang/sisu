@@ -24,14 +24,9 @@ fn assign_from_own_call() {
     has(
         &printed,
         "main",
-        &[
-            "call f(move x#0)",
-            "release? x#0",
-            "x#0 = move _",
-            "_ = move x#0",
-            "= _[0]",
-        ],
+        &["call f(move x#0)", "x#0 = move _", "_ = move x#0", "= _[0]"],
     );
+    assert!(!function(&printed, "main").contains("release? x#0"));
     has(&printed, "f", &["= move x#0"]);
 }
 
@@ -464,7 +459,7 @@ fn last_use_through_match() {
         "t",
         &[
             "_ = move l#1\n    switch tag _",
-            "_ = move t#3\n    release? l#1\n    l#1 = move _",
+            "_ = move t#3\n    l#1 = move _",
         ],
     );
 }
