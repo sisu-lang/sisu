@@ -1891,7 +1891,7 @@ fn fast_path_follows_the_index_whitelist() {
          fn field(xs: [i64], o: O) -> [i64] {\n    print(xs[o.n])\n    print(o.n)\n    xs\n}\n\
          fn length(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    print(ys.len())\n    xs\n}\n\
          fn call(q: Q) -> Q {\n    print(q.xs[1 + g()])\n    q\n}\n\
-         fn moved(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    xs\n}\nfn main() {}",
+         fn moved(xs: [i64]) -> [i64] {\n    let ys = [true]\n    print(xs[ys.len()])\n    xs\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();

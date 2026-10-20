@@ -94,8 +94,9 @@ fn comparison_chain_reads() {
 
 #[test]
 fn read_in_loop_body() {
-    let printed =
-        built("fn f(xs: [i64], c: bool) {\n    while c {\n        print(xs.len())\n    }\n}");
+    let printed = built(
+        "fn f() {\n    let xs = [1]\n    let c = true\n    while c {\n        print(xs.len())\n    }\n}",
+    );
     has(&printed, "f", &["_ = len xs#0"]);
     assert!(!printed.contains("move xs"), "{printed}");
 }
@@ -374,7 +375,7 @@ fn scalars_never_move() {
 fn borrow_site_at_last_use_moves_and_releases() {
     let printed = built(
         "fn f() -> i64 {\n    let a = [1]\n    a.len()\n}\n\
-         fn g(a: [i64]) -> i64 {\n    let n = a.len()\n    a[0] + n\n}",
+         fn g() -> i64 {\n    let a = [1]\n    let n = a.len()\n    a[0] + n\n}",
     );
     has(&printed, "f", &["_ = move a#0", "_ = len _", "release _"]);
     has(&printed, "g", &["n#1 = len a#0"]);
@@ -595,7 +596,7 @@ fn panic_reads_its_message() {
 /// kind of node and in a guard that reads a binding both ways; lowering left each of them.
 #[test]
 fn pass_leaves_no_use_or_mark() {
-    let guard = "enum E {\n    S(string)\n    T(string)\n}\nfn keep(s: string) -> bool { true }\n\
+    let guard = "enum E {\n    S(string)\n    T(string)\n}\nfn keep(s: string) -> bool {\n    let kept = s\n    true\n}\n\
                  fn f(e: E) -> i64 {\n    match e {\n        S(x) | T(x) if keep(x) && x.len() > 0 => 0\n        _ => 1\n    }\n}";
     let marks = ["Use(LocalId(", "Guarded(", "borrow: true", "guard: true"];
     let mut before = Vec::new();
