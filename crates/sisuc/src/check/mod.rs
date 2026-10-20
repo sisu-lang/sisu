@@ -154,6 +154,12 @@ struct Source<'src> {
     breaks: &'src [usize],
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many class fields the class-cycle search has read on this thread.
+    pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 struct Checker<'src> {
     /// The program's text and the positions found in it.
     source: Source<'src>,
@@ -563,18 +569,43 @@ impl Checker<'_> {
     /// at its first field into the component: no first object of such a class can exist.
     /// Returns, by `ClassId`, whether each class is on such a cycle.
     fn never_constructed(&mut self) -> Vec<bool> {
-        let reach: Vec<Vec<bool>> = (0..self.classes.len()).map(|c| self.reachable(c)).collect();
+        let edges: Vec<Vec<usize>> = self
+            .classes
+            .iter()
+            .map(|class| {
+                class
+                    .fields
+                    .iter()
+                    .filter_map(|f| {
+                        #[cfg(test)]
+                        FIELD_READS.set(FIELD_READS.get() + 1);
+                        match f.ty.map(Type::kind) {
+                            Some(TypeKind::Class(d)) => Some(d.0),
+                            _ => None,
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let component = enums::components(&edges);
+        let mut size = vec![0; edges.len()];
+        for &k in &component {
+            size[k] += 1;
+        }
+        let cyclic: Vec<bool> = (0..edges.len())
+            .map(|c| size[component[c]] > 1 || edges[c].contains(&c))
+            .collect();
+        let mut reported = vec![false; edges.len()];
         let mut reports = Vec::new();
         for (c, class) in self.classes.iter().enumerate() {
-            let in_cycle = |d: usize| reach[c][d] && reach[d][c];
-            if !in_cycle(c) || (0..c).any(in_cycle) {
+            if !cyclic[c] || std::mem::replace(&mut reported[component[c]], true) {
                 continue;
             }
             let (field, target) = class
                 .fields
                 .iter()
                 .find_map(|f| match f.ty.map(Type::kind) {
-                    Some(TypeKind::Class(d)) if in_cycle(d.0) => Some((f, d)),
+                    Some(TypeKind::Class(d)) if component[d.0] == component[c] => Some((f, d)),
                     _ => None,
                 })
                 .expect(
@@ -593,24 +624,7 @@ impl Checker<'_> {
         for report in reports {
             self.report(report);
         }
-        (0..self.classes.len()).map(|c| reach[c][c]).collect()
-    }
-
-    /// The classes an object of class `from` holds through one field or more.
-    fn reachable(&self, from: usize) -> Vec<bool> {
-        let mut seen = vec![false; self.classes.len()];
-        let mut stack = vec![from];
-        while let Some(c) = stack.pop() {
-            for field in &self.classes[c].fields {
-                if let Some(TypeKind::Class(d)) = field.ty.map(Type::kind)
-                    && !seen[d.0]
-                {
-                    seen[d.0] = true;
-                    stack.push(d.0);
-                }
-            }
-        }
-        seen
+        cyclic
     }
 
     /// Reports a missing `main`, or one that takes anything but nothing or one `[string]`, or

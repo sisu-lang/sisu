@@ -1974,19 +1974,6 @@ fn range_queries_match_a_scan() {
     }
 }
 
-/// Asserts that `one`, `two` and `three`, the reads for inputs of size `n`, `2n` and `3n`,
-/// grow no faster than `n log n`: the second step adds at most a tenth more than the first.
-/// The wavelet matrix and its queries add one bit level per doubling of the depths they hold,
-/// a few percent from `2n` to `3n`; quadratic work makes the second step two thirds larger.
-fn assert_near_linear(one: usize, two: usize, three: usize) {
-    assert!(one > 0);
-    let (first, second) = (two - one, three - two);
-    assert!(
-        second <= first + first / 10,
-        "{one}, {two}, {three} reads: the second step adds {second}, the first {first}"
-    );
-}
-
 /// The scope release of each `s_i` sits in the function's last block, after every later `if`.
 /// Each `s_i`'s region is its own block and that last one, so the reads grow near linearly
 /// with the locals.

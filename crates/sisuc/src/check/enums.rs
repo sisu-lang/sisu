@@ -503,7 +503,7 @@ impl Checker<'_> {
 /// visiting the nodes in order. Components are numbered as they complete, so a component's
 /// number is above that of every other component it reaches. The walk keeps its own stack,
 /// since a chain of declarations can be long.
-fn components(edges: &[Vec<usize>]) -> Vec<usize> {
+pub(super) fn components(edges: &[Vec<usize>]) -> Vec<usize> {
     const UNSEEN: usize = usize::MAX;
     let mut index = vec![UNSEEN; edges.len()];
     let mut low = vec![0; edges.len()];
