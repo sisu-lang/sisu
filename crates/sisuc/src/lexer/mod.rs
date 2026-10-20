@@ -2409,6 +2409,21 @@ mod tests {
     }
 
     #[test]
+    fn literal_not_closed_help() {
+        // A `\r\n` stops a literal as `\n` does and keeps the line-break help; the end of the
+        // file gives none.
+        for (src, help) in [
+            ("let s = \"a\r\n", true),
+            ("let s = \"a\n", true),
+            ("let s = \"a", false),
+        ] {
+            let d = only(src);
+            assert_eq!(d.code(), Code::LiteralNotClosed, "{src:?}");
+            assert_eq!(d.help().is_some(), help, "{src:?}");
+        }
+    }
+
+    #[test]
     fn unexpected_character_fix() {
         // A lone `&` gets an unsafe fix to the doubled operator; a lone `|` is the parser's.
         let src = "a & b";

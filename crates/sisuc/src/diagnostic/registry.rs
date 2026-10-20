@@ -601,7 +601,7 @@ pub(crate) enum DiagnosticKind {
     },
     /// The operation at `at` in a constant's value, which would `panic` at run time.
     ConstantPanics { panic: Panic, at: Span },
-    /// The escape `\` and `found`, at `at`, which is none of the escapes.
+    /// The escape `\` and `found`, at `at` in a `literal`, which is none of the escapes.
     UnknownEscape {
         found: char,
         at: Span,

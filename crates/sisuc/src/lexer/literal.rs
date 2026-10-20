@@ -358,6 +358,8 @@ fn line_ends(source: &str, chars: &mut Chars) -> bool {
 
 /// Decodes the escape after a `\`, which `chars` has just consumed at `backslash`. A char that is
 /// not a line break must follow: the caller reports a literal that ends there as not closed.
+/// `literal` is the kind of literal the escape is in, which decides whether an unknown escape
+/// gets the backslash fix.
 pub(super) fn escape(
     source: &str,
     backslash: usize,
