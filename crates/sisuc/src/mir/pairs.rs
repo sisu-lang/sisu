@@ -149,11 +149,11 @@ fn pairs(function: &Function) -> (Vec<(usize, Vec<Option<Rewrite>>)>, Vec<(Local
     let mut found = Vec::new();
     let mut owners = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
-    let mut open: FxHashMap<LocalId, usize> = FxHashMap::default();
     let mut events = Vec::new();
     for (b, block) in function.blocks.iter().enumerate() {
         candidates.clear();
-        open.clear();
+        // A fresh map per block: clearing a used one costs the capacity the widest block left.
+        let mut open: FxHashMap<LocalId, usize> = FxHashMap::default();
         let mut clobbers = 0;
         let mut rewrites: Vec<Option<Rewrite>> = Vec::new();
         for (at, stmt) in block.stmts.iter().enumerate() {
