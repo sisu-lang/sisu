@@ -971,7 +971,7 @@ fn neg_needs_i64() {
 }
 
 #[test]
-fn less_needs_i64() {
+fn less_needs_an_ordered_operand() {
     codes(
         "fn main() { print(true < false) }",
         &[(Code::Mismatch, (1, 19))],
