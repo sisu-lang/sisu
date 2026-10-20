@@ -9,7 +9,6 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
-use rustc_hash::FxHashSet;
 
 use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
 use super::layout::HeapBlock;
@@ -378,31 +377,14 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Whether every value of `ty` is `==` to itself: no `f64` is reachable from it, directly,
     /// as an optional's payload, an array's element, or a field of a class or a payload field
-    /// of an enum it reaches, boxed or inline. Fields close cycles through classes and boxes,
-    /// so a class or enum met again counts as reflexive until a path from it finds an `f64`.
+    /// of an enum it reaches, boxed or inline. `reaches_f64` answers it for a class or an enum.
     pub(super) fn reflexive(&self, ty: Type) -> bool {
-        fn reaches_no_f64(program: &Program, ty: Type, seen: &mut FxHashSet<Type>) -> bool {
-            match ty.kind() {
-                TypeKind::F64 => false,
-                TypeKind::Optional(inner) | TypeKind::Array(inner) => {
-                    reaches_no_f64(program, inner, seen)
-                }
-                // A class or enum already seen is being checked further up, or was found
-                // reflexive.
-                TypeKind::Class(_) | TypeKind::Enum(_) if !seen.insert(ty) => true,
-                TypeKind::Class(id) => program.classes[id.0]
-                    .fields
-                    .iter()
-                    .all(|field| reaches_no_f64(program, field.ty, seen)),
-                TypeKind::Enum(id) => program.enums[id.0]
-                    .variants
-                    .iter()
-                    .flat_map(|variant| &variant.fields)
-                    .all(|field| reaches_no_f64(program, field.ty, seen)),
-                _ => true,
-            }
+        match unwrapped(ty).kind() {
+            TypeKind::F64 => false,
+            TypeKind::Class(id) => !self.reaches_f64[id.0],
+            TypeKind::Enum(id) => !self.reaches_f64[self.program.classes.len() + id.0],
+            _ => true,
         }
-        reaches_no_f64(self.program, ty, &mut FxHashSet::default())
     }
 
     /// Whether `lhs` and `rhs`, of type `ty`, are equal: `==` without releasing them.
@@ -670,4 +652,55 @@ pub(super) fn param(function: FunctionValue<'_>) -> PointerValue<'_> {
         .get_nth_param(0)
         .expect("a counting helper should be declared with one pointer parameter")
         .into_pointer_value()
+}
+
+/// `ty` with any `?` and `[ ]` around it removed.
+fn unwrapped(mut ty: Type) -> Type {
+    while let TypeKind::Optional(inner) | TypeKind::Array(inner) = ty.kind() {
+        ty = inner;
+    }
+    ty
+}
+
+/// Which classes, then which enums, of `program` reach an `f64` through their fields (see
+/// `Codegen::reflexive`): the types with a field of `f64` seed it, and each class or enum with
+/// a field of a type already in it joins, by a worklist over the reversed field graph. Every
+/// field is read once.
+pub(super) fn reaching_f64(program: &Program) -> Vec<bool> {
+    let classes = program.classes.len();
+    let node_count = classes + program.enums.len();
+    let mut reaches = vec![false; node_count];
+    let mut holders: Vec<Vec<usize>> = vec![Vec::new(); node_count];
+    let mut work = Vec::new();
+    let class_fields = program
+        .classes
+        .iter()
+        .enumerate()
+        .flat_map(|(node, class)| class.fields.iter().map(move |field| (node, field.ty)));
+    let enum_fields = program.enums.iter().enumerate().flat_map(|(id, decl)| {
+        let fields = decl.variants.iter().flat_map(|variant| &variant.fields);
+        fields.map(move |field| (classes + id, field.ty))
+    });
+    for (node, ty) in class_fields.chain(enum_fields) {
+        #[cfg(test)]
+        super::TYPE_READS.set(super::TYPE_READS.get() + 1);
+        match unwrapped(ty).kind() {
+            TypeKind::F64 if !reaches[node] => {
+                reaches[node] = true;
+                work.push(node);
+            }
+            TypeKind::Class(id) => holders[id.0].push(node),
+            TypeKind::Enum(id) => holders[classes + id.0].push(node),
+            _ => {}
+        }
+    }
+    while let Some(done) = work.pop() {
+        for &holder in &holders[done] {
+            if !reaches[holder] {
+                reaches[holder] = true;
+                work.push(holder);
+            }
+        }
+    }
+    reaches
 }

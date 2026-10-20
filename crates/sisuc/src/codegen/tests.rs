@@ -1,5 +1,6 @@
 use super::*;
 use crate::check::check;
+use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::tir::BinaryOp;
 use inkwell::values::{AnyValue, InstructionOpcode, InstructionValue, Operand};
@@ -680,6 +681,30 @@ fn same_pointer_shortcut_only_when_reflexive() {
             .lines()
             .any(|line| line.contains("icmp eq ptr ") && line.ends_with(", null"));
         assert!(against_null, "{helper}:\n{body}");
+    }
+}
+
+/// An enum's reflexivity is looked up apart from the classes': the box of a recursive enum
+/// is compared by pointer first only when no `f64` is reachable from the enum, whatever the
+/// classes before it in the program hold.
+#[test]
+fn enum_box_shortcut_only_when_reflexive() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Pt {\n    x: f64\n}\nclass Other {\n    n: i64\n}\nenum Ints {\n    Nil\n    Cons(i64, Ints)\n}\nenum Floats {\n    Nil\n    Cons(f64, Floats)\n}\nfn main() {\n    print(Pt(x: 1.0) == Pt(x: 1.0) || Other(n: 1) == Other(n: 1))\n    print(Ints.Nil == Ints.Nil)\n    print(Floats.Nil == Floats.Nil)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    for (helper, reflexive) in [
+        ("@sisu_rc.eq_component.Ints(i32", true),
+        ("@sisu_rc.eq_component.Floats(i32", false),
+    ] {
+        let body = function_body(&ir, &format!("define internal i1 {helper}"));
+        let between_pointers = body
+            .lines()
+            .any(|line| line.contains("icmp eq ptr ") && !line.ends_with(", null"));
+        assert_eq!(between_pointers, reflexive, "{helper}:\n{body}");
     }
 }
 
@@ -2313,4 +2338,24 @@ fn blocks_are_named_after_their_index_or_loop_role() {
         "bb15",
     ];
     assert_eq!(names, expected, "{}", f.print_to_string());
+}
+
+/// Whether `==` on a class or enum is reflexive is worked out once for the program: a walk
+/// from each `eq` helper's type reads a chain of classes quadratically.
+#[test]
+fn reflexivity_reads_linearly() {
+    let reads = |n: usize| {
+        let classes = (0..n)
+            .map(|i| format!("class C{i} {{\n    x: C{}?\n}}\n", i + 1))
+            .collect::<Vec<_>>()
+            .concat();
+        let src = format!(
+            "{classes}class C{n} {{}}\nfn main() {{\n    print(C0(x: None) == C0(x: None))\n}}\n"
+        );
+        TYPE_READS.set(0);
+        let context = Context::create();
+        compiled(&context, &src);
+        TYPE_READS.get()
+    };
+    assert_near_linear(reads(100), reads(200), reads(300));
 }

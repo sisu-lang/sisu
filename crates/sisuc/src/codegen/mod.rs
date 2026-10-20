@@ -46,6 +46,13 @@ use crate::tir::{ClassId, EnumId, FuncId, LocalId, Program, Stream, Type, TypeKi
 const POSITIONED: &str =
     "the builder should be positioned in a block while a function body is emitted";
 
+#[cfg(test)]
+thread_local! {
+    /// How many class fields and enum payload fields the reflexivity analysis has read on this
+    /// thread.
+    static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'ctx, 'src> Codegen<'ctx, 'src> {
     /// An empty module for `program`, with the runtime's declarations and no function defined.
     fn new(
@@ -106,6 +113,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             element_tag: tbaa_tag(context, tbaa_root, "array element"),
             tbaa_root,
             program,
+            reaches_f64: rc::reaching_f64(program),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
             target_data,
@@ -238,6 +246,9 @@ struct Codegen<'ctx, 'src> {
     /// through a field, carry no tag.
     tbaa_root: MetadataValue<'ctx>,
     program: &'src Program,
+    /// Whether each class, then each enum, reaches an `f64` through its fields; see
+    /// `rc::reaching_f64`.
+    reaches_f64: Vec<bool>,
     /// The helpers declared so far, by kind and counted type; see `rc::helper`.
     helpers: RefCell<FxHashMap<(Helper, Type), FunctionValue<'ctx>>>,
     /// The helpers declared but not yet defined; `define_helpers` empties it.
