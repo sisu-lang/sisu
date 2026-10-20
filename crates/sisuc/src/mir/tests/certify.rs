@@ -5,6 +5,7 @@ use super::*;
 use crate::mir::certify::range::RangeMin;
 use crate::mir::certify::wavelet::Wavelet;
 use crate::mir::certify::{READS, Rule, Violation, certify, scope_release_states};
+use crate::mir::elaborate::flagged;
 use crate::source::Span;
 use crate::tir::TypeKind;
 
@@ -1631,7 +1632,7 @@ fn scope_release_states_are_sparse() {
             .find(|f| f.name == "f")
             .expect("the program should have `f`");
         READS.set(0);
-        assert_eq!(scope_release_states(f).len(), n);
+        assert_eq!(scope_release_states(f, &flagged(f)).len(), n);
         READS.get()
     };
     let n = 100;

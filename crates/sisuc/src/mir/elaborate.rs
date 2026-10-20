@@ -42,7 +42,7 @@ pub(crate) fn flagged(function: &Function) -> Vec<bool> {
 /// Removes each scope release of `function` that releases nothing, and makes each one of an
 /// owned local a plain release.
 pub(super) fn elaborate(function: &mut Function) {
-    let states = certify::scope_release_states(function);
+    let states = certify::scope_release_states(function, &flagged(function));
     for (b, block) in function.blocks.iter_mut().enumerate() {
         block.stmts = std::mem::take(&mut block.stmts)
             .into_iter()

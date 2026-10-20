@@ -70,18 +70,13 @@ fn release_in_a_failing_region_is_kept() {
     let mut f = b.finish();
     elaborate(&mut f);
     let stmts = &f.blocks[0].stmts;
-    let at = stmts
-        .iter()
-        .position(|stmt| matches!(stmt, Statement::ScopeRelease(local) if *local == s))
-        .expect("the scope release should stay");
+    // `s`'s scope release and the hand-written release stay, in order; `t`'s becomes a release.
     assert!(
-        !stmts[..at]
-            .iter()
-            .any(|stmt| matches!(stmt, Statement::Release(_))),
-        "{stmts:?}"
-    );
-    assert!(
-        matches!(stmts.last(), Some(Statement::Release(local)) if *local == t),
+        matches!(
+            stmts.as_slice(),
+            [_, Statement::ScopeRelease(kept), Statement::Release(written), _, Statement::Release(made)]
+                if *kept == s && *written == s && *made == t
+        ),
         "{stmts:?}"
     );
     assert_eq!(

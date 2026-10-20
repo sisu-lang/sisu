@@ -91,7 +91,8 @@ pub(super) const OWNED: States = 1;
 pub(super) const EMPTY: States = 2;
 const BORROWED: States = 4;
 /// The slot holds a pointer the local does not own: a borrow that ended, or a value that
-/// `release x` or `release? x` freed. Unlike an empty (null) slot, a scope release would free it.
+/// `release x` or `release? x` freed. Unlike an empty slot, which holds the zero value wherever a
+/// `release?` can read it (a flagged local), a scope release would free it.
 const ENDED: States = 8;
 
 /// No block, or no number.
@@ -108,19 +109,17 @@ pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
     )
 }
 
-/// The set that reaches each scope release, keyed by its block and its statement's index there,
-/// for the elaboration. A local whose region breaks a rule is left out, and so is every local
-/// when the function breaks rule 6 or a statement reads a root in place and then kills it.
+/// The set that reaches each scope release of a `named` local (one a `release?` names), keyed by
+/// its block and its statement's index there, for the elaboration. A local whose region breaks a
+/// rule is left out, and so is every local when the function breaks rule 6 or a statement reads a
+/// root in place and then kills it.
 ///
 /// A region's sets only grow while its fixpoint runs, so the union of every set observed at a
 /// scope release is the set the fixpoint ends with there.
-pub(super) fn scope_release_states(function: &Function) -> FxHashMap<(BlockId, usize), States> {
-    let mut named = vec![false; function.locals.len()];
-    for stmt in function.blocks.iter().flat_map(|block| &block.stmts) {
-        if let Statement::ScopeRelease(local) = stmt {
-            named[local.0] = true;
-        }
-    }
+pub(super) fn scope_release_states(
+    function: &Function,
+    named: &[bool],
+) -> FxHashMap<(BlockId, usize), States> {
     let mut states = FxHashMap::default();
     if !named.contains(&true) {
         return states;
@@ -1645,7 +1644,8 @@ impl Region<'_> {
             }
             Effect::Consume => (EMPTY | BORROWED | ENDED, Rule::Consume, EMPTY),
             Effect::Release => (EMPTY | BORROWED | ENDED, Rule::Consume, ENDED),
-            // A null slot stays null; only an owned value is freed and left in the slot.
+            // An empty slot holds the zero value where a `release?` can read it; only an owned
+            // value is freed and left in the slot.
             Effect::ScopeRelease => (
                 BORROWED | ENDED,
                 Rule::Consume,
