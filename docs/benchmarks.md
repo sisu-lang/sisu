@@ -168,7 +168,7 @@ the program's IR (`sisuc -O2 --emit ir`) and the result timed.
   `sisu_rc.release.Node`. With `self` borrowed instead, the run took 0.75 s
   instead of 0.84 s. Skipping the add is safe here because `left` and `right` are not `mut`:
   the node holds its children for as long as the caller holds the node.
-  [ADR 0012](adr/0012-methods-borrow-self.md) proposes this convention.
+  [ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md) borrows it.
 - **`?.` and `??` build an optional.** `self.left?.check() ?? 0` makes an
   `i64?` and then picks from it, where C branches once. With the counting
   removed, `check` still runs 1.8 times C's instructions, but they are
