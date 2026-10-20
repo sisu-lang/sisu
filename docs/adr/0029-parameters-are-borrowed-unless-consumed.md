@@ -12,22 +12,38 @@ parameter is owned when the function consumes it, which is any of these uses:
 - passing it to an owned parameter, or capturing it;
 - assigning it to a named local, which covers ADR 0007's handover to a
   `let mut`;
+- selecting it into the result of an `if`, `match` or `??`: a destination
+  that is assigned in more than one statement is a join, and the assignment
+  consumes the parameter. A temporary that is assigned once and only reads the
+  parameter, such as the operand of `print(s)`, consumes nothing;
 - consuming a binding or a projection borrowed out of it, such as returning
   the binding of an `if let` on it (the backward rule);
-- passing it in tail position to a function of its own recursive group, when
-  the caller's parameter is owned (the tail rule): otherwise the caller would
-  release the argument after the call and lose the tail call.
+
+One more rule runs from the caller to the callee, the tail rule. Within one
+recursive group, an owned argument to a tail call makes the callee's
+parameter owned. Otherwise the caller would release the argument after the
+call and lose the tail call. The argument is owned when it is a fresh value,
+a local the caller owns, or a parameter the caller owns. A borrowed binding
+rooted in a parameter makes the callee's parameter owned only if that
+parameter turns owned, and then the binding becomes an owned copy.
 
 The parameters of `main` stay owned, because the C entry point passes an
 array and releases nothing after the call.
 
 The compiler infers this on mir, across calls, in one search over the whole
-program. The result is what Lean 4 and Roc get by solving the call graph one
-component at a time, callees first.
+program. The result is what solving Sisu's own constraints one strongly
+connected component at a time, callees first, would give, as Lean 4 and Roc
+solve theirs. The tail rule is Sisu's extension: Lean's `preserveTailCall`
+(lean4@a6f30730 `InferBorrow.lean:408-415`) applies to self-calls only, and
+Sisu applies it across the recursive group.
 
-A caller decides what to pass from where the argument comes:
+A parameter that is owned takes an owned reference, copied or moved as
+today. For a borrowed parameter, the caller decides what to pass from where
+the argument comes:
 
 - **A local, or a field without `mut` of a borrowed place**: passed as it is.
+  If the call is the local's last use, the caller moves it into a temporary
+  and releases that after the call.
   The callee cannot reach the caller's locals, and a field without `mut`
   never changes.
 - **A `mut` field, a weak field or an array element**: copied before the call
