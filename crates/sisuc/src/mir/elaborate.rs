@@ -27,6 +27,18 @@
 use super::certify::{self, EMPTY, OWNED};
 use super::{BlockId, Function, Statement};
 
+/// Whether each local of `function` is flagged, indexed by `LocalId`: a `release?` still names
+/// it, so a move of it must leave the zero value in its slot.
+pub(crate) fn flagged(function: &Function) -> Vec<bool> {
+    let mut flagged = vec![false; function.locals.len()];
+    for stmt in function.blocks.iter().flat_map(|block| &block.stmts) {
+        if let Statement::ScopeRelease(local) = stmt {
+            flagged[local.0] = true;
+        }
+    }
+    flagged
+}
+
 /// Removes each scope release of `function` that releases nothing, and makes each one of an
 /// owned local a plain release.
 pub(super) fn elaborate(function: &mut Function) {

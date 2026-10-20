@@ -1,0 +1,33 @@
+// An enum and an optional enum, each moved into a function on one branch of an `if` that falls
+// through to a join. At the join each is released by a conditional release, which must find the
+// zero value (an enum with null fields, an optional whose flag is clear) where the move left it,
+// and the other path must release the value that is still there. Valgrind sees a leak or a
+// double free.
+enum E {
+    V(string)
+    W
+}
+
+fn size(e: E) -> i64 {
+    if e == E.W { 0 } else { 1 }
+}
+
+fn size_opt(o: E?) -> i64 {
+    if o == E.W { 0 } else { 1 }
+}
+
+fn pick(c: bool) -> i64 {
+    let e = E.V("a" + "b")
+    let o: E? = E.V("c" + "d")
+    let mut n = 0
+    if c {
+        n += size(e)
+        n += size_opt(o)
+    }
+    n
+}
+
+fn main() {
+    print(pick(true))     // 2: both are `V`, so each size is 1
+    print(pick(false))    // 0: nothing is moved, and both are released at the end
+}

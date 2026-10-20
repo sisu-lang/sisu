@@ -1765,30 +1765,99 @@ fn write_checks_bounds_before_unique() {
     assert!([bounds, unique, store].is_sorted(), "{body}");
 }
 
-/// `Move` takes the local's reference and leaves `null` in its slot, which releasing at the
-/// scope's end then skips.
-#[test]
-fn move_stores_null() {
-    let context = Context::create();
-    let ir = compiled(&context, "fn f(xs: [i64]) -> [i64] { xs }\nfn main() {}")
-        .print_to_string()
-        .to_string();
-    let body = function_body(&ir, "@sisu.f(");
-    let (param, _) = body
+/// The slot of the first parameter of the function whose text is `body`: where the entry block
+/// stores that parameter.
+fn first_parameter_slot(body: &str) -> &str {
+    let (params, _) = body
         .split_once(')')
         .unwrap_or_else(|| panic!("no parameter list in\n{body}"));
-    let param = param.trim_start_matches("ptr ");
-    // The slot is where the entry block stores the parameter.
+    let param = params
+        .trim_start_matches("ptr ")
+        .split(',')
+        .next()
+        .expect("a split should yield a first part");
     let entry_store = format!("store ptr {param}, ptr ");
-    let slot = body
-        .lines()
+    body.lines()
         .find_map(|l| l.trim().strip_prefix(entry_store.as_str()))
         .and_then(|rest| rest.split(',').next())
-        .unwrap_or_else(|| panic!("no store of {param} in\n{body}"));
+        .unwrap_or_else(|| panic!("no store of {param} in\n{body}"))
+}
+
+/// `Move` takes the local's reference and leaves `null` in its slot only where a conditional
+/// release reads the slot (or under the RC checks, which test it): `xs` has no `release?`, so
+/// the plain build stores nothing.
+#[test]
+fn move_stores_null_only_for_a_flag() {
+    let context = Context::create();
+    let src = "fn f(xs: [i64]) -> [i64] { xs }\nfn main() {}";
+    for (rc_checks, stores) in [(false, false), (true, true)] {
+        let ir = compiled_with(&context, src, rc_checks)
+            .print_to_string()
+            .to_string();
+        let body = function_body(&ir, "@sisu.f(");
+        let slot = first_parameter_slot(body);
+        assert_eq!(
+            body.contains(&format!("store ptr null, ptr {slot},")),
+            stores,
+            "{body}"
+        );
+    }
+}
+
+/// `xs` is moved on one branch and released at the join by a `release?`, which reads the zero
+/// that the move left: the plain build keeps the store.
+#[test]
+fn conditional_release_keeps_null_store() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn keep(p: [i64]) {}\nfn f(xs: [i64], c: bool) {\n    if c {\n        keep(xs)\n    }\n}\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = function_body(&ir, "@sisu.f(");
+    let slot = first_parameter_slot(body);
     assert!(
         body.contains(&format!("store ptr null, ptr {slot},")),
         "{body}"
     );
+}
+
+/// A static `release s` tests its slot under the RC checks: a null slot is a read after a move,
+/// kind 2, and the test comes before the release helper's call. The plain build has no check.
+#[test]
+fn static_release_checks_its_slot_under_rc_checks() {
+    let context = Context::create();
+    let src = "fn name() -> string { \"n\" }\nfn f() {\n    let s = name()\n}\nfn main() {}";
+    let plain = compiled(&context, src).print_to_string().to_string();
+    let body = function_body(&plain, "@sisu.f(");
+    assert!(!body.contains("@sisu_rc_fault"), "{body}");
+    let checked = compiled_with(&context, src, true)
+        .print_to_string()
+        .to_string();
+    let body = function_body(&checked, "@sisu.f(");
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let release_at = lines
+        .iter()
+        .position(|l| l.starts_with("call void @sisu_rc.release.string("))
+        .unwrap_or_else(|| panic!("no release in\n{body}"));
+    // `s`'s slot is where the call to `name` stores its result.
+    let (_, value, _) = instruction(&lines, &|t| t.starts_with("call ptr @sisu.name("))
+        .unwrap_or_else(|| panic!("no call to name in\n{body}"));
+    let store = format!("store ptr {value}, ptr ");
+    let slot = lines
+        .iter()
+        .find_map(|l| l.strip_prefix(store.as_str()))
+        .and_then(|rest| rest.split(',').next())
+        .unwrap_or_else(|| panic!("no store of {value} in\n{body}"));
+    let (_, loaded, _) = instruction(&lines, &|t| {
+        t.starts_with(&format!("load ptr, ptr {slot},"))
+    })
+    .unwrap_or_else(|| panic!("the release should read {slot} in\n{body}"));
+    let (_, null, _) = instruction(&lines, &|t| t == format!("icmp eq ptr {loaded}, null"))
+        .unwrap_or_else(|| panic!("no null test of {loaded} in\n{body}"));
+    let branch_at = assert_faults_on(&lines, null, 2, body);
+    assert!(branch_at < release_at, "{body}");
 }
 
 /// `.config/nextest.toml` kills this test after 30 s, matching it by name: a rename must

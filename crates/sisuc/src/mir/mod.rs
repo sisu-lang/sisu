@@ -38,6 +38,7 @@ mod lower;
 mod ownership;
 mod print;
 
+pub(crate) use elaborate::flagged;
 pub(crate) use lower::lower;
 pub(crate) use print::print;
 

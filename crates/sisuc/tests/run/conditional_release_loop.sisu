@@ -1,0 +1,18 @@
+// `s` is declared outside the loop, moved into `keep` on the even iterations and reassigned on
+// every one. The release before the reassignment is conditional: `s` is owned when the move was
+// skipped and empty when it ran, so the move must leave the zero value for that release to skip.
+// A leak or a double free shows up under Valgrind.
+fn keep(s: string) -> i64 { s.len() }
+
+fn main() {
+    let mut s = "start"
+    let mut total = 0
+    for i in 0..6 {
+        if i % 2 == 0 {
+            total += keep(s)
+        }
+        s = "s{i}"
+    }
+    print(total)    // 9: "start" is 5 long, then "s1" and "s3" are 2 each
+    print(s)        // s5
+}
