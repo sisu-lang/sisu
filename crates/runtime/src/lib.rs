@@ -466,6 +466,8 @@ const RC_CHECK_EXIT: i32 = 102;
 pub extern "C" fn sisu_rc_check_exit() {
     let live = LIVE.load(Relaxed);
     if live != 0 {
+        // The flush is a no-op here (`main` already flushed); the call ignores SIGPIPE.
+        flush_and_ignore_sigpipe();
         // Write errors are ignored as in `exit_with_panic`: `eprintln!` would panic.
         let _ = writeln!(
             std::io::stderr(),
@@ -849,14 +851,14 @@ mod tests {
                     .write(true)
                     .open("/dev/full")
                     .expect("/dev/full should exist on Linux");
-                point_stdout_at(full.as_raw_fd());
+                point_fd_at(full.as_raw_fd(), 1);
                 sisu_print_int(5);
                 sisu_rc_fault(1);
             }
             "fault_closed_stdout_pipe" => {
                 let (reader, writer) = std::io::pipe().expect("creates a pipe");
                 drop(reader);
-                point_stdout_at(writer.as_raw_fd());
+                point_fd_at(writer.as_raw_fd(), 1);
                 // libtest starts with SIGPIPE ignored; a Sisu program does not.
                 // SAFETY: a valid signal number and `SIG_DFL` (0).
                 #[expect(unsafe_code, reason = "calls libc `signal`")]
@@ -865,6 +867,21 @@ mod tests {
                 }
                 sisu_print_int(5);
                 sisu_rc_fault(1);
+            }
+            "leak_closed_stderr_pipe" => {
+                let (reader, writer) = std::io::pipe().expect("creates a pipe");
+                drop(reader);
+                point_fd_at(writer.as_raw_fd(), 2);
+                // libtest starts with SIGPIPE ignored; a Sisu program does not.
+                // SAFETY: a valid signal number and `SIG_DFL` (0).
+                #[expect(unsafe_code, reason = "calls libc `signal`")]
+                unsafe {
+                    signal(SIGPIPE, 0);
+                }
+                let _leaked = sisu_alloc(8, 8);
+                // SAFETY: `a` came from `sisu_alloc(8, 8)` and is not used afterwards.
+                unsafe { sisu_free(a, 8, 8) };
+                sisu_rc_check_exit();
             }
             "print_char" => {
                 crate::text::sisu_print_char(0x1F600);
@@ -906,15 +923,23 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&out.stderr), stderr);
     }
 
-    /// Makes file descriptor 1 refer to the same file as `fd`.
+    /// Makes file descriptor `target` refer to the same file as `fd`.
     #[expect(unsafe_code, reason = "declares and calls libc `dup2`")]
-    fn point_stdout_at(fd: i32) {
+    fn point_fd_at(fd: i32, target: i32) {
         unsafe extern "C" {
             fn dup2(old: i32, new: i32) -> i32;
         }
-        // SAFETY: `fd` is an open descriptor and 1 is a valid target.
-        let result = unsafe { dup2(fd, 1) };
-        assert_eq!(result, 1, "dup2 should succeed");
+        // SAFETY: `fd` is an open descriptor and `target` is a valid target.
+        let result = unsafe { dup2(fd, target) };
+        assert_eq!(result, target, "dup2 should succeed");
+    }
+
+    /// The leak report reaches its exit code 102 even when standard error is a pipe with no
+    /// reader, as a fault's report does.
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    fn check_exit_reports_when_stderr_is_a_closed_pipe() {
+        assert_rc_exit("leak_closed_stderr_pipe", Some(102), "");
     }
 
     /// `sisu_print_char` writes the character as UTF-8, then a newline.
