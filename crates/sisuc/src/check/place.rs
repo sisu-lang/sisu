@@ -79,9 +79,10 @@ impl Checker<'_> {
     /// neither is an operand that is an immutable local, which `v` cannot change: `p[i] op= v`
     /// is `Assign { p[i], p[i] op v }`.
     /// `op` takes `u8`s when the place holds a `u8`, else `i64`s; `+=` on a `string` joins. A place
-    /// of any other type than `op` takes is reported as `binary` reports a local of that type: a
-    /// `string?` beside `+=` against `string`, any other against all the types `op` takes. `op`
-    /// comes with its token's span.
+    /// is reported as `binary` reports a local of its type, and a `char` value is reported alone:
+    /// a `string?` beside `+=` against `string`; an `i64?`, `u8?` or `f64?` against its payload; a
+    /// place of any other type than `op` takes against all the types it takes. `op` comes with its
+    /// token's span.
     pub(super) fn compound_assign(
         &mut self,
         span: Span,
@@ -167,7 +168,7 @@ impl Checker<'_> {
             Some((root, temps)) => Ok(self.read(build(*root, reads(temps)), target.span)),
             None => Err(Poisoned::typed(ty)),
         };
-        let value = self.compound_value(span, (op, op_span), target, value, read);
+        let value = self.compound_value(span, (op, op_span), target, value, (ty, read));
         let (Some((root, temps)), Ok(value), true) = (path, value, place.writable) else {
             return Err(unit());
         };
@@ -176,17 +177,18 @@ impl Checker<'_> {
         Ok(tir::Stmt::Expr(block_expr(lets, None, Type::UNIT, span)))
     }
 
-    /// The operator `op` of a compound assignment over the place `target`, whose current value is
-    /// `read`, and `value`: a join if the place holds a `string`, else a number operator.
+    /// The operator `op` of a compound assignment over the place `target`, of type `ty`, whose
+    /// current value is `read`, and `value`: a join if the place holds a `string` or a `string?`
+    /// and `op` is `+`, else a number operator. A place that is none of the operand types is
+    /// reported as `integers` does, after `value`: a `char` value is reported alone.
     fn compound_value(
         &mut self,
         span: Span,
         (op, op_span): (tir::BinaryOp, Span),
         target: &ast::Expr,
         value: &ast::Expr,
-        read: Checked,
+        (ty, read): (Type, Checked),
     ) -> Checked {
-        let ty = type_of(&read).expect("a place with a type should have a typed read");
         let want = literal_type(Some(ty));
         let operator = if op == tir::BinaryOp::Add {
             Operator::Plus { compound: true }
@@ -198,10 +200,14 @@ impl Checker<'_> {
             // A `string?` place is what `binary` reports first, and the value is checked with no
             // expected type.
             let checked = self.value(value, Some(if ty == Type::STRING { ty } else { UNKNOWN }));
+            if ty != Type::STRING && type_of(&checked) == Some(Type::CHAR) {
+                self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
+                return Err(Poisoned::error());
+            }
             self.label_join_literals(start, [target, value]);
             let (value, mismatched) = if ty != Type::STRING {
                 let d = self.concat_mismatch(target, ty, &[target, value], true, type_of(&checked));
-                self.diagnostics.insert(start, d);
+                self.diagnostics.push(d);
                 (Err(Poisoned::error()), true)
             } else if let Some(got) = type_of(&checked).filter(|&got| got != ty) {
                 // As in `binary`: the place is the `string` that the value is joined to.
@@ -213,20 +219,12 @@ impl Checker<'_> {
                 self.settled(value, checked, Some(ty))
             };
             self.concat(span, read, value, mismatched)
-        } else if !operator.takes().contains(&payload(ty)) {
-            // As in `integers`: the place is reported, once, and the value is checked after it.
-            let d = self.takes_mismatch(target.span, operator.takes(), ty);
-            self.diagnostics.push(d);
-            self.arithmetic(
-                span,
-                (op, op_span),
-                want,
-                (Err(Poisoned::error()), true),
-                value,
-            )
         } else {
-            let read = self.against(target, read, Some(want));
-            self.arithmetic(span, (op, op_span), want, read, value)
+            // The place's own mismatch waits for `arithmetic`, which drops it beside a `char`.
+            let start = self.diagnostics.len();
+            let place = self.settled_by(target, read, Some(want), Some(operator.takes()));
+            let held = self.diagnostics.drain(start..).collect();
+            self.arithmetic(span, (op, op_span), want, place, value, held)
         }
     }
 

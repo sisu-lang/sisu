@@ -122,6 +122,39 @@ fn char_compound_inside_arithmetic() {
     );
 }
 
+/// A `char` value in a compound assignment to an element or a field is reported alone, at the
+/// operator, as it is for a local: the place's own mismatch is not reported beside it.
+#[test]
+fn char_value_on_an_element_or_field_is_reported_alone() {
+    let rows = [
+        ("string?", "+="),
+        ("bool", "+="),
+        ("bool", "-="),
+        ("f64?", "*="),
+        ("string", "-="),
+    ];
+    for (ty, op) in rows {
+        for (place, local) in [
+            ("xs[0]", format!("    let mut xs: [{ty}] = []\n")),
+            ("p.f", String::new()),
+        ] {
+            for value in ["'x'", "c"] {
+                let src = with_main(&format!(
+                    "class P {{\n    mut f: {ty}\n}}\nfn f(c: char, p: P) {{\n{local}    {place} {op} {value}\n}}"
+                ));
+                // Past the class, the function, the local if any, four spaces, the place, a space.
+                codes(
+                    &src,
+                    &[(
+                        Code::ArithmeticOnChar,
+                        (5 + usize::from(!local.is_empty()), 6 + place.len()),
+                    )],
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn char_arithmetic_reports_once() {
     // A longer expression reports the operator of its first `char` operand, and nothing above

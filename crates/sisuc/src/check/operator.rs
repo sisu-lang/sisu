@@ -96,7 +96,7 @@ impl Checker<'_> {
         };
         if want == Type::BOOL {
             let lhs = self.operand(lhs, Some(want));
-            return self.arithmetic(span, (tir_op, op_span), want, lhs, rhs);
+            return self.arithmetic(span, (tir_op, op_span), want, lhs, rhs, Vec::new());
         }
         let operator = if tir_op == tir::BinaryOp::Add {
             Operator::Plus { compound }
@@ -243,8 +243,9 @@ impl Checker<'_> {
             let (operand, m) = if let Some(got) =
                 got.filter(|&got| joins && want == Some(Type::STRING) && got != Type::STRING)
             {
-                // The other operand's type is known if it is checked already.
-                let beside = [first.as_ref().and_then(|f| type_of(&f.1)), before][i.min(1)];
+                // The other operand's type, if it is checked already: the first's is `before`, and
+                // a second that is the leader waits in `first`.
+                let beside = first.as_ref().map_or(before, |f| type_of(&f.1));
                 unlabelled = beside.is_none().then_some(deferred.len());
                 deferred.push(self.concat_mismatch(e, got, operands, compound, beside));
                 (Err(Poisoned::error()), true)
@@ -257,6 +258,7 @@ impl Checker<'_> {
                 if let Some(other) = before.take() {
                     // All that is deferred is that operand's, the first of two.
                     deferred.clear();
+                    // Beside the first operand is this `string`, which `ty` now is.
                     let d = self.concat_mismatch(operands[0], other, operands, false, ty);
                     self.diagnostics.push(d);
                     checked[0] = Err(Poisoned::error());
@@ -322,7 +324,8 @@ impl Checker<'_> {
     }
 
     /// `lhs op rhs`, its `lhs` already checked against `want`, the type `op` takes; `op` comes
-    /// with its token's span.
+    /// with its token's span. `held` are the diagnostics of `lhs`, reported once `rhs` is known to
+    /// be no `char`: a `char` is reported alone, at `op`.
     pub(super) fn arithmetic(
         &mut self,
         span: Span,
@@ -330,6 +333,7 @@ impl Checker<'_> {
         want: Type,
         (l, l_mismatched): (Checked, bool),
         rhs: &ast::Expr,
+        held: Vec<Diagnostic>,
     ) -> Checked {
         let expected = type_of(&l).and(Some(want));
         let checked = self.value(rhs, Some(expected.unwrap_or(UNKNOWN)));
@@ -338,6 +342,7 @@ impl Checker<'_> {
             self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
             return Err(Poisoned::error());
         }
+        self.diagnostics.extend(held);
         let (r, r_mismatched) = self.settled(rhs, checked, expected);
         let kind = l.ok().zip(r.ok()).map(|(l, r)| tir::ExprKind::Binary {
             op,
@@ -350,7 +355,7 @@ impl Checker<'_> {
     /// `settled`, except that a `checked` of a type that is none of `takes`, if given, is
     /// reported against all of them. Such a `checked` was found with no expected type, so no
     /// `mismatch` poison is in it for `settled` to pass on.
-    fn settled_by(
+    pub(super) fn settled_by(
         &mut self,
         e: &ast::Expr,
         checked: Checked,
