@@ -42,7 +42,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 8] = [
+const SMALL_STACK: [&str; 10] = [
     "longlist",
     "rightskew",
     "deepchain",
@@ -51,6 +51,8 @@ const SMALL_STACK: [&str; 8] = [
     "enumfold",
     "enummutual",
     "enumeq",
+    "tailfresh",
+    "tailpass",
 ];
 
 /// `tests/programs` holds exactly the `SMALL_STACK` programs; every other program is a case in
@@ -287,6 +289,36 @@ fn deepchain_overflows_the_same_stack() {
     // It dies in the drop, after `print`, but stdout is a pipe and so block-buffered: the
     // runtime flushes only on a normal exit or a Sisu panic, so a signal loses the line, as
     // it does in a C program.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+}
+
+/// Runs `<name>.sisu` at `-O2` under the small stack and checks that it exits 0 and prints
+/// `expected`.
+fn assert_small_stack_prints_at_o2(name: &str, expected: &str) {
+    let out = run_in_small_stack_at(name, true);
+    assert_eq!(out.status.code(), Some(0), "{:?}", out.status);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+}
+
+/// The tail rule: `walk` owns the fresh string it hands itself, so the caller releases nothing
+/// after the call, and `-O2` makes 100 000 tail calls a loop.
+#[test]
+fn tail_call_with_a_fresh_string_runs_in_a_small_stack() {
+    assert_small_stack_prints_at_o2("tailfresh", "100000\n");
+}
+
+/// `walk` passes its borrowed string on as it is, so its tail call stays a tail call.
+#[test]
+fn tail_call_passing_a_borrowed_string_runs_in_a_small_stack() {
+    assert_small_stack_prints_at_o2("tailpass", "2\n");
+}
+
+/// The control for the two tail-call tests: without `-O2`, no call is a tail call, and 100 000
+/// frames overflow the same stack.
+#[test]
+fn tail_calls_overflow_the_same_stack_without_optimization() {
+    let out = run_in_small_stack("tailpass");
+    assert_eq!(out.status.signal(), Some(11), "{:?}", out.status);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "");
 }
 

@@ -35,20 +35,38 @@ use std::ptr;
 use rustc_hash::FxHashMap;
 
 use super::{
-    Block as MirBlock, BlockId, Const, Function, Local, Loop, Operand, Place as MirPlace, Program,
+    Block as MirBlock, BlockId, Const, Function, Local, Loop, Operand, Place as MirPlace,
     Projection, Rvalue, Statement, Terminator,
 };
-use crate::tir::{self, Block, CompareOp, Expr, ExprKind, LocalId, Place, Stmt, Type};
+use crate::tir::{self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type};
 
-/// The mir of `program`, before any pass: `Use` operands and borrow sites are still undecided.
-pub(crate) fn lower(program: &tir::Program) -> Program {
-    Program {
-        functions: program
-            .functions
+/// The mir of `program`, before any pass, each function lowered under its parameters' `modes`:
+/// `Use` operands and borrow sites are still undecided.
+#[cfg(test)]
+pub(crate) fn lower(program: &tir::Program, modes: &[Vec<bool>]) -> super::Program {
+    super::Program {
+        functions: modes
             .iter()
-            .map(|f| Lowering::function(program, f))
+            .enumerate()
+            .map(|(id, borrowed)| function(program, FuncId(id), borrowed).0)
             .collect(),
     }
+}
+
+/// The mir of function `id`, before any pass, lowered as if each parameter that `borrowed` marks
+/// is borrowed; and the parameters whose flag decided the form of a `match` or an `if let`.
+pub(super) fn function(
+    program: &tir::Program,
+    id: FuncId,
+    borrowed: &[bool],
+) -> (Function, Vec<bool>) {
+    let f = &program.functions[id.0];
+    debug_assert_eq!(
+        borrowed.len(),
+        f.params.len(),
+        "a function should have one flag per parameter"
+    );
+    (Lowering::function(program, f), vec![false; f.params.len()])
 }
 
 /// What lowering an expression gave: `None` when it cannot fall through, and otherwise the

@@ -14,10 +14,11 @@
 //!    string copy is copy-on-write of a value with a second holder; as a borrow it would write
 //!    into `p`'s value in place.
 //! 3. Between them, nothing consumes, assigns, releases or writes `p.local`.
-//! 4. When `p` goes through a `Field` or an `Index`, nothing between them clobbers: a call, a
-//!    `take` into a counted local, a store of a counted value, or a `make_unique`. A call can
-//!    replace any field or element, a `take` or a counted store can free one, and a
-//!    `make_unique` decides on the count that the copy would hold.
+//! 4. When `p` goes through a `mut` field or an element, a projection that is not `stable`,
+//!    nothing between them clobbers: a call, a `take` into a counted local, a store of a counted
+//!    value, or a `make_unique`. A call can replace such a field or element, a `take` or a
+//!    counted store can free one, and a `make_unique` decides on the count that the copy would
+//!    hold.
 //!
 //! The pass walks each block once, in order: each open member maps to its candidate, and each
 //! candidate keeps the mentions of its members seen so far, and the root's kills and the block's
@@ -26,9 +27,10 @@
 //! certifier rejects a wrong removal in a debug build.
 //!
 //! The rewrite keeps the meaning. `t = borrow p` reads the value the copy read, without the
-//! retain: by condition 3 `p.local` still holds it at the release, and by condition 4 no field or
-//! element on the path was replaced, so the value lives as long as `t` is read. Later changes to
-//! an index local do not matter: the borrow read the element once, as the copy did. Each
+//! retain: by condition 3 `p.local` still holds it at the release, by condition 4 no `mut` field
+//! or element on the path was replaced, and a field without `mut` never is, so the value lives as
+//! long as `t` is read. Later changes to an index local do not matter: the borrow read the
+//! element once, as the copy did. Each
 //! `u = move m` becomes `u = borrow m`, which holds the same pointer. The release becomes `end`
 //! of each member, last first: it released the count the copy added, which is no longer there.
 //! `owners` maps each member straight to `p.local`.
@@ -54,7 +56,7 @@ enum Kind<'a> {
 /// A copy and the members it has gathered so far.
 struct Candidate {
     root: LocalId,
-    /// Whether the copied place goes through a field or an element, so a clobber blocks it.
+    /// Whether the copied place goes through a `mut` field or an element, so a clobber blocks it.
     unstable: bool,
     /// Each member and the statement that made it: the copy, then each `u = move m`.
     links: Vec<(usize, LocalId)>,
@@ -80,12 +82,7 @@ impl Candidate {
     ) -> Self {
         Candidate {
             root: place.local,
-            unstable: place.projections.iter().any(|projection| {
-                matches!(
-                    projection,
-                    Projection::Field { .. } | Projection::Index { .. }
-                )
-            }),
+            unstable: !place.projections.iter().all(Projection::stable),
             links: vec![(at, t)],
             // The copy's own assignment of `t`.
             seen: 1,

@@ -10,6 +10,13 @@
 //! through a place. Two forms are left for a later pass to decide: `Use`, a consuming read of a
 //! whole counted local, and a borrow site, a place whose root a statement reads in place.
 //!
+//! Inference (`params.rs`) then decides which counted parameters are borrowed: those their
+//! function never consumes, across the whole program's calls (ADR 0029). Each function is lowered
+//! under assumed flags, and lowered again only where a flag that decided the form of a `match` or
+//! an `if let` came out owned. The rewrite then gives each function and each call its flags: a
+//! call reads a borrowed argument in place, and the caller releases a temporary it passed there
+//! after the call. A borrowed parameter has no scope release.
+//!
 //! The ownership pass (`ownership.rs`) decides them by liveness (`liveness.rs`): a `Use` moves
 //! the local when nothing reads it later and copies it otherwise, and a borrow site reads its
 //! root in place unless that is the root's last use, when the root moves into a temporary that
@@ -43,9 +50,11 @@ mod liveness;
 mod lower;
 mod ownership;
 mod pairs;
+mod params;
 mod print;
 
 pub(crate) use elaborate::flagged;
+#[cfg(test)]
 pub(crate) use lower::lower;
 pub(crate) use print::print;
 
@@ -377,13 +386,37 @@ impl Terminator {
     }
 }
 
-/// The mir of `program`, with its copies, moves and releases placed, and each loop's
-/// `make_unique` of the arrays it writes hoisted to its pre-header, each scope release
-/// elaborated, and each retain/release pair within a block removed. A debug build certifies
-/// each function and panics on a violation.
+/// The mir of `program`, with each parameter that its function does not consume borrowed, its
+/// copies, moves and releases placed, and each loop's `make_unique` of the arrays it writes
+/// hoisted to its pre-header, each scope release elaborated, and each retain/release pair within
+/// a block removed. A debug build certifies each function and panics on a violation.
 pub(crate) fn build(program: &tir::Program) -> Program {
-    let mut mir = lower(program);
-    for function in &mut mir.functions {
+    let assumed = params::assumed(program);
+    let (mut functions, consulted): (Vec<_>, Vec<_>) = assumed
+        .iter()
+        .enumerate()
+        .map(|(id, borrowed)| lower::function(program, FuncId(id), borrowed))
+        .unzip();
+    let main = program
+        .functions
+        .iter()
+        .position(|f| f.name == "main")
+        .expect("the checker should reject a program without a `main` function");
+    let modes = params::infer(&functions, FuncId(main));
+    for (id, consulted) in consulted.iter().enumerate() {
+        if consulted
+            .iter()
+            .zip(&modes[id])
+            .any(|(&consulted, &borrowed)| consulted && !borrowed)
+        {
+            functions[id] = lower::function(program, FuncId(id), &modes[id]).0;
+        }
+    }
+    params::rewrite(&mut functions, &modes);
+    if cfg!(debug_assertions) {
+        modes_checked(&functions);
+    }
+    for function in &mut functions {
         ownership::place(function);
         hoist::hoist(function);
         elaborate::elaborate(function);
@@ -392,7 +425,27 @@ pub(crate) fn build(program: &tir::Program) -> Program {
             certified(function);
         }
     }
-    mir
+    Program { functions }
+}
+
+/// Panics on a call whose flags are not its callee's `borrowed`.
+fn modes_checked(functions: &[Function]) {
+    for function in functions {
+        for stmt in function.blocks.iter().flat_map(|block| &block.stmts) {
+            if let Statement::Assign {
+                value: Rvalue::Call { func, borrowed, .. },
+                ..
+            } = stmt
+            {
+                let callee = &functions[func.0];
+                assert_eq!(
+                    borrowed, &callee.borrowed,
+                    "fn {}'s call to {} should carry its parameters' modes",
+                    function.name, callee.name
+                );
+            }
+        }
+    }
 }
 
 /// Panics on the first rule `function` breaks.

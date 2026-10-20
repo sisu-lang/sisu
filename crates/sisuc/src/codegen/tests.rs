@@ -2313,6 +2313,26 @@ fn element_comparison_in_a_loop_retains_nothing() {
     assert!(!repeats.contains("sisu_rc.retain"), "{repeats}");
 }
 
+/// `look` passes its borrowed array to `size`, which borrows it too: at `-O2` neither function
+/// counts it. Before inference, `look` moved `xs` into `size`, which released it.
+#[test]
+fn size_of_a_borrowed_array_counts_nothing() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn size(xs: [i64]) -> i64 {\n    xs.len()\n}\nfn look(xs: [i64]) -> i64 { size(xs) }\n\
+         fn main() {\n    print(look([1, 2]))\n}",
+    );
+    keep_functions(&module, "look,size");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    for name in ["look", "size"] {
+        let body = function_body(&ir, &format!("@sisu.{name}("));
+        assert!(!body.contains("sisu_rc."), "{body}");
+    }
+}
+
 /// A loop makes the arrays it writes unique before it starts. `f`'s raw IR, split at each
 /// `loop.body` label: the count of `unique` calls before the first loop body, then in each
 /// piece from a loop body on. The blocks are in mir's order, where a loop's exit block may sit

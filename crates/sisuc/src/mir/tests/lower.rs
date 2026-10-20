@@ -641,7 +641,7 @@ fn pins_walk_the_body_once() {
     );
     let program = checked(&src);
     WALKED.set(0);
-    let printed = print(&lower(&program), &program);
+    let printed = print(&lowered_of(&program), &program);
     // Print, Len, ArrayLit and its elements; Print, the sums and their operands; the last line.
     let nodes = (3 + wide + 1) + (1 + 2 * deep + 1) + (3 + 5);
     assert_eq!(WALKED.get(), nodes);
@@ -693,7 +693,7 @@ fn interpolation_examines_each_format_once() {
         "{a:>3}".repeat(parts)
     );
     let program = checked(&src);
-    let mir = lower(&program);
+    let mir = lowered_of(&program);
     EXAMINED.set(0);
     let printed = print(&mir, &program);
     assert_eq!(EXAMINED.get(), parts);

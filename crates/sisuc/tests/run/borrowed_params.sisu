@@ -1,0 +1,80 @@
+class W {
+    s: string
+}
+
+class B {
+    s: string
+}
+
+// `keep` and `give` own their parameter: each returns it, `keep` through a named local.
+fn keep(p: [i64]) -> [i64] {
+    let q = p
+    q
+}
+
+fn give(p: [i64]) -> [i64] { p }
+
+// Each of these only reads its parameter, so it is borrowed.
+fn name_of(w: W) -> string { w.s }
+
+fn len(s: string) -> i64 {
+    print(s)
+    s.len()
+}
+
+fn size(xs: [i64]) -> i64 { xs.len() }
+
+fn look(xs: [i64]) -> i64 { size(xs) }
+
+fn slen(s: string) -> i64 { s.len() }
+
+// `a` stores `p`, and `b` passes it to `a`, so both own it.
+fn a(p: string, n: i64) -> B {
+    if n == 0 {
+        B(s: p)
+    } else {
+        let r = b(p, n - 1)
+        r
+    }
+}
+
+fn b(p: string, n: i64) -> B { a(p, n) }
+
+// `saved` holds the array `keep` returned, so writing `xs` must copy it first.
+fn keeps() {
+    let mut xs = [0, 0, 0]
+    let mut saved = [0, 0, 0]
+    let mut i = 0
+    while i < 3 {
+        xs[i] = 1
+        print(saved[i])
+        saved = keep(xs)
+        i += 1
+    }
+    print(saved[2])
+}
+
+fn gives() {
+    let mut xs = [0, 0, 0]
+    let mut saved = [0, 0, 0]
+    let mut i = 0
+    while i < 3 {
+        xs[i] = 1
+        print(saved[i])
+        saved = give(xs)
+        i += 1
+    }
+    print(saved[2])
+}
+
+fn main() {
+    keeps()                          // 0, 0, 0, then 1
+    gives()                          // 0, 0, 0, then 1
+    let k = 4
+    print(name_of(W(s: "n{k}")))     // n4
+    let n = 3
+    print(a("p{n}", n).s)            // p3
+    print(len("v{k}"))               // v4, then 2
+    print(look([1, k]))              // 2
+    print(slen("w{k}{k}"))           // 3
+}

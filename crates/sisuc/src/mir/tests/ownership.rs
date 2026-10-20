@@ -599,7 +599,7 @@ fn pass_leaves_no_use_or_mark() {
     let mut before = Vec::new();
     for src in [EVERY_KIND, guard] {
         let program = checked(src);
-        before.push(format!("{:?}", lower(&program).functions));
+        before.push(format!("{:?}", lowered_of(&program).functions));
         let after = format!("{:?}", build(&program).functions);
         for mark in marks {
             assert!(!after.contains(mark), "`{mark}` left in\n{after}");
@@ -653,7 +653,7 @@ fn borrowed_parameter_is_never_moved() {
     let program = checked(
         "fn g(s: string) {}\nfn f(s: string, t: string) -> i64 {\n    g(s)\n    t.len()\n}",
     );
-    let mut mir = lower(&program);
+    let mut mir = lowered_of(&program);
     let f = mir
         .functions
         .iter_mut()

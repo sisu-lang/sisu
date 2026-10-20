@@ -406,7 +406,7 @@ fn wide_guard_probes_once_per_read() {
     );
     let program = checked(&src);
     PROBED.set(0);
-    let mir = lower(&program);
+    let mir = lowered_of(&program);
     // One probe for `use w#0`, and one per binding the guard reads.
     assert_eq!(PROBED.get(), 1 + wide);
     let f = func(&mir, "f");

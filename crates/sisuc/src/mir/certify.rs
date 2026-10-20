@@ -217,7 +217,7 @@ fn regions(
 
 /// The root of `local`'s borrow chain, when it is a `match` binding: the owners followed from
 /// it to a local that is not a binding.
-fn root(function: &Function, local: LocalId) -> Option<LocalId> {
+pub(super) fn root(function: &Function, local: LocalId) -> Option<LocalId> {
     let mut root = *function.owners.get(&local)?;
     // A chain is at most as long as the map, so a cycle cannot loop for ever.
     for _ in 0..function.owners.len() {

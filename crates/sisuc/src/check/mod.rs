@@ -587,7 +587,7 @@ impl Checker<'_> {
                     .collect()
             })
             .collect();
-        let component = enums::components(&edges);
+        let component = crate::graph::components(&edges);
         let mut size = vec![0; edges.len()];
         for &k in &component {
             size[k] += 1;
