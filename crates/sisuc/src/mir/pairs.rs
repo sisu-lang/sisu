@@ -81,7 +81,10 @@ impl Candidate {
         Candidate {
             root: place.local,
             unstable: place.projections.iter().any(|projection| {
-                matches!(projection, Projection::Field(_) | Projection::Index { .. })
+                matches!(
+                    projection,
+                    Projection::Field { .. } | Projection::Index { .. }
+                )
             }),
             links: vec![(at, t)],
             // The copy's own assignment of `t`.
@@ -140,9 +143,11 @@ fn pairs(function: &Function) -> (Vec<(usize, Vec<Option<Rewrite>>)>, Vec<(Local
     let mut mentions = vec![0_usize; function.locals.len()];
     for block in &function.blocks {
         for stmt in &block.stmts {
-            certify::statement(stmt, &mut |local, _, _| mentions[local.0] += 1);
+            certify::statement(stmt, false, &mut |local, _, _| mentions[local.0] += 1);
         }
-        certify::terminator(&block.term, &mut |local, _, _| mentions[local.0] += 1);
+        certify::terminator(&block.term, false, &mut |local, _, _| {
+            mentions[local.0] += 1;
+        });
     }
     // Each local's kills and writes so far; a candidate compares the count at its copy.
     let mut kills = vec![0_usize; function.locals.len()];
@@ -158,7 +163,9 @@ fn pairs(function: &Function) -> (Vec<(usize, Vec<Option<Rewrite>>)>, Vec<(Local
         let mut rewrites: Vec<Option<Rewrite>> = Vec::new();
         for (at, stmt) in block.stmts.iter().enumerate() {
             events.clear();
-            certify::statement(stmt, &mut |local, effect, _| events.push((local, effect)));
+            certify::statement(stmt, false, &mut |local, effect, _| {
+                events.push((local, effect));
+            });
             let kind = kind(function, stmt);
             for &(local, effect) in &events {
                 if let Some(&c) = open.get(&local) {

@@ -8,7 +8,9 @@
 //!   is not, `t = move x` comes before the statement, the place reads `t`, and `release t`
 //!   follows: the statement owns the root's value, and releases it.
 //! - A guard mark, on a `use` of a `match` binding or a borrow site rooted at one, is a read
-//!   of a borrowed binding: a copy or an in-place read, whatever liveness says.
+//!   of a borrowed binding: a copy or an in-place read, whatever liveness says. A `use` of a
+//!   borrowed parameter, or a borrow site rooted at one, is read the same way: the pass never
+//!   moves a borrowed parameter.
 
 use std::mem;
 
@@ -23,6 +25,7 @@ pub(super) fn place(function: &mut Function) {
     let live = liveness(function);
     let mut placer = Placer {
         live: &live,
+        borrowed: &function.borrowed,
         locals: &mut function.locals,
         at: (BlockId(0), 0),
         out: Vec::new(),
@@ -76,6 +79,8 @@ pub(super) fn place(function: &mut Function) {
 
 struct Placer<'a> {
     live: &'a Liveness,
+    /// `Function::borrowed`.
+    borrowed: &'a [bool],
     locals: &'a mut Vec<Local>,
     /// The statement being placed, as lowering left the block.
     at: (BlockId, usize),
@@ -106,7 +111,7 @@ impl Placer<'_> {
             Rvalue::Use(Operand::Use(local) | Operand::Guarded(local)) => {
                 let local = *local;
                 let guarded = matches!(value, Rvalue::Use(Operand::Guarded(_)));
-                *value = if self.copies(local, guarded) {
+                *value = if self.keeps(local, guarded) {
                     Rvalue::Copy(whole(local))
                 } else {
                     Rvalue::Use(Operand::Move(local))
@@ -171,17 +176,18 @@ impl Placer<'_> {
         }
     }
 
-    /// Whether a `use` of `local` reads a copy: always for a guard binding, otherwise when
+    /// Whether `local` stays put: a `use` of it reads a copy, and a borrow site rooted at it
+    /// reads it in place. Always for a guard binding or a borrowed parameter, otherwise when
     /// `local` is live after the statement.
-    fn copies(&self, local: LocalId, guarded: bool) -> bool {
-        guarded || self.live.live_after(local, self.at)
+    fn keeps(&self, local: LocalId, guarded: bool) -> bool {
+        guarded || self.borrowed.get(local.0) == Some(&true) || self.live.live_after(local, self.at)
     }
 
     /// A `use` becomes a move of its local, or of a copy made just before the statement.
     fn operand(&mut self, op: &mut Operand) {
         match *op {
             Operand::Use(local) | Operand::Guarded(local) => {
-                *op = if self.copies(local, matches!(op, Operand::Guarded(_))) {
+                *op = if self.keeps(local, matches!(op, Operand::Guarded(_))) {
                     let copy = self.temp(local);
                     self.out.push(Statement::Assign {
                         dest: Some(copy),
@@ -206,7 +212,7 @@ impl Placer<'_> {
             }
         }
         let guard = mem::take(&mut place.guard);
-        if !mem::take(&mut place.borrow) || guard || self.live.live_after(place.local, self.at) {
+        if !mem::take(&mut place.borrow) || self.keeps(place.local, guard) {
             return;
         }
         let root = self.temp(place.local);

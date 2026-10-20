@@ -60,6 +60,9 @@ pub(crate) struct Function {
     pub(crate) name: String,
     /// `locals[..params]` are the parameters.
     pub(crate) params: usize,
+    /// Per parameter, whether it is borrowed: the caller keeps its reference, and the function
+    /// reads the value in place and never consumes it. An uncounted parameter is never borrowed.
+    pub(crate) borrowed: Vec<bool>,
     pub(crate) ret: Type,
     /// The parameters, then `tir`'s locals with `tir`'s ids, then the temporaries.
     pub(crate) locals: Vec<Local>,
@@ -105,7 +108,8 @@ pub(crate) struct Loop {
 /// element. `borrow` marks a borrow site: a statement reads the counted root in place, and the
 /// ownership pass decides whether the root stays put or is moved into a temporary first.
 /// `guard` marks a borrow site whose root is a `match` binding inside its arm's test or guard,
-/// where the binding is borrowed: it always reads in place.
+/// where the binding is borrowed: it always reads in place, as a borrow site rooted at a borrowed
+/// parameter does without the mark.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Place {
     pub(crate) local: LocalId,
@@ -116,7 +120,11 @@ pub(crate) struct Place {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Projection {
-    Field(usize),
+    /// A class field; `mutable` for a `mut` field.
+    Field {
+        index: usize,
+        mutable: bool,
+    },
     Payload {
         variant: usize,
         field: usize,
@@ -126,6 +134,28 @@ pub(crate) enum Projection {
         index: Operand,
         span: Span,
     },
+    /// The payload of an optional that holds one; only ever the last projection.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "lowering builds it for a borrowed `if let`, in Task 3"
+        )
+    )]
+    Some,
+}
+
+impl Projection {
+    /// Whether nothing a call or a write does can replace or free what the projection reaches
+    /// while its root lives: a field that is not `mut` cannot be replaced nor written through
+    /// (E0001), and a payload or a present optional's value is fixed with its container.
+    pub(crate) const fn stable(&self) -> bool {
+        match self {
+            Projection::Field { mutable, .. } => !*mutable,
+            Projection::Payload { .. } | Projection::Some => true,
+            Projection::Index { .. } => false,
+        }
+    }
 }
 
 /// A constant operand, with the type an integer or a `None` needs.
@@ -151,7 +181,8 @@ pub(crate) enum Operand {
     /// or a copy.
     Use(LocalId),
     /// A `Use` of a `match` binding inside its arm's test or guard, where the binding is
-    /// borrowed: the ownership pass makes it a copy, whatever liveness says.
+    /// borrowed: the ownership pass makes it a copy, whatever liveness says, as it makes a `Use`
+    /// of a borrowed parameter without the mark.
     Guarded(LocalId),
 }
 
@@ -169,9 +200,12 @@ pub(crate) enum Rvalue {
     Borrow(Place),
     /// The payload of an optional that holds one.
     Unwrap(Operand),
+    /// `borrowed` holds one flag per argument, the callee's `Function::borrowed`: a borrowed
+    /// argument is read in place, and the caller keeps its reference.
     Call {
         func: FuncId,
         args: Vec<Operand>,
+        borrowed: Vec<bool>,
     },
     New {
         class: ClassId,

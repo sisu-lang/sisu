@@ -645,3 +645,33 @@ fn liveness_reads_grow_linearly() {
         );
     }
 }
+
+/// A borrowed parameter is never moved, though each use below is its last: its `use` reads a
+/// copy, and a borrow site rooted at it reads it in place. The printer marks it `borrow`.
+#[test]
+fn borrowed_parameter_is_never_moved() {
+    let program = checked(
+        "fn g(s: string) {}\nfn f(s: string, t: string) -> i64 {\n    g(s)\n    t.len()\n}",
+    );
+    let mut mir = lower(&program);
+    let f = mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "f")
+        .expect("the source should define `f`");
+    f.borrowed = vec![true, true];
+    crate::mir::ownership::place(f);
+    let printed = print(&mir, &program);
+    has(
+        &printed,
+        "f",
+        &[
+            "fn f(s#0: borrow string, t#1: borrow string)",
+            "_ = copy s#0",
+            "call g(move _)",
+            "_ = len t#1",
+        ],
+    );
+    assert_eq!(count(&printed, "f", "move s#0"), 0);
+    assert_eq!(count(&printed, "f", "move t#1"), 0);
+}

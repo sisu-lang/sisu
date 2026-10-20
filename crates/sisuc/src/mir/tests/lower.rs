@@ -200,6 +200,7 @@ fn unreachable_blocks_finds_a_disconnected_cycle() {
     let f = Function {
         name: "f".to_owned(),
         params: 0,
+        borrowed: Vec::new(),
         ret: Type::UNIT,
         locals: Vec::new(),
         blocks: vec![
@@ -697,4 +698,30 @@ fn interpolation_examines_each_format_once() {
     let printed = print(&mir, &program);
     assert_eq!(EXAMINED.get(), parts);
     assert_eq!(printed.matches(", \">3\")").count(), parts);
+}
+
+/// The present value of an optional prints as a pattern would bind it.
+#[test]
+fn some_projection_prints_as_a_pattern() {
+    let program = checked("");
+    let mut b = Builder::new("f");
+    let p = b.param("p", Type::optional(Type::STRING));
+    let x = b.local("x", Type::STRING);
+    b.block(
+        vec![
+            assign(
+                x,
+                Rvalue::Borrow(Place {
+                    projections: vec![Projection::Some],
+                    ..whole(p)
+                }),
+            ),
+            Statement::End(x),
+        ],
+        Terminator::Return(None),
+    );
+    let mir = Program {
+        functions: vec![b.finish()],
+    };
+    has(&print(&mir, &program), "f", &["x#1 = borrow (p#0 as some)"]);
 }

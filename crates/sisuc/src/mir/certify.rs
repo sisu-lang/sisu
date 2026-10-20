@@ -14,9 +14,12 @@
 //! An owned or borrowed value that leaves its region is an error, so a cycle that leaks is
 //! caught whether or not `Function::loops` records it.
 //!
-//! Rule 3 ends a borrow through a field or an element at any call, as the spec says for a `mut`
-//! or weak field, but for every field: there is no class table here, and weak fields come in
-//! milestone 9. The stricter rule is never unsound.
+//! Rule 3 ends a borrow through an unstable place at any call: one through a `mut` field or an
+//! element (`Projection::stable`). Weak fields come in milestone 9, and will be unstable.
+//!
+//! A borrowed parameter starts borrowed, and stays borrowed to the end: its root is the caller.
+//! A call's arguments follow its own flags: a borrowed one is read in place, an owned one is
+//! consumed.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
@@ -54,8 +57,8 @@ pub(crate) enum Rule {
     Read,
     /// Rule 3: the root of the local's borrow is consumed, assigned, released or written while
     /// it is borrowed, or a call, a counted write or a `make_unique` happens while it borrows
-    /// through a field or an element; or a statement reads a root in place and then consumes,
-    /// assigns or releases it.
+    /// through a `mut` field or an element; or a statement reads a root in place and then
+    /// consumes, assigns or releases it.
     Borrow,
     /// Rule 4: a `return` where the local may be owned.
     Return,
@@ -86,7 +89,7 @@ impl fmt::Display for Rule {
             Rule::Borrow => {
                 "its borrow's root is consumed, assigned, released or written while it is \
                  borrowed, or a call, a counted write or a `make_unique` happens while it \
-                 borrows through a field or an element"
+                 borrows through a `mut` field or an element"
             }
             Rule::Return => "may still own a reference at `return`",
             Rule::Assign => "assigned where it may own a reference",
@@ -142,8 +145,9 @@ pub(super) fn scope_release_states(
         return states;
     }
     let mut seen = FxHashMap::default();
-    // When `takes` or `mentions` fails, no region runs and the map stays empty.
-    let _ = regions(
+    // `takes` and `mentions` fail only on mir the certifier rejects; then no region runs, and
+    // every `release?` would stay unelaborated without a sign.
+    let built = regions(
         function,
         |local| named[local.0],
         false,
@@ -159,6 +163,10 @@ pub(super) fn scope_release_states(
             }
             Ok(())
         },
+    );
+    debug_assert!(
+        built.is_ok(),
+        "the elaboration should see mir that breaks no rule of `takes` or `mentions`: {built:?}"
     );
     states
 }
@@ -243,12 +251,12 @@ impl Kills {
     }
 }
 
-/// Rule 3's clobbers: the statements that may free or change what a borrow through a field or
-/// an element reads. A call can replace any field or element; a `take` into a counted local and
+/// Rule 3's clobbers: the statements that may free or change what a borrow through an unstable
+/// place reads. A call can replace any field or element; a `take` into a counted local and
 /// a store of a counted value can free one; and a `make_unique` decides on a count that a
 /// borrow does not hold.
 struct Clobbers {
-    /// Whether each local borrows through a field or an element, or from a local that does.
+    /// Whether each local borrows through an unstable place, or from a local that does.
     unstable: Vec<bool>,
     /// The pre-order numbers of the clobbers' blocks, sorted.
     pres: Vec<usize>,
@@ -281,12 +289,8 @@ impl Clobbers {
                         Rvalue::Call { .. } => true,
                         Rvalue::Borrow(place) => {
                             if let Some(dest) = *dest {
-                                if place.projections.iter().any(|projection| {
-                                    matches!(
-                                        projection,
-                                        Projection::Field(_) | Projection::Index { .. }
-                                    )
-                                }) && !unstable[dest.0]
+                                if !place.projections.iter().all(Projection::stable)
+                                    && !unstable[dest.0]
                                 {
                                     unstable[dest.0] = true;
                                     work.push(dest.0);
@@ -662,14 +666,17 @@ struct Event {
     effect: Effect,
 }
 
-/// Calls `f` with each local `stmt` mentions, its effect and the place it is the root of.
+/// Calls `f` with each local `stmt` mentions, its effect and the place it is the root of. With
+/// `lowered`, the mir is as lowering left it, and a `use` or a guard mark consumes its local as a
+/// move does.
 pub(super) fn statement<'a>(
     stmt: &'a Statement,
+    lowered: bool,
     f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
 ) {
     match stmt {
         Statement::Assign { dest, value } => {
-            rvalue(value, f);
+            rvalue(value, lowered, f);
             if let Some(dest) = *dest {
                 let borrowed = matches!(value, Rvalue::Borrow(_));
                 f(
@@ -684,27 +691,31 @@ pub(super) fn statement<'a>(
             }
         }
         Statement::Take { dest, place } => {
-            self::place(place, Effect::Write, f);
+            self::place(place, Effect::Write, lowered, f);
             f(*dest, Effect::Assign, None);
         }
         Statement::Store { place, value } => {
-            self::place(place, Effect::Write, f);
-            consumed(value, f);
+            self::place(place, Effect::Write, lowered, f);
+            consumed(value, lowered, f);
         }
         Statement::Release(local) => f(*local, Effect::Release, None),
         Statement::ScopeRelease(local) => f(*local, Effect::ScopeRelease, None),
-        Statement::MakeUnique(place) => self::place(place, Effect::Write, f),
-        Statement::Check(place) => self::place(place, Effect::ReadInPlace, f),
+        Statement::MakeUnique(place) => self::place(place, Effect::Write, lowered, f),
+        Statement::Check(place) => self::place(place, Effect::ReadInPlace, lowered, f),
         Statement::End(local) => f(*local, Effect::End, None),
     }
 }
 
 /// The spec's table of operands: a consuming one hands its reference to the receiver.
-fn rvalue<'a>(value: &'a Rvalue, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
+fn rvalue<'a>(
+    value: &'a Rvalue,
+    lowered: bool,
+    f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
+) {
     match value {
         // `l = use op` makes `l` own what `op` hands on.
         Rvalue::Use(op) | Rvalue::Unwrap(op) | Rvalue::Wrap(op) | Rvalue::Sum { base: op, .. } => {
-            consumed(op, f);
+            consumed(op, lowered, f);
         }
         Rvalue::Chars(op)
         | Rvalue::Bytes(op)
@@ -714,65 +725,86 @@ fn rvalue<'a>(value: &'a Rvalue, f: &mut impl FnMut(LocalId, Effect, Option<&'a 
         | Rvalue::LenWords(op)
         | Rvalue::Convert(op)
         | Rvalue::Unary { operand: op, .. }
-        | Rvalue::Print { operand: op, .. } => operand(op, f),
-        Rvalue::Copy(place) => self::place(place, Effect::Read, f),
-        Rvalue::Borrow(place) => self::place(place, Effect::ReadInPlace, f),
+        | Rvalue::Print { operand: op, .. } => operand(op, lowered, f),
+        Rvalue::Copy(place) => self::place(place, Effect::Read, lowered, f),
+        Rvalue::Borrow(place) => self::place(place, Effect::ReadInPlace, lowered, f),
         Rvalue::CopyStr(_) | Rvalue::ReadLine => {}
-        Rvalue::Call { args, .. }
-        | Rvalue::New { args, .. }
+        // A borrowed argument is read in place, and a move into one hands on nothing: the
+        // caller still owns the value after the call.
+        Rvalue::Call { args, borrowed, .. } => {
+            for (op, &borrowed) in args.iter().zip(borrowed) {
+                match op {
+                    Operand::Move(local) if borrowed => f(*local, Effect::ReadInPlace, None),
+                    _ if borrowed => operand(op, lowered, f),
+                    _ => consumed(op, lowered, f),
+                }
+            }
+        }
+        Rvalue::New { args, .. }
         | Rvalue::Variant { args, .. }
         | Rvalue::ArrayLit(args)
         | Rvalue::Interpolate { parts: args, .. } => {
             for op in args {
-                consumed(op, f);
+                consumed(op, lowered, f);
             }
         }
         Rvalue::Math { operands, .. } => {
             for op in operands {
-                operand(op, f);
+                operand(op, lowered, f);
             }
         }
         Rvalue::ArrayFill { value, len, .. } => {
-            consumed(value, f);
-            operand(len, f);
+            consumed(value, lowered, f);
+            operand(len, lowered, f);
         }
         Rvalue::Concat { lhs, rhs }
         | Rvalue::Contains {
             base: lhs,
             value: rhs,
         } => {
-            consumed(lhs, f);
-            consumed(rhs, f);
+            consumed(lhs, lowered, f);
+            consumed(rhs, lowered, f);
         }
         Rvalue::Binary { lhs, rhs, .. }
         | Rvalue::Compare { lhs, rhs, .. }
         | Rvalue::Equal { lhs, rhs, .. }
         | Rvalue::Is { lhs, rhs } => {
-            operand(lhs, f);
-            operand(rhs, f);
+            operand(lhs, lowered, f);
+            operand(rhs, lowered, f);
         }
     }
 }
 
+/// `statement`'s visitor for a terminator.
 pub(super) fn terminator<'a>(
     term: &'a Terminator,
+    lowered: bool,
     f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
 ) {
     match term {
         Terminator::Branch { cond: op, .. } | Terminator::SwitchValue { operand: op, .. } => {
-            operand(op, f);
+            operand(op, lowered, f);
         }
-        Terminator::Return(Some(op)) | Terminator::Panic { message: op, .. } => consumed(op, f),
+        Terminator::Return(Some(op)) | Terminator::Panic { message: op, .. } => {
+            consumed(op, lowered, f);
+        }
         Terminator::IfPresent { optional, .. } => f(*optional, Effect::Read, None),
-        Terminator::SwitchTag { place, .. } => self::place(place, Effect::ReadInPlace, f),
+        Terminator::SwitchTag { place, .. } => self::place(place, Effect::ReadInPlace, lowered, f),
         Terminator::Goto(_) | Terminator::Return(None) | Terminator::Unreachable => {}
     }
 }
 
-fn operand<'a>(op: &'a Operand, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
+fn operand<'a>(
+    op: &'a Operand,
+    lowered: bool,
+    f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
+) {
     match op {
-        Operand::Read(place) => self::place(place, Effect::ReadInPlace, f),
+        Operand::Read(place) => self::place(place, Effect::ReadInPlace, lowered, f),
         Operand::Move(local) => f(*local, Effect::Consume, None),
+        Operand::Use(local) | Operand::Guarded(local) if lowered => {
+            f(*local, Effect::Consume, None);
+        }
         Operand::Use(_) | Operand::Guarded(_) => {
             panic!("the ownership pass should leave no `use` and no guard mark")
         }
@@ -783,7 +815,11 @@ fn operand<'a>(op: &'a Operand, f: &mut impl FnMut(LocalId, Effect, Option<&'a P
 /// An operand in a consuming position. Only a move or a copy hands on a reference, so a whole
 /// local read in place there hands on one it keeps; a value read through a projection is
 /// uncounted, or a copy would have made it owned.
-fn consumed<'a>(op: &'a Operand, f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>)) {
+fn consumed<'a>(
+    op: &'a Operand,
+    lowered: bool,
+    f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
+) {
     match op {
         Operand::Read(place) if place.projections.is_empty() => {
             f(place.local, Effect::ReadConsumed, Some(place));
@@ -792,7 +828,7 @@ fn consumed<'a>(op: &'a Operand, f: &mut impl FnMut(LocalId, Effect, Option<&'a 
         | Operand::Move(_)
         | Operand::Use(_)
         | Operand::Guarded(_)
-        | Operand::Const(_) => operand(op, f),
+        | Operand::Const(_) => operand(op, lowered, f),
     }
 }
 
@@ -800,12 +836,13 @@ fn consumed<'a>(op: &'a Operand, f: &mut impl FnMut(LocalId, Effect, Option<&'a 
 fn place<'a>(
     place: &'a Place,
     root: Effect,
+    lowered: bool,
     f: &mut impl FnMut(LocalId, Effect, Option<&'a Place>),
 ) {
     f(place.local, root, Some(place));
     for projection in &place.projections {
         if let Projection::Index { index, .. } = projection {
-            operand(index, f);
+            operand(index, lowered, f);
         }
     }
 }
@@ -851,12 +888,12 @@ fn mentions(function: &Function, tree: &Tree) -> Result<Vec<Vec<Event>>, Violati
         };
         for (at, stmt) in block.stmts.iter().enumerate() {
             in_place.clear();
-            statement(stmt, &mut |local, effect, _| {
+            statement(stmt, false, &mut |local, effect, _| {
                 note(at, local, effect, &mut in_place);
             });
         }
         in_place.clear();
-        terminator(&block.term, &mut |local, effect, _| {
+        terminator(&block.term, false, &mut |local, effect, _| {
             note(block.stmts.len(), local, effect, &mut in_place);
         });
         if let Some(violation) = found {
@@ -894,7 +931,7 @@ fn takes(function: &Function, tree: &Tree) -> Result<(), Violation> {
             } else {
                 None
             };
-            statement(stmt, &mut |local, effect, at| {
+            statement(stmt, false, &mut |local, effect, at| {
                 let own = at
                     .zip(target)
                     .is_some_and(|(at, target)| std::ptr::eq(at, target));
@@ -910,7 +947,7 @@ fn takes(function: &Function, tree: &Tree) -> Result<(), Violation> {
                 taken.push(place);
             }
         }
-        terminator(&block.term, &mut |local, _, at| {
+        terminator(&block.term, false, &mut |local, _, at| {
             check(&taken, local, at, false, false);
         });
         if let Some(local) = found.or(taken.first().map(|t| t.local)) {
@@ -950,10 +987,10 @@ fn indexed_by(t: &Place, local: LocalId) -> bool {
     let mut found = false;
     for projection in &t.projections {
         match projection {
-            Projection::Index { index, .. } => operand(index, &mut |read, _, _| {
+            Projection::Index { index, .. } => operand(index, false, &mut |read, _, _| {
                 found |= read == local;
             }),
-            Projection::Field(_) | Projection::Payload { .. } => {}
+            Projection::Field { .. } | Projection::Payload { .. } | Projection::Some => {}
         }
     }
     found
@@ -1512,7 +1549,13 @@ impl Region<'_> {
         let outside = self.nodes(scratch);
         let s = scratch;
         let count = s.blocks.len();
-        let init = if param { OWNED } else { EMPTY };
+        let init = if self.borrowed_param() {
+            BORROWED
+        } else if param {
+            OWNED
+        } else {
+            EMPTY
+        };
         // What reaches the scope block from outside the region: empty, and ended once a
         // borrow's end or a release leaves it ended along a path that comes back.
         let mut from_outside = if outside { EMPTY } else { 0 };
@@ -1855,12 +1898,17 @@ impl Region<'_> {
         Ok(after)
     }
 
+    /// Whether the local is a borrowed parameter, whose borrow lasts the whole body.
+    fn borrowed_param(&self) -> bool {
+        self.function.borrowed.get(self.local.0) == Some(&true)
+    }
+
     /// Rule 4, and a borrow that reaches a `return`.
     fn at_return(&self, block: usize, states: States) -> Result<(), Violation> {
         if states & OWNED != 0 {
             return Err(self.violation(block, Rule::Return));
         }
-        if states & BORROWED != 0 {
+        if states & BORROWED != 0 && !self.borrowed_param() {
             return Err(self.violation(block, Rule::Unended));
         }
         Ok(())

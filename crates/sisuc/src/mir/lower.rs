@@ -186,6 +186,7 @@ impl<'a> Lowering<'a> {
         Function {
             name: f.name.clone(),
             params: f.params.len(),
+            borrowed: vec![false; f.params.len()],
             ret: f.ret,
             locals: lowering.locals,
             blocks: lowering.blocks,
@@ -196,6 +197,17 @@ impl<'a> Lowering<'a> {
 
     fn counted(&self, ty: Type) -> bool {
         ty.is_counted(&self.program.enums)
+    }
+
+    /// The projection to field `index` of a value of the class type `base`.
+    fn field(&self, base: Type, index: usize) -> Projection {
+        let tir::TypeKind::Class(class) = base.kind() else {
+            unreachable!("the checker should allow a field only on a class-typed value")
+        };
+        Projection::Field {
+            index,
+            mutable: self.program.classes[class.0].fields[index].mutable,
+        }
     }
 
     fn new_block(&mut self) -> BlockId {
@@ -531,6 +543,7 @@ impl<'a> Lowering<'a> {
             ExprKind::Call { func, args } => Rvalue::Call {
                 func: *func,
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
+                borrowed: vec![false; args.len()],
             },
             ExprKind::New { class, args } => Rvalue::New {
                 class: *class,
@@ -543,7 +556,7 @@ impl<'a> Lowering<'a> {
             },
             ExprKind::Field { base, index } => {
                 let (mut place, temp) = self.base(base, true)?;
-                place.projections.push(Projection::Field(*index));
+                place.projections.push(self.field(base.ty, *index));
                 return Some(self.read_place(e.ty, place, temp, dest));
             }
             ExprKind::Wrap(operand) => Rvalue::Wrap(self.operand(operand)?),
@@ -956,7 +969,7 @@ impl<'a> Lowering<'a> {
     /// the store.
     fn field_store(&mut self, base: &Expr, index: usize, value: &Expr) -> Option<()> {
         let (mut place, temp) = self.base(base, leaves_locals(value))?;
-        place.projections.push(Projection::Field(index));
+        place.projections.push(self.field(base.ty, index));
         let value_op = self.operand(value)?;
         self.store(place, value_op, value.ty);
         self.release(temp);
@@ -995,7 +1008,7 @@ impl<'a> Lowering<'a> {
             Place::Field { base, index } => {
                 let temp = self.temp_of(base)?;
                 let mut root = whole(temp);
-                root.projections.push(Projection::Field(*index));
+                root.projections.push(self.field(base.ty, *index));
                 (root, Some(temp))
             }
             Place::Index { .. } => unreachable!("the loop above should stop at the root"),

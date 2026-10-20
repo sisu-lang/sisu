@@ -965,6 +965,7 @@ fn print_after_move() -> mir::Function {
                 Rvalue::Call {
                     func: FuncId(0),
                     args: vec![mir::Operand::Move(s)],
+                    borrowed: vec![false],
                 },
             ),
             assign(
@@ -1038,9 +1039,13 @@ fn assert_root_read_faults(
             let at = mir.functions.iter().position(|f| f.name == name);
             FuncId(at.expect("the source should define the function"))
         };
-        let call = |func, args| Statement::Assign {
+        let call = |func, args: Vec<mir::Operand>| Statement::Assign {
             dest: None,
-            value: Rvalue::Call { func, args },
+            value: Rvalue::Call {
+                func,
+                borrowed: vec![false; args.len()],
+                args,
+            },
         };
         let mut b = mir::tests::Builder::new("main");
         let r = b.local("r", root);
@@ -1051,6 +1056,7 @@ fn assert_root_read_faults(
                 value: Rvalue::Call {
                     func: func(make),
                     args: Vec::new(),
+                    borrowed: Vec::new(),
                 },
             },
             call(func(take), vec![mir::Operand::Move(r)]),
@@ -1099,7 +1105,10 @@ fn store_to_a_moved_root_faults() {
     let holder = Type::intern(TypeKind::Class(ClassId(0)));
     assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
         let place = Place {
-            projections: vec![Projection::Field(0)],
+            projections: vec![Projection::Field {
+                index: 0,
+                mutable: true,
+            }],
             ..whole_place(r)
         };
         let value = mir::Operand::Const(Const::Int(5, Type::I64));
@@ -1146,7 +1155,10 @@ fn switch_on_a_field_of_a_moved_class_faults() {
     let holder = Type::intern(TypeKind::Class(ClassId(0)));
     assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
         let shape = Place {
-            projections: vec![Projection::Field(2)],
+            projections: vec![Projection::Field {
+                index: 2,
+                mutable: true,
+            }],
             ..whole_place(r)
         };
         let term = Terminator::SwitchTag {

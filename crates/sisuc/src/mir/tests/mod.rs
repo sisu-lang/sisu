@@ -155,6 +155,7 @@ impl Builder {
             function: Function {
                 name: name.to_owned(),
                 params: 0,
+                borrowed: Vec::new(),
                 ret: Type::UNIT,
                 locals: Vec::new(),
                 blocks: Vec::new(),
@@ -172,7 +173,13 @@ impl Builder {
             "parameters should come first"
         );
         self.function.params += 1;
+        self.function.borrowed.push(false);
         self.local(name, ty)
+    }
+
+    /// Marks `param` borrowed.
+    pub(crate) fn borrowed(&mut self, param: LocalId) {
+        self.function.borrowed[param.0] = true;
     }
 
     /// A named local of `ty`, which holds no enum: counted when `ty` is.
@@ -243,6 +250,7 @@ pub(super) fn fresh(dest: LocalId) -> Statement {
         Rvalue::Call {
             func: FuncId(0),
             args: Vec::new(),
+            borrowed: Vec::new(),
         },
     )
 }
