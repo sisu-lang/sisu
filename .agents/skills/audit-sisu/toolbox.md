@@ -30,6 +30,7 @@ run in the wrong checkout.
 - `timeout 20` on every `sisuc` call and plain program run.
 - `timeout 120` under Valgrind, ASan or Miri.
 - `limits` timing probes: `timeout 60`, as its guide says.
+- `compile-time` runs of `sisuc` under callgrind or DHAT: `timeout 600`.
 - Cargo commands get no timeout.
 - Any probe that allocates in proportion to an input you grow runs under `ulimit -v 4194304` (4 GiB) in a subshell: `(ulimit -v 4194304; timeout 20 $D/p)`. Other subagents share the machine.
 
