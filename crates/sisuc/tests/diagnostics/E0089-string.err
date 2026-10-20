@@ -1,0 +1,14 @@
+error[E0089]: unknown escape `\q`
+ --> E0089-string.sisu:2:12
+  |
+2 |     print("\q")
+  |            ^^
+  |
+  = help: the escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`, `\{`, `\}` and `\u{...}`
+help: if you meant a backslash, write `\\`
+  |
+2 |     print("\\q")
+  |            +
+
+sisuc: 1 error
+sisuc: for more on a code, run `sisuc --explain <code>`: E0089

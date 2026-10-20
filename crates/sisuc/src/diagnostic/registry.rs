@@ -602,7 +602,11 @@ pub(crate) enum DiagnosticKind {
     /// The operation at `at` in a constant's value, which would `panic` at run time.
     ConstantPanics { panic: Panic, at: Span },
     /// The escape `\` and `found`, at `at`, which is none of the escapes.
-    UnknownEscape { found: char, at: Span },
+    UnknownEscape {
+        found: char,
+        at: Span,
+        literal: LiteralKind,
+    },
     /// The `\u` escape at `at`, as far as it reaches, which is not 1 to 6 hex digits in braces.
     MalformedUnicodeEscape { at: Span },
     /// The `\u{...}` escape `escape`, as written, at `at`, whose value is not a Unicode scalar
@@ -862,7 +866,7 @@ pub(crate) struct VariantLabels {
     pub(crate) labels: Vec<Span>,
 }
 
-/// What a literal that is not closed is the literal of.
+/// What a literal is the literal of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LiteralKind {
     Char,
@@ -2153,21 +2157,25 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::ConstantPanics { panic, at } => {
                 Diagnostic::coded(code, at, panic.message())
             }
-            DiagnosticKind::UnknownEscape { found, at } => {
+            DiagnosticKind::UnknownEscape { found, at, literal } => {
                 let escape = if invisible(found) {
                     format!("`\\` followed by {}", shown(found))
                 } else {
                     format!("`\\{found}`")
                 };
-                Diagnostic::coded(code, at, format!("unknown escape {escape}"))
+                let diagnostic = Diagnostic::coded(code, at, format!("unknown escape {escape}"))
                     .with_help(
                         r#"the escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`, `\{`, `\}` and `\u{...}`"#,
-                    )
-                    .with_fix(unsafe_fix(
+                    );
+                // In a `char` literal a second backslash would make two code points.
+                match literal {
+                    LiteralKind::String => diagnostic.with_fix(unsafe_fix(
                         r"if you meant a backslash, write `\\`",
                         Span::new(at.start(), at.start()),
                         "\\",
-                    ))
+                    )),
+                    LiteralKind::Char => diagnostic,
+                }
             }
             DiagnosticKind::MalformedUnicodeEscape { at } => {
                 Diagnostic::coded(code, at, r"malformed `\u` escape")

@@ -244,7 +244,7 @@ fn char_literal(source: &str, start: usize, chars: &mut Chars) -> Result<TokenKi
             '\'' => break i + 1,
             // A `\` at the line end is followed by the "not closed" error of a later turn.
             '\\' if line_ends(source, chars) => {}
-            '\\' => match escape(source, i, chars) {
+            '\\' => match escape(source, i, chars, LiteralKind::Char) {
                 Ok(c) => points.push(c),
                 Err(d) => {
                     error.get_or_insert(d);
@@ -322,7 +322,7 @@ pub(super) fn string_text(
             }
             // A `\` at the line end is followed by the "not closed" error of a later turn.
             '\\' if line_ends(source, chars) => {}
-            '\\' => match escape(source, i, chars) {
+            '\\' => match escape(source, i, chars, LiteralKind::String) {
                 Ok(c) => text.push(c),
                 Err(d) => {
                     error.get_or_insert(d);
@@ -359,6 +359,7 @@ pub(super) fn escape(
     source: &str,
     backslash: usize,
     chars: &mut Chars,
+    literal: LiteralKind,
 ) -> Result<char, Diagnostic> {
     let Some((at, c)) = chars.next() else {
         unreachable!("the caller checked that a char follows the backslash")
@@ -373,6 +374,7 @@ pub(super) fn escape(
         _ => Err(DiagnosticKind::UnknownEscape {
             found: c,
             at: Span::new(backslash, at + c.len_utf8()),
+            literal,
         }
         .into()),
     }

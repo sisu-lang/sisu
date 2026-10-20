@@ -1919,13 +1919,15 @@ mod tests {
         }
     }
 
-    /// An unknown escape gets an unsafe fix that assumes the `\` was meant as a backslash, and
-    /// writes another one.
+    /// An unknown escape in a string literal gets an unsafe fix that assumes the `\` was meant as a
+    /// backslash, and writes another one. In a `char` literal that would make two code points, so
+    /// it gets none.
     #[test]
     fn unknown_escape_fix() {
-        let d = only(r"'\q'");
+        let d = only(r#""\q""#);
         assert_eq!(fix_edits(&d), Some((false, vec![(1, 1, "\\".to_string())])));
-        assert_eq!(apply_fix(r"'\q'", &d), r"'\\q'");
+        assert_eq!(apply_fix(r#""\q""#, &d), r#""\\q""#);
+        assert_eq!(fix_edits(&only(r"'\q'")), None);
     }
 
     #[test]
