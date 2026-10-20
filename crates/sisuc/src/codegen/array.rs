@@ -179,6 +179,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The block of `[filler; count]` of type `ty`; a negative or oversized `count` panics at
     /// `span`. A counted pointer `filler` gains `count - 1` references in one step, or loses its
     /// one when `count` is 0. A counted enum `filler` is retained once per slot, then released.
+    /// A `bool` filler is stored as a byte, so that `-O2` makes the loop a `memset`: LLVM's
+    /// loop-idiom pass does not do that for an `i1` store.
     pub(super) fn array_fill(
         &self,
         filler: BasicValueEnum<'ctx>,
@@ -188,10 +190,18 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) -> PointerValue<'ctx> {
         let element = element_of(ty);
         let array = self.alloc_array(element, count, Some(span));
+        let stored = if element == Type::BOOL {
+            self.builder
+                .build_int_z_extend(filler.into_int_value(), self.context.i8_type(), "fill.byte")
+                .expect(POSITIONED)
+                .into()
+        } else {
+            filler
+        };
         self.count_loop(count, |index| {
             self.store_tagged(
                 self.element_ptr(element, array, index),
-                filler,
+                stored,
                 self.element_tag,
             );
         });

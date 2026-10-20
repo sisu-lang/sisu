@@ -539,6 +539,77 @@ fn drop_frees_with_the_allocated_layout() {
     }
 }
 
+const STRING_PROGRAM: &str =
+    "fn main() {\n    let mut s = \"a\" + \"b\"\n    s += \"c\"\n    print(s)\n}";
+
+/// Asserts that `size`, a value in `body`, is a string block's header plus its capacity: `add
+/// nuw i64 24, <cap>`, with `<cap>` loaded from the capacity field of `block`.
+fn assert_header_plus_capacity(body: &str, block: &str, size: &str) {
+    // The value defined by the instruction `<value> = <text>`.
+    let text = |value: &str| {
+        body.lines()
+            .find_map(|l| l.trim().strip_prefix(&format!("{value} = ")))
+            .unwrap_or_else(|| panic!("no {value} in\n{body}"))
+    };
+    let cap = text(size)
+        .strip_prefix("add nuw i64 24, ")
+        .unwrap_or_else(|| panic!("size {size} is not 24 + cap in\n{body}"));
+    let field = text(cap)
+        .strip_prefix("load i64, ptr ")
+        .and_then(|operands| operands.strip_suffix(", align 8"))
+        .unwrap_or_else(|| panic!("{cap} is not a load in\n{body}"));
+    assert!(
+        text(field).ends_with(&format!("ptr {block}, i32 0, i32 {}", layout::CAP)),
+        "{field} is not {block}'s capacity field in\n{body}"
+    );
+}
+
+/// A string's drop frees its header plus its capacity, the size of the last `sisu_alloc` or
+/// `sisu_realloc`. Valgrind and the RC checks cannot see a wrong size.
+#[test]
+fn string_drop_frees_header_and_capacity() {
+    let context = Context::create();
+    let ir = compiled(&context, STRING_PROGRAM)
+        .print_to_string()
+        .to_string();
+    let body = function_body(&ir, "define internal void @sisu_rc.drop.string(ptr");
+    let line = body
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("call void @sisu_free(ptr "))
+        .unwrap_or_else(|| panic!("no free in\n{body}"));
+    let operands: Vec<&str> = line.trim_end_matches(')').split(", i64 ").collect();
+    let [pointer, size, align] = operands[..] else {
+        panic!("free operands in {line:?}")
+    };
+    assert!(
+        body.trim_start().starts_with(&format!("{pointer})")),
+        "{body}"
+    );
+    assert_eq!(align, "8", "{body}");
+    assert_header_plus_capacity(body, pointer, size);
+}
+
+/// A string append that outgrows its block reallocates it from the size it was allocated with:
+/// the header plus the old capacity, not the new one.
+#[test]
+fn string_grow_reallocates_from_the_old_capacity() {
+    let context = Context::create();
+    let ir = compiled(&context, STRING_PROGRAM)
+        .print_to_string()
+        .to_string();
+    let body = function_body(&ir, "define internal void @sisu.main(");
+    let line = body
+        .split_once("call ptr @sisu_realloc(ptr ")
+        .and_then(|(_, rest)| rest.lines().next())
+        .unwrap_or_else(|| panic!("no realloc in\n{body}"));
+    let operands: Vec<&str> = line.trim_end_matches(')').split(", i64 ").collect();
+    let [block, old_size, align, _] = operands[..] else {
+        panic!("realloc operands in {line:?}")
+    };
+    assert_eq!(align, "8", "{body}");
+    assert_header_plus_capacity(body, block, old_size);
+}
+
 #[test]
 fn eq_loops_on_the_chain_field() {
     let context = Context::create();
@@ -2096,6 +2167,25 @@ fn a_barred_partition_makes_its_array_unique_once() {
     );
     let bounds = partition.matches("call void @sisu_panic_bounds(").count();
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
+}
+
+/// `[true; n]` and `[b; n]` fill with one `memset` at `-O2`, as `[0; n]` does: the fill stores
+/// a byte, which LLVM's loop-idiom pass turns into a `memset`, and an `i1` store it does not.
+#[test]
+fn a_bool_fill_is_a_memset_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn f(n: i64) -> [bool] {\n    [true; n]\n}\n\nfn g(b: bool, n: i64) -> [bool] {\n    [b; n]\n}\n\nfn main(args: [string]) {\n    let n = args.len()\n    print(f(n).len() + g(n > 1, n).len())\n}",
+    );
+    keep_functions(&module, "f,g");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    for name in ["f", "g"] {
+        let body = function_body(&ir, &format!("@sisu.{name}("));
+        assert!(body.contains("@llvm.memset"), "{body}");
+    }
 }
 
 /// A loop makes the arrays it writes unique before it starts. `f`'s raw IR, split at each

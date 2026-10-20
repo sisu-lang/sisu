@@ -1,0 +1,16 @@
+warning[W0006]: unreachable arm
+ --> W0006-same-line.sisu:1:37
+  |
+1 | fn main() { print(match 1 { _ => 1; 2 => 2 }) }
+  |                             -       ^
+  |                             |
+  |                             this arm covers it
+  |
+help: remove the arm
+  |
+1 - fn main() { print(match 1 { _ => 1; 2 => 2 }) }
+1 + fn main() { print(match 1 { _ => 1 }) }
+  |
+
+sisuc: 1 warning
+sisuc: for more on a code, run `sisuc --explain <code>`: W0006

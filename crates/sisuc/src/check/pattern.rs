@@ -207,33 +207,44 @@ impl Checker<'_> {
         let source = self.source.text;
         let line_start = |at: usize| source[..at].rfind('\n').map_or(0, |n| n + 1);
         // Each entry is an arm's pattern or an alternative in it, in arm order.
-        let mut rest = arms.iter();
-        let mut arm = rest.next();
+        let mut rest = arms.iter().enumerate();
+        let mut current = rest.next();
         for found in report.unreachable {
             let within = |arm: &ast::Arm| {
                 let pattern = arm.pattern.span;
                 pattern.start() <= found.at.start() && found.at.end() <= pattern.end()
             };
-            while arm.is_some_and(|arm| !within(arm)) {
-                arm = rest.next();
+            while current.is_some_and(|(_, arm)| !within(arm)) {
+                current = rest.next();
             }
-            let Some(arm) = arm else {
+            let Some((index, arm)) = current else {
                 break;
             };
             let remove = found.alternative.unwrap_or_else(|| {
-                // The first arm is always reached, and arms are separated by line breaks, so
-                // this arm starts its line. The fix takes the whole line, a comment after the
-                // body too, unless the `match`'s `}` ends it: then from the line break before
-                // the arm through the body, so the `}` stays.
+                // Arms are separated by a line break or a `;` (ADR 0028), so an arm may share
+                // its line. The first arm is always reached, so a previous arm exists.
+                let start = arm.pattern.span.start();
                 let end = arm.body.span.end();
+                let next = arms.get(index + 1).map(|next| next.pattern.span.start());
+                if !source[line_start(start)..start].trim().is_empty() {
+                    // The arm follows another on its line: take the `;` before it too.
+                    let previous = index.checked_sub(1).and_then(|i| arms.get(i));
+                    let previous = previous.expect("an unreachable arm should follow an arm");
+                    return Span::new(previous.body.span.end(), end);
+                }
+                if let Some(next) = next.filter(|&next| line_start(next) == line_start(end)) {
+                    // The next arm starts on the line where this body ends: take this arm up
+                    // to it, so the fix leaves the next arm in place.
+                    return Span::new(start, next);
+                }
+                // This arm starts its line and the next starts its own. The fix takes the
+                // whole line, a comment after the body too, unless the `match`'s `}` ends it:
+                // then from the line break before the arm through the body, so the `}` stays.
                 let line_end = source[end..].find('\n').map_or(source.len(), |n| end + n);
                 if close.start() < line_end {
-                    Span::new(line_start(found.at.start()) - 1, end)
+                    Span::new(line_start(start) - 1, end)
                 } else {
-                    Span::new(
-                        line_start(found.at.start()),
-                        (line_end + 1).min(source.len()),
-                    )
+                    Span::new(line_start(start), (line_end + 1).min(source.len()))
                 }
             });
             self.report(DiagnosticKind::UnreachableArm {
