@@ -128,9 +128,15 @@ vague or generic error, or with none.
 - Check cheap claims yourself: build, run the tests, write a probe
   program. To build a commit, export it as "Export a commit to build it"
   in `CODING_STANDARDS.md` says.
-- When "Focus" gives the result of `make verify`, check the note on each
-  surviving mutant and uncovered region. Otherwise, name the riskiest
-  changed path that no test runs.
+- To compare diagnostics before and after a change, build the base and
+  the head, write probe programs into one directory, and run
+  `python3 scripts/diag_diff.py BASE_SISUC HEAD_SISUC DIR`. It prints
+  each program the head newly accepts, newly rejects or reports
+  differently, with the codes and positions of both.
+- When "Focus" names a verify log, check that its first line is the
+  target's head commit, then check the note on each surviving mutant and
+  uncovered region. Otherwise, name the riskiest changed path that no
+  test runs.
 
 # Focus
 

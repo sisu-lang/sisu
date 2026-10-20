@@ -285,3 +285,47 @@ fn element_index_of_the_wrong_type() {
         &[],
     );
 }
+
+/// A compound assignment to an element or a field reports what the same statement on a local of
+/// the same type reports: the same codes, at the same places relative to the target.
+#[test]
+fn compound_assignment_reports_as_a_local_would() {
+    let types = [
+        "string", "string?", "bool", "i64", "i64?", "f64", "f64?", "u8",
+    ];
+    let values = ["'x'", "c", "1", "\"s\"", "1.5", "true"];
+    for ty in types {
+        for op in ["+=", "-=", "*="] {
+            for value in values {
+                let reported = |place: &str, binding: &str| {
+                    let src = format!(
+                        "class P {{\n    mut f: {ty}\n}}\nfn f(c: char, p: P) {{\n    {binding}\n    {place} {op} {value}\n}}\nfn main() {{}}"
+                    );
+                    // Line 6 holds the statement; past the target, which starts at column 5,
+                    // its columns shift by the target's length.
+                    let at = |(line, col): (usize, usize)| match (line, col) {
+                        (6, 6..) => (0, col - place.len()),
+                        (6, _) => (0, col),
+                        _ => (line, col),
+                    };
+                    let found: Vec<_> = found(&src)
+                        .into_iter()
+                        .map(|(code, pos, secondary)| {
+                            (
+                                code,
+                                at(pos),
+                                secondary.into_iter().map(at).collect::<Vec<_>>(),
+                            )
+                        })
+                        .collect();
+                    (found, src)
+                };
+                let (local, src) = reported("x", "let mut x = p.f");
+                for (place, binding) in [("xs[0]", "let mut xs = [p.f]"), ("p.f", "let y = 0")] {
+                    let (other, other_src) = reported(place, binding);
+                    assert_eq!(other, local, "{other_src}\nagainst\n{src}");
+                }
+            }
+        }
+    }
+}
