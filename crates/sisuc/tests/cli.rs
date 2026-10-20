@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -1071,13 +1072,18 @@ fn format_usage_errors() {
 fn json_link_failure_stays_json() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("json_link_failure.sisu"), "fn main() {}\n").expect("writes");
+    // A directory `ld` cannot write to: sisuc finds a missing one before it compiles.
+    let readonly = dir.join("json_link_failure_dir");
+    let _ = fs::remove_dir_all(&readonly);
+    fs::create_dir(&readonly).expect("creates");
+    fs::set_permissions(&readonly, fs::Permissions::from_mode(0o555)).expect("sets");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
         .args([
             "--format",
             "json",
             "json_link_failure.sisu",
-            "missing-dir/out",
+            "json_link_failure_dir/out",
         ])
         .output()
         .expect("sisuc starts");
@@ -1105,7 +1111,7 @@ fn json_link_failure_stays_json() {
         .split_once('\n')
         .expect("cc's output after a newline");
     assert!(status.starts_with("cc failed: "), "{message}");
-    assert!(detail.contains("missing-dir/out"), "{message}");
+    assert!(detail.contains("json_link_failure_dir/out"), "{message}");
     assert_eq!(detail, detail.trim(), "{message}");
 }
 
@@ -1297,5 +1303,64 @@ fn enum_layouts_follow_the_target() {
         "%sisu.Wide = type { i16 }",
     ] {
         assert!(ir.contains(wanted), "missing {wanted:?} in\n{ir}");
+    }
+}
+
+/// A `sisuc` with no runtime library beside it says so before it compiles: with no
+/// temporary directory, a compile would fail at the object file first.
+#[test]
+fn missing_runtime_is_found_before_the_compile() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing_runtime");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("creates");
+    let sisuc = dir.join("sisuc");
+    fs::hard_link(env!("CARGO_BIN_EXE_sisuc"), &sisuc).expect("links");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    let out = Command::new(&sisuc)
+        .current_dir(&dir)
+        .env("TMPDIR", dir.join("absent"))
+        .args(["one.sisu", "one"])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.starts_with("sisuc: runtime library not found at "),
+        "{stderr}"
+    );
+}
+
+/// An output whose directory does not exist, or that is a directory, is reported before
+/// the compile.
+#[test]
+fn bad_output_path_is_found_before_the_compile() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bad_output_path");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("outdir")).expect("creates");
+    fs::write(dir.join("regular"), "").expect("writes");
+    fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    for (output, expected) in [
+        (
+            "missing/one",
+            "sisuc: output directory missing does not exist\n",
+        ),
+        ("outdir", "sisuc: output outdir is a directory\n"),
+        (
+            "regular/one",
+            "sisuc: output directory regular is not a directory\n",
+        ),
+        (
+            "regular/sub/one",
+            "sisuc: cannot access output directory regular/sub: Not a directory (os error 20)\n",
+        ),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(&dir)
+            .env("TMPDIR", dir.join("absent"))
+            .args(["one.sisu", output])
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(1), "{output}");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), expected);
     }
 }

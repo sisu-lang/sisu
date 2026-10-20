@@ -501,6 +501,17 @@ fn build(
         ));
         return ExitCode::FAILURE;
     }
+    // Found here, not by `ld` after a whole compile.
+    let runtime = match link::runtime_library().and_then(|runtime| {
+        check_output(output)?;
+        Ok(runtime)
+    }) {
+        Ok(runtime) => runtime,
+        Err(message) => {
+            reporter.tool_error(&message);
+            return ExitCode::FAILURE;
+        }
+    };
     let path = input.to_string_lossy();
     let Some(source) = read(reporter, input) else {
         return ExitCode::FAILURE;
@@ -508,13 +519,45 @@ fn build(
     let Some(program) = front_end(reporter, &path, &source) else {
         return ExitCode::FAILURE;
     };
-    match compile(&program, &path, &source, output, level, rc_checks, linker) {
+    let linking = link::Linking {
+        runtime: &runtime,
+        output,
+        linker,
+    };
+    match compile(&program, &path, &source, &linking, level, rc_checks) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             reporter.tool_error(&message);
             ExitCode::FAILURE
         }
     }
+}
+
+/// Checks, without compiling, that `ld` can create `output`: its directory exists and it is not
+/// a directory.
+fn check_output(output: &Path) -> Result<(), String> {
+    let parent = match output.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let shown = output
+        .parent()
+        .map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+    match fs::metadata(parent) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Err(format!("output directory {shown} is not a directory")),
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Err(format!("output directory {shown} does not exist"));
+        }
+        Err(e) => return Err(format!("cannot access output directory {shown}: {e}")),
+    }
+    if output.is_dir() {
+        return Err(format!(
+            "output {} is a directory",
+            output.to_string_lossy()
+        ));
+    }
+    Ok(())
 }
 
 /// Runs the front end on `source` and reports every diagnostic. Returns the program unless a
@@ -531,10 +574,9 @@ fn compile(
     program: &Program,
     path: &str,
     source: &str,
-    output: &Path,
+    linking: &link::Linking,
     level: OptLevel,
     rc_checks: bool,
-    linker: Option<&str>,
 ) -> Result<(), String> {
     let mir = mir::build(program);
     let context = Context::create();
@@ -553,7 +595,7 @@ fn compile(
     });
     let object = create_object(&std::env::temp_dir(), code.as_slice(), names)?;
     // Remove the object file whether or not the link worked; a link error wins.
-    let link_result = link::link(&object, output, linker);
+    let link_result = link::link(&object, linking);
     let removed =
         fs::remove_file(&object).map_err(|e| format!("cannot remove {}: {e}", object.display()));
     link_result.and(removed)

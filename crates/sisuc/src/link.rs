@@ -4,9 +4,21 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// What a link needs besides the object file.
+pub(crate) struct Linking<'a> {
+    /// The runtime library, found before the compile.
+    pub(crate) runtime: &'a Path,
+    pub(crate) output: &'a Path,
+    pub(crate) linker: Option<&'a str>,
+}
+
 /// Links with `cc`'s default linker, or with `ld.<linker>` through `cc -fuse-ld=<linker>`.
-pub(crate) fn link(object: &Path, output: &Path, linker: Option<&str>) -> Result<(), String> {
-    let runtime = runtime_library()?;
+pub(crate) fn link(object: &Path, linking: &Linking) -> Result<(), String> {
+    let Linking {
+        runtime,
+        output,
+        linker,
+    } = *linking;
     let mut cc = Command::new("cc");
     if let Some(linker) = linker {
         cc.arg(format!("-fuse-ld={linker}"));
@@ -14,7 +26,7 @@ pub(crate) fn link(object: &Path, output: &Path, linker: Option<&str>) -> Result
     // `output`, not `status`: cc's messages go into the tool error, so stderr stays one format.
     let out = cc
         .arg(object)
-        .arg(&runtime)
+        .arg(runtime)
         // libm, after the runtime, for the C math functions. Not for `fmod`, which `frem`
         // lowers to: the runtime's compiler_builtins defines it, weakly, and is linked first.
         .arg("-lm")
@@ -47,7 +59,7 @@ fn on_path(program: &str) -> bool {
 
 /// Cargo builds `libsisu_runtime.a` into the same directory as `sisuc`.
 // shortcut: Cargo target directories only; add a search path once sisuc installs elsewhere.
-fn runtime_library() -> Result<PathBuf, String> {
+pub(crate) fn runtime_library() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate sisuc: {e}"))?;
     let path = exe.with_file_name("libsisu_runtime.a");
     if path.is_file() {

@@ -5,6 +5,7 @@
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -1137,8 +1138,10 @@ fn existing_object_file_survives_a_build() {
 fn failed_link_leaves_no_object_file() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("link_fails.sisu"), "fn main() {}\n").expect("writes");
-    // `cc` cannot write an executable over a directory.
+    // `ld` cannot write into a read-only directory, and sisuc cannot see that before the link.
     let output = empty_dir("link_fails");
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o555)).expect("sets");
+    let output = output.join("out");
     let tmp = empty_dir("link_fails_tmp");
     let out = support::sisuc(dir, "link_fails.sisu", &output, &[])
         .env("TMPDIR", &tmp)
