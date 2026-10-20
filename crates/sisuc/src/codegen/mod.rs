@@ -140,11 +140,9 @@ pub(crate) fn compile<'ctx>(
 ) -> Module<'ctx> {
     let mut codegen = Codegen::new(context, program, path, source, machine, rc_checks);
     codegen.lay_out_types();
-    // Every class gets its helpers, used or not, as in milestone 2.
-    for helper in [Helper::Release, Helper::Eq] {
-        for id in 0..program.classes.len() {
-            codegen.helper(helper, Type::intern(TypeKind::Class(ClassId(id))));
-        }
+    // Every class gets its release helper, used or not; an `eq` helper is made on first use.
+    for id in 0..program.classes.len() {
+        codegen.helper(Helper::Release, Type::intern(TypeKind::Class(ClassId(id))));
     }
     // Declare every function first so that calls can refer to functions defined later.
     for f in &mir.functions {

@@ -631,6 +631,23 @@ fn eq_loops_on_the_chain_field() {
     }
 }
 
+/// A class gets an `eq` helper when a `==` compares it, and not otherwise.
+#[test]
+fn only_a_compared_class_gets_an_eq_helper() {
+    let context = Context::create();
+    let class = "class C {\n    v: i64\n}\n\n";
+    let unused = compiled(
+        &context,
+        &format!("{class}fn main() {{\n    print(C(v: 1).v)\n}}\n"),
+    );
+    assert!(unused.get_function("sisu_rc.eq.C").is_none());
+    let used = compiled(
+        &context,
+        &format!("{class}fn main() {{\n    print(C(v: 1) == C(v: 2))\n}}\n"),
+    );
+    assert!(used.get_function("sisu_rc.eq.C").is_some());
+}
+
 /// An `eq` helper answers "equal" for one pointer on both sides only when its type's `==` is
 /// reflexive; where an `f64` is reachable, through an optional, an array or a class's fields,
 /// one block or object may hold a `nan`, so only two `null`s are equal at once.
