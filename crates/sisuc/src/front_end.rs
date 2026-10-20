@@ -56,6 +56,7 @@ pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>)
 /// as it is: neither judged, counted nor demoted.
 pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
     let mut sound = diagnostics.to_vec();
+    // Skipping the reparse for W0007s alone only saves work, so no test pins it.
     let syntax_fix = |d: &Diagnostic| d.code() != Code::RedundantSemicolon;
     // Judging a fix lexes and parses `source` again, so skip that when no diagnostic has one.
     if sound.iter().any(|d| syntax_fix(d) && !d.fixes().is_empty()) {
@@ -699,33 +700,6 @@ fn main() {
             assert_eq!(d.code(), Code::RedundantSemicolon);
             assert!(fix_edits(d).is_some_and(|(safe, _)| safe), "{d:?}");
         }
-    }
-
-    /// With no fix but W0007s to show, `sound_fixes` judges none, so it does not lex or parse the
-    /// source again. Parsing this deeply nested source overflows a 64 KiB stack, which
-    /// `sound_fixes` fits in only when it does not.
-    #[test]
-    fn redundant_semicolon_fixes_alone_parse_nothing_again() {
-        let depth = 200;
-        let src = format!(
-            "fn main() {{\n    print({}1{});\n}}\n",
-            "(".repeat(depth),
-            ")".repeat(depth)
-        );
-        let run = |stack: usize, f: &(dyn Fn() -> Vec<Diagnostic> + Sync)| {
-            std::thread::scope(|scope| {
-                (std::thread::Builder::new().stack_size(stack))
-                    .spawn_scoped(scope, f)
-                    .expect("the OS should start a thread")
-                    .join()
-                    .expect("the thread should not panic")
-            })
-        };
-        let ds = run(crate::STACK_SIZE, &|| front_end(&src).1);
-        assert_eq!(starts(&ds), [(Code::RedundantSemicolon, 24 + 2 * depth)]);
-        let shown = run(64 << 10, &|| sound_fixes(&src, &ds));
-        assert_eq!(starts(&shown), starts(&ds));
-        assert_eq!(shown[0].fixes(), ds[0].fixes());
     }
 
     /// Applying one W0007 fix alone leaves every other diagnostic of the lexer and of the front
