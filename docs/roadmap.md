@@ -247,8 +247,10 @@ These came out of the milestone 2 design and are now part of its spec:
   name, and a box held alone becomes a reuse token, which a construction of the
   same enum in the arm builds into
   ([ADR 0030](adr/0030-match-takes-its-scrutinee-apart.md), which supersedes
-  ADR 0019's rule that `match` moves nothing out). An arm whose `|` binds a
-  counted name keeps ADR 0019's copying commit.
+  ADR 0019's rule that `match` moves nothing out). Two cases are not taken
+  apart like that. An arm whose `|` alternative binds a counted name or tests
+  a box keeps ADR 0019's copying commit. A boxed `F?` binding is copied before
+  the take-apart, so its box is never reused; the rest of that arm still moves.
 - `match` is checked for exhaustiveness and reachability in one pass. A
   guarded arm may not match, so it never covers a value. `i64`, `u8` and
   `char` are finite domains, so ranges can cover them. A missing value is an
@@ -1050,9 +1052,10 @@ These do not make code nicer to write, so they wait:
   and keeps the block as a reuse token, which an arm that builds nothing frees
   on every exit; a shared box gives no token. A parameter whose `match` would
   reuse its box stays owned in part 4's inference, which is what lets
-  `tree_rewrite` allocate nothing after its first tree. Two cases stay with the
-  copying commit and are deferred: an arm whose `|` binds a counted name, and a
-  boxed `F?` field.
+  `tree_rewrite` allocate nothing after its first tree. Two cases are deferred.
+  An arm whose `|` alternative binds a counted name or tests a box keeps the
+  copying commit. A boxed `F?` binding is copied before the take-apart, so its
+  box is never reused, and the rest of its arm still moves.
 - Handing over an array held in a field or an element. The last-use rule
   moves only locals, so `self.cells = step(self.cells)` and
   `grid[i] = f(grid[i])` share the array with the call, and the first write
