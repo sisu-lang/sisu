@@ -581,12 +581,23 @@ fn spaced<T: fmt::Display>(f: &mut fmt::Formatter<'_>, items: &[T]) -> fmt::Resu
 }
 
 /// `<a, b>` to write after a name, or nothing for an empty list.
-fn angled<T: fmt::Display>(items: &[T]) -> String {
-    if items.is_empty() {
-        return String::new();
+struct Angled<'a, T>(&'a [T]);
+
+impl<T: fmt::Display> fmt::Display for Angled<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some((first, rest)) = self.0.split_first() else {
+            return Ok(());
+        };
+        write!(f, "<{first}")?;
+        for item in rest {
+            write!(f, ", {item}")?;
+        }
+        f.write_str(">")
     }
-    let all: Vec<String> = items.iter().map(ToString::to_string).collect();
-    format!("<{}>", all.join(", "))
+}
+
+fn angled<T>(items: &[T]) -> Angled<'_, T> {
+    Angled(items)
 }
 
 impl fmt::Display for Ident {

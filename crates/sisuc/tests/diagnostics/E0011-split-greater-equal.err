@@ -1,0 +1,8 @@
+error[E0011]: expected `)`, found `=`
+ --> E0011-split-greater-equal.sisu:1:15
+  |
+1 | fn f(x: A<i64>= 1) {}
+  |               ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

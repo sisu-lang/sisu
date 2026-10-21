@@ -45,9 +45,26 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         diagnostics.is_sorted_by_key(|d| d.span().start()),
         "`lexer_in` searches the lexer's diagnostics by where they start"
     );
+    // The `=` that remains of each `>=` once a type-argument list takes its `>`, by token index.
+    let halves: Vec<(usize, Token)> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.kind == TokenKind::Ge)
+        .map(|(i, t)| {
+            let span = Span::new(t.span.start() + 1, t.span.end());
+            (
+                i,
+                Token {
+                    kind: TokenKind::Eq,
+                    span,
+                },
+            )
+        })
+        .collect();
     Parser {
         source,
         tokens: &tokens,
+        halves: &halves,
         pos: 0,
         depth: 0,
         lexer: &diagnostics,
@@ -286,12 +303,22 @@ struct Parser<'a> {
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
     labels: Vec<Ident>,
-    /// The position of a `>=` token whose `>` closed a type-argument list: it reads as `=` now.
+    /// The position of a `>=` token whose `>` closed a type-argument list: `peek` reads it as the
+    /// `=` that is left, from `halves`, until the parser moves past it.
     split: Option<usize>,
+    /// What `split` makes of a `>=` token: the `=`, by the token's index.
+    halves: &'a [(usize, Token)],
 }
 
 impl<'a> Parser<'a> {
     fn peek(&self) -> &'a Token {
+        if self.split == Some(self.pos) {
+            let half = self
+                .halves
+                .binary_search_by_key(&self.pos, |(i, _)| *i)
+                .expect("a split token should be a `>=`, which `halves` holds");
+            return &self.halves[half].1;
+        }
         // `Eof` is last and never consumed, so `pos` stays in range.
         &self.tokens[self.pos]
     }
@@ -448,7 +475,7 @@ impl<'a> Parser<'a> {
                         name: ident.name,
                         args,
                     },
-                    ident.span.to(self.closing_angle()),
+                    Span::new(ident.span.start(), self.closing_angle()),
                 )
             } else {
                 (TypeKind::Name(ident.name), ident.span)
@@ -507,30 +534,21 @@ impl<'a> Parser<'a> {
         if self.eat(&TokenKind::Gt).is_some() {
             return Ok(());
         }
-        if self.at(&TokenKind::Ge) && self.split != Some(self.pos) {
+        if self.at(&TokenKind::Ge) {
             self.split = Some(self.pos);
             return Ok(());
         }
         Err(self.expected("`,` or `>`"))
     }
 
-    /// The span of the `>` that `close_angle` just took.
-    fn closing_angle(&self) -> Span {
+    /// Where the `>` that `close_angle` just took ends.
+    fn closing_angle(&self) -> usize {
         if self.split == Some(self.pos) {
-            let ge = self.peek().span;
-            Span::new(ge.start(), ge.start() + 1)
+            // What is left of the `>=` starts where the `>` ends.
+            self.peek().span.start()
         } else {
-            self.last_span()
+            self.last_span().end()
         }
-    }
-
-    /// `=`, or the half of a `>=` that is left after a type-argument list took its `>`.
-    fn expect_eq(&mut self) -> Result<(), Diagnostic> {
-        if self.split == Some(self.pos) {
-            self.bump();
-            return Ok(());
-        }
-        self.expect(&TokenKind::Eq).map(drop)
     }
 
     /// Whether the `<` at the next token starts a type-argument list in an expression: the tokens
@@ -1163,6 +1181,7 @@ impl<'a> Parser<'a> {
             warnings: Vec::new(),
             labels: Vec::new(),
             split: None,
+            halves: self.halves,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -1196,7 +1215,7 @@ impl<'a> Parser<'a> {
             None => None,
         };
         self.depth = 0;
-        self.expect_eq()?;
+        self.expect(&TokenKind::Eq)?;
         let value = self.expr()?;
         if self.pos != end {
             return Err(self.end_of_line());
@@ -2251,7 +2270,7 @@ impl<'a> Parser<'a> {
             Some(_) => Some(self.child(base, &mut reach, Self::parse_type)?),
             None => None,
         };
-        self.expect_eq()?;
+        self.expect(&TokenKind::Eq)?;
         if let Some(error) = self.label_not_on_loop() {
             return Err(error);
         }
@@ -2574,16 +2593,20 @@ impl<'a> Parser<'a> {
             let access = self.bump();
             let safe = access.kind == TokenKind::QuestionDot;
             let name = self.ident("a field or method name")?;
-            let types = if self.at(&TokenKind::Lt) && self.type_args_follow() {
-                self.type_args()?
-            } else {
-                Vec::new()
-            };
+            // The type arguments and the value arguments are siblings of the receiver: each
+            // starts at the receiver's own level and only the deepest counts.
+            let mut types = Vec::new();
+            let mut types_reach = wrapped;
+            if self.at(&TokenKind::Lt) && self.type_args_follow() {
+                self.depth = base + 1;
+                types = self.type_args()?;
+                types_reach = self.depth.max(wrapped);
+            }
             expr = if self.at(&TokenKind::LParen) {
                 self.depth = base + 1;
                 let open = self.peek().span;
                 let (args, close) = self.args()?;
-                self.depth = self.depth.max(wrapped);
+                self.depth = self.depth.max(types_reach);
                 Expr {
                     span: expr.span.to(close),
                     kind: ExprKind::MethodCall {
@@ -2707,17 +2730,23 @@ impl<'a> Parser<'a> {
                 if let Some(error) = self.path_idiom(token.span) {
                     return Err(error);
                 }
+                // The type arguments and the value arguments are siblings: each starts at the
+                // callee's level and only the deepest counts.
+                let base = self.depth;
                 let types = if self.at(&TokenKind::Lt) && self.type_args_follow() {
                     self.type_args()?
                 } else {
                     Vec::new()
                 };
+                let types_reach = self.depth;
                 let callee = Ident {
                     name,
                     span: token.span,
                 };
                 if self.at(&TokenKind::LParen) {
+                    self.depth = base;
                     let (args, close) = self.args()?;
+                    self.depth = self.depth.max(types_reach);
                     return Ok(Expr {
                         span: token.span.to(close),
                         kind: ExprKind::Call {
@@ -4264,8 +4293,11 @@ mod tests {
             panic!("expected a typed let");
         };
         assert_eq!(&src[ty.span.range()], "Stack<i64>");
-        // One `>=` closes one list, so the outer list is left open.
-        assert_eq!(expr_err("let t: A<B<i64>= y"), (Code::Expected, 1, 27));
+        // One `>=` closes one list, so the outer list is left open, and what is left of the
+        // token is the `=` after the `>`, wherever an error finds it.
+        assert_eq!(expr_err("let t: A<B<i64>= y"), (Code::Expected, 1, 28));
+        assert_eq!(expr_err("let t: [A<i64>= y] = z"), (Code::Expected, 1, 27));
+        assert_eq!(parse_err("fn f(x: A<i64>= 1) {}"), (Code::Expected, 1, 15));
     }
 
     #[test]
@@ -4334,6 +4366,7 @@ mod tests {
             specs: Vec::new(),
             warnings: Vec::new(),
             split: None,
+            halves: &[],
         }
         .type_args_follow()
     }
@@ -4377,6 +4410,53 @@ mod tests {
             .expect("the parse should not overflow the stack");
         // One `i64` fits where nine brackets around it do not.
         assert_eq!(codes, [(0, Code::NestingTooDeep); 2]);
+    }
+
+    /// Type arguments and value arguments are siblings in the tree, so the deepest of them counts,
+    /// whichever way the call is written, and what follows the call sits above both.
+    #[test]
+    fn type_arguments_and_value_arguments_are_siblings() {
+        fn brackets(n: usize) -> String {
+            format!("{}i64{}", "[".repeat(n), "]".repeat(n))
+        }
+        let access = ".x".repeat(30);
+        let cases = [
+            // Two lists of 130 brackets side by side are 134 deep, not 264.
+            format!("f<{0}>(g<{0}>())", brackets(130)),
+            format!("s.f<{0}>(g<{0}>())", brackets(130)),
+            // 240 brackets with 30 accesses above them are too deep either way.
+            format!("f<{}>(){access}", brackets(240)),
+            format!("s.f<{}>(){access}", brackets(240)),
+        ];
+        // The most brackets that a call of `callee` can hold in its type argument.
+        let most = |callee: &str| {
+            (0..MAX_DEPTH)
+                .take_while(|&n| {
+                    let src = format!("fn main() {{ {callee}<{}>() }}", brackets(n));
+                    parsed(&src).diagnostics.is_empty()
+                })
+                .last()
+                .expect("a call without brackets should parse")
+        };
+        // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
+        let (found, free, method) = std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || {
+                let found = cases.map(|src| {
+                    parsed(&format!("fn main() {{ {src} }}"))
+                        .diagnostics
+                        .first()
+                        .map(Diagnostic::code)
+                });
+                (found, most("f"), most("s.f"))
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the parse should not overflow the stack");
+        let too_deep = Some(Code::NestingTooDeep);
+        assert_eq!(found, [None, None, too_deep, too_deep]);
+        // The receiver is a level of its own, so the method call's arguments sit one lower.
+        assert_eq!(free, method + 1);
     }
 
     /// Every operand opens a nested scan, so the cutoff at `MAX_DEPTH` is what keeps a chain

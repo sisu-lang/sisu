@@ -110,9 +110,7 @@ impl Checker<'_> {
                 );
                 self.call(e.span, callee, args)
             }
-            ExprKind::Applied { .. } => {
-                unreachable!("an applied name should be the base of a `.`, which `type_path` takes")
-            }
+            ExprKind::Applied { .. } => panic!("type arguments in expressions land in Task 4"),
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
             ExprKind::SelfValue => {
                 let Some(ty) = self.body.self_type else {
