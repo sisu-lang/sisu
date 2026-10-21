@@ -1235,15 +1235,6 @@ impl<'a> Parser<'a> {
         } else {
             open.to(self.last_span())
         };
-        // A line break after the `>` of `fn f<T>` ends no statement before its `(`: the header
-        // goes on, as it did before a `>` could end a line. A `;`, a `Newline` with a width,
-        // still ends it.
-        if self.at(&TokenKind::Newline)
-            && self.peek().span.range().is_empty()
-            && self.tokens[self.pos + 1].kind == TokenKind::LParen
-        {
-            self.bump();
-        }
         self.expect(&TokenKind::LParen)?;
         let mut self_param = None;
         let mut params = Vec::new();
@@ -2528,11 +2519,7 @@ impl<'a> Parser<'a> {
                 }
                 .into());
             }
-            // A line break after a `>` ends a statement, for type arguments; one that compares
-            // goes on to its operand.
-            if self.bump().kind == TokenKind::Gt {
-                self.eat(&TokenKind::Newline);
-            }
+            self.bump();
             ops.push(op);
             self.depth = base + 1;
             operands.push(self.binary(5)?);
@@ -4358,6 +4345,23 @@ mod tests {
             ),
             // A function's header goes on after its type parameters.
             ("fn f<T>\n(x: T) {}", "(fn f<T> ((x T)) unit (block))"),
+            (
+                "class C {\n    fn m<U>\n    (self, y: U) {}\n}",
+                "(class C (fn m<U> (self (y U)) unit (block)))",
+            ),
+            // So does a call's line after its type arguments, though a `:` comes before them,
+            // and a comparison's, though one is inside its parentheses.
+            (
+                "fn f() {\n    let g: i64 = f<i64>\n    (x)\n    let b = g(x: a < c) >\n        d\n}",
+                "(fn f () unit (block (let g i64 (call f<i64> x)) (let b (> (call g (: x (< a c))) d))))",
+            ),
+            // A constant's comparison goes on too.
+            ("const b = 2 >\n    1", "(const b (> 2 1))"),
+            // A type with an inner list closed at a line's end goes on to its outer `>`.
+            (
+                "class D {\n    b: Box<Box<i64>\n    >\n    n: i64\n}",
+                "(class D (b Box<Box<i64>>) (n i64))",
+            ),
         ] {
             assert_eq!(program(src), expected, "{src}");
         }
@@ -4372,7 +4376,14 @@ mod tests {
             assert!(fix_edits(&d).is_none(), "{src}");
         }
         assert_eq!(parse_err("fn f<T>; (x: T) {}"), (Code::Expected, 1, 8));
-        assert_eq!(parse_err("fn f<T>\nfn g() {}"), (Code::Expected, 1, 8));
+        // An error in a split header's body is the only one: the header holds together.
+        assert_eq!(
+            parse_err("fn f<T>\n(x: T) { let = 1 }"),
+            (Code::Expected, 2, 14)
+        );
+        // Without type parameters, the line break ends the header, as it always has.
+        let d = &parsed("fn f\n(x: i64) {}").diagnostics[0];
+        assert_eq!((d.code(), d.span().start()), (Code::Expected, 4));
         // As after `i64`: the `=` cannot start the next line, nor the `{`.
         assert_eq!(
             parse_err("fn f() {\n    let s: Box<i64>\n    = x\n}"),
@@ -4381,6 +4392,16 @@ mod tests {
         assert_eq!(
             parse_err("fn f() -> Box<i64>\n{\n}"),
             (Code::BraceOnNewLine, 2, 1)
+        );
+        // A split header's brace on its own line gets that error alone, in a function and a
+        // method.
+        assert_eq!(
+            parse_err("fn f<T>\n(x: T) -> Box<T>\n{\n}"),
+            (Code::BraceOnNewLine, 3, 1)
+        );
+        assert_eq!(
+            parse_err("class C {\n    fn m<U>\n    (self, y: U) -> Box<U>\n    {\n    }\n}"),
+            (Code::BraceOnNewLine, 4, 5)
         );
     }
 

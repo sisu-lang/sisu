@@ -41,6 +41,7 @@ pub(crate) enum TypeKind {
 
 impl TypeKind {
     /// Whether a type of this kind names a type parameter, from what its children say.
+    // `check::cycle::parts` looks into the same kinds: a kind that holds a type goes in both.
     fn has_param(self) -> bool {
         match self {
             TypeKind::Param(..) => true,

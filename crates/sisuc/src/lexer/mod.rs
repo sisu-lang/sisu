@@ -334,7 +334,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                 first_on_line = true;
                 // Look ahead only where a `Newline` would be pushed: the next newlines of a
                 // blank run then find `Newline` last and skip it, so no gap is scanned twice.
-                if ends_statement(&tokens, &brackets.open, brackets.trailing_semicolons) {
+                if ends_statement(&tokens, &mut brackets) {
                     if let Some(gap) = continues_line(&source[start..]) {
                         // Jump to the `.`/`?.`, so a long gap is scanned once.
                         while chars.next_if(|&(i, _)| i < start + gap).is_some() {}
@@ -375,7 +375,8 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                 kind
             }
             '-' if matches!(chars.peek(), Some(&(_, ' ' | '\t')))
-                && starts_statement(&tokens, brackets.trailing_semicolons) =>
+                && before_semicolons(&tokens, brackets.trailing_semicolons)
+                    .is_some_and(|t| t.kind == TokenKind::Newline) =>
             {
                 let at = Span::new(start, start + 1);
                 if !after_skip(source, &tokens, &brackets, skipped) {
@@ -414,7 +415,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
         let unclosed = DiagnosticKind::UnclosedBracket { bracket, at };
         return Err(first_or(diagnostics, unclosed.into()));
     }
-    if ends_statement(&tokens, &brackets.open, brackets.trailing_semicolons) {
+    if ends_statement(&tokens, &mut brackets) {
         tokens.push(newline(Span::new(source.len(), source.len())));
     }
     let warnings = separate(source, &mut tokens, &brackets.separators);
@@ -586,6 +587,8 @@ struct Brackets {
     /// needs no separator before the next item, rather than a `const` or none.
     // shortcut: assumes no `fn` inside a const's value; revisit with function types or closures
     self_ending: bool,
+    /// The last `>` that `annotates_type` judged, by its span, and what it found.
+    judged: Option<(Span, Annotation)>,
 }
 
 /// A `;` that separates statements, which `separate` judges.
@@ -594,6 +597,16 @@ struct Separator {
     at: usize,
     /// Whether it stands between top-level items, after a `fn`, `class` or `enum`.
     between_items: bool,
+}
+
+/// What the scan back from a `>` at a line's end found in its statement.
+#[derive(Clone, Copy)]
+enum Annotation {
+    /// No `:` or `->` without an `=` after it: the `>` compares, or closes a header's type
+    /// parameters.
+    None,
+    /// A type annotation, with how many more `>` than `<` it has through the `>`: zero closes it.
+    Closes(isize),
 }
 
 impl Brackets {
@@ -880,14 +893,6 @@ fn before_semicolons(tokens: &[Token], trailing: usize) -> Option<&Token> {
     tokens.get(tokens.len().checked_sub(trailing + 1)?)
 }
 
-/// Whether the next token starts a statement: the token before the last `trailing` tokens, which
-/// are `;`s that separate statements, is a `Newline`, and not one after a `>`, whose `Newline`
-/// the parser drops when the `>` compares.
-fn starts_statement(tokens: &[Token], trailing: usize) -> bool {
-    before_semicolons(tokens, trailing).is_some_and(|t| t.kind == TokenKind::Newline)
-        && before_semicolons(tokens, trailing + 1).is_none_or(|t| t.kind != TokenKind::Gt)
-}
-
 fn newline(span: Span) -> Token {
     Token {
         kind: TokenKind::Newline,
@@ -898,12 +903,63 @@ fn newline(span: Span) -> Token {
 /// Whether a line break here ends a statement: the token before the last `trailing` tokens, which
 /// are `;`s that separate statements, can end one, and the innermost open bracket, if any, is a
 /// block. A `;` is transparent, so `x;\n` ends a statement as `x\n` does, and `{;\n` does not.
-/// A `>` ends one too, as the close of type arguments (`b: Box<i64>`); after a `>` that
-/// compares, the parser drops the `Newline`, so `a >\n b` goes on.
-fn ends_statement(tokens: &[Token], open: &[Open], trailing: usize) -> bool {
+/// A `>` ends one too when it closes a type annotation (`annotates_type`).
+fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
+    let trailing = brackets.trailing_semicolons;
     let last = before_semicolons(tokens, trailing);
-    (can_end_statement(last) || last.is_some_and(|t| t.kind == TokenKind::Gt))
-        && open.last().is_none_or(|&(c, _)| c == '{')
+    brackets.open.last().is_none_or(|&(c, _)| c == '{')
+        && (can_end_statement(last)
+            || last.is_some_and(|t| t.kind == TokenKind::Gt)
+                && annotates_type(&tokens[..tokens.len() - trailing], &mut brackets.judged))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many tokens `annotates_type` has visited on this thread.
+    static JUDGED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the `>` that ends `tokens`, at a line's end, closes a type annotation: in its
+/// statement, a `:` or `->` has no `=` after it, and every `<` after that is closed
+/// (`b: Box<i64>`, `fn f() -> Box<i64>`). Anywhere else the `>` compares (`a >`), closes a
+/// header's type parameters before its `(` (`fn f<T>`), or an inner list of a type that goes
+/// on (`b: Pair<Box<i64>`), and the line goes on. This is the one place that decides it: every
+/// later reader sees a `Newline` or none. The scan back stops at the last `>` it `judged`, which
+/// went on, and takes its count from there, so a run of continued lines is scanned once.
+fn annotates_type(tokens: &[Token], judged: &mut Option<(Span, Annotation)>) -> bool {
+    use TokenKind::{
+        Arrow, Colon, Eq, Gt, LBrace, LBracket, LParen, Lt, Newline, RBrace, RBracket, RParen,
+        Semicolon, StrHead, StrTail,
+    };
+    let mut depth = 0_usize;
+    let mut angles = 0_isize;
+    let mut found = Annotation::None;
+    for t in tokens.iter().rev() {
+        #[cfg(test)]
+        JUDGED.set(JUDGED.get() + 1);
+        match t.kind {
+            RParen | RBracket | RBrace | StrTail(_) => depth += 1,
+            LParen | LBracket | LBrace | StrHead(_) if depth == 0 => break,
+            LParen | LBracket | LBrace | StrHead(_) => depth -= 1,
+            _ if depth > 0 => {}
+            Colon | Arrow => {
+                found = Annotation::Closes(angles);
+                break;
+            }
+            Eq | Newline | Semicolon => break,
+            Gt if judged.is_some_and(|(span, _)| span == t.span) => {
+                if let Some((_, Annotation::Closes(before))) = *judged {
+                    found = Annotation::Closes(angles + before);
+                }
+                break;
+            }
+            Gt => angles += 1,
+            Lt => angles -= 1,
+            _ => {}
+        }
+    }
+    *judged = Some((tokens[tokens.len() - 1].span, found));
+    matches!(found, Annotation::Closes(0))
 }
 
 /// Whether `token` can end a statement (Go's rule).
@@ -3830,5 +3886,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Each `>` at a line's end that goes on is judged from the last one, not from its
+    /// statement's start, so a comparison continued over many lines is scanned once.
+    #[test]
+    fn continued_comparisons_are_judged_linearly() {
+        let judged = |n: usize| {
+            let chain = vec!["a"; n].join(" >\n");
+            JUDGED.set(0);
+            lex_clean(&format!("const b: bool = {chain}")).expect("the source should lex");
+            JUDGED.get()
+        };
+        crate::mir::tests::assert_near_linear(judged(1000), judged(2000), judged(3000));
     }
 }

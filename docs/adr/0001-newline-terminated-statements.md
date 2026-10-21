@@ -33,9 +33,9 @@ newlines".
   Already decided: from milestone 2, a line starting with `.` continues the
   previous one, so method chains can put each call on its own line (as in
   Swift and Kotlin).
-- From milestone 8, a `>` can end a statement too, as the close of type
-  arguments (`b: Box<i64>`). The parser drops the line break after a `>`
-  that compares, so `a >` still continues onto the next line, and after the
-  type parameters of a function's header, so `fn f<T>` goes on to its
-  parameters. A call's type arguments get no such exception: `f<i64>` then
-  `(x)` on the next line ends at the line break, as `f` then `(x)` does.
+- From milestone 8, a `>` can end a statement too, when it closes a type
+  annotation: after a `:` or `->` with no `=` after it, with every `<` closed
+  (`b: Box<i64>`). The lexer decides, so every reader sees the same line
+  break. Any other `>` at a line's end goes on, as before: a comparison
+  (`a >`), a header's type parameters (`fn f<T>` then its parameters), or a
+  call's type arguments (`f<i64>` then `(x)` is one call).

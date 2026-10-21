@@ -146,7 +146,8 @@ impl Graph {
     }
 }
 
-/// The parts of `ty` that mention a parameter.
+/// The parts of `ty` that mention a parameter. It looks into the kinds `TypeKind::has_param`
+/// does, so a type other than a parameter that mentions one has a part that does.
 fn parts(ty: Type) -> impl Iterator<Item = Type> {
     let (inner, args) = match ty.kind() {
         TypeKind::Array(inner) | TypeKind::Optional(inner) => (Some(inner), &[][..]),
@@ -316,7 +317,9 @@ impl Checker<'_> {
     }
 }
 
-/// The edges of a shortest path from node `from` to node `to`, which are in one component.
+/// The edges of a shortest path from node `from` to node `to`, which are in one component, by
+/// instantiations: an edge into a type's node from one of its parts costs nothing, so a way
+/// through a deeper type argument is no longer for it (a 0-1 breadth-first search).
 fn way_back(
     graph: &Graph,
     out: &[Vec<usize>],
@@ -324,25 +327,34 @@ fn way_back(
     from: usize,
     to: usize,
 ) -> Vec<usize> {
-    // Each node reached, by the edge that reached it first.
-    let mut reached = FxHashMap::default();
+    // Each node reached, by its cost and the edge that reached it at that cost.
+    let mut reached: FxHashMap<usize, (usize, Option<usize>)> = FxHashMap::default();
+    reached.insert(from, (0, None));
     let mut queue = VecDeque::from([from]);
     while let Some(n) = queue.pop_front() {
         if n == to {
             break;
         }
+        let cost = reached[&n].0;
         for &i in &out[n] {
-            let m = graph.edges[i].to;
-            if component[m] == component[from] && !reached.contains_key(&m) {
-                reached.insert(m, i);
-                queue.push_back(m);
+            let edge = &graph.edges[i];
+            let step = usize::from(edge.instance.is_some());
+            let m = edge.to;
+            if component[m] == component[from]
+                && reached.get(&m).is_none_or(|&(c, _)| cost + step < c)
+            {
+                reached.insert(m, (cost + step, Some(i)));
+                if step == 0 {
+                    queue.push_front(m);
+                } else {
+                    queue.push_back(m);
+                }
             }
         }
     }
     let mut path = Vec::new();
     let mut n = to;
-    while n != from {
-        let i = reached[&n];
+    while let (_, Some(i)) = reached[&n] {
         path.push(i);
         n = graph.edges[i].from;
     }

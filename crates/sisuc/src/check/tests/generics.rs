@@ -1563,6 +1563,18 @@ fn cycles() {
             (1, 17),
             vec![(4, 5)],
         ),
+        // Shortest by calls, however deep the arguments on the way: `f([[[[x]]]])` back from
+        // `g` directly, not through `h`, before it and after it.
+        (
+            "fn f<T>(x: T) { g([x]) }\nfn g<T>(x: T) {\n    f([[[[x]]]])\n    h(x)\n}\nfn h<T>(x: T) { f(x) }",
+            (1, 17),
+            vec![(3, 5)],
+        ),
+        (
+            "fn f<T>(x: T) { g([x]) }\nfn g<T>(x: T) {\n    h(x)\n    f([[[x]]])\n}\nfn h<T>(x: T) { f(x) }",
+            (1, 17),
+            vec![(4, 5)],
+        ),
         // An argument mentions a parameter inside a class, an enum or an optional, and a
         // second class or enum is numbered after the first.
         (
