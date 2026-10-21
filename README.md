@@ -7,7 +7,7 @@
 [![CI](https://github.com/sisu-lang/sisu/actions/workflows/ci.yml/badge.svg)](https://github.com/sisu-lang/sisu/actions/workflows/ci.yml)
 
 Sisu is a small, statically typed programming language that compiles to native
-x86-64 and ARM64 Linux code. Sisu is Finnish for grit.
+x86-64 and ARM64 Linux code and ARM64 macOS code. Sisu is Finnish for grit.
 
 Sisu takes its readable syntax from Python, its strict checks from Rust, and
 reference counting and optionals from Swift. Programs read top to
@@ -184,7 +184,7 @@ editors and agents, and marks each fix as safe or unsafe.
 
 ## Status
 
-Sisu has no releases and runs on x86-64 and ARM64 Linux only. Today it compiles
+Sisu has no releases and runs on x86-64 and ARM64 Linux and ARM64 macOS only. Today it compiles
 functions, `i64`, `f64`, `u8`, `bool` and `char`, classes with methods,
 optionals, enums with payloads and methods, `match` with nested,
 alternative, guarded and range patterns, arrays, and strings with `+`, `+=`,

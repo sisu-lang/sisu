@@ -1,17 +1,22 @@
 # Developing Sisu
 
 This guide covers building `sisu`, compiling a Sisu program with it, and
-running the same checks as CI. Sisu builds and runs on x86-64 and ARM64 Linux;
-CI runs the tests on ARM64 on each push to `main`.
+running the same checks as CI. Sisu builds and runs on x86-64 and ARM64 Linux and
+on ARM64 macOS. CI runs the tests on ARM64 Linux and ARM64 macOS on each push
+to `main`. On macOS the tests that need Valgrind, `/dev/full`, GNU ld or gcc
+are skipped, and `make coverage`, `make mutants`, `make verify`, `make fuzz`,
+`make bench` and `make callgrind` do not work.
 
 ## Prerequisites
 
 - The Rust toolchain pinned in `rust-toolchain.toml`. rustup installs it on
   first use.
 - GNU Make, which runs the commands below.
-- A C compiler on `PATH` as `cc`. `sisu` uses it to link programs.
+- A C compiler on `PATH` as `cc`. `sisu` uses it to link programs. On macOS,
+  the Xcode Command Line Tools provide it and Make.
 - On Ubuntu: `libzstd-dev`, `libxml2-dev` and `zlib1g-dev`, which LLVM links
-  against.
+  against. On macOS: Homebrew's `zstd`; LLVM looks for it in
+  `/opt/homebrew/lib`.
 - [prek](https://prek.j178.dev) for the Git hooks, with
   [typos](https://github.com/crate-ci/typos) and `shellcheck`, which two of
   the hooks run.
@@ -22,15 +27,19 @@ CI runs the tests on ARM64 on each push to `main`.
   [cargo-mutants](https://mutants.rs) for the commands below.
 - [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) for
   `scripts/coverage.sh`.
-- Valgrind. The end-to-end tests run each program under it to catch leaks
-  and memory errors.
+- On Linux, Valgrind. The end-to-end tests run each program under it to
+  catch leaks and memory errors. macOS has no Valgrind, so there the tests
+  run each program natively and do not check for leaks.
 - For `make miri`, a nightly toolchain with Miri:
   `rustup toolchain install nightly --component miri --component rust-src`.
 - [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
 
 LLVM 23 lives inside the repository. `scripts/install-llvm.sh` downloads the
-official release for the machine, x86-64 or ARM64 (about 2 GB), and keeps only
-what the build needs in `.llvm/23` (about 570 MB). `.cargo/config.toml` points the build at it, and any system
+official release for the machine, x86-64 or ARM64 Linux or ARM64 macOS (about
+2 GB), and keeps only what the build needs in `.llvm/23` (about 570 MB). The
+macOS release's static libraries hold LLVM bitcode, which Apple's linker
+cannot read, so on macOS the script also compiles them to native code with
+the release's `llc`; that adds about 5 minutes. `.cargo/config.toml` points the build at it, and any system
 LLVM is left alone. [Upgrading LLVM](llvm.md) covers moving to a new major.
 `make audit-setup` adds `opt` and `clang`, with the ASan runtime, for the
 audit-sisu skill's probes; `.llvm/23` then takes about 1.2 GB.
@@ -72,7 +81,7 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 
 | Directory | The program must | Expected output |
 | --- | --- | --- |
-| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind, and in a `--rc-checks` build | `<name>.out`: stdout; optional `<name>.err`: stderr |
+| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind on Linux, and in a `--rc-checks` build | `<name>.out`: stdout; optional `<name>.err`: stderr |
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
 | `diagnostics/` | report diagnostics under `sisu check`, exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
@@ -114,8 +123,8 @@ exactly that to stderr. Without the file, stderr must stay empty. The Valgrind
 runs' stderr holds Valgrind's own log, so they check only stdout and the exit
 code. To add the file to a case, `touch` it like any expected file.
 
-The runs go in order: plain and `-O2` without Valgrind, then both under
-Valgrind, then `--rc-checks`, and the first failure ends the case. A double
+The runs go in order: plain and `-O2` without Valgrind, then, on Linux, both
+under Valgrind, then `--rc-checks`, and the first failure ends the case. A double
 free usually aborts in the plain run, so Valgrind never reports it there. To
 show what Valgrind says about a broken build, run its binary under
 `valgrind --error-exitcode=1` yourself.
@@ -472,11 +481,14 @@ stderr as JSON Lines. `build`, `run` and `check` take it; `explain` does not.
 
 `sisu build --linker lld file.sisu` links with `ld.lld` instead of `cc`'s
 default linker; `bfd`, `gold` and `mold` work the same way. `sisu` passes the
-name to `cc -fuse-ld=`. When the link fails and `ld.<name>` is not on `PATH`,
-the error names `ld.<name>`, where gcc names only `ld`. `--linker` works only
+name to `cc -fuse-ld=`. When the link fails and `ld.<name>` (`ld64.<name>` on
+macOS) is not on `PATH`, the error names it, where gcc names only `ld`. `--linker` works only
 when building an executable.
 `scripts/install-llvm.sh` puts `ld.lld` in `.llvm/23/bin`; the tests put that
 directory on `PATH`, or in gcc's `COMPILER_PATH`, for the `--linker lld` tests.
+On macOS, Apple's clang has no `bfd`, and for `lld` it runs `ld64.lld`, which
+`.llvm/23` does not have, so the tests that link with `--linker` run only on
+Linux.
 
 `sisu build --rc-checks file.sisu` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is

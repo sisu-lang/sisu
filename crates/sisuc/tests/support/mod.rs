@@ -84,10 +84,11 @@ impl Invocation {
         Invocation { stdin, args }
     }
 
-    /// Runs `exe` with this standard input and these arguments; with `valgrind`, under
-    /// Valgrind, where any leak or memory error makes it exit 1.
+    /// Runs `exe` with this standard input and these arguments; with `valgrind` on Linux, under
+    /// Valgrind, where any leak or memory error makes it exit 1. Elsewhere Valgrind does not
+    /// run, so `exe` runs natively and the Linux jobs alone check for leaks.
     pub(crate) fn run(&self, exe: &Path, valgrind: bool) -> Output {
-        let mut command = if valgrind {
+        let mut command = if valgrind && cfg!(target_os = "linux") {
             let mut command = Command::new("valgrind");
             command
                 .args([
@@ -137,8 +138,9 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 }
 
 /// Checks a `tests/run` case: both builds differ, exit 0, agree on stdout and on stderr, and
-/// print the same under Valgrind, which finds no leak or memory error, and in a `--rc-checks`
-/// build, which finds no count fault or live object at exit; then that stdout is `<name>.out`.
+/// print the same under Valgrind on Linux, which finds no leak or memory error, and in a
+/// `--rc-checks` build, which finds no count fault or live object at exit; then that stdout is
+/// `<name>.out`.
 /// Stderr is empty, unless `<name>.err` exists: then the stderr of the plain, `-O2` and
 /// `--rc-checks` runs is that file. The Valgrind runs' stderr holds Valgrind's own log, so it is
 /// never compared.
@@ -181,25 +183,28 @@ pub(crate) fn run(path: &Path, bless: bool) {
     });
     let stdout = agreed(path, "stdout", &out0.stdout, &out2.stdout);
     let stderr = agreed(path, "stderr", &out0.stderr, &out2.stderr);
-    for exe in [o0, o2] {
-        let checked = invocation.run(&exe, true);
-        let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
-        assert_eq!(
-            checked.status.code(),
-            Some(0),
-            "{}: {valgrind_stderr}",
-            exe.display()
-        );
-        // shortcut: Valgrind 3.26 runs arm64 FMINNM and FMAXNM as FMIN and FMAX
-        // (VEX/priv/guest_arm64_toIR.c:32), so `min` or `max` of a `nan` prints `nan` under it;
-        // compare stdout on aarch64 again once a Valgrind release fixes that.
-        if !cfg!(target_arch = "aarch64") {
+    // macOS has no Valgrind, and the native runs above already checked these builds.
+    if cfg!(target_os = "linux") {
+        for exe in [o0, o2] {
+            let checked = invocation.run(&exe, true);
+            let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
             assert_eq!(
-                String::from_utf8_lossy(&checked.stdout),
-                stdout,
+                checked.status.code(),
+                Some(0),
                 "{}: {valgrind_stderr}",
                 exe.display()
             );
+            // shortcut: Valgrind 3.26 runs arm64 FMINNM and FMAXNM as FMIN and FMAX
+            // (VEX/priv/guest_arm64_toIR.c:32), so `min` or `max` of a `nan` prints `nan` under it;
+            // compare stdout on aarch64 again once a Valgrind release fixes that.
+            if !cfg!(target_arch = "aarch64") {
+                assert_eq!(
+                    String::from_utf8_lossy(&checked.stdout),
+                    stdout,
+                    "{}: {valgrind_stderr}",
+                    exe.display()
+                );
+            }
         }
     }
     let checked = invocation.run(&rc, false);

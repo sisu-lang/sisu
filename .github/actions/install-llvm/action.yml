@@ -3,18 +3,28 @@ description: Restores or installs the project-local LLVM in .llvm/23 that llvm-s
 runs:
   using: composite
   steps:
-    # llvm-config names these system libraries; libzstd.a by absolute path.
+    # llvm-config names these system libraries; libzstd.a by absolute path. The macOS
+    # runners already have them.
     - name: Install LLVM's system libraries
+      if: runner.os == 'Linux'
       shell: bash
       run: |
         sudo apt-get update
         sudo apt-get install --yes --no-install-recommends libzstd-dev libxml2-dev zlib1g-dev
     # The script pins the LLVM version and checksum, so a version bump changes the key.
-    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    - id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .llvm/23
         key: llvm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/install-llvm.sh') }}
-    # Does nothing on a cache hit.
     - name: Install LLVM
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       run: scripts/install-llvm.sh
+    # Saved now, not when the job ends: actions/cache saves only after a green job, and a
+    # failing test would throw the install away.
+    - if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .llvm/23
+        key: ${{ steps.cache.outputs.cache-primary-key }}

@@ -219,6 +219,10 @@ fn help_and_no_arguments_exit_0() {
 /// Help, version, an explanation and an emitted stage that cannot be written are a tool error,
 /// not a panic or a silent success.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
 fn output_into_a_full_stdout_is_a_tool_error() {
     const MAIN: &str = "fn main() { print(1) }";
     for args in [
@@ -1565,7 +1569,8 @@ fn bad_output_path_is_found_before_the_compile() {
     }
 }
 
-/// `build`'s flags go before or after the file, in any order.
+/// `build`'s flags go before or after the file, in any order. The `--linker` rows run on Linux
+/// only: Apple's clang has no `bfd`, and for `lld` it looks for `ld64.lld`, which `.llvm/23` lacks.
 #[test]
 fn flags_in_any_order() {
     let dir = scratch_path::empty_dir("flags_in_any_order");
@@ -1615,7 +1620,10 @@ fn flags_in_any_order() {
             "e",
         ],
         &["build", "f.sisu", "-o", "e", "--linker", "lld"],
-    ] {
+    ]
+    .into_iter()
+    .filter(|args| cfg!(target_os = "linux") || !args.contains(&"--linker"))
+    {
         // It is absent before the first build, so a failure here is expected and harmless.
         let _ = fs::remove_file(dir.join("e"));
         sisu(args);

@@ -157,7 +157,7 @@ intro = "How <code>sisu</code> turns a source file into native code."
 note = ""
 
 [[area.feature]]
-text = "Native x86-64 and ARM64 Linux code through LLVM"
+text = "Native code for x86-64 and ARM64 Linux and ARM64 macOS through LLVM"
 state = "works"
 notes = [["Architecture", "docs/architecture.md"]]
 
@@ -192,9 +192,9 @@ state = "planned"
 notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
 
 [[area.feature]]
-text = "macOS, Windows"
+text = "Windows"
 state = "planned"
-notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"], ["later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
 
 [[area.feature]]
 text = "Cross-compiling"

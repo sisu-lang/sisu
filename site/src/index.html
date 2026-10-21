@@ -4,7 +4,7 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
   <div class="w">
     <section class="hero">
       <div>
-        <span class="pill">Early and experimental · x86-64 and ARM64 Linux</span>
+        <span class="pill">Early and experimental · Linux and ARM64 macOS</span>
         <h1>Sisu learns from the languages we admire.</h1>
         <p class="lede">Python shows that code can be simple and easy to read. Rust shows that a compiler can rule out whole kinds of bugs. Swift shows that memory can be safe without a garbage collector. Sisu brings these lessons together in one small, statically typed language that compiles to native code.</p>
         <div class="acts"><a class="btn go" href="tour.html">Take the tour</a><a class="btn alt" href="status.html">See what works</a></div>
@@ -72,11 +72,11 @@ Sisu is a small, statically typed language that compiles to native x86-64 and AR
   </div></section>
 
   <section class="s tint" aria-labelledby="h-try"><div class="w try">
-    <div><h2 id="h-try">Build it and run a program</h2><p>Sisu has no releases yet. You build the compiler from source, on x86-64 or ARM64 Linux. You need:</p>
+    <div><h2 id="h-try">Build it and run a program</h2><p>Sisu has no releases yet. You build the compiler from source, on x86-64 or ARM64 Linux or an ARM64 Mac. You need:</p>
       <ul>
         <li>The Rust toolchain; rustup installs the pinned version</li>
         <li>GNU Make, and a C compiler on <code>PATH</code> as <code>cc</code></li>
-        <li>On Ubuntu: <code>libzstd-dev</code>, <code>libxml2-dev</code>, <code>zlib1g-dev</code></li>
+        <li>On Ubuntu: <code>libzstd-dev</code>, <code>libxml2-dev</code>, <code>zlib1g-dev</code>; on macOS, Homebrew's <code>zstd</code></li>
         <li><code>prek</code>, which <code>make setup</code> uses to install the Git hooks</li>
       </ul>
       <a class="more" href="contribute.html">Prerequisites and checks</a>

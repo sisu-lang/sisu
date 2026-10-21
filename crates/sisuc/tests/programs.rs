@@ -150,6 +150,10 @@ macro_rules! allocation_counts {
         mod allocation_counts {
             $(
                 #[test]
+                #[cfg_attr(
+                    not(target_os = "linux"),
+                    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+                )]
                 fn $name() {
                     for o2 in [false, true] {
                         assert_eq!(
@@ -495,6 +499,10 @@ const STDOUT_WRITE_PANIC: &str =
 /// A failed write in `print` of an `i64` or a `bool` is a Sisu panic: one stderr line, exit
 /// code 101, no Rust panic text and no abort.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
 fn print_to_a_full_stdout_panics_with_exit_101() {
     for (name, arg) in [("print_full_int", "1"), ("print_full_bool", "true")] {
         let source = format!("fn main() {{\n    print({arg})\n}}\n");
@@ -606,6 +614,10 @@ fn prints_then_panic_call_flushes_stdout_first() {
 /// Output is buffered: only the final flush at the end of `main` fails, and it ends the
 /// program with the one panic line, not a second error when the process exits.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
 fn prints_then_a_normal_exit_into_a_full_stdout_panics_once() {
     let source = "fn main() {\n    print(1)\n    print(false)\n    print(3)\n}\n";
     for o2 in [false, true] {
@@ -684,6 +696,10 @@ fn eprint_into_a_closed_stderr_pipe_dies_by_sigpipe() {
 
 /// A failed write to standard error (`ENOSPC`) is ignored: the program goes on and exits 0.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
 fn eprint_to_a_full_stderr_exits_0() {
     let source = "fn main() {\n    eprint(1)\n    print(2)\n}\n";
     for o2 in [false, true] {
@@ -894,6 +910,10 @@ fn full_blocks_of_output_survive_a_crash() {
 
 /// `print` collects its output in one buffer, however much the program prints.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
 fn print_allocates_one_buffer() {
     let program = |limit: u32| {
         format!(
@@ -939,6 +959,10 @@ const LEAKS_A_CYCLE: &str = "class Node {\n    mut next: Node?\n}\n\nfn leak() {
 
 /// Proves the harness catches a leak.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
 fn valgrind_reports_a_cycle() {
     let exe = compile_tmp("cycle", LEAKS_A_CYCLE, false);
     let out = Command::new(&exe).output().expect("the program starts");
@@ -1000,12 +1024,16 @@ fn rc_checks_ignore_a_panic() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
 fn panic_exits_101_when_stderr_write_fails() {
     // Writes to /dev/full fail with ENOSPC, so the runtime's panic line cannot be written.
     let full = File::options()
         .write(true)
         .open("/dev/full")
-        .expect("Linux has /dev/full, the only target Sisu supports");
+        .expect("/dev/full exists on Linux");
     let exe = compile_tmp(
         "stderr_full",
         "fn main() {\n    let z = 0\n    print(1 / z)\n}\n",
@@ -1117,6 +1145,10 @@ fn o3_builds_a_program_that_runs() {
 /// GNU ld, which `--linker bfd` picks, does not. `cc`'s default linker varies by host, so the
 /// test names both.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads the ELF `.comment` section and GNU ld"
+)]
 fn linker_lld_links_with_lld() {
     let bin = Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin");
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -1130,6 +1162,10 @@ fn linker_lld_links_with_lld() {
 
 /// gcc finds a linker in `COMPILER_PATH` too, so `--linker` does not require it on `PATH`.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "links with `--linker lld`, and Apple's clang looks for `ld64.lld`, which `.llvm/23` lacks"
+)]
 fn linker_off_path_links_when_cc_finds_it() {
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("loops-compiler-path");
     let out = support::sisu(Path::new(RUN), "loops.sisu", &exe, &["--linker", "lld"])
@@ -1150,7 +1186,8 @@ fn linker_off_path_links_when_cc_finds_it() {
     assert!(executable.windows(11).any(|w| w == b"Linker: LLD"));
 }
 
-/// With only `cc` on `PATH`, `cc` runs and fails to find `ld.mold`; `sisu` names it.
+/// With only `cc` on `PATH`, `cc` runs and fails to find `ld.mold` (`ld64.mold` on macOS);
+/// `sisu` names it.
 #[test]
 fn a_missing_linker_is_named() {
     let empty = empty_dir("no_linker_on_path");
@@ -1162,9 +1199,16 @@ fn a_missing_linker_is_named() {
         .expect("sisu starts");
     assert_eq!(out.status.code(), Some(1));
     // cc's own message follows on the next lines.
+    let linker = if cfg!(target_os = "macos") {
+        "ld64.mold"
+    } else {
+        "ld.mold"
+    };
     assert_eq!(
         String::from_utf8_lossy(&out.stderr).lines().next(),
-        Some("sisu: linker ld.mold not found on PATH; cc failed: exit status: 1")
+        Some(
+            format!("sisu: linker {linker} not found on PATH; cc failed: exit status: 1").as_str()
+        )
     );
     assert_empty(&empty);
 }
@@ -1481,6 +1525,10 @@ fn o2_calls_marker_must_name_caller_callee_and_count() {
 
 /// A run that passes natively but fails under Valgrind writes nothing.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
+)]
 fn bless_never_writes_after_a_valgrind_failure() {
     let dir = fixture(
         "bless_never_writes_after_a_valgrind_failure",
@@ -1658,13 +1706,16 @@ fn same_name_in_two_modes() {
     });
 }
 
-/// Each program builds to the same bytes twice, at two different output paths.
+/// Each program builds to the same bytes twice, at two different output paths. Their file names
+/// match, because macOS's linker signs each executable under its file name.
 #[test]
 fn builds_are_deterministic() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     for name in ["life", "optionals", "arrays"] {
         let [a, b] = ["a", "b"].map(|build| {
-            let exe = dir.join(format!("deterministic-{name}-{build}"));
+            let build_dir = dir.join(format!("deterministic-{build}"));
+            fs::create_dir_all(&build_dir).expect("creates the build directory");
+            let exe = build_dir.join(name);
             support::compile(Path::new(RUN), name, &exe, &["-O2"]);
             fs::read(&exe).expect("reads the build")
         });

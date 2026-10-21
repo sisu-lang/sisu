@@ -8,21 +8,25 @@
 set -euo pipefail
 
 version=23.1.3
-case "$(uname -m)" in
-x86_64)
-    arch=X64
+case "$(uname -s)-$(uname -m)" in
+Linux-x86_64)
+    platform=Linux-X64
     sha256=ca9fe385a5d9e2d88132dc0e23a00e9f87f38fa75f67207b5e457d208e71d013
     ;;
-aarch64)
-    arch=ARM64
+Linux-aarch64)
+    platform=Linux-ARM64
     sha256=56d005e339c979a696ed6c244e6472e16f3b1371e48987a07e6145bda7ee0d03
     ;;
+Darwin-arm64)
+    platform=macOS-ARM64
+    sha256=3dcfd88aec10be204a24037bcb0dc0ad777882e9dbe8ac60e2639060d8a794b1
+    ;;
 *)
-    echo "install-llvm.sh: no LLVM release for $(uname -m); Sisu builds on x86-64 and aarch64 Linux" >&2
+    echo "install-llvm.sh: no LLVM release for $(uname -s) $(uname -m); Sisu builds on x86-64 and aarch64 Linux and arm64 macOS" >&2
     exit 1
     ;;
 esac
-url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}/LLVM-${version}-Linux-${arch}.tar.xz"
+url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}/LLVM-${version}-${platform}.tar.xz"
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$root/.llvm/23"
@@ -39,7 +43,15 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 curl --fail --location --retry 3 --no-progress-meter --output "$tmp/llvm.tar.xz" "$url"
-echo "$sha256  $tmp/llvm.tar.xz" | sha256sum --check --quiet
+# macOS has neither sha256sum nor GNU tar; its bsdtar matches wildcards without a flag. By path,
+# because Homebrew's GNU tar can come first on PATH.
+if [[ "$(uname -s)" == Darwin ]]; then
+    echo "$sha256  $tmp/llvm.tar.xz" | shasum -a 256 --check --quiet
+    tar=(/usr/bin/tar)
+else
+    echo "$sha256  $tmp/llvm.tar.xz" | sha256sum --check --quiet
+    tar=(tar --wildcards)
+fi
 
 rm -rf "$dest"
 mkdir -p "$dest"
@@ -48,13 +60,30 @@ mkdir -p "$dest"
 # with its ld.lld link, for the `--linker lld` tests. That is about 570 MB of
 # the 12 GB release; the rest (clang and other tools) would not fit the 10 GB
 # GitHub Actions cache.
-top="LLVM-${version}-Linux-${arch}"
+top="LLVM-${version}-${platform}"
 members=("$top/bin/llvm-config" "$top/bin/lld" "$top/bin/ld.lld" "$top/include/llvm" "$top/include/llvm-c"
     "$top/lib/libLLVM*.a" "$top/lib/libPolly*.a")
 if $audit; then
     members+=("$top/bin/opt" "$top/bin/clang" "$top/bin/clang-23" "$top/lib/clang")
 fi
-tar -xJf "$tmp/llvm.tar.xz" -C "$dest" --strip-components=1 --wildcards "${members[@]}"
+[[ "$(uname -s)" == Darwin ]] && members+=("$top/bin/llc")
+"${tar[@]}" -xJf "$tmp/llvm.tar.xz" -C "$dest" --strip-components=1 "${members[@]}"
+# The macOS release's static libraries hold LLVM 23 bitcode (it is built with ThinLTO), which
+# Apple's linker cannot read, so llc compiles each member to a native object, once, here.
+if [[ "$(uname -s)" == Darwin ]]; then
+    # An assignment, so a failing llvm-config stops the script; llvm-sys asks for the same list.
+    libs=$("$dest/bin/llvm-config" --libnames --link-static)
+    for lib in $libs; do
+        objects="$tmp/objects/$lib"
+        mkdir -p "$objects"
+        (cd "$objects" && ar x "$dest/lib/$lib")
+        find "$objects" -name '*.o' -print0 |
+            xargs -0 -P "$(sysctl -n hw.ncpu)" -I{} "$dest/bin/llc" -O2 -filetype=obj {} -o {}.native
+        rm "$dest/lib/$lib"
+        ar rcs "$dest/lib/$lib" "$objects"/*.native
+    done
+    rm "$dest/bin/llc"
+fi
 # Written last, so an interrupted run is redone on the next call.
 echo "$version" >"$dest/VERSION"
 echo "Installed LLVM $version in $dest"

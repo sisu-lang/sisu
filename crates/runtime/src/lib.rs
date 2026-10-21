@@ -92,7 +92,7 @@ const BUFFER_CAPACITY: usize = 8192;
 /// The longest line `print` writes: `-9223372036854775808` and a newline.
 const LONGEST_LINE: usize = 21;
 
-// shortcut: Linux errno, the only target; upgrade if another target is added.
+// The same on Linux and macOS; check it when adding another target.
 const EBADF: i32 = 9;
 
 /// The buffer's size: a line that starts below `BUFFER_CAPACITY` still fits.
@@ -338,7 +338,7 @@ unsafe extern "C" {
     fn signal(signum: i32, handler: usize) -> usize;
 }
 
-// The values glibc uses on x86-64 and aarch64 Linux; check them when adding another target.
+// The same on Linux (x86-64, aarch64) and macOS; check them when adding another target.
 const SIGPIPE: i32 = 13;
 const SIG_IGN: usize = 1;
 
@@ -709,6 +709,10 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "writes to /dev/full, which only Linux has"
+    )]
     fn panic_bounds_exits_101_when_stderr_fails() {
         let exe = std::env::current_exe().expect("test binary path");
         let full = std::fs::OpenOptions::new()
@@ -835,7 +839,7 @@ mod tests {
                 // the first `print` cannot duplicate the open standard output.
                 #[expect(unsafe_code, reason = "calls libc `setrlimit` and `dup`")]
                 unsafe {
-                    const RLIMIT_NOFILE: i32 = 7;
+                    const RLIMIT_NOFILE: i32 = if cfg!(target_os = "macos") { 8 } else { 7 };
                     assert_eq!(setrlimit(RLIMIT_NOFILE, &[32, 32]), 0);
                     // `dup(0)` takes the lowest free slot, so it fills the table without a second
                     // open file. Descriptor 0 is open here: std's startup reopens a closed one on
@@ -1007,7 +1011,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
     fn rc_fault_reports_when_the_stdout_flush_fails() {
-        for case in ["fault_full_stdout", "fault_closed_stdout_pipe"] {
+        // Only Linux has /dev/full.
+        let full = cfg!(target_os = "linux").then_some("fault_full_stdout");
+        for case in full.into_iter().chain(["fault_closed_stdout_pipe"]) {
             assert_rc_exit(
                 case,
                 Some(102),
