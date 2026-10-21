@@ -4362,6 +4362,20 @@ mod tests {
                 "class D {\n    b: Box<Box<i64>\n    >\n    n: i64\n}",
                 "(class D (b Box<Box<i64>>) (n i64))",
             ),
+            // A `>=` that closes a type annotation holds its `=`, so a comparison in the value
+            // after it goes on, fused, spaced and nested alike.
+            (
+                "fn f() {\n    let x: Box<i64>= if 2 >\n        1 { y } else { z }\n}",
+                "(fn f () unit (block (let x Box<i64> (if (> 2 1) (block y) (block z)))))",
+            ),
+            (
+                "fn f() {\n    let x: Box<i64> = if 2 >\n        1 { y } else { z }\n}",
+                "(fn f () unit (block (let x Box<i64> (if (> 2 1) (block y) (block z)))))",
+            ),
+            (
+                "fn f() {\n    let x: Box<Box<i64>>= if 2 >\n        1 { y } else { z }\n}",
+                "(fn f () unit (block (let x Box<Box<i64>> (if (> 2 1) (block y) (block z)))))",
+            ),
         ] {
             assert_eq!(program(src), expected, "{src}");
         }
@@ -4391,6 +4405,11 @@ mod tests {
         );
         assert_eq!(
             parse_err("fn f() -> Box<i64>\n{\n}"),
+            (Code::BraceOnNewLine, 2, 1)
+        );
+        // Inside the header's parentheses too: the statement around them is still the header.
+        assert_eq!(
+            parse_err("fn f(x: Box<i64>\n{}) {}"),
             (Code::BraceOnNewLine, 2, 1)
         );
         // A split header's brace on its own line gets that error alone, in a function and a
