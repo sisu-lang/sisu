@@ -13,8 +13,19 @@ use crate::{Backend, Mode, Source, Stage};
 
 /// The Sisu compiler.
 #[derive(Parser)]
-#[command(name = "sisuc", args_conflicts_with_subcommands = true)]
+#[command(
+    name = "sisuc",
+    args_conflicts_with_subcommands = true,
+    // clap's own `--version` would exit before `-v` is seen, so `-vV` could not work.
+    disable_version_flag = true
+)]
 struct Cli {
+    /// Print the version
+    #[arg(short = 'V', long)]
+    version: bool,
+    /// With `--version`, also print the commit, the host and the LLVM version
+    #[arg(short, long, requires = "version")]
+    verbose: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -108,7 +119,16 @@ impl BuildFlags {
 
 /// The format and the mode `args`, the whole command line, asks for.
 pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> {
-    let Some(command) = Cli::try_parse_from(args)?.command else {
+    let cli = Cli::try_parse_from(args)?;
+    if cli.version {
+        return Ok((
+            Format::Text,
+            Mode::Version {
+                verbose: cli.verbose,
+            },
+        ));
+    }
+    let Some(command) = cli.command else {
         return Ok((Format::Text, Mode::Help));
     };
     Ok(match command {
@@ -235,4 +255,13 @@ fn build_error(message: impl std::fmt::Display) -> clap::Error {
 /// The help that `sisuc` with no arguments prints, as `sisuc --help` does.
 pub(crate) fn help() -> StyledStr {
     Cli::command().render_help()
+}
+
+/// The first line of `--version`: the command's name and the version.
+pub(crate) fn version() -> String {
+    format!(
+        "{} {}",
+        Cli::command().get_name(),
+        env!("CARGO_PKG_VERSION")
+    )
 }

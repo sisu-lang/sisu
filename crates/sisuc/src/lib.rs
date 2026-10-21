@@ -29,6 +29,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use codegen::OptLevel;
 use diagnostic::{Code, Diagnostic, RETIRED, Severity};
 use inkwell::context::Context;
+use inkwell::targets::TargetMachine;
 use report::{Format, Reporter};
 use tir::Program;
 
@@ -41,6 +42,10 @@ type Report = Reporter<Stderr>;
 enum Mode {
     /// Print the usage.
     Help,
+    /// Print the version, and with `verbose` the commit, the host and the LLVM version.
+    Version {
+        verbose: bool,
+    },
     Emit {
         stage: Stage,
         input: Source,
@@ -121,16 +126,8 @@ pub fn cli() -> ExitCode {
 /// Does what `mode` asks for, and finishes `reporter`, which writes in `format`.
 fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
     let code = match mode {
-        Mode::Help => {
-            let mut stdout = io::stdout().lock();
-            match write!(stdout, "{}", args::help()).and_then(|()| stdout.flush()) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    reporter.tool_error(&format!("cannot write to stdout: {e}"));
-                    ExitCode::FAILURE
-                }
-            }
-        }
+        Mode::Help => print_stdout(&mut reporter, &args::help().to_string()),
+        Mode::Version { verbose } => print_stdout(&mut reporter, &version_text(verbose)),
         Mode::Emit {
             stage,
             input,
@@ -153,6 +150,33 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
     };
     reporter.finish();
     code
+}
+
+/// Writes `text` to stdout, or reports why it cannot.
+fn print_stdout(reporter: &mut Report, text: &str) -> ExitCode {
+    let mut stdout = io::stdout().lock();
+    match write!(stdout, "{text}").and_then(|()| stdout.flush()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            reporter.tool_error(&format!("cannot write to stdout: {e}"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The text of `--version`, with the commit, host and LLVM lines if `verbose`.
+fn version_text(verbose: bool) -> String {
+    let name = args::version();
+    if !verbose {
+        return format!("{name}\n");
+    }
+    let (major, minor, patch) = inkwell::support::get_llvm_version();
+    let host = TargetMachine::get_default_triple();
+    format!(
+        "{name}\ncommit: {}\nhost: {}\nllvm: {major}.{minor}.{patch}\n",
+        env!("SISU_COMMIT"),
+        host.as_str().to_string_lossy()
+    )
 }
 
 /// Prints the explanation of `code`, in any case, retired or not, or that there is no such code.

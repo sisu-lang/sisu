@@ -262,6 +262,78 @@ fn mode_with_the_wrong_arguments_is_a_usage_error() {
     assert_usage_errors(&[&["check"], &["check", "tir", "f.sisu"]]);
 }
 
+/// `--version` and `-V` print the name and the version, and nothing else.
+#[test]
+fn version_prints_the_version() {
+    for flag in ["--version", "-V"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .arg(flag)
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(0), "{flag}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            concat!("sisuc ", env!("CARGO_PKG_VERSION"), "\n"),
+            "{flag}"
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "", "{flag}");
+    }
+}
+
+/// `--version --verbose` adds the commit, the host and the LLVM version; each line is checked
+/// by shape, since the values change with the checkout and the machine.
+#[test]
+fn verbose_version_prints_four_lines() {
+    for args in [&["--version", "--verbose"][..], &["-vV"]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .args(args)
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        assert_eq!(lines.len(), 4, "{args:?}: {stdout}");
+        assert_eq!(
+            lines[0],
+            concat!("sisuc ", env!("CARGO_PKG_VERSION")),
+            "{args:?}"
+        );
+        let commit = lines[1]
+            .strip_prefix("commit: ")
+            .unwrap_or_else(|| panic!("{args:?}: {stdout}"));
+        assert!(
+            commit == "unknown"
+                || (commit.len() >= 7 && commit.bytes().all(|b| b.is_ascii_hexdigit())),
+            "{args:?}: {stdout}"
+        );
+        let host = lines[2]
+            .strip_prefix("host: ")
+            .unwrap_or_else(|| panic!("{args:?}: {stdout}"));
+        assert!(host.matches('-').count() >= 2, "{args:?}: {stdout}");
+        let llvm = lines[3]
+            .strip_prefix("llvm: 23.")
+            .unwrap_or_else(|| panic!("{args:?}: {stdout}"));
+        let numbers: Vec<&str> = llvm.split('.').collect();
+        assert!(
+            numbers.len() == 2
+                && numbers
+                    .iter()
+                    .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+            "{args:?}: {stdout}"
+        );
+    }
+}
+
+/// `--verbose` means something only with `--version`; `--version` takes no subcommand.
+#[test]
+fn verbose_alone_is_a_usage_error() {
+    assert_usage_errors(&[
+        &["-v"],
+        &["check", "-v", "f.sisu"],
+        &["-V", "build", "a.sisu"],
+    ]);
+}
+
 /// Runs `sisuc` with each of `cases` in the target tmp dir, and checks that each is a usage
 /// error: clap's error on stderr, nothing on stdout, and exit 2. Returns the last stderr.
 fn assert_usage_errors(cases: &[&[&str]]) -> String {
