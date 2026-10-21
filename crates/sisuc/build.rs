@@ -12,16 +12,18 @@ fn main() {
     // `HEAD` changes on a checkout. The HEAD reflog gets a line on every commit, checkout and
     // reset, whether the branch's ref is loose or packed, but it is missing when
     // `core.logAllRefUpdates` is false; then the current branch's ref and `packed-refs` stand in.
-    // A watched file that is missing makes Cargo rerun on every build, so only existing ones
+    // A watched file that is missing makes Cargo rerun on every build, so only existing paths
     // are watched.
     let git_path = |name: &str| git(&["rev-parse", "--git-path", name]).map(PathBuf::from);
     let mut watched = vec![git_path("HEAD"), git_path("logs/HEAD")];
     if !watched[1].as_ref().is_some_and(|path| path.exists()) {
-        let branch = git(&["rev-parse", "--symbolic-full-name", "HEAD"]);
+        let branch = git(&["rev-parse", "--symbolic-full-name", "HEAD"])
+            .filter(|name| name != "HEAD")
+            .and_then(|name| git_path(&name));
+        // A packed branch has no ref file until the next commit writes one, so until then the
+        // nearest directory that exists is watched: Cargo sees the new file in it.
         watched.push(
-            branch
-                .filter(|name| name != "HEAD")
-                .and_then(|name| git_path(&name)),
+            branch.and_then(|path| path.ancestors().find(|p| p.exists()).map(Path::to_path_buf)),
         );
         watched.push(git_path("packed-refs"));
     }
