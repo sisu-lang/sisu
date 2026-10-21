@@ -115,7 +115,10 @@ the whole program for the counted parameters that their functions only read,
 marks them borrowed, and rewrites each call to pass such an argument in place;
 a function that tests a parameter that came out owned with `match` or `if let`
 is lowered again. The call graph's strongly connected components come from
-`graph.rs`, which the checker's search for recursive enums shares. The
+`graph.rs`, which the checker's search for recursive enums shares. The reuse
+pass (`reuse.rs`, [ADR 0030](adr/0030-match-takes-its-scrutinee-apart.md)) runs
+next, before the ownership pass, and builds each box of a construction into the
+block that a `match` arm took apart when it held that box alone. The
 ownership pass (`ownership.rs`) then decides each read of a counted local by liveness (`liveness.rs`): a read that is the local's
 last use moves its reference instead of sharing it, so a later write to the
 array it holds can skip the copy

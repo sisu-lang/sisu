@@ -241,10 +241,14 @@ These came out of the milestone 2 design and are now part of its spec:
   the declaration, a call gives every label in declared order, and a pattern
   binds by position
   ([ADR 0020](adr/0020-labels-belong-to-the-declaration.md)).
-- `match` owns its scrutinee and moves nothing out of it: arms are tested in
-  order, straight into basic blocks, with backtracking for alternatives and
-  guards. A part the scrutinee held alone is counted up
-  and down once; reusing a box waits for a benchmark.
+- `match` owns its scrutinee: arms are tested in order, straight into basic
+  blocks, with backtracking for alternatives and guards. An arm that commits on
+  an owned enum takes the scrutinee apart: a counted binding moves into its
+  name, and a box held alone becomes a reuse token, which a construction of the
+  same enum in the arm builds into
+  ([ADR 0030](adr/0030-match-takes-its-scrutinee-apart.md), which supersedes
+  ADR 0019's rule that `match` moves nothing out). An arm whose `|` binds a
+  counted name keeps ADR 0019's copying commit.
 - `match` is checked for exhaustiveness and reachability in one pass. A
   guarded arm may not match, so it never covers a value. `i64`, `u8` and
   `char` are finite domains, so ranges can cover them. A missing value is an
@@ -513,7 +517,9 @@ follow it, ahead of the rest of milestone 8.
 3. Retain/release pair removal. Built; awaits its measured verdict.
 4. Borrowed-parameter inference ([ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md),
    which replaces ADR 0012). Built; awaits its measured verdict.
-5. Reuse of freed boxes.
+5. Reuse of freed boxes
+   ([ADR 0030](adr/0030-match-takes-its-scrutinee-apart.md)). Built; awaits its
+   measured verdict.
 
 Each step down from `tir` to LLVM IR is a
 lowering: it rewrites a feature with simpler parts, so the stages below
@@ -1032,19 +1038,21 @@ These do not make code nicer to write, so they wait:
   closure keeps owned parameters, and a `for` over a parameter keeps it owned,
   as does a `match` on a binding of a borrowed `match`, because the loop's
   iterable or the inner scrutinee is a temporary that outlives its block.
-- Reusing a box in `match`. Milestone 7 boxes the enum fields that close a
-  cycle. When a `match` takes apart the last reference to a box, and its arm
-  builds a box of the same enum type, as
-  `Add(l, r) => Expr.Add(simplify(l), simplify(r))` does, the old box could
-  hold the new value in place of a `sisu_free` and a `sisu_alloc`. Koka
-  (Perceus) and Roc call this reuse. Enums have no identity, so a program
-  cannot tell. Classes stay out, because `is` sees identity. Reuse needs
-  `match` to move fields out of a box with count 1 first, which milestone 7
-  does not build: its `match` adds 1 to each binding and then releases the
-  box. A box kept for reuse stays off the pending list, and an arm that does
-  not reuse it frees it on every exit. An enum benchmark in `bench/`, such as
-  an expression simplifier, measures the move and the reuse separately
-  before either is built.
+- Reusing a box in `match`. Built as part 5 of mir
+  ([ADR 0030](adr/0030-match-takes-its-scrutinee-apart.md)); it awaits its
+  measured verdict. Milestone 7 boxes the enum fields that close a cycle. When
+  a `match` takes apart the last reference to a box, and its arm builds a box
+  of the same enum type, as `Add(l, r) => Expr.Add(simplify(l), simplify(r))`
+  does, the new box is built into the old one's block in place of a
+  `sisu_free` and a `sisu_alloc`. Koka (Perceus) and Roc call this reuse. Enums
+  have no identity, so a program cannot tell. Classes stay out, because `is`
+  sees identity. The arm's commit moves the fields out of a box with count 1
+  and keeps the block as a reuse token, which an arm that builds nothing frees
+  on every exit; a shared box gives no token. A parameter whose `match` would
+  reuse its box stays owned in part 4's inference, which is what lets
+  `tree_rewrite` allocate nothing after its first tree. Two cases stay with the
+  copying commit and are deferred: an arm whose `|` binds a counted name, and a
+  boxed `F?` field.
 - Handing over an array held in a field or an element. The last-use rule
   moves only locals, so `self.cells = step(self.cells)` and
   `grid[i] = f(grid[i])` share the array with the call, and the first write
