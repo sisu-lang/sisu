@@ -168,7 +168,9 @@ it.
 `make coverage [BASE=<base>]` runs the tests under `cargo-llvm-cov` and prints
 a `Coverage:` line, then two lists. "Uncovered regions touching changed code"
 names regions that a changed line touches. "Other uncovered regions in changed
-files (advisory)" names the rest of those files. Test code is left out:
+files (advisory)" names the rest of those files, and any region on an
+`unreachable!` or `panic!` line, whose message states an invariant no test
+should reach. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
 or under `src/**/tests/`. It never fails on low
 coverage. Agents run it before the mutants. Commit new files, or
@@ -178,7 +180,10 @@ coverage. Agents run it before the mutants. Commit new files, or
 one line: `verify: PASS`, or `verify: FAIL` and why, ending
 `(HEAD <sha>)`, or `(HEAD <sha> with uncommitted changes)` when the working tree
 has uncommitted Rust changes. PASS needs no uncovered
-region touching the changes and no surviving mutant. A region you explain
+region touching the changes and no missed mutant; a mutant that hangs the
+tests until cargo-mutants' timeout counts as caught. A mutant proven
+equivalent goes into `exclude_re` in `.cargo/mutants.toml`, with the proof in
+a comment, so later runs skip it. A region you explain
 rather than cover still fails it, so read the reasons, not only the word. A
 diff that changes no `.rs` file passes at once, with nothing run.
 

@@ -11,7 +11,8 @@ hooks = [
   # `no_trailing_newline.sisu`, `eof-quote.sisu`, `E0093-end-of-file.sisu` and `W0007-places.sisu` must not end in a newline, and the stderr snapshots end in one blank line.
   { id = "end-of-file-fixer", exclude = '^(crates/sisuc/tests/(diagnostics/(.*\.err|no_trailing_newline\.sisu|eof-quote\.sisu|E0093-end-of-file\.sisu|W0007-places\.sisu)|run(-fail)?/.*\.(in|out|err))|site/programs/((diagnostics|explanations)/.*\.err|run(-fail)?/.*\.(in|out|err)))$' },
   { id = "mixed-line-ending", exclude = '^(crates/sisuc/tests|site/programs)/run(-fail)?/.*\.(in|out|err)$' },
-  { id = "check-merge-conflict" },
+  # Without the flag the hook checks nothing outside a merge, so a rebase or CI misses markers.
+  { id = "check-merge-conflict", args = ["--assume-in-merge"] },
   { id = "check-added-large-files" },
   { id = "check-toml" },
   { id = "check-yaml" },
