@@ -318,12 +318,12 @@ impl Checker<'_> {
                 let outer = std::mem::replace(&mut self.body.in_target, true);
                 let checked = self.value(base, None);
                 self.body.in_target = outer;
-                let Some((class, index)) = self.find_field(type_of(&checked), base, name, true)
+                let Some((class, index, ty)) = self.find_field(type_of(&checked), base, name, true)
                 else {
                     return CheckedPlace::failed();
                 };
                 let field = &self.classes[class.0].fields[index];
-                let (ty, writable) = (field.ty, field.mutable);
+                let writable = field.mutable;
                 if !writable {
                     let (name, declared) = (field.name.name.to_string(), field.name.span);
                     self.report(DiagnosticKind::AssignToImmutable {
@@ -402,12 +402,7 @@ impl Checker<'_> {
         let (kind, ty) = match place {
             tir::Place::Local(id) => (ExprKind::Local(id), self.body.locals[id.0].ty),
             tir::Place::Field { base, index } => {
-                let TypeKind::Class(class, _) = base.ty.kind() else {
-                    panic!(
-                        "a field place's base should be of a class type, as `find_field` found the field on it"
-                    )
-                };
-                let ty = self.classes[class.0].fields[index].ty.expect(
+                let ty = self.field_type(base.ty, index).expect(
                     "a place whose type is known should not be a field whose type is `Error`",
                 );
                 let base = Box::new(base);

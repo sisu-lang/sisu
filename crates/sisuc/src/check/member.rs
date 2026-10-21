@@ -69,17 +69,9 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
     ) -> Checked {
-        let Some((class, index)) = self.find_field(type_of(&base), receiver, name, false) else {
+        let Some((_, index, ty)) = self.find_field(type_of(&base), receiver, name, false) else {
             return Err(Poisoned::error());
         };
-        // A generic class's field is of the type its arguments make it.
-        let args = match type_of(&base).map(Type::kind) {
-            Some(TypeKind::Class(_, args)) => args.get(),
-            _ => &[],
-        };
-        let ty = self.classes[class.0].fields[index]
-            .ty
-            .map(|ty| ty.subst(args));
         match (base, ty) {
             (Ok(base), Some(ty)) => Ok(tir::Expr {
                 kind: tir::ExprKind::Field {
@@ -93,7 +85,22 @@ impl Checker<'_> {
         }
     }
 
-    /// The class and index of field `name` of `receiver`, a value of type `base`. `None` when
+    /// The type of field `index` of a value of the class type `base`: `base`'s arguments stand
+    /// for its class's parameters. `None` when the field's type is `Error`.
+    pub(super) fn field_type(&self, base: Type, index: usize) -> Option<Type> {
+        let TypeKind::Class(class, args) = base.kind() else {
+            panic!("a field should only be found on a value of a class type, not `{base}`")
+        };
+        let info = &self.classes[class.0];
+        assert_eq!(
+            args.get().len(),
+            info.type_params.len(),
+            "a class type should give each of its class's type parameters an argument"
+        );
+        info.fields[index].ty.map(|ty| ty.subst(args.get()))
+    }
+
+    /// The class, index and type of field `name` of `receiver`, a value of type `base`. `None` when
     /// there is none, reported unless `base` is `Error`. `target` when the field is assigned,
     /// where neither `()` nor `?.` can follow the access.
     pub(super) fn find_field(
@@ -102,7 +109,7 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
         target: bool,
-    ) -> Option<(tir::ClassId, usize)> {
+    ) -> Option<(tir::ClassId, usize, Option<Type>)> {
         let ty = base?;
         let method = |owner, safe: bool| DiagnosticKind::MethodNotField {
             name: name.name.to_string(),
@@ -114,7 +121,7 @@ impl Checker<'_> {
             TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
                 if let Some(index) = info.fields.iter().position(|f| f.name.name == name.name) {
-                    return Some((class, index));
+                    return Some((class, index, self.field_type(ty, index)));
                 }
                 match info.methods.get(&name.name) {
                     Some(Declared::Known(func)) => {

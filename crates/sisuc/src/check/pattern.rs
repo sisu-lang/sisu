@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::branch::Branch;
 use super::enums::reserved_name;
 use super::exhaust::{self, Report, Row};
-use super::{Checked, CheckedBlock, Checker, Poisoned, type_of};
+use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, GuardHelp, MismatchSource, Unwrap, suggestion,
@@ -870,16 +870,25 @@ impl Checker<'_> {
         parens: Option<Span>,
     ) -> Option<(usize, Vec<Option<Type>>)> {
         let path = written(qualifier, name);
-        let named = match qualifier {
-            Some(q) => Some(self.resolve(&ast::TypeExpr {
-                kind: ast::TypeKind::Name(q.name),
-                optional: false,
-                span: q.span,
-            })?),
-            None => None,
+        // A qualifier names an enum, whatever arguments `ty` gives it, as an enum path does in
+        // an expression; any other type it names is resolved for its own errors, and fits no
+        // enum.
+        let fits = match qualifier {
+            None => true,
+            Some(q) if let Some(&Declared::Known(named)) = self.enum_ids.get(&q.name) => {
+                matches!(ty.kind(), TypeKind::Enum(id, _) if id == named)
+            }
+            Some(q) => {
+                self.resolve(&ast::TypeExpr {
+                    kind: ast::TypeKind::Name(q.name),
+                    optional: false,
+                    span: q.span,
+                })?;
+                false
+            }
         };
         let id = match ty.kind() {
-            TypeKind::Enum(id, _) if named.is_none_or(|named| named == ty) => id.0,
+            TypeKind::Enum(id, _) if fits => id.0,
             _ => {
                 let want = self.type_name(ty);
                 self.report(DiagnosticKind::PatternMismatch {

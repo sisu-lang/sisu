@@ -274,13 +274,15 @@ impl Checker<'_> {
             });
         }
         if fields.len() != args.len() {
-            self.report(DiagnosticKind::ArgumentCount {
-                name: path.to_string(),
-                want: fields.len(),
-                found: args.len(),
-                at: span,
-            });
             self.stray(args);
+            if !self.misread_in(args) {
+                self.report(DiagnosticKind::ArgumentCount {
+                    name: path.to_string(),
+                    want: fields.len(),
+                    found: args.len(),
+                    at: span,
+                });
+            }
             return Err(true);
         }
         let (checked, mismatched): (Vec<_>, Vec<_>) = args
@@ -379,41 +381,47 @@ impl Checker<'_> {
         lowered
     }
 
-    /// Reports each enum no value can be built of. Which classes and enums can be built is a
-    /// least fixed point over them all, with the arguments they are given: a class can when
-    /// every field's type can, an enum when every field of some variant can, and every other
-    /// type always can. A class in `cyclic` counts as built, and so does an enum with no
+    /// Reports each enum or class no value can be built of. Which classes and enums can be
+    /// built is a least fixed point over them all, with the arguments they are given: a class
+    /// can when every field's type can, an enum when every field of some variant can, and every
+    /// other type always can. A class in `cyclic` counts as built, and so does an enum with no
     /// variant, since each has its error already. Each component of the rest that needs no
-    /// other is reported once, at its first enum; a type that only needs one of those is not.
+    /// other, by what the fixed point found each one to need, is reported once, at its first
+    /// enum, or else its first class; a type that only needs one of those is not.
     fn never_built(&mut self, cyclic: &[bool]) {
         let mut fix = Buildable::new(self, cyclic);
         fix.run();
         let classes = self.classes.len();
-        // What each declaration no value can be built of needs that none can be built of.
-        let mut needs = vec![Vec::new(); fix.slots.len()];
-        for (n, wants) in needs.iter_mut().enumerate() {
-            if !fix.built[fix.root(n)] {
-                for &ty in fix.slots[n].iter().flatten().flatten() {
-                    fix.blame(ty, wants);
+        let nodes = fix.slots.len();
+        let unbuilt = |fix: &Buildable, n: usize| !fix.built[fix.root(n)];
+        let needs: Vec<Vec<usize>> = (0..nodes)
+            .map(|n| {
+                if unbuilt(&fix, n) {
+                    fix.needs(fix.root(n))
+                } else {
+                    Vec::new()
                 }
-            }
-        }
+            })
+            .collect();
         let component = components(&needs);
-        let mut leaves = vec![true; needs.len()];
+        let mut leaves = vec![true; nodes];
         for (n, wants) in needs.iter().enumerate() {
             if wants.iter().any(|&w| component[w] != component[n]) {
                 leaves[component[n]] = false;
             }
         }
-        let mut reported = vec![false; needs.len()];
-        for e in 0..self.enums.len() {
-            let n = classes + e;
-            if fix.built[fix.root(n)] || !leaves[component[n]] || reported[component[n]] {
+        let mut reported = vec![false; nodes];
+        for n in (classes..nodes).chain(0..classes) {
+            if !unbuilt(&fix, n) || !leaves[component[n]] || reported[component[n]] {
                 continue;
             }
             reported[component[n]] = true;
             let chain = self.chain(n, &fix);
-            let name = &self.enums[e].name;
+            let name = if n < classes {
+                &self.classes[n].name
+            } else {
+                &self.enums[n - classes].name
+            };
             self.report(DiagnosticKind::NeverConstructed {
                 name: name.name.to_string(),
                 at: name.span,
@@ -422,13 +430,17 @@ impl Checker<'_> {
         }
     }
 
-    /// The chain of fields from the enum at node `start`, through types none of which can be
-    /// built by `fix`: each link's holder (`E.V` or `K.f`) and the type held, with the arguments
-    /// the chain gives it. At an enum it takes the first variant's first such field, at a class
-    /// the first such field, and it ends at the first type it meets again.
+    /// The chain of fields from the enum or class at node `start`, through types none of which
+    /// can be built by `fix`: each link's holder (`E.V` or `K.f`) and the type held, with the
+    /// arguments the chain gives it. At an enum it takes the first variant's first such field,
+    /// at a class the first such field, and it ends at the first type it meets again.
     fn chain(&self, start: usize, fix: &Buildable) -> Vec<(String, String)> {
         let classes = self.classes.len();
-        let params = &self.enums[start - classes].type_params;
+        let params = if start < classes {
+            &self.classes[start].type_params
+        } else {
+            &self.enums[start - classes].type_params
+        };
         // A field named `name` of type `ty`, if that type cannot be built: its name, its type's
         // name, and its node and arguments.
         let unbuilt = |(name, ty): (&str, Type)| {
@@ -489,6 +501,9 @@ struct Buildable {
     ids: FxHashMap<(usize, Vec<bool>), usize>,
     keys: Vec<(usize, Vec<bool>)>,
     built: Vec<bool>,
+    /// By key, how many keys each of its node's slots, which failed when last scanned, still
+    /// waits for.
+    pending: Vec<Vec<usize>>,
     /// By key, the slots of other keys that wait for it to be built.
     waiting: Vec<Vec<(usize, usize)>>,
     /// Slots of keys to try: a key and the index of one of its node's slots.
@@ -534,6 +549,7 @@ impl Buildable {
             ids: FxHashMap::default(),
             keys: Vec::new(),
             built: Vec::new(),
+            pending: Vec::new(),
             waiting: Vec::new(),
             queue: Vec::new(),
         };
@@ -556,6 +572,7 @@ impl Buildable {
         self.ids.insert((node, flags.clone()), key);
         self.keys.push((node, flags));
         self.built.push(false);
+        self.pending.push(vec![0; self.slots[node].len()]);
         self.waiting.push(Vec::new());
         self.queue
             .extend((0..self.slots[node].len()).map(|s| (key, s)));
@@ -584,23 +601,30 @@ impl Buildable {
         self.built[self.key_of(node, args)]
     }
 
-    /// Adds to `wants` each declaration `ty` names that cannot be built with any arguments.
-    fn blame(&self, ty: Type, wants: &mut Vec<usize>) {
-        let (node, args) = match ty.kind() {
-            TypeKind::Class(id, args) => (id.0, args),
-            TypeKind::Enum(id, args) => (self.classes + id.0, args),
-            _ => return,
-        };
-        if !self.built[self.root(node)] {
-            wants.push(node);
+    /// The declarations no value can be built of that the slots of `key` need, once the fixed
+    /// point is reached: an argument such a slot needs is among the keys it needs, unless the
+    /// type given it can be built.
+    fn needs(&mut self, key: usize) -> Vec<usize> {
+        let deps = self.deps(key);
+        deps.into_iter()
+            .map(|k| self.keys[k].0)
+            .filter(|&node| !self.built[self.root(node)])
+            .collect()
+    }
+
+    /// The keys, none of them built, that the slots of `key` need.
+    fn deps(&mut self, key: usize) -> Vec<usize> {
+        let (node, flags) = self.keys[key].clone();
+        let mut deps = Vec::new();
+        for ty in self.slots[node].clone().into_iter().flatten() {
+            self.buildable(ty, &flags, &mut deps);
         }
-        for &arg in args.get() {
-            self.blame(arg, wants);
-        }
+        deps
     }
 
     /// Whether `ty` can be built, where a type parameter's argument can when `flags` says so.
-    /// Each declaration `ty` names that cannot be built yet is added to `consulted`.
+    /// Each key `ty` needs that cannot be built yet is added to `consulted`: an application's,
+    /// and its arguments' only when the application cannot be built.
     fn buildable(&mut self, ty: Option<Type>, flags: &[bool], consulted: &mut Vec<usize>) -> bool {
         let Some(ty) = ty else { return true };
         let (node, args) = match ty.kind() {
@@ -609,39 +633,59 @@ impl Buildable {
             TypeKind::Enum(id, args) => (self.classes + id.0, args),
             _ => return true,
         };
+        let mark = consulted.len();
         let args = args
             .get()
             .iter()
             .map(|&arg| self.buildable(Some(arg), flags, consulted))
             .collect();
         let key = self.key(node, args);
-        if !self.built[key] {
+        if self.built[key] {
+            consulted.truncate(mark);
+        } else {
             consulted.push(key);
         }
         self.built[key]
     }
 
+    /// Scans queued slots until none is left. A slot that fails waits for the keys it needs,
+    /// and is scanned again only once every one of them is built, so no slot waits twice on
+    /// one scan: a scan is followed by at most one more for each key built.
     fn run(&mut self) {
         while let Some((key, s)) = self.queue.pop() {
             if self.built[key] {
                 continue;
             }
+            #[cfg(test)]
+            SCANS.set(SCANS.get() + 1);
             let (node, flags) = self.keys[key].clone();
-            let mut consulted = Vec::new();
+            let mut deps = Vec::new();
             // Every field is tried, so that every key a field reaches is interned and tried.
             let mut all = true;
             for ty in self.slots[node][s].clone() {
-                all &= self.buildable(ty, &flags, &mut consulted);
+                all &= self.buildable(ty, &flags, &mut deps);
             }
             if all {
                 self.built[key] = true;
-                let waiting = std::mem::take(&mut self.waiting[key]);
-                self.queue.extend(waiting);
-            } else {
-                for c in consulted {
-                    self.waiting[c].push((key, s));
+                for (k, slot) in std::mem::take(&mut self.waiting[key]) {
+                    let remaining = &mut self.pending[k][slot];
+                    *remaining -= 1;
+                    if *remaining == 0 {
+                        self.queue.push((k, slot));
+                    }
                 }
+            } else {
+                for &d in &deps {
+                    self.waiting[d].push((key, s));
+                }
+                self.pending[key][s] = deps.len();
             }
         }
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many slots `Buildable::run` has scanned on this thread.
+    pub(super) static SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }

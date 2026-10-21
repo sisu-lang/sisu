@@ -8,7 +8,9 @@ use super::number;
 use super::prelude::PRELUDE;
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, built_in_type, type_of};
 use crate::ast::{self, ExprKind};
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Suggestion, alias, suggestion};
+use crate::diagnostic::{
+    Code, Definition, Diagnostic, DiagnosticKind, Suggestion, alias, suggestion,
+};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -164,7 +166,8 @@ impl Checker<'_> {
 
     /// `receiver.method<types>(args)` as written, the type arguments in `angles`, `(args)` at
     /// `parens`, which `safe` makes `receiver?.method(args)`. A type or `math` before the `.`
-    /// may make it an idiom.
+    /// may make it an idiom. Type arguments on a member the receiver has not are not reported:
+    /// the unknown member is.
     pub(super) fn method_expr(
         &mut self,
         span: Span,
@@ -174,24 +177,42 @@ impl Checker<'_> {
         args: &[ast::Arg],
         parens: Span,
     ) -> Checked {
+        let start = self.diagnostics.len();
         let path = !types.is_empty() && self.path_method(receiver, method);
-        if path {
+        // Whether the list is reported only once the member is found: a path's, or a built-in's.
+        let mut deferred = path;
+        let checked = if !safe
+            && let Some(checked) = self.type_path(span, receiver, method, Some((args, parens)))
+        {
+            checked
+        } else {
+            self.member(span, safe, receiver, method, |c, checked| {
+                if !path && let Some((first, _)) = types.split_first() {
+                    if let Some(value) = c.method_args(&checked, receiver, method, first, angles) {
+                        c.stray(args);
+                        return Err(value);
+                    }
+                    deferred = type_of(&checked).is_some_and(|ty| {
+                        matches!(
+                            ty.kind(),
+                            TypeKind::Array(_) | TypeKind::String | TypeKind::I64 | TypeKind::F64
+                        )
+                    });
+                }
+                c.method_call(span, checked, receiver, method, args)
+            })
+        };
+        // The member was found unknown, or the receiver of a path that is no idiom was: a name
+        // or a type, which has no members.
+        let unknown = self.diagnostics[start..].iter().any(|d| match d.code() {
+            Code::NoMember | Code::UnknownVariant => d.span() == method.span,
+            Code::BindingNotFound | Code::TypeAsValue => d.span() == receiver.span,
+            _ => false,
+        });
+        if deferred && !unknown {
             self.not_generic(method.name, angles);
         }
-        if !safe && let Some(checked) = self.type_path(span, receiver, method, Some((args, parens)))
-        {
-            return checked;
-        }
-        self.member(span, safe, receiver, method, |c, checked| {
-            if !path
-                && let Some((first, _)) = types.split_first()
-                && let Some(value) = c.method_args(&checked, receiver, method, first, angles)
-            {
-                c.stray(args);
-                return Err(value);
-            }
-            c.method_call(span, checked, receiver, method, args)
-        })
+        checked
     }
 
     /// `receiver.method(args)`, `receiver` checked from `receiver_expr`.
@@ -235,10 +256,8 @@ impl Checker<'_> {
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
         if params.len() != args.len() {
-            let misread = self.body.misread;
             self.stray(args);
-            // A comparison misread as a call took the commas around it.
-            if self.body.misread == misread {
+            if !self.misread_in(args) {
                 self.report(DiagnosticKind::ArgumentCount {
                     name,
                     want: params.len(),
@@ -260,6 +279,13 @@ impl Checker<'_> {
             }
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }
+    }
+
+    /// Whether one of `args`, checked, is a comparison misread as a call, which took the commas
+    /// around it.
+    pub(super) fn misread_in(&self, args: &[ast::Arg]) -> bool {
+        args.iter()
+            .any(|arg| self.body.misread.contains(&arg.value.span.start()))
     }
 
     /// The node `kind` makes of `operands`, in a block after the bindings `spill` makes of them.
@@ -298,6 +324,10 @@ impl Checker<'_> {
     /// `C(f: e, ...)`, a construction of the class `class`.
     fn construct_class(&mut self, span: Span, class: tir::ClassId, args: &[ast::Arg]) -> Checked {
         let info = &self.classes[class.0];
+        assert!(
+            info.type_params.is_empty(),
+            "type arguments in expressions land in Task 4"
+        );
         let name = info.name.name.as_str();
         let fields: Vec<(Symbol, Option<Type>)> =
             info.fields.iter().map(|f| (f.name.name, f.ty)).collect();

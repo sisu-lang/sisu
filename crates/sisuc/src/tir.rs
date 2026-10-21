@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use crate::ast::angled;
 use crate::source::Span;
 
 pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
@@ -1134,14 +1135,6 @@ impl Program {
             _ => ty.to_string(),
         }
     }
-}
-
-/// `<T, U>`, or nothing for no type parameters.
-fn angled(params: &[String]) -> String {
-    if params.is_empty() {
-        return String::new();
-    }
-    format!("<{}>", params.join(", "))
 }
 
 impl fmt::Display for Program {

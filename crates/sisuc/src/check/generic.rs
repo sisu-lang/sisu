@@ -11,6 +11,7 @@ use super::{
 };
 use crate::ast;
 use crate::diagnostic::{ArgumentsForm, MainForm};
+use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
@@ -117,13 +118,17 @@ impl Checker<'_> {
     }
 
     /// Reports `main`, which has type parameters. The fix removes them, unless a comment is
-    /// among them or the rest of `main` names one.
+    /// among them or a name in the rest of `main`, outside its strings and comments, is one.
     pub(super) fn main_type_params(&mut self, main: &ast::Function) {
         let angles = main.angles;
         let rest = &self.source.text[angles.end()..main.span.end()];
-        let named = rest
-            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .any(|word| main.type_params.iter().any(|p| p.name.as_str() == word));
+        // What does not lex alone is held to name one.
+        let named = lex(rest).map_or(true, |lexed| {
+            lexed.tokens.iter().any(|token| {
+                matches!(token.kind, TokenKind::Ident(name)
+                    if main.type_params.iter().any(|p| p.name == name))
+            })
+        });
         let remove = (!named && !self.comment_in(&[angles.range()])).then_some(angles);
         self.report(DiagnosticKind::MainSignature {
             at: angles,
@@ -144,15 +149,15 @@ impl Checker<'_> {
 
     /// Reports `name<...>`, a value with type arguments in `angles`: the `<` and `>` were
     /// comparisons. `name` is the value as written, a name or a field, and `first` the first
-    /// type argument, which the help puts in parentheses with `name`.
-    pub(super) fn misread(&mut self, name: Span, first: &ast::TypeExpr) -> Poisoned {
-        self.body.misread += 1;
+    /// type argument, which the help puts in parentheses with `name`, when a `(` follows the list.
+    pub(super) fn misread(&mut self, name: Span, first: Option<&ast::TypeExpr>) -> Poisoned {
+        self.body.misread.insert(name.start());
         let text = self.source.text;
         self.report(DiagnosticKind::TypeArguments {
             name: text[name.start()..name.end()].to_string(),
             at: name,
             form: ArgumentsForm::Value {
-                compare: text[name.start()..first.span.end()].to_string(),
+                compare: first.map(|first| text[name.start()..first.span.end()].to_string()),
             },
         });
         Poisoned::error()
@@ -160,12 +165,14 @@ impl Checker<'_> {
 
     /// The type arguments `types`, in `angles`, written after `name` in an expression, which
     /// are reported unless a generic declaration takes them. `Some` when `name` is a value,
-    /// whose `<` and `>` were comparisons: the expression is poisoned.
+    /// whose `<` and `>` were comparisons: the expression is poisoned. `call` when a `(`
+    /// follows the list, rather than a `.`.
     pub(super) fn named_args(
         &mut self,
         name: &ast::Ident,
         types: &[ast::TypeExpr],
         angles: Span,
+        call: bool,
     ) -> Option<Poisoned> {
         let first = types.first()?;
         let n = name.name;
@@ -188,7 +195,7 @@ impl Checker<'_> {
             None if self.lookup(n).is_some()
                 || matches!(self.constants.get(&n), Some(Declared::Known(_))) =>
             {
-                return Some(self.misread(name.span, first));
+                return Some(self.misread(name.span, call.then_some(first)));
             }
             // A broken or unknown name: its use reports it.
             None => {}
@@ -221,7 +228,8 @@ impl Checker<'_> {
     /// Reports the type arguments in `angles` of `receiver.method<first, ...>`, `receiver`
     /// checked from `receiver_expr`: a method that takes none, or a field, a value whose `<` and
     /// `>` were comparisons, which is `Some` and poisons the expression. A member the receiver
-    /// does not have is reported as that alone.
+    /// does not have is reported as that alone, and a built-in receiver's list is left to the
+    /// caller.
     pub(super) fn method_args(
         &mut self,
         receiver: &Checked,
@@ -240,10 +248,7 @@ impl Checker<'_> {
                 let info = &self.enums[id.0];
                 (&info.methods, info.type_params.len(), false)
             }
-            TypeKind::Array(_) | TypeKind::String | TypeKind::I64 | TypeKind::F64 => {
-                self.not_generic(method.name, angles);
-                return None;
-            }
+            // A built-in's list is reported once its method is found.
             _ => return None,
         };
         match methods.get(&method.name).copied() {
@@ -255,7 +260,7 @@ impl Checker<'_> {
                 self.not_generic(method.name, angles);
                 None
             }
-            None if field => Some(self.misread(receiver_expr.span.to(method.span), first)),
+            None if field => Some(self.misread(receiver_expr.span.to(method.span), Some(first))),
             _ => None,
         }
     }

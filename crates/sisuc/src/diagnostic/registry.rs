@@ -930,9 +930,10 @@ pub(crate) enum ArgumentsForm {
     /// A declaration that takes none. The fix deletes the list, the diagnostic's span; it is
     /// unsafe when the list holds a comment.
     NotGeneric { safe: bool },
-    /// A value, which is not generic. `compare` is the text the list starts with, the value
-    /// through the first argument, which a comparison would put in parentheses.
-    Value { compare: String },
+    /// A value, which is not generic. `compare`, when the list is followed by `(`, is the text
+    /// the list starts with, the value through the first argument, which a comparison would put
+    /// in parentheses; before a `.` it was no comparison.
+    Value { compare: Option<String> },
 }
 
 /// Why `main`'s signature is wrong.
@@ -3158,8 +3159,11 @@ impl From<DiagnosticKind> for Diagnostic {
                         })
                 }
                 ArgumentsForm::Value { compare } => {
-                    Diagnostic::coded(code, at, format!("`{name}` is not generic"))
-                        .with_help(format!("to compare, write `({compare})`"))
+                    let d = Diagnostic::coded(code, at, format!("`{name}` is not generic"));
+                    match compare {
+                        Some(compare) => d.with_help(format!("to compare, write `({compare})`")),
+                        None => d,
+                    }
                 }
             },
             DiagnosticKind::TypeArgument { ty, at, optional } => {

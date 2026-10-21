@@ -26,12 +26,28 @@ fn generic_declarations_check_clean() {
         "fn f(s: Stack<i64>, t: [Stack<[i64]>]) {}",
         "fn f(s: Stack<[i64?]>) {}",
         "fn f(s: Stack<i64>) -> Cell<i64>? { s.top }",
+        // A field is assigned the type the receiver's arguments make it, as it is read.
+        "class Box<T> {\n    mut v: T\n}\nfn f<U>(b: Box<U>, u: U) { b.v = u }",
+        "class Box<T> {\n    mut v: T\n}\nfn f(b: Box<i64>) { b.v = 1 }",
+        "class Box<T> {\n    mut v: T\n}\nfn f(b: Box<i64>) { b.v += 1 }",
+        "class Box<T> {\n    mut v: T\n}\nfn f(b: Box<[i64]>) { b.v[0] += 1 }",
         "fn f<T>(n: i64) -> [T?] { [None; n] }",
         "fn g<T>(xs: [T]) -> [[T]] { [xs; 2] }",
         "fn g(a: i64, b: i64, c: i64, d: i64) { f((a < b), c > (d)) }\nfn f(x: bool, y: bool) {}",
+        // A qualified variant pattern names the enum, whatever its arguments.
+        "enum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}\nfn count<T>(t: Tree<T>) -> i64 {\n    match t {\n        Tree.Leaf => 0\n        Tree.Node(_, _, _) => 1\n    }\n}",
+        "enum Opt<T> {\n    No\n    Yes(T)\n    fn none(self) -> bool {\n        match self {\n            Opt.No => true\n            Opt.Yes(_) => false\n        }\n    }\n}",
     ] {
         clean(&with_decls(src));
     }
+}
+
+/// A generic class is constructed with type arguments only from Task 4 on, so its fields are
+/// never read with none.
+#[test]
+#[should_panic(expected = "type arguments in expressions land in Task 4")]
+fn constructing_a_generic_class_waits_for_type_arguments() {
+    checked("class C<T> {\n    x: T?\n}\nfn main() {\n    let c = C(x: None)\n    let _ = c.x\n}");
 }
 
 /// `tir` names each declaration's type parameters, a method's owner's before its own.
@@ -125,6 +141,44 @@ fn type_arguments_on_a_value() {
     assert_eq!(d.fixes(), []);
     let src = with_decls("fn g(p: Point, a: i64, b: i64, c: i64) -> bool { p.x < a, b > (c) }");
     diagnostic(&src, Code::TypeArguments, (1, 50, "p.x"), &[]);
+    // Before a `.`, the list cannot be two comparisons, so there is nothing to compare.
+    for (line, at) in [
+        ("fn g(xs: [i64]) -> i64 { xs<i64>.len() }", (1, 26, "xs")),
+        ("fn g(p: Point) -> i64 { p<i64>.x }", (1, 25, "p")),
+    ] {
+        let d = diagnostic(&with_decls(line), Code::TypeArguments, at, &[]);
+        assert!(d.help().is_none(), "{line}");
+    }
+}
+
+/// Comparisons misread as a call take the commas of the call they are an argument of, whose
+/// count of arguments is then not reported, a variant's and a method's as a function's; a
+/// call around that one, or around a block that holds it, still has its count reported.
+#[test]
+fn a_misread_comparison_hides_only_its_own_call_s_count() {
+    let decls = "enum E { A(bool, bool) }\nclass K {\n    fn m(self, x: bool, y: bool) {}\n}\nfn g(x: i64) -> i64 { x }\nfn h(x: bool, y: bool) -> bool { x }\nfn main() {}";
+    let misread = |col| (Code::TypeArguments, (1, col));
+    let count = (Code::ArgumentCount, (1, 40));
+    for (line, expected) in [
+        (
+            "fn f(a: i64, b: i64, c: i64, d: i64) -> E { E.A(a < b, c > (d)) }",
+            vec![misread(49)],
+        ),
+        (
+            "fn f(k: K, a: i64, b: i64, c: i64, d: i64) { k.m(a < b, c > (d)) }",
+            vec![misread(50)],
+        ),
+        (
+            "fn f(a: i64, b: i64, c: i64, d: i64) { g(1, { h(a < b, c > (d))\n 2 }) }",
+            vec![count, misread(49)],
+        ),
+        (
+            "fn f(a: i64, b: i64, c: i64, d: i64) { g(1, 2, h(a < b, c > (d))) }",
+            vec![count, misread(50)],
+        ),
+    ] {
+        codes(&format!("{line}\n{decls}"), &expected);
+    }
 }
 
 #[test]
@@ -199,6 +253,10 @@ fn main_takes_no_type_parameters() {
     let src = "fn main<T>() { let x: T? = None }";
     let d = diagnostic(src, Code::MainSignature, (1, 8, "<T>"), &[]);
     assert_eq!(d.fixes(), []);
+    // A string or a comment that holds the name does not use it.
+    let src = "fn main<T>() {\n    print(\"T\") // T\n}";
+    let d = diagnostic(src, Code::MainSignature, (1, 8, "<T>"), &[]);
+    assert_eq!(fixes(src, &d), [(true, vec![(1, 8, "<T>", String::new())])]);
 }
 
 #[test]
@@ -213,6 +271,12 @@ fn type_parameter_names() {
     ] {
         codes(&format!("{src}\nfn main() {{}}"), &expected);
     }
+    // A class's parameters are out of scope after it, here with no function after the class to
+    // reset the scope.
+    codes(
+        "fn main() {}\nclass C<T> {\n    x: T\n}\nconst N: T = 1",
+        &[(Code::UnknownType, (5, 10))],
+    );
 }
 
 /// Which generic enums can be built depends on which of their arguments can: `Two<Expr>` only
@@ -246,9 +310,53 @@ fn generic_enums_that_cannot_be_built() {
             "enum Nest<T> { A(Nest<[T]>) }",
             vec![(Code::NeverConstructed, (1, 6))],
         ),
+        // A class no value can be built of is reported when an argument hides its cycle,
+        // and `E`, which only needs it, is not.
+        (
+            "class C<T> {\n    x: T\n}\nclass B {\n    c: C<B>\n}\nenum E { A(B) }",
+            vec![(Code::NeverConstructed, (4, 7))],
+        ),
+        (
+            "class Box<T> {\n    v: T\n}\nclass C {\n    b: Box<C>\n}",
+            vec![(Code::NeverConstructed, (4, 7))],
+        ),
+        // `Ignore<Bad>` can be built, so `E` does not need a `Bad` and is reported on its own.
+        (
+            "enum Ignore<T> { A }\nenum Bad { A(Bad) }\nenum E { A(E, Ignore<Bad>) }",
+            vec![
+                (Code::NeverConstructed, (2, 6)),
+                (Code::NeverConstructed, (3, 6)),
+            ],
+        ),
+        // A field whose type is unknown builds nothing, and is passed over on the chain.
+        (
+            "class C {\n    a: Zz\n    b: E\n}\nenum E { A(C) }",
+            vec![
+                (Code::UnknownType, (2, 8)),
+                (Code::NeverConstructed, (5, 6)),
+            ],
+        ),
     ] {
         codes(&format!("{src}\nfn main() {{}}"), &expected);
     }
+}
+
+/// A slot that cannot be built yet is scanned again only once all it waits for is built, so
+/// an enum of `n` fields, each of an enum built at once, costs a few scans per field.
+#[test]
+fn the_can_be_built_fixed_point_scans_linearly() {
+    let scans = |n: usize| {
+        let names: Vec<String> = (0..n).map(|i| format!("E{i}")).collect();
+        let decls = names.join(" { A }\nenum ");
+        let src = format!(
+            "enum {decls} {{ A }}\nenum Root {{ A({}) }}\nfn main() {{}}",
+            names.join(", ")
+        );
+        crate::check::enums::SCANS.set(0);
+        clean(&src);
+        crate::check::enums::SCANS.get()
+    };
+    assert_near_linear(scans(4), scans(8), scans(12));
 }
 
 /// A list after a name that takes none is reported at the list in every expression form, and
@@ -336,6 +444,41 @@ fn type_arguments_in_expressions() {
         (
             "enum E {\n    A\n    fn m(self) -> i64 { 1 }\n}\nfn g() -> i64 { E.m<i64>() }",
             vec![(Code::MemberKind, (5, 19)), (Code::TypeArguments, (5, 20))],
+        ),
+    ] {
+        codes(&with_decls(src), &expected);
+    }
+}
+
+/// A member the receiver does not have is reported alone, and so is a path's receiver that is
+/// no idiom: no list is reported after either.
+#[test]
+fn type_arguments_on_an_unknown_member() {
+    for (src, expected) in [
+        (
+            "fn g() { [1].what<i64>() }",
+            vec![(Code::NoMember, (1, 14))],
+        ),
+        (
+            "fn g() { \"s\".what<i64>() }",
+            vec![(Code::NoMember, (1, 14))],
+        ),
+        ("fn g() { 1.what<i64>() }", vec![(Code::NoMember, (1, 12))]),
+        (
+            "enum E { A }\nfn g() { E.nope<i64>() }",
+            vec![(Code::UnknownVariant, (2, 12))],
+        ),
+        (
+            "fn g() { math.nope<f64>(1.0) }",
+            vec![(Code::BindingNotFound, (1, 10))],
+        ),
+        (
+            "fn g() { f64.nope<f64>(1.0) }",
+            vec![(Code::TypeAsValue, (1, 10))],
+        ),
+        (
+            "fn g() { i64.abs<i64>(1) }",
+            vec![(Code::TypeAsValue, (1, 10))],
         ),
     ] {
         codes(&with_decls(src), &expected);

@@ -589,7 +589,7 @@ fn spaced<T: fmt::Display>(f: &mut fmt::Formatter<'_>, items: &[T]) -> fmt::Resu
 }
 
 /// `<a, b>` to write after a name, or nothing for an empty list.
-struct Angled<'a, T>(&'a [T]);
+pub(crate) struct Angled<'a, T>(&'a [T]);
 
 impl<T: fmt::Display> fmt::Display for Angled<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -604,7 +604,7 @@ impl<T: fmt::Display> fmt::Display for Angled<'_, T> {
     }
 }
 
-fn angled<T>(items: &[T]) -> Angled<'_, T> {
+pub(crate) fn angled<T>(items: &[T]) -> Angled<'_, T> {
     Angled(items)
 }
 

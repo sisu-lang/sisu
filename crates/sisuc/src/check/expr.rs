@@ -105,7 +105,7 @@ impl Checker<'_> {
                 angles,
                 args,
             } => {
-                if let Some(value) = self.named_args(callee, types, *angles) {
+                if let Some(value) = self.named_args(callee, types, *angles, true) {
                     self.stray(args);
                     return Err(value);
                 }
@@ -115,7 +115,7 @@ impl Checker<'_> {
                 name,
                 types,
                 angles,
-            } => match self.named_args(name, types, *angles) {
+            } => match self.named_args(name, types, *angles, false) {
                 Some(value) => Err(value),
                 None => self.name(name.span, name.name),
             },

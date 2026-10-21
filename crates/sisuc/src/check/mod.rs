@@ -293,9 +293,10 @@ struct Checker<'src> {
 struct Body {
     /// The type parameters in scope, which `resolve` finds before any other type.
     type_params: Vec<Symbol>,
-    /// How many calls of a value, `a<b, c>(d)`, have been reported: comparisons misread as a
-    /// call change the count of the arguments around them, which is then not reported.
-    misread: usize,
+    /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
+    /// misread as a call change the count of the arguments of the call they are an argument of,
+    /// which is then not reported.
+    misread: FxHashSet<usize>,
     scopes: Vec<FxHashMap<Symbol, Binding>>,
     locals: Vec<tir::Local>,
     /// `None` is `Error`.
@@ -643,6 +644,7 @@ impl Checker<'_> {
                     ast::Member::Field(field) => {
                         self.body.type_params.clone_from(&owner);
                         let ty = self.resolve(&field.ty);
+                        self.body.type_params.clear();
                         if self.first_definition(
                             &mut first,
                             Definition::Field,
