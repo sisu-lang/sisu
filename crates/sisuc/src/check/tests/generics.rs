@@ -149,6 +149,22 @@ fn type_arguments_on_a_value() {
         let d = diagnostic(&with_decls(line), Code::TypeArguments, at, &[]);
         assert!(d.help().is_none(), "{line}");
     }
+    // A local that takes the name `math` is a value, whose field is compared.
+    codes(
+        &with_decls(
+            "fn g(p: Point, a: i64, b: i64, c: i64) -> bool {\n    let math = p\n    math.x < a, b > (c)\n}",
+        ),
+        &[(Code::TypeArguments, (3, 5))],
+    );
+}
+
+/// A pattern's qualifier that names a type other than an enum fits no enum.
+#[test]
+fn a_class_qualifier_fits_no_enum() {
+    codes(
+        "class K {\n    x: i64\n}\nenum E { A }\nfn f(e: E) -> i64 {\n    match e {\n        K.A => 1\n        _ => 0\n    }\n}\nfn main() {}",
+        &[(Code::Mismatch, (7, 9))],
+    );
 }
 
 /// Comparisons misread as a call take the commas of the call they are an argument of, whose
