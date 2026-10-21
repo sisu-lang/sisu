@@ -762,6 +762,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         for (address, ty) in rest {
             self.release_at(address, ty);
         }
+        // No `--rc-checks` moved mark is set: `check_not_moved` (rc.rs) skips enums.
         if self.flagged[scrutinee.0] {
             let (slot, ty) = self.slot(scrutinee);
             self.store(slot, ty.const_zero());
