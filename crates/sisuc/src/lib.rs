@@ -73,7 +73,7 @@ enum Mode {
 }
 
 /// Where the program's text comes from.
-pub(crate) enum Source {
+enum Source {
     File(PathBuf),
     /// An inline program, from `-e`.
     Inline(OsString),
@@ -110,7 +110,16 @@ pub fn cli() -> ExitCode {
         Err(e) => {
             // Not `e.exit()`, which would end the process from the compiler's thread. With
             // stderr gone, there is nowhere to say that printing failed.
-            e.print().ok();
+            if let Err(write) = e.print()
+                && !e.use_stderr()
+            {
+                // A help or version that did not reach stdout is not a success.
+                report::tool_error_after_summary(
+                    &Format::Text,
+                    &format!("cannot write to stdout: {write}"),
+                );
+                return ExitCode::FAILURE;
+            }
             // 0 for help, 2 for a usage error.
             return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2));
         }
@@ -186,8 +195,7 @@ fn explain(reporter: &mut Report, code: &str) -> ExitCode {
         Some(*text)
     };
     if let Some(text) = Code::parse(code).map(Code::explanation).or_else(retired) {
-        print!("{text}");
-        ExitCode::SUCCESS
+        print_stdout(reporter, text)
     } else {
         reporter.tool_error(&format!("unknown diagnostic code `{code}`"));
         ExitCode::FAILURE

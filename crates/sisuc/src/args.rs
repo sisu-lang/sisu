@@ -60,13 +60,17 @@ enum Command {
     },
     /// Report the diagnostics of a program without building it
     Check {
+        /// How to print diagnostics: as text, or as JSON Lines.
         #[arg(long, value_enum, default_value = "text")]
         format: Format,
         #[command(flatten)]
         program: Program,
     },
     /// Print the explanation of a diagnostic code
-    Explain { code: String },
+    Explain {
+        /// A diagnostic code, such as E0001.
+        code: String,
+    },
 }
 
 /// The program `build` and `check` take: a file, or the text of one with `-e`.
@@ -101,6 +105,7 @@ struct BuildFlags {
     /// Link with `ld.<linker>` in place of `cc`'s default linker
     #[arg(long, value_parser = ["bfd", "gold", "lld", "mold"])]
     linker: Option<String>,
+    /// How to print diagnostics: as text, or as JSON Lines.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
 }

@@ -58,9 +58,9 @@ fn build(reporter: &mut Report, source: &Source, backend: &Backend) -> Option<(P
         .ok()?;
     let (name, text) = read_source(reporter, source)?;
     let program = front_end(reporter, &name, &text)?;
-    // shortcut: a Ctrl-C from here until `run` removes the directory, through the compile, the
-    // link and the spawn, leaves it behind; a signal handler would close that gap, if it ever
-    // matters.
+    // shortcut: a Ctrl-C or a compiler panic (`panic = "abort"`) from here until `run` removes the
+    // directory, through the compile, the link and the spawn, leaves it behind; a signal handler
+    // would close the Ctrl-C gap, if it ever matters.
     let dir = private_dir(&std::env::temp_dir(), fresh_names(""))
         .inspect_err(|message| reporter.tool_error(message))
         .ok()?;

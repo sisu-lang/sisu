@@ -216,22 +216,34 @@ fn help_and_no_arguments_exit_0() {
     }
 }
 
-/// The help of a bare `sisu` that cannot be written is a tool error, not a panic.
+/// Help, version and an explanation that cannot be written are a tool error, not a panic or a
+/// silent success.
 #[test]
-fn help_into_a_full_stdout_is_a_tool_error() {
-    let full = fs::File::options()
-        .write(true)
-        .open("/dev/full")
-        .expect("/dev/full exists on Linux");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .stdout(full)
-        .output()
-        .expect("sisu starts");
-    assert_eq!(out.status.code(), Some(1), "{:?}", out.status);
-    assert_eq!(
-        String::from_utf8_lossy(&out.stderr),
-        "sisu: cannot write to stdout: No space left on device (os error 28)\n"
-    );
+fn output_into_a_full_stdout_is_a_tool_error() {
+    for args in [
+        &[][..],
+        &["--help"],
+        &["help"],
+        &["build", "--help"],
+        &["--version"],
+        &["explain", "E0001"],
+    ] {
+        let full = fs::File::options()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full exists on Linux");
+        let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+            .args(args)
+            .stdout(full)
+            .output()
+            .expect("sisu starts");
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {:?}", out.status);
+        assert_eq!(
+            String::from_utf8_lossy(&out.stderr),
+            "sisu: cannot write to stdout: No space left on device (os error 28)\n",
+            "{args:?}"
+        );
+    }
 }
 
 /// A wrong command line exits 2, and a broken flag rule names the flag with `build`'s usage.
@@ -240,7 +252,6 @@ fn usage_errors_exit_2() {
     assert_usage_errors(&[
         &["bogus"],
         &["build"],
-        &["check"],
         &["explain"],
         &["build", "a.sisu", "b.sisu"],
         &["check", "--emit", "ast", "a.sisu"],
@@ -1715,13 +1726,13 @@ fn build_takes_an_inline_program() {
         .expect("the program starts");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "7\n");
 
-    let out = sisu_in_tmp(&["build", "--emit", "tir", "-e", "fn main() {}"]);
-    assert_eq!(out.status.code(), Some(0));
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("main"),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
+    let file = dir.join("p.sisu");
+    fs::write(&file, "fn main() { print(7) }").expect("the program should be written");
+    let from_file = sisu_in_tmp(&["build", "--emit", "tir", file.to_str().expect("UTF-8 path")]);
+    let inline = sisu_in_tmp(&["build", "--emit", "tir", "-e", "fn main() { print(7) }"]);
+    assert_eq!(inline.status.code(), Some(0));
+    assert_ne!(inline.stdout, Vec::<u8>::new());
+    assert_eq!(inline.stdout, from_file.stdout);
 }
 
 /// An inline program has no name to give an executable.
