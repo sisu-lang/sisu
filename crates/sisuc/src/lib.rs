@@ -13,6 +13,7 @@ mod link;
 mod mir;
 mod parser;
 mod report;
+mod run;
 mod source;
 mod symbol;
 mod tir;
@@ -28,7 +29,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use codegen::OptLevel;
 use diagnostic::{Code, Diagnostic, RETIRED, Severity};
 use inkwell::context::Context;
-use report::Reporter;
+use report::{Format, Reporter};
 use tir::Program;
 
 pub use fuzz::front_end as fuzz_front_end;
@@ -56,6 +57,12 @@ enum Mode {
     Build {
         input: Source,
         output: PathBuf,
+        backend: Backend,
+    },
+    /// Compile the program and run it with `args`.
+    Run {
+        source: Source,
+        args: Vec<OsString>,
         backend: Backend,
     },
 }
@@ -107,15 +114,13 @@ pub fn cli() -> ExitCode {
         io::stderr().is_terminal(),
         std::env::var_os("NO_COLOR").as_deref(),
     );
-    let mut reporter = Reporter::new(io::stderr(), format, color);
-    let code = execute(&mut reporter, mode);
-    reporter.finish();
-    code
+    let reporter = Reporter::new(io::stderr(), format.clone(), color);
+    execute(reporter, &format, mode)
 }
 
-/// Does what `mode` asks for.
-fn execute(reporter: &mut Report, mode: Mode) -> ExitCode {
-    match mode {
+/// Does what `mode` asks for, and finishes `reporter`, which writes in `format`.
+fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
+    let code = match mode {
         Mode::Help => {
             let mut stdout = io::stdout().lock();
             match write!(stdout, "{}", args::help()).and_then(|()| stdout.flush()) {
@@ -131,15 +136,23 @@ fn execute(reporter: &mut Report, mode: Mode) -> ExitCode {
             input,
             level,
             rc_checks,
-        } => emit(reporter, &stage, &input, level, rc_checks),
-        Mode::Check { source } => run_check(reporter, &source),
-        Mode::Explain { code } => explain(reporter, &code),
+        } => emit(&mut reporter, &stage, &input, level, rc_checks),
+        Mode::Check { source } => run_check(&mut reporter, &source),
+        Mode::Explain { code } => explain(&mut reporter, &code),
         Mode::Build {
             input,
             output,
             backend,
-        } => build(reporter, &input, &output, &backend),
-    }
+        } => build(&mut reporter, &input, &output, &backend),
+        // `run` finishes the reporter itself, before the program starts.
+        Mode::Run {
+            source,
+            args,
+            backend,
+        } => return run::run(reporter, format, &source, &args, &backend),
+    };
+    reporter.finish();
+    code
 }
 
 /// Prints the explanation of `code`, in any case, retired or not, or that there is no such code.
@@ -427,7 +440,16 @@ fn build(reporter: &mut Report, input: &Source, output: &Path, backend: &Backend
     let Some(program) = front_end(reporter, &path, &source) else {
         return ExitCode::FAILURE;
     };
-    match compile(&program, &path, &source, &runtime, output, backend) {
+    let compiled = compile(
+        &program,
+        &path,
+        &source,
+        &runtime,
+        output,
+        &std::env::temp_dir(),
+        backend,
+    );
+    match compiled {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             reporter.tool_error(&message);
@@ -470,13 +492,14 @@ fn front_end(reporter: &mut Report, path: &str, source: &str) -> Option<Program>
 }
 
 /// Compiles `program` into the executable `output`, linked with `runtime`, going through a
-/// temporary object file.
+/// temporary object file in `dir`.
 fn compile(
     program: &Program,
     path: &str,
     source: &str,
     runtime: &Path,
     output: &Path,
+    dir: &Path,
     backend: &Backend,
 ) -> Result<(), String> {
     let Backend {
@@ -490,16 +513,8 @@ fn compile(
     let module = codegen::compile(&context, program, &mir, path, source, &machine, rc_checks);
     codegen::optimize(&module, &machine, level)?;
     let code = codegen::object_code(&module, &machine)?;
-    // A name of its own, so a user's `<output>.o` is left alone; the nanoseconds pick a
-    // fresh name when one is taken.
-    let pid = std::process::id();
-    let names = (0..10).map(|_| {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-        format!("sisuc-{pid}-{nanos}.o")
-    });
-    let object = create_object(&std::env::temp_dir(), code.as_slice(), names)?;
+    // A name of its own, so a user's `<output>.o` is left alone.
+    let object = create_object(dir, code.as_slice(), fresh_names(".o"))?;
     // Remove the object file whether or not the link worked; a link error wins.
     let linking = link::Linking {
         runtime,
@@ -510,6 +525,18 @@ fn compile(
     let removed =
         fs::remove_file(&object).map_err(|e| format!("cannot remove {}: {e}", object.display()));
     link_result.and(removed)
+}
+
+/// Ten names for a new file or directory in the temp dir: `sisuc-<pid>-<nanoseconds><suffix>`.
+/// The nanoseconds pick a fresh name when one is taken.
+fn fresh_names(suffix: &'static str) -> impl Iterator<Item = String> {
+    let pid = std::process::id();
+    (0..10).map(move |_| {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        format!("sisuc-{pid}-{nanos}{suffix}")
+    })
 }
 
 /// Writes `bytes` to a new file in `dir`, under the first of `names` that is free, and

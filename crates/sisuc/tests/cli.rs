@@ -209,7 +209,7 @@ fn help_and_no_arguments_exit_0() {
             .expect("sisuc starts");
         assert_eq!(out.status.code(), Some(0), "{args:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        for command in ["build", "check", "explain"] {
+        for command in ["build", "run", "check", "explain"] {
             assert!(stdout.contains(command), "{args:?}: {stdout}");
         }
         assert_eq!(String::from_utf8_lossy(&out.stderr), "", "{args:?}");
@@ -538,16 +538,19 @@ fn explain_rejects_an_unknown_code() {
 
 #[test]
 fn unreadable_input_exits_1() {
-    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
-        .current_dir(env!("CARGO_TARGET_TMPDIR"))
-        .args(["check", "no_such_dir/unreadable_input_exits_1.sisu"])
-        .output()
-        .expect("sisuc starts");
-    assert_eq!(out.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&out.stderr)
-            .starts_with("sisuc: cannot read no_such_dir/unreadable_input_exits_1.sisu: ")
-    );
+    for command in ["check", "run"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(env!("CARGO_TARGET_TMPDIR"))
+            .args([command, "no_such_dir/unreadable_input_exits_1.sisu"])
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(1), "{command}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr)
+                .starts_with("sisuc: cannot read no_such_dir/unreadable_input_exits_1.sisu: "),
+            "{command}"
+        );
+    }
 }
 
 #[test]
@@ -1399,18 +1402,23 @@ fn missing_runtime_is_found_before_the_compile() {
     let sisuc = dir.join("sisuc");
     fs::hard_link(env!("CARGO_BIN_EXE_sisuc"), &sisuc).expect("links");
     fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
-    let out = Command::new(&sisuc)
-        .current_dir(&dir)
-        .env("TMPDIR", dir.join("absent"))
-        .args(["build", "one.sisu", "-o", "one"])
-        .output()
-        .expect("sisuc starts");
-    assert_eq!(out.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.starts_with("sisuc: runtime library not found at "),
-        "{stderr}"
-    );
+    for args in [
+        &["build", "one.sisu", "-o", "one"][..],
+        &["run", "one.sisu"],
+    ] {
+        let out = Command::new(&sisuc)
+            .current_dir(&dir)
+            .env("TMPDIR", dir.join("absent"))
+            .args(args)
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.starts_with("sisuc: runtime library not found at "),
+            "{args:?}: {stderr}"
+        );
+    }
 }
 
 /// An output whose directory does not exist, or that is a directory, is reported before
@@ -1708,4 +1716,355 @@ fn inline_program_not_utf8() {
         stderr.starts_with("error[E0072]: source is not valid UTF-8\n --> <inline>:1:13\n"),
         "{stderr}"
     );
+}
+
+/// `sisuc run`, run from `tests/` with `TMPDIR` set to `tmp`, where it makes its directory.
+fn sisuc_run(tmp: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sisuc"));
+    command
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"))
+        .env("TMPDIR", tmp)
+        .arg("run");
+    command
+}
+
+/// Asserts that `sisuc run` left nothing in `tmp`.
+fn assert_empty(tmp: &Path) {
+    let left: Vec<_> = fs::read_dir(tmp)
+        .expect("reads the temp directory")
+        .map(|entry| entry.expect("reads an entry").file_name())
+        .collect();
+    assert!(left.is_empty(), "left in {}: {left:?}", tmp.display());
+}
+
+#[test]
+fn run_passes_stdin_and_arguments() {
+    let tmp = scratch_path::empty_dir("run_passes_stdin_and_arguments");
+    let case = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run"));
+    let mut child = sisuc_run(&tmp)
+        .args(["run/args_and_stdin.sisu", "a", "-x", "--flag"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("sisuc starts");
+    child
+        .stdin
+        .take()
+        .expect("stdin is piped")
+        .write_all(&fs::read(case.join("args_and_stdin.in")).expect("reads"))
+        .expect("writes stdin");
+    let out = child.wait_with_output().expect("sisuc runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(stderr, "");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        fs::read_to_string(case.join("args_and_stdin.out")).expect("reads")
+    );
+    // A first `--` is dropped, a later one passed on.
+    for (args, expected) in [(&["--", "a"][..], "a\n"), (&["a", "--", "b"], "a\n--\nb\n")] {
+        let out = sisuc_run(&tmp)
+            .arg("run/args_and_stdin.sisu")
+            .args(args)
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), expected, "{args:?}");
+    }
+    assert_empty(&tmp);
+}
+
+#[test]
+fn run_passes_the_exit_code() {
+    let tmp = scratch_path::empty_dir("run_passes_the_exit_code");
+    let out = sisuc_run(&tmp)
+        .arg("run/args_none.sisu")
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "0\n");
+    // Without end, the recursion overflows the stack: SIGSEGV, 11, as a shell reports it.
+    let out = sisuc_run(&tmp)
+        .args([
+            "-e",
+            "fn f(n: i64) -> i64 { f(n + 1) + 1 }\nfn main() { print(f(0)) }",
+        ])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(
+        out.status.code(),
+        Some(128 + 11),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run_fail = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run-fail"));
+    let out = sisuc_run(&tmp)
+        .current_dir(run_fail)
+        .arg("panic.sisu")
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(101));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        fs::read_to_string(run_fail.join("panic.err")).expect("reads")
+    );
+    assert_empty(&tmp);
+}
+
+#[test]
+fn run_with_a_compile_error_runs_nothing() {
+    let tmp = scratch_path::empty_dir("run_with_a_compile_error_runs_nothing");
+    let diagnostics = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/diagnostics"));
+    let out = sisuc_run(&tmp)
+        .current_dir(diagnostics)
+        .arg("E0001.sisu")
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        fs::read_to_string(diagnostics.join("E0001.err")).expect("reads")
+    );
+    assert_empty(&tmp);
+}
+
+#[test]
+fn run_takes_build_flags() {
+    let tmp = scratch_path::empty_dir("run_takes_build_flags");
+    let out = sisuc_run(&tmp)
+        .args(["-O2", "--rc-checks", "run/args_none.sisu"])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "0\n");
+    assert_empty(&tmp);
+}
+
+/// The warnings and their summary are on stderr before the program starts, and the summary
+/// is not written again after it ends.
+#[test]
+fn run_prints_warnings_first() {
+    let tmp = scratch_path::empty_dir("run_prints_warnings_first");
+    let out = sisuc_run(&tmp)
+        .args(["-e", "fn main() { let mut x = 1; panic(\"x is {x}\") }"])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(101));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let summary =
+        "\nsisuc: 1 warning\nsisuc: for more on a code, run `sisuc --explain <code>`: W0002\n";
+    let (warning, panic) = stderr.split_once(summary).expect("one summary");
+    assert!(warning.starts_with("warning[W0002]: "), "{stderr}");
+    assert!(panic.starts_with("sisu: panic at <inline>:1:"), "{stderr}");
+    assert!(!panic.contains("sisuc: "), "{stderr}");
+    assert_empty(&tmp);
+}
+
+#[test]
+fn run_takes_an_inline_program() {
+    let tmp = scratch_path::empty_dir("run_takes_an_inline_program");
+    let out = sisuc_run(&tmp)
+        .args([
+            "-e",
+            "fn main(args: [string]) { for a in args { print(a) } }",
+            "arg",
+        ])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "arg\n");
+    assert_empty(&tmp);
+}
+
+/// As with `python -c`, every argument after the code goes to the program, flags included.
+#[test]
+fn run_passes_flags_after_inline_code_to_the_program() {
+    let tmp = scratch_path::empty_dir("run_passes_flags_after_inline_code");
+    let out = sisuc_run(&tmp)
+        .args([
+            "-e",
+            "fn main(args: [string]) { print(args.len()) }",
+            "-O2",
+            "x",
+        ])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "2\n");
+    assert_empty(&tmp);
+}
+
+/// `sisuc run x | head -1`: the program dies of SIGPIPE, as it would run directly, and `sisuc`
+/// says nothing of its own.
+#[test]
+fn run_into_a_closed_pipe_dies_of_sigpipe() {
+    use std::io::{BufRead, BufReader};
+
+    let tmp = scratch_path::empty_dir("run_into_a_closed_pipe");
+    let mut child = sisuc_run(&tmp)
+        .args(["-e", "fn main() { while true { print(1) } }"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("sisuc starts");
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().expect("stdout is piped"))
+        .read_line(&mut line)
+        .expect("reads a line");
+    assert_eq!(line, "1\n");
+    let out = child.wait_with_output().expect("sisuc runs");
+    assert_eq!(out.status.code(), Some(128 + 13));
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+    assert_empty(&tmp);
+}
+
+/// Two `run`s of one file at once each get a directory of their own.
+#[test]
+fn two_runs_at_once() {
+    let tmp = scratch_path::empty_dir("two_runs_at_once");
+    let start = || {
+        sisuc_run(&tmp)
+            .arg("run/args_none.sisu")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("sisuc starts")
+    };
+    for child in [start(), start()] {
+        let out = child.wait_with_output().expect("sisuc runs");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "0\n");
+    }
+    assert_empty(&tmp);
+}
+
+#[test]
+fn json_run_with_an_error_runs_nothing() {
+    let tmp = scratch_path::empty_dir("json_run_with_an_error");
+    let out = sisuc_run(&tmp)
+        .args(["--format", "json", "diagnostics/E0001.sisu"])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let kinds: Vec<String> = stderr
+        .lines()
+        .map(|l| {
+            let record: serde_json::Value =
+                serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}"));
+            record["kind"].as_str().expect("a kind").to_string()
+        })
+        .collect();
+    assert_eq!(kinds, ["diagnostic", "summary"], "{stderr}");
+    assert_empty(&tmp);
+}
+
+#[test]
+fn run_without_a_program_is_a_usage_error() {
+    assert_usage_errors(&[&["run"], &["run", "-O2"]]);
+}
+
+/// The program's directory is gone while it still runs: `sisuc` removes it before it waits.
+#[test]
+fn run_removes_its_directory_while_the_program_runs() {
+    use std::io::{BufRead, BufReader};
+    use std::time::{Duration, Instant};
+
+    let tmp = scratch_path::empty_dir("run_removes_its_directory");
+    // `eprint`, not `print`: stdout into a pipe is block-buffered, and `read_line` does not
+    // flush it.
+    let mut child = sisuc_run(&tmp)
+        .args([
+            "-e",
+            "fn main() { eprint(\"ready\"); print(read_line() ?? \"none\") }",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("sisuc starts");
+    let mut stderr = BufReader::new(child.stderr.take().expect("stderr is piped"));
+    let mut line = String::new();
+    stderr.read_line(&mut line).expect("reads a line");
+    assert_eq!(line, "ready\n");
+    // A hang guard, not a measure of speed.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while fs::read_dir(&tmp).expect("reads").next().is_some() {
+        assert!(
+            Instant::now() < deadline,
+            "the directory is still there while the program waits for input"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child
+        .stdin
+        .take()
+        .expect("stdin is piped")
+        .write_all(b"line\n")
+        .expect("writes stdin");
+    let out = child.wait_with_output().expect("sisuc runs");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "line\n");
+}
+
+/// A link that fails, here because `cc` is not on `PATH`, leaves nothing behind.
+#[test]
+fn run_link_failure_leaves_nothing() {
+    let tmp = scratch_path::empty_dir("run_link_failure_leaves_nothing");
+    let out = sisuc_run(&tmp)
+        .env("PATH", scratch_path::empty_dir("run_link_failure_path"))
+        .arg("run/args_none.sisu")
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with("sisuc: cannot run cc: "), "{stderr}");
+    assert_empty(&tmp);
+}
+
+/// A temp directory that does not exist is a tool error: `run` cannot make its directory there,
+/// and `build` cannot write its object file.
+#[test]
+fn missing_temp_dir_is_a_tool_error() {
+    let dir = scratch_path::empty_dir("missing_temp_dir");
+    let absent = dir.join("absent");
+    for (args, suffix) in [
+        (&["run", "run/args_none.sisu"][..], ""),
+        (&["build", "run/args_none.sisu", "-o"], ".o"),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"))
+            .env("TMPDIR", &absent)
+            .args(args)
+            // `build`'s output; for `run`, an argument of a program that never starts.
+            .arg(dir.join("out"))
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let expected = format!("sisuc: cannot create {}/sisuc-", absent.display());
+        assert!(stderr.starts_with(&expected), "{args:?}: {stderr}");
+        assert!(
+            stderr.ends_with(&format!(
+                "{suffix}: No such file or directory (os error 2)\n"
+            )),
+            "{args:?}: {stderr}"
+        );
+    }
 }

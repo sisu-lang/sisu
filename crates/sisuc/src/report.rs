@@ -61,10 +61,7 @@ impl<W: Write> Reporter<W> {
 
     /// Writes a tool error; `message` has no `sisuc: ` prefix.
     pub(crate) fn tool_error(&mut self, message: &str) {
-        let text = match self.format {
-            Format::Text => format!("sisuc: {message}"),
-            Format::Json => json::tool_error(message),
-        };
+        let text = tool_error_line(&self.format, message);
         self.line(&text);
     }
 
@@ -101,6 +98,21 @@ impl<W: Write> Reporter<W> {
         writeln!(self.out, "{text}")
             .expect("stderr should take the report, as `eprintln!` assumes");
     }
+}
+
+/// A tool error in `format`, without its newline.
+fn tool_error_line(format: &Format, message: &str) -> String {
+    match format {
+        Format::Text => format!("sisuc: {message}"),
+        Format::Json => json::tool_error(message),
+    }
+}
+
+/// Writes a tool error to stderr after `finish` has written the summary: the one exception to
+/// the summary being the last line, for what goes wrong in `sisuc run` once the program is
+/// built.
+pub(crate) fn tool_error_after_summary(format: &Format, message: &str) {
+    eprintln!("{}", tool_error_line(format, message));
 }
 
 /// Whether text output is colored: only on a terminal, and only when `NO_COLOR` is unset or

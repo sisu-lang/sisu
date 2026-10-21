@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::builder::StyledStr;
 use clap::error::ErrorKind;
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
 use crate::codegen::OptLevel;
 use crate::report::Format;
@@ -34,6 +34,18 @@ enum Command {
         /// current directory
         #[arg(short)]
         output: Option<PathBuf>,
+    },
+    /// Compile a program and run it; exit with its exit code
+    #[command(group = ArgGroup::new("program").required(true).args(["inline", "rest"]))]
+    Run {
+        #[command(flatten)]
+        flags: BuildFlags,
+        /// The program, as text on the command line, then the program's arguments
+        #[arg(short = 'e', value_name = "CODE", num_args = 1.., allow_hyphen_values = true)]
+        inline: Vec<OsString>,
+        /// The program, then its arguments
+        #[arg(value_name = "FILE", trailing_var_arg = true, num_args = 1..)]
+        rest: Vec<OsString>,
     },
     /// Report the diagnostics of a program without building it
     Check {
@@ -66,7 +78,7 @@ impl Program {
     }
 }
 
-/// The flags `build` takes besides its own.
+/// The flags `build` and `run` take besides their own.
 #[derive(Args)]
 struct BuildFlags {
     /// Optimize at this level
@@ -82,6 +94,18 @@ struct BuildFlags {
     format: Format,
 }
 
+impl BuildFlags {
+    /// The format, and the back end these flags ask for.
+    fn into_parts(self) -> (Format, Backend) {
+        let backend = Backend {
+            level: self.level.unwrap_or(OptLevel::O0),
+            rc_checks: self.rc_checks,
+            linker: self.linker,
+        };
+        (self.format, backend)
+    }
+}
+
 /// The format and the mode `args`, the whole command line, asks for.
 pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> {
     let Some(command) = Cli::try_parse_from(args)?.command else {
@@ -94,14 +118,40 @@ pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> 
             program,
             output,
         } => {
-            let backend = Backend {
-                level: flags.level.unwrap_or(OptLevel::O0),
-                rc_checks: flags.rc_checks,
-                linker: flags.linker,
-            };
+            let (format, backend) = flags.into_parts();
             (
-                flags.format,
+                format,
                 build_mode(backend, emit, program.into_source(), output)?,
+            )
+        }
+        Command::Run {
+            flags,
+            inline,
+            rest,
+        } => {
+            let (format, backend) = flags.into_parts();
+            let inline_given = !inline.is_empty();
+            let mut values = if inline_given { inline } else { rest }
+                .into_iter()
+                .peekable();
+            let first = values
+                .next()
+                .expect("clap should require a file or `-e` with code");
+            let source = if inline_given {
+                Source::Inline(first)
+            } else {
+                Source::File(first.into())
+            };
+            // A first `--` only ends `sisuc`'s own arguments; a later one is the program's.
+            values.next_if(|arg| arg == "--");
+            let args = values.collect();
+            (
+                format,
+                Mode::Run {
+                    source,
+                    args,
+                    backend,
+                },
             )
         }
         Command::Check { format, program } => (

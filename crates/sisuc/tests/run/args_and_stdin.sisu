@@ -1,0 +1,11 @@
+// args: a -x --flag
+// Prints its arguments, one that looks like a flag included, one per line, then echoes its
+// standard input. `sisuc run` passes both on (`tests/cli.rs`).
+fn main(args: [string]) {
+    for a in args {
+        print(a)        // a, -x, --flag
+    }
+    while let line = read_line() {
+        print(line)     // one, two
+    }
+}

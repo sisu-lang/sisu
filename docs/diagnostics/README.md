@@ -176,9 +176,9 @@ leaves it out.
 ## JSON output
 
 `--format json` writes every line on stderr as one JSON object (JSON
-Lines). It works with `check` and `build`, with or without `--emit`; stdout is
-the same as in text, and stays empty when there is an error. A usage error is
-clap's text on stderr, with exit code 2, in either format.
+Lines). It works with `check`, `run` and `build` (with or without `--emit`);
+stdout is the same as in text, and stays empty when there is an error. A usage
+error is clap's text on stderr, with exit code 2, in either format.
 
 Every object has `version`, which is `1` and is bumped on any breaking
 change, and `kind`, one of `diagnostic`, `tool_error` and `summary`. Keys
@@ -223,7 +223,11 @@ input, or a failed link. It has no code; codes are for the source.
   puts before it. A failed link adds the C compiler's own output after a
   newline.
 
-The summary, always the last line, also when there is no diagnostic:
+The summary, always the last line, also when there is no diagnostic, with one
+exception. `sisuc run` writes the summary before the program starts, so the
+program's own stderr follows it, and so do the three tool errors that can only
+happen once the program is built: it cannot start, its temporary directory
+cannot be removed, or `sisuc` cannot wait for it.
 
 ```json
 {"version":1,"kind":"summary","errors":1,"warnings":0,"explanations":{"E0001":"# E0001: ..."}}
