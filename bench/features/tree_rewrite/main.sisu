@@ -1,0 +1,53 @@
+// Rewrites a boxed expression tree again and again. Each round takes every
+// node apart in a `match` and builds it back mirrored, so a `match` that reuses
+// the boxes it takes apart allocates nothing in any round. The first round
+// also folds away the `+ 0` and `* 1` nodes, freeing their boxes. `weigh`
+// checks the tree before the rounds and after them.
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+}
+
+fn tree(depth: i64, k: i64) -> Expr {
+    if depth == 0 {
+        if k % 3 == 0 {
+            Expr.Add(Expr.Num(k % 7 + 2), Expr.Num(0))
+        } else if k % 3 == 1 {
+            Expr.Mul(Expr.Num(k % 5 + 2), Expr.Num(1))
+        } else {
+            Expr.Num(k % 7 + 2)
+        }
+    } else if depth % 2 == 0 {
+        Expr.Add(tree(depth - 1, k * 2), tree(depth - 1, k * 2 + 1))
+    } else {
+        Expr.Mul(tree(depth - 1, k * 2 + 1), tree(depth - 1, k * 2))
+    }
+}
+
+fn simplify(e: Expr) -> Expr {
+    match e {
+        Add(l, Num(0)) => simplify(l)
+        Mul(l, Num(1)) => simplify(l)
+        Add(l, r) => Expr.Add(simplify(r), simplify(l))
+        Mul(l, r) => Expr.Mul(simplify(r), simplify(l))
+        Num(n) => Expr.Num(n)
+    }
+}
+
+fn weigh(e: Expr) -> i64 {
+    match e {
+        Num(n) => n
+        Add(a, b) => (weigh(a) * 3 + weigh(b)) % 1_000_003
+        Mul(a, b) => (weigh(a) * 5 + weigh(b) * 7) % 1_000_003
+    }
+}
+
+fn main() {
+    let mut e = tree(12, 1)
+    print(weigh(e))
+    for _ in 0..16 {
+        e = simplify(e)
+    }
+    print(weigh(e))
+}
