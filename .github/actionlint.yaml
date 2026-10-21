@@ -1,0 +1,5 @@
+# shortcut: actionlint v1.7.12 predates GitHub's ubuntu-26.04 runners and calls the label
+# unknown; drop this file once a release lists it in rule_runner_label.go.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
