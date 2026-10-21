@@ -4,3 +4,5 @@ test_tool = "nextest"
 # The copy then lacks `.llvm/`, so the command sets an absolute
 # LLVM_SYS_231_PREFIX.
 gitignore = true
+# Each `|` in `Region::apply` joins disjoint one-bit states, where `^` gives the same value.
+exclude_re = ["replace \\| with \\^ in Region<'_>::apply"]

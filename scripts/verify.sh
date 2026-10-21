@@ -2,7 +2,7 @@
 # Runs scripts/coverage.sh, then scripts/mutants.sh, on the changes since <base>,
 # and always ends with one verdict line that starts "verify: PASS" or "verify: FAIL"
 # and ends "(HEAD <sha>)", the commit it measured.
-# PASS needs no uncovered region touching the changes and no surviving mutant.
+# PASS needs no uncovered region touching the changes and no missed mutant; a timeout counts as caught.
 # A region you explain instead of covering still fails the verdict, so the
 # mutants run anyway: one job reports both. A failing test run stops it early.
 # A diff that changes no .rs file passes without running either.
@@ -46,6 +46,9 @@ rm -rf mutants.out
 status=0
 scripts/mutants.sh "$base" || status=$?
 count() { if [[ -f mutants.out/$1.txt ]]; then wc -l <"mutants.out/$1.txt"; else echo 0; fi; }
+# A mutant that hangs the tests is caught, but cargo mutants exits 3 for a timeout even
+# when another mutant was missed, so only the missed count can pass it.
+((status == 3 && $(count missed) == 0)) && status=0
 if [[ -d mutants.out ]]; then
 	mutants="$(count caught) caught, $(count unviable) unviable, $(count missed) missed, $(count timeout) timeouts"
 else

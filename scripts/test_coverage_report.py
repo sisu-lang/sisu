@@ -141,6 +141,13 @@ class Report(unittest.TestCase):
         _, touching, other = sections(run(exp, df=diff(path="a.rs", start=3)))
         self.assertEqual((touching, other), (["(none)"], ["(none)"]))
 
+    def test_an_invariant_panic_touching_changes_is_advisory(self):
+        exp = export(func("f", [(1, 1, 9, 1, 1), (3, 5, 3, 17, 0), (4, 5, 4, 11, 0), (5, 5, 5, 9, 0)]))
+        lines = {3: '    unreachable!("x should be y")', 4: '    _ => panic!("z should hold"),', 5: "    0"}
+        _, touching, other = sections(run(exp, df=diff(start=3, count=3), read=lambda p, n: lines[n]))
+        self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:5:5-5:9"])
+        self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:5-3:17", "a.rs:4:5-4:11"])
+
     def test_changed_lines_coverage_counts_only_instrumented_lines(self):
         out = run(export(), lcov(**{"a.rs": {1: 1, 2: 1, 3: 0}}), diff(start=1, count=4))
         self.assertIn("changed lines 66.7% (2 of 3).", out.splitlines()[0])

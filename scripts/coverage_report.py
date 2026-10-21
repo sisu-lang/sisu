@@ -12,6 +12,8 @@ from typing import Callable, NamedTuple
 
 # Integration tests, and unit-test modules in their own file (src/**/tests.rs, src/**/tests/).
 TEST_DIR = re.compile(r'^crates/[^/]+/(?:tests/|src/(?:.+/)?tests(?:\.rs$|/))')
+# A panic that states an invariant, which no test should reach.
+INVARIANT = re.compile(r'\b(?:unreachable|panic)!\(')
 HUNK = re.compile(r'^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
 
 
@@ -122,12 +124,13 @@ def report(export: dict, lcov: str, diff: str, root: str,
         if path not in changed:
             continue
         for r in regions:
-            source = read_line(path, r.start).strip()[:80]
+            line = read_line(path, r.start)
+            source = line.strip()[:80]
             if r.never_run:
                 text = f'{path}:{r.start}: never run: {source}'
             else:
                 text = f'{path}:{r.start}:{r.start_col}-{r.end}:{r.end_col}: {source}'
-            hit = any(n in changed[path] for n in range(r.start, r.end + 1))
+            hit = any(n in changed[path] for n in range(r.start, r.end + 1)) and not INVARIANT.search(line)
             (touching if hit else other).append(text)
     return (f'{head}\n\nUncovered regions touching changed code:\n' + '\n'.join(touching or ['(none)'])
             + '\n\nOther uncovered regions in changed files (advisory):\n' + '\n'.join(other or ['(none)']))
