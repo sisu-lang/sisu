@@ -7,6 +7,12 @@ mod codegen;
 mod diagnostic;
 mod front_end;
 mod fuzz;
+#[cfg(any(test, feature = "fuzz"))]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Task 5's program fuzz target calls `generate`")
+)]
+mod generate;
 mod graph;
 mod lexer;
 mod link;

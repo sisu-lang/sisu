@@ -1,0 +1,278 @@
+//! The program fuzzer's generator: it turns bytes, read through `arbitrary::Unstructured`, into a
+//! Sisu program that is well typed by construction, the stdin it reads, and a rewritten copy that
+//! must print the same (ADR 0031). Each rule writes one construct of a wanted type, and the bytes
+//! choose among the rules that can make that type in the current scope. Choice 0 is always the
+//! smallest valid one, which is what every choice is once the bytes run out.
+
+mod expr;
+mod item;
+mod scope;
+mod stmt;
+mod writer;
+
+#[cfg(test)]
+mod coverage;
+
+use arbitrary::Unstructured;
+
+use scope::Scope;
+use writer::Writer;
+
+pub(crate) struct Generated {
+    pub(crate) program: String,
+    /// Equal to `program` until Task 6 adds rewrites.
+    pub(crate) rewritten: String,
+    pub(crate) stdin: String,
+    /// Empty until Task 6.
+    #[cfg_attr(
+        test,
+        expect(dead_code, reason = "Task 6's known answers fill and read it")
+    )]
+    pub(crate) known: Vec<Known>,
+    /// The program's cost, as decision 5 counts it.
+    #[cfg(test)]
+    pub(crate) cost: u64,
+}
+
+#[cfg_attr(test, expect(dead_code, reason = "Task 6 writes the known answers"))]
+pub(crate) struct Known {
+    /// `k<n>`; `main` prints its result as `@k<n> <value>`.
+    pub(crate) marker: String,
+    pub(crate) answer: Answer,
+}
+
+#[cfg_attr(test, expect(dead_code, reason = "Task 6 writes the known answers"))]
+pub(crate) enum Answer {
+    Value(String),
+    /// The runtime's message: `integer overflow` or `division by zero`.
+    Panic(&'static str),
+}
+
+/// The most work a program may do, counted by `Cost` (decision 5).
+const BUDGET: u64 = 1_000_000;
+/// The most elements or nodes of a value the program builds, chars for a `string` (decision 5).
+const MAX_SIZE: u64 = 1_000;
+/// The most iterations of a loop.
+const MAX_BOUND: u64 = 8;
+/// The most loops around a statement.
+const MAX_LOOPS: usize = 3;
+/// The `depth`s a call can pass: `main` passes at most 4.
+const DEPTHS: usize = 5;
+/// Statements and expression nodes a program may hold; each rule spends one.
+const FUEL: u64 = 400;
+/// The most an expression nests.
+const MAX_NESTING: u32 = 6;
+/// The most chars of a line of the stdin.
+const LINE: u64 = 12;
+/// The most a statement of `main` costs: inside every loop it may nest in, where the condition of
+/// a `while` runs once more than its body.
+const STATEMENT_MOST: u64 = (MAX_BOUND + 1) * (MAX_BOUND + 1) * (MAX_BOUND + 1);
+
+/// Accepts every byte string. When `data` runs out, every choice is the smallest valid one.
+pub(crate) fn generate(data: &[u8]) -> Generated {
+    let mut g = Gen {
+        u: Unstructured::new(data),
+        w: Writer::default(),
+        scope: Scope::default(),
+        fuel: FUEL,
+        nesting: 0,
+        stdin: String::new(),
+        cost: Cost::default(),
+        one_line: false,
+        budget: BUDGET - FUEL * STATEMENT_MOST,
+        jumps: stmt::Jumps::default(),
+        blocks: 0,
+        synth: false,
+    };
+    let cost = g.program();
+    // Only the tests read the cost.
+    #[cfg(not(test))]
+    let _ = cost;
+    Generated {
+        program: g.w.out.program,
+        rewritten: g.w.out.rewritten,
+        stdin: g.stdin,
+        known: Vec::new(),
+        #[cfg(test)]
+        cost,
+    }
+}
+
+/// The generator's state while it writes one program.
+struct Gen<'a> {
+    u: Unstructured<'a>,
+    w: Writer,
+    scope: Scope,
+    /// What rules may still spend.
+    fuel: u64,
+    /// How deep the expression being written nests.
+    nesting: u32,
+    /// The lines `read_line` reads, each ending in a line break.
+    stdin: String,
+    /// The cost of the function being written, or of `main`.
+    cost: Cost,
+    /// Inside an interpolation, where a line break ends the string.
+    one_line: bool,
+    /// What the calls `main` may still make may cost: the budget less what `main`'s own
+    /// statements can cost.
+    budget: u64,
+    /// The jumps a statement may make here.
+    jumps: stmt::Jumps,
+    /// How many blocks are open around the point being written.
+    blocks: u32,
+    /// Whether the next expression is in a position with no expected type, where a `u8` must
+    /// be one by its own type (`Gen::expr`).
+    synth: bool,
+}
+
+impl Gen<'_> {
+    /// One of `0..n`, `n > 0`.
+    fn pick(&mut self, n: usize) -> usize {
+        self.u.choose_index(n).unwrap_or(0)
+    }
+
+    /// One of `lo..=hi`.
+    fn int(&mut self, lo: i64, hi: i64) -> i64 {
+        self.u.int_in_range(lo..=hi).unwrap_or(lo)
+    }
+
+    /// One of `0..=hi`.
+    fn upto(&mut self, hi: u64) -> u64 {
+        self.u.int_in_range(0..=hi).unwrap_or(0)
+    }
+
+    /// Writes one of `options`.
+    fn one_of(&mut self, options: &[&str]) {
+        let choice = self.pick(options.len());
+        self.w.text(options[choice]);
+    }
+
+    /// Takes `units` of fuel, if that much is left.
+    fn spend(&mut self, units: u64) -> bool {
+        let spent = self.fuel >= units;
+        if spent {
+            self.fuel -= units;
+        }
+        spent
+    }
+}
+
+/// What a value is made of, for its size (decision 5).
+#[derive(Clone)]
+pub(crate) enum Shape {
+    /// A number, a `bool` or a `char`, held inline.
+    Scalar,
+    /// A `string` of so many chars.
+    Str(u64),
+    /// An array of `len` elements, each at most `element`.
+    Array { len: u64, element: Box<Shape> },
+    /// A class object or an enum variant, and its fields.
+    Node(Vec<Shape>),
+}
+
+impl Shape {
+    /// Its elements and nodes, and the chars of its strings, all counted.
+    pub(crate) fn size(&self) -> u64 {
+        match self {
+            Shape::Scalar => 0,
+            Shape::Str(chars) => *chars,
+            Shape::Array { len, element } => len.saturating_add(len.saturating_mul(element.size())),
+            Shape::Node(fields) => fields
+                .iter()
+                .fold(1, |sum: u64, field| sum.saturating_add(field.size())),
+        }
+    }
+
+    /// Whether the generator may build it.
+    pub(crate) fn fits(&self) -> bool {
+        self.size() <= MAX_SIZE
+    }
+}
+
+/// The work of a function body, or of `main`, as decision 5 counts it: a statement costs 1, a
+/// loop its bound times its body, and a call its callee's cost at the depth it passes.
+#[derive(Default)]
+pub(crate) struct Cost {
+    /// The bounds of the loops around the point being written.
+    loops: Vec<u64>,
+    /// The statements so far, each times the bounds of its loops.
+    statements: u64,
+    calls: Vec<Call>,
+}
+
+/// A call in a body: how many times it runs per run of the body, its callee, and the depth it
+/// passes, `None` for `depth - 1`.
+struct Call {
+    times: u64,
+    callee: usize,
+    depth: Option<usize>,
+}
+
+impl Cost {
+    /// How many times a statement at this point runs per run of the body.
+    pub(crate) fn times(&self) -> u64 {
+        self.times_since(0)
+    }
+
+    /// How many times a statement at this point runs per run of the loops after the first
+    /// `outer` ones.
+    pub(crate) fn times_since(&self, outer: usize) -> u64 {
+        self.loops[outer..]
+            .iter()
+            .fold(1, |times: u64, bound| times.saturating_mul(*bound))
+    }
+
+    pub(crate) fn enter_loop(&mut self, bound: u64) {
+        self.loops.push(bound);
+    }
+
+    pub(crate) fn exit_loop(&mut self) {
+        self.loops.pop();
+    }
+
+    /// The loops around the point being written.
+    pub(crate) fn depth(&self) -> usize {
+        self.loops.len()
+    }
+
+    pub(crate) fn statement(&mut self) {
+        self.statements = self.statements.saturating_add(self.times());
+    }
+
+    /// A call of the function `callee` passing `depth`, `None` for `depth - 1`.
+    pub(crate) fn call(&mut self, callee: usize, depth: Option<usize>) {
+        let times = self.times();
+        self.calls.push(Call {
+            times,
+            callee,
+            depth,
+        });
+    }
+
+    /// The cost of a call of the function whose body this is, at each depth, where `costs` are
+    /// the earlier functions'; the function is the next one. The `depth <= 0` check costs 1.
+    pub(crate) fn of_function(&self, costs: &[[u64; DEPTHS]]) -> [u64; DEPTHS] {
+        let mut own = [1; DEPTHS];
+        for depth in 1..DEPTHS {
+            let cost =
+                self.calls
+                    .iter()
+                    .fold(self.statements.saturating_add(1), |sum: u64, call| {
+                        let callee = costs.get(call.callee).unwrap_or(&own);
+                        sum.saturating_add(call.times.saturating_mul(callee[depth - 1]))
+                    });
+            own[depth] = cost;
+        }
+        own
+    }
+
+    /// The cost of `main`, whose calls pass literal depths, where `costs` are the functions'.
+    pub(crate) fn of_main(&self, costs: &[[u64; DEPTHS]]) -> u64 {
+        self.calls.iter().fold(self.statements, |sum: u64, call| {
+            let depth = call
+                .depth
+                .expect("a call in `main` should pass a literal depth");
+            sum.saturating_add(call.times.saturating_mul(costs[call.callee][depth]))
+        })
+    }
+}

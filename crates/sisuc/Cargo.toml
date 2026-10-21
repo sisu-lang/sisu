@@ -21,8 +21,15 @@ rustc-hash = "2.1.3"
 inkwell = { version = "0.10.0", git = "https://github.com/TheDan64/inkwell", rev = "c9d9734ae17dbaf1d9902dab3b8ee9d2041781ff", features = ["llvm23-1"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# The program fuzzer's generator reads its choices through `arbitrary` (crate::generate), only
+# in tests and under the `fuzz` feature, so the released compiler never builds it.
+arbitrary = { version = "1.5.0", optional = true }
+
+[features]
+fuzz = ["dep:arbitrary"]
 
 [dev-dependencies]
+arbitrary = "1.5.0"
 datatest-stable = "0.3.3"
 syn = { version = "3.0.6", default-features = false, features = ["full", "parsing"] }
 
