@@ -355,8 +355,8 @@ $ target/debug/sisu run -O2 wc.sisu words.txt
 `-e` gives an inline program in place of the file, to `build`, `run` and
 `check`. The text is a whole program, and diagnostics and panics name the
 source `<inline>`. `build -e` needs `-o`, because there is no file name to
-take the output name from. After `run -e code`, every argument is the
-program's:
+take the output name from. After `run -e code`, every argument except a
+first `--` is the program's:
 
 ```console
 $ target/debug/sisu run -e 'fn main() { let x = 2; print(x * 21) }'

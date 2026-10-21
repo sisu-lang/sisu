@@ -19,7 +19,7 @@ the terms.
 
 **Driver** (`crates/sisuc/src/lib.rs`). Reads the command line, runs the
 stages in order and prints diagnostics. `args.rs` parses the command line with
-clap into a `Mode`, one of `build`, `run`, `check` and `explain`, and `run.rs`
+clap into a `Mode`, one per subcommand plus `--version` and the usage, and `run.rs`
 links a program into a private temporary directory, runs it and removes the
 directory. The `sisu` binary (`main.rs`) only
 runs it on a thread with a 64 MiB stack. It reads at most 1 GiB of source,
