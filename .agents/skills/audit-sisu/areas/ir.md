@@ -9,7 +9,7 @@ behavior) before it is fast. Unsound IR may look fine at `-O0` and break at
 For every case in `crates/sisuc/tests/run` and `run-fail`, and for your own
 probes, run the commands in the toolbox, "IR":
 
-- `--emit ir-raw` exits 1 for a program `--check` accepts: the verifier rejected codegen's module. That is `crash`.
+- `build --emit ir-raw` exits 1 for a program `check` accepts: the verifier rejected codegen's module. That is `crash`.
 - Lint flags an operation: a lead. It becomes `unsound` when you show a Sisu program reaches that block. A hit only in a block behind a constant branch (`br i1 false`) is `slow` at most: codegen emits dead code. Lint after `simplifycfg` removes most of those.
 
 Every flag is a promise LLVM may exploit: `nsw`, `nuw`, `exact`,

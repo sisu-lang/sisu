@@ -9,5 +9,5 @@ help: if you meant logical and, use `&&`
 2 |     let a = 1 &&
   |                +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0010
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0010

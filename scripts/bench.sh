@@ -26,7 +26,7 @@ have() { command -v "$1" >/dev/null; }
 build() {
     local lang=$1 src=bench/$2 dir=$3 start=$EPOCHREALTIME
     case $lang in
-        sisu) target/release/sisuc -O2 "$src/main.sisu" "$dir/main" ;;
+        sisu) target/release/sisu build -O2 "$src/main.sisu" -o "$dir/main" ;;
         c) clang -O2 -o "$dir/main" "$src/main.c" -lm ;;
         rust) rustc -C opt-level=3 -o "$dir/main" "$src/main.rs" ;;
         go) go build -o "$dir/main" "$src/main.go" ;;
@@ -98,7 +98,7 @@ done
 
 echo
 echo "Toolchains:"
-echo "- sisuc -O2 (LLVM 23)"
+echo "- sisu build -O2 (LLVM 23)"
 have clang && echo "- $(clang --version | head -1), -O2"
 have rustc && echo "- $(rustc --version), -C opt-level=3"
 have go && echo "- $(go version)"

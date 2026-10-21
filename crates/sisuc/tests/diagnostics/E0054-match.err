@@ -14,5 +14,5 @@ help: remove the conversion
  8 +     print((match e {
    |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0054
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0054

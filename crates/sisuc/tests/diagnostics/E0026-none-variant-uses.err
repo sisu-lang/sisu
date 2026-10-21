@@ -10,5 +10,5 @@ error[E0116]: `Light` names an enum
 6 |     let Light = 1
   |         ^^^^^
 
-sisuc: 2 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0026, E0116
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0026, E0116

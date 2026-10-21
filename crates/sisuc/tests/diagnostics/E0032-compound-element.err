@@ -22,5 +22,5 @@ error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
 8 |     bs[0] += true
   |     ^^^^^
 
-sisuc: 4 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

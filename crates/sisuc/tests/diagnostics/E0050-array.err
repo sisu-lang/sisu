@@ -6,5 +6,5 @@ error[E0050]: cannot infer the type of `[]`
   |
   = help: write the type: `let xs: [i64] = []`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0050
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

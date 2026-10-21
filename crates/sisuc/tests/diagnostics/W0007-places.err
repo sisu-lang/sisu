@@ -81,5 +81,5 @@ help: remove the `;`
 14 - ;
    |
 
-sisuc: 7 warnings
-sisuc: for more on a code, run `sisuc --explain <code>`: W0007
+sisu: 7 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0007

@@ -23,5 +23,5 @@ help: a class with a similar name exists: `Counter`
 8 +     let c = Counter(count: total)
   |
 
-sisuc: 2 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0001, E0052
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0052

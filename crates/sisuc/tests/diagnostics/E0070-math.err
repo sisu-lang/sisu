@@ -10,5 +10,5 @@ help: call `sqrt` as a method
 3 +     print(x.sqrt())
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0070
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

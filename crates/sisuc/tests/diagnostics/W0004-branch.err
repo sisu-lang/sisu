@@ -22,5 +22,5 @@ help: drop it on purpose
 3 |     if c { let _ = 1 } else { let _ = 2 }
   |            +++++++            +++++++
 
-sisuc: 2 warnings
-sisuc: for more on a code, run `sisuc --explain <code>`: W0004
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0004

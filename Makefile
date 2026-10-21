@@ -25,7 +25,7 @@ setup: ## Once per clone: LLVM 23, the pre-commit hook, cargo-mutants, cargo-llv
 audit-setup: ## For the audit-sisu skill: add opt and clang, with the ASan runtime, to .llvm/23
 	scripts/install-llvm.sh --audit
 
-build: ## Build sisuc and the runtime library
+build: ## Build sisu and the runtime library
 	cargo build --workspace
 
 test: ## Run every test with nextest, whose setup script builds the runtime
@@ -60,9 +60,9 @@ fuzz: ## Fuzz the front end for SECS seconds (1800 by default)
 bench: ## Time the benchmarks in bench/ (BENCH='fib sieve' picks some)
 	scripts/bench.sh $(BENCH)
 
-callgrind: ## Count the instructions of sisuc --check, as CodSpeed does
+callgrind: ## Count the instructions of sisu check, as CodSpeed does
 	scripts/codspeed-prep.sh
-	valgrind --tool=callgrind --callgrind-out-file=/dev/null target/release/sisuc --check target/codspeed/large/main.sisu
+	valgrind --tool=callgrind --callgrind-out-file=/dev/null target/release/sisu check target/codspeed/large/main.sisu
 
 site: ## Build the site into site/_site and check it
 	uv run --locked --script site/build.py --test && uv run --locked --script site/build.py

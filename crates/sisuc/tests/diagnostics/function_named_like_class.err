@@ -7,5 +7,5 @@ error[E0034]: `A` is already a class
 3 | fn A() {}
   |    ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0034
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

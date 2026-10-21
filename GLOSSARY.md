@@ -65,7 +65,7 @@ in the prelude file the compiler builds into every program.
 The Sisu prelude file arrives in milestone 8.
 
 **RC check**:
-A check that a program built with `sisuc --rc-checks` makes on its reference
+A check that a program built with `--rc-checks` makes on its reference
 counts: no retain or release of a count below 1, no read of a string, class
 or array local whose reference was moved out, and no object still allocated
 at a normal exit. A failed check prints `sisu: rc check: <what>` on stderr and
@@ -370,7 +370,7 @@ a return) that says where control goes next.
 _Avoid_: node, label
 
 **Certifier**:
-The check, run on every function in debug builds of `sisuc`, that mir's
+The check, run on every function in debug builds of `sisu`, that mir's
 counts are sound: each owned reference is consumed exactly once, no empty
 local is read, no borrow outlives its owner, and nothing writes or changes what
 a borrow reads.
@@ -477,3 +477,8 @@ _Avoid_: indirection, `Box<T>`, pointer
 A reference that its holder must release exactly once. Every expression of a
 counted type yields one; for an enum value, that is one reference to each of
 its counted parts.
+
+**Inline program**:
+A whole program given on the command line with `-e` in place of a file.
+Its diagnostics and panics name the source `<inline>`.
+_Avoid_: snippet, one-liner, script

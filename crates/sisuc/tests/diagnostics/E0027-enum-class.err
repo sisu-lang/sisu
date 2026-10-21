@@ -4,5 +4,5 @@ error[E0027]: no value of `D` can be built
 1 | enum D {
   |      ^ `D.Q` holds a `K`, and `K.d` holds a `D`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0027
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0027

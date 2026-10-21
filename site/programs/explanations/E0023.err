@@ -4,5 +4,5 @@ error[E0023]: ranges are only allowed in `for` and in patterns
 2 |     let r = 0..3
   |              ^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0023
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0023

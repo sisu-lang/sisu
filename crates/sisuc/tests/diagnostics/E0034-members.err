@@ -23,5 +23,5 @@ error[E0034]: class `Point` is defined twice
 9 | class Point {
   |       ^^^^^
 
-sisuc: 3 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0034
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0034

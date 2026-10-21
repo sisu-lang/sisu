@@ -4,5 +4,5 @@ error[E0063]: `Point` has no method `norm`
 7 |     print(p.norm())
   |             ^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0063
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0063

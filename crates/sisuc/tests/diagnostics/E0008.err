@@ -4,5 +4,5 @@ error[E0008]: `_` must sit between digits
 2 |     let n = 1__000
   |              ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0008
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0008

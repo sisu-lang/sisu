@@ -4,5 +4,5 @@ error[E0032]: expected `i64`, found `u8`
 2 |     if a { 1 } else if let n = o { x } else { x }
   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -1,6 +1,6 @@
 ---
 name: update-docs
-description: Use in the Sisu repo before opening a pull request, or when one merged without a docs pass, if a change to sisuc, the runtime, CLI flags, language features, the toolchain, the repository layout, or milestone status may have left the README, guides, architecture diagram, roadmap, glossary or ADRs stale.
+description: Use in the Sisu repo before opening a pull request, or when one merged without a docs pass, if a change to sisu, the runtime, CLI flags, language features, the toolchain, the repository layout, or milestone status may have left the README, guides, architecture diagram, roadmap, glossary or ADRs stale.
 ---
 
 # Update the docs after a change
@@ -50,7 +50,7 @@ Read each target below before you decide it needs no edit.
 | Diagnostic or panic text, or an exit code | The sample outputs and exit codes in `docs/development.md` |
 | The toolchain or a prerequisite (`rust-toolchain.toml`, `scripts/`, `.cargo/`), a command, how tests run (`crates/sisuc/tests/*.rs`), CI (`.github/workflows/`, `prek.toml`), dependency policy (`deny.toml`) or lint policy (`[workspace.lints]` in `Cargo.toml`) | "Prerequisites" and "Build and test" in `docs/development.md`; "Commands" and "Code rules" in `AGENTS.md`; step 5 of `CONTRIBUTING.md` |
 | A top-level directory or crate | "Repository layout" in `docs/development.md`; the crate list in `AGENTS.md` |
-| What `sisuc` prints, or the text of an explanation in `docs/diagnostics/` (each `.json` summary embeds it) | `make bless`, then read the diff under `site/programs/` |
+| What `sisu` prints, or the text of an explanation in `docs/diagnostics/` (each `.json` summary embeds it) | `make bless`, then read the diff under `site/programs/` |
 | The build steps, prerequisites or compiler stages | "Build it" and the pipeline section on Home (`site/src/index.html`) |
 | `docs/roadmap.md` | `site/data/status.toml` |
 | A diagnostic code added or removed | `site/data/categories.toml` |
@@ -77,7 +77,7 @@ gitignored, and the docs do not link to it.
   merge, make a worktree with `git worktree add $TMPDIR/sisu-main <merge-sha>`
   and set `LLVM_SYS_231_PREFIX` to an existing `.llvm/23`, because a new
   worktree has none. Build with `cargo build --workspace` and run that
-  checkout's `target/debug/sisuc`; a binary from another checkout may come
+  checkout's `target/debug/sisu`; a binary from another checkout may come
   from another branch. Never write output from memory or from the diff.
 - Write the executables you compile to `$TMPDIR`, not the repository root.
   Keep source paths as the docs show them, because panic messages quote them.

@@ -114,7 +114,7 @@ def colours(line: str, below: str) -> list[str]:
 
 
 def diag_html(text: str) -> str:
-    """sisuc's diagnostic output as coloured lines, one `<span class="ln">` each."""
+    """sisu's diagnostic output as coloured lines, one `<span class="ln">` each."""
     rows = re.findall(r'[^\n]*\n|[^\n]+\Z', text)
     lines = [row.removesuffix('\n') for row in rows]
     out = []
@@ -215,7 +215,7 @@ def code_fence(renderer, tokens, idx, options, env) -> str:
     return f'<figure class="code"><pre data-lang="{html.escape(token.info.strip())}">{escape(token.content)}</pre></figure>\n'
 
 
-# No raw HTML: `sisuc --explain` prints `Option<T>` as written, and the page must show the same.
+# No raw HTML: `sisu explain` prints `Option<T>` as written, and the page must show the same.
 MD = MarkdownIt('commonmark', {'html': False}).enable('table')
 MD.add_render_rule('fence', code_fence)
 # An indented block gets data-lang too, so the page checks see it as shown code.
@@ -239,7 +239,7 @@ def explanation_link(href: str) -> str:
 
 
 def explanation_html(code: str, markdown: str, err: str) -> str:
-    """The explanation without its heading, with what sisuc says about Broken placed before Fixed."""
+    """The explanation without its heading, with what sisu says about Broken placed before Fixed."""
     tokens = MD.parse(markdown)
     if tokens and tokens[0].tag == 'h1':
         tokens = tokens[3:]
@@ -250,11 +250,11 @@ def explanation_html(code: str, markdown: str, err: str) -> str:
     before, fixed, after = MD.renderer.render(tokens, MD.options, {}).partition('<h2>Fixed</h2>')
     if not fixed:
         raise BuildError(f'{code} has no "## Fixed"')
-    return f'{before}<h2>What sisuc says</h2><figure class="code"><pre>{diag_html(err)}</pre></figure>\n{fixed}{after}'
+    return f'{before}<h2>What sisu says</h2><figure class="code"><pre>{diag_html(err)}</pre></figure>\n{fixed}{after}'
 
 
 def diagnostics_of(json_text: str, code: str) -> list[dict]:
-    """The diagnostics with code `code` in sisuc's JSON output, one object per line."""
+    """The diagnostics with code `code` in sisu's JSON output, one object per line."""
     records = [json.loads(line) for line in json_text.splitlines() if line.strip()]
     return [r for r in records if r.get('kind') == 'diagnostic' and r.get('code') == code]
 
@@ -588,7 +588,7 @@ SCHEME = re.compile(r'[a-z][a-z0-9+.-]*:|//')
 FOREIGN = re.compile(r'(?:https?:)?//', re.I)
 CSS_URL = re.compile(r'url\(\s*([\'"]?)(.*?)\1\s*\)|@import\s+([\'"])(.*?)\3')
 HEADING = re.compile(r'<h([1-6])\b')
-# A <pre> with no data-lang holds diag_html output, which shows what sisuc prints.
+# A <pre> with no data-lang holds diag_html output, which shows what sisu prints.
 UNTAGGED_PRE = re.compile(r'<pre\b(?![^>]*\bdata-lang=)[^>]*>.*?</pre>', re.S)
 
 

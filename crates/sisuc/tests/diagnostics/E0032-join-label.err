@@ -10,5 +10,5 @@ error[E0032]: expected `string`, found `string?`
 5 |     zs[0] += true
   |     ^^^^^
 
-sisuc: 2 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

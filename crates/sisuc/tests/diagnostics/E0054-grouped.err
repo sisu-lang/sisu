@@ -10,5 +10,5 @@ help: remove the conversion
 3 +     print((x + 1) * 2)
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0054
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0054

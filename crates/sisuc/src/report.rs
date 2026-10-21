@@ -1,4 +1,4 @@
-//! The reporter: everything `sisuc` writes to stderr after the arguments parse, as text or as
+//! The reporter: everything `sisu` writes to stderr after the arguments parse, as text or as
 //! JSON Lines, and the summary that ends it.
 
 use std::ffi::OsStr;
@@ -9,6 +9,7 @@ use crate::front_end;
 use crate::source::LineIndex;
 
 /// How the reporter writes.
+#[derive(Clone, clap::ValueEnum)]
 pub(crate) enum Format {
     Text,
     Json,
@@ -58,12 +59,9 @@ impl<W: Write> Reporter<W> {
         }
     }
 
-    /// Writes a tool error; `message` has no `sisuc: ` prefix.
+    /// Writes a tool error; `message` has no `sisu: ` prefix.
     pub(crate) fn tool_error(&mut self, message: &str) {
-        let text = match self.format {
-            Format::Text => format!("sisuc: {message}"),
-            Format::Json => json::tool_error(message),
-        };
+        let text = tool_error_line(&self.format, message);
         self.line(&text);
     }
 
@@ -81,11 +79,11 @@ impl<W: Write> Reporter<W> {
                 if counts.is_empty() {
                     return;
                 }
-                self.line(&format!("sisuc: {}", counts.join(", ")));
+                self.line(&format!("sisu: {}", counts.join(", ")));
                 // Every counted diagnostic has a code, so there is at least one.
                 let codes: Vec<&str> = self.codes.iter().map(|code| code.as_str()).collect();
                 self.line(&format!(
-                    "sisuc: for more on a code, run `sisuc --explain <code>`: {}",
+                    "sisu: for more on a code, run `sisu explain <code>`: {}",
                     codes.join(", ")
                 ));
             }
@@ -100,6 +98,21 @@ impl<W: Write> Reporter<W> {
         writeln!(self.out, "{text}")
             .expect("stderr should take the report, as `eprintln!` assumes");
     }
+}
+
+/// A tool error in `format`, without its newline.
+fn tool_error_line(format: &Format, message: &str) -> String {
+    match format {
+        Format::Text => format!("sisu: {message}"),
+        Format::Json => json::tool_error(message),
+    }
+}
+
+/// Writes a tool error to stderr after `finish` has written the summary: the one exception to
+/// the summary being the last line, for what goes wrong in `sisu run` once the program is
+/// built.
+pub(crate) fn tool_error_after_summary(format: &Format, message: &str) {
+    eprintln!("{}", tool_error_line(format, message));
 }
 
 /// Whether text output is colored: only on a terminal, and only when `NO_COLOR` is unset or
@@ -160,7 +173,7 @@ mod tests {
         );
         assert!(
             out.ends_with(
-                "\n\nsisuc: 2 errors, 1 warning\nsisuc: for more on a code, run `sisuc --explain <code>`: E0001, W0002\n"
+                "\n\nsisu: 2 errors, 1 warning\nsisu: for more on a code, run `sisu explain <code>`: E0001, W0002\n"
             ),
             "{out}"
         );
@@ -171,7 +184,7 @@ mod tests {
         let out = report(Format::Text, &[never_reassigned()], None);
         assert!(
             out.ends_with(
-                "\n\nsisuc: 1 warning\nsisuc: for more on a code, run `sisuc --explain <code>`: W0002\n"
+                "\n\nsisu: 1 warning\nsisu: for more on a code, run `sisu explain <code>`: W0002\n"
             ),
             "{out}"
         );
@@ -208,7 +221,7 @@ mod tests {
     fn text_tool_error_line() {
         assert_eq!(
             report(Format::Text, &[], Some("cannot read x")),
-            "sisuc: cannot read x\n"
+            "sisu: cannot read x\n"
         );
     }
 

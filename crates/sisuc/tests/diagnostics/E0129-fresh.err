@@ -18,5 +18,5 @@ error[E0129]: `z` is bound twice in this pattern
    |
    = help: use a guard: `Add(z, z2) if z == z2`
 
-sisuc: 2 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0129
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0129

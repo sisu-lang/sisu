@@ -4,5 +4,5 @@ error[E0028]: no `main` function
 1 | fn helper() {
   | ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0028
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0028

@@ -4,5 +4,5 @@ error[E0116]: `Shape` names an enum
 6 |     let Shape = 1
   |         ^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0116
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0116

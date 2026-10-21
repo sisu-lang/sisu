@@ -4,5 +4,5 @@ error[E0111]: precision needs an `f64`
 3 |     print("{s:.2}")
   |              ^^^ the value is `string`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0111
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0111

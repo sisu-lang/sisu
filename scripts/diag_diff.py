@@ -1,8 +1,8 @@
-"""Checks every `.sisu` file under DIR with two sisuc builds and prints each program whose
+"""Checks every `.sisu` file under DIR with two sisu builds and prints each program whose
 diagnostics differ: their codes, positions or count, or a crash. A review uses it to show that a
 change accepts no program it should reject and adds no cascade.
 
-Usage: python3 diag_diff.py BASE_SISUC HEAD_SISUC DIR
+Usage: python3 diag_diff.py BASE_SISU HEAD_SISU DIR
 Exits 1 when a program differs.
 """
 import json
@@ -12,9 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
-def diagnostics(sisuc, path):
-    """Each diagnostic sisuc reports on `path`: (code, severity, line, column, secondaries)."""
-    run = subprocess.run([sisuc, '--format', 'json', '--check', str(path)],
+def diagnostics(sisu, path):
+    """Each diagnostic sisu reports on `path`: (code, severity, line, column, secondaries)."""
+    run = subprocess.run([sisu, 'check', '--format', 'json', str(path)],
                          capture_output=True, text=True)
     if run.returncode not in (0, 1):
         return [('crash', 'error', run.returncode, 0, ())]
@@ -42,11 +42,11 @@ def show(ds):
                      for c, _, line, col, s in ds) or 'none'
 
 
-def main(base_sisuc, head_sisuc, root):
+def main(base_sisu, head_sisu, root):
     paths = sorted(Path(root).rglob('*.sisu'))
     with ThreadPoolExecutor() as pool:
-        bases = pool.map(lambda p: diagnostics(base_sisuc, p), paths)
-        heads = pool.map(lambda p: diagnostics(head_sisuc, p), paths)
+        bases = pool.map(lambda p: diagnostics(base_sisu, p), paths)
+        heads = pool.map(lambda p: diagnostics(head_sisu, p), paths)
         rows = list(zip(paths, bases, heads))
     counts = {}
     for path, base, head in rows:

@@ -41,9 +41,11 @@ Reviewers apply these rules to every diff. Clippy, rustfmt and prek already enfo
 
 - **Sizes come from `TargetData`.** Sizes and alignments in generated code are measured with LLVM's `TargetData`, never written as numbers. The 16-byte array header is two `i64`s measured the same way.
 
+- **Prefer a crate to hand-written code.** Where a well-maintained crate that `deny.toml` allows does the job, use it, and check it with GitHits first.
+
 ## Performance
 
-- **Borrow or move before you clone.** Code that only reads a value takes a reference, and code that hands it on moves it. Anywhere in `sisuc`, a `clone()`, `to_string()`, `to_vec()` or new allocation needs a reason: the receiver keeps the value and the source still needs it. On a per-token, per-node or per-lookup path, the reason is also measured or obvious. Names travel as `Symbol`s and become a `String` only where they leave for `tir` or a diagnostic.
+- **Borrow or move before you clone.** Code that only reads a value takes a reference, and code that hands it on moves it. Anywhere in `crates/sisuc`, a `clone()`, `to_string()`, `to_vec()` or new allocation needs a reason: the receiver keeps the value and the source still needs it. On a per-token, per-node or per-lookup path, the reason is also measured or obvious. Names travel as `Symbol`s and become a `String` only where they leave for `tir` or a diagnostic.
 - **The clean path does no repeat work.** A step that lexes, parses or checks the whole source again runs only when its result is used, as `front_end::sound_fixes` does.
 - **A cost claim is measured.** A diff that claims a speedup, or that a change costs nothing, gives callgrind instruction counts before and after (see `AGENTS.md`). CodSpeed's simulation mode runs under callgrind too. Without a measured gain, the simpler code wins ([ADR 0006](docs/adr/0006-values-correctness-simplicity-readability-performance.md)).
 - **An optimization is pinned by a structural test.** CodSpeed reports but never fails a pull request, so an optimization that a benchmark relies on also gets a structural test at the interface of the module that owns it. When the contract shows in the generated code, that is a test in `crates/sisuc/src/codegen/tests.rs` that asserts the shape of the `-O2` IR, as `partition_makes_its_array_unique_once` does.

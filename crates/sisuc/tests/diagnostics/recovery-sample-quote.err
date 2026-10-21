@@ -32,5 +32,5 @@ error[E0093]: string literal is not closed
    |
    = help: write `\n` for a line break
 
-sisuc: 3 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0001, E0070, E0093
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0070, E0093

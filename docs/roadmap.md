@@ -22,7 +22,7 @@ enums with `match`.
 
 ### What works today
 
-`sisuc` compiles:
+`sisu` compiles:
 
 - `i64` and `bool`, with `let` for immutable bindings, `let mut` for
   variables, and inferred types
@@ -102,7 +102,7 @@ enums with `match`.
   such as a bare `u8(n)` or `twice(21)`; `let _ = e` drops the value on
   purpose
 - error messages in the style of `rustc`, pointing at the code, each with a
-  stable code that `sisuc --explain` describes, a JSON form, and fixes where
+  stable code that `sisu explain` describes, a JSON form, and fixes where
   the checker can offer one
 
 ### Diagnostics foundation
@@ -369,7 +369,7 @@ Each item is cheap when its milestone lands and expensive to retrofit:
 
 ### Portability rules
 
-`sisuc` already compiles for the machine it runs on: codegen asks LLVM for the
+`sisu` already compiles for the machine it runs on: codegen asks LLVM for the
 host triple and takes the data layout from it. Two rules keep it that way, so
 that new targets stay cheap:
 
@@ -378,7 +378,7 @@ that new targets stay cheap:
 - Runtime functions take and return only integers, `bool`, floats and
   pointers, never structs by value. How a struct is passed differs between
   x86-64, ARM64 and Windows. Clang applies those rules for C, but LLVM does
-  not, so `sisuc` would have to implement them for each target.
+  not, so `sisu` would have to implement them for each target.
   `sisu_panic(msg, len)` already follows this rule. The runtime never builds
   or reads a Sisu object either; text crosses as a pointer and a length
   (ADR 0009).
@@ -390,14 +390,19 @@ so it does not wait for the later goals:
 
 - One `sisu` binary with subcommands, as with the `go` and `zig` commands.
   One binary means the compiler and the build tool can never be different
-  versions, unlike Cargo and `rustc`. Planned for milestone 2, it did not
-  land and is not scheduled yet. It renames `sisuc` to `sisu` and adds two
-  subcommands:
-  - `sisu build` does what `sisuc` does today, with the same flags.
-  - `sisu run file.sisu` compiles to a temporary executable and runs it.
+  versions, unlike Cargo and `rustc`. Planned for milestone 2, it is done:
+  the binary is `sisu`, and `sisuc` is gone.
+  - `sisu build` writes the executable, with the old flags in any order.
+  - `sisu run file.sisu [args]` compiles to a temporary executable, runs it
+    and exits with its exit code.
+  - `sisu check` and `sisu explain` replace `--check` and `--explain`.
+  - `-e '<code>'` gives an inline program in place of a file.
+  - `sisu --version --verbose` prints the commit, the host and the LLVM
+    version.
 
-  Later subcommands are `sisu check` (type checking only), `sisu fmt`,
-  `sisu test` and `sisu lsp`. No manifest at first: a single file, or a
+  A build directory and `sisu clean` wait for modules (milestone 11), when
+  per-file objects are worth keeping. `sisu fmt`, `sisu test` and
+  `sisu lsp` are still later. No manifest at first: a single file, or a
   directory whose entry point is `main.sisu`, builds without one. A `sisu.toml`
   arrives only when a project needs dependencies.
 - A `-O2` flag, added in milestone 2. It runs LLVM's `default<O2>` pass
@@ -454,7 +459,7 @@ so it does not wait for the later goals:
 The compiler is fuzzed in two stages:
 
 1. Front-end crash fuzzing. Done. A libFuzzer target feeds arbitrary bytes to
-   `sisuc --check` and fails on a panic, a stack overflow, a timeout or an
+   `sisu check` and fails on a panic, a stack overflow, a timeout or an
    out-of-memory, or on a malformed span or fix in the report. An input that
    checks clean is also compiled, and fails when LLVM rejects the module. CI runs it
    nightly; [development.md](development.md#fuzz-the-front-end) covers it.
@@ -589,14 +594,14 @@ stretch goal into steps.
   is still open.
 - The check is built in: for each `.sisu` file in the compiler's tests that
   lexes without errors, the program prints the same tokens as
-  `sisuc --emit tokens`. The parser, once it exists, is checked against
+  `sisu build --emit tokens`. The parser, once it exists, is checked against
   `--emit ast` the same way.
 - Milestone 8's spec settles where the program lives and how the tests run
   it.
 
 Once the lexer exists, CodSpeed gets two benchmarks from it: one runs the
 lexer on a fixed corpus of `.sisu` files, whose output prep checks against
-`sisuc --emit tokens`, and one builds the lexer at `-O2`. The focused
+`sisu build --emit tokens`, and one builds the lexer at `-O2`. The focused
 benchmarks stay, because the program changes in every milestone, and its
 numbers compare only between commits that leave it unchanged.
 
@@ -650,7 +655,7 @@ once the decisions it needs are settled:
   `(i64) -> bool`, so closures need no generics.
 - **Calls**: named arguments and default parameters from milestone 10.
 - **Modules**: modules and `pub` from milestone 11, after the keywords are
-  reserved and `sisuc` can build more than one file. A program of one file
+  reserved and `sisu` can build more than one file. A program of one file
   still builds with no `import`.
 - **Small additions** from the table above, each a branch of its own:
   `let mut` replacing `var` (land it first: it touches every test program),
@@ -659,8 +664,8 @@ once the decisions it needs are settled:
   with `panic("msg")` in milestone 5, stage 1, so `test` blocks can panic.
   Scheduled right after milestone 6: tests in the source file,
   `test "add handles negatives" { assert(add(-1, 1) == 0) }`, with a built-in
-  `assert`. A normal build drops `test` blocks; `sisuc --test`, later
-  `sisu test`, builds a `main` that runs each one and reports which panicked.
+  `assert`. A normal build drops `test` blocks; `sisu test` builds a `main`
+  that runs each one and reports which panicked.
   A test is in the same module, so it sees private names. A panic ends the
   whole process (`sisu_panic`), so the spec decides how the other tests still
   run: one child process per test, or stopping at the first failure. Tests
@@ -1076,10 +1081,10 @@ These do not make code nicer to write, so they wait:
   that shows runtime calls matter.
 
   Bitcode ties two LLVM versions together. LLVM reads bitcode written by
-  older releases, not newer ones, so `sisuc`'s LLVM must read what the pinned
+  older releases, not newer ones, so `sisu`'s LLVM must read what the pinned
   Rust toolchain writes, and a test must prove it on each upgrade. Roc's
   builtins were Zig bitcode, so its LLVM had to follow Zig's. Generating the
-  hot runtime functions as IR inside `sisuc`, as the `@sisu_rc.*` helpers
+  hot runtime functions as IR inside `sisu`, as the `@sisu_rc.*` helpers
   are, avoids the coupling.
 - A formatter, `sisu fmt`, after milestone 7, once `enum` and `match` have
   fixed most of the syntax. It has one style and no options, as with `gofmt`
@@ -1090,7 +1095,7 @@ These do not make code nicer to write, so they wait:
   from the spans. Formatting twice must change nothing, and the formatted
   file must parse to the same syntax tree.
 - A language server, `sisu lsp`, reusing the lexer, parser and checker.
-- Windows. There is no `cc`, so `sisuc` links with `link.exe` or `lld-link`.
+- Windows. There is no `cc`, so `sisu` links with `link.exe` or `lld-link`.
   Programs are `.exe` files in the COFF object format. LLVM ships for Windows
   as an installer and a `clang+llvm` archive, so `llvm-sys` needs its own
   setup.
@@ -1112,7 +1117,7 @@ These do not make code nicer to write, so they wait:
     reflection" in "Open decisions".
 - `@inline` and `@noinline` on functions. They set LLVM's `alwaysinline` and
   `noinline` attributes, as codegen already sets `noreturn` on `sisu_panic`.
-  An attribute alone changes nothing: without `-O2`, `sisuc` must run
+  An attribute alone changes nothing: without `-O2`, `sisu` must run
   `always-inline` before `mem2reg`. `default<O2>` inlines `alwaysinline`
   functions and respects `noinline`. Avoid an `inline fn` keyword, which in
   Kotlin inlines lambda arguments. `@inline` on a recursive function is an
@@ -1143,7 +1148,7 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
   decide" lists the choices they need.
 - **A language reference.** Milestone specs are not published, so the
   compiler and its tests define the language today. Users and tool authors
-  need a reference that says what a program means, apart from what `sisuc`
+  need a reference that says what a program means, apart from what `sisu`
   happens to do.
 - **A stability promise.** Nothing says which programs keep compiling from
   one version to the next, how a feature is deprecated, or whether Sisu has
@@ -1200,14 +1205,14 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
 - **Fuzzing the compiler.** Mutation testing measures the tests. Nothing
   feeds generated programs to the parser, checker and codegen to find
   crashes or wrong code.
-- **Distributing `sisuc`.** Nothing installs Sisu outside a clone. `sisuc`
+- **Distributing `sisu`.** Nothing installs Sisu outside a clone. `sisu`
   finds `libsisu_runtime.a` only next to its own executable in a Cargo target
   directory (`link.rs`), and it links with `cc`, so users need a C toolchain.
   The release binary links LLVM statically but needs glibc, libstdc++,
   libgcc_s, libm, zlib and zstd. A compiled program needs glibc and
-  libgcc_s. A first release ships the runtime beside `sisuc` and finds it
+  libgcc_s. A first release ships the runtime beside `sisu` and finds it
   there, and is built on an old glibc with libstdc++, zlib and zstd linked
-  statically, then tested on a clean machine. A fully static `sisuc` built
+  statically, then tested on a clean machine. A fully static `sisu` built
   against musl needs LLVM built from source against musl. Static compiled
   programs need the runtime built for `x86_64-unknown-linux-musl` and a link
   against musl's C library.

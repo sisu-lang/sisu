@@ -1,0 +1,272 @@
+//! The command line: clap's types, and the `Mode` and `Format` they become.
+
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+use clap::builder::StyledStr;
+use clap::error::ErrorKind;
+use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
+
+use crate::codegen::OptLevel;
+use crate::report::Format;
+use crate::{Backend, Mode, Source, Stage};
+
+/// The Sisu compiler.
+#[derive(Parser)]
+#[command(
+    name = "sisu",
+    args_conflicts_with_subcommands = true,
+    // clap's own `--version` would exit before `-v` is seen, so `-vV` could not work.
+    disable_version_flag = true
+)]
+struct Cli {
+    /// Print the version
+    #[arg(short = 'V', long)]
+    version: bool,
+    /// With `--version`, also print the commit, the host and the LLVM version
+    #[arg(short, long, requires = "version")]
+    verbose: bool,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Compile a program into an executable, or print one stage of it with `--emit`
+    Build {
+        #[command(flatten)]
+        flags: BuildFlags,
+        /// Print this stage to stdout instead of building
+        #[arg(long, value_enum, conflicts_with = "output")]
+        emit: Option<Stage>,
+        #[command(flatten)]
+        program: Program,
+        /// The executable to write; by default the file's name without its extension, in the
+        /// current directory
+        #[arg(short)]
+        output: Option<PathBuf>,
+    },
+    /// Compile a program and run it; exit with its exit code
+    #[command(group = ArgGroup::new("program").required(true).args(["inline", "rest"]))]
+    Run {
+        #[command(flatten)]
+        flags: BuildFlags,
+        /// The program, as text on the command line, then the program's arguments
+        #[arg(short = 'e', value_name = "CODE", num_args = 1.., allow_hyphen_values = true)]
+        inline: Vec<OsString>,
+        /// The program, then its arguments
+        #[arg(value_name = "FILE", trailing_var_arg = true, num_args = 1..)]
+        rest: Vec<OsString>,
+    },
+    /// Report the diagnostics of a program without building it
+    Check {
+        /// How to print diagnostics: as text, or as JSON Lines.
+        #[arg(long, value_enum, default_value = "text")]
+        format: Format,
+        #[command(flatten)]
+        program: Program,
+    },
+    /// Print the explanation of a diagnostic code
+    Explain {
+        /// A diagnostic code, such as E0001.
+        code: String,
+    },
+}
+
+/// The program `build` and `check` take: a file, or the text of one with `-e`.
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct Program {
+    /// The program
+    file: Option<PathBuf>,
+    /// The program, as text on the command line
+    #[arg(short = 'e', value_name = "CODE")]
+    inline: Option<OsString>,
+}
+
+impl Program {
+    fn into_source(self) -> Source {
+        self.file
+            .map(Source::File)
+            .or(self.inline.map(Source::Inline))
+            .expect("clap should require a file or `-e`")
+    }
+}
+
+/// The flags `build` and `run` take besides their own.
+#[derive(Args)]
+struct BuildFlags {
+    /// Optimize at this level
+    #[arg(short = 'O', value_enum)]
+    level: Option<OptLevel>,
+    /// Build in checks of every reference count
+    #[arg(long)]
+    rc_checks: bool,
+    /// Link with `ld.<linker>` in place of `cc`'s default linker
+    #[arg(long, value_parser = ["bfd", "gold", "lld", "mold"])]
+    linker: Option<String>,
+    /// How to print diagnostics: as text, or as JSON Lines.
+    #[arg(long, value_enum, default_value = "text")]
+    format: Format,
+}
+
+impl BuildFlags {
+    /// The format, and the back end these flags ask for.
+    fn into_parts(self) -> (Format, Backend) {
+        let backend = Backend {
+            level: self.level.unwrap_or(OptLevel::O0),
+            rc_checks: self.rc_checks,
+            linker: self.linker,
+        };
+        (self.format, backend)
+    }
+}
+
+/// The format and the mode `args`, the whole command line, asks for.
+pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> {
+    let cli = Cli::try_parse_from(args)?;
+    if cli.version {
+        return Ok((
+            Format::Text,
+            Mode::Version {
+                verbose: cli.verbose,
+            },
+        ));
+    }
+    let Some(command) = cli.command else {
+        return Ok((Format::Text, Mode::Help));
+    };
+    Ok(match command {
+        Command::Build {
+            flags,
+            emit,
+            program,
+            output,
+        } => {
+            let (format, backend) = flags.into_parts();
+            (
+                format,
+                build_mode(backend, emit, program.into_source(), output)?,
+            )
+        }
+        Command::Run {
+            flags,
+            inline,
+            rest,
+        } => {
+            let (format, backend) = flags.into_parts();
+            let inline_given = !inline.is_empty();
+            let mut values = if inline_given { inline } else { rest }
+                .into_iter()
+                .peekable();
+            let first = values
+                .next()
+                .expect("clap should require a file or `-e` with code");
+            let source = if inline_given {
+                Source::Inline(first)
+            } else {
+                Source::File(first.into())
+            };
+            // A first `--` only ends `sisu`'s own arguments; a later one is the program's.
+            values.next_if(|arg| arg == "--");
+            let args = values.collect();
+            (
+                format,
+                Mode::Run {
+                    source,
+                    args,
+                    backend,
+                },
+            )
+        }
+        Command::Check { format, program } => (
+            format,
+            Mode::Check {
+                source: program.into_source(),
+            },
+        ),
+        Command::Explain { code } => (Format::Text, Mode::Explain { code }),
+    })
+}
+
+/// The mode `build` asks for, once the flags it takes are checked against `--emit`.
+fn build_mode(
+    backend: Backend,
+    emit: Option<Stage>,
+    source: Source,
+    output: Option<PathBuf>,
+) -> Result<Mode, clap::Error> {
+    let Some(stage) = emit else {
+        let output = match (output, &source) {
+            (Some(output), _) => output,
+            (None, Source::File(file)) => PathBuf::from(file.file_stem().ok_or_else(|| {
+                build_error(format!(
+                    "cannot name an executable after `{}`; give one with `-o <output>`",
+                    file.display()
+                ))
+            })?),
+            (None, Source::Inline(_)) => {
+                return Err(build_error(
+                    "an inline program needs `-o <output>` to build an executable",
+                ));
+            }
+        };
+        return Ok(Mode::Build {
+            input: source,
+            output,
+            backend,
+        });
+    };
+    // The other stages run no optimizer.
+    if backend.level != OptLevel::O0 && !matches!(stage, Stage::Ir) {
+        let level = backend
+            .level
+            .to_possible_value()
+            .expect("`-O` should take only levels it can name");
+        return Err(build_error(format!(
+            "`-O{}` works only when building an executable or with `--emit ir`",
+            level.get_name()
+        )));
+    }
+    if backend.rc_checks && !matches!(stage, Stage::Ir | Stage::IrRaw) {
+        return Err(build_error(
+            "`--rc-checks` works only when building an executable or with `--emit ir` or \
+             `--emit ir-raw`",
+        ));
+    }
+    if backend.linker.is_some() {
+        return Err(build_error(
+            "`--linker` works only when building an executable",
+        ));
+    }
+    Ok(Mode::Emit {
+        stage,
+        input: source,
+        level: backend.level,
+        rc_checks: backend.rc_checks,
+    })
+}
+
+/// A usage error of `build`, shown with `build`'s usage.
+fn build_error(message: impl std::fmt::Display) -> clap::Error {
+    let mut cli = Cli::command();
+    // Gives the subcommand its full name, `sisu build`, for the usage line.
+    cli.build();
+    cli.find_subcommand_mut("build")
+        .expect("`Cli` should have the subcommand `build`")
+        .error(ErrorKind::ArgumentConflict, message)
+}
+
+/// The help that `sisu` with no arguments prints, as `sisu --help` does.
+pub(crate) fn help() -> StyledStr {
+    Cli::command().render_help()
+}
+
+/// The first line of `--version`: the command's name and the version.
+pub(crate) fn version() -> String {
+    format!(
+        "{} {}",
+        Cli::command().get_name(),
+        env!("CARGO_PKG_VERSION")
+    )
+}

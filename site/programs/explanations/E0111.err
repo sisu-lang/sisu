@@ -9,5 +9,5 @@ help: convert it with `f64(...)`
 3 |     print("{f64(n):.2}")
   |             ++++ +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0111
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0111

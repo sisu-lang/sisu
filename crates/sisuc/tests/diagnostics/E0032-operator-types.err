@@ -34,5 +34,5 @@ error[E0032]: expected `i64`, found `bool`
 12 |     print(1 + p)
    |               ^
 
-sisuc: 6 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

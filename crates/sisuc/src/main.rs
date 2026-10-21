@@ -1,4 +1,4 @@
-//! The `sisuc` binary: runs the compiler's command line on a thread with a large stack.
+//! The `sisu` binary: runs the compiler's command line on a thread with a large stack.
 
 use std::panic;
 use std::process::ExitCode;

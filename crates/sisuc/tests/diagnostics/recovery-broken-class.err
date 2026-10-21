@@ -16,5 +16,5 @@ error[E0033]: cannot find binding `nope`
 20 |     c.bump(nope)
    |            ^^^^
 
-sisuc: 3 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0011, E0033
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0011, E0033

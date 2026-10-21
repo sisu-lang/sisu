@@ -1,5 +1,6 @@
 //! `sisuc`, the Sisu compiler.
 
+mod args;
 mod ast;
 mod check;
 mod codegen;
@@ -12,6 +13,7 @@ mod link;
 mod mir;
 mod parser;
 mod report;
+mod run;
 mod source;
 mod symbol;
 mod tir;
@@ -27,41 +29,66 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use codegen::OptLevel;
 use diagnostic::{Code, Diagnostic, RETIRED, Severity};
 use inkwell::context::Context;
+use inkwell::targets::TargetMachine;
 use report::{Format, Reporter};
 use tir::Program;
 
 pub use fuzz::front_end as fuzz_front_end;
-
-const USAGE: &str = "usage: sisuc [--format text|json] ([-O2|-O3] [--rc-checks] [--linker bfd|gold|lld|mold] <input.sisu> <output> | [-O2|-O3] [--rc-checks] --emit ir <input.sisu> | [--rc-checks] --emit ir-raw <input.sisu> | --emit tokens|ast|tir|mir <input.sisu> | --check <input.sisu>) | sisuc --explain <code>";
 
 /// The reporter `cli` writes stderr through.
 type Report = Reporter<Stderr>;
 
 /// What the command line asks for.
 enum Mode {
+    /// Print the usage.
+    Help,
+    /// Print the version, and with `verbose` the commit, the host and the LLVM version.
+    Version {
+        verbose: bool,
+    },
     Emit {
         stage: Stage,
-        input: PathBuf,
+        input: Source,
         level: OptLevel,
         rc_checks: bool,
     },
     Check {
-        input: PathBuf,
+        source: Source,
     },
     /// Print the explanation of a diagnostic code.
     Explain {
         code: String,
     },
     Build {
-        input: PathBuf,
+        input: Source,
         output: PathBuf,
-        level: OptLevel,
-        rc_checks: bool,
-        /// The `-fuse-ld` name `cc` links with; `cc`'s default without one.
-        linker: Option<&'static str>,
+        backend: Backend,
+    },
+    /// Compile the program and run it with `args`.
+    Run {
+        source: Source,
+        args: Vec<OsString>,
+        backend: Backend,
     },
 }
 
+/// Where the program's text comes from.
+enum Source {
+    File(PathBuf),
+    /// An inline program, from `-e`.
+    Inline(OsString),
+}
+
+/// How an executable is built: the optimization level, the count checks, and the linker.
+struct Backend {
+    level: OptLevel,
+    rc_checks: bool,
+    /// The `-fuse-ld` name `cc` links with; `cc`'s default without one.
+    linker: Option<String>,
+}
+
+/// The stage `--emit` prints.
+#[derive(Clone, clap::ValueEnum)]
 enum Stage {
     Tokens,
     Ast,
@@ -71,121 +98,6 @@ enum Stage {
     IrRaw,
 }
 
-/// The stage `--emit` names.
-fn emit_stage(name: &OsString) -> Result<Stage, String> {
-    match name.to_str() {
-        Some("tokens") => Ok(Stage::Tokens),
-        Some("ast") => Ok(Stage::Ast),
-        Some("tir") => Ok(Stage::Tir),
-        Some("mir") => Ok(Stage::Mir),
-        Some("ir") => Ok(Stage::Ir),
-        Some("ir-raw") => Ok(Stage::IrRaw),
-        _ => Err(USAGE.to_string()),
-    }
-}
-
-/// The format and the mode the command line asks for.
-fn parse_args(args: &[OsString]) -> Result<(Format, Mode), String> {
-    // `--format` is accepted only as the first two arguments.
-    let (format, args) = match args {
-        [flag, format, rest @ ..] if flag == "--format" => match format.to_str() {
-            Some("text") => (Some(Format::Text), rest),
-            Some("json") => (Some(Format::Json), rest),
-            _ => return Err(USAGE.to_string()),
-        },
-        _ => (None, args),
-    };
-    // `-O2` or `-O3` is accepted only as the first argument after `--format`.
-    let (level, args) = match args {
-        [flag, rest @ ..] if flag == "-O2" => (OptLevel::O2, rest),
-        [flag, rest @ ..] if flag == "-O3" => (OptLevel::O3, rest),
-        _ => (OptLevel::O0, args),
-    };
-    // `--rc-checks` is accepted only right after an optional `-O2` or `-O3`, and only for a build
-    // or IR.
-    let (rc_checks, args) = match args {
-        [flag, rest @ ..] if flag == "--rc-checks" => (true, rest),
-        _ => (false, args),
-    };
-    // `--linker` is accepted only right after an optional `--rc-checks`, and only for a build;
-    // the names are those `cc -fuse-ld` takes.
-    let (linker, args) = match args {
-        [flag, name, rest @ ..] if flag == "--linker" => {
-            let name = ["bfd", "gold", "lld", "mold"]
-                .into_iter()
-                .find(|&n| *name == n);
-            (Some(name.ok_or_else(|| USAGE.to_string())?), rest)
-        }
-        _ => (None, args),
-    };
-    if args.iter().any(|a| {
-        a == "-O2" || a == "-O3" || a == "--rc-checks" || a == "--linker" || a == "--format"
-    }) {
-        return Err(USAGE.to_string());
-    }
-    let mode = match args {
-        [flag, stage, input] if flag == "--emit" => Ok(Mode::Emit {
-            stage: emit_stage(stage)?,
-            input: PathBuf::from(input),
-            level,
-            rc_checks,
-        }),
-        [flag, input] if flag == "--check" => Ok(Mode::Check {
-            input: PathBuf::from(input),
-        }),
-        [flag, code] if flag == "--explain" => Ok(Mode::Explain {
-            code: code.to_string_lossy().into_owned(),
-        }),
-        [input, output]
-            if [input, output]
-                .iter()
-                .all(|a| !a.to_string_lossy().starts_with('-')) =>
-        {
-            Ok(Mode::Build {
-                input: PathBuf::from(input),
-                output: PathBuf::from(output),
-                level,
-                rc_checks,
-                linker,
-            })
-        }
-        _ => Err(USAGE.to_string()),
-    }?;
-    if rc_checks
-        && !matches!(
-            mode,
-            Mode::Build { .. }
-                | Mode::Emit {
-                    stage: Stage::Ir | Stage::IrRaw,
-                    ..
-                }
-        )
-    {
-        return Err(USAGE.to_string());
-    }
-    // `--explain` prints to stdout and takes no other flag.
-    if format.is_some() && matches!(mode, Mode::Explain { .. }) {
-        return Err(USAGE.to_string());
-    }
-    if linker.is_some() && !matches!(mode, Mode::Build { .. }) {
-        return Err(USAGE.to_string());
-    }
-    // The other modes run no optimizer.
-    if level != OptLevel::O0
-        && !matches!(
-            mode,
-            Mode::Build { .. }
-                | Mode::Emit {
-                    stage: Stage::Ir,
-                    ..
-                }
-        )
-    {
-        return Err(USAGE.to_string());
-    }
-    Ok((format.unwrap_or(Format::Text), mode))
-}
-
 /// The stack of the thread that runs the compiler. The parser bounds the depth of the syntax tree
 /// (`MAX_DEPTH`), and the deepest tree compiles in about 5.5 MiB in a debug build. 64 MiB is
 /// four times that and more. The pages are mapped but touched only when used.
@@ -193,44 +105,92 @@ pub const STACK_SIZE: usize = 64 << 20;
 
 /// Parses the arguments, does what they ask for, and reports.
 pub fn cli() -> ExitCode {
-    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let (format, mode) = match parse_args(&args) {
+    let (format, mode) = match args::parse(std::env::args_os().collect()) {
         Ok(parsed) => parsed,
-        Err(usage) => {
-            // The format is not known yet, so this stays plain text.
-            eprintln!("{usage}");
-            return ExitCode::FAILURE;
+        Err(e) => {
+            // Not `e.exit()`, which would end the process from the compiler's thread. A usage
+            // error that cannot reach stderr has nowhere to be reported, so it only sets the exit
+            // code.
+            if let Err(write) = e.print()
+                && !e.use_stderr()
+                && write.kind() != ErrorKind::BrokenPipe
+            {
+                // A help or version that did not reach stdout is not a success, unless the
+                // reader left (`sisu --help | head -1`), which ends quietly as in coreutils.
+                report::tool_error_after_summary(
+                    &Format::Text,
+                    &format!("cannot write to stdout: {write}"),
+                );
+                return ExitCode::FAILURE;
+            }
+            // 0 for help, 2 for a usage error.
+            return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2));
         }
     };
     let color = report::use_color(
         io::stderr().is_terminal(),
         std::env::var_os("NO_COLOR").as_deref(),
     );
-    let mut reporter = Reporter::new(io::stderr(), format, color);
-    let code = run(&mut reporter, mode);
-    reporter.finish();
-    code
+    let reporter = Reporter::new(io::stderr(), format.clone(), color);
+    execute(reporter, &format, mode)
 }
 
-/// Does what `mode` asks for.
-fn run(reporter: &mut Report, mode: Mode) -> ExitCode {
-    match mode {
+/// Does what `mode` asks for, and finishes `reporter`, which writes in `format`.
+fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
+    let code = match mode {
+        Mode::Help => print_stdout(&mut reporter, &args::help().to_string()),
+        Mode::Version { verbose } => print_stdout(&mut reporter, &version_text(verbose)),
         Mode::Emit {
             stage,
             input,
             level,
             rc_checks,
-        } => emit(reporter, &stage, &input, level, rc_checks),
-        Mode::Check { input } => run_check(reporter, &input),
-        Mode::Explain { code } => explain(reporter, &code),
+        } => emit(&mut reporter, &stage, &input, level, rc_checks),
+        Mode::Check { source } => run_check(&mut reporter, &source),
+        Mode::Explain { code } => explain(&mut reporter, &code),
         Mode::Build {
             input,
             output,
-            level,
-            rc_checks,
-            linker,
-        } => build(reporter, &input, &output, level, rc_checks, linker),
+            backend,
+        } => build(&mut reporter, &input, &output, &backend),
+        // `run` finishes the reporter itself, before the program starts.
+        Mode::Run {
+            source,
+            args,
+            backend,
+        } => return run::run(reporter, format, &source, &args, &backend),
+    };
+    reporter.finish();
+    code
+}
+
+/// Writes `text` to stdout, or reports why it cannot.
+fn print_stdout(reporter: &mut Report, text: &str) -> ExitCode {
+    let mut stdout = io::stdout().lock();
+    match write!(stdout, "{text}").and_then(|()| stdout.flush()) {
+        // A reader that left (`sisu explain E0001 | head -1`) ends the output quietly.
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
+        Err(e) => {
+            reporter.tool_error(&format!("cannot write to stdout: {e}"));
+            ExitCode::FAILURE
+        }
     }
+}
+
+/// The text of `--version`, with the commit, host and LLVM lines if `verbose`.
+fn version_text(verbose: bool) -> String {
+    let name = args::version();
+    if !verbose {
+        return format!("{name}\n");
+    }
+    let (major, minor, patch) = inkwell::support::get_llvm_version();
+    let host = TargetMachine::get_default_triple();
+    format!(
+        "{name}\ncommit: {}\nhost: {}\nllvm: {major}.{minor}.{patch}\n",
+        env!("SISU_COMMIT"),
+        host.as_str().to_string_lossy()
+    )
 }
 
 /// Prints the explanation of `code`, in any case, retired or not, or that there is no such code.
@@ -240,8 +200,7 @@ fn explain(reporter: &mut Report, code: &str) -> ExitCode {
         Some(*text)
     };
     if let Some(text) = Code::parse(code).map(Code::explanation).or_else(retired) {
-        print!("{text}");
-        ExitCode::SUCCESS
+        print_stdout(reporter, text)
     } else {
         reporter.tool_error(&format!("unknown diagnostic code `{code}`"));
         ExitCode::FAILURE
@@ -279,17 +238,24 @@ fn read_at_most(reader: impl Read, len: u64, limit: usize) -> io::Result<Option<
     Ok((bytes.len() <= limit).then_some(bytes))
 }
 
-/// Reads `input`, or reports why it cannot. Text that is not UTF-8 is a diagnostic at its first
-/// invalid byte, rendered over the valid text before it, so the renderer never sees bad UTF-8.
-fn read(reporter: &mut Report, input: &Path) -> Option<String> {
-    let path = input.to_string_lossy();
-    let bytes = read_bytes(reporter, input)?;
+/// The name diagnostics and panics give `input`, and its text, or why it cannot be read. Text
+/// that is not UTF-8 is a diagnostic at its first invalid byte, rendered over the valid text
+/// before it, so the renderer never sees bad UTF-8.
+fn read_source(reporter: &mut Report, input: &Source) -> Option<(String, String)> {
+    let (name, bytes) = match input {
+        Source::File(path) => (
+            path.to_string_lossy().into_owned(),
+            read_bytes(reporter, path)?,
+        ),
+        Source::Inline(code) => ("<inline>".to_owned(), code.as_encoded_bytes().to_vec()),
+    };
     front_end::decode(bytes)
         .inspect_err(|e| {
             let (shown, d) = &**e;
-            reporter.diagnostics(&path, shown, std::slice::from_ref(d));
+            reporter.diagnostics(&name, shown, std::slice::from_ref(d));
         })
         .ok()
+        .map(|text| (name, text))
 }
 
 /// Prints one stage's output for `input` to stdout; the IR stages build in count checks with
@@ -297,12 +263,11 @@ fn read(reporter: &mut Report, input: &Path) -> Option<String> {
 fn emit(
     reporter: &mut Report,
     stage: &Stage,
-    input: &Path,
+    input: &Source,
     level: OptLevel,
     rc_checks: bool,
 ) -> ExitCode {
-    let path = input.to_string_lossy();
-    let Some(source) = read(reporter, input) else {
+    let Some((path, source)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
     match stage {
@@ -429,27 +394,24 @@ fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str, rc_checks: bool)
 }
 
 /// Lexes, parses and checks `input`; reports every diagnostic. Fails if any is an error.
-fn run_check(reporter: &mut Report, input: &Path) -> ExitCode {
-    let Some(bytes) = read_bytes(reporter, input) else {
+fn run_check(reporter: &mut Report, input: &Source) -> ExitCode {
+    let Some((name, text)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
-    if check_bytes(reporter, &input.to_string_lossy(), bytes)
-        .program
-        .is_some()
-    {
+    if front_end(reporter, &name, &text).is_some() {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
     }
 }
 
-/// What `sisuc --check` reported for one source.
+/// What `sisu check` reported for one source.
 pub(crate) struct Checked {
     /// The text the diagnostics point into: the source, or for bytes that are not UTF-8,
     /// the replacement text `decode` returns.
     pub(crate) source: String,
     pub(crate) diagnostics: Vec<Diagnostic>,
-    /// The program, unless a diagnostic is an error. `--check` passes when it is `Some`.
+    /// The program, unless a diagnostic is an error. `check` passes when it is `Some`.
     pub(crate) program: Option<Program>,
 }
 
@@ -482,18 +444,14 @@ pub(crate) fn check_bytes<W: Write>(
 }
 
 /// Compiles `input` into the executable `output`.
-fn build(
-    reporter: &mut Report,
-    input: &Path,
-    output: &Path,
-    level: OptLevel,
-    rc_checks: bool,
-    linker: Option<&str>,
-) -> ExitCode {
+fn build(reporter: &mut Report, input: &Source, output: &Path, backend: &Backend) -> ExitCode {
     // `cc -o` would replace the source with the executable.
-    let overwrites_input = match (fs::canonicalize(input), fs::canonicalize(output)) {
-        (Ok(input), Ok(output)) => input == output,
-        _ => input == output,
+    let overwrites_input = match input {
+        Source::File(input) => match (fs::canonicalize(input), fs::canonicalize(output)) {
+            (Ok(input), Ok(output)) => input == output,
+            _ => input == output,
+        },
+        Source::Inline(_) => false,
     };
     if overwrites_input {
         reporter.tool_error(&format!(
@@ -513,19 +471,22 @@ fn build(
             return ExitCode::FAILURE;
         }
     };
-    let path = input.to_string_lossy();
-    let Some(source) = read(reporter, input) else {
+    let Some((path, source)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
     let Some(program) = front_end(reporter, &path, &source) else {
         return ExitCode::FAILURE;
     };
-    let linking = link::Linking {
-        runtime: &runtime,
+    let compiled = compile(
+        &program,
+        &path,
+        &source,
+        &runtime,
         output,
-        linker,
-    };
-    match compile(&program, &path, &source, &linking, level, rc_checks) {
+        &std::env::temp_dir(),
+        backend,
+    );
+    match compiled {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             reporter.tool_error(&message);
@@ -567,37 +528,52 @@ fn front_end(reporter: &mut Report, path: &str, source: &str) -> Option<Program>
     program
 }
 
-/// Compiles `program` into the executable `output`, going through a temporary object file;
-/// with `rc_checks`, the executable checks its reference counts.
+/// Compiles `program` into the executable `output`, linked with `runtime`, going through a
+/// temporary object file in `dir`.
 fn compile(
     program: &Program,
     path: &str,
     source: &str,
-    linking: &link::Linking,
-    level: OptLevel,
-    rc_checks: bool,
+    runtime: &Path,
+    output: &Path,
+    dir: &Path,
+    backend: &Backend,
 ) -> Result<(), String> {
+    let Backend {
+        level,
+        rc_checks,
+        ref linker,
+    } = *backend;
     let mir = mir::build(program);
     let context = Context::create();
     let machine = codegen::target_machine(level)?;
     let module = codegen::compile(&context, program, &mir, path, source, &machine, rc_checks);
     codegen::optimize(&module, &machine, level)?;
     let code = codegen::object_code(&module, &machine)?;
-    // A name of its own, so a user's `<output>.o` is left alone; the nanoseconds pick a
-    // fresh name when one is taken.
-    let pid = std::process::id();
-    let names = (0..10).map(|_| {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.subsec_nanos());
-        format!("sisuc-{pid}-{nanos}.o")
-    });
-    let object = create_object(&std::env::temp_dir(), code.as_slice(), names)?;
+    // A name of its own, so a user's `<output>.o` is left alone.
+    let object = create_object(dir, code.as_slice(), fresh_names(".o"))?;
     // Remove the object file whether or not the link worked; a link error wins.
-    let link_result = link::link(&object, linking);
+    let linking = link::Linking {
+        runtime,
+        output,
+        linker: linker.as_deref(),
+    };
+    let link_result = link::link(&object, &linking);
     let removed =
         fs::remove_file(&object).map_err(|e| format!("cannot remove {}: {e}", object.display()));
     link_result.and(removed)
+}
+
+/// Ten names for a new file or directory in the temp dir: `sisu-<pid>-<nanoseconds><suffix>`.
+/// The nanoseconds pick a fresh name when one is taken.
+fn fresh_names(suffix: &'static str) -> impl Iterator<Item = String> {
+    let pid = std::process::id();
+    (0..10).map(move |_| {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos());
+        format!("sisu-{pid}-{nanos}{suffix}")
+    })
 }
 
 /// Writes `bytes` to a new file in `dir`, under the first of `names` that is free, and
@@ -672,12 +648,12 @@ mod tests {
     fn object_file_never_follows_an_existing_path() {
         use std::os::unix::fs::symlink;
 
-        let dir = std::env::temp_dir().join(format!("sisuc-create-object-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sisu-create-object-{}", std::process::id()));
         // It is absent unless an earlier run failed, so a failure here is expected and harmless.
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).expect("creates the directory");
         let target = dir.join("target");
-        fs::write(&target, "not sisuc's").expect("writes");
+        fs::write(&target, "not sisu's").expect("writes");
         symlink(&target, dir.join("taken.o")).expect("links");
         symlink(dir.join("absent"), dir.join("dangling.o")).expect("links");
 
@@ -685,11 +661,11 @@ mod tests {
         let object = create_object(&dir, b"object", names).expect("`free.o` is free");
         assert_eq!(object, dir.join("free.o"));
         assert_eq!(fs::read(&object).expect("reads"), b"object");
-        assert_eq!(fs::read_to_string(&target).expect("reads"), "not sisuc's");
+        assert_eq!(fs::read_to_string(&target).expect("reads"), "not sisu's");
         assert!(!dir.join("absent").exists());
         // With every name taken, it gives up without writing.
         assert!(create_object(&dir, b"object", ["taken.o".to_string()]).is_err());
-        assert_eq!(fs::read_to_string(&target).expect("reads"), "not sisuc's");
+        assert_eq!(fs::read_to_string(&target).expect("reads"), "not sisu's");
         fs::remove_dir_all(&dir).expect("removes the directory");
     }
 
@@ -698,7 +674,7 @@ mod tests {
     fn object_file_is_readable_only_by_its_owner() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir().join(format!("sisuc-object-mode-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sisu-object-mode-{}", std::process::id()));
         // It is absent unless an earlier run failed, so a failure here is expected and harmless.
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).expect("creates the directory");

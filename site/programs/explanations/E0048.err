@@ -4,5 +4,5 @@ error[E0048]: the left side of `??` is not optional
 3 |     print(n ?? 0)
   |           ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0048
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0048

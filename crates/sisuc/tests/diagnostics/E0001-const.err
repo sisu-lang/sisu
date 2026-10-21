@@ -7,5 +7,5 @@ error[E0001]: cannot assign to `LIMIT`
 4 |     LIMIT = 200
   |     ^^^^^^^^^^^ cannot assign
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0001
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0001

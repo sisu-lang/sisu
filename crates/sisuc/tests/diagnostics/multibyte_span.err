@@ -4,5 +4,5 @@ error[E0010]: unexpected character `ä`
 3 |     let ä = 1
   |         ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0010
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0010

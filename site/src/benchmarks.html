@@ -58,7 +58,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
       <p>Each element write checks the index against the bounds and the array's count against 1, and each addition checks for overflow. The checks are the whole gap to C. Removing the overflow checks by hand made no measurable difference.</p>
       <p>A loop now makes the arrays it writes unique once, before it starts (<a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md">ADR 0021</a>). In a separate session on a busy machine, that took the fastest run from 690 ms to 640 ms, against C's 610 ms. The bounds checks remain: LLVM cannot prove the index is in range.</p>
       <h3>hello: the link step</h3>
-      <p>Lexing, parsing and checking <code>hello</code> take 1.4 ms, timed with hyperfine on one pinned CPU after a warm-up. The whole <code>sisuc -O2</code> build takes 27.6 ms, and the link through <code>cc</code> alone takes 21.9 ms of that. The bench script neither pins nor warms up its builds, so its 0.058 s reads higher. A faster edit-to-output loop starts with the link, not the compiler.</p>
+      <p>Lexing, parsing and checking <code>hello</code> take 1.4 ms, timed with hyperfine on one pinned CPU after a warm-up. The whole <code>sisu build -O2</code> build takes 27.6 ms, and the link through <code>cc</code> alone takes 21.9 ms of that. The bench script neither pins nor warms up its builds, so its 0.058 s reads higher. A faster edit-to-output loop starts with the link, not the compiler.</p>
     </div>
   </div></section>
   <!-- source: docs/benchmarks.md (Where binary_trees spends its time, quicksort on an array value, Where a hello build spends its time, What the numbers mean) -->
@@ -93,7 +93,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
       <div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>Language</th><th>Toolchain and flags</th></tr></thead>
         <tbody>
-          <tr><td>Sisu</td><td><code>sisuc -O2</code>, LLVM 22</td></tr>
+          <tr><td>Sisu</td><td><code>sisu build -O2</code>, LLVM 22</td></tr>
           <tr><td>C</td><td>Ubuntu clang 18.1.3, <code>-O2</code></td></tr>
           <tr><td>Rust</td><td>rustc 1.99.0, <code>-C opt-level=3</code></td></tr>
           <tr><td>Go</td><td>Go 1.27.2</td></tr>
@@ -104,7 +104,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
       <h3>What these numbers cannot tell you</h3>
       <p>They come from one machine, on small single-threaded programs. Sisu runs on x86-64 Linux only, so there is nothing to compare on other systems. They show where Sisu stands, not how fast it will be.</p>
       <h3>Run them yourself</h3>
-      <p>The script builds <code>sisuc</code> in release mode, runs each program in every language whose toolchain is on <code>PATH</code>, and skips the rest. It prints the tables with the commit, date and machine.</p>
+      <p>The script builds <code>sisu</code> in release mode, runs each program in every language whose toolchain is on <code>PATH</code>, and skips the rest. It prints the tables with the commit, date and machine.</p>
       <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
 $ make bench                       # all benchmarks
 $ make bench BENCH='fib sieve'     # some of them
@@ -127,10 +127,10 @@ $ RUNS=10 BENCH_CPU=4 make bench
       <p>It runs in CodSpeed's simulation mode, which counts instructions rather than timing the run. It measures two things:</p>
       <ul>
         <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and four programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code> and <code>compare</code>.</li>
-        <li>The compiler itself: an <code>-O2</code> build of <code>bench/hello</code>, a <code>--check</code> and an <code>-O2</code> build of <code>bench/binary_trees</code>, a <code>--check</code> of a generated 200-section input that uses most of the language, and an <code>-O2</code> build of a 20-section one. Pushes to <code>main</code> also build the 200-section input, from <code>codspeed-main.yml</code>.</li>
+        <li>The compiler itself: an <code>-O2</code> build of <code>bench/hello</code>, a <code>sisu check</code> and an <code>-O2</code> build of <code>bench/binary_trees</code>, a <code>sisu check</code> of a generated 200-section input that uses most of the language, and an <code>-O2</code> build of a 20-section one. Pushes to <code>main</code> also build the 200-section input, from <code>codspeed-main.yml</code>.</li>
       </ul>
       <p>Before it measures, <code>scripts/codspeed-prep.sh</code> builds every benchmark and checks what each one prints. CodSpeed comments on a pull request when a result changes.</p>
-      <p>The check is informational: it never turns a pull request red. On a push to <code>main</code>, a failed step fails the run, so the benchmarks cannot stop running unnoticed. To compare a change before you push, <code>make callgrind</code> counts the instructions of <code>sisuc --check</code> on the large input, as CodSpeed does.</p>
+      <p>The check is informational: it never turns a pull request red. On a push to <code>main</code>, a failed step fails the run, so the benchmarks cannot stop running unnoticed. To compare a change before you push, <code>make callgrind</code> counts the instructions of <code>sisu check</code> on the large input, as CodSpeed does.</p>
     </div>
   </div></section>
   <!-- source: .github/workflows/codspeed.yml (on: push branches [main], pull_request paths; continue-on-error; summary step), codspeed.yml, codspeed-main.yml, scripts/codspeed-prep.sh, docs/benchmarks.md (Benchmarks for CodSpeed only), docs/development.md (Coverage and performance), Makefile (callgrind) -->

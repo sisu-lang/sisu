@@ -4,5 +4,5 @@ error[E0074]: `one` is a function, not a variable
 6 |     one = 2
   |     ^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0074
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0074

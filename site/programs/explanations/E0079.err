@@ -9,5 +9,5 @@ help: bind it with `let _`
 6 |     let _ = make()
   |     +++
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0079
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0079

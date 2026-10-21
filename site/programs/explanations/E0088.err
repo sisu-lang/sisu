@@ -4,5 +4,5 @@ error[E0088]: integer overflow
 1 | const MASK: u8 = 16 * 16
   |                  ^^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0088
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0088

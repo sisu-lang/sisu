@@ -11,5 +11,5 @@ help: test it with `is_nan()`
 3 +     print(x.is_nan())
   |
 
-sisuc: 1 warning
-sisuc: for more on a code, run `sisuc --explain <code>`: W0005
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0005

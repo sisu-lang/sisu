@@ -39,7 +39,7 @@ languages do, not by what Sisu did before.
 2. **Memory safety.** Reference counts balance on every path: early
    return, `break`, `continue`, a panic, a loop, copy-on-write. No leak,
    double free or use after free.
-3. **Robustness.** No input makes `sisuc` panic or hang. No path is
+3. **Robustness.** No input makes `sisu` panic or hang. No path is
    quadratic in the size of the source. Deep nesting, huge literals and
    long programs work or fail with a diagnostic. Between tasks, no
    reachable crash (see "Staging work across tasks" in `CODING_STANDARDS.md`).
@@ -47,7 +47,7 @@ languages do, not by what Sisu did before.
    No option, layer, abstraction or generality that nothing needs yet.
    Each invariant lives in the module that owns it. Names match
    `GLOSSARY.md`.
-5. **Performance.** Of `sisuc`: no clone, allocation or repeat pass
+5. **Performance.** Of `sisu`: no clone, allocation or repeat pass
    without a reason, anywhere. On a per-token, per-node or per-lookup
    path, that reason is also measured or obvious. Of the generated code: the IR after `-O2` does no avoidable work. A claim that
    something is faster, or costs nothing, needs callgrind counts.
@@ -130,7 +130,7 @@ vague or generic error, or with none.
   in `CODING_STANDARDS.md` says.
 - To compare diagnostics before and after a change, build the base and
   the head, write probe programs into one directory, and run
-  `python3 scripts/diag_diff.py BASE_SISUC HEAD_SISUC DIR`. It prints
+  `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU DIR`. It prints
   each program the head newly accepts, newly rejects or reports
   differently, with the codes and positions of both.
 - When "Focus" names a verify log, check that its first line is the

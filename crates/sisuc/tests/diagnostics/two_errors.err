@@ -16,5 +16,5 @@ error[E0033]: cannot find binding `second`
 4 |     print(second)
   |           ^^^^^^
 
-sisuc: 3 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032, E0033
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0033

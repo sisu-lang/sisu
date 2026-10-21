@@ -4,5 +4,5 @@ error[E0027]: no value of `A` can be built
 1 | enum A {
   |      ^ `A.X` holds a `B`, and `B.Y` holds a `C`, and `C.Z` holds a `B`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0027
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0027

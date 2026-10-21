@@ -6,5 +6,5 @@ error[E0066]: expected field `w` here, found `h`
   |
   = help: name the fields in declaration order: `w`, `h`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0066
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0066

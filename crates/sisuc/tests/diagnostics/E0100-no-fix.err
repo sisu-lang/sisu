@@ -6,5 +6,5 @@ error[E0100]: a constant cannot use a conversion that can fail
   |
   = help: write the literal with its type: `const B: u8 = 200`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0100
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0100

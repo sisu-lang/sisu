@@ -6,5 +6,5 @@ error[E0082]: `continue` cannot appear in a loop header
 3 |         continue
   |         ^^^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0082
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0082

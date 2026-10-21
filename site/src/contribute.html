@@ -50,7 +50,7 @@ How to help with Sisu, a one-person learning project at an early stage.
       <ul>
         <li>The Rust toolchain pinned in <code>rust-toolchain.toml</code> (1.99.0). rustup installs it on first use.</li>
         <li>GNU Make, which runs every command.</li>
-        <li>A C compiler on <code>PATH</code> as <code>cc</code>. <code>sisuc</code> uses it to link programs.</li>
+        <li>A C compiler on <code>PATH</code> as <code>cc</code>. <code>sisu</code> uses it to link programs.</li>
         <li>On Ubuntu: <code>libzstd-dev</code>, <code>libxml2-dev</code> and <code>zlib1g-dev</code>, which LLVM links against.</li>
         <li><code>prek</code> for the Git hooks, with <code>typos</code> and <code>shellcheck</code>.</li>
         <li><code>cargo-nextest</code> and <code>cargo-deny</code>, and Valgrind for the end-to-end tests.</li>
@@ -62,11 +62,11 @@ How to help with Sisu, a one-person learning project at an early stage.
 $ git clone https://github.com/sisu-lang/sisu
 $ cd sisu
 $ make setup     # once per clone: LLVM 23 into .llvm/23, the pre-commit hook
-$ make build     # cargo build --workspace: sisuc and the runtime library
-$ target/debug/sisuc crates/sisuc/tests/run/fib.sisu fib
+$ make build     # cargo build --workspace: sisu and the runtime library
+$ target/debug/sisu build crates/sisuc/tests/run/fib.sisu
 $ ./fib
 {{text ../crates/sisuc/tests/run/fib.out}}</pre></figure>
-      <p>Build the whole workspace, not only <code>sisuc</code>. Every program links with the runtime library, which <code>sisuc</code> looks for next to its own executable; <code>cargo build -p sisuc</code> does not build it. <code>make help</code> lists every target.</p>
+      <p>Build the whole workspace, not only <code>sisu</code>. Every program links with the runtime library, which <code>sisu</code> looks for next to its own executable; <code>cargo build -p sisuc</code> does not build it. <code>make help</code> lists every target.</p>
       <p><a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md">Developing Sisu</a> has the full list of prerequisites and commands.</p>
       <!-- source: docs/development.md ("Prerequisites", "Set up a clone", "Compile and run a program"), rust-toolchain.toml (channel 1.99.0), Makefile (setup, build), README.md (x86-64 Linux only); fib output from crates/sisuc/tests/run/fib.out, which the end-to-end tests check -->
 

@@ -429,7 +429,7 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <rect width="100%" height="100%" fill="url(#grid)"/>
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="sisuc (Rust)" x="250" y="10" width="950" height="270" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="sisu (Rust)" x="250" y="10" width="950" height="270" rx="12" class="c-region" stroke-width="1"/>
 
         <!-- Connection paths (before components for correct z-order) -->
         <g data-graph-role="automatic-crossover" style="--step:0">
@@ -494,8 +494,8 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <text x="105" y="244" class="t-muted" font-size="9" text-anchor="middle">program.sisu</text>
         </g>
 
-        <g id="node-lexer" data-node-id="lexer" data-node-label="Lexer" tabindex="0" role="button" aria-label="Focus Lexer, lexer/, sisuc (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="lexer/" data-node-context="sisuc (Rust)">
-          <title>Lexer · lexer/ · sisuc (Rust)</title>
+        <g id="node-lexer" data-node-id="lexer" data-node-label="Lexer" tabindex="0" role="button" aria-label="Focus Lexer, lexer/, sisu (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="lexer/" data-node-context="sisu (Rust)">
+          <title>Lexer · lexer/ · sisu (Rust)</title>
           <rect x="280" y="200" width="130" height="60" rx="6" class="c-mask"/>
           <rect x="280" y="200" width="130" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(286 206) scale(0.6875)">
@@ -505,8 +505,8 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <text x="345" y="244" class="t-muted" font-size="9" text-anchor="middle">lexer/</text>
         </g>
 
-        <g id="node-parser" data-node-id="parser" data-node-label="Parser" tabindex="0" role="button" aria-label="Focus Parser, parser.rs, sisuc (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="parser.rs" data-node-context="sisuc (Rust)">
-          <title>Parser · parser.rs · sisuc (Rust)</title>
+        <g id="node-parser" data-node-id="parser" data-node-label="Parser" tabindex="0" role="button" aria-label="Focus Parser, parser.rs, sisu (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="parser.rs" data-node-context="sisu (Rust)">
+          <title>Parser · parser.rs · sisu (Rust)</title>
           <rect x="470" y="200" width="130" height="60" rx="6" class="c-mask"/>
           <rect x="470" y="200" width="130" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(476 206) scale(0.6875)">
@@ -516,8 +516,8 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <text x="535" y="244" class="t-muted" font-size="9" text-anchor="middle">parser.rs</text>
         </g>
 
-        <g id="node-checker" data-node-id="checker" data-node-label="Checker" tabindex="0" role="button" aria-label="Focus Checker, check/, sisuc (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="check/" data-node-context="sisuc (Rust)">
-          <title>Checker · check/ · sisuc (Rust)</title>
+        <g id="node-checker" data-node-id="checker" data-node-label="Checker" tabindex="0" role="button" aria-label="Focus Checker, check/, sisu (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="check/" data-node-context="sisu (Rust)">
+          <title>Checker · check/ · sisu (Rust)</title>
           <rect x="660" y="200" width="130" height="60" rx="6" class="c-mask"/>
           <rect x="660" y="200" width="130" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(666 206) scale(0.6875)">
@@ -527,8 +527,8 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <text x="725" y="244" class="t-muted" font-size="9" text-anchor="middle">check/</text>
         </g>
 
-        <g id="node-mir" data-node-id="mir" data-node-label="mir" tabindex="0" role="button" aria-label="Focus mir, mir/, sisuc (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="mir/" data-node-context="sisuc (Rust)">
-          <title>mir · mir/ · sisuc (Rust)</title>
+        <g id="node-mir" data-node-id="mir" data-node-label="mir" tabindex="0" role="button" aria-label="Focus mir, mir/, sisu (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="mir/" data-node-context="sisu (Rust)">
+          <title>mir · mir/ · sisu (Rust)</title>
           <rect x="850" y="200" width="130" height="60" rx="6" class="c-mask"/>
           <rect x="850" y="200" width="130" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(856 206) scale(0.6875)">
@@ -538,8 +538,8 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <text x="915" y="244" class="t-muted" font-size="9" text-anchor="middle">mir/</text>
         </g>
 
-        <g id="node-codegen" data-node-id="codegen" data-node-label="Codegen" tabindex="0" role="button" aria-label="Focus Codegen, codegen/, inkwell, sisuc (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="codegen/, inkwell" data-node-context="sisuc (Rust)">
-          <title>Codegen · codegen/, inkwell · sisuc (Rust)</title>
+        <g id="node-codegen" data-node-id="codegen" data-node-label="Codegen" tabindex="0" role="button" aria-label="Focus Codegen, codegen/, inkwell, sisu (Rust)" aria-pressed="false" data-node-kind="backend" data-node-sublabel="codegen/, inkwell" data-node-context="sisu (Rust)">
+          <title>Codegen · codegen/, inkwell · sisu (Rust)</title>
           <rect x="1040" y="200" width="130" height="60" rx="6" class="c-mask"/>
           <rect x="1040" y="200" width="130" height="60" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1046 206) scale(0.6875)">
@@ -549,8 +549,8 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <text x="1105" y="244" class="t-muted" font-size="9" text-anchor="middle">codegen/, inkwell</text>
         </g>
 
-        <g id="node-diagnostics" data-node-id="diagnostics" data-node-label="Diagnostics" tabindex="0" role="button" aria-label="Focus Diagnostics, text or JSON on stderr, sisuc (Rust)" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="text or JSON on stderr" data-node-context="sisuc (Rust)">
-          <title>Diagnostics · text or JSON on stderr · sisuc (Rust)</title>
+        <g id="node-diagnostics" data-node-id="diagnostics" data-node-label="Diagnostics" tabindex="0" role="button" aria-label="Focus Diagnostics, text or JSON on stderr, sisu (Rust)" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="text or JSON on stderr" data-node-context="sisu (Rust)">
+          <title>Diagnostics · text or JSON on stderr · sisu (Rust)</title>
           <rect x="470" y="40" width="130" height="60" rx="6" class="c-mask"/>
           <rect x="470" y="40" width="130" height="60" rx="6" class="c-frontend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(476 46) scale(0.6875)">
@@ -660,9 +660,9 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="sisuc (Rust)">
-          <rect data-graph-role="structural-frame-label-mask" x="254" y="20" width="74.8" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="258" y="33" class="t-cloud" font-size="9" font-weight="600">sisuc (Rust)</text>
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="sisu (Rust)">
+          <rect data-graph-role="structural-frame-label-mask" x="254" y="20" width="69.4" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="258" y="33" class="t-cloud" font-size="9" font-weight="600">sisu (Rust)</text>
         </g>
 
         <!-- Legend -->
@@ -672,21 +672,21 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
             <rect x="40" y="643" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
             <text x="62" y="652" class="t-muted" font-size="10" font-weight="500">Diagnostics</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-x="160" data-legend-baseline="652" data-legend-width="103">
+          <g data-legend-semantic-kind="backend" data-legend-x="160" data-legend-baseline="652" data-legend-width="98">
             <rect x="160" y="643" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
-            <text x="182" y="652" class="t-muted" font-size="10" font-weight="500">sisuc stages</text>
+            <text x="182" y="652" class="t-muted" font-size="10" font-weight="500">sisu stages</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-x="285" data-legend-baseline="652" data-legend-width="118">
-            <rect x="285" y="643" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
-            <text x="307" y="652" class="t-muted" font-size="10" font-weight="500">Runtime library</text>
+          <g data-legend-semantic-kind="database" data-legend-x="280" data-legend-baseline="652" data-legend-width="118">
+            <rect x="280" y="643" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
+            <text x="302" y="652" class="t-muted" font-size="10" font-weight="500">Runtime library</text>
           </g>
-          <g data-legend-semantic-kind="cloud" data-legend-x="425" data-legend-baseline="652" data-legend-width="167">
-            <rect x="425" y="643" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
-            <text x="447" y="652" class="t-muted" font-size="10" font-weight="500">LLVM and system toolchain</text>
+          <g data-legend-semantic-kind="cloud" data-legend-x="420" data-legend-baseline="652" data-legend-width="167">
+            <rect x="420" y="643" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
+            <text x="442" y="652" class="t-muted" font-size="10" font-weight="500">LLVM and system toolchain</text>
           </g>
-          <g data-legend-semantic-kind="external" data-legend-x="614" data-legend-baseline="652" data-legend-width="68">
-            <rect x="614" y="643" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
-            <text x="636" y="652" class="t-muted" font-size="10" font-weight="500">Files</text>
+          <g data-legend-semantic-kind="external" data-legend-x="609" data-legend-baseline="652" data-legend-width="68">
+            <rect x="609" y="643" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="631" y="652" class="t-muted" font-size="10" font-weight="500">Files</text>
           </g>
         </g>
       </svg>

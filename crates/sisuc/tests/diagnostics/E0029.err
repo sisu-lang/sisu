@@ -4,5 +4,5 @@ error[E0029]: `main` takes no parameters, or one `[string]`, and returns no valu
 1 | fn main(n: i64) {
   |    ^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0029
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0029

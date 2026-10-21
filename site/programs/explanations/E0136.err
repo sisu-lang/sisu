@@ -4,5 +4,5 @@ error[E0136]: `w` is bound in one alternative but not the other
 8 |         Square(w) | Rect(_, h) => w
   |                     ^^^^^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0136
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0136

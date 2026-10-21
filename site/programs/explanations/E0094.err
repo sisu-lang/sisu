@@ -6,5 +6,5 @@ error[E0094]: arithmetic does not apply to `char`
   |
   = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0094
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0094

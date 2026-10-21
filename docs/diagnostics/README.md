@@ -1,9 +1,9 @@
 # Diagnostic codes
 
-Every diagnostic that `sisuc` reports about the source has a stable code:
+Every diagnostic that `sisu` reports about the source has a stable code:
 `E0001`, `E0002`, ... for errors and `W0001`, `W0002`, ... for warnings
 ([ADR 0013](../adr/0013-diagnostics-have-stable-codes.md)). Each code has an
-explanation in this directory, which `sisuc --explain <code>` prints as it
+explanation in this directory, which `sisu explain <code>` prints as it
 stands. The code may be in any case. Links in an explanation are relative to
 `docs/diagnostics/`.
 
@@ -169,17 +169,16 @@ on `main`. A code is never reused or renumbered.
 E0012 is the first retired code. When the compiler stops reporting a code,
 its variant leaves `DiagnosticKind` and its row leaves the table above. Its
 file stays here and gains a `Status: retired` line after its title, naming
-the ADR that retired it, and `sisuc --explain` serves it from `RETIRED`, the
+the ADR that retired it, and `sisu explain` serves it from `RETIRED`, the
 table of retired codes in `crates/sisuc/src/diagnostic/registry.rs`. The site
 leaves it out.
 
 ## JSON output
 
-`sisuc --format json` writes every line on stderr as one JSON object (JSON
-Lines). It works with `--check`, a build and `--emit`; stdout is the same as
-in text, and stays empty when there is an error. `--format` comes first, before
-any other argument. A usage error stays a plain text line, since the format
-is not known until the arguments parse.
+`--format json` writes every line on stderr as one JSON object (JSON
+Lines). It works with `check`, `run` and `build` (with or without `--emit`);
+stdout is the same as in text, and stays empty when there is an error. A usage
+error is clap's text on stderr, with exit code 2, in either format.
 
 Every object has `version`, which is `1` and is bumped on any breaking
 change, and `kind`, one of `diagnostic`, `tool_error` and `summary`. Keys
@@ -196,7 +195,8 @@ A diagnostic about the source:
 - `message`: what is wrong.
 - `primary`: the offending code. `secondary`: a list of other spans that
   explain it. Each span has:
-  - `file`: the input path exactly as given on the command line;
+  - `file`: the input path exactly as given on the command line, or `<inline>` for a
+    program given with `-e`;
   - `start` and `end`: a half-open byte range of the input;
   - `line` and `column`: where `start` is, both 1-based; the column counts
     characters, not bytes;
@@ -219,11 +219,15 @@ input, or a failed link. It has no code; codes are for the source.
 {"version":1,"kind":"tool_error","message":"cannot read x.sisu: No such file or directory (os error 2)"}
 ```
 
-- `message`: what went wrong, without the `sisuc:` prefix that text output
+- `message`: what went wrong, without the `sisu:` prefix that text output
   puts before it. A failed link adds the C compiler's own output after a
   newline.
 
-The summary, always the last line, also when there is no diagnostic:
+The summary, always the last line, also when there is no diagnostic, with one
+exception. `sisu run` writes the summary before the program starts, so the
+program's own stderr follows it, and so do the three tool errors that can only
+happen once the program is built: it cannot start, its temporary directory
+cannot be removed, or `sisu` cannot wait for it.
 
 ```json
 {"version":1,"kind":"summary","errors":1,"warnings":0,"explanations":{"E0001":"# E0001: ..."}}
@@ -233,7 +237,7 @@ The summary, always the last line, also when there is no diagnostic:
   are not counted. A tool error and the exit code tell that the command
   failed.
 - `explanations`: each code seen in this run, sorted, mapped to its
-  explanation, the text `sisuc --explain` prints.
+  explanation, the text `sisu explain` prints.
 
 Text output ends the same way, after at least one diagnostic: a line with
 the counts, then a line naming the codes seen.

@@ -4,5 +4,5 @@ warning[W0003]: `todo` panics when it runs
 2 |     todo("why")
   |     ^^^^
 
-sisuc: 1 warning
-sisuc: for more on a code, run `sisuc --explain <code>`: W0003
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0003

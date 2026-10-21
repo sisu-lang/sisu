@@ -4,5 +4,5 @@ error[E0079]: `_` is not a value
 2 |     print(_)
   |           ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0079
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0079

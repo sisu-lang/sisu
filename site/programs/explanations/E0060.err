@@ -6,5 +6,5 @@ error[E0060]: cannot print `[i64]`
   |
   = help: print each element in a `for` loop
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0060
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0060

@@ -9,5 +9,5 @@ help: write `\}`
 2 |     print("a\}b")
   |             +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0095
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0095

@@ -188,12 +188,12 @@ fn line_col(source: &str, offset: usize) -> (usize, usize) {
     (line, col)
 }
 
-fn sisuc(dir: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_sisuc"))
+fn sisu(dir: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(dir)
         .args(args)
         .output()
-        .expect("sisuc starts")
+        .expect("sisu starts")
 }
 
 /// Builds and runs the program `n` deep: it must compile and exit 0 without a diagnostic.
@@ -201,7 +201,7 @@ fn compiles_at_the_limit(name: &str, program: fn(usize) -> Generated, limit: usi
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join(format!("{name}.sisu")), program(limit).source).expect("writes");
     let exe = format!("{name}.out");
-    let build = sisuc(dir, &[&format!("{name}.sisu"), &exe]);
+    let build = sisu(dir, &["build", &format!("{name}.sisu"), "-o", &exe]);
     assert_eq!(
         (build.status.code(), String::from_utf8_lossy(&build.stderr)),
         (Some(0), "".into())
@@ -212,12 +212,12 @@ fn compiles_at_the_limit(name: &str, program: fn(usize) -> Generated, limit: usi
     assert_eq!(run.status.code(), Some(0));
 }
 
-/// One level past the limit: `--check` exits 1 with the one message, at the failing token.
+/// One level past the limit: `check` exits 1 with the one message, at the failing token.
 fn errors_past_the_limit(name: &str, program: fn(usize) -> Generated, limit: usize) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let Generated { source, fail } = program(limit + 1);
     fs::write(dir.join(format!("{name}.sisu")), &source).expect("writes");
-    let out = sisuc(dir, &["--check", &format!("{name}.sisu")]);
+    let out = sisu(dir, &["check", &format!("{name}.sisu")]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     let (line, col) = line_col(&source, fail);
@@ -298,7 +298,7 @@ fn match_nests_to_the_limit() {
             let file = format!("nesting_match_{name}.sisu");
             let source = format!("fn main() {{\n    {}\n}}\n", program(n));
             fs::write(dir.join(&file), source).expect("writes");
-            let out = sisuc(dir, &["--emit", "ast", &file]);
+            let out = sisu(dir, &["build", "--emit", "ast", &file]);
             let stderr = String::from_utf8_lossy(&out.stderr);
             assert_eq!(out.status.code(), code, "{name} {n}: {stderr}");
             assert_eq!(
@@ -322,7 +322,10 @@ fn alternatives_nest_a_level_more() {
         let first = "    let r = R.Z\n    let _ = match r {\n";
         let Generated { source, .. } = in_main(&format!("{first}{arm}        _ => 2\n    }}\n"), 0);
         fs::write(dir.join("nesting_alternatives.sisu"), source).expect("writes");
-        let out = sisuc(dir, &["--emit", "ast", "nesting_alternatives.sisu"]);
+        let out = sisu(
+            dir,
+            &["build", "--emit", "ast", "nesting_alternatives.sisu"],
+        );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), code, "{n}: {stderr}");
         assert_eq!(
@@ -345,26 +348,27 @@ fn the_right_side_of_a_power_nests_one_level_in() {
             ")".repeat(n)
         );
         fs::write(dir.join("nesting_power.sisu"), source).expect("writes");
-        let out = sisuc(dir, &["--check", "nesting_power.sisu"]);
+        let out = sisu(dir, &["check", "nesting_power.sisu"]);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(stderr.matches("error[").count(), 1, "{n}: {stderr}");
         assert!(stderr.contains(&format!("error[{code}]")), "{n}: {stderr}");
     }
 }
 
-/// `--check`, `--emit ast` and a build of `source` all exit 1 with the one message, however large
-/// it is: the parser stops at the first level past the limit and builds nothing deeper.
+/// `check`, `build --emit ast` and a build of `source` all exit 1 with the one message,
+/// however large it is: the parser stops at the first level past the limit and builds nothing
+/// deeper.
 fn assert_too_deep(name: &str, source: &str) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let (file, exe) = (format!("{name}.sisu"), format!("{name}.out"));
     fs::write(dir.join(&file), source).expect("writes");
     let invocations = [
-        vec!["--check", &file],
-        vec!["--emit", "ast", &file],
-        vec![&file, &exe],
+        vec!["check", &file],
+        vec!["build", "--emit", "ast", &file],
+        vec!["build", &file, "-o", &exe],
     ];
     for args in invocations {
-        let out = sisuc(dir, &args);
+        let out = sisu(dir, &args);
         assert_eq!(out.status.code(), Some(1), "{name} {args:?}");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
@@ -487,7 +491,10 @@ fn a_ten_thousand_operand_comparison_chain_is_shallow() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let source = format!("fn main() {{\n    print(1{})\n}}\n", "<1".repeat(10_000));
     fs::write(dir.join("nesting_compare.sisu"), source).expect("writes");
-    let build = sisuc(dir, &["nesting_compare.sisu", "nesting_compare.out"]);
+    let build = sisu(
+        dir,
+        &["build", "nesting_compare.sisu", "-o", "nesting_compare.out"],
+    );
     assert_eq!(
         (build.status.code(), String::from_utf8_lossy(&build.stderr)),
         (Some(0), "".into())
@@ -522,7 +529,7 @@ fn an_operand_of_a_wrapping_node_counts_the_wrapping_node() {
         for (k, parses) in [(limit, true), (limit + 1, false)] {
             let source = format!("fn main() {{\n    print({})\n}}\n", expr(k));
             fs::write(dir.join("nesting_operand.sisu"), source).expect("writes");
-            let out = sisuc(dir, &["--emit", "ast", "nesting_operand.sisu"]);
+            let out = sisu(dir, &["build", "--emit", "ast", "nesting_operand.sisu"]);
             let stderr = String::from_utf8_lossy(&out.stderr);
             assert_eq!(
                 out.status.success(),
@@ -547,7 +554,7 @@ fn wide_trees_are_not_counted_by_size() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let source = format!("fn main() {{\n    print({sum})\n}}\n");
     fs::write(dir.join("nesting_wide.sisu"), source).expect("writes");
-    let out = sisuc(dir, &["--check", "nesting_wide.sisu"]);
+    let out = sisu(dir, &["check", "nesting_wide.sisu"]);
     assert_eq!(
         (out.status.code(), String::from_utf8_lossy(&out.stderr)),
         (Some(0), "".into())
@@ -585,7 +592,7 @@ fn siblings_do_not_add_up_to_the_limit() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let source = format!("{PRELUDE}fn main() {{\n{body}}}\n");
     fs::write(dir.join("nesting_siblings.sisu"), source).expect("writes");
-    let out = sisuc(dir, &["--check", "nesting_siblings.sisu"]);
+    let out = sisu(dir, &["check", "nesting_siblings.sisu"]);
     assert_eq!(
         (out.status.code(), String::from_utf8_lossy(&out.stderr)),
         (Some(0), "".into())

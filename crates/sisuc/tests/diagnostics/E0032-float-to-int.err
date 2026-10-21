@@ -6,5 +6,5 @@ error[E0032]: expected `i64`, found `i64?`
   |
   = help: a conversion that can fail gives an optional: give a default with `??`, or unwrap it with `if let`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

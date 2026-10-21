@@ -10,5 +10,5 @@ help: declare it with `let`
 2 +     let count = 3
   |
 
-sisuc: 1 warning
-sisuc: for more on a code, run `sisuc --explain <code>`: W0002
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0002

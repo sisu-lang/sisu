@@ -4,7 +4,7 @@ A tour of the Sisu language as it works today, one small program at a time.
   <section class="ph"><div class="w">
     <h1>A tour of Sisu</h1>
     <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
-    <p class="meta">The working programs on this page compile with sisuc today. Every output and error shown is what sisuc really prints. Checked against the repository at commit 317f0d9.</p>
+    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 317f0d9.</p>
   </div></section>
 
   <div class="w doc">
@@ -29,21 +29,21 @@ A tour of the Sisu language as it works today, one small program at a time.
 {{text programs/run/hello.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/hello.out}}</pre></figure>
-      <p>Braces inside a string insert a value. After a colon comes a format spec: an alignment (<code>&lt;</code>, <code>&gt;</code>, <code>^</code>), a width in characters and a number of decimals. Compile with <code>target/debug/sisuc hello.sisu hello</code>, then run <code>./hello</code>.</p>
+      <p>Braces inside a string insert a value. After a colon comes a format spec: an alignment (<code>&lt;</code>, <code>&gt;</code>, <code>^</code>), a width in characters and a number of decimals. Compile with <code>target/debug/sisu build hello.sisu</code>, then run <code>./hello</code>.</p>
       <!-- source: docs/roadmap.md ("What works today": format specs, interpolation), docs/adr/0001-newline-terminated-statements.md, crates/sisuc/tests/run/format_width.sisu -->
 
       <h2 id="values">let and let mut</h2>
       <p><code>let</code> binds a name that cannot be reassigned. <code>let mut</code> binds one that can. Types are inferred.</p>
       <figure class="code"><figcaption class="cap">rounds.sisu</figcaption><pre data-lang="sisu">
 {{text programs/diagnostics/rounds.sisu}}</pre></figure>
-      <figure class="code"><figcaption class="cap">sisuc rounds.sisu rounds</figcaption><pre>{{diag programs/diagnostics/rounds.err}}</pre></figure>
+      <figure class="code"><figcaption class="cap">sisu build rounds.sisu</figcaption><pre>{{diag programs/diagnostics/rounds.err}}</pre></figure>
       <p>A class object works differently. Its fields can change only if the field itself is declared <code>mut</code>, whatever binding holds the object. Objects are shared, so the field decides, not the binding.</p>
       <figure class="code"><figcaption class="cap">player.sisu</figcaption><pre data-lang="sisu">
 {{text programs/run/player.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/player.out}}</pre></figure>
       <p>Writing <code>p.name = "Eino"</code> in the same program is the same error, E0001, with the help line <code>{{help ../crates/sisuc/tests/diagnostics/E0001-field.err}}</code>.</p>
-      <!-- source: docs/adr/0011-let-mut-marks-what-can-change.md, docs/roadmap.md ("What works today"); diagnostics are real sisuc output -->
+      <!-- source: docs/adr/0011-let-mut-marks-what-can-change.md, docs/roadmap.md ("What works today"); diagnostics are real sisu output -->
 
       <h2 id="functions">Functions and if</h2>
       <p>A function names the type of each parameter and of its result. The last expression in a body is its value. <code>if</code> is an expression too, so it can be a function's result or the right side of a <code>let</code>.</p>
@@ -93,13 +93,13 @@ A tour of the Sisu language as it works today, one small program at a time.
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/area.out}}</pre></figure>
       <p>A <code>match</code> must cover every value. Leave out the <code>Point</code> arm and the program does not compile:</p>
-      <figure class="code"><figcaption class="cap">sisuc area.sisu area</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure>
+      <figure class="code"><figcaption class="cap">sisu build area.sisu</figcaption><pre>{{diag programs/diagnostics/area.err}}</pre></figure>
       <p>Patterns can also be literals, alternatives joined with <code>|</code>, and ranges. An arm can add a guard with <code>if</code>.</p>
       <figure class="code"><figcaption class="cap">describe.sisu</figcaption><pre data-lang="sisu">
 {{text programs/run/describe.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/describe.out}}</pre></figure>
-      <!-- source: docs/roadmap.md ("What works today": enums, match, literal and range patterns, alternatives, guards, exhaustiveness), docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, crates/sisuc/tests/run/match_alternatives.sisu, crates/sisuc/tests/run/match_ranges.sisu; diagnostic is real sisuc output -->
+      <!-- source: docs/roadmap.md ("What works today": enums, match, literal and range patterns, alternatives, guards, exhaustiveness), docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, crates/sisuc/tests/run/match_alternatives.sisu, crates/sisuc/tests/run/match_ranges.sisu; diagnostic is real sisu output -->
 
       <h2 id="arrays">Arrays are values</h2>
       <p>Assigning an array, or passing it to a function, behaves as a copy. No other holder can change your array. The copy is made only when one holder writes, so reading or passing an array never copies it.</p>

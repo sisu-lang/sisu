@@ -18,5 +18,5 @@ error[E0129]: `y` is bound twice in this pattern
    |
    = help: use a guard: bind a second name and compare it with `y`
 
-sisuc: 2 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0129
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0129

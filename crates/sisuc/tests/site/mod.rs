@@ -21,7 +21,7 @@ fn code_of(path: &Path) -> &str {
 }
 
 /// Checks the explanation `docs/diagnostics/<code>.md` at `path`: its Broken program, written to
-/// `<code>.sisu` in its `case_dir`, makes `sisuc` print `site/programs/explanations/<code>.err`
+/// `<code>.sisu` in its `case_dir`, makes `sisu` print `site/programs/explanations/<code>.err`
 /// and `.json` (see `support::diagnose`). With `bless`, rewrites both files instead. A retired
 /// code's page is skipped, as the site leaves it out.
 pub(crate) fn explanation(path: &Path, bless: bool) {
@@ -70,18 +70,18 @@ fn broken_program(code: &str, markdown: &str) -> Vec<u8> {
         .collect()
 }
 
-/// Checks the pending case at `path`, a program the site shows before it compiles: `sisuc
-/// --check <name>`, run from its directory, reports an error. The day it compiles, this fails,
+/// Checks the pending case at `path`, a program the site shows before it compiles: `sisu
+/// check <name>`, run from its directory, reports an error. The day it compiles, this fails,
 /// asking for it to become a `site/programs/run/` case.
 pub(crate) fn pending(path: &Path) {
     let dir = path.parent().expect("a case should sit in a directory");
     let name = path.file_name().expect("a case should have a file name");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(dir)
-        .arg("--check")
+        .arg("check")
         .arg(name)
         .output()
-        .expect("sisuc starts");
+        .expect("sisu starts");
     let stderr = String::from_utf8_lossy(&out.stderr);
     let display = path.display();
     assert!(
@@ -91,7 +91,7 @@ pub(crate) fn pending(path: &Path) {
     );
     assert!(
         out.status.code() == Some(1) && stderr.lines().any(|l| l.starts_with("error[")),
-        "{display}: sisuc --check exits {:?} without reporting an error:\n{stderr}",
+        "{display}: sisu check exits {:?} without reporting an error:\n{stderr}",
         out.status
     );
 }

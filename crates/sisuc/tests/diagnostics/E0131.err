@@ -6,5 +6,5 @@ error[E0131]: `if let` always matches here
   |
   = help: use `match`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0131
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0131

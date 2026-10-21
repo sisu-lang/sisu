@@ -4,5 +4,5 @@ error[E0109]: Sisu's format specs take only alignment, width and precision
 3 |     print("{x:+}")
   |              ^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0109
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0109

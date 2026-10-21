@@ -1,6 +1,6 @@
 ---
 name: audit-sisu
-description: Exploratory audit of sisuc and the runtime. Probes IR quality, reference counting, crashes, miscompiles, runtime unsafe code, limits, diagnostics, test blind spots and compile time; reports reproduced findings with a suggested fix and test each. `/audit-sisu` runs every area, `/audit-sisu <area>` one.
+description: Exploratory audit of sisu and the runtime. Probes IR quality, reference counting, crashes, miscompiles, runtime unsafe code, limits, diagnostics, test blind spots and compile time; reports reproduced findings with a suggested fix and test each. `/audit-sisu` runs every area, `/audit-sisu <area>` one.
 disable-model-invocation: true
 ---
 
@@ -22,13 +22,13 @@ in Codex, `$audit-sisu [area...]`.
 | --- | --- | --- |
 | `ir` | IR that LLVM rejects, undefined behavior, avoidable cost after `-O2` | [areas/ir.md](areas/ir.md) |
 | `rc` | Leaks, double frees, use after free, broken copy-on-write, count imbalance on any path | [areas/rc.md](areas/rc.md) |
-| `crash` | `sisuc` panicking, hanging or failing on a checked program; a compiled program dying by a signal | [areas/crash.md](areas/crash.md) |
+| `crash` | `sisu` panicking, hanging or failing on a checked program; a compiled program dying by a signal | [areas/crash.md](areas/crash.md) |
 | `bugs` | Wrong output, `-O0` and `-O2` disagreeing, the checker accepting or rejecting the wrong program | [areas/bugs.md](areas/bugs.md) |
 | `runtime` | Unsound `unsafe` in `crates/runtime`, codegen calls that break its ABI | [areas/runtime.md](areas/runtime.md) |
 | `limits` | Deep recursion, huge values, long programs, overflow edges | [areas/limits.md](areas/limits.md) |
 | `diagnostics` | Bad programs that get no diagnostic, a wrong span, or a confusing message | [areas/diagnostics.md](areas/diagnostics.md) |
 | `coverage` | Compiler paths no test reaches, surviving mutants | [areas/coverage.md](areas/coverage.md) |
-| `compile-time` | `sisuc` doing avoidable work: repeated steps, allocations on hot paths, IR LLVM only deletes, failing late | [areas/compile-time.md](areas/compile-time.md) |
+| `compile-time` | `sisu` doing avoidable work: repeated steps, allocations on hot paths, IR LLVM only deletes, failing late | [areas/compile-time.md](areas/compile-time.md) |
 
 With no argument, run all nine; otherwise run the named ones.
 
@@ -38,11 +38,11 @@ With no argument, run all nine; otherwise run the named ones.
 
 From the repository root:
 
-1. `cargo build --workspace`. Every probe uses this checkout's `target/debug/sisuc`. Then `make audit-setup`, which adds `opt` and `clang` to `.llvm/23/bin` for the ASan, lint and layout-shim recipes; it does nothing when they are there.
+1. `cargo build --workspace`. Every probe uses this checkout's `target/debug/sisu`. Then `make audit-setup`, which adds `opt` and `clang` to `.llvm/23/bin` for the ASan, lint and layout-shim recipes; it does nothing when they are there.
 2. `mktemp -d "${TMPDIR:-/tmp}/sisu-audit-XXXXXXXX"` makes the run directory, `RUN`. Shell variables do not survive between tool calls, so from here on write `RUN`, the repository root and the tool paths as literal paths.
 3. Write `RUN/known-tickets.md`: the title and path of every ticket under `.scratch/*/issues/` whose `Status:` is not `wontfix` or `resolved`, or "none" when `.scratch/` does not exist. `.scratch/` is untracked, so read it in the main checkout, the first path `git worktree list` prints.
 
-Done when `sisuc` builds, `.llvm/23/bin/opt` and `.llvm/23/bin/clang` run, and `RUN/known-tickets.md` exists.
+Done when `sisu` builds, `.llvm/23/bin/opt` and `.llvm/23/bin/clang` run, and `RUN/known-tickets.md` exists.
 
 ### 2. Explore
 

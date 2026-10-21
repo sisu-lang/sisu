@@ -104,7 +104,7 @@ runs from fastest to slowest wall time, with Sisu in bold.
 | Java | 0.17 | 0.16 | 42.9 | - | 0.210 |
 | Python | 2.76 | 2.76 | 11.1 | - | - |
 
-Toolchains: `sisuc -O2` (LLVM 22), Ubuntu clang 18.1.3 with `-O2`, rustc
+Toolchains: `sisu build -O2` (LLVM 22), Ubuntu clang 18.1.3 with `-O2`, rustc
 1.99.0 with `-C opt-level=3`, Go 1.27.2, OpenJDK 25.0.4.1 (Temurin), Python
 3.14.5.
 
@@ -151,7 +151,7 @@ ten times the memory.
 
 Sisu takes 1.4 times as long as C on binary_trees. Callgrind counted the
 instructions in each function, and each suspect was then removed by hand from
-the program's IR (`sisuc -O2 --emit ir`) and the result timed.
+the program's IR (`sisu build -O2 --emit ir`) and the result timed.
 
 - **The allocator costs the same.** `malloc` and `free` run 12.4 billion
   instructions in both programs. A Sisu node is 24 bytes, its count and two
@@ -193,7 +193,7 @@ memory shows it: Sisu holds 77.6 MiB, as C does for its one array of
 Each element write checks the index against the bounds and the array's
 count against 1, and each addition checks for overflow. To find what each
 check costs, each kind was removed by hand from the program's IR
-(`sisuc --emit ir-raw`), and the result built with the same `default<O2>`
+(`sisu build --emit ir-raw`), and the result built with the same `default<O2>`
 pipeline. hyperfine timed every build in one session, pinned to one CPU, as
 the mean of 15 runs, and callgrind counted the instructions. "Before" is
 commit c75ef2d; "after" is 3dbda29, which adds the change described below.
@@ -275,15 +275,15 @@ runs (`taskset -c 2 hyperfine -N -w 5 -r 50 ...`):
 
 | Command | Mean (ms) |
 | --- | ---: |
-| `sisuc --check main.sisu` | 1.4 |
-| `sisuc -O2 main.sisu main` | 27.6 |
+| `sisu check main.sisu` | 1.4 |
+| `sisu build -O2 main.sisu -o main` | 27.6 |
 | `cc main.o libsisu_runtime.a -lm -o main`, the link step alone | 21.9 |
-| `./main` built by `sisuc` | 0.2 |
+| `./main` built by `sisu` | 0.2 |
 | `./main` built by `clang` | 0.2 |
 | `python3.14 main.py` | 5.3 |
 
 - Lexing, parsing and checking take 1.4 ms.
-- The link through `cc`, which `sisuc` runs as its last step, takes about
+- The link through `cc`, which `sisu` runs as its last step, takes about
   22 of the 28 ms. A faster edit-to-output loop starts there, not in the
   compiler.
 - `scripts/bench.sh` does not pin or warm up its builds, so its Build column
@@ -323,7 +323,7 @@ make bench BENCH='fib sieve'     # some of them
 RUNS=10 BENCH_CPU=4 make bench
 ```
 
-The script builds `sisuc` in release mode and then runs each program in every
+The script builds `sisu` in release mode and then runs each program in every
 language whose toolchain is on `PATH`. It stops if a program prints something
 other than the Sisu version, and it prints the tables above with the commit,
 date and machine. It needs `clang`, `rustc`, `go`, `javac` and `java`, and
@@ -331,7 +331,7 @@ date and machine. It needs `clang`, `rustc`, `go`, `javac` and `java`, and
 skipped. Build outputs go to `target/bench/`.
 
 The numbers depend on the machine. Rerun the script and replace the tables when
-a change to `sisuc` or the runtime should move them.
+a change to `sisu` or the runtime should move them.
 
 To add a benchmark, add a directory under `bench/` with `main.sisu` and, for
 each language, `main.c`, `main.rs`, `main.go`, `Main.java` and `main.py`, all

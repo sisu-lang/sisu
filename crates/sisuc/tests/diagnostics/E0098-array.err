@@ -14,5 +14,5 @@ error[E0098]: cannot interpolate `[i64]?`
   |
   = help: build the text in a `for` loop
 
-sisuc: 2 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0098
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0098

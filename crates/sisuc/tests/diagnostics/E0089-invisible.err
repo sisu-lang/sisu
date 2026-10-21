@@ -6,5 +6,5 @@ error[E0089]: unknown escape `\` followed by U+200B
   |
   = help: the escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`, `\{`, `\}` and `\u{...}`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0089
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0089

@@ -4,5 +4,5 @@ error[E0127]: a `Expr?` position takes only a name or `_`
 8 |     if let Num(n) = maybe {
   |            ^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0127
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0127
