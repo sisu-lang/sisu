@@ -610,12 +610,17 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        if let Some(&index) = self.body.ahead_at.get(&(receiver.span, false)) {
-            #[cfg(test)]
-            INSPECTED.set(INSPECTED.get() + 1);
-            if let Some(Ahead::Receiver(checked)) = &self.body.ahead[index].1 {
-                return type_of(checked);
-            }
+        let kept = self
+            .body
+            .ahead_at
+            .get(&(receiver.span, false))
+            .and_then(|&index| {
+                #[cfg(test)]
+                INSPECTED.set(INSPECTED.get() + 1);
+                self.body.ahead[index].1.as_ref()
+            });
+        if let Some(Ahead::Receiver(checked)) = kept {
+            return type_of(checked);
         }
         // An argument is not part of an assignment target's chain.
         let target = std::mem::take(&mut self.body.in_target);
