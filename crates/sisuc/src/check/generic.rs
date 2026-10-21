@@ -508,31 +508,28 @@ impl Checker<'_> {
     /// statements before it are checked here, once, and kept with that scope for `block`.
     fn tail_waits(&mut self, block: &ast::Block, tail: &ast::Expr, fit: &mut bool) -> bool {
         // Ranked before: its scope comes back for the value, and goes back after.
-        let index = if let Some((index, Ahead::Block(scope, so_far))) = self.kept(block.span, true)
-        {
-            self.body.scopes.push(scope);
-            self.body.ahead[index].1 = Some(Ahead::Block(FxHashMap::default(), so_far));
-            index
-        } else {
-            self.body.scopes.push(FxHashMap::default());
-            let mut so_far = BlockSoFar::default();
-            // A statement is not part of an assignment target's chain.
-            let target = std::mem::take(&mut self.body.in_target);
-            self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
-            self.body.in_target = target;
-            let kept = Ahead::Block(FxHashMap::default(), so_far);
-            self.body.ahead.push((block.span, Some(kept)));
-            self.body.ahead.len() - 1
-        };
+        let (index, so_far) =
+            if let Some((index, Ahead::Block(scope, so_far))) = self.kept(block.span, true) {
+                self.body.scopes.push(scope);
+                (index, so_far)
+            } else {
+                self.body.scopes.push(FxHashMap::default());
+                let mut so_far = BlockSoFar::default();
+                // A statement is not part of an assignment target's chain.
+                let target = std::mem::take(&mut self.body.in_target);
+                self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
+                self.body.in_target = target;
+                // Its place, held before the value's ranking keeps work of its own.
+                self.body.ahead.push((block.span, None));
+                (self.body.ahead.len() - 1, so_far)
+            };
         let waits = self.waits(tail, fit);
         let scope = self
             .body
             .scopes
             .pop()
             .expect("the block's scope should be open while its value is ranked");
-        if let Some(Ahead::Block(kept, _)) = &mut self.body.ahead[index].1 {
-            *kept = scope;
-        }
+        self.body.ahead[index].1 = Some(Ahead::Block(scope, so_far));
         waits
     }
 
@@ -541,13 +538,11 @@ impl Checker<'_> {
     pub(super) fn kept(&mut self, span: Span, block: bool) -> Option<(usize, Ahead)> {
         let index = self.body.ahead.iter().rposition(|(at, kept)| {
             *at == span
-                && match kept {
-                    Some(Ahead::Block(..)) => block,
-                    Some(Ahead::Receiver(_)) => !block,
-                    None => false,
-                }
+                && kept
+                    .as_ref()
+                    .is_some_and(|k| matches!(k, Ahead::Block(..)) == block)
         })?;
-        Some((index, self.body.ahead[index].1.take()?))
+        self.body.ahead[index].1.take().map(|kept| (index, kept))
     }
 
     /// The variant `base.member` of a generic enum that `base` names without type arguments.

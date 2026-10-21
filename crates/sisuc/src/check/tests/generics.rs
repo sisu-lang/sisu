@@ -892,6 +892,12 @@ fn generic_methods_wait_for_context() {
             "Box.make",
             &["i64", "i64", "[i64]"],
         ),
+        // Each receiver checked ahead is kept for its own method.
+        (
+            "fn g(b: Box<i64>, e: E<i64>) {\n    let xs: [[[i64]]] = pair(b.make(), e.map(make()))\n}",
+            "E.map",
+            &["i64", "[i64]", "[[i64]]"],
+        ),
         // A block's value is ranked in the block's scope, which its `let`s are in.
         (
             "fn g(b: Box<i64>) {\n    let xs: [i64] = id({ let n = 1; b.make() })\n}",
@@ -1073,6 +1079,12 @@ fn other_arguments_bind_on_their_own() {
     infers(&[
         (
             "fn g() {\n    let x = id(make_ints())\n}",
+            "id",
+            &["[i64]", "[i64]"],
+        ),
+        // A call given its type arguments.
+        (
+            "fn g() {\n    let x = id(make<i64>())\n}",
             "id",
             &["[i64]", "[i64]"],
         ),
@@ -1310,6 +1322,11 @@ fn generic_arguments_that_do_not_check() {
         ),
         (
             "fn g() {\n    let x = Wrap.W([])\n}".into(),
+            vec![(Code::CannotInfer, (2, 13))],
+        ),
+        // A variant that fits waits for the call around it, which reports.
+        (
+            "fn g() {\n    let x = id(Wrap.W([]))\n}".into(),
             vec![(Code::CannotInfer, (2, 13))],
         ),
         (
