@@ -167,12 +167,13 @@ fn a_class_qualifier_fits_no_enum() {
     );
 }
 
-/// Comparisons misread as a call take the commas of the call they are an argument of, whose
-/// count of arguments is then not reported, a variant's and a method's as a function's; a
-/// call around that one, or around a block that holds it, still has its count reported.
+/// Comparisons misread as a call take the commas of the argument list they sit in, which then
+/// has its count of arguments not reported: a function's, a variant's, a method's or a class's,
+/// and wherever operators put the comparison in its argument. A list around that one, or around
+/// a block that holds the comparison, still has its count reported.
 #[test]
-fn a_misread_comparison_hides_only_its_own_call_s_count() {
-    let decls = "enum E { A(bool, bool) }\nclass K {\n    fn m(self, x: bool, y: bool) {}\n}\nfn g(x: i64) -> i64 { x }\nfn h(x: bool, y: bool) -> bool { x }\nfn main() {}";
+fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
+    let decls = "enum E { A(bool, bool) }\nclass K {\n    fn m(self, x: bool, y: bool) {}\n}\nclass C {\n    x: bool\n    y: bool\n}\nfn g(x: i64) -> i64 { x }\nfn h(x: bool, y: bool) -> bool { x }\nfn p(x: bool, y: bool) {}\nfn main() {}";
     let misread = |col| (Code::TypeArguments, (1, col));
     let count = (Code::ArgumentCount, (1, 40));
     for (line, expected) in [
@@ -194,6 +195,40 @@ fn a_misread_comparison_hides_only_its_own_call_s_count() {
         ),
     ] {
         codes(&format!("{line}\n{decls}"), &expected);
+    }
+    // Each row and the row its help corrects, which checks clean.
+    let head = "fn f(a: i64, b: i64, c: i64, d: i64, x: bool?) -> C {\n    ";
+    let body = |call: &str| {
+        // A call of `p` is a statement before the `C` the function returns.
+        let tail = if call.starts_with('p') {
+            "\n    C(x: true, y: true)"
+        } else {
+            ""
+        };
+        format!("{head}{call}{tail}\n}}\n{decls}")
+    };
+    for (misread, corrected) in [
+        ("p(true && a < b, c > (d))", "p(true && (a < b), c > (d))"),
+        ("p(1 + a < b, c > (d))", "p((1 + a < b), c > (d))"),
+        ("p(-a < b, c > (d))", "p((-a < b), c > (d))"),
+        (
+            "p(!(a == 1) == a < b, c > (d))",
+            "p(!(a == 1) == (a < b), c > (d))",
+        ),
+        ("p(x ?? a < b, c > (d))", "p(x ?? (a < b), c > (d))"),
+        ("p(0 < a < b, c > (d))", "p((0 < a < b), c > (d))"),
+        (
+            "p(1 + a < b, c > (d) && true)",
+            "p((1 + a < b), c > (d) && true)",
+        ),
+        ("C(x: a < b, c > (d))", "C(x: (a < b), y: c > (d))"),
+    ] {
+        let col = misread
+            .find("a < b")
+            .expect("the row should compare `a < b`")
+            + 5;
+        codes(&body(misread), &[(Code::TypeArguments, (2, col))]);
+        clean(&body(corrected));
     }
 }
 
@@ -344,6 +379,40 @@ fn generic_enums_that_cannot_be_built() {
                 (Code::NeverConstructed, (3, 6)),
             ],
         ),
+        // An argument a declaration ignores need not be buildable, and one that becomes
+        // buildable later changes which application a field holds.
+        (
+            "enum Opt<T> {\n    No\n    Yes(T)\n}\nenum List {\n    Cons(i64, Opt<List>)\n}",
+            vec![],
+        ),
+        (
+            "class Box<T> {\n    v: T?\n}\nclass Node {\n    next: Box<Node>\n}",
+            vec![],
+        ),
+        ("enum Ignore<T> { A }\nenum E { A(Ignore<E>) }", vec![]),
+        (
+            "class Box<T> {\n    v: T\n}\nenum E { A }\nenum Good { A(Box<E>) }",
+            vec![],
+        ),
+        // `E` is built after `Good` is first tried, which then holds `Box<E>` rather than the
+        // `Box` of an argument that cannot be built.
+        (
+            "class Box<T> {\n    v: T\n}\nenum E { A(i64) }\nenum Good { A(Box<E>) }",
+            vec![],
+        ),
+        // Building `E` counts the field that consulted it twice as buildable once.
+        (
+            "enum E { A(i64) }\nenum Two<T, U> { A(T, U) }\nenum Bad { A(Two<E, E>, Bad) }",
+            vec![(Code::NeverConstructed, (3, 6))],
+        ),
+        (
+            "enum Pair<T> { P(T, T) }\nenum Tree {\n    Leaf\n    Node(Pair<Tree>)\n}",
+            vec![],
+        ),
+        (
+            "enum Ignore<T> { A }\nenum Bad { A(Bad) }\nenum Good { A(Ignore<Bad>) }",
+            vec![(Code::NeverConstructed, (2, 6))],
+        ),
         // A field whose type is unknown builds nothing, and is passed over on the chain.
         (
             "class C {\n    a: Zz\n    b: E\n}\nenum E { A(C) }",
@@ -357,22 +426,26 @@ fn generic_enums_that_cannot_be_built() {
     }
 }
 
-/// A slot that cannot be built yet is scanned again only once all it waits for is built, so
-/// an enum of `n` fields, each of an enum built at once, costs a few scans per field.
+/// A field that cannot be built yet is scanned again only once a key it consulted is built, so
+/// an enum of `n` fields, each of an enum built later or of a class wrapping one, costs a few
+/// scans per field.
 #[test]
 fn the_can_be_built_fixed_point_scans_linearly() {
-    let scans = |n: usize| {
+    let scans = |n: usize, wrap: &str| {
         let names: Vec<String> = (0..n).map(|i| format!("E{i}")).collect();
-        let decls = names.join(" { A }\nenum ");
+        let fields: Vec<String> = names.iter().map(|name| wrap.replace('_', name)).collect();
         let src = format!(
-            "enum {decls} {{ A }}\nenum Root {{ A({}) }}\nfn main() {{}}",
-            names.join(", ")
+            "class Box<T> {{\n    v: T\n}}\nenum {} {{ A(i64) }}\nenum Root {{ A({}) }}\nfn main() {{}}",
+            names.join(" { A(i64) }\nenum "),
+            fields.join(", ")
         );
         crate::check::enums::SCANS.set(0);
         clean(&src);
         crate::check::enums::SCANS.get()
     };
-    assert_near_linear(scans(4), scans(8), scans(12));
+    for wrap in ["_", "Box<_>"] {
+        assert_near_linear(scans(4, wrap), scans(8, wrap), scans(12, wrap));
+    }
 }
 
 /// A list after a name that takes none is reported at the list in every expression form, and

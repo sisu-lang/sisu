@@ -281,11 +281,25 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether one of `args`, checked, is a comparison misread as a call, which took the commas
-    /// around it.
+    /// Whether one of `args`, checked, holds a comparison misread as a call, which took the
+    /// list's commas around it: as the argument, or as an operand of its operators. One inside
+    /// a nested list or a block took that list's commas instead.
     pub(super) fn misread_in(&self, args: &[ast::Arg]) -> bool {
-        args.iter()
-            .any(|arg| self.body.misread.contains(&arg.value.span.start()))
+        args.iter().any(|arg| self.holds_misread(&arg.value))
+    }
+
+    /// Whether `expr`, or an operand of its operators, is a comparison misread as a call.
+    fn holds_misread(&self, expr: &ast::Expr) -> bool {
+        use ast::ExprKind as K;
+        self.body.misread.contains(&expr.span.start())
+            || match &expr.kind {
+                K::Unary { operand, .. } => self.holds_misread(operand),
+                K::Binary { lhs, rhs, .. } | K::Coalesce { lhs, rhs } => {
+                    self.holds_misread(lhs) || self.holds_misread(rhs)
+                }
+                K::Compare { operands, .. } => operands.iter().any(|e| self.holds_misread(e)),
+                _ => false,
+            }
     }
 
     /// The node `kind` makes of `operands`, in a block after the bindings `spill` makes of them.
@@ -366,11 +380,13 @@ impl Checker<'_> {
             }
         }
         if !failed && let Some(missing) = names.get(args.len()) {
-            self.report(DiagnosticKind::MissingField {
-                field: missing.to_string(),
-                fields: names.iter().map(ToString::to_string).collect(),
-                at: span,
-            });
+            if !self.misread_in(args) {
+                self.report(DiagnosticKind::MissingField {
+                    field: missing.to_string(),
+                    fields: names.iter().map(ToString::to_string).collect(),
+                    at: span,
+                });
+            }
             failed = true;
         }
         match checked.into_iter().collect() {

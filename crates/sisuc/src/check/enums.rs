@@ -501,13 +501,17 @@ struct Buildable {
     ids: FxHashMap<(usize, Vec<bool>), usize>,
     keys: Vec<(usize, Vec<bool>)>,
     built: Vec<bool>,
-    /// By key, how many keys each of its node's slots, which failed when last scanned, still
-    /// waits for.
-    pending: Vec<Vec<usize>>,
-    /// By key, the slots of other keys that wait for it to be built.
-    waiting: Vec<Vec<(usize, usize)>>,
-    /// Slots of keys to try: a key and the index of one of its node's slots.
-    queue: Vec<(usize, usize)>,
+    /// By key, for each of its node's slots, how many of its fields are not yet known to be
+    /// buildable, and for each field the number of the scan whose waits are live: 0 when none
+    /// is, as the field is buildable or queued.
+    pending: Vec<Vec<(usize, Vec<usize>)>>,
+    /// By key, the fields of other keys that wait for it to be built: the key, its slot, the
+    /// field's index, and the number of the scan that registered the wait.
+    waiting: Vec<Vec<(usize, usize, usize, usize)>>,
+    /// How many fields have been scanned.
+    scans: usize,
+    /// Fields of keys to try: a key, the index of one of its node's slots, and a field's.
+    queue: Vec<(usize, usize, usize)>,
 }
 
 impl Buildable {
@@ -551,6 +555,7 @@ impl Buildable {
             built: Vec::new(),
             pending: Vec::new(),
             waiting: Vec::new(),
+            scans: 0,
             queue: Vec::new(),
         };
         for (n, &p) in params.iter().enumerate() {
@@ -571,11 +576,19 @@ impl Buildable {
         let key = self.keys.len();
         self.ids.insert((node, flags.clone()), key);
         self.keys.push((node, flags));
-        self.built.push(false);
-        self.pending.push(vec![0; self.slots[node].len()]);
+        let slots = &self.slots[node];
+        // A slot with no fields builds the key at once.
+        self.built.push(slots.iter().any(Vec::is_empty));
+        self.pending.push(
+            slots
+                .iter()
+                .map(|fields| (fields.len(), vec![0; fields.len()]))
+                .collect(),
+        );
         self.waiting.push(Vec::new());
-        self.queue
-            .extend((0..self.slots[node].len()).map(|s| (key, s)));
+        for (s, fields) in slots.iter().enumerate() {
+            self.queue.extend((0..fields.len()).map(|f| (key, s, f)));
+        }
         key
     }
 
@@ -648,37 +661,43 @@ impl Buildable {
         self.built[key]
     }
 
-    /// Scans queued slots until none is left. A slot that fails waits for the keys it needs,
-    /// and is scanned again only once every one of them is built, so no slot waits twice on
-    /// one scan: a scan is followed by at most one more for each key built.
+    /// Scans queued fields until none is left. A field that cannot be built yet waits for the
+    /// keys it consulted: its own, and its arguments', whose building changes which key it
+    /// holds. The first of them built queues it once more, so a field is scanned at most once
+    /// for each key built that it consulted.
     fn run(&mut self) {
-        while let Some((key, s)) = self.queue.pop() {
+        while let Some((key, s, f)) = self.queue.pop() {
             if self.built[key] {
                 continue;
             }
+            self.scans += 1;
             #[cfg(test)]
             SCANS.set(SCANS.get() + 1);
             let (node, flags) = self.keys[key].clone();
-            let mut deps = Vec::new();
-            // Every field is tried, so that every key a field reaches is interned and tried.
-            let mut all = true;
-            for ty in self.slots[node][s].clone() {
-                all &= self.buildable(ty, &flags, &mut deps);
-            }
-            if all {
-                self.built[key] = true;
-                for (k, slot) in std::mem::take(&mut self.waiting[key]) {
-                    let remaining = &mut self.pending[k][slot];
-                    *remaining -= 1;
-                    if *remaining == 0 {
-                        self.queue.push((k, slot));
-                    }
+            let mut consulted = Vec::new();
+            if self.buildable(self.slots[node][s][f], &flags, &mut consulted) {
+                let remaining = &mut self.pending[key][s].0;
+                *remaining -= 1;
+                if *remaining == 0 {
+                    self.build(key);
                 }
             } else {
-                for &d in &deps {
-                    self.waiting[d].push((key, s));
+                self.pending[key][s].1[f] = self.scans;
+                for d in consulted {
+                    self.waiting[d].push((key, s, f, self.scans));
                 }
-                self.pending[key][s] = deps.len();
+            }
+        }
+    }
+
+    /// Marks `key` built, and queues each field waiting for it whose wait is live.
+    fn build(&mut self, key: usize) {
+        self.built[key] = true;
+        for (k, s, f, scan) in std::mem::take(&mut self.waiting[key]) {
+            let live = &mut self.pending[k][s].1[f];
+            if *live == scan {
+                *live = 0;
+                self.queue.push((k, s, f));
             }
         }
     }
@@ -686,6 +705,6 @@ impl Buildable {
 
 #[cfg(test)]
 thread_local! {
-    /// How many slots `Buildable::run` has scanned on this thread.
+    /// How many fields `Buildable::run` has scanned on this thread.
     pub(super) static SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
