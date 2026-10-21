@@ -1,7 +1,8 @@
 # Developing Sisu
 
 This guide covers building `sisu`, compiling a Sisu program with it, and
-running the same checks as CI. Sisu builds and runs on x86-64 Linux.
+running the same checks as CI. Sisu builds and runs on x86-64 and ARM64 Linux;
+CI runs the tests on ARM64 on each push to `main`.
 
 ## Prerequisites
 
@@ -28,7 +29,7 @@ running the same checks as CI. Sisu builds and runs on x86-64 Linux.
 - [uv](https://docs.astral.sh/uv/), for `make site`, which builds the website.
 
 LLVM 23 lives inside the repository. `scripts/install-llvm.sh` downloads the
-official release (2.0 GB) and keeps only what the build needs in `.llvm/23`
+official release for the machine, x86-64 or ARM64 (2.0 GB), and keeps only what the build needs in `.llvm/23`
 (about 570 MB). `.cargo/config.toml` points the build at it, and any system
 LLVM is left alone. [Upgrading LLVM](llvm.md) covers moving to a new major.
 `make audit-setup` adds `opt` and `clang`, with the ASan runtime, for the

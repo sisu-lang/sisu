@@ -26,7 +26,7 @@
     { "id": "llvm", "type": "cloud", "label": "LLVM 23", "sublabel": "passes, x86-64 code", "pos": [1040, 380], "size": [130, 60] },
     { "id": "link", "type": "cloud", "label": "cc", "sublabel": "linker, run by link.rs", "pos": [800, 380], "size": [130, 60] },
     { "id": "runtime", "type": "database", "label": "sisu-runtime", "sublabel": "libsisu_runtime.a", "pos": [800, 540], "size": [130, 60] },
-    { "id": "binary", "type": "external", "label": "Executable", "sublabel": "native x86-64 Linux", "pos": [560, 380], "size": [130, 60] }
+    { "id": "binary", "type": "external", "label": "Executable", "sublabel": "x86-64 or ARM64 Linux", "pos": [560, 380], "size": [130, 60] }
   ],
   "boundaries": [
     { "kind": "region", "label": "sisu (Rust)", "wraps": ["lexer", "parser", "checker", "mir", "codegen", "diagnostics"] }

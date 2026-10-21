@@ -102,7 +102,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
         </tbody>
       </table></div>
       <h3>What these numbers cannot tell you</h3>
-      <p>They come from one machine, on small single-threaded programs. Sisu runs on x86-64 Linux only, so there is nothing to compare on other systems. They show where Sisu stands, not how fast it will be.</p>
+      <p>They come from one x86-64 machine, on small single-threaded programs. They show where Sisu stands, not how fast it will be.</p>
       <h3>Run them yourself</h3>
       <p>The script builds <code>sisu</code> in release mode, runs each program in every language whose toolchain is on <code>PATH</code>, and skips the rest. It prints the tables with the commit, date and machine.</p>
       <figure class="code"><figcaption class="cap">terminal</figcaption><pre data-lang="sh">
@@ -112,7 +112,7 @@ $ RUNS=10 BENCH_CPU=4 make bench
 </pre></figure>
     </div>
   </div></section>
-  <!-- source: docs/benchmarks.md (What the numbers mean, Running them, toolchains), Makefile (bench), README.md (x86-64 Linux only) -->
+  <!-- source: docs/benchmarks.md (What the numbers mean, Running them, toolchains), Makefile (bench), README.md (x86-64 and ARM64 Linux) -->
 
   <section class="s" aria-labelledby="h-codspeed"><div class="w">
     <div class="s-h"><h2 id="h-codspeed">Regression tracking</h2><p>The tables above compare Sisu with other languages. CodSpeed does something else: it compares Sisu with itself, change by change, so a slowdown shows on the pull request that causes it.</p></div>

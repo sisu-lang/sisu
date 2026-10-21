@@ -54,6 +54,24 @@ jobs:
       - if: always()
         run: python3 scripts/slow_tests.py target/nextest/ci/junit.xml
 
+  # The same tests on an aarch64 host. It runs on main and by hand, not on every
+  # pull request: a pull request can start it with workflow_dispatch on its branch.
+  test-arm64:
+    name: Test (ARM64)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-26.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-nextest
+      - uses: ./.github/actions/install-llvm
+      - run: sudo apt-get update && sudo apt-get install --yes valgrind
+      - run: cargo nextest run --workspace --locked --profile ci
+
   # Miri runs the runtime's unit tests in an interpreter that stops at undefined
   # behaviour in its unsafe code; it needs nightly, which overrides rust-toolchain.toml.
   miri:

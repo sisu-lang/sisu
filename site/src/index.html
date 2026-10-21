@@ -1,10 +1,10 @@
 Sisu
-Sisu is a small, statically typed language that compiles to native x86-64 code through LLVM.
+Sisu is a small, statically typed language that compiles to native x86-64 and ARM64 code through LLVM.
 <main>
   <div class="w">
     <section class="hero">
       <div>
-        <span class="pill">Early and experimental · x86-64 Linux only</span>
+        <span class="pill">Early and experimental · x86-64 and ARM64 Linux</span>
         <h1>Sisu learns from the languages we admire.</h1>
         <p class="lede">Python shows that code can be simple and easy to read. Rust shows that a compiler can rule out whole kinds of bugs. Swift shows that memory can be safe without a garbage collector. Sisu brings these lessons together in one small, statically typed language that compiles to native code.</p>
         <div class="acts"><a class="btn go" href="tour.html">Take the tour</a><a class="btn alt" href="status.html">See what works</a></div>
@@ -65,14 +65,14 @@ Sisu is a small, statically typed language that compiles to native x86-64 code t
       <li><b>Checker</b><span class="io">AST <em>→</em> TIR</span><span class="what">Resolves every name and types every expression. Rewrites shorthand such as <code>for</code> and <code>??</code> into simpler forms, and reports every error in one run. Its output is the typed tree, TIR.</span></li>
       <li><b>MIR</b><span class="io">TIR <em>→</em> MIR</span><span class="what">A mid-level form in which every reference-count change is its own statement. It hands over each counted value's reference at its last read, so an array can change in place without a copy, and debug builds check every function. Removing the pairs that cancel out within a block is built and awaits its measured verdict.</span></li>
       <li><b>Codegen</b><span class="io">MIR <em>→</em> LLVM IR</span><span class="what">Writes the program in LLVM's language.</span></li>
-      <li><b>LLVM</b><span class="io">LLVM IR <em>→</em> object</span><span class="what">Optimizes and writes x86-64 machine code.</span></li>
+      <li><b>LLVM</b><span class="io">LLVM IR <em>→</em> object</span><span class="what">Optimizes and writes x86-64 or ARM64 machine code.</span></li>
       <li><b>Link</b><span class="io">object <em>→</em> executable</span><span class="what">The system C compiler, <code>cc</code>, links it with the Sisu runtime.</span></li>
     </ol>
     <p class="flow-note">All stages run in one process, with LLVM linked in as a library. Only the link step calls another program. <a class="more" href="architecture.html">More on the architecture</a></p>
   </div></section>
 
   <section class="s tint" aria-labelledby="h-try"><div class="w try">
-    <div><h2 id="h-try">Build it and run a program</h2><p>Sisu has no releases yet. You build the compiler from source, on x86-64 Linux. You need:</p>
+    <div><h2 id="h-try">Build it and run a program</h2><p>Sisu has no releases yet. You build the compiler from source, on x86-64 or ARM64 Linux. You need:</p>
       <ul>
         <li>The Rust toolchain; rustup installs the pinned version</li>
         <li>GNU Make, and a C compiler on <code>PATH</code> as <code>cc</code></li>

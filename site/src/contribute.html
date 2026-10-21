@@ -46,7 +46,7 @@ How to help with Sisu, a one-person learning project at an early stage.
       <!-- source: docs/roadmap.md (intro: design settled in a working spec, lasting ones recorded as ADRs; "Beyond milestone 6": nothing decided until it lands in a spec or an ADR; "Open decisions"), CONTRIBUTING.md (local Markdown issues under .scratch/); the owner's answer, 2026-10-18: ideas go to GitHub issues -->
 
       <h2 id="build">Build from source</h2>
-      <p>Sisu builds and runs on x86-64 Linux only. You need:</p>
+      <p>Sisu builds and runs on x86-64 and ARM64 Linux. You need:</p>
       <ul>
         <li>The Rust toolchain pinned in <code>rust-toolchain.toml</code> (1.99.0). rustup installs it on first use.</li>
         <li>GNU Make, which runs every command.</li>
@@ -68,7 +68,7 @@ $ ./fib
 {{text ../crates/sisuc/tests/run/fib.out}}</pre></figure>
       <p>Build the whole workspace, not only <code>sisu</code>. Every program links with the runtime library, which <code>sisu</code> looks for next to its own executable; <code>cargo build -p sisuc</code> does not build it. <code>make help</code> lists every target.</p>
       <p><a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md">Developing Sisu</a> has the full list of prerequisites and commands.</p>
-      <!-- source: docs/development.md ("Prerequisites", "Set up a clone", "Compile and run a program"), rust-toolchain.toml (channel 1.99.0), Makefile (setup, build), README.md (x86-64 Linux only); fib output from crates/sisuc/tests/run/fib.out, which the end-to-end tests check -->
+      <!-- source: docs/development.md ("Prerequisites", "Set up a clone", "Compile and run a program"), rust-toolchain.toml (channel 1.99.0), Makefile (setup, build), README.md (x86-64 and ARM64 Linux); fib output from crates/sisuc/tests/run/fib.out, which the end-to-end tests check -->
 
       <h2 id="checks">Checks before a pull request</h2>
       <p>The pre-commit hook runs the same checks as CI. Before you open a pull request, run these:</p>

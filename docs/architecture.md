@@ -227,7 +227,7 @@ change it, and `main` calls `sisu_rc_check_exit` before it returns.
 
 **LLVM 23**. Runs the `mem2reg` pass, which turns stack slots into registers,
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it
-emits x86-64 object code for the machine `sisu` runs on.
+emits object code for the machine `sisu` runs on, x86-64 or ARM64.
 
 **Link step** (`link.rs`). Before it compiles, the driver checks that
 `libsisu_runtime.a` and the output's directory exist, so a missing one fails

@@ -114,8 +114,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) -> PointerValue<'ctx> {
         let i64_type = self.context.i64_type();
         let (len, rhs_len) = (self.string_len(lhs), self.string_len(rhs));
-        // Both strings exist in memory, which on x86-64 is below 2^47 bytes, so no length,
-        // capacity or block size here can overflow.
+        // Both strings exist in memory, which on x86-64 and aarch64 Linux is below 2^57 bytes,
+        // so no length, capacity or block size here can overflow.
         let needed = self
             .builder
             .build_int_nuw_add(len, rhs_len, "needed")
@@ -237,7 +237,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let bound = |bytes| i64_type.const_int(bytes, false);
         // The most bytes each part's text takes: see `sisu_write_int`, `_f64`, `_f64_fixed`,
         // `_bool` and `_char`, plus the width when it is padded. A string's length is below
-        // 2^47 on x86-64, so the sum cannot overflow.
+        // 2^57 on x86-64 and aarch64 Linux, so the sum cannot overflow.
         let cap = parts
             .iter()
             .enumerate()
