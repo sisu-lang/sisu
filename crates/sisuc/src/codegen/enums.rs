@@ -24,8 +24,10 @@ use inkwell::values::{
 
 use super::layout::HeapBlock;
 use super::rc::{Helper, param};
-use super::{Codegen, POSITIONED};
-use crate::tir::{Enum, EnumId, Payload, Type, TypeKind};
+use super::{Codegen, POSITIONED, enum_of};
+use crate::mir::{Place, Projection};
+use crate::tir::{Enum, EnumId, LocalId, Payload, Type, TypeKind};
+use rustc_hash::FxHashMap;
 
 /// An enum's LLVM types.
 pub(super) struct EnumLayout<'ctx> {
@@ -316,12 +318,13 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// the tag and each field stored into a scratch slot, which is loaded whole. The slot is
     /// zeroed first, so that the whole load never reads a byte that no store gave a value, and
     /// a boxed `F?` field given `None` keeps its `null`. A boxed field's value moves into a new
-    /// box with count 1.
+    /// box with count 1, built into its token's block when `reuse` gives it one.
     pub(super) fn variant(
         &self,
         id: EnumId,
         variant: usize,
         values: &[BasicValueEnum<'ctx>],
+        reuse: &[Option<LocalId>],
     ) -> BasicValueEnum<'ctx> {
         let layout = self.enum_layout(id);
         let (ty, tag) = (layout.ty, layout.tag);
@@ -333,10 +336,16 @@ impl<'ctx> Codegen<'ctx, '_> {
             tag.const_int(tag_value, false).into(),
         );
         let fields = &self.program.enums[id.0].variants[variant].fields;
-        for (field, (&value, payload)) in values.iter().zip(fields).enumerate() {
+        debug_assert_eq!(
+            reuse.len(),
+            values.len(),
+            "a construction should carry one reuse entry per field"
+        );
+        for (field, ((&value, payload), &token)) in values.iter().zip(fields).zip(reuse).enumerate()
+        {
             let place = self.field_slot(slot, id, variant, field);
             if payload.boxed {
-                self.store_boxed(place, value, payload.ty);
+                self.store_boxed(place, value, payload.ty, token);
             } else {
                 self.store(place, value);
             }
@@ -346,8 +355,16 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
-    /// Stores at `place` a new box that holds `value`, of type `F`, or of `F?` when present.
-    fn store_boxed(&self, place: PointerValue<'ctx>, value: BasicValueEnum<'ctx>, ty: Type) {
+    /// Stores at `place` a new box that holds `value`, of type `F`, or of `F?` when present. With
+    /// a `token`, the box's block comes from `@sisu_rc.reuse.<F>`, and a flagged token's slot is
+    /// left `null`.
+    fn store_boxed(
+        &self,
+        place: PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+        ty: Type,
+        token: Option<LocalId>,
+    ) {
         let (value, present) = match ty.kind() {
             TypeKind::Optional(_) => {
                 let function = self.current_function();
@@ -360,15 +377,28 @@ impl<'ctx> Codegen<'ctx, '_> {
             _ => (value, None),
         };
         let inner = boxed_enum(ty);
-        let (size, align) = self.heap_size(&HeapBlock::Box(inner));
-        let boxed = self
-            .builder
-            .build_call(self.alloc, &[size.into(), align.into()], "box")
-            .expect(POSITIONED)
-            .try_as_basic_value()
-            .basic()
-            .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
-            .into_pointer_value();
+        let boxed = match token {
+            Some(token) => {
+                let boxed = self
+                    .builder
+                    .build_call(
+                        self.helper(Helper::Reuse, self.types[token.0]),
+                        &[self.load_local(token).into()],
+                        "box",
+                    )
+                    .expect(POSITIONED)
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("`reuse` should return a pointer, as `helper` declares it");
+                if self.flagged[token.0] {
+                    let (slot, ty) = self.slot(token);
+                    self.store(slot, ty.const_zero());
+                }
+                boxed
+            }
+            None => self.alloc_box(inner),
+        }
+        .into_pointer_value();
         self.init_count(boxed);
         self.store(self.box_value(inner, boxed), value);
         self.store(place, boxed.into());
@@ -412,6 +442,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Drain => self.define_drain(id, function),
             Helper::Eq => self.define_enum_eq(id, function),
             Helper::EqComponent => self.define_eq_component(id, function),
+            Helper::Unbox => self.define_unbox(id, function),
+            Helper::Free => self.define_free(id, function),
+            Helper::Reuse => self.define_reuse(id, function),
             Helper::Drop | Helper::Unique => {
                 unreachable!("an enum should never be queued for a `drop` or `unique` helper")
             }
@@ -575,6 +608,196 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.position_at_end(empty);
         }
         self.builder.build_return(None).expect(POSITIONED);
+    }
+
+    /// `@sisu_rc.unbox.<F>(slot, out) -> ptr`: `slot` holds a box of `F`, never `null`. Copies
+    /// the box's value to `out` and stores `null` into `slot`. A box with count 1 is returned,
+    /// its value moved out. A shared box keeps its value: `out` is retained, the box loses the
+    /// slot's reference, and `null` is returned. Its count was at least 2, so it stays above 0.
+    fn define_unbox(&self, id: EnumId, function: FunctionValue<'ctx>) {
+        let nth = |n| {
+            function
+                .get_nth_param(n)
+                .expect("the generated `unbox` helper should be declared with two parameters")
+                .into_pointer_value()
+        };
+        let (slot, out) = (nth(0), nth(1));
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let block = |name| self.context.append_basic_block(function, name);
+        let (entry, unique, shared) = (block("entry"), block("unique"), block("shared"));
+        self.builder.position_at_end(entry);
+        let boxed = self
+            .builder
+            .build_load(ptr_type, slot, "box")
+            .expect(POSITIONED)
+            .into_pointer_value();
+        let value_ty = self.enums[id.0].ty;
+        let value = self
+            .builder
+            .build_load(value_ty, self.box_value(id, boxed), "value")
+            .expect(POSITIONED);
+        self.store(out, value);
+        self.store(slot, ptr_type.const_null().into());
+        let count = self.load_count(boxed, "count");
+        let one = self.int_compare(
+            IntPredicate::EQ,
+            count,
+            self.context.i64_type().const_int(1, false),
+        );
+        self.branch_on(one, unique, shared);
+        self.builder.position_at_end(unique);
+        self.builder.build_return(Some(&boxed)).expect(POSITIONED);
+        self.builder.position_at_end(shared);
+        let ty = Type::intern(TypeKind::Enum(id));
+        self.call(self.helper(Helper::Retain, ty), &[out.into()]);
+        let minus_one = self
+            .context
+            .i64_type()
+            .const_int((-1_i64).cast_unsigned(), false);
+        self.add_to_count(boxed, minus_one);
+        self.builder
+            .build_return(Some(&ptr_type.const_null()))
+            .expect(POSITIONED);
+    }
+
+    /// A new block for a box of `F`, from `sisu_alloc`.
+    fn alloc_box(&self, id: EnumId) -> BasicValueEnum<'ctx> {
+        let (size, align) = self.heap_size(&HeapBlock::Box(id));
+        self.builder
+            .build_call(self.alloc, &[size.into(), align.into()], "box")
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+            .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
+    }
+
+    /// `@sisu_rc.reuse.<F>(token) -> ptr`: `token` when it holds a box of `F`, whose value was
+    /// moved out, and a new block from `sisu_alloc` when it is `null`.
+    fn define_reuse(&self, id: EnumId, function: FunctionValue<'ctx>) {
+        let block = |name| self.context.append_basic_block(function, name);
+        let (entry, held, empty) = (block("entry"), block("held"), block("empty"));
+        self.builder.position_at_end(entry);
+        let token = param(function);
+        let null = self.builder.build_is_null(token, "null").expect(POSITIONED);
+        self.branch_on(null, empty, held);
+        self.builder.position_at_end(held);
+        self.builder.build_return(Some(&token)).expect(POSITIONED);
+        self.builder.position_at_end(empty);
+        let boxed = self.alloc_box(id);
+        self.builder.build_return(Some(&boxed)).expect(POSITIONED);
+    }
+
+    /// `@sisu_rc.free.<F>(token)`: frees the box of `F` that `token` holds, whose value was
+    /// moved out; nothing when it is `null`.
+    fn define_free(&self, id: EnumId, function: FunctionValue<'ctx>) {
+        let (boxed, done) = self.helper_entry(function);
+        let (size, align) = self.heap_size(&HeapBlock::Box(id));
+        self.call(self.free, &[boxed.into(), size.into(), align.into()]);
+        self.branch_to(done);
+    }
+
+    /// `take_apart`, straight-line (see `Statement::TakeApart`): unboxes each token's box,
+    /// outermost first, into a slot of its own; moves each binding out of its place, zeroing the
+    /// source when its value keeps a rest; releases each rest; then zeroes the scrutinee's slot
+    /// when it is flagged, as a move does.
+    pub(super) fn take_apart(
+        &self,
+        scrutinee: LocalId,
+        tokens: &[(LocalId, Place)],
+        bindings: &[(LocalId, Place)],
+        rest: &[Place],
+    ) {
+        let mut unboxed = Unboxed {
+            child: FxHashMap::default(),
+            out: vec![None],
+        };
+        for (token, place) in tokens {
+            let Some((&Projection::Payload { variant, field }, outer)) =
+                place.projections.split_last()
+            else {
+                unreachable!("lowering should make a token only of a payload field")
+            };
+            let (parent, ty, _) = self.unboxed_at(scrutinee, outer, &unboxed);
+            let slot = self.field_slot(parent, enum_of(ty), variant, field);
+            let inner = self.types[token.0];
+            let value_ty = self
+                .llvm_type(inner)
+                .expect("a token's enum should have a value type");
+            let out = self.entry_alloca(value_ty, "unboxed");
+            let boxed = self
+                .builder
+                .build_call(
+                    self.helper(Helper::Unbox, inner),
+                    &[slot.into(), out.into()],
+                    "token",
+                )
+                .expect(POSITIONED)
+                .try_as_basic_value()
+                .basic()
+                .expect("`unbox` should return a pointer, as `helper` declares it");
+            self.store(self.slot(*token).0, boxed);
+            unboxed.insert(&place.projections, out);
+        }
+        // Each rest's address, and whether each value keeps a rest.
+        let mut kept = vec![false; unboxed.out.len()];
+        let rest: Vec<(PointerValue<'ctx>, Type)> = (rest.iter())
+            .map(|place| {
+                let (address, ty, value) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
+                kept[value] = true;
+                (address, ty)
+            })
+            .collect();
+        for (binding, place) in bindings {
+            let (address, _, value) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
+            let (slot, ty) = self.slot(*binding);
+            let moved = self
+                .builder
+                .build_load(ty, address, "moved")
+                .expect(POSITIONED);
+            self.store(slot, moved);
+            if kept[value] {
+                self.store(address, ty.const_zero());
+            }
+        }
+        for (address, ty) in rest {
+            self.release_at(address, ty);
+        }
+        // No `--rc-checks` moved mark is set: `check_not_moved` (rc.rs) skips enums.
+        if self.flagged[scrutinee.0] {
+            let (slot, ty) = self.slot(scrutinee);
+            self.store(slot, ty.const_zero());
+        }
+    }
+
+    /// The address of the value at `projections` from `scrutinee`, its type, and the node in
+    /// `unboxed` of the value that holds it: the scrutinee, node 0, or a token's box, whose value
+    /// is in that token's slot.
+    fn unboxed_at(
+        &self,
+        scrutinee: LocalId,
+        projections: &[Projection],
+        unboxed: &Unboxed<'ctx>,
+    ) -> (PointerValue<'ctx>, Type, usize) {
+        let (mut address, _) = self.slot(scrutinee);
+        let mut ty = self.types[scrutinee.0];
+        let mut node = Some(0);
+        let mut value = 0;
+        for projection in projections {
+            let &Projection::Payload { variant, field } = projection else {
+                unreachable!("a take-apart's places should hold only payload projections")
+            };
+            let id = enum_of(ty);
+            ty = self.program.enums[id.0].variants[variant].fields[field].ty;
+            node = node.and_then(|node| unboxed.child(node, variant, field));
+            address = match node.and_then(|node| Some((node, unboxed.out[node]?))) {
+                Some((node, out)) => {
+                    value = node;
+                    out
+                }
+                None => self.field_slot(address, id, variant, field),
+            };
+        }
+        (address, ty, value)
     }
 
     /// `@sisu_rc.eq.<E>(a, b) -> i1`: with boxes, `eq_component` of `E`'s component, given
@@ -837,5 +1060,40 @@ impl<'ctx> Codegen<'ctx, '_> {
         arms.into_iter()
             .map(|(variant, _, block)| (variant, block))
             .collect()
+    }
+}
+
+/// A `take_apart`'s token places as a trie of their prefixes, so that finding a place's token
+/// costs one lookup per projection: node 0 is the scrutinee, and a node's child is keyed by the
+/// node and the payload projection that reaches it.
+struct Unboxed<'ctx> {
+    child: FxHashMap<(usize, usize, usize), usize>,
+    /// The slot each node's token's box went to, for a node that is a token's place.
+    out: Vec<Option<PointerValue<'ctx>>>,
+}
+
+impl<'ctx> Unboxed<'ctx> {
+    fn child(&self, node: usize, variant: usize, field: usize) -> Option<usize> {
+        #[cfg(test)]
+        super::TAKE_APART_PROBES.set(super::TAKE_APART_PROBES.get() + 1);
+        self.child.get(&(node, variant, field)).copied()
+    }
+
+    /// Records that the box at `projections`, a token's place, went to `out`.
+    fn insert(&mut self, projections: &[Projection], out: PointerValue<'ctx>) {
+        let mut node = 0;
+        for projection in projections {
+            let &Projection::Payload { variant, field } = projection else {
+                unreachable!("a take-apart's places should hold only payload projections")
+            };
+            #[cfg(test)]
+            super::TAKE_APART_PROBES.set(super::TAKE_APART_PROBES.get() + 1);
+            let next = self.out.len();
+            node = *self.child.entry((node, variant, field)).or_insert(next);
+            if node == next {
+                self.out.push(None);
+            }
+        }
+        self.out[node] = Some(out);
     }
 }

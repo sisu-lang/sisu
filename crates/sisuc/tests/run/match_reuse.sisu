@@ -1,0 +1,101 @@
+// Builds new boxes into the blocks a `match` took apart, and frees the blocks
+// that no construction takes. Each case prints the tree it built.
+enum Expr {
+    Num(i64)
+    Neg(Expr)
+    Add(Expr, Expr)
+}
+
+enum Tree {
+    Leaf(i64, i64, i64)
+    Node(Tree, Tree)
+}
+
+fn show(e: Expr) -> string {
+    match e {
+        Num(n) => "{n}"
+        Neg(x) => "-{show(x)}"
+        Add(l, r) => "({show(l)} {show(r)})"
+    }
+}
+
+fn size(t: Tree) -> i64 {
+    match t {
+        Leaf(_, _, _) => 1
+        Node(a, b) => size(a) + size(b)
+    }
+}
+
+fn mirror(e: Expr) -> Expr {
+    match e {
+        Add(l, r) => Expr.Add(mirror(r), mirror(l))
+        Neg(x) => Expr.Neg(mirror(x))
+        other => other
+    }
+}
+
+// The inner `match` takes `l` apart too: its two blocks and the outer two are
+// all there for the two `Add`s it builds.
+fn rotate(e: Expr) -> Expr {
+    match e {
+        Add(l, c) => match l {
+            Add(a, b) => Expr.Add(a, Expr.Add(b, c))
+            other => Expr.Add(other, c)
+        }
+        other => other
+    }
+}
+
+// A construction in a loop takes no block: the loop would build into it twice.
+fn grow(e: Expr, n: i64) -> Expr {
+    match e {
+        Add(l, r) => {
+            let mut acc = l
+            for _ in 0..n {
+                acc = Expr.Add(acc, Expr.Num(1))
+            }
+            Expr.Add(acc, r)
+        }
+        other => other
+    }
+}
+
+fn to_tree(e: Expr) -> Tree {
+    match e {
+        Add(l, r) => Tree.Node(to_tree(l), to_tree(r))
+        Neg(x) => to_tree(x)
+        Num(n) => Tree.Leaf(n, n, n)
+    }
+}
+
+// A `Tree` is built where the `match` took apart blocks of `Expr`: none fits,
+// so each is freed. A `Tree` box is larger than an `Expr` box.
+fn convert(n: i64) -> Tree {
+    match Expr.Add(Expr.Num(n), Expr.Neg(Expr.Num(n))) {
+        Add(l, r) => Tree.Node(to_tree(l), to_tree(r))
+        other => to_tree(other)
+    }
+}
+
+// One path builds a `Neg` into the first block. After the join, only the
+// second block is there on both paths, so the `Add` takes it, and the first
+// is freed when the `Neg` did not take it.
+fn wrap(e: Expr, neg: bool) -> Expr {
+    match e {
+        Add(l, r) => {
+            let x = if neg { Expr.Neg(l) } else { l }
+            Expr.Add(x, r)
+        }
+        other => other
+    }
+}
+
+fn main() {
+    let e = Expr.Add(Expr.Add(Expr.Num(1), Expr.Num(2)), Expr.Num(3))
+    print(show(mirror(e)))  // (3 (2 1))
+    print(show(rotate(Expr.Add(Expr.Add(Expr.Num(1), Expr.Num(2)), Expr.Num(3)))))  // (1 (2 3))
+    print(show(grow(Expr.Add(Expr.Num(5), Expr.Num(6)), 2)))  // (((5 1) 1) 6)
+    print(show(wrap(Expr.Add(Expr.Num(1), Expr.Num(2)), true)))  // (-1 2)
+    print(show(wrap(Expr.Add(Expr.Num(1), Expr.Num(2)), false)))  // (1 2)
+    print(size(convert(4)))  // 2
+}

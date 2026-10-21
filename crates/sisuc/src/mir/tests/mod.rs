@@ -10,6 +10,7 @@ mod ownership;
 mod pairs;
 mod params;
 mod pattern;
+mod reuse;
 
 /// A program whose `f` holds every kind of expression and statement lowering handles.
 pub(super) const EVERY_KIND: &str = "class O {\n    mut n: i64\n    mut s: string\n}\n\
@@ -188,15 +189,26 @@ impl Builder {
         self.function.borrowed[param.0] = true;
     }
 
-    /// A named local of `ty`, which holds no enum: counted when `ty` is.
+    /// A named local of `ty`, which holds no enum unless it is one: counted when `ty` is, and
+    /// never when it is an enum, which has no declaration here.
     pub(crate) fn local(&mut self, name: &str, ty: Type) -> LocalId {
         self.function.locals.push(Local {
             name: Some(name.to_owned()),
             ty,
-            counted: ty.is_counted(&[]),
+            counted: !matches!(ty.kind(), tir::TypeKind::Enum(_)) && ty.is_counted(&[]),
             scope: BlockId(0),
+            token: false,
         });
         LocalId(self.function.locals.len() - 1)
+    }
+
+    /// A reuse token named `name`, which holds a box of the enum `ty`.
+    pub(crate) fn token(&mut self, name: &str, ty: Type) -> LocalId {
+        let token = self.local(name, ty);
+        let local = &mut self.function.locals[token.0];
+        local.counted = true;
+        local.token = true;
+        token
     }
 
     pub(crate) fn scope(&mut self, local: LocalId, block: BlockId) {

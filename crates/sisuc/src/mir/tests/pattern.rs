@@ -221,11 +221,11 @@ fn literals_switch_on_the_value() {
     );
 }
 
-/// A binding borrows its part of the scrutinee while the test runs. The commit copies it and
-/// then releases the scrutinee at once, before the body; no exit of the arm releases the
-/// scrutinee again.
+/// A binding borrows its part of the scrutinee while the test runs. The commit ends the borrow
+/// and takes the scrutinee apart at once, before the body, moving the binding out; no exit of
+/// the arm releases the scrutinee again.
 #[test]
-fn bindings_borrow_then_commit_copies() {
+fn bindings_borrow_then_commit_takes_apart() {
     let src = "enum Box {\n    Full(string)\n    Empty\n}\n\
          fn f(bs: [Box], c: bool) -> string {\n    match bs[0] {\n        Full(x) => {\n            if c {\n                return x\n            }\n            x\n        }\n        Empty => \"\"\n    }\n}";
     let printed = lowered(src);
@@ -234,11 +234,11 @@ fn bindings_borrow_then_commit_copies() {
         "f",
         &[
             "x#2 = borrow (_ as 0).0",
-            "x#2 = copy x#2\n    release? _\n    branch c#1",
+            "end x#2\n    take_apart _: x#2 = (_ as 0).0\n    branch c#1",
         ],
     );
-    // One scope release of the scrutinee per committed arm, and no other.
-    assert_eq!(function(&printed, "f").matches("release? _").count(), 2);
+    // The `Empty` arm's scope release of the scrutinee, and no other: `Full`'s took it apart.
+    assert_eq!(function(&printed, "f").matches("release? _").count(), 1);
     let program = lowered_program(src);
     let f = func(&program, "f");
     let Terminator::SwitchTag { place, .. } = &f.blocks[0].term else {
@@ -511,7 +511,7 @@ fn binding_returned_from_a_borrowed_if_let_makes_the_parameter_owned() {
 }
 
 /// Returning a binding makes `e` owned, and `first` is lowered again in the owned form: the
-/// commit copies the binding.
+/// commit takes `e` apart and moves the binding out.
 #[test]
 fn binding_returned_from_a_borrowed_match_makes_the_parameter_owned() {
     let printed = built(&format!(
@@ -520,7 +520,10 @@ fn binding_returned_from_a_borrowed_match_makes_the_parameter_owned() {
     has(
         &printed,
         "first",
-        &["fn first(e#0: Expr)", "a#1 = copy a#1"],
+        &[
+            "fn first(e#0: Expr)",
+            "take_apart _: _ = token (_ as 1).0, _ = token (_ as 1).1, a#1 = (_ as 1).0, b#2 = (_ as 1).1\n",
+        ],
     );
 }
 
@@ -720,4 +723,170 @@ fn borrowed_if_let_with_no_join_ends_the_optional_at_each_return() {
         .map(|b| ends(&f, BlockId(b), optional))
         .sum::<usize>();
     assert_eq!(all, 2, "{f:?}");
+}
+
+// The take-apart commit.
+
+const SWAP: &str = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n\
+    fn swap(e: Expr) -> Expr {\n    match e {\n        Add(l, r) => Expr.Add(r, l)\n        other => other\n    }\n}";
+
+/// `match_take_apart.sisu`'s `Expr`, whose `Name` is variant 1 and `Add` variant 2.
+const NAMED_EXPR: &str = "enum Expr {\n    Num(i64)\n    Name(string)\n    Add(Expr, Expr)\n}\n";
+
+/// `SWAP`'s `Expr` and a function `f` whose `match e` has the arm `arm`, then `other => other`.
+fn swap_arm(arm: &str) -> String {
+    let enum_end = SWAP.find("fn swap").expect("SWAP should hold `swap`");
+    format!(
+        "{}fn f(e: Expr) -> Expr {{\n    match e {{\n        {arm}\n        other => other\n    }}\n}}",
+        &SWAP[..enum_end]
+    )
+}
+
+/// The `Add` arm borrows its bindings for the test, ends them, and takes the scrutinee apart:
+/// two tokens and two moved bindings, so nothing copies a binding or releases the scrutinee.
+/// The `other` arm moves the whole scrutinee into its binding.
+#[test]
+fn arm_takes_its_scrutinee_apart() {
+    let printed = built(SWAP);
+    has(
+        &printed,
+        "swap",
+        &[
+            "l#1 = borrow (_ as 1).0",
+            "r#2 = borrow (_ as 1).1",
+            "end l#1",
+            "end r#2",
+            "take_apart _: _ = token (_ as 1).0, _ = token (_ as 1).1, l#1 = (_ as 1).0, r#2 = (_ as 1).1",
+            "variant Expr.Add(",
+        ],
+    );
+    has(&printed, "swap", &["take_apart _: other#3 = _\n"]);
+    let f = function(&printed, "swap");
+    for absent in ["copy", "release"] {
+        assert!(!f.contains(absent), "`{absent}` in\n{f}");
+    }
+}
+
+/// `Num(n)` tests the first box and `r` binds the second: both are tokens, `r` moves the second
+/// box's contents, and the uncounted `n` is no binding. The arm builds nothing, so it frees both.
+#[test]
+fn nested_pattern_tests_the_inner_box() {
+    let printed = built(&swap_arm("Add(Num(n), r) => r"));
+    has(
+        &printed,
+        "f",
+        &[
+            "take_apart _: _ = token (_ as 1).0, _ = token (_ as 1).1, r#2 = (_ as 1).1\n",
+            "free _",
+            "free _",
+            "return",
+        ],
+    );
+}
+
+#[test]
+fn unbound_field_is_left_in_the_rest() {
+    let printed = built(&swap_arm("Add(l, _) => l"));
+    has(
+        &printed,
+        "f",
+        &["take_apart _: _ = token (_ as 1).0, l#1 = (_ as 1).0, rest _\n"],
+    );
+}
+
+/// Review Focus 1: each alternative binds `s` at a different place, so the arm copies it.
+#[test]
+fn or_arm_keeps_the_copying_commit() {
+    let printed = built(include_str!("../../../tests/run/match_take_apart.sisu"));
+    let f = function(&printed, "either_name");
+    assert!(!f.contains("take_apart"), "{f}");
+    has(&printed, "either_name", &["s#1 = copy s#1", "release _"]);
+}
+
+/// `0 | 1` tests an uncounted value, so the arm still takes its scrutinee apart.
+#[test]
+fn or_on_uncounted_values_takes_apart() {
+    let printed = built(&swap_arm("Add(l, Num(0 | 1)) => Expr.Add(l, Expr.Num(2))"));
+    has(
+        &printed,
+        "f",
+        &["take_apart _: _ = token (_ as 1).0, _ = token (_ as 1).1, l#1 = (_ as 1).0\n"],
+    );
+    let f = function(&printed, "f");
+    assert!(!f.contains("copy l#1"), "{f}");
+}
+
+/// An `|` at a box that tests no box inside it: `Add(_, _)` leaves its boxes untested, and the
+/// `0 | 1` inside `Num` tests an uncounted value. The arm takes its scrutinee apart, and the
+/// box the `|` sits at stays in the rest.
+#[test]
+fn or_that_tests_no_box_takes_apart() {
+    let printed = built(&swap_arm("Add(l, Num(0 | 1) | Add(_, _)) => l"));
+    has(
+        &printed,
+        "f",
+        &["take_apart _: _ = token (_ as 1).0, l#1 = (_ as 1).0, rest _\n"],
+    );
+}
+
+/// An `|` below a variant whose alternatives bind `s` at different places: the arm copies `s`.
+#[test]
+fn or_below_a_variant_keeps_the_copying_commit() {
+    let printed = built(&format!(
+        "{NAMED_EXPR}fn f(e: Expr) -> string {{\n    match e {{\n        \
+         Add(_, Name(s) | Add(Name(s), _)) => s\n        _ => \"\"\n    }}\n}}"
+    ));
+    let f = function(&printed, "f");
+    assert!(!f.contains("take_apart"), "{f}");
+    has(&printed, "f", &["s#1 = copy s#1"]);
+}
+
+/// Only an enum is taken apart: a string scrutinee's binding copies.
+#[test]
+fn string_scrutinee_keeps_the_copying_commit() {
+    let printed = built(
+        "fn f(s: string) -> string {\n    match s + \"\" {\n        \"a\" => \"b\"\n        t => t\n    }\n}",
+    );
+    let f = function(&printed, "f");
+    assert!(!f.contains("take_apart"), "{f}");
+    has(&printed, "f", &["t#1 = copy t#1"]);
+}
+
+/// A boxed `Chain?` is never a token: `next` copies before the take-apart, and its field stays
+/// in the rest.
+#[test]
+fn optional_box_binding_is_copied() {
+    let printed = built(
+        "enum Chain {\n    End\n    Link(string, Chain?)\n}\n\
+         fn f(c: Chain) -> Chain {\n    match c {\n        Link(s, next) => Chain.Link(s, next)\n        other => other\n    }\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "next#2 = copy next#2",
+            "take_apart _: s#1 = (_ as 1).0, rest _\n",
+        ],
+    );
+    let f = function(&printed, "f");
+    assert!(!f.contains("token"), "{f}");
+}
+
+/// Review Focus 2: `n` stays live past the first `match`, so its scrutinee is a copy, and `s`
+/// moves out of the copy; the second `match` is `n`'s last use and moves it.
+#[test]
+fn binding_moves_from_a_copied_scrutinee() {
+    let printed = built(&format!(
+        "{NAMED_EXPR}fn f(n: Expr) -> Expr {{\n    let s = match n {{\n        Name(s) => s\n        _ => \"\"\n    }}\n    \
+         match n {{\n        Name(t) => Expr.Name(s + t)\n        other => other\n    }}\n}}"
+    ));
+    has(
+        &printed,
+        "f",
+        &[
+            "_ = copy n#0",
+            "take_apart _: s#1 = (_ as 1).0\n",
+            "_ = move n#0",
+        ],
+    );
 }

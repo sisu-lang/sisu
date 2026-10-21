@@ -1,9 +1,10 @@
 // `return`, `break` and `continue` from arm bodies while string and class bindings are live, from
-// `if let` and `while let` bodies, and a scrutinee that itself returns early. An exit releases
-// the bindings it leaves and never the scrutinee's temporary, which the commit released; an exit
-// in the scrutinee releases nothing of the `match`. A guard that returns releases the temporary
-// and no binding, since none is retained before the commit. Strings are built at run time, so
-// Valgrind and `--rc-checks` see every binding and temporary released exactly once.
+// `if let` and `while let` bodies, and a scrutinee that itself returns early. An exit releases the
+// bindings it leaves and never the scrutinee's temporary, which the commit took apart, moving the
+// bindings out and releasing the rest; an exit in the scrutinee releases nothing of the `match`. A
+// guard that returns releases the temporary and no binding, since none is retained before the
+// commit. Strings are built at run time, so Valgrind and `--rc-checks` see every binding and
+// temporary released exactly once.
 class Counter {
     count: i64
 }

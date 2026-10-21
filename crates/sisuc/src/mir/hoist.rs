@@ -231,7 +231,9 @@ fn level_0(stmt: &Statement) -> Option<LocalId> {
         | Statement::Release(_)
         | Statement::ScopeRelease(_)
         | Statement::Check(_)
-        | Statement::End(_) => None,
+        | Statement::End(_)
+        | Statement::TakeApart { .. }
+        | Statement::Free(_) => None,
     }
 }
 
@@ -253,8 +255,18 @@ impl Walk {
                 self.barred.push(*dest);
             }
             Statement::Store { value, .. } => self.operand(value),
-            Statement::Release(local) => {
+            Statement::Release(local) | Statement::Free(local) => {
                 self.barred.push(*local);
+            }
+            Statement::TakeApart {
+                scrutinee,
+                tokens,
+                bindings,
+                rest: _,
+            } => {
+                self.barred.push(*scrutinee);
+                self.barred
+                    .extend(tokens.iter().chain(bindings).map(|&(local, _)| local));
             }
             Statement::MakeUnique(_) => self.written.extend(level_0(stmt)),
             Statement::ScopeRelease(_) | Statement::Check(_) | Statement::End(_) => {}

@@ -1,0 +1,207 @@
+// `match` takes an owned scrutinee apart at the commit: a box with count 1
+// hands its fields to the bindings and its block to the arm, which builds into
+// it or frees it on every exit; a shared box keeps its fields, and the
+// bindings copy them. Each case prints values that show no field was lost.
+// Each function takes apart a value it owns whether or not its parameters
+// are borrowed: a value it builds, or a parameter that one arm returns.
+enum Expr {
+    Num(i64)
+    Name(string)
+    Add(Expr, Expr)
+}
+
+enum Chain {
+    End
+    Link(string, Chain?)
+}
+
+fn show(e: Expr) -> string {
+    match e {
+        Num(n) => "{n}"
+        Name(s) => s
+        Add(l, r) => "({show(l)} + {show(r)})"
+    }
+}
+
+fn leaf(n: i64) -> Expr {
+    Expr.Add(Expr.Num(n), Expr.Name("x" + "{n}"))
+}
+
+// A guard that fails before the commit leaves the scrutinee whole for the next arm.
+fn guarded(n: i64) -> string {
+    match leaf(n) {
+        Add(Num(k), r) if k > 10 => "big {show(r)}"
+        Add(l, Name(s)) => "{show(l)} named {s}"
+        _ => "other"
+    }
+}
+
+// An arm that returns builds no box, so it frees what it took apart.
+fn early(n: i64) -> i64 {
+    match leaf(n) {
+        Add(Num(k), Name(s)) => {
+            if k > 0 {
+                return k + s.len()
+            }
+            0
+        }
+        _ => -1
+    }
+}
+
+// One path returns and frees the tokens; the other builds a new `Add`, which may take them.
+fn flip(e: Expr, keep: bool) -> Expr {
+    match e {
+        Add(l, r) => {
+            if keep {
+                return Expr.Num(0)
+            }
+            Expr.Add(r, l)
+        }
+        other => other
+    }
+}
+
+// The second field stays in the scrutinee and is released with it, while
+// the first box is a token.
+fn first(e: Expr) -> Expr {
+    match e {
+        Add(l, _) => l
+        other => other
+    }
+}
+
+// An arm with `|` keeps the commit that copies each binding.
+fn either_name(n: i64) -> string {
+    match leaf(n) {
+        Add(Name(s), _) | Add(_, Name(s)) => s
+        _ => "none"
+    }
+}
+
+// An `|` that binds nothing counted is a plain test. An `|` at a box never
+// tests it, so the box stays in the scrutinee and is released with it.
+fn small(e: Expr) -> Expr {
+    match e {
+        Add(l, Num(0 | 1)) => Expr.Add(l, Expr.Num(2))
+        Add(l, Num(5) | Name(_)) => l
+        other => other
+    }
+}
+
+// The inner `Add` is a tested box; its right side is counted and unbound.
+fn inner_left(e: Expr) -> Expr {
+    match e {
+        Add(Add(l, _), _) => l
+        other => other
+    }
+}
+
+fn main() {
+    print(guarded(3))  // 3 named x3
+    print(guarded(30))  // big x30
+    print(early(4))  // 6
+    print(early(-4))  // 0
+
+    // A shared box: `w` holds the same boxes, so the bindings copy.
+    let v = leaf(5)
+    let w = v
+    match v {
+        Add(Num(n), Name(s)) => print("{n} {s}")  // 5 x5
+        _ => print("no")  // never runs
+    }
+    print(show(w))  // (5 + x5)
+
+    // The inner value stays boxed inside its binding: no sub-pattern looks into `l`.
+    match Expr.Add(Expr.Add(Expr.Num(1), Expr.Num(2)), Expr.Num(3)) {
+        Add(l, Num(k)) => print("{show(l)} and {k}")  // (1 + 2) and 3
+        _ => print("no")  // never runs
+    }
+
+    // Inner boxes shared with `keep`, outer box unique.
+    let u = Expr.Add(Expr.Num(6), Expr.Name("y" + ""))
+    let keep = u
+    match Expr.Add(u, Expr.Num(7)) {
+        Add(Add(a, b), c) => print("{show(a)} {show(b)} {show(c)}")  // 6 y 7
+        _ => print("no")  // never runs
+    }
+    print(show(keep))  // (6 + y)
+
+    // A take-apart followed by `continue` frees its tokens on that edge.
+    let mut total = 0
+    for i in 0..4 {
+        match leaf(i) {
+            Add(Num(n), Name(s)) => {
+                if n % 2 == 0 {
+                    continue
+                }
+                total += n + s.len()
+            }
+            _ => {}
+        }
+    }
+    print(total)  // 8
+
+    print(show(flip(leaf(8), false)))  // (x8 + 8)
+    print(show(flip(leaf(9), true)))  // 0
+    print(either_name(2))  // x2
+
+    // A token beside a rest: unique, then shared with `b`.
+    print(show(first(leaf(10))))  // 10
+    let a = leaf(11)
+    let b = a
+    print(show(first(a)))  // 11
+    print(show(b))  // (11 + x11)
+    match Expr.Add(Expr.Name("z" + ""), Expr.Name("w" + "")) {
+        Add(Name(s), _) => print(s)  // z
+        _ => print("no")  // never runs
+    }
+    let p = Expr.Add(Expr.Name("p" + ""), Expr.Name("q" + ""))
+    let q = p
+    match p {
+        Add(Name(s), _) => print(s)  // p
+        _ => print("no")  // never runs
+    }
+    print(show(q))  // (p + q)
+
+    // A shared tested box with an unbound counted part.
+    let u = Expr.Add(Expr.Add(Expr.Name("u" + ""), Expr.Name("v" + "")), Expr.Num(1))
+    let w = u
+    print(show(inner_left(u)))  // u
+    print(show(w))  // ((u + v) + 1)
+
+    // `|` arms, each on a unique value, then on one shared with another local.
+    print(show(small(Expr.Add(Expr.Name("a" + ""), Expr.Num(1)))))  // (a + 2)
+    print(show(small(leaf(3))))  // 3
+    let g = leaf(4)
+    let h = g
+    print(show(small(g)))  // 4
+    print(show(h))  // (4 + x4)
+    let i = Expr.Add(Expr.Name("b" + ""), Expr.Num(0))
+    let j = i
+    print(show(small(i)))  // (b + 2)
+    print(show(j))  // (b + 0)
+
+    // The scrutinee is a copy of `n`, which stays live: the string moves into `s` and is
+    // still shared with `n`, so the append copies it.
+    let n = Expr.Name("ab" + "")
+    match n {
+        Name(s) => {
+            let mut t = s
+            t += "!"
+            print(t)  // ab!
+        }
+        _ => print("no")  // never runs
+    }
+    print(show(n))  // ab
+
+    // A boxed `Chain?` field: its binding copies, its box is never a token, and it
+    // stays in the scrutinee beside the moved string.
+    match Chain.Link("ab" + "", Chain.Link("c" + "", None)) {
+        Link(s, next) => {
+            let rest = if let m = next { 1 } else { 0 }
+            print(s.len() + rest)  // 3
+        }
+        End => print(0)  // never runs
+    }
+}

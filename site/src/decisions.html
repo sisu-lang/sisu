@@ -11,9 +11,9 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit 317f0d9</p>
+    <p class="meta">{{adr-count}} records · at commit 8e7bd64</p>
   </div></section>
-  <!-- source: docs/adr/ (28 files, 0001 to 0025 and 0027 to 0029), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (29 files, 0001 to 0025 and 0027 to 0030), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -55,7 +55,7 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0001-newline-terminated-statements.md"><span class="num">0001</span><b>Statements end at newlines, not semicolons</b><span>A line break ends a statement, except inside parentheses. No statement needs a <code>;</code>.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md"><span class="num">0028</span><b>A <code>;</code> stands in for a line break</b><span>Two statements, fields, variants or arms can share a line with a <code>;</code> between them; an unnecessary <code>;</code> is a warning.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md"><span class="num">0015</span><b>The prelude holds only what almost every program uses</b><span>A name is visible in every file without an import only if almost every program uses it, or the language depends on it.</span></a></li>
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0019-enums-are-values-named-through-their-enum.md"><span class="num">0019</span><b>Enums are values named through their enum</b><span>An enum is an inline value built as <code>Expr.Num(2)</code>; a pattern can use the bare name, and <code>match</code> must cover every variant.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0019-enums-are-values-named-through-their-enum.md"><span class="num">0019</span><b>Enums are values named through their enum<small>amended by 0025 and 0030</small></b><span>An enum is an inline value built as <code>Expr.Num(2)</code>; a pattern can use the bare name, and <code>match</code> must cover every variant.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0020-labels-belong-to-the-declaration.md"><span class="num">0020</span><b>Labels belong to the declaration</b><span>A variant labels every field or none, and is built with its labels in declared order.</span></a></li>
       </ul>
       <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md -->
@@ -74,11 +74,12 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0005-reference-counting.md"><span class="num">0005</span><b>Memory is managed by reference counting</b><span>Every heap object carries a count of its references and is freed when the count reaches 0.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0008-weak-references.md"><span class="num">0008</span><b>Weak references break cycles</b><span>A <code>weak mut</code> field does not keep its object alive, and reads as <code>None</code> once the object is gone.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0012-methods-borrow-self.md"><span class="num">0012</span><b>Methods borrow <code>self</code><small>superseded by 0029</small></b><span>A method receives <code>self</code> without changing its count, and the caller keeps it alive for the call.</span></a></li>
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md"><span class="num">0021</span><b>A loop makes its written arrays unique before it starts</b><span>A loop that writes a local array makes it unique once, before the first iteration, so its writes skip the count check.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md"><span class="num">0021</span><b>A loop makes its written arrays unique before it starts<small>amended by 0025</small></b><span>A loop that writes a local array makes it unique once, before the first iteration, so its writes skip the count check.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0025-mir-holds-every-count.md"><span class="num">0025</span><b>mir holds every count</b><span>Copies and releases are explicit statements in a mid-level IR, moves are consuming operands, and a debug-build check certifies each function.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0029-parameters-are-borrowed-unless-consumed.md"><span class="num">0029</span><b>Parameters are borrowed unless the function consumes them</b><span>A function that only reads a counted parameter borrows it: the caller keeps its reference, and neither side counts it.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0030-match-takes-its-scrutinee-apart.md"><span class="num">0030</span><b><code>match</code> takes its scrutinee apart</b><span>An arm moves the parts it binds out of an owned scrutinee, and a box it held alone becomes a block the arm builds the next box into.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0008-weak-references.md, docs/adr/0012-methods-borrow-self.md, docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0025-mir-holds-every-count.md, docs/adr/0029-parameters-are-borrowed-unless-consumed.md -->
+      <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0008-weak-references.md, docs/adr/0012-methods-borrow-self.md, docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/adr/0025-mir-holds-every-count.md, docs/adr/0029-parameters-are-borrowed-unless-consumed.md, docs/adr/0030-match-takes-its-scrutinee-apart.md -->
 
       <h2 id="types">Types</h2>
       <ul class="rows">

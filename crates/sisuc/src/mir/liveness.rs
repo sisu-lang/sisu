@@ -115,9 +115,7 @@ pub(super) fn liveness(function: &Function) -> Liveness {
         };
         for (at, stmt) in block.stmts.iter().enumerate() {
             statement(stmt, &mut |local| note(at, local, true));
-            if let Some(dest) = written(stmt) {
-                note(at, dest, false);
-            }
+            written(stmt, |dest| note(at, dest, false));
         }
         terminator(&block.term, &mut |local| {
             note(block.stmts.len(), local, true);
@@ -173,17 +171,29 @@ pub(super) fn liveness(function: &Function) -> Liveness {
     Liveness { after }
 }
 
-/// The local `stmt` writes whole, if any.
-fn written(stmt: &Statement) -> Option<LocalId> {
+/// Calls `f` with each local `stmt` writes whole.
+fn written(stmt: &Statement, mut f: impl FnMut(LocalId)) {
     match stmt {
-        Statement::Assign { dest, .. } => *dest,
-        Statement::Take { dest, .. } => Some(*dest),
+        Statement::Assign { dest, .. } => {
+            if let Some(dest) = *dest {
+                f(dest);
+            }
+        }
+        Statement::Take { dest, .. } => f(*dest),
+        Statement::TakeApart {
+            tokens, bindings, ..
+        } => {
+            for (local, _) in tokens.iter().chain(bindings) {
+                f(*local);
+            }
+        }
         Statement::Store { .. }
         | Statement::Release(_)
         | Statement::ScopeRelease(_)
         | Statement::MakeUnique(_)
         | Statement::Check(_)
-        | Statement::End(_) => None,
+        | Statement::End(_)
+        | Statement::Free(_) => {}
     }
 }
 
@@ -198,8 +208,12 @@ fn statement(stmt: &Statement, read: &mut impl FnMut(LocalId)) {
             self::place(place, read);
             operand(value, read);
         }
-        // A release consumes the value, so it reads it.
-        Statement::Release(local) => read(*local),
+        // A release consumes the value, so it reads it; so do a take-apart and a free.
+        Statement::Release(local)
+        | Statement::TakeApart {
+            scrutinee: local, ..
+        }
+        | Statement::Free(local) => read(*local),
         Statement::ScopeRelease(_) | Statement::End(_) => {}
     }
 }
@@ -221,9 +235,15 @@ fn rvalue(value: &Rvalue, read: &mut impl FnMut(LocalId)) {
         | Rvalue::Print { operand: op, .. } => operand(op, read),
         Rvalue::Copy(place) | Rvalue::Borrow(place) => self::place(place, read),
         Rvalue::CopyStr(_) | Rvalue::ReadLine => {}
+        // A construction consumes each token it builds into, so it reads it.
+        Rvalue::Variant { args, reuse, .. } => {
+            for op in args {
+                operand(op, read);
+            }
+            reuse.iter().flatten().for_each(|&token| read(token));
+        }
         Rvalue::Call { args, .. }
         | Rvalue::New { args, .. }
-        | Rvalue::Variant { args, .. }
         | Rvalue::ArrayLit(args)
         | Rvalue::Interpolate { parts: args, .. }
         | Rvalue::Math { operands: args, .. } => {

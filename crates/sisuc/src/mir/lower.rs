@@ -40,7 +40,9 @@ use super::{
     Block as MirBlock, BlockId, Const, Function, Local, Loop, Operand, Place as MirPlace,
     Projection, Rvalue, Statement, Terminator,
 };
-use crate::tir::{self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type};
+use crate::tir::{
+    self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type, TypeKind,
+};
 
 /// The mir of `program`, before any pass, each function lowered under its parameters' `modes`:
 /// `Use` operands and borrow sites are still undecided.
@@ -56,12 +58,13 @@ pub(crate) fn lower(program: &tir::Program, modes: &[Vec<bool>]) -> super::Progr
 }
 
 /// The mir of function `id`, before any pass, lowered as if each parameter that `borrowed` marks
-/// is borrowed; and the parameters whose flag decided the form of a `match` or an `if let`.
+/// is borrowed; the parameters whose flag decided the form of a `match` or an `if let`; and those
+/// a `match` would reuse a box of in the owned form (`Lowering::reuses`).
 pub(super) fn function(
     program: &tir::Program,
     id: FuncId,
     borrowed: &[bool],
-) -> (Function, Vec<bool>) {
+) -> (Function, Vec<bool>, Vec<bool>) {
     let f = &program.functions[id.0];
     debug_assert_eq!(
         borrowed.len(),
@@ -85,6 +88,15 @@ struct Lowering<'a> {
     borrowed: &'a [bool],
     /// Per parameter, whether its flag decided the form of a `match` or an `if let`.
     consulted: Vec<bool>,
+    /// Per parameter, whether a `match` on it has an arm that would take a box of some enum `F`
+    /// apart in the owned form, and whose body builds a `Variant` with a boxed `F` field.
+    reuses: Vec<bool>,
+    /// Per enum looked at so far, the `Variant` constructions lowered with a boxed field of that
+    /// enum, and the stamp of the last construction or arm that looked at it, so that one counts
+    /// an enum once however many of its fields hold it. A missing enum has count zero.
+    built: FxHashMap<tir::EnumId, (usize, usize)>,
+    /// The stamp of the last construction or arm that looked at `built`.
+    stamp: usize,
     locals: Vec<Local>,
     blocks: Vec<MirBlock>,
     loops: Vec<Loop>,
@@ -167,7 +179,7 @@ impl<'a> Lowering<'a> {
         program: &'a tir::Program,
         f: &tir::Function,
         borrowed: &'a [bool],
-    ) -> (Function, Vec<bool>) {
+    ) -> (Function, Vec<bool>, Vec<bool>) {
         let locals = f
             .locals
             .iter()
@@ -176,12 +188,16 @@ impl<'a> Lowering<'a> {
                 ty: local.ty,
                 counted: local.ty.is_counted(&program.enums),
                 scope: BlockId(0),
+                token: false,
             })
             .collect();
         let mut lowering = Lowering {
             program,
             borrowed,
             consulted: vec![false; f.params.len()],
+            reuses: vec![false; f.params.len()],
+            built: FxHashMap::default(),
+            stamp: 0,
             locals,
             blocks: Vec::new(),
             loops: Vec::new(),
@@ -225,16 +241,45 @@ impl<'a> Lowering<'a> {
             loops: lowering.loops,
             owners: lowering.owners,
         };
-        (function, lowering.consulted)
+        #[cfg(test)]
+        COUNTERS.set(lowering.built.len());
+        (function, lowering.consulted, lowering.reuses)
     }
 
     fn counted(&self, ty: Type) -> bool {
         ty.is_counted(&self.program.enums)
     }
 
+    /// Counts a construction of variant `variant` of enum `id` once for each enum `F` it has a
+    /// boxed `F` field of, the fields the reuse pass gives a token.
+    fn count_built(&mut self, id: tir::EnumId, variant: usize) {
+        self.stamp += 1;
+        let program = self.program;
+        for field in &program.enums[id.0].variants[variant].fields {
+            if let TypeKind::Enum(f) = field.ty.kind()
+                && field.boxed
+            {
+                #[cfg(test)]
+                DEDUPED.set(DEDUPED.get() + 1);
+                let (count, stamp) = self.built.entry(f).or_default();
+                if *stamp != self.stamp {
+                    *stamp = self.stamp;
+                    *count += 1;
+                    #[cfg(test)]
+                    SEEDED.set(SEEDED.get() + 1);
+                }
+            }
+        }
+    }
+
+    /// How many constructions with a boxed field of enum `f` lowering has counted.
+    fn built_of(&self, f: tir::EnumId) -> usize {
+        self.built.get(&f).map_or(0, |&(count, _)| count)
+    }
+
     /// The projection to field `index` of a value of the class type `base`.
     fn field(&self, base: Type, index: usize) -> Projection {
-        let tir::TypeKind::Class(class) = base.kind() else {
+        let TypeKind::Class(class) = base.kind() else {
             unreachable!("the checker should allow a field only on a class-typed value")
         };
         Projection::Field {
@@ -280,6 +325,20 @@ impl<'a> Lowering<'a> {
             ty,
             counted: self.counted(ty),
             scope,
+            token: false,
+        });
+        LocalId(self.locals.len() - 1)
+    }
+
+    /// A new reuse token for a box of the enum `ty`, whose scope is the current block.
+    fn token(&mut self, ty: Type) -> LocalId {
+        let scope = self.here();
+        self.locals.push(Local {
+            name: None,
+            ty,
+            counted: true,
+            scope,
+            token: true,
         });
         LocalId(self.locals.len() - 1)
     }
@@ -360,13 +419,15 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// Scope-releases the locals above `mark`, or ends the borrowed ones, newest first, without
-    /// popping them.
+    /// Scope-releases the locals above `mark`, frees the tokens, or ends the borrowed ones,
+    /// newest first, without popping them.
     fn release_scope(&mut self, mark: usize) {
         for i in (mark..self.scope.len()).rev() {
             let (local, borrowed) = self.scope[i];
             self.push(if borrowed {
                 Statement::End(local)
+            } else if self.locals[local.0].token {
+                Statement::Free(local)
             } else {
                 Statement::ScopeRelease(local)
             });
@@ -590,11 +651,16 @@ impl<'a> Lowering<'a> {
                 class: *class,
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
             },
-            ExprKind::Variant { id, variant, args } => Rvalue::Variant {
-                id: *id,
-                variant: *variant,
-                args: self.operands(&args.iter().collect::<Vec<_>>())?,
-            },
+            ExprKind::Variant { id, variant, args } => {
+                let args = self.operands(&args.iter().collect::<Vec<_>>())?;
+                self.count_built(*id, *variant);
+                Rvalue::Variant {
+                    id: *id,
+                    variant: *variant,
+                    reuse: vec![None; args.len()],
+                    args,
+                }
+            }
             ExprKind::Field { base, index } => {
                 let (mut place, temp) = self.base(base, true)?;
                 place.projections.push(self.field(base.ty, *index));
@@ -1263,6 +1329,16 @@ thread_local! {
     /// How many guard-membership records `is_guarded` has read on this thread: one flag per
     /// question about a source local.
     pub(super) static PROBED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many reads and writes of a construction counter (`Lowering::built`) lowering has made
+    /// on this thread.
+    pub(super) static SEEDED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times lowering has asked whether the construction or arm at hand already looked
+    /// at an enum: once per boxed enum field of a construction, and once per tested box of an arm
+    /// on a parameter.
+    pub(super) static DEDUPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many construction counters (`Lowering::built`) the last function lowered on this
+    /// thread held.
+    pub(super) static COUNTERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `mentions` of `e`'s own node and its children.

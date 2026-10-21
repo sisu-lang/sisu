@@ -51,6 +51,8 @@ thread_local! {
     /// How many class fields and enum payload fields the reflexivity analysis has read on this
     /// thread.
     static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many token places and rest places a `take_apart` has visited on this thread.
+    static TAKE_APART_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {
@@ -469,7 +471,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             .locals
             .iter()
             .map(|local| {
-                let ty = self.llvm_type(local.ty)?;
+                let ty = if local.token {
+                    self.context.ptr_type(AddressSpace::default()).into()
+                } else {
+                    self.llvm_type(local.ty)?
+                };
                 let name = local.name.as_deref().unwrap_or("");
                 Some((self.entry_alloca(ty, name), ty))
             })
@@ -550,6 +556,16 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (index, _) = self.operand(index);
                 self.check_bounds(array, index.into_int_value(), *span);
             }
+            Statement::TakeApart {
+                scrutinee,
+                tokens,
+                bindings,
+                rest,
+            } => self.take_apart(*scrutinee, tokens, bindings, rest),
+            Statement::Free(token) => {
+                let free = self.helper(Helper::Free, self.types[token.0]);
+                self.call(free, &[self.load_local(*token).into()]);
+            }
             Statement::End(_) => {}
         }
     }
@@ -621,9 +637,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 return self.call_value(*func, &args);
             }
             Rvalue::New { class, args } => self.new_object(*class, &self.values(args)).into(),
-            Rvalue::Variant { id, variant, args } => {
-                self.variant(*id, *variant, &self.values(args))
-            }
+            Rvalue::Variant {
+                id,
+                variant,
+                args,
+                reuse,
+            } => self.variant(*id, *variant, &self.values(args), reuse),
             Rvalue::ArrayLit(elements) => self.array_lit(ty(), &self.values(elements)).into(),
             Rvalue::ArrayFill { value, len, span } => {
                 let (filler, _) = self.operand(value);

@@ -197,11 +197,14 @@ allocation_counts! {
     (enum_alloc_boxes, "1000\n", "0\n", 2000),
     // `match` hands the payload of a scrutinee in its last use to its binding: no array copy.
     (enum_alloc_handover, "1000\n", "0\n", 0),
-    // The same through a box with count one: one new box per step, no array copy. Reusing the
-    // old box in `match` would make it 0.
-    (enum_alloc_handover_box, "1000\n", "0\n", 1000),
+    // The same through a box with count one: no array copy. Building into the old box
+    // allocates nothing.
+    (enum_alloc_handover_box, "1000\n", "0\n", 0),
     // Through a shared box: one new box and one array copy per step.
     (enum_alloc_shared_box, "1000\n499500\n", "0\n0\n", 2000),
+    // Each step takes `e`'s two boxes apart for the new `Add`. Building into the old boxes
+    // allocates nothing.
+    (enum_alloc_rewrite, "12\n", "12\n", 0),
 }
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.

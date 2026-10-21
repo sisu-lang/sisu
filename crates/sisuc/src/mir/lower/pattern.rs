@@ -4,11 +4,15 @@
 //! point: a local `tried` holds the alternative being tried, a dispatch block switches on it to
 //! that alternative's test, and a retry block switches on it to the retry target of the
 //! alternative that matched, so a later failure resumes the innermost choice point first. The
-//! first arm whose pattern and guard hold commits: each counted binding copies its value, `temp`
-//! is released and leaves the scope stack, and the counted bindings join it. Each edge that
-//! leaves a test or a guard before the commit ends the arm's bindings; the edges out of a
-//! committed body do not. The last arm's failure is `unreachable`: the checker proves some arm
-//! matches.
+//! first arm whose pattern and guard hold commits. When `temp` is a counted enum and the arm
+//! binds a counted name or tests a box, outside any `|` that would, the commit takes `temp`
+//! apart: each binding moves its part out (one of a boxed `F?`, whose box may be `null`, copies
+//! it), each box the pattern tests becomes a reuse token, which the scope stack frees, and the
+//! parts nothing moved are released. Otherwise each counted binding copies its value and `temp`
+//! is released. Either way `temp` leaves the scope stack, and the counted bindings, then the
+//! tokens, join it. Each edge that leaves a test or a guard before the commit ends the arm's
+//! bindings; the edges out of a committed body do not. The last arm's failure is `unreachable`:
+//! the checker proves some arm matches.
 //!
 //! A scrutinee that is a borrowed place, a borrowed parameter or a field without `mut` of one,
 //! is not copied. A `match` tests the place itself; its commit copies and releases nothing, and
@@ -23,10 +27,13 @@
 
 use std::mem;
 
+#[cfg(test)]
+use super::{DEDUPED, SEEDED};
 use super::{Lowered, Lowering, valued, whole};
 use crate::mir::{BlockId, Const, Operand, Place, Projection, Rvalue, Statement, Terminator};
 use crate::tir::{
-    Arm, BinaryOp, Block, CompareOp, Expr, ExprKind, LocalId, Pattern, PatternKind, Type, TypeKind,
+    Arm, BinaryOp, Block, CompareOp, EnumId, Expr, ExprKind, LocalId, Pattern, PatternKind, Type,
+    TypeKind,
 };
 
 /// An index into `Lowering::targets`: a failure target that has no block until an edge needs it.
@@ -190,7 +197,10 @@ impl Lowering<'_> {
     }
 
     /// `match scrutinee { arms }`, with the scrutinee in `temp`, or tested in place when it is a
-    /// borrowed place.
+    /// borrowed place. A `match` on a borrowed parameter of an enum type marks it in `reuses` when
+    /// an arm would take a box of an enum `F` apart in the owned form and its body builds a
+    /// `Variant` with a boxed `F` field: the arm notes `F`'s count in `built` before its body, and
+    /// the count differs after.
     pub(super) fn match_expr(
         &mut self,
         scrutinee: &Expr,
@@ -201,6 +211,11 @@ impl Lowering<'_> {
     ) -> Lowered {
         let borrowed = self.borrowed_place(scrutinee);
         let borrows = borrowed.is_some();
+        let seed = (borrowed.as_ref())
+            .filter(|place| {
+                place.projections.is_empty() && matches!(scrutinee.ty.kind(), TypeKind::Enum(_))
+            })
+            .map(|place| place.local);
         // `counted`: whether the scrutinee is in a temporary that owns a reference.
         let (place, counted) = if let Some(place) = borrowed {
             (place, false)
@@ -233,8 +248,26 @@ impl Lowering<'_> {
                 Some(guard) => self.guard_holds(guard, retry),
             };
             if passed {
-                self.commit(temp, counted, borrows, guards, &arm.bindings);
+                let parts = if counted && matches!(scrutinee.ty.kind(), TypeKind::Enum(_)) {
+                    self.parts(&arm.pattern, &place, scrutinee.ty, &arm.bindings)
+                } else {
+                    None
+                };
+                self.commit(temp, counted, borrows, guards, &arm.bindings, parts);
+                let noted = match seed {
+                    Some(_) => self.noted(&arm.pattern, &place, scrutinee.ty, &arm.bindings),
+                    None => Vec::new(),
+                };
                 self.arm(outer, &arm.body, dest, &mut join);
+                if let Some(param) = seed
+                    && noted.iter().any(|&(f, count)| {
+                        #[cfg(test)]
+                        SEEDED.set(SEEDED.get() + 1);
+                        self.built_of(f) != count
+                    })
+                {
+                    self.reuses[param.0] = true;
+                }
                 if borrows {
                     for &binding in &arm.bindings {
                         self.guarded[binding.0] = false;
@@ -269,11 +302,15 @@ impl Lowering<'_> {
         true
     }
 
-    /// The commit of an arm whose pattern and guard held: each counted binding copies its
-    /// borrowed value, then `temp`, when `counted`, is released and leaves the scope stack, and
-    /// the counted bindings join it. The bindings are no longer borrowed. When the match
-    /// `borrows` its scrutinee, the bindings copy nothing: they stay borrowed through the body,
-    /// and join the scope stack as borrowed, so each edge that leaves the arm ends them.
+    /// The commit of an arm whose pattern and guard held. With `parts`, it takes `temp` apart:
+    /// each boxed `F?` binding copies its value, each other counted binding's borrow ends, and
+    /// `take_apart` moves those bindings out, makes each tested box a token and releases each
+    /// rest; `temp` leaves the scope stack with no release, and the counted bindings, then the
+    /// tokens, join it. Otherwise each counted binding copies its borrowed value, then `temp`,
+    /// when `counted`, is released and leaves the scope stack, and the counted bindings join it.
+    /// The bindings are no longer borrowed. When the match `borrows` its scrutinee, the bindings
+    /// copy nothing: they stay borrowed through the body, and join the scope stack as borrowed,
+    /// so each edge that leaves the arm ends them.
     fn commit(
         &mut self,
         temp: LocalId,
@@ -281,6 +318,7 @@ impl Lowering<'_> {
         borrows: bool,
         guards: usize,
         bindings: &[LocalId],
+        parts: Option<Parts>,
     ) {
         self.close_guards(guards);
         if borrows {
@@ -290,6 +328,10 @@ impl Lowering<'_> {
                     self.scope.push((binding, true));
                 }
             }
+            return;
+        }
+        if let Some(parts) = parts {
+            self.take_apart(temp, bindings, parts);
             return;
         }
         for &binding in bindings {
@@ -313,6 +355,186 @@ impl Lowering<'_> {
             if self.locals[binding.0].counted {
                 self.scope.push((binding, false));
             }
+        }
+    }
+
+    /// Each enum a box of which the owned form's commit of `pattern` takes apart, with its count
+    /// in `built`. It builds the whole `Parts` to read its tokens, as the owned form's commit does.
+    fn noted(
+        &mut self,
+        pattern: &Pattern,
+        place: &Place,
+        ty: Type,
+        bindings: &[LocalId],
+    ) -> Vec<(EnumId, usize)> {
+        self.stamp += 1;
+        let mut noted: Vec<(EnumId, usize)> = Vec::new();
+        let tokens = self
+            .parts(pattern, place, ty, bindings)
+            .map(|parts| parts.tokens);
+        for (token, _) in tokens.into_iter().flatten() {
+            let TypeKind::Enum(f) = token.kind() else {
+                unreachable!("a tested box should hold an enum")
+            };
+            #[cfg(test)]
+            DEDUPED.set(DEDUPED.get() + 1);
+            let (count, stamp) = self.built.entry(f).or_default();
+            if *stamp != self.stamp {
+                *stamp = self.stamp;
+                #[cfg(test)]
+                SEEDED.set(SEEDED.get() + 1);
+                noted.push((f, *count));
+            }
+        }
+        noted
+    }
+
+    /// The take-apart commit of `parts` on `temp`, whose arm binds `bindings`.
+    fn take_apart(&mut self, temp: LocalId, bindings: &[LocalId], parts: Parts) {
+        for &binding in &parts.copied {
+            self.push(Statement::Assign {
+                dest: Some(binding),
+                value: Rvalue::Copy(whole(binding)),
+            });
+        }
+        // The certifier applies `temp`'s kill before the statement's own effects, so a binding
+        // still borrowing from it there would break rule 3.
+        for &(binding, _) in &parts.moved {
+            self.push(Statement::End(binding));
+        }
+        let tokens: Vec<(LocalId, Place)> = (parts.tokens.into_iter())
+            .map(|(ty, place)| (self.token(ty), place))
+            .collect();
+        let rest = (parts.rest.into_iter().zip(parts.kept))
+            .filter_map(|(place, kept)| kept.then_some(place))
+            .collect();
+        let new_tokens: Vec<LocalId> = tokens.iter().map(|&(token, _)| token).collect();
+        self.push(Statement::TakeApart {
+            scrutinee: temp,
+            tokens,
+            bindings: parts.moved,
+            rest,
+        });
+        let popped = self.scope.pop();
+        debug_assert_eq!(
+            popped,
+            Some((temp, false)),
+            "`temp` should top the scope stack"
+        );
+        for &binding in bindings {
+            if self.locals[binding.0].counted {
+                self.scope.push((binding, false));
+            }
+        }
+        self.scope
+            .extend(new_tokens.into_iter().map(|token| (token, false)));
+    }
+
+    /// What an arm's commit takes apart of a scrutinee at `place`, of the enum type `ty`, or
+    /// `None` when the arm keeps the copying commit: when an `|` has an alternative that binds a
+    /// counted name or tests a box, whose places differ per alternative, or when there is
+    /// nothing to take apart, none of `bindings` counted and no tested box.
+    fn parts(
+        &self,
+        pattern: &Pattern,
+        place: &Place,
+        ty: Type,
+        bindings: &[LocalId],
+    ) -> Option<Parts> {
+        let mut parts = Parts {
+            tokens: Vec::new(),
+            moved: Vec::new(),
+            copied: Vec::new(),
+            rest: vec![place.clone()],
+            kept: vec![false],
+        };
+        self.walk_parts(pattern, place, ty, false, 0, &mut parts)?;
+        let binds = bindings
+            .iter()
+            .any(|binding| self.locals[binding.0].counted);
+        (binds || !parts.tokens.is_empty()).then_some(parts)
+    }
+
+    /// Walks `pattern` as `test` does, at `place`, a part of value `value` of `parts.rest`, of
+    /// type `ty`, which is a boxed payload field when `boxed`. `None` for an `|` that the
+    /// take-apart cannot follow.
+    fn walk_parts(
+        &self,
+        pattern: &Pattern,
+        place: &Place,
+        ty: Type,
+        boxed: bool,
+        value: usize,
+        parts: &mut Parts,
+    ) -> Option<()> {
+        match &pattern.kind {
+            PatternKind::Bind(binding) if self.locals[binding.0].counted => {
+                if boxed && matches!(ty.kind(), TypeKind::Optional(_)) {
+                    // A boxed `F?` is never tested: its box may be `null`.
+                    parts.copied.push(*binding);
+                    parts.kept[value] = true;
+                } else {
+                    if boxed {
+                        parts.token(ty, place);
+                    }
+                    parts.moved.push((*binding, place.clone()));
+                }
+            }
+            PatternKind::Variant { variant, fields } => {
+                let TypeKind::Enum(id) = ty.kind() else {
+                    unreachable!("the checker should allow a variant pattern only at an enum")
+                };
+                let value = if boxed { parts.token(ty, place) } else { value };
+                let payloads = &self.program.enums[id.0].variants[*variant].fields;
+                for (field, (sub, payload)) in fields.iter().zip(payloads).enumerate() {
+                    let mut at = place.clone();
+                    at.projections.push(Projection::Payload {
+                        variant: *variant,
+                        field,
+                    });
+                    self.walk_parts(sub, &at, payload.ty, payload.boxed, value, parts)?;
+                }
+            }
+            PatternKind::Or(alternatives) => {
+                if (alternatives.iter()).any(|alternative| self.binds_or_tests(alternative, ty)) {
+                    return None;
+                }
+                parts.kept[value] |= self.counted(ty);
+            }
+            // A part nothing moves stays in its value: `_`, a string literal, an uncounted
+            // binding or test, which leave nothing counted.
+            PatternKind::Wild
+            | PatternKind::Bind(_)
+            | PatternKind::Bool(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Str(_) => parts.kept[value] |= self.counted(ty),
+        }
+        Some(())
+    }
+
+    /// Whether `pattern`, of type `ty`, an alternative of an `|` or a part of one, binds a
+    /// counted name or tests a box inside it.
+    fn binds_or_tests(&self, pattern: &Pattern, ty: Type) -> bool {
+        match &pattern.kind {
+            PatternKind::Bind(binding) => self.locals[binding.0].counted,
+            PatternKind::Variant { variant, fields } => {
+                let TypeKind::Enum(id) = ty.kind() else {
+                    unreachable!("the checker should allow a variant pattern only at an enum")
+                };
+                let payloads = &self.program.enums[id.0].variants[*variant].fields;
+                fields.iter().zip(payloads).any(|(sub, payload)| {
+                    payload.boxed
+                        && matches!(sub.kind, PatternKind::Bind(_) | PatternKind::Variant { .. })
+                        || self.binds_or_tests(sub, payload.ty)
+                })
+            }
+            PatternKind::Or(alternatives) => alternatives
+                .iter()
+                .any(|alternative| self.binds_or_tests(alternative, ty)),
+            PatternKind::Wild
+            | PatternKind::Bool(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Str(_) => false,
         }
     }
 
@@ -493,5 +715,29 @@ fn bound(n: i64, ty: Type) -> Const {
         Const::Char(c)
     } else {
         Const::Int(n, ty)
+    }
+}
+
+/// What a take-apart commit moves, copies and frees; see `Lowering::parts`.
+struct Parts {
+    /// Each tested box, outermost first: the enum it holds and its field's place.
+    tokens: Vec<(Type, Place)>,
+    /// Each counted binding that moves out of its place, with the place.
+    moved: Vec<(LocalId, Place)>,
+    /// Each counted binding of a boxed `F?`, which the commit copies.
+    copied: Vec<LocalId>,
+    /// The scrutinee's place, then each tested box's, and whether that value keeps a counted
+    /// part nothing moves or tests.
+    rest: Vec<Place>,
+    kept: Vec<bool>,
+}
+
+impl Parts {
+    /// Records the box at `place`, of the enum `ty`, as tested: a token, and a value of its own.
+    fn token(&mut self, ty: Type, place: &Place) -> usize {
+        self.tokens.push((ty, place.clone()));
+        self.rest.push(place.clone());
+        self.kept.push(false);
+        self.rest.len() - 1
     }
 }

@@ -2479,3 +2479,56 @@ fn reflexivity_reads_linearly() {
     };
     assert_near_linear(reads(100), reads(200), reads(300));
 }
+
+/// A `take_apart` finds each place's token and kept value once: a scan of every token, or of
+/// every rest, per binding would visit quadratically many places.
+#[test]
+fn take_apart_probes_linearly() {
+    let probes = |n: usize| {
+        let fields = vec!["E"; n].join(", ");
+        let parts = (0..n)
+            .map(|i| format!("Pair(a{i}, _)"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let args = (0..n)
+            .map(|i| format!("a{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let src = format!(
+            "enum E {{\n    Leaf\n    Pair(E, E)\n    Big({fields})\n}}\n\
+             fn f(e: E) -> E {{\n    match e {{\n        Big({parts}) => E.Big({args})\n        other => other\n    }}\n}}\n\
+             fn main() {{}}"
+        );
+        TAKE_APART_PROBES.set(0);
+        let context = Context::create();
+        compiled(&context, &src);
+        TAKE_APART_PROBES.get()
+    };
+    assert_near_linear(probes(100), probes(200), probes(300));
+}
+
+/// `swap` takes its scrutinee apart: an unbox of each box, which retains nothing when the box
+/// has count 1, where the copying commit retained each binding.
+#[test]
+fn take_apart_of_swap_retains_nothing() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n\
+         fn swap(e: Expr) -> Expr {\n    match e {\n        Add(l, r) => Expr.Add(r, l)\n        other => other\n    }\n}\n\
+         fn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    let header = ir
+        .lines()
+        .find(|line| line.starts_with("define") && line.contains("@sisu.swap("))
+        .unwrap_or_else(|| panic!("no swap in\n{ir}"));
+    let swap = function_body(&ir, header);
+    assert_eq!(
+        swap.matches("call ptr @sisu_rc.unbox.Expr(").count(),
+        2,
+        "{swap}"
+    );
+    assert!(!swap.contains("@sisu_rc.retain.Expr("), "{swap}");
+}

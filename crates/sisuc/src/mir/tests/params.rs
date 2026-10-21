@@ -3,8 +3,10 @@
 
 use std::fmt::Write as _;
 
+use super::super::lower::{self, COUNTERS, DEDUPED, SEEDED};
 use super::super::params::FOLLOWED;
 use super::*;
+use crate::tir::FuncId;
 
 const KEEP: &str = "fn keep(p: [i64]) -> [i64] {\n    let q = p\n    q\n}";
 
@@ -340,4 +342,135 @@ fn infer_visits_each_edge_once() {
         two_hundred <= 5 * fifty,
         "{fifty} edges for 50, {two_hundred} for 200"
     );
+}
+
+const TREE_REWRITE: &str = include_str!("../../../../../bench/features/tree_rewrite/main.sisu");
+
+/// Part 4 alone infers `simplify`'s `e` borrowed: `e` reaches only a tail call to itself and
+/// calls whose results go into new boxes. Its `Add(l, r)` arm takes two boxes apart and builds
+/// an `Add`, so the seed keeps `e` owned, and the `Add` is built into the arm's two tokens.
+#[test]
+fn parameter_whose_box_is_reused_stays_owned() {
+    let printed = built(TREE_REWRITE);
+    signature(&printed, "simplify", "fn simplify(e#0: Expr)");
+    has(
+        &printed,
+        "simplify",
+        &["= variant Expr.Add(move _, move _) into [_, _]"],
+    );
+    let printed = built(include_str!("../../../tests/run/enum_alloc_rewrite.sisu"));
+    signature(&printed, "swap", "fn swap(e#0: Expr)");
+    // `Cons` has one boxed field, after an inline one, and `xs` is the second parameter.
+    let printed = built(
+        "enum L {\n    Nil\n    Cons(i64, L)\n}\n\
+         fn bump(k: i64, xs: L) -> L {\n    match xs {\n        Cons(h, t) => L.Cons(h + k, L.Nil)\n        Nil => L.Nil\n    }\n}",
+    );
+    signature(&printed, "bump", "fn bump(k#0: i64, xs#1: L)");
+    has(
+        &printed,
+        "bump",
+        &["= variant L.Cons(_, move _) into [-, _]"],
+    );
+}
+
+/// `weigh` and `eval` test `e`'s boxes, but no arm builds a box, so `e` stays borrowed. In
+/// `split`, the arms that test boxes build none, and the arm that builds one tests none. In
+/// `other`, the arm that tests boxes of `Expr` builds a box of `G`.
+#[test]
+fn parameter_only_read_stays_borrowed() {
+    signature(&built(TREE_REWRITE), "weigh", "fn weigh(e#0: borrow Expr)");
+    let printed = built(include_str!(
+        "../../../../../bench/features/enum_match/main.sisu"
+    ));
+    signature(&printed, "eval", "fn eval(e#0: borrow Expr)");
+    let printed = built(&format!(
+        "{EXPR}\nenum G {{\n    Leaf\n    Node(G)\n}}\n\
+         fn split(e: Expr) -> Expr {{\n    match e {{\n        Add(l, r) => Expr.Num(1)\n        Num(n) => Expr.Add(Expr.Num(n), Expr.Num(0))\n        Mul(l, r) => Expr.Num(2)\n    }}\n}}\n\
+         fn other(e: Expr) -> G {{\n    match e {{\n        Add(l, r) => G.Node(G.Leaf)\n        _ => G.Leaf\n    }}\n}}"
+    ));
+    signature(&printed, "split", "fn split(e#0: borrow Expr)");
+    signature(&printed, "other", "fn other(e#0: borrow Expr)");
+}
+
+/// The arm of `REBUILT` takes two boxes apart and builds a box of their enum.
+const REBUILT: &str = "match e {\n        Add(l, r) => Expr.Add(Expr.Num(1), Expr.Num(2))\n        _ => Expr.Num(0)\n    }";
+
+/// `rebuilt` matches its parameter, so the seed keeps it owned. `Holder.rebuilt` matches a field
+/// of `self`, not `self` itself: taking `self.e` apart would not free `self`, which stays
+/// borrowed.
+#[test]
+fn match_on_a_field_is_not_seeded() {
+    let printed = built(&format!(
+        "{EXPR}\nfn rebuilt(e: Expr) -> Expr {{\n    {REBUILT}\n}}\n\
+         class Holder {{\n    e: Expr\n\n    fn rebuilt(self) -> Expr {{\n        {}\n    }}\n}}",
+        REBUILT.replace("match e", "match self.e")
+    ));
+    signature(&printed, "rebuilt", "fn rebuilt(e#0: Expr)");
+    signature(
+        &printed,
+        "Holder.rebuilt",
+        "fn Holder.rebuilt(self#0: borrow Holder)",
+    );
+}
+
+/// Lowers `f` of `src` with every parameter borrowed: `SEEDED`, `DEDUPED`, `COUNTERS` and the
+/// parameters marked in `reuses`.
+fn seed_counts(src: &str) -> (usize, usize, usize, Vec<bool>) {
+    let program = checked(src);
+    let id = (program.functions.iter())
+        .position(|f| f.name == "f")
+        .expect("the program should define `f`");
+    let borrowed = vec![true; program.functions[id].params.len()];
+    SEEDED.set(0);
+    DEDUPED.set(0);
+    let (_, _, reuses) = lower::function(&program, FuncId(id), &borrowed);
+    (SEEDED.get(), DEDUPED.get(), COUNTERS.get(), reuses)
+}
+
+/// Each construction writes one counter and each arm on a parameter reads one twice, so `n`
+/// nested arms, each open around all `n` constructions, cost `n + 2 × n`, not `n × n`. Unrelated
+/// enum declarations add no counter. A construction and an arm over `n` distinct boxed enums
+/// each ask once per enum whether they have seen it, not once per pair.
+#[test]
+fn seed_bookkeeping_is_linear() {
+    let n = 40;
+    let params: Vec<String> = (0..n).map(|i| format!("e{i}: Expr")).collect();
+    let mut lets = String::new();
+    for i in 0..n {
+        writeln!(lets, "let b{i} = Expr.Add(Expr.Num({i}), Expr.Num(0))")
+            .expect("writing to a `String` should not fail");
+    }
+    let mut body = format!("{{\n{lets}Expr.Num(0)\n}}");
+    for i in (0..n).rev() {
+        body = format!("match e{i} {{\n    Add(l{i}, r{i}) => {body}\n    _ => Expr.Num({i})\n}}");
+    }
+    let nested = format!("fn f({}) -> Expr {{\n{body}\n}}", params.join(", "));
+    let (seeded, _, counters, reuses) = seed_counts(&format!("{EXPR}\n{nested}"));
+    assert_eq!(seeded, n + 2 * n);
+    assert_eq!(counters, 1);
+    assert_eq!(reuses, vec![true; n]);
+
+    let (mut unrelated, mut enums) = (String::new(), String::new());
+    for i in 0..n {
+        writeln!(unrelated, "enum U{i} {{\n    A\n}}")
+            .expect("writing to a `String` should not fail");
+        writeln!(enums, "enum F{i} {{\n    Nil\n    Back(Root)\n}}")
+            .expect("writing to a `String` should not fail");
+    }
+    let (seeded, _, counters, _) = seed_counts(&format!("{unrelated}{EXPR}\n{nested}"));
+    assert_eq!((seeded, counters), (n + 2 * n, 1));
+
+    let fs: Vec<String> = (0..n).map(|i| format!("F{i}")).collect();
+    let bindings: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
+    let nils: Vec<String> = (0..n).map(|i| format!("F{i}.Nil")).collect();
+    let wide = format!(
+        "enum Root {{\n    Nil\n    All({})\n}}\n{enums}\
+         fn f(r: Root) -> Root {{\n    match r {{\n        All({}) => Root.All({})\n        Nil => Root.Nil\n    }}\n}}",
+        fs.join(", "),
+        bindings.join(", "),
+        nils.join(", ")
+    );
+    let (_, deduped, counters, reuses) = seed_counts(&wide);
+    assert_eq!((deduped, counters), (2 * n, n));
+    assert_eq!(reuses, vec![true]);
 }

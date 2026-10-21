@@ -6,7 +6,9 @@ enum half of [ADR 0011](0011-let-mut-marks-what-can-change.md)'s
 self-containment rule. On 2026-10-18,
 [ADR 0025](0025-mir-holds-every-count.md) superseded its statement that
 `match` stays in `tir` with no `mir`: `match` now lowers to `mir`, which keeps
-the same scheme of arms in order and backtracking choice points.
+the same scheme of arms in order and backtracking choice points. When part 5
+of the mir merges, [ADR 0030](0030-match-takes-its-scrutinee-apart.md) will
+supersede its rule that `match` moves nothing out of its scrutinee.
 
 An enum is a value: a tag plus the payload of the variant it holds, stored
 inline, with no heap block of its own. Every value of an enum is one of its

@@ -1,0 +1,55 @@
+// A take-apart whose tested box keeps a rest, one whose box sits below an unboxed field, and one
+// in a loop arm that `break`s. Strings are
+// built at run time, so Valgrind and `--rc-checks` see each part released exactly once.
+enum Tagged {
+    Leaf(string)
+    Tag(string, Tagged)
+    Two(Tagged, Tagged)
+}
+
+// `Outer` is outside `Tagged`'s cycle, so its `Tagged` field is unboxed.
+enum Outer {
+    O(Tagged, string)
+}
+
+// The tested `Tag` box keeps a rest, its unbound `Tagged`, beside the moved `s`, while the
+// scrutinee keeps none: the move zeroes `s`'s source in the token's value, which is released.
+fn tag_of(t: Tagged) -> string {
+    match t {
+        Two(Tag(s, _), Leaf(u)) => s + u
+        _ => "none"
+    }
+}
+
+// The token is the `Leaf` box below the unboxed `Two`; the scrutinee keeps a rest, the `Two`'s
+// second box, beside the moved `s`.
+fn below(o: Outer) -> string {
+    match o {
+        O(Two(Leaf(a), _), s) => a + s
+        _ => "none"
+    }
+}
+
+// The `break` edge frees the arm's tokens, and so does the arm's end on the other iterations.
+fn joined_at(n: i64) -> string {
+    let mut found = "none"
+    for i in 0..n {
+        match Tagged.Two(Tagged.Leaf("a" + "{i}"), Tagged.Leaf("b" + "")) {
+            Two(Leaf(s), Leaf(t)) => {
+                if i == 2 {
+                    found = s + t
+                    break
+                }
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+fn main() {
+    print(tag_of(Tagged.Two(Tagged.Tag("t" + "", Tagged.Leaf("x" + "")), Tagged.Leaf("u" + ""))))  // tu
+    print(below(Outer.O(Tagged.Two(Tagged.Leaf("a" + ""), Tagged.Leaf("c" + "")), "b" + "")))  // ab
+    print(joined_at(5))  // a2b
+    print(joined_at(1))  // none
+}
