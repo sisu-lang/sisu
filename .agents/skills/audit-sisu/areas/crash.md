@@ -1,17 +1,17 @@
 # Area: crashes
 
-Two targets. `sisuc` must end every input with exit 0, or exit 1 and an
+Two targets. `sisu` must end every input with exit 0, or exit 1 and an
 `error:` diagnostic; never a Rust panic, a signal, a hang, or an internal
-failure (`sisuc: ...`) on a program its checker accepted. A compiled program
+failure (`sisu: ...`) on a program its checker accepted. A compiled program
 must end with 0, 101 (a Sisu panic) or, under `--rc-checks`, 102; the
 signals that are not crashes are listed in [finding.md](../finding.md).
 
-## Crash sisuc
+## Crash sisu
 
 Oracle, for every input:
 
-- `sisuc --check p.sisu` exits 0 or 1. Exit 1 prints at least one `error:`; any other exit, or `panicked at` on stderr, is `crash`.
-- When `--check` exits 0, each of `sisuc p.sisu p`, `sisuc -O2 p.sisu p2`, `sisuc --rc-checks p.sisu prc` and `sisuc --emit ir-raw p.sisu` exits 0. Any other exit is `crash`.
+- `sisu check p.sisu` exits 0 or 1. Exit 1 prints at least one `error:`; any other exit, or `panicked at` on stderr, is `crash`.
+- When `sisu check` exits 0, each of `sisu build p.sisu`, `sisu build -O2 p.sisu -o p2`, `sisu build --rc-checks p.sisu -o prc` and `sisu build --emit ir-raw p.sisu` exits 0. Any other exit is `crash`.
 
 Mutate real programs and feed each mutant through that oracle. Seeds:
 every `.sisu` under `crates/sisuc/tests`. Mutations, each applied at many

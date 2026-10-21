@@ -6,5 +6,5 @@ error[E0056]: missing field `y`
   |
   = help: name the fields in declaration order: `x`, `y`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0056
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0056

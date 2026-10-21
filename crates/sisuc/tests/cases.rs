@@ -2,13 +2,13 @@
 //! counterparts under `site/programs/`, which hold every program the site shows. A `run` case exits
 //! 0 and prints its `.out`, and its `.err` on stderr when it has one, else nothing there; a
 //! `run_fail` case panics with its `.out` on stdout and its `.err` on stderr. Both read their
-//! `.in`, when they have one, on stdin. A `diagnostics` case makes `sisuc check` report its
-//! `.err` on stderr, and `sisuc check --format json` its `.json`. Every file in these
+//! `.in`, when they have one, on stdin. A `diagnostics` case makes `sisu check` report its
+//! `.err` on stderr, and `sisu check --format json` its `.json`. Every file in these
 //! directories must belong to a case, as a file its mode reads, and none may be hidden.
 //!
-//! A `site_pending` case is a program the site shows before it compiles: `sisuc check` reports
+//! A `site_pending` case is a program the site shows before it compiles: `sisu check` reports
 //! an error, until the day it compiles. An `explanation` case is the Broken program of a
-//! `docs/diagnostics` explanation, whose `sisuc` output is under `site/programs/explanations/`.
+//! `docs/diagnostics` explanation, whose `sisu` output is under `site/programs/explanations/`.
 //! An `every_program_certifies` case builds the mir of a program in `tests/run`, `tests/run-fail`,
 //! `tests/programs` or `bench`, which a debug build certifies.
 //!
@@ -182,15 +182,15 @@ fn every_program_certifies(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-/// Asserts that `sisuc build --emit mir` builds `path`, which the debug build the tests use
+/// Asserts that `sisu build --emit mir` builds `path`, which the debug build the tests use
 /// certifies function by function, and that a traversal from each function's `bb0` visits every
 /// block.
 fn certifies(path: &Path) {
-    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .args(["build", "--emit", "mir"])
         .arg(path)
         .output()
-        .expect("sisuc starts");
+        .expect("sisu starts");
     assert_eq!(
         out.status.code(),
         Some(0),

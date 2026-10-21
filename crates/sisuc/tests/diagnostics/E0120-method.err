@@ -4,5 +4,5 @@ error[E0120]: `eval` is a method; call it on a value: `e.eval()`
 11 |     print(Expr.eval(e))
    |                ^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0120
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0120

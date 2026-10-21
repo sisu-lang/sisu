@@ -5,7 +5,7 @@ which major we can use, and lists every place a bump touches.
 
 ## The chain
 
-`sisuc` reaches LLVM through two crates, and each LLVM major needs a new
+`sisu` reaches LLVM through two crates, and each LLVM major needs a new
 release of both:
 
 1. **LLVM** releases a new major about every six months, around March and
@@ -32,7 +32,7 @@ pinned to a commit only when a newer LLVM gives us something we need, and go
 back to crates.io when inkwell releases.
 
 LLVM 23 is such a case. The pinned Rust toolchain's `rustc` is on LLVM 23.1,
-so with LLVM 23 `sisuc` can read the bitcode that toolchain writes, which
+so with LLVM 23 `sisu` can read the bitcode that toolchain writes, which
 linking the runtime as bitcode needs (Link-time optimization with the runtime
 in [Later and stretch goals](roadmap.md#later-and-stretch-goals)). inkwell's
 `master` has `llvm23-1`, so `crates/sisuc/Cargo.toml` pins a commit of it, and

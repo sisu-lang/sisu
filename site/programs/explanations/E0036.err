@@ -4,5 +4,5 @@ error[E0036]: `return` needs a value of type `i64`
 2 |     return
   |     ^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0036
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0036

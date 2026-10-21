@@ -4,5 +4,5 @@ error[E0011]: expected a function name, found end of file
 5 | fn
   |   ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0011
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

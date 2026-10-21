@@ -110,7 +110,7 @@ fn main() {
 ```
 
 ```console
-$ sisuc overflow.sisu overflow && ./overflow
+$ sisu build overflow.sisu && ./overflow
 1
 sisu: panic at overflow.sisu:4:11: integer overflow
 ```
@@ -135,7 +135,7 @@ fn main() {
 ```
 
 ```console
-$ sisuc --check counter.sisu
+$ sisu check counter.sisu
 error[E0001]: cannot assign to `total`
  --> counter.sisu:7:5
   |
@@ -161,12 +161,12 @@ help: a class with a similar name exists: `Counter`
 8 +     let c = Counter(count: total)
   |
 
-sisuc: 2 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0001, E0052
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0052
 ```
 
-`sisuc --explain E0001` prints why the rule exists, with a broken and a fixed
-program. `sisuc --format json` writes the same diagnostics as JSON Lines for
+`sisu explain E0001` prints why the rule exists, with a broken and a fixed
+program. `sisu check --format json` writes the same diagnostics as JSON Lines for
 editors and agents, and marks each fix as safe or unsafe.
 [Diagnostic codes](docs/diagnostics/README.md) lists every code.
 
@@ -184,7 +184,7 @@ on purpose. The
 [roadmap](docs/roadmap.md) proposes generics, closures,
 records, modules with a standard library, and `Result` with `?`.
 
-The compiler, `sisuc`, is written in Rust and uses LLVM for code generation.
+The compiler, `sisu`, is written in Rust and uses LLVM for code generation.
 
 ## Start here
 

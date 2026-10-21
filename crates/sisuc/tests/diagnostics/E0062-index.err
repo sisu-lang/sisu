@@ -6,5 +6,5 @@ error[E0062]: `xs` may be `None`
   |
   = help: unwrap it with `if let`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0062
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

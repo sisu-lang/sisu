@@ -9,5 +9,5 @@ help: move `{` to the end of the line above
 8 |     match e {
   |            +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0004
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0004

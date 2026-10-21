@@ -18,5 +18,5 @@ error[E0032]: expected `string`, found `[i64]`
 4 |     print([1] + s)
   |           ^^^   - `+` joins this `string`
 
-sisuc: 3 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

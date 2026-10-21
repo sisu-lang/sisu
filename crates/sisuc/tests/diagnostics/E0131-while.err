@@ -4,5 +4,5 @@ error[E0131]: `while let` always matches here, so the pattern never ends the loo
 7 |     while let P(a, b) = p {
   |               ^^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0131
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0131

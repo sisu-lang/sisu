@@ -1,4 +1,4 @@
-//! Sets `SISU_COMMIT`, the short hash of the commit being built, for `sisuc --version --verbose`.
+//! Sets `SISU_COMMIT`, the short hash of the commit being built, for `sisu --version --verbose`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

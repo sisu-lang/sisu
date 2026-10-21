@@ -4,5 +4,5 @@ error[E0052]: cannot find function `sum`
 6 |     print(sum(1, 2))
   |           ^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0052
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0052

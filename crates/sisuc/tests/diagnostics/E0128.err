@@ -4,5 +4,5 @@ error[E0128]: `Add` has 2 fields, the pattern has 1
 9 |         Add(x) => print(1)
   |         ^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0128
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0128

@@ -22,5 +22,5 @@ help: remove the `;`
 2 +     let x = 1;
   |
 
-sisuc: 2 warnings
-sisuc: for more on a code, run `sisuc --explain <code>`: W0007
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0007

@@ -6,5 +6,5 @@ error[E0019]: a parameter cannot be `mut`
   |
   = help: copy it into a variable: `let mut n = n`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0019
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0019

@@ -8,5 +8,5 @@ error[E0129]: `x` is bound twice in this pattern
   |
   = help: use a guard: `Add(x, y) if x == y`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0129
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0129

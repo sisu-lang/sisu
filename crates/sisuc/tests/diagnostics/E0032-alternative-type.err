@@ -22,5 +22,5 @@ error[E0032]: expected `i64`, found `string`
    |           |
    |           `x` is `i64` here
 
-sisuc: 3 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -6,5 +6,5 @@ error[E0039]: `a` is already declared in this scope
   |        |
   |        first declared here
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0039
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0039

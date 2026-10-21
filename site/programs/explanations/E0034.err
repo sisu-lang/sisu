@@ -7,5 +7,5 @@ error[E0034]: function `double` is defined twice
 5 | fn double(n: i64) -> i64 {
   |    ^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0034
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

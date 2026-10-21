@@ -1,9 +1,9 @@
-//! Scratch directories for the test binaries that run `sisuc` with a custom `PATH`.
+//! Scratch directories for the test binaries that run `sisu` with a custom `PATH`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// An empty directory under the target tmp dir, for `sisuc` to use as `TMPDIR`.
+/// An empty directory under the target tmp dir, for `sisu` to use as `TMPDIR`.
 pub(crate) fn empty_dir(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     // It is absent on the first run, so a failure here is expected and harmless.

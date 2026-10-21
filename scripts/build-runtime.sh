@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds sisu-runtime for the end-to-end tests: the nextest setup script.
 # Under scripts/coverage.sh it builds the runtime without instrumentation, in
-# its own target directory, and copies it next to the instrumented sisuc. The
-# test build shares sisuc's target directory and has already put an
+# its own target directory, and copies it next to the instrumented sisu. The
+# test build shares sisu's target directory and has already put an
 # instrumented runtime there, which cargo would consider fresh.
 #   scripts/build-runtime.sh
 set -euo pipefail

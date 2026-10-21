@@ -11,5 +11,5 @@ help: replace the `,` with `;`
 2 +     x: i64; y: i64
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0015
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0015

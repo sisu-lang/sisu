@@ -6,5 +6,5 @@ error[E0071]: nesting is too deep
   |
   = help: the limit is 256 levels
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0071
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0071

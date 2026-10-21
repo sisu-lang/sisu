@@ -21,8 +21,8 @@ help: if the types are right, convert it with `f64(...)`
 4 |     print(f64(n) * x)
   |           ++++ +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032
 """
 
 # The mockup's spans for those lines, each with its newline moved inside, before `</span>`.
@@ -42,7 +42,7 @@ COLOURED = [
     # Line 7 of crates/sisuc/tests/diagnostics/W0004-branch.err.
     ('  = help: use it, or write `let _ =` to drop it on purpose\n',
      '<span class="ln">  <span class="g">=</span> <span class="h">help</span>: use it, or write `let _ =` to drop it on purpose\n</span>'),
-    # From `sisuc --check` on a program whose `let n` follows two wide characters: the `+` markers
+    # From `sisu check` on a program whose `let n` follows two wide characters: the `+` markers
     # count display columns, where 界 takes two.
     ('2 |     if "界" == "界" { let mut n = 1\n  |                           +++\n',
      '<span class="ln"><span class="g">2 |</span>     if "界" == "界" { let <span class="add">mut</span> n = 1\n</span>'),
@@ -168,7 +168,7 @@ class Build(unittest.TestCase):
         path = temp_file(self, 'a < b && c > d')
         self.assertEqual(build.expand(f'{{{{text {path}}}}}', {}), 'a &lt; b &amp;&amp; c &gt; d')
         shown = build.diag_html((build.SITE / 'programs/diagnostics/rounds.err').read_text(encoding='utf-8'))
-        self.assertIn('--explain &lt;code&gt;', shown)
+        self.assertIn('sisu explain &lt;code&gt;', shown)
         self.assertNotIn('<code>', shown)
 
     def test_diag_html_matches_the_mockup_colouring(self):
@@ -463,7 +463,7 @@ class Build(unittest.TestCase):
                     self.assertIn(url, found[0])
 
     def test_explanation_html_is_text(self):
-        # `sisuc --explain` prints the Markdown as it is, so a `<` outside code shows, and markup cannot slip past the checks.
+        # `sisu explain` prints the Markdown as it is, so a `<` outside code shows, and markup cannot slip past the checks.
         text = '# X0001: t\n\nA value of type Option<T> is <iframe src="https://evil.example/x"></iframe> here.\n\n    indented milestone 9\n\n## Fixed\n'
         shown = build.explanation_html('X0001', text, '')
         self.assertIn('<p>A value of type Option&lt;T&gt; is &lt;iframe src=&quot;https://evil.example/x&quot;&gt;&lt;/iframe&gt; here.</p>', shown)
@@ -637,7 +637,7 @@ class Pages(unittest.TestCase):
     def test_explanation_order(self):
         page = self.page('diagnostics/E0032.html')
         parts = ['A value must have the type its position expects', '<h2>Why</h2>', '<h2>Broken</h2>',
-                 '<h2>What sisuc says</h2>', 'error[E0032]', '<h2>Fixed</h2>']
+                 '<h2>What sisu says</h2>', 'error[E0032]', '<h2>Fixed</h2>']
         places = [page.find(part) for part in parts]
         self.assertNotIn(-1, places, parts)
         self.assertEqual(places, sorted(places))

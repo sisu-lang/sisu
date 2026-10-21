@@ -16,4 +16,4 @@ parser and checker.
 - Wording: a message that uses compiler terms (`tir`, poison, internal type names), suggests a fix that would not compile, or names the wrong type.
 
 Severity is `gap`, unless a forbidden program gets no diagnostic at all
-(then `wrong`) or `sisuc` fails (then `crash`).
+(then `wrong`) or `sisu` fails (then `crash`).

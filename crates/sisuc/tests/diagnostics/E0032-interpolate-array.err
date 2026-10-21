@@ -4,5 +4,5 @@ error[E0032]: expected `string`, found `[i64]`
 3 |     print(xs + " items")
   |           ^^   -------- `+` joins this `string`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

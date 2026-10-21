@@ -4,5 +4,5 @@ error[E0042]: `u8` cannot be negative
 3 |     print(-1 == b)
   |           ^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0042
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0042

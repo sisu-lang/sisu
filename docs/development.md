@@ -1,6 +1,6 @@
 # Developing Sisu
 
-This guide covers building `sisuc`, compiling a Sisu program with it, and
+This guide covers building `sisu`, compiling a Sisu program with it, and
 running the same checks as CI. Sisu builds and runs on x86-64 Linux.
 
 ## Prerequisites
@@ -8,7 +8,7 @@ running the same checks as CI. Sisu builds and runs on x86-64 Linux.
 - The Rust toolchain pinned in `rust-toolchain.toml`. rustup installs it on
   first use.
 - GNU Make, which runs the commands below.
-- A C compiler on `PATH` as `cc`. `sisuc` uses it to link programs.
+- A C compiler on `PATH` as `cc`. `sisu` uses it to link programs.
 - On Ubuntu: `libzstd-dev`, `libxml2-dev` and `zlib1g-dev`, which LLVM links
   against.
 - [prek](https://prek.j178.dev) for the Git hooks, with
@@ -46,7 +46,7 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-mutants, carg
 
 ```console
 $ make help    # every target
-$ make build   # sisuc and the runtime library
+$ make build   # sisu and the runtime library
 $ make test    # unit tests and end-to-end cases
 $ make lint    # fmt, clippy, expect messages, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
@@ -73,7 +73,7 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 | --- | --- | --- |
 | `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind, and in a `--rc-checks` build | `<name>.out`: stdout; optional `<name>.err`: stderr |
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
-| `diagnostics/` | report diagnostics under `sisuc --check`, exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
+| `diagnostics/` | report diagnostics under `sisu check`, exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
 To add a case, write the `.sisu` file and an empty expected file beside it,
 then fill the expected file with `make bless`. Read what it wrote before
@@ -125,10 +125,10 @@ checks that the `-O2` IR of `<caller>` holds exactly `<count>` calls to
 `<callee>`, because the inliner can fold a call away and keep the output
 the same. A count of 0 is rejected: it holds when every call is gone. Every function except the C `main` is internal, so `-O2` would
 inline a caller with one call site and the caller would vanish from the IR.
-The check therefore runs `sisuc -O2 --emit ir` once for each distinct
+The check therefore runs `sisu build -O2 --emit ir` once for each distinct
 `<caller>`, with the environment variable `SISU_KEEP_FUNCTIONS` set to that
 caller alone. That marks it `noinline` in the module and changes nothing
-else; `sisuc` reads it only for `--emit ir`, and the usage text does not
+else; `sisu` reads it only for `--emit ir`, and the usage text does not
 mention it. One caller per build, so that keeping one caller does not also
 keep a callee that another marker names as its caller. The check counts the
 calls to `<callee>` in the body of `<caller>` after `-O2`. It fails with "no
@@ -181,7 +181,7 @@ rather than cover still fails it, so read the reasons, not only the word. A
 diff that changes no `.rs` file passes at once, with nothing run.
 
 Programs that the tests compile link an uninstrumented runtime, built in
-`target/llvm-cov-runtime` and copied next to the instrumented `sisuc`. Runtime
+`target/llvm-cov-runtime` and copied next to the instrumented `sisu`. Runtime
 coverage therefore comes from the runtime's own unit tests. One of them,
 `print_panics_when_standard_output_cannot_be_duplicated`, is excluded under
 coverage: it exhausts file descriptors, and the profiler's error breaks its
@@ -197,7 +197,7 @@ in `codspeed.yml`: the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`,
 `mandelbrot` and `fannkuch_redux` programs at reduced inputs, the `strings`,
 `enum_match`, `shared_arrays` and `compare` programs from `bench/features/`,
 and the compiler on `bench/hello` (an `-O2` build), on `bench/binary_trees`
-(`--check` and an `-O2` build) and on a generated 200-section input that
+(`check` and an `-O2` build) and on a generated 200-section input that
 uses most of the language. The `-O2` build of that input comes in two sizes:
 20 sections on every run (`build_large_20`) and 200 sections on pushes to
 `main` only (`build_large`, in `codspeed-main.yml`). Pull request reports show
@@ -212,7 +212,7 @@ unnoticed. The bench step's time is its duration in the GitHub Actions run of
 the `CodSpeed` workflow, or in its job log. Agents read results through the
 CodSpeed MCP tools and do not run CodSpeed locally. To compare a change before
 pushing, count the instructions of
-`target/release/sisuc --check target/codspeed/large/main.sisu` under callgrind,
+`target/release/sisu check target/codspeed/large/main.sisu` under callgrind,
 as `make callgrind` does.
 
 Set these once in the CodSpeed UI: "Informational Status Checks on Failure"
@@ -227,7 +227,7 @@ threshold. Any regression that is kept is explained in the description.
 ## Fuzz the front end
 
 The fuzz target, `fuzz/fuzz_targets/front_end.rs`, feeds arbitrary bytes to
-`sisuc --check`. It renders the report as text and as JSON, and asserts that
+`sisu check`. It renders the report as text and as JSON, and asserts that
 every span and every fix edit is well formed, and that no fix shown leaves the
 source lexing or parsing worse. It also applies each safe fix
 alone and checks the result: the fix deletes no comment, removes its
@@ -330,20 +330,21 @@ Then:
 
 ## Compile and run a program
 
-`sisuc` takes a source file and the name of the executable to write:
+`sisu build` takes a source file and writes the executable, named after the file
+without its extension, in the current directory; `-o` names it:
 
 ```console
 $ cargo build --workspace
-$ target/debug/sisuc crates/sisuc/tests/run/fib.sisu fib
+$ target/debug/sisu build crates/sisuc/tests/run/fib.sisu
 $ ./fib
 832040
 ```
 
-`sisuc` links every program with `libsisu_runtime.a`, which it looks for
+`sisu` links every program with `libsisu_runtime.a`, which it looks for
 next to its own executable. `cargo build --workspace` puts both files there;
 `cargo build -p sisuc` does not build the runtime.
 
-When a program breaks a rule, `sisuc` prints a diagnostic to stderr and exits
+When a program breaks a rule, `sisu` prints a diagnostic to stderr and exits
 with code 1. Take this `bad.sisu`:
 
 ```
@@ -353,22 +354,22 @@ fn main() {
 ```
 
 ```console
-$ target/debug/sisuc bad.sisu bad
+$ target/debug/sisu build bad.sisu
 error[E0032]: expected `bool`, found `i64`
  --> bad.sisu:2:19
   |
 2 |     let x: bool = 1
   |                   ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0032
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032
 ```
 
 When a compiled program fails at runtime, for example by dividing by zero,
 it prints a panic to stderr and exits with code 101:
 
 ```console
-$ target/debug/sisuc crates/sisuc/tests/run-fail/div_zero.sisu div_zero
+$ target/debug/sisu build crates/sisuc/tests/run-fail/div_zero.sisu
 $ ./div_zero
 sisu: panic at crates/sisuc/tests/run-fail/div_zero.sisu:2:5: division by zero
 ```
@@ -411,43 +412,42 @@ These flags run the pipeline up to one stage and stop there.
 
 | Command | Prints |
 | --- | --- |
-| `sisuc --emit tokens file.sisu` | The lexer's tokens |
-| `sisuc --emit ast file.sisu` | The parser's syntax tree |
-| `sisuc --emit tir file.sisu` | The checker's typed tree, `tir` |
-| `sisuc --emit mir file.sisu` | The mid-level IR, `mir`, after parameter inference, the ownership pass, the hoist, elaboration and pair removal: every copy, move and release is a statement, and a borrowed parameter is marked `borrow` |
-| `sisuc --emit ir file.sisu` | The LLVM IR, before and after `mem2reg` |
-| `sisuc -O2 --emit ir file.sisu` | The LLVM IR, before and after LLVM's `default<O2>` pipeline |
-| `sisuc -O3 --emit ir file.sisu` | The same, with the `default<O3>` pipeline |
-| `sisuc --emit ir-raw file.sisu` | The LLVM IR before any pass, as one module that LLVM's `opt` reads |
-| `sisuc --rc-checks --emit ir-raw file.sisu` | The same, with the count checks of `--rc-checks` built in |
-| `sisuc --check file.sisu` | Only diagnostics; exits with code 1 if any is an error |
-| `sisuc --explain E0001` | The explanation of a diagnostic code, in any case; unknown codes exit with code 1 |
+| `sisu build --emit tokens file.sisu` | The lexer's tokens |
+| `sisu build --emit ast file.sisu` | The parser's syntax tree |
+| `sisu build --emit tir file.sisu` | The checker's typed tree, `tir` |
+| `sisu build --emit mir file.sisu` | The mid-level IR, `mir`, after parameter inference, the ownership pass, the hoist, elaboration and pair removal: every copy, move and release is a statement, and a borrowed parameter is marked `borrow` |
+| `sisu build --emit ir file.sisu` | The LLVM IR, before and after `mem2reg` |
+| `sisu build -O2 --emit ir file.sisu` | The LLVM IR, before and after LLVM's `default<O2>` pipeline |
+| `sisu build -O3 --emit ir file.sisu` | The same, with the `default<O3>` pipeline |
+| `sisu build --emit ir-raw file.sisu` | The LLVM IR before any pass, as one module that LLVM's `opt` reads |
+| `sisu build --rc-checks --emit ir-raw file.sisu` | The same, with the count checks of `--rc-checks` built in |
+| `sisu check file.sisu` | Only diagnostics; exits with code 1 if any is an error |
+| `sisu explain E0001` | The explanation of a diagnostic code, in any case; unknown codes exit with code 1 |
 
 `--format json` writes diagnostics, tool errors and a closing summary to
-stderr as JSON Lines. It must be the first argument, and `--explain` does not
-take it. [Diagnostic codes](diagnostics/README.md#json-output) describes the
-objects.
+stderr as JSON Lines. `build`, `run` and `check` take it; `explain` does not.
+[Diagnostic codes](diagnostics/README.md#json-output) describes the objects.
 
-`-O2` or `-O3` must come first, or right after `--format`. It also works when
-building an executable: `sisuc -O2 file.sisu out`.
+`-O2` or `-O3` works with `--emit ir` and when building an executable:
+`sisu build -O2 file.sisu`.
 
-`sisuc --linker lld file.sisu out` links with `ld.lld` instead of `cc`'s
-default linker; `bfd`, `gold` and `mold` work the same way. `sisuc` passes the
+`sisu build --linker lld file.sisu` links with `ld.lld` instead of `cc`'s
+default linker; `bfd`, `gold` and `mold` work the same way. `sisu` passes the
 name to `cc -fuse-ld=`. When the link fails and `ld.<name>` is not on `PATH`,
-the error names `ld.<name>`, where gcc names only `ld`. `--linker` comes after
-`-O2`, `-O3` and `--rc-checks`, and works only when building an executable.
+the error names `ld.<name>`, where gcc names only `ld`. `--linker` works only
+when building an executable.
 `scripts/install-llvm.sh` puts `ld.lld` in `.llvm/23/bin`; the tests put that
 directory on `PATH`, or in gcc's `COMPILER_PATH`, for the `--linker lld` tests.
 
-`sisuc --rc-checks file.sisu out` builds an executable that checks its
+`sisu build --rc-checks file.sisu` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is
 at least 1. Before each read of a string, class or array local, it checks that
 the local still holds a reference, which a compiler bug could have moved out.
 At a normal exit, it checks that no object is still allocated.
 A failed check prints a line that starts with `sisu: rc check:` and exits
-with code 102. `--rc-checks` comes after `-O2` or `-O3`, if given, and works
-only when building an executable or with `--emit ir` and `--emit ir-raw`,
-which then print the module with the checks built in. A use after free often goes unseen: the
+with code 102. `--rc-checks` works only when building an executable or with
+`--emit ir` and `--emit ir-raw`, which then print the module with the checks
+built in. A use after free often goes unseen: the
 freed memory may still hold a count of 1 or more. Valgrind finds those.
 
 ## Add a diagnostic code
@@ -496,6 +496,6 @@ must accept any syntax those programs use.
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The front-end fuzz target, its own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, `diag_diff.py`, which compares the diagnostics of two `sisuc` builds for a review, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |

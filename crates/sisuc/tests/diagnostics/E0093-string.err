@@ -6,5 +6,5 @@ error[E0093]: string literal is not closed
   |
   = help: write `\n` for a line break
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0093
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0093

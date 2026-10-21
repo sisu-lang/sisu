@@ -11,10 +11,10 @@ Ranked from worst; the report orders findings this way.
 | Severity | Means |
 | --- | --- |
 | `wrong` | A program the checker accepts prints the wrong thing or exits with the wrong code; `-O0` and `-O2` disagree; the checker accepts a program the implemented language forbids or rejects one it allows; memory is corrupted (use after free, double free, out-of-bounds access, a free with the wrong layout); a size overflows into a short allocation |
-| `crash` | `sisuc` panics, dies by a signal, hangs, or fails (exit 1 with `sisuc: ...`) on a program `--check` accepts; a compiled program dies by a signal, except the cases below |
+| `crash` | `sisu` panics, dies by a signal, hangs, or fails (exit 1 with `sisu: ...`) on a program `check` accepts; a compiled program dies by a signal, except the cases below |
 | `leak` | An object outlives its last reference in a program with no reference cycle, at exit or while the program runs |
 | `unsound` | IR the verifier rejects, or undefined behavior on a path a Sisu program can reach, that has not yet misbehaved |
-| `slow` | Sound code with avoidable, measured cost: a redundant retain and release pair, a check `-O2` cannot remove, a missed attribute, dead code emitted; or `sisuc` doing avoidable work that instruction counts show, such as a step it repeats or an allocation per token |
+| `slow` | Sound code with avoidable, measured cost: a redundant retain and release pair, a check `-O2` cannot remove, a missed attribute, dead code emitted; or `sisu` doing avoidable work that instruction counts show, such as a step it repeats or an allocation per token |
 | `gap` | A confusing or misplaced diagnostic, a low but clean limit, or behavior no test would notice breaking |
 
 Signals that are not `crash`:
@@ -36,7 +36,7 @@ Severity: <severity>
 Repro:
 
 ```console
-$ S=<repo>/target/debug/sisuc L=<repo>/.llvm/23/bin D=<a fresh directory>; mkdir -p $D
+$ S=<repo>/target/debug/sisu L=<repo>/.llvm/23/bin D=<a fresh directory>; mkdir -p $D
 $ cat > $D/p.sisu <<'EOF'
 <the shrunk program>
 EOF

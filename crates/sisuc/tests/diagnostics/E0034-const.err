@@ -6,5 +6,5 @@ error[E0034]: constant `LIMIT` is defined twice
 2 | const LIMIT = 200
   |       ^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0034
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

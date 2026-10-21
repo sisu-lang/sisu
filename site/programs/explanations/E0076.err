@@ -4,5 +4,5 @@ error[E0076]: `0x` needs at least one digit
 2 |     let n = 0x
   |             ^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0076
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0076

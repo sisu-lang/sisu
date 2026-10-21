@@ -58,7 +58,7 @@ Sisu is a small, statically typed language that compiles to native x86-64 code t
   </div></section>
 
   <section class="s" aria-labelledby="h-how"><div class="w">
-    <div class="s-h"><h2 id="h-how">How a program becomes native code</h2><p><code>sisuc</code> turns one source file into one executable. Each stage hands the next a simpler form of the program.</p></div>
+    <div class="s-h"><h2 id="h-how">How a program becomes native code</h2><p><code>sisu</code> turns one source file into one executable. Each stage hands the next a simpler form of the program.</p></div>
     <ol class="flow">
       <li><b>Lexer</b><span class="io">text <em>→</em> tokens</span><span class="what">Splits the UTF-8 source into names, numbers and symbols.</span></li>
       <li><b>Parser</b><span class="io">tokens <em>→</em> AST</span><span class="what">Builds the syntax tree: the program as you wrote it.</span></li>
@@ -86,7 +86,7 @@ $ git clone https://github.com/sisu-lang/sisu
 $ cd sisu
 $ make setup     # once per clone: LLVM 23 into .llvm/23
 $ make build
-$ target/debug/sisuc crates/sisuc/tests/run/fib.sisu fib
+$ target/debug/sisu build crates/sisuc/tests/run/fib.sisu
 $ ./fib
 {{text ../crates/sisuc/tests/run/fib.out}}</pre></figure>
   </div></section>

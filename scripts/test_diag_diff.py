@@ -13,8 +13,8 @@ W0001 = ('{"kind":"diagnostic","code":"W0001","severity":"warning",'
          '"primary":{"line":1,"column":1},"secondary":[]}')
 
 
-def fake_sisuc(tmp, name, outputs):
-    """A sisuc stand-in that prints the JSON lines `outputs` gives a file's stem, or crashes."""
+def fake_sisu(tmp, name, outputs):
+    """A sisu stand-in that prints the JSON lines `outputs` gives a file's stem, or crashes."""
     path = os.path.join(tmp, name)
     cases = ''.join(f"  {stem}) printf '%s\\n' '{out}' >&2;;\n" for stem, out in outputs.items())
     with open(path, 'w', encoding='utf-8') as f:
@@ -29,9 +29,9 @@ class DiagDiff(unittest.TestCase):
             for stem in ['same', 'accepted', 'rejected', 'moved', 'crash']:
                 open(os.path.join(tmp, f'{stem}.sisu'), 'w').close()
             moved = E0032.replace('"column":9', '"column":10')
-            base = fake_sisuc(tmp, 'base', {'same': E0032, 'accepted': E0032, 'rejected': W0001,
+            base = fake_sisu(tmp, 'base', {'same': E0032, 'accepted': E0032, 'rejected': W0001,
                                             'moved': E0032, 'crash': E0032})
-            head = fake_sisuc(tmp, 'head', {'same': E0032, 'accepted': W0001, 'rejected': E0032,
+            head = fake_sisu(tmp, 'head', {'same': E0032, 'accepted': W0001, 'rejected': E0032,
                                             'moved': moved})
             out = io.StringIO()
             with contextlib.redirect_stdout(out):

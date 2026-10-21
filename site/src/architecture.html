@@ -14,7 +14,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
-    <p class="lede"><code>sisuc</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
+    <p class="lede"><code>sisu</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
     <p class="meta">From docs/architecture.md and the ADRs at commit 317f0d9 · x86-64 Linux only</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 Linux only) -->
@@ -40,7 +40,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
           <tr><td><code style="white-space:nowrap">sisu-runtime</code></td><td>In <code>crates/runtime</code>. A static library with a C ABI, linked into every compiled program.</td></tr>
         </tbody>
       </table></div>
-      <p>The driver, <code>crates/sisuc/src/lib.rs</code>, reads the command line, runs the stages in order and prints diagnostics. The <code>sisuc</code> binary, <code>main.rs</code>, runs the driver on a thread with a 64 MiB stack. The compiler reads at most 1 GiB of source, so every position in the file fits in 32 bits.</p>
+      <p>The driver, <code>crates/sisuc/src/lib.rs</code>, reads the command line, runs the stages in order and prints diagnostics. The <code>sisu</code> binary, <code>main.rs</code>, runs the driver on a thread with a 64 MiB stack. The compiler reads at most 1 GiB of source, so every position in the file fits in 32 bits.</p>
       <!-- source: AGENTS.md (crates), docs/architecture.md (Driver, Runtime), crates/sisuc/src/main.rs -->
 
       <h2 id="pipeline">The pipeline</h2>
@@ -54,7 +54,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
         <li><b>LLVM</b><span class="io">LLVM IR <em>→</em> object</span><span class="what">Optimizes and writes x86-64 machine code.</span></li>
         <li><b>Link</b><span class="io">object <em>→</em> executable</span><span class="what">The system C compiler, <code>cc</code>, links it with the Sisu runtime.</span></li>
       </ol>
-      <p>The first three stages are the front end. <code>front_end.rs</code> runs them in order and returns the program with every diagnostic, sorted by position. <code>--check</code> stops there. <code>--emit</code> stops later and prints what a stage produced: tokens, the AST, TIR, MIR or LLVM IR.</p>
+      <p>The first three stages are the front end. <code>front_end.rs</code> runs them in order and returns the program with every diagnostic, sorted by position. <code>sisu check</code> stops there. <code>sisu build --emit</code> stops later and prints what a stage produced: tokens, the AST, TIR, MIR or LLVM IR.</p>
 
       <h3>Lexer</h3>
       <p class="files"><code>crates/sisuc/src/lexer/</code>, <code>symbol.rs</code></p>
@@ -88,12 +88,12 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
       <h3>LLVM</h3>
       <p class="files">LLVM 23, linked as a library</p>
-      <p>A plain build runs only the <code>mem2reg</code> pass, which turns stack slots into registers. With <code>-O2</code> or <code>-O3</code> it runs LLVM's <code>default&lt;O2&gt;</code> or <code>default&lt;O3&gt;</code> pipeline. Then LLVM writes x86-64 object code for the machine <code>sisuc</code> runs on.</p>
+      <p>A plain build runs only the <code>mem2reg</code> pass, which turns stack slots into registers. With <code>-O2</code> or <code>-O3</code> it runs LLVM's <code>default&lt;O2&gt;</code> or <code>default&lt;O3&gt;</code> pipeline. Then LLVM writes x86-64 object code for the machine <code>sisu</code> runs on.</p>
 
       <h3>Link</h3>
       <p class="files"><code>crates/sisuc/src/link.rs</code></p>
       <p>Before it compiles, the driver checks that <code>libsisu_runtime.a</code> and the output's directory exist, so a missing one fails at once. The link step then writes the object code to a fresh temporary file and runs <code>cc</code> on it with <code>libsisu_runtime.a</code>. <code>cc</code> adds the C startup code and libc and writes the executable, through its default linker or the one <code>--linker</code> names. The temporary file is removed whether or not the link succeeds.</p>
-      <!-- source: docs/architecture.md (The stages), docs/roadmap.md (mid-level IR, mir), src/index.html (flow), docs/development.md (Look inside the compiler), sisuc --help -->
+      <!-- source: docs/architecture.md (The stages), docs/roadmap.md (mid-level IR, mir), src/index.html (flow), docs/development.md (Look inside the compiler), sisu --help -->
 
       <h2 id="memory">Memory</h2>
       <p>Sisu manages memory by reference counting. Every heap object carries a count of the references to it. Generated code adds 1 when a reference is copied and subtracts 1 when one is dropped, and the object is freed when its count reaches 0. Swift works the same way.</p>
@@ -121,16 +121,16 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text ../crates/sisuc/tests/run-fail/div_zero.out}}{{text ../crates/sisuc/tests/run-fail/div_zero.err}}</pre></figure>
       <p>The runtime also counts the blocks that are allocated and not yet freed. A program built with <code>--rc-checks</code> checks each count before it changes, and fails at exit, with code 102, if any block is still allocated.</p>
-      <!-- source: docs/adr/0009-runtime-owns-io.md, docs/architecture.md (Runtime), GLOSSARY.md (Panic, RC check), crates/sisuc/tests/run-fail/div_zero.sisu; output from target/release/sisuc, exit code 101 observed -->
+      <!-- source: docs/adr/0009-runtime-owns-io.md, docs/architecture.md (Runtime), GLOSSARY.md (Panic, RC check), crates/sisuc/tests/run-fail/div_zero.sisu; output from target/release/sisu, exit code 101 observed -->
 
       <h2 id="diagnostics">Diagnostics</h2>
       <p>The lexer, parser and checker report problems as diagnostics. Every diagnostic has a stable code: <code>E0001</code> and up for errors, <code>W0001</code> and up for warnings. A code is never reused or renumbered.</p>
       <ul>
         <li><strong>One registry.</strong> <code>diagnostic/registry.rs</code> holds every message, label, help and fix. A stage names what happened and where, and writes no text, so the same code always has the same wording.</li>
-        <li><strong>An explanation per code.</strong> <code>sisuc --explain E0001</code> prints what the code means, an example that triggers it, and the fix. The explanations live in <code>docs/diagnostics/</code>.</li>
+        <li><strong>An explanation per code.</strong> <code>sisu explain E0001</code> prints what the code means, an example that triggers it, and the fix. The explanations live in <code>docs/diagnostics/</code>.</li>
         <li><strong>No cascades.</strong> A broken item is reported once. Nothing that depends on it adds a second report.</li>
         <li><strong>Fixes marked safe or unsafe.</strong> A safe fix always removes its diagnostic and leaves source that still lexes and parses, so a tool may apply it without asking. An unsafe fix is applied only when you pick it. Before it reports a fix for a lexer or parser diagnostic, the compiler applies it and drops it if the result lexes or parses worse; past the first 100 such fixes it drops the rest, since each check parses the source again. The fuzz target checks that no fix shown makes the syntax worse.</li>
-        <li><strong>JSON output.</strong> <code>sisuc --format json</code> writes each diagnostic as one JSON object per line, with the code, severity, spans and fixes, for editors, scripts and agents.</li>
+        <li><strong>JSON output.</strong> <code>sisu check --format json</code> writes each diagnostic as one JSON object per line, with the code, severity, spans and fixes, for editors, scripts and agents.</li>
       </ul>
       <p>The <a href="diagnostics.html">diagnostics page</a> shows them in use.</p>
       <!-- source: docs/adr/0013-diagnostics-have-stable-codes.md, docs/diagnostics/README.md (JSON output), docs/architecture.md (Diagnostics) -->
@@ -138,7 +138,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <h2 id="testing">How it is tested</h2>
       <p><code>make test</code> runs the unit tests and the end-to-end cases with cargo-nextest. CI runs them on every pull request and every push to <code>main</code>.</p>
       <ul>
-        <li><strong>Test programs.</strong> Each end-to-end case is a <code>.sisu</code> file with its expected output beside it, under <code>crates/sisuc/tests</code>. A program in <code>run/</code> must pass in a plain and an <code>-O2</code> build, both again under Valgrind, and in a <code>--rc-checks</code> build. A program in <code>run-fail/</code> must panic with exit code 101. A case in <code>diagnostics/</code> pins the text and the JSON of what <code>sisuc --check</code> reports.</li>
+        <li><strong>Test programs.</strong> Each end-to-end case is a <code>.sisu</code> file with its expected output beside it, under <code>crates/sisuc/tests</code>. A program in <code>run/</code> must pass in a plain and an <code>-O2</code> build, both again under Valgrind, and in a <code>--rc-checks</code> build. A program in <code>run-fail/</code> must panic with exit code 101. A case in <code>diagnostics/</code> pins the text and the JSON of what <code>sisu check</code> reports.</li>
         <li><strong>Explanations.</strong> A test compiles the broken and fixed example of every diagnostic code, and applies each safe fix to the broken one.</li>
         <li><strong>Fuzzing.</strong> A cargo-fuzz target feeds arbitrary bytes to the front end and checks every span and fix edit. It also applies each safe fix alone and checks the result. An input that checks clean is printed as a typed tree and compiled, without and with <code>--rc-checks</code>, and LLVM must verify both modules. It runs every night for 30 minutes.</li>
         <li><strong>Miri.</strong> The runtime's unit tests run under Miri in CI, which stops at undefined behaviour.</li>

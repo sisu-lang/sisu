@@ -15,5 +15,5 @@ error[E0068]: cannot index `i64`
   |
   = help: only arrays can be indexed
 
-sisuc: 2 errors
-sisuc: for more on a code, run `sisuc --explain <code>`: E0001, E0068
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0068

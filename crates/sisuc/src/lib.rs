@@ -392,7 +392,7 @@ fn run_check(reporter: &mut Report, input: &Source) -> ExitCode {
     }
 }
 
-/// What `sisuc check` reported for one source.
+/// What `sisu check` reported for one source.
 pub(crate) struct Checked {
     /// The text the diagnostics point into: the source, or for bytes that are not UTF-8,
     /// the replacement text `decode` returns.
@@ -551,7 +551,7 @@ fn compile(
     link_result.and(removed)
 }
 
-/// Ten names for a new file or directory in the temp dir: `sisuc-<pid>-<nanoseconds><suffix>`.
+/// Ten names for a new file or directory in the temp dir: `sisu-<pid>-<nanoseconds><suffix>`.
 /// The nanoseconds pick a fresh name when one is taken.
 fn fresh_names(suffix: &'static str) -> impl Iterator<Item = String> {
     let pid = std::process::id();
@@ -559,7 +559,7 @@ fn fresh_names(suffix: &'static str) -> impl Iterator<Item = String> {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos());
-        format!("sisuc-{pid}-{nanos}{suffix}")
+        format!("sisu-{pid}-{nanos}{suffix}")
     })
 }
 
@@ -635,12 +635,12 @@ mod tests {
     fn object_file_never_follows_an_existing_path() {
         use std::os::unix::fs::symlink;
 
-        let dir = std::env::temp_dir().join(format!("sisuc-create-object-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sisu-create-object-{}", std::process::id()));
         // It is absent unless an earlier run failed, so a failure here is expected and harmless.
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).expect("creates the directory");
         let target = dir.join("target");
-        fs::write(&target, "not sisuc's").expect("writes");
+        fs::write(&target, "not sisu's").expect("writes");
         symlink(&target, dir.join("taken.o")).expect("links");
         symlink(dir.join("absent"), dir.join("dangling.o")).expect("links");
 
@@ -648,11 +648,11 @@ mod tests {
         let object = create_object(&dir, b"object", names).expect("`free.o` is free");
         assert_eq!(object, dir.join("free.o"));
         assert_eq!(fs::read(&object).expect("reads"), b"object");
-        assert_eq!(fs::read_to_string(&target).expect("reads"), "not sisuc's");
+        assert_eq!(fs::read_to_string(&target).expect("reads"), "not sisu's");
         assert!(!dir.join("absent").exists());
         // With every name taken, it gives up without writing.
         assert!(create_object(&dir, b"object", ["taken.o".to_string()]).is_err());
-        assert_eq!(fs::read_to_string(&target).expect("reads"), "not sisuc's");
+        assert_eq!(fs::read_to_string(&target).expect("reads"), "not sisu's");
         fs::remove_dir_all(&dir).expect("removes the directory");
     }
 
@@ -661,7 +661,7 @@ mod tests {
     fn object_file_is_readable_only_by_its_owner() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir().join(format!("sisuc-object-mode-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sisu-object-mode-{}", std::process::id()));
         // It is absent unless an earlier run failed, so a failure here is expected and harmless.
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir(&dir).expect("creates the directory");

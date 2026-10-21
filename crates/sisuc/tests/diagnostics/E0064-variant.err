@@ -4,5 +4,5 @@ error[E0064]: too many arguments: `Shape.Rect` has 2 fields
 6 |     let _ = Shape.Rect(w: 2, h: 3, d: 4)
   |                                    ^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0064
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0064

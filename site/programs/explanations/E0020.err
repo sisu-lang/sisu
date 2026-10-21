@@ -4,5 +4,5 @@ error[E0020]: `self` is only the first parameter of a method
 4 |     fn add(by: i64, self) {
   |                     ^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0020
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0020

@@ -23,5 +23,5 @@ help: declare it with `let mut`
 3 |     let mut total = total
   |         +++
 
-sisuc: 1 error, 1 warning
-sisuc: for more on a code, run `sisuc --explain <code>`: E0001, W0002
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0001, W0002

@@ -4,5 +4,5 @@ error[E0055]: labels on arguments come in milestone 10
 6 |     print(double(n: 2))
   |                  ^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0055
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0055

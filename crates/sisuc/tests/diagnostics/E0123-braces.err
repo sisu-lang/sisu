@@ -10,5 +10,5 @@ help: write `Rect(w, h)`
 7 +         Rect(w, h) => w * h
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0123
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0123

@@ -4,5 +4,5 @@ error[E0105]: `f64` is a type, not a value
 2 |     let x = f64
   |             ^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0105
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0105

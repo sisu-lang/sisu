@@ -6,5 +6,5 @@ error[E0098]: cannot interpolate `i64?`
   |
   = help: unwrap it with `if let`, or give a default with `??`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0098
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0098

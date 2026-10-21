@@ -10,5 +10,5 @@ help: try calling `contains` as a method, then fix its arguments
 3 +     print(xs.contains(true))
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0070
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

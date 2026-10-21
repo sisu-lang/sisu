@@ -6,5 +6,5 @@ error[E0081]: a block cannot stand alone as a statement
   |
   = help: bind its value: `let x = { ... }`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0081
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0081

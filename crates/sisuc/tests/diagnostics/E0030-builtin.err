@@ -10,5 +10,5 @@ help: a type with a similar name exists: `bool`
 2 |     let ready: bool = true
   |                  +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0030
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

@@ -16,5 +16,5 @@ error[E0011]: expected `{`, found end of line
 1 | fn helper();
   |             ^
 
-sisuc: 1 error, 1 warning
-sisuc: for more on a code, run `sisuc --explain <code>`: E0011, W0007
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0011, W0007

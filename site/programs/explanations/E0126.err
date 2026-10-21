@@ -6,5 +6,5 @@ error[E0126]: `LIMIT` is a constant; a pattern cannot compare with it
   |
   = help: use a guard: `n if n == LIMIT`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0126
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0126

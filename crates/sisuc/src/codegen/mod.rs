@@ -1101,7 +1101,7 @@ pub(crate) enum OptLevel {
     O3,
 }
 
-/// A target machine for the host `sisuc` runs on.
+/// A target machine for the host `sisu` runs on.
 pub(crate) fn target_machine(level: OptLevel) -> Result<TargetMachine, String> {
     Target::initialize_native(&InitializationConfig::default())?;
     let triple = TargetMachine::get_default_triple();

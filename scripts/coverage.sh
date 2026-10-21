@@ -14,7 +14,7 @@ cd "$(git rev-parse --show-toplevel)"
 base=${1:-$(git merge-base main HEAD)}
 
 # cargo-llvm-cov passes its target directory to cargo as an argument, so tell
-# the nextest setup script (scripts/build-runtime.sh) where sisuc will look.
+# the nextest setup script (scripts/build-runtime.sh) where sisu will look.
 export SISU_COVERAGE_TARGET_DIR="$PWD/target/llvm-cov-target"
 
 cargo llvm-cov clean --workspace

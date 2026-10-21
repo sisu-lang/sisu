@@ -6,5 +6,5 @@ error[E0013]: there is no `var` in Sisu
   |
   = help: Sisu declares a variable with `let mut`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0013
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0013

@@ -57,10 +57,10 @@ fn on_path(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
-/// Cargo builds `libsisu_runtime.a` into the same directory as `sisuc`.
-// shortcut: Cargo target directories only; add a search path once sisuc installs elsewhere.
+/// Cargo builds `libsisu_runtime.a` into the same directory as `sisu`.
+// shortcut: Cargo target directories only; add a search path once sisu installs elsewhere.
 pub(crate) fn runtime_library() -> Result<PathBuf, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("cannot locate sisuc: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| format!("cannot locate sisu: {e}"))?;
     let path = exe.with_file_name("libsisu_runtime.a");
     if path.is_file() {
         Ok(path)

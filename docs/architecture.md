@@ -1,6 +1,6 @@
 # Architecture
 
-`sisuc` compiles one Sisu source file into one native executable. It is a
+`sisu` compiles one Sisu source file into one native executable. It is a
 pipeline: each stage takes what the previous stage produced and hands on
 something closer to machine code. The stages run in one process, with LLVM
 linked in as a library. Only the final link runs a separate program, the
@@ -18,18 +18,18 @@ the terms.
 ## The stages
 
 **Driver** (`crates/sisuc/src/lib.rs`). Reads the command line, runs the
-stages in order and prints diagnostics. The `sisuc` binary (`main.rs`) only
+stages in order and prints diagnostics. The `sisu` binary (`main.rs`) only
 runs it on a thread with a 64 MiB stack. It reads at most 1 GiB of source,
 so every span offset fits in a `u32`; a larger file is a tool error. The
 fuzzer calls the library too:
-`fuzz.rs` runs the `--check` path on raw bytes and asserts that every
+`fuzz.rs` runs the `check` path on raw bytes and asserts that every
 diagnostic span and fix edit is well formed, and that every safe fix, applied
 alone, deletes no comment and removes its diagnostic and no other. For an
 input that checks clean, it also prints the typed tree, builds its mir and
-runs codegen, and LLVM must verify the module. The `--emit` and `--check`
-flags stop the pipeline early, as
+runs codegen, and LLVM must verify the module. `sisu check` and `sisu build --emit`
+stop the pipeline early, as
 [Developing Sisu](development.md#look-inside-the-compiler) lists.
-`--format json` switches the diagnostics to JSON Lines, and `--explain <code>`
+`--format json` switches the diagnostics to JSON Lines, and `sisu explain <code>`
 prints the explanation of a code and runs no stage.
 
 **Lexer** (`lexer/`). Turns source text into tokens. A line break that can
@@ -104,7 +104,7 @@ its `kind()` gives the structure, and equal structures get the same handle.
 
 **mir** (`mir/`). The mid-level IR between `tir` and LLVM IR
 ([ADR 0025](adr/0025-mir-holds-every-count.md)), built on the build path only,
-so `--check` does not pay for it. `mir::build` lowers each function of `tir` to
+so `sisu check` does not pay for it. `mir::build` lowers each function of `tir` to
 typed locals and basic blocks in which every copy, move and release is its own
 statement (`lower.rs`). Parameter inference (`params.rs`,
 [ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md)) then searches
@@ -221,7 +221,7 @@ change it, and `main` calls `sisu_rc_check_exit` before it returns.
 
 **LLVM 23**. Runs the `mem2reg` pass, which turns stack slots into registers,
 or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it
-emits x86-64 object code for the machine `sisuc` runs on.
+emits x86-64 object code for the machine `sisu` runs on.
 
 **Link step** (`link.rs`). Before it compiles, the driver checks that
 `libsisu_runtime.a` and the output's directory exist, so a missing one fails
@@ -282,7 +282,7 @@ judgement parses the source again, so it judges only the first 100 syntax
 fixes and drops the rest. It does not judge a checker fix: that would cost a
 parse for each one, and the checker runs only on items that parse. The fuzz
 target checks that no fix shown makes the syntax worse. The explanations in
-[`docs/diagnostics`](diagnostics/README.md) are what `--explain` prints.
+[`docs/diagnostics`](diagnostics/README.md) are what `sisu explain` prints.
 
 ## Updating the diagram
 

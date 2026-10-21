@@ -1022,13 +1022,13 @@ fn output_naming_the_input_is_refused() {
     let input = dir.join("overwrite_input.sisu");
     fs::write(&input, source).expect("writes");
     for output in ["overwrite_input.sisu", "./overwrite_input.sisu"] {
-        let out = support::sisuc(dir, "overwrite_input.sisu", Path::new(output), &[])
+        let out = support::sisu(dir, "overwrite_input.sisu", Path::new(output), &[])
             .output()
-            .expect("sisuc starts");
+            .expect("sisu starts");
         assert_eq!(out.status.code(), Some(1), "output {output}");
         assert_eq!(
             String::from_utf8_lossy(&out.stderr),
-            format!("sisuc: output {output} would overwrite the input\n")
+            format!("sisu: output {output} would overwrite the input\n")
         );
         assert_eq!(fs::read_to_string(&input).expect("reads"), source);
     }
@@ -1041,18 +1041,18 @@ fn build_names_the_executable_after_the_whole_stem() {
     let dir = empty_dir("build_whole_stem");
     let source = "fn main() {\n    print(1)\n}\n";
     let build = |input: &str| {
-        Command::new(env!("CARGO_BIN_EXE_sisuc"))
+        Command::new(env!("CARGO_BIN_EXE_sisu"))
             .current_dir(&dir)
             .args(["build", input])
             .output()
-            .expect("sisuc starts")
+            .expect("sisu starts")
     };
     fs::write(dir.join("my prog"), source).expect("writes");
     let out = build("my prog");
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
-        "sisuc: output my prog would overwrite the input\n"
+        "sisu: output my prog would overwrite the input\n"
     );
     assert_eq!(
         fs::read_to_string(dir.join("my prog")).expect("reads"),
@@ -1077,10 +1077,10 @@ fn build_names_the_executable_after_the_whole_stem() {
 /// Returns the executable's bytes.
 fn build_loops(exe: &str, flags: &[&str], path: &OsStr) -> Vec<u8> {
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join(exe);
-    let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, flags)
+    let out = support::sisu(Path::new(RUN), "loops.sisu", &exe, flags)
         .env("PATH", path)
         .output()
-        .expect("sisuc starts");
+        .expect("sisu starts");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -1129,14 +1129,14 @@ fn linker_lld_links_with_lld() {
 #[test]
 fn linker_off_path_links_when_cc_finds_it() {
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("loops-compiler-path");
-    let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "lld"])
+    let out = support::sisu(Path::new(RUN), "loops.sisu", &exe, &["--linker", "lld"])
         .env("PATH", only_cc("only_cc_compiler_path"))
         .env(
             "COMPILER_PATH",
             Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin"),
         )
         .output()
-        .expect("sisuc starts");
+        .expect("sisu starts");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -1147,40 +1147,40 @@ fn linker_off_path_links_when_cc_finds_it() {
     assert!(executable.windows(11).any(|w| w == b"Linker: LLD"));
 }
 
-/// With only `cc` on `PATH`, `cc` runs and fails to find `ld.mold`; `sisuc` names it.
+/// With only `cc` on `PATH`, `cc` runs and fails to find `ld.mold`; `sisu` names it.
 #[test]
 fn a_missing_linker_is_named() {
     let empty = empty_dir("no_linker_on_path");
     let exe = empty.join("loops");
-    let out = support::sisuc(Path::new(RUN), "loops.sisu", &exe, &["--linker", "mold"])
+    let out = support::sisu(Path::new(RUN), "loops.sisu", &exe, &["--linker", "mold"])
         .env("PATH", only_cc("only_cc_on_path"))
         .env_remove("COMPILER_PATH")
         .output()
-        .expect("sisuc starts");
+        .expect("sisu starts");
     assert_eq!(out.status.code(), Some(1));
     // cc's own message follows on the next lines.
     assert_eq!(
         String::from_utf8_lossy(&out.stderr).lines().next(),
-        Some("sisuc: linker ld.mold not found on PATH; cc failed: exit status: 1")
+        Some("sisu: linker ld.mold not found on PATH; cc failed: exit status: 1")
     );
     assert_empty(&empty);
 }
 
 fn assert_empty(dir: &Path) {
     let left: Vec<_> = fs::read_dir(dir).expect("reads").collect();
-    assert!(left.is_empty(), "sisuc left {left:?}");
+    assert!(left.is_empty(), "sisu left {left:?}");
 }
 
 #[test]
 fn existing_object_file_survives_a_build() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("keep_object.sisu"), "fn main() {}\n").expect("writes");
-    fs::write(dir.join("keep_object.o"), "not sisuc's").expect("writes");
+    fs::write(dir.join("keep_object.o"), "not sisu's").expect("writes");
     let tmp = empty_dir("keep_object_tmp");
-    let out = support::sisuc(dir, "keep_object.sisu", &dir.join("keep_object"), &[])
+    let out = support::sisu(dir, "keep_object.sisu", &dir.join("keep_object"), &[])
         .env("TMPDIR", &tmp)
         .output()
-        .expect("sisuc starts");
+        .expect("sisu starts");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -1189,7 +1189,7 @@ fn existing_object_file_survives_a_build() {
     );
     assert_eq!(
         fs::read_to_string(dir.join("keep_object.o")).expect("`keep_object.o` is still there"),
-        "not sisuc's"
+        "not sisu's"
     );
     assert_empty(&tmp);
 }
@@ -1201,12 +1201,12 @@ fn failed_link_leaves_no_object_file() {
     // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
     let output = empty_dir("link_fails").join("out");
     let tmp = empty_dir("link_fails_tmp");
-    let out = support::sisuc(dir, "link_fails.sisu", &output, &["--linker", "mold"])
+    let out = support::sisu(dir, "link_fails.sisu", &output, &["--linker", "mold"])
         .env("TMPDIR", &tmp)
         .env("PATH", only_cc("link_fails_path"))
         .env_remove("COMPILER_PATH")
         .output()
-        .expect("sisuc starts");
+        .expect("sisu starts");
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("cc failed: "), "{stderr}");
@@ -1214,7 +1214,7 @@ fn failed_link_leaves_no_object_file() {
     assert!(!dir.join("link_fails.o").exists());
 }
 
-/// Runs `sisuc <name>.sisu <name>` on `source` in the target tmp dir, after removing any
+/// Runs `sisu build <name>.sisu -o <name>` on `source` in the target tmp dir, after removing any
 /// earlier `<name>`; returns the output and the executable's path.
 fn build_tmp(name: &str, source: &str) -> (Output, PathBuf) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -1222,9 +1222,9 @@ fn build_tmp(name: &str, source: &str) -> (Output, PathBuf) {
     let exe = dir.join(name);
     // It is absent on the first run, so a failure here is expected and harmless.
     let _ = fs::remove_file(&exe);
-    let out = support::sisuc(dir, &format!("{name}.sisu"), &exe, &[])
+    let out = support::sisu(dir, &format!("{name}.sisu"), &exe, &[])
         .output()
-        .expect("sisuc starts");
+        .expect("sisu starts");
     (out, exe)
 }
 

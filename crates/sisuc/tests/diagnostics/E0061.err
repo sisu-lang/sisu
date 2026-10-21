@@ -4,5 +4,5 @@ error[E0061]: `print` never runs: its argument never finishes
 2 |     print(if ok { return } else { return })
   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0061
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0061

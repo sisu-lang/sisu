@@ -9,5 +9,5 @@ help: join it to the line above
  9 |         Red | Amber => true
    |            +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0133
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0133

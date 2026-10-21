@@ -8,7 +8,7 @@
     "legend": {
       "entries": {
         "external": { "label": "Files" },
-        "backend": { "label": "sisuc stages" },
+        "backend": { "label": "sisu stages" },
         "frontend": { "label": "Diagnostics" },
         "cloud": { "label": "LLVM and system toolchain" },
         "database": { "label": "Runtime library" }
@@ -29,7 +29,7 @@
     { "id": "binary", "type": "external", "label": "Executable", "sublabel": "native x86-64 Linux", "pos": [560, 380], "size": [130, 60] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "sisuc (Rust)", "wraps": ["lexer", "parser", "checker", "mir", "codegen", "diagnostics"] }
+    { "kind": "region", "label": "sisu (Rust)", "wraps": ["lexer", "parser", "checker", "mir", "codegen", "diagnostics"] }
   ],
   "connections": [
     { "id": "source-to-lexer", "from": "source", "to": "lexer", "label": "source text", "variant": "emphasis" },

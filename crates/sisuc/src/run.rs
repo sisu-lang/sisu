@@ -1,4 +1,4 @@
-//! `sisuc run`: compiles a program into a private temporary directory, starts it, removes the
+//! `sisu run`: compiles a program into a private temporary directory, starts it, removes the
 //! directory, and exits with the program's exit code.
 
 use std::ffi::OsString;
@@ -12,7 +12,7 @@ use std::process::{Command, ExitCode, ExitStatus};
 use crate::report::{Format, tool_error_after_summary};
 use crate::{Backend, Report, Source, compile, fresh_names, front_end, link, read_source};
 
-/// Compiles `source` and runs it with `args`, its stdin, stdout and stderr those of `sisuc`.
+/// Compiles `source` and runs it with `args`, its stdin, stdout and stderr those of `sisu`.
 /// Finishes `reporter`, which writes in `format`, before the program starts.
 pub(crate) fn run(
     mut reporter: Report,
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn private_dir_takes_the_first_free_name_and_is_the_owners_only() {
-        let parent = std::env::temp_dir().join(format!("sisuc-private-dir-{}", std::process::id()));
+        let parent = std::env::temp_dir().join(format!("sisu-private-dir-{}", std::process::id()));
         // It is absent unless an earlier run failed, so a failure here is expected and harmless.
         let _ = fs::remove_dir_all(&parent);
         fs::create_dir_all(parent.join("taken")).expect("creates the directories");

@@ -153,7 +153,7 @@ notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0009", "docs
 [[area]]
 id = "compiler"
 name = "Compiler"
-intro = "How <code>sisuc</code> turns a source file into native code."
+intro = "How <code>sisu</code> turns a source file into native code."
 note = ""
 
 [[area.feature]]
@@ -216,7 +216,7 @@ text = "Lexer and parser in Sisu"
 state = "planned"
 notes = [["Roadmap: the growing proof program", "docs/roadmap.md#the-growing-proof-program"]]
 
-# source: docs/development.md ("Look inside the compiler", "Coverage and performance": CodSpeed runs on pull requests that touch the code); docs/benchmarks.md "Running them"; docs/roadmap.md ("Early tooling", "Gaps before production" (distributing sisuc, packages), "Deliberately avoided" (no registry))
+# source: docs/development.md ("Look inside the compiler", "Coverage and performance": CodSpeed runs on pull requests that touch the code); docs/benchmarks.md "Running them"; docs/roadmap.md ("Early tooling", "Gaps before production" (distributing sisu, packages), "Deliberately avoided" (no registry))
 [[area]]
 id = "toolchain"
 name = "Toolchain"
@@ -224,7 +224,7 @@ intro = "The commands around the compiler."
 note = ""
 
 [[area.feature]]
-text = "<code>sisuc</code>: build, check, show IR"
+text = "<code>sisu</code>: build, check, show IR"
 state = "works"
 notes = [["Developing Sisu", "docs/development.md#look-inside-the-compiler"]]
 
@@ -248,7 +248,7 @@ text = "Packages from a path or Git"
 state = "planned"
 notes = [["Roadmap: gaps before production", "docs/roadmap.md#gaps-before-production"], ["deliberately avoided", "docs/roadmap.md#deliberately-avoided"]]
 
-# source: docs/adr/0013; docs/diagnostics/README.md (the codes; `sisuc --explain` accepts each, checked with target/release/sisuc); docs/roadmap.md ("Early tooling" (TextMate grammar, --leaks), "Later and stretch goals" (sisu fmt, sisu lsp, lints, parser error recovery, doc comments), "Gaps before production" (language reference, recovery inside a body))
+# source: docs/adr/0013; docs/diagnostics/README.md (the codes; `sisu explain` accepts each, checked with target/release/sisu); docs/roadmap.md ("Early tooling" (TextMate grammar, --leaks), "Later and stretch goals" (sisu fmt, sisu lsp, lints, parser error recovery, doc comments), "Gaps before production" (language reference, recovery inside a body))
 [[area]]
 id = "dx"
 name = "Developer experience"
@@ -261,7 +261,7 @@ state = "works"
 notes = [["ADR 0013", "docs/adr/0013-diagnostics-have-stable-codes.md"]]
 
 [[area.feature]]
-text = "<code>--explain</code> for all {{diagnostic-count}} codes"
+text = "<code>sisu explain</code> for all {{diagnostic-count}} codes"
 state = "works"
 notes = [["ADR 0013", "docs/adr/0013-diagnostics-have-stable-codes.md"], ["Diagnostic codes", "docs/diagnostics/README.md"]]
 

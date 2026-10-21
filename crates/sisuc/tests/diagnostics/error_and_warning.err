@@ -16,5 +16,5 @@ error[E0033]: cannot find binding `missing`
 3 |     print(missing)
   |           ^^^^^^^
 
-sisuc: 1 error, 1 warning
-sisuc: for more on a code, run `sisuc --explain <code>`: E0033, W0002
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0033, W0002

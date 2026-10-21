@@ -10,5 +10,5 @@ help: remove the byte order mark at the start of the file
 1 + fn main() {
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0010
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0010

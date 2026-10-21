@@ -4,5 +4,5 @@ error[E0011]: expected end of line or `;`, found `2.5`
 2 |     let x = 1.5 2.5
   |                 ^^^
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0011
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

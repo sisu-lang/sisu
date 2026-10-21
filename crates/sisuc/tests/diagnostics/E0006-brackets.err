@@ -9,5 +9,5 @@ help: if this `else` belongs to the `if` above, move it after the `}`
 3 |     print(if n > 2 { 1 } else { 0 })
   |                         +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0006
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0006

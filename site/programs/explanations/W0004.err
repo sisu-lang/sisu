@@ -10,5 +10,5 @@ help: drop it on purpose
 6 |     let _ = twice(21)
   |     +++++++
 
-sisuc: 1 warning
-sisuc: for more on a code, run `sisuc --explain <code>`: W0004
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0004

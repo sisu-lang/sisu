@@ -6,5 +6,5 @@ error[E0016]: a field takes no `let`
   |
   = help: drop the `let`: `mut name: Type`
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0016
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0016

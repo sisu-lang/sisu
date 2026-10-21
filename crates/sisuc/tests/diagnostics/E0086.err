@@ -6,5 +6,5 @@ error[E0086]: a constant's value must be known at compile time
   |
   = help: use literals, operators and earlier constants
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0086
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0086

@@ -16,7 +16,7 @@ import time
 import xml.etree.ElementTree as ET
 
 # Seconds on a GitHub-hosted runner, which takes about twice as long as a developer machine. A
-# unit test runs in-process; an end-to-end test spawns sisuc, links, and may run under Valgrind,
+# unit test runs in-process; an end-to-end test spawns sisu, links, and may run under Valgrind,
 # and a `tests/run` case, with three builds and two Valgrind runs, takes about 2 s.
 UNIT_BUDGET = 1.0
 END_TO_END_BUDGET = 4.0

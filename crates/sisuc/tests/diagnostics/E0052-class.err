@@ -10,5 +10,5 @@ help: a class with a similar name exists: `Tree`
 6 +     let t = Tree(value: 1)
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0052
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0052

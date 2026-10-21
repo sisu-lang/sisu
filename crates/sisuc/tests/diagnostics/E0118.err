@@ -10,5 +10,5 @@ help: a variant with a similar name exists: `Num`
 7 +     let _ = Expr.Num(2)
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0118
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0118

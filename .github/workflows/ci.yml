@@ -31,7 +31,7 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: prek,typos
-      # Clippy compiles sisuc, which links LLVM.
+      # Clippy compiles sisu, which links LLVM.
       - uses: ./.github/actions/install-llvm
       # The same hooks a local commit runs, over every tracked file.
       - run: prek run --all-files --show-diff-on-failure

@@ -10,5 +10,5 @@ help: use `let`
 2 +     let limit = 100
   |
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0084
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0084

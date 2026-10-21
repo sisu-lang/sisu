@@ -9,5 +9,5 @@ help: write a `0` after the `.`
 2 |     let x = 1.0
   |               +
 
-sisuc: 1 error
-sisuc: for more on a code, run `sisuc --explain <code>`: E0101
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0101

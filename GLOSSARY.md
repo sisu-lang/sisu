@@ -370,7 +370,7 @@ a return) that says where control goes next.
 _Avoid_: node, label
 
 **Certifier**:
-The check, run on every function in debug builds of `sisuc`, that mir's
+The check, run on every function in debug builds of `sisu`, that mir's
 counts are sound: each owned reference is consumed exactly once, no empty
 local is read, no borrow outlives its owner, and nothing writes or changes what
 a borrow reads.

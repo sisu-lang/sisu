@@ -14,7 +14,7 @@ use crate::{Backend, Mode, Source, Stage};
 /// The Sisu compiler.
 #[derive(Parser)]
 #[command(
-    name = "sisuc",
+    name = "sisu",
     args_conflicts_with_subcommands = true,
     // clap's own `--version` would exit before `-v` is seen, so `-vV` could not work.
     disable_version_flag = true
@@ -162,7 +162,7 @@ pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> 
             } else {
                 Source::File(first.into())
             };
-            // A first `--` only ends `sisuc`'s own arguments; a later one is the program's.
+            // A first `--` only ends `sisu`'s own arguments; a later one is the program's.
             values.next_if(|arg| arg == "--");
             let args = values.collect();
             (
@@ -245,14 +245,14 @@ fn build_mode(
 /// A usage error of `build`, shown with `build`'s usage.
 fn build_error(message: impl std::fmt::Display) -> clap::Error {
     let mut cli = Cli::command();
-    // Gives the subcommand its full name, `sisuc build`, for the usage line.
+    // Gives the subcommand its full name, `sisu build`, for the usage line.
     cli.build();
     cli.find_subcommand_mut("build")
         .expect("`Cli` should have the subcommand `build`")
         .error(ErrorKind::ArgumentConflict, message)
 }
 
-/// The help that `sisuc` with no arguments prints, as `sisuc --help` does.
+/// The help that `sisu` with no arguments prints, as `sisu --help` does.
 pub(crate) fn help() -> StyledStr {
     Cli::command().render_help()
 }
