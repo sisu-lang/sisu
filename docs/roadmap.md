@@ -493,6 +493,8 @@ The compiler is fuzzed in two stages:
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |
 | 12 | Error handling: `Result<T, E>` and a `?` operator | File I/O code has no nested error checks |
 
+Every milestone's "Done when" also includes generator rules for its features ([ADR 0031](adr/0031-every-language-feature-has-a-generator-rule.md)).
+
 Order matters in these places:
 
 - Milestone 7 comes before generics, because `Option` and `Result` are

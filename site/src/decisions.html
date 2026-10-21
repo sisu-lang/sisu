@@ -112,8 +112,9 @@ The design decisions behind Sisu, each written down as a short record with its r
       <h2 id="compiler">The compiler</h2>
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0026-one-compiler-crate.md"><span class="num">0026</span><b>The compiler stays one crate</b><span>A split before LLVM was measured against a rule set in advance: an edit already rebuilds the tests in about 2 s, so a split cannot pay for itself.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0031-every-language-feature-has-a-generator-rule.md"><span class="num">0031</span><b>Every language feature has a generator rule<small>proposed</small></b><span>A feature is done only when the program fuzzer generates it, and a unit test fails when a variant has no generated program.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0026-one-compiler-crate.md -->
+      <!-- source: docs/adr/0026-one-compiler-crate.md, docs/adr/0031-every-language-feature-has-a-generator-rule.md -->
 
       <h2 id="avoided">What Sisu deliberately avoids</h2>
       <p>These come from the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#deliberately-avoided">Deliberately avoided</a> list.</p>
