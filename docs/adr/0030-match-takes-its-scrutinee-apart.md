@@ -80,3 +80,6 @@ Checked with GitHits.
 - Part 4's inference keeps a parameter owned when its `match` would reuse a
   box. [ADR 0029](0029-parameters-are-borrowed-unless-consumed.md) borrows a
   parameter that is only read, and a borrowed scrutinee is never taken apart.
+  It does so even when the `match` is not the parameter's last use: the
+  scrutinee is then a copy, its box is shared, nothing is reused, and the
+  caller pays a retain where it used to lend the value.
