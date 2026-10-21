@@ -89,6 +89,13 @@ fn type_arguments_in_types() {
     ] {
         codes(&with_decls(line), &expected);
     }
+    // The missing list is reported at the name, without its `?`.
+    diagnostic(
+        &with_decls("fn f(s: Stack?) {}"),
+        Code::TypeArguments,
+        (1, 9, "Stack"),
+        &[],
+    );
 }
 
 /// A non-generic name's list is deleted, in a type and in an expression alike.
@@ -225,6 +232,16 @@ fn generic_enums_that_cannot_be_built() {
             "class K {\n    x: i64\n}\nenum Two<T> { Both(T, T) }\nenum F<T> { A(Two<Two<K>>, Two<T>, F<T>) }",
             vec![(Code::NeverConstructed, (5, 6))],
         ),
+        // The chain reaches `Two<Leaf>` only if a class argument is held unbuildable.
+        (
+            "class Leaf {\n    e: Expr\n}\nenum Two<T> { Both(T, T) }\nenum Expr { Pair(Two<Leaf>) }",
+            vec![(Code::NeverConstructed, (5, 6))],
+        ),
+        // `A` needs `C` through an argument, so only `B`, which needs nothing else, is reported.
+        (
+            "enum Two<T> { Both(T, T) }\nenum A { X(Two<C>) }\nclass C {\n    b: B\n}\nenum B { Y(B) }",
+            vec![(Code::NeverConstructed, (6, 6))],
+        ),
         (
             "enum Nest<T> { A(Nest<[T]>) }",
             vec![(Code::NeverConstructed, (1, 6))],
@@ -303,6 +320,14 @@ fn type_arguments_in_expressions() {
         (
             "enum E { A(i64) }\nfn g() -> E { E.A<i64>(1) }",
             arguments((2, 18)),
+        ),
+        (
+            "enum E {\n    A\n    fn m(self) -> i64 { 1 }\n}\nfn g() -> i64 { E<i64>.m<i64>() }",
+            vec![
+                (Code::TypeArguments, (5, 18)),
+                (Code::MemberKind, (5, 24)),
+                (Code::TypeArguments, (5, 25)),
+            ],
         ),
         (
             "enum E {\n    A\n    fn m(self) -> i64 { 1 }\n}\nfn g(e: E) -> i64 { e.m<i64>() }",

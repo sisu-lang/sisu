@@ -428,9 +428,7 @@ impl Checker<'_> {
     /// the first such field, and it ends at the first type it meets again.
     fn chain(&self, start: usize, fix: &Buildable) -> Vec<(String, String)> {
         let classes = self.classes.len();
-        // The chain starts at an enum with every parameter's argument buildable.
         let params = &self.enums[start - classes].type_params;
-        let flags = vec![true; params.len()];
         // A field named `name` of type `ty`, if that type cannot be built: its name, its type's
         // name, and its node and arguments.
         let unbuilt = |(name, ty): (&str, Type)| {
@@ -439,7 +437,7 @@ impl Checker<'_> {
                 TypeKind::Enum(id, args) => (classes + id.0, args),
                 _ => return None,
             };
-            let key = fix.key_of(n, args, &flags);
+            let key = fix.key_of(n, args);
             (!fix.built[key]).then(|| (name.to_string(), self.type_name(ty), (n, args), key))
         };
         let mut chain = Vec::new();
@@ -569,31 +567,21 @@ impl Buildable {
         self.ids[&(node, vec![true; self.params[node]])]
     }
 
-    /// The key `node` has when given `args`, with their parameters' arguments as `flags` says,
-    /// which `run` interned if a field holds it.
-    fn key_of(&self, node: usize, args: TypeArgs, flags: &[bool]) -> usize {
-        let flags = args
-            .get()
-            .iter()
-            .map(|&arg| self.reached(arg, flags))
-            .collect();
+    /// The key `node` has when given `args`, which `run` interned if a field holds it. A
+    /// type parameter in `args` is a chain's start's, whose arguments are all buildable.
+    fn key_of(&self, node: usize, args: TypeArgs) -> usize {
+        let flags = args.get().iter().map(|&arg| self.reached(arg)).collect();
         self.ids[&(node, flags)]
     }
 
-    /// Whether `ty`, with its parameters' arguments as `flags` says, was found buildable.
-    fn reached(&self, ty: Type, flags: &[bool]) -> bool {
+    /// Whether `ty` was found buildable, a type parameter's argument always.
+    fn reached(&self, ty: Type) -> bool {
         let (node, args) = match ty.kind() {
-            TypeKind::Param(_, i) => return flags[i as usize],
             TypeKind::Class(id, args) => (id.0, args),
             TypeKind::Enum(id, args) => (self.classes + id.0, args),
             _ => return true,
         };
-        let inner = args
-            .get()
-            .iter()
-            .map(|&arg| self.reached(arg, flags))
-            .collect();
-        self.built[self.ids[&(node, inner)]]
+        self.built[self.key_of(node, args)]
     }
 
     /// Adds to `wants` each declaration `ty` names that cannot be built with any arguments.
