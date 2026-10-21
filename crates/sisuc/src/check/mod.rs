@@ -5,6 +5,7 @@ mod array;
 mod branch;
 mod call;
 mod constant;
+mod cycle;
 mod enums;
 mod exhaust;
 mod expr;
@@ -345,7 +346,8 @@ pub(crate) fn check<'src>(
     let declared = checker.collect_signatures(program);
     checker.fold_constants(program);
     let cyclic = checker.never_constructed();
-    checker.lowered_enums = checker.lower_enums(&cyclic);
+    let unbuilt;
+    (checker.lowered_enums, unbuilt) = checker.lower_enums(&cyclic);
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
     let functions: Vec<_> = declared
@@ -353,6 +355,7 @@ pub(crate) fn check<'src>(
         .enumerate()
         .map(|(i, (f, owner))| checker.function(f, tir::FuncId(i), owner))
         .collect();
+    checker.instantiation_cycles(&functions, &unbuilt);
     let classes = checker.classes.iter().map(lower_class).collect();
     let mut diagnostics = checker.diagnostics;
     diagnostics.sort_by_key(|d| d.span().start());

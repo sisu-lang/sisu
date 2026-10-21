@@ -1,0 +1,9 @@
+fn f<T>(x: T) {
+    g(x)
+}
+
+fn g<T>(x: T) {
+    f([x])
+}
+
+fn main() {}

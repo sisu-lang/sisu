@@ -29,6 +29,8 @@ pub(super) struct VariantInfo {
     pub(super) name: ast::Ident,
     /// The payload's field types; `None` is `Error`.
     pub(super) fields: Vec<Option<Type>>,
+    /// Where each field's type is written.
+    pub(super) spans: Vec<Span>,
     /// The payload's labels, one for each field.
     pub(super) labels: Vec<Option<Symbol>>,
 }
@@ -116,6 +118,7 @@ impl Checker<'_> {
                 info.variants.push(VariantInfo {
                     name: name.clone(),
                     fields,
+                    spans: payload.iter().map(|field| field.ty.span).collect(),
                     labels: payload
                         .iter()
                         .map(|field| field.label.as_ref().map(|label| label.name))
@@ -391,8 +394,9 @@ impl Checker<'_> {
     /// Lowers every enum: boxes each payload field whose enum lies in the declaring enum's
     /// component of the holds-inline graph, and marks the enums with counted parts. Reports
     /// the enums no value can be built of; `cyclic` marks the classes on a cycle of fields,
-    /// which `never_constructed` reports.
-    pub(super) fn lower_enums(&mut self, cyclic: &[bool]) -> Vec<tir::Enum> {
+    /// which `never_constructed` reports. Returns the enums, and which declarations have an
+    /// error of that kind, as `never_built` does.
+    pub(super) fn lower_enums(&mut self, cyclic: &[bool]) -> (Vec<tir::Enum>, Vec<bool>) {
         let held: Vec<Vec<usize>> = self
             .enums
             .iter()
@@ -454,8 +458,8 @@ impl Checker<'_> {
                 .any(|f| f.boxed || f.ty.may_be_counted(&lowered));
             lowered[e].counted = counted;
         }
-        self.never_built(cyclic);
-        lowered
+        let unbuilt = self.never_built(cyclic);
+        (lowered, unbuilt)
     }
 
     /// Reports each enum or class no value can be built of. Which classes and enums can be
@@ -464,8 +468,10 @@ impl Checker<'_> {
     /// other type always can. A class in `cyclic` counts as built, and so does an enum with no
     /// variant, since each has its error already. Each component of the rest that needs no
     /// other, by what the fixed point found each one to need, is reported once, at its first
-    /// enum, or else its first class; a type that only needs one of those is not.
-    fn never_built(&mut self, cyclic: &[bool]) {
+    /// enum, or else its first class; a type that only needs one of those is not. Returns, by
+    /// node (the classes, then the enums), whether no value of it can be built, or it is a class
+    /// in `cyclic`.
+    fn never_built(&mut self, cyclic: &[bool]) -> Vec<bool> {
         let mut fix = Buildable::new(self, cyclic);
         fix.run();
         let classes = self.classes.len();
@@ -505,6 +511,9 @@ impl Checker<'_> {
                 cause: Unbuilt::Chain(chain),
             });
         }
+        (0..nodes)
+            .map(|n| unbuilt(&fix, n) || n < classes && cyclic[n])
+            .collect()
     }
 
     /// The chain of fields from the enum or class at node `start`, through types none of which

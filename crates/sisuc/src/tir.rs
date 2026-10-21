@@ -717,6 +717,113 @@ impl Place {
     }
 }
 
+impl Expr {
+    /// `self` and every expression inside it, outermost first.
+    fn exprs<'a>(&'a self, out: &mut Vec<&'a Expr>) {
+        use ExprKind as K;
+        out.push(self);
+        match &self.kind {
+            K::Int(_)
+            | K::Float(_)
+            | K::Bool(_)
+            | K::Char(_)
+            | K::Str(_)
+            | K::None
+            | K::Local(_)
+            | K::ReadLine
+            | K::Break
+            | K::Continue
+            | K::Return(None) => {}
+            K::Call { args, .. }
+            | K::New { args, .. }
+            | K::Variant { args, .. }
+            | K::ArrayLit(args)
+            | K::Math { operands: args, .. }
+            | K::Interpolate { parts: args, .. }
+            | K::Compare { operands: args, .. } => args.iter().for_each(|a| a.exprs(out)),
+            K::Field { base: e, .. }
+            | K::Wrap(e)
+            | K::Convert(e)
+            | K::Print { operand: e, .. }
+            | K::Panic(e)
+            | K::Len(e)
+            | K::Chars(e)
+            | K::Bytes(e)
+            | K::Words(e)
+            | K::FromChars(e)
+            | K::Sum(e)
+            | K::Unary { operand: e, .. }
+            | K::Return(Some(e)) => e.exprs(out),
+            K::ArrayFill { value: a, len: b }
+            | K::Index { base: a, index: b }
+            | K::Contains { base: a, value: b }
+            | K::Binary { lhs: a, rhs: b, .. }
+            | K::Concat { lhs: a, rhs: b }
+            | K::Equal { lhs: a, rhs: b, .. }
+            | K::Is { lhs: a, rhs: b } => {
+                a.exprs(out);
+                b.exprs(out);
+            }
+            K::If {
+                cond: first,
+                then_block,
+                else_block,
+            }
+            | K::IfSome {
+                scrutinee: first,
+                then_block,
+                else_block,
+                ..
+            } => {
+                first.exprs(out);
+                then_block.exprs(out);
+                if let Some(b) = else_block {
+                    b.exprs(out);
+                }
+            }
+            K::Match {
+                scrutinee, arms, ..
+            } => {
+                scrutinee.exprs(out);
+                for arm in arms {
+                    arm.guard.iter().for_each(|g| g.exprs(out));
+                    arm.body.exprs(out);
+                }
+            }
+            K::Loop(block) | K::Block(block) => block.exprs(out),
+        }
+    }
+}
+
+impl Block {
+    /// Every expression in the block, each before those inside it, in order.
+    pub(crate) fn exprs<'a>(&'a self, out: &mut Vec<&'a Expr>) {
+        for stmt in &self.stmts {
+            match stmt {
+                Stmt::Let { init: e, .. } | Stmt::Expr(e) => e.exprs(out),
+                Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+                    place.exprs(out);
+                    value.exprs(out);
+                }
+            }
+        }
+        self.value.iter().for_each(|v| v.exprs(out));
+    }
+}
+
+impl Place {
+    fn exprs<'a>(&'a self, out: &mut Vec<&'a Expr>) {
+        match self {
+            Place::Local(_) => {}
+            Place::Field { base, .. } => base.exprs(out),
+            Place::Index { base, index } => {
+                base.exprs(out);
+                index.exprs(out);
+            }
+        }
+    }
+}
+
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self.kind() {

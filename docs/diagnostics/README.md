@@ -147,6 +147,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0137](E0137.md) | error | type arguments that do not fit |
 | [E0138](E0138.md) | error | type that cannot be a type argument |
 | [E0139](E0139.md) | error | operator on a value of a type parameter |
+| [E0140](E0140.md) | error | instantiations that never end |
 | [E0141](E0141.md) | error | `break` with a value in a loop that has none |
 | [E0142](E0142.md) | error | loop label that is also a name in scope |
 | [E0143](E0143.md) | error | loop label used by an enclosing loop |

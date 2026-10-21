@@ -194,6 +194,7 @@ codes! {
     TypeArguments = "E0137",
     TypeArgument = "E0138",
     ParamLacks = "E0139",
+    InstantiationCycle = "E0140",
     BreakValueNotLoop = "E0141",
     LabelClash = "E0142",
     LabelReused = "E0143",
@@ -926,6 +927,15 @@ pub(crate) enum DiagnosticKind {
         op: String,
         at: Span,
         contains: bool,
+    },
+    /// The generic declaration `name`, which instantiates itself without end: `instance`, at
+    /// `at`, gives a growing type argument, and `through` holds each other instantiation on the
+    /// way back to `name`, as written, at its site.
+    InstantiationCycle {
+        name: String,
+        at: Span,
+        instance: String,
+        through: Vec<(Span, String)>,
     },
 }
 
@@ -3208,6 +3218,18 @@ impl From<DiagnosticKind> for Diagnostic {
                     d.with_label(format!("this is a `{ty}`"))
                 }
             }
+            DiagnosticKind::InstantiationCycle {
+                name,
+                at,
+                instance,
+                through,
+            } => through.into_iter().fold(
+                Diagnostic::coded(code, at, format!("`{name}` instantiates itself without end"))
+                    .with_label(format!("`{instance}` here")),
+                |d, (site, instance)| {
+                    d.with_secondary(site, format!("which instantiates `{instance}`"))
+                },
+            ),
             DiagnosticKind::NanComparison { at, negated, fix } => {
                 let always = if negated { "true" } else { "false" };
                 let d = Diagnostic::coded(

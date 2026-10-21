@@ -583,7 +583,7 @@ fn call_types(src: &str, callee: &str) -> Vec<String> {
     let program = program.expect("a program without diagnostics should have a tir");
     let mut exprs = Vec::new();
     for function in &program.functions {
-        block_exprs(&function.body, &mut exprs);
+        function.body.exprs(&mut exprs);
     }
     let call = exprs.into_iter().find_map(|e| {
         let (name, types) = match (&e.kind, e.ty.kind()) {
@@ -604,107 +604,6 @@ fn call_types(src: &str, callee: &str) -> Vec<String> {
     let mut names: Vec<_> = types.get().iter().map(|&t| program.type_name(t)).collect();
     names.push(program.type_name(ty));
     names
-}
-
-/// `e` and every expression inside it, outermost first.
-fn exprs<'a>(e: &'a tir::Expr, out: &mut Vec<&'a tir::Expr>) {
-    use tir::ExprKind as K;
-    out.push(e);
-    match &e.kind {
-        K::Int(_)
-        | K::Float(_)
-        | K::Bool(_)
-        | K::Char(_)
-        | K::Str(_)
-        | K::None
-        | K::Local(_)
-        | K::ReadLine
-        | K::Break
-        | K::Continue
-        | K::Return(None) => {}
-        K::Call { args, .. }
-        | K::New { args, .. }
-        | K::Variant { args, .. }
-        | K::ArrayLit(args)
-        | K::Math { operands: args, .. }
-        | K::Interpolate { parts: args, .. }
-        | K::Compare { operands: args, .. } => args.iter().for_each(|a| exprs(a, out)),
-        K::Field { base: e, .. }
-        | K::Wrap(e)
-        | K::Convert(e)
-        | K::Print { operand: e, .. }
-        | K::Panic(e)
-        | K::Len(e)
-        | K::Chars(e)
-        | K::Bytes(e)
-        | K::Words(e)
-        | K::FromChars(e)
-        | K::Sum(e)
-        | K::Unary { operand: e, .. }
-        | K::Return(Some(e)) => exprs(e, out),
-        K::ArrayFill { value: a, len: b }
-        | K::Index { base: a, index: b }
-        | K::Contains { base: a, value: b }
-        | K::Binary { lhs: a, rhs: b, .. }
-        | K::Concat { lhs: a, rhs: b }
-        | K::Equal { lhs: a, rhs: b, .. }
-        | K::Is { lhs: a, rhs: b } => {
-            exprs(a, out);
-            exprs(b, out);
-        }
-        K::If {
-            cond: first,
-            then_block,
-            else_block,
-        }
-        | K::IfSome {
-            scrutinee: first,
-            then_block,
-            else_block,
-            ..
-        } => {
-            exprs(first, out);
-            block_exprs(then_block, out);
-            if let Some(b) = else_block {
-                block_exprs(b, out);
-            }
-        }
-        K::Match {
-            scrutinee, arms, ..
-        } => {
-            exprs(scrutinee, out);
-            for arm in arms {
-                arm.guard.iter().for_each(|g| exprs(g, out));
-                block_exprs(&arm.body, out);
-            }
-        }
-        K::Loop(block) | K::Block(block) => block_exprs(block, out),
-    }
-}
-
-/// Every expression in `block`, in order.
-fn block_exprs<'a>(block: &'a tir::Block, out: &mut Vec<&'a tir::Expr>) {
-    for stmt in &block.stmts {
-        match stmt {
-            tir::Stmt::Let { init: e, .. } | tir::Stmt::Expr(e) => exprs(e, out),
-            tir::Stmt::Assign { place, value } | tir::Stmt::Append { place, value } => {
-                place_exprs(place, out);
-                exprs(value, out);
-            }
-        }
-    }
-    block.value.iter().for_each(|v| exprs(v, out));
-}
-
-fn place_exprs<'a>(place: &'a tir::Place, out: &mut Vec<&'a tir::Expr>) {
-    match place {
-        tir::Place::Local(_) => {}
-        tir::Place::Field { base, .. } => exprs(base, out),
-        tir::Place::Index { base, index } => {
-            place_exprs(base, out);
-            exprs(index, out);
-        }
-    }
 }
 
 /// Each row's `callee` is called with the type arguments and type after it (see `call_types`).
@@ -1610,4 +1509,77 @@ fn waiting_calls_report_their_own_shape() {
     ] {
         codes(&with_generics(line), &expected);
     }
+}
+
+/// An instantiation that gives a declaration a type argument that grows, on a cycle back to that
+/// declaration, is one error per cycle: at the first growing instantiation, with a note at each
+/// other instantiation of the shortest way back. A cycle whose arguments do not grow, and a
+/// growing one that does not come back, are clean, and so is a class whose method makes a
+/// bigger instance of it.
+#[test]
+fn cycles() {
+    for (src, at, notes) in [
+        ("fn f<T>(x: T) { f([x]) }", (1, 17), vec![]),
+        (
+            "fn f<T>(x: T) { g([x]) }\nfn g<T>(x: T) { f(x) }",
+            (1, 17),
+            vec![(2, 17)],
+        ),
+        ("enum Nest<T> { A(Nest<[T]>)\n B }", (1, 18), vec![]),
+        ("class C<T> { next: C<[T]>? }", (1, 20), vec![]),
+        ("fn f<T>(x: T) { let y: [T] = [x]\n f(y) }", (2, 2), vec![]),
+        // A method is its own declaration, its class's parameters first.
+        (
+            "class C<T> {\n    v: T\n    fn m(self) { C(v: [self.v]).m() }\n}",
+            (3, 18),
+            vec![],
+        ),
+        // A call inside an assigned place.
+        (
+            "fn f<T>(x: T) -> i64 {\n    let mut xs = [0]\n    xs[f([x])] = 1\n    0\n}",
+            (3, 8),
+            vec![],
+        ),
+        // `U` grows into `T` and `T` comes back into `U` at the same call, noted once.
+        ("fn f<T, U>(x: T, y: U) { f(y, [x]) }", (1, 26), vec![]),
+        // Two growing edges, one error, at the first in source order: the payload, not the
+        // field, though classes are numbered first.
+        (
+            "enum E<T> { A(C<[T]>)\n B }\nclass C<T> {\n    e: E<[T]>?\n}",
+            (1, 15),
+            vec![(4, 8)],
+        ),
+        // The way back is the shortest: `g` calls `f` directly as well as through `h`.
+        (
+            "fn f<T>(x: T) { g([x]) }\nfn g<T>(x: T) {\n    h(x)\n    f(x)\n}\nfn h<T>(x: T) { f(x) }",
+            (1, 17),
+            vec![(4, 5)],
+        ),
+    ] {
+        assert_eq!(
+            found(&format!("{src}\nfn main() {{}}")),
+            [(Code::InstantiationCycle, at, notes)],
+            "{src}"
+        );
+    }
+    for src in [
+        "fn f<T>(x: T, n: i64) { if n > 0 { f(x, n - 1) } }",
+        "fn f<T>(x: T) { g(x) }\nfn g<T>(x: T) { f(x) }",
+        "class List<T> { next: List<T>? }",
+        "enum Tree<T> { Leaf\n Node(Tree<T>, T, Tree<T>) }",
+        "fn f<T>(x: T) { g([x]) }\nfn g<T>(x: T) {}",
+        "class C<T> { v: T\n fn up(self) -> C<[T]> { C(v: [self.v]) } }\nfn g() -> C<[i64]> { C(v: 1).up() }",
+        "fn f<T, U>(x: T, y: U) { f(y, x) }",
+    ] {
+        clean(&format!("{src}\nfn main() {{}}"));
+    }
+    // A declaration no value can be built of has that error alone.
+    codes(
+        "enum Nest<T> { A(Nest<[T]>) }\nfn main() {}",
+        &[(Code::NeverConstructed, (1, 6))],
+    );
+    codes(
+        "class C<T> {\n    next: C<[T]>\n}\nfn main() {}",
+        &[(Code::NeverConstructed, (2, 5))],
+    );
 }
