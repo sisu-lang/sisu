@@ -57,7 +57,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0047](E0047.md) | error | comparison of values of different types |
 | [E0048](E0048.md) | error | `??` on a value that is not optional |
 | [E0049](E0049.md) | error | `?.` on a value that is not optional |
-| [E0050](E0050.md) | error | `None` without a type |
+| [E0050](E0050.md) | error | a type that cannot be inferred |
 | [E0051](E0051.md) | error | `if let` or `while let` on a value that is not an enum or optional |
 | [E0052](E0052.md) | error | call of a function that does not exist |
 | [E0053](E0053.md) | error | call with the wrong number of arguments |

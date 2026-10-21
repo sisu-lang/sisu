@@ -262,7 +262,9 @@ impl Checker<'_> {
     ) -> Checked {
         let info = &self.enums[id.0];
         let v = &info.variants[variant];
-        let path = format!("{}.{}", info.name.name, member.name);
+        let enum_name = info.name.name;
+        // Built only for a diagnostic.
+        let path = format_args!("{enum_name}.{}", member.name);
         let (declared, fields, labels) =
             (info.type_params.clone(), v.fields.clone(), v.labels.clone());
         let args = call.map_or(&[][..], |(args, _)| args);

@@ -567,7 +567,7 @@ fn type_arguments_on_an_unknown_member() {
 }
 
 /// The generic declarations the inference rows call, after `DECLS`.
-const GENERIC: &str = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T? {\n    if xs.len() == 0 { return None }\n    xs[0]\n}\nfn pair<T>(a: T, b: T) -> [T] { [a, b] }\nfn opt<T>(x: T?) -> T? { x }\nfn wrap<T>(x: T) -> [T] { [x] }\nfn make<T>() -> [T] { [] }\nfn make_ints() -> [i64] { [1] }\nfn fill<T>(xs: [T], s: Stack<T>) {}\nfn take<U>(x: U, n: i64) {}\nclass Pile<T> {\n    mut top: Cell<T>?\n    fn push(self, x: T) { self.top = Cell(value: x, next: self.top) }\n}\nclass Box<T> {\n    v: T\n    fn map_all<U>(self, u: U) -> [U] { [u] }\n}\nenum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}\nenum Opt2<T> {\n    S(T)\n    N\n}\nenum Wrap<T> { W(T) }\nenum E<T> {\n    A(T)\n    fn map<U>(self, u: U) -> [U] { [u] }\n}";
+const GENERIC: &str = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T? {\n    if xs.len() == 0 { return None }\n    xs[0]\n}\nfn pair<T>(a: T, b: T) -> [T] { [a, b] }\nfn opt<T>(x: T?) -> T? { x }\nfn wrap<T>(x: T) -> [T] { [x] }\nfn make<T>() -> [T] { [] }\nfn make_ints() -> [i64] { [1] }\nfn fill<T>(xs: [T], s: Stack<T>) {}\nfn take<U>(x: U, n: i64) {}\nclass Pile<T> {\n    mut top: Cell<T>?\n    fn push(self, x: T) { self.top = Cell(value: x, next: self.top) }\n}\nclass Box<T> {\n    v: T\n    fn map_all<U>(self, u: U) -> [U] { [u] }\n    fn make<U>(self) -> [U] { [] }\n}\nenum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}\nenum Opt2<T> {\n    S(T)\n    N\n}\nenum Wrap<T> { W(T) }\nenum E<T> {\n    A(T)\n    fn map<U>(self, u: U) -> [U] { [u] }\n}";
 
 /// `line` on line 1, then `GENERIC` and `DECLS`.
 fn with_generics(line: &str) -> String {
@@ -725,6 +725,11 @@ fn arguments_bind_type_parameters() {
             &["i64", "i64?"],
         ),
         (
+            "fn g() {\n    let x = first([3, 9, 2])\n}",
+            "first",
+            &["i64", "i64?"],
+        ),
+        (
             "fn g() -> string? { first<string>([]) }",
             "first",
             &["string", "string?"],
@@ -832,7 +837,62 @@ fn the_expected_type_binds_the_rest() {
             "make",
             &["i64", "[i64]"],
         ),
+        // What of the return type meets the expected type binds, each part on its own.
+        (
+            "class Two<A, B> {\n    a: A\n    b: B\n}\nfn two<A, B>(x: A, y: B) -> Two<A, B> { Two(a: x, b: y) }\nfn g() {\n    let x: Two<f64, [i64]> = two(1, [])\n}",
+            "two",
+            &["f64", "[i64]", "Two<f64, [i64]>"],
+        ),
     ]);
+}
+
+/// A call of a method with type parameters of its own, on a local or a field of one, waits for
+/// context as a call of a generic function does.
+#[test]
+fn generic_methods_wait_for_context() {
+    infers(&[
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id(b.make())\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = b.make()\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "class Holder {\n    b: Box<i64>\n}\nfn g(h: Holder) {\n    let xs: [i64] = id(h.b.make())\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "fn g(e: E<i64>) {\n    let xs: [[string]] = id(e.map([]))\n}",
+            "E.map",
+            &["i64", "[string]", "[[string]]"],
+        ),
+    ]);
+}
+
+/// Each binding is checked once, and a failed one undoes only what it bound, so inference's
+/// work grows with a call's type parameters, not with their square.
+#[test]
+fn inference_checks_each_binding_once() {
+    let visits = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let params: Vec<_> = (0..n).map(|i| format!("x{i}: T{i}")).collect();
+        let src = format!(
+            "fn f<{}>({}) {{}}\nfn main() {{ f({}) }}",
+            types.join(", "),
+            params.join(", "),
+            vec!["true"; n].join(", ")
+        );
+        generic::VISITS.set(0);
+        clean(&src);
+        generic::VISITS.get()
+    };
+    assert_eq!(visits(64), 64);
+    assert_eq!(visits(128), 128);
 }
 
 /// A literal-like argument takes its type from the others, as an array literal's element
@@ -888,6 +948,11 @@ fn literal_like_arguments_follow_the_others() {
         ),
         (
             "fn g(x: f64) {\n    let xs = pair(1, -x)\n}",
+            "pair",
+            &["f64", "[f64]"],
+        ),
+        (
+            "fn g() {\n    let xs = pair(1 + 2, 2.5)\n}",
             "pair",
             &["f64", "[f64]"],
         ),
@@ -1036,6 +1101,8 @@ fn generic_calls_spill_their_arguments() {
     );
 }
 
+/// A generic call that cannot bind a parameter, or whose argument or list cannot fit, reports
+/// that once, and so does each mistake a call of a declaration that is not generic can make.
 #[test]
 fn generic_calls_that_do_not_check() {
     let infer = |at| vec![(Code::CannotInfer, at)];
@@ -1163,9 +1230,31 @@ fn generic_arguments_that_do_not_check() {
             "fn g() {\n    let x = id(Wrap.W<i64>([]))\n}".into(),
             vec![(Code::TypeArguments, (2, 22))],
         ),
+        // The generic method waits for `id`, which nothing binds.
         (
             "fn g(b: Box<i64>) {\n    let x = id(b.map_all([]))\n}".into(),
-            vec![(Code::CannotInfer, (2, 18))],
+            vec![(Code::CannotInfer, (2, 13))],
+        ),
+        // shortcut (`generic_method`): only a local's or a field's method waits.
+        (
+            "fn g() {\n    let xs: [i64] = id(Box(v: 1).make())\n}".into(),
+            vec![(Code::CannotInfer, (2, 34))],
+        ),
+        // A parameter's type that is not found may be what would have bound it.
+        (
+            "fn f<T>(x: Nope<T>) -> T { panic(\"x\") }\nfn g() {\n    let y = f(1)\n}".into(),
+            vec![(Code::UnknownType, (1, 12))],
+        ),
+        (
+            "class Bad<T> {\n    v: Nope<T>\n}\nfn g() {\n    let b = Bad(v: 1)\n}".into(),
+            vec![(Code::UnknownType, (2, 8))],
+        ),
+        // The expected type binds `B`, and the result's `A` is reported against it.
+        (
+            format!(
+                "{two}fn both<A, B>(a: A, b: B) -> Two<A, B> {{ Two(a: a, b: b) }}\nfn g(n: i64) {{\n    let x: Two<f64, [i64]> = both(n, [])\n}}"
+            ),
+            vec![(Code::Mismatch, (7, 30))],
         ),
         (
             "fn g() {\n    let x = Wrap.W([])\n}".into(),

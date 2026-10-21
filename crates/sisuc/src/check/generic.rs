@@ -5,12 +5,13 @@ use std::{fmt, iter};
 
 use rustc_hash::FxHashMap;
 
+use super::expr::int_literal;
 use super::prelude::PRELUDE;
 use super::{
     Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN, built_in_type,
     type_of,
 };
-use crate::ast::{self, StmtKind, UnaryOp};
+use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, MainForm};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
@@ -21,6 +22,8 @@ use crate::tir::{Type, TypeArgs, TypeKind};
 /// the receiver, an argument or the expected type fixes it.
 pub(super) struct Bindings {
     found: Vec<Option<Type>>,
+    /// The parameters the last `unify` or `constrain` bound, which only they need checking.
+    fresh: Vec<usize>,
 }
 
 impl Bindings {
@@ -29,6 +32,7 @@ impl Bindings {
         let unbound = iter::repeat_n(None, count - owner.len());
         Bindings {
             found: owner.iter().copied().map(Some).chain(unbound).collect(),
+            fresh: Vec::new(),
         }
     }
 
@@ -36,20 +40,41 @@ impl Bindings {
     /// parameter of which is the caller's and a fixed type. A `T?` binds `T` to a value that is
     /// not optional, which the call then wraps. `false`, binding nothing, when they cannot.
     pub(super) fn unify(&mut self, pattern: Type, value: Type) -> bool {
-        let before = self.found.clone();
+        self.fresh.clear();
         let unified = self.bind(pattern, value);
         if !unified {
-            self.found = before;
+            for &i in &self.fresh {
+                #[cfg(test)]
+                VISITS.set(VISITS.get() + 1);
+                self.found[i] = None;
+            }
+            self.fresh.clear();
         }
         unified
     }
 
+    /// As `unify`, but what of `pattern` meets `value` stays bound when the rest does not.
+    pub(super) fn constrain(&mut self, pattern: Type, value: Type) {
+        self.fresh.clear();
+        let _ = self.bind(pattern, value);
+    }
+
+    /// Binds each unbound parameter `pattern` names where it meets `value`, recording it in
+    /// `fresh`; whether all of `pattern` meets it.
     fn bind(&mut self, pattern: Type, value: Type) -> bool {
         if !pattern.has_param() {
             return pattern == value;
         }
         match (pattern.kind(), value.kind()) {
-            (TypeKind::Param(_, i), _) => *self.found[i as usize].get_or_insert(value) == value,
+            (TypeKind::Param(_, i), _) => {
+                let i = i as usize;
+                if let Some(bound) = self.found[i] {
+                    return bound == value;
+                }
+                self.found[i] = Some(value);
+                self.fresh.push(i);
+                true
+            }
             (TypeKind::Array(p), TypeKind::Array(v))
             | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.bind(p, v),
             (TypeKind::Optional(p), _) => self.bind(p, value),
@@ -59,8 +84,9 @@ impl Bindings {
         }
     }
 
+    /// `bind` for each pair, every one of them tried.
     fn bind_all(&mut self, patterns: TypeArgs, values: TypeArgs) -> bool {
-        iter::zip(patterns.get(), values.get()).all(|(&p, &v)| self.bind(p, v))
+        iter::zip(patterns.get(), values.get()).fold(true, |all, (&p, &v)| self.bind(p, v) && all)
     }
 
     /// `ty`, a callee's, with its parameters' bindings in their place; `None` while it names
@@ -96,6 +122,12 @@ impl Bindings {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many bindings inference has checked or undone on this thread.
+    pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A generic callee as a call sees it: a function or method, a class's constructor, or an
 /// enum's variant.
 pub(super) struct GenericSig<'a> {
@@ -125,8 +157,6 @@ pub(super) struct Site<'a> {
 /// A generic call while its arguments bind its callee's parameters.
 struct Inference {
     bindings: Bindings,
-    /// Whether each parameter's binding, once it has one, was checked to be a type argument.
-    seen: Vec<bool>,
     /// Each argument once checked, in source order.
     slots: Vec<Option<Checked>>,
     /// The arguments of type `unit` or `never`, which bind only what no other argument does.
@@ -175,19 +205,17 @@ impl Checker<'_> {
         let owned = sig.owner.len();
         let mut call = Inference {
             bindings: Bindings::new(sig.declared.len(), sig.owner),
-            seen: vec![true; owned],
             slots: args.iter().map(|_| None).collect(),
             last: Vec::new(),
             failed: false,
         };
-        call.seen.resize(sig.declared.len(), false);
         if !written.is_empty() {
             let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
             else {
                 self.stray(args);
                 return None;
             };
-            // Unseen, each is a type `bind_param` lets pass: `type_args` rejects the others.
+            // `type_args` rejects each type that `report_fresh` would.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
             }
@@ -208,8 +236,9 @@ impl Checker<'_> {
                 TypeKind::Optional(payload) => payload,
                 _ => want,
             };
-            // A return type that cannot meet it is reported where the call's value is used.
-            let _ = self.bind_param(&mut call, ret, want, span);
+            // What of the return type cannot meet it is reported where the call's value is used.
+            call.bindings.constrain(ret, want);
+            self.report_fresh(&mut call, span);
         }
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 1) {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
@@ -235,9 +264,10 @@ impl Checker<'_> {
             Ok(list) if !call.failed => list,
             Ok(_) => return None,
             Err(i) => {
-                // An argument that failed may be what would have bound it, and an `UNKNOWN`
-                // context is one that failed.
-                let errored = call.slots.iter().flatten().any(|c| type_of(c).is_none());
+                // An argument that failed, or a parameter's type that did, may be what would
+                // have bound it, and an `UNKNOWN` context is one that failed.
+                let errored = call.slots.iter().flatten().any(|c| type_of(c).is_none())
+                    || sig.params.contains(&None);
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
                     self.cannot_infer(sig, sig.declared[i]);
                 }
@@ -295,15 +325,18 @@ impl Checker<'_> {
     /// `Bindings::unify`, reporting at `at` each parameter it binds to a type that no type
     /// parameter takes.
     fn bind_param(&mut self, call: &mut Inference, pattern: Type, value: Type, at: Span) -> bool {
-        if !call.bindings.unify(pattern, value) {
-            return false;
-        }
-        for (found, seen) in iter::zip(&call.bindings.found, &mut call.seen) {
-            let Some(ty) = *found else { continue };
-            if *seen {
-                continue;
-            }
-            *seen = true;
+        let unified = call.bindings.unify(pattern, value);
+        self.report_fresh(call, at);
+        unified
+    }
+
+    /// Reports at `at` each parameter the last binding bound to a type that no type parameter
+    /// takes.
+    fn report_fresh(&mut self, call: &mut Inference, at: Span) {
+        for &i in &call.bindings.fresh {
+            #[cfg(test)]
+            VISITS.set(VISITS.get() + 1);
+            let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
             let optional = matches!(ty.kind(), TypeKind::Optional(_));
             if optional || matches!(ty, Type::UNIT | Type::NEVER) {
                 self.report(DiagnosticKind::TypeArgument {
@@ -314,7 +347,6 @@ impl Checker<'_> {
                 call.failed = true;
             }
         }
-        true
     }
 
     /// Reports the call of `sig` that binds nothing to its parameter `param`.
@@ -369,7 +401,12 @@ impl Checker<'_> {
                 args,
                 safe: false,
                 ..
-            } => types.is_empty() && self.generic_variant(receiver, method).is_some() && all(args),
+            } => {
+                types.is_empty()
+                    && (self.generic_variant(receiver, method).is_some()
+                        || self.generic_method(receiver, method))
+                    && all(args)
+            }
             K::Call {
                 callee,
                 types,
@@ -414,6 +451,54 @@ impl Checker<'_> {
         (!info.type_params.is_empty()).then(|| info.variants[variant].fields.len())
     }
 
+    /// Whether `receiver.method` calls a method with type parameters of its own.
+    // shortcut: only a local's or a field's type is known before it is checked, so another
+    // receiver's method is checked without context; upgrade once a receiver can be checked
+    // ahead of the ranking and kept.
+    fn generic_method(&self, receiver: &ast::Expr, method: &ast::Ident) -> bool {
+        let (methods, owner) = match self.static_type(receiver).map(Type::kind) {
+            Some(TypeKind::Class(id, _)) => {
+                let info = &self.classes[id.0];
+                (&info.methods, info.type_params.len())
+            }
+            Some(TypeKind::Enum(id, _)) => {
+                let info = &self.enums[id.0];
+                (&info.methods, info.type_params.len())
+            }
+            _ => return false,
+        };
+        matches!(methods.get(&method.name), Some(&Declared::Known(func))
+            if self.signatures[func.0].type_params.len() > owner)
+    }
+
+    /// The type of `e`, a local or a field of one, known without checking it.
+    fn static_type(&self, e: &ast::Expr) -> Option<Type> {
+        match &e.kind {
+            ast::ExprKind::Name(name) => {
+                self.body
+                    .scopes
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(name))?
+                    .ty
+            }
+            ast::ExprKind::Field {
+                base,
+                name,
+                safe: false,
+            } => {
+                let ty = self.static_type(base)?;
+                let TypeKind::Class(id, _) = ty.kind() else {
+                    return None;
+                };
+                let fields = &self.classes[id.0].fields;
+                let index = fields.iter().position(|f| f.name.name == name.name)?;
+                self.field_type(ty, index)
+            }
+            _ => None,
+        }
+    }
+
     /// Whether a call of `name` calls a generic function or constructs a generic class.
     fn generic_callee(&self, name: Symbol) -> bool {
         match (self.class_ids.get(&name), self.function_ids.get(&name)) {
@@ -423,24 +508,18 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `e`'s type comes from its literals' defaults: an integer literal, `-` of one,
-    /// or a non-empty array literal whose elements are each literal-like or need context, one
-    /// at least literal-like.
+    /// Whether `e`'s type comes from its literals' defaults: an integer literal or arithmetic
+    /// over them, ranked as an array literal's elements are, or a non-empty array literal whose
+    /// elements are each literal-like or need context, one at least literal-like.
     pub(super) fn literal_like(&self, e: &ast::Expr) -> bool {
-        use ast::ExprKind as K;
         match &e.kind {
-            K::Int { .. } => true,
-            K::Unary {
-                op: UnaryOp::Neg,
-                operand,
-            } => matches!(operand.kind, K::Int { .. }),
-            K::ArrayLit(elements) => {
+            ast::ExprKind::ArrayLit(elements) => {
                 elements.iter().any(|e| self.literal_like(e))
                     && elements
                         .iter()
                         .all(|e| self.literal_like(e) || self.needs_context(e))
             }
-            _ => false,
+            _ => int_literal(e),
         }
     }
 
