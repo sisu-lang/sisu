@@ -13,7 +13,7 @@
 //! takes. Dropping a token costs reuse, never soundness, and bounds the walk by the blocks times
 //! `MAX_OPEN`, however deep the arms nest.
 
-use super::{BlockId, Function, LocalId, Rvalue, Statement};
+use super::{BlockId, Function, Local, LocalId, Rvalue, Statement};
 use crate::tir::{self, EnumId, TypeKind};
 
 /// The most tokens a set holds.
@@ -21,18 +21,23 @@ pub(super) const MAX_OPEN: usize = 16;
 
 /// Gives each construction of `function` the tokens its boxed fields take.
 pub(super) fn reuse(function: &mut Function, program: &tir::Program) {
-    for (b, mut set) in available(function, program).into_iter().enumerate() {
-        for at in 0..function.blocks[b].stmts.len() {
-            let taken = step(&mut set, &function.blocks[b].stmts[at], function, program);
-            if let (
-                Some(taken),
-                Statement::Assign {
-                    value: Rvalue::Variant { reuse, .. },
-                    ..
-                },
-            ) = (taken, &mut function.blocks[b].stmts[at])
+    let available = available(function, program);
+    let Function { blocks, locals, .. } = function;
+    for (block, mut set) in blocks.iter_mut().zip(available) {
+        for stmt in &mut block.stmts {
+            if let Statement::Assign {
+                value:
+                    Rvalue::Variant {
+                        id, variant, reuse, ..
+                    },
+                ..
+            } = stmt
             {
-                *reuse = taken;
+                take(&mut set, locals, program, *id, *variant, |field, token| {
+                    reuse[field] = Some(token);
+                });
+            } else {
+                step(&mut set, stmt, locals, program);
             }
         }
     }
@@ -67,25 +72,20 @@ pub(super) fn available(function: &Function, program: &tir::Program) -> Vec<Vec<
         };
         entry[block.0].clone_from(&set);
         for stmt in &function.blocks[block.0].stmts {
-            step(&mut set, stmt, function, program);
+            step(&mut set, stmt, &function.locals, program);
         }
         exit[block.0] = set;
     }
     entry
 }
 
-/// Applies `stmt` to `set`: for a construction, the token each of its fields takes.
-fn step(
-    set: &mut Vec<LocalId>,
-    stmt: &Statement,
-    function: &Function,
-    program: &tir::Program,
-) -> Option<Vec<Option<LocalId>>> {
+/// Applies `stmt` to `set`.
+fn step(set: &mut Vec<LocalId>, stmt: &Statement, locals: &[Local], program: &tir::Program) {
     match stmt {
         Statement::Assign {
             value: Rvalue::Variant { id, variant, .. },
             ..
-        } => return Some(take(set, function, program, *id, *variant)),
+        } => take(set, locals, program, *id, *variant, |_, _| {}),
         Statement::TakeApart { tokens, .. } => {
             set.extend(tokens.iter().map(|(token, _)| *token));
             set.sort_unstable_by_key(|token| token.0);
@@ -102,32 +102,31 @@ fn step(
         | Statement::Check(_)
         | Statement::End(_) => {}
     }
-    None
 }
 
-/// The token each field of variant `variant` of enum `id` takes from `set`, which loses them: a
-/// boxed `F` field takes the token of `F` with the lowest id. A field held inline and a boxed
-/// `F?` take none.
+/// Removes from `set` the token each field of variant `variant` of enum `id` takes, and passes
+/// `put` the field's index and the token: a boxed `F` field takes the token of `F` with the
+/// lowest id. A field held inline and a boxed `F?` take none.
 fn take(
     set: &mut Vec<LocalId>,
-    function: &Function,
+    locals: &[Local],
     program: &tir::Program,
     id: EnumId,
     variant: usize,
-) -> Vec<Option<LocalId>> {
-    program.enums[id.0].variants[variant]
+    mut put: impl FnMut(usize, LocalId),
+) {
+    for (at, field) in program.enums[id.0].variants[variant]
         .fields
         .iter()
-        .map(|field| {
-            if !field.boxed || !matches!(field.ty.kind(), TypeKind::Enum(_)) {
-                return None;
-            }
-            let at = set
-                .iter()
-                .position(|token| function.locals[token.0].ty == field.ty)?;
-            Some(set.remove(at))
-        })
-        .collect()
+        .enumerate()
+    {
+        if !field.boxed || !matches!(field.ty.kind(), TypeKind::Enum(_)) {
+            continue;
+        }
+        if let Some(i) = set.iter().position(|token| locals[token.0].ty == field.ty) {
+            put(at, set.remove(i));
+        }
+    }
 }
 
 /// The blocks that a path from the entry reaches, each before its successors except along a
