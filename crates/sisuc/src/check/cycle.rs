@@ -436,4 +436,10 @@ mod tests {
         g.types(0, ty, Span::new(0, 1));
         assert_eq!(g.walked.len(), levels + 1);
     }
+
+    /// A parameter has no parts: its node is its own, never one made of parts.
+    #[test]
+    fn a_parameter_has_no_parts() {
+        assert_eq!(parts(param(0)).count(), 0);
+    }
 }

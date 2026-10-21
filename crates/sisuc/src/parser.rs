@@ -4372,6 +4372,7 @@ mod tests {
             assert!(fix_edits(&d).is_none(), "{src}");
         }
         assert_eq!(parse_err("fn f<T>; (x: T) {}"), (Code::Expected, 1, 8));
+        assert_eq!(parse_err("fn f<T>\nfn g() {}"), (Code::Expected, 1, 8));
         // As after `i64`: the `=` cannot start the next line, nor the `{`.
         assert_eq!(
             parse_err("fn f() {\n    let s: Box<i64>\n    = x\n}"),
