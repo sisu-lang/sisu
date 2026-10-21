@@ -20,11 +20,13 @@ scrutinee apart:
   contents are taken apart by the same rule and its block becomes a token. A
   construction of the same enum builds into the token's block instead of
   calling `sisu_alloc`; every exit that builds nothing frees it. A shared box
-  has an empty token: its bindings are copied and the box is released.
+  gives no token: its contents are retained and its count drops by one.
 - **The test runs after the guard.** A failing guard never sees a moved field.
 - **Only enums.** A class has identity, which `is` sees.
-- **Two arms keep the copying commit.** An arm whose `|` binds a counted name
-  or tests a box, and a boxed `F?` field, which is copied and never reused.
+- **One kind of arm keeps the copying commit.** An arm whose `|` binds a
+  counted name or tests a box. A boxed `F?` field does not: its binding is
+  copied before the take-apart and its box stays in the rest, so the box is
+  released with it and never becomes a token.
 
 ## Considered options
 
@@ -43,12 +45,13 @@ scrutinee apart:
   only at run time. This is linear in the alternatives. The user deferred it
   to a follow-up on 2026-10-21, so such an arm keeps the copying commit:
   `Add(l, r) | Mul(l, r) => Expr.Add(simplify(l), simplify(r))` still frees
-  and allocates one box per pass.
+  two boxes and allocates two per rewrite, when the input boxes are held
+  alone.
 - **An `F?` token from a helper that returns `null` for an absent box.** A
   list rewrite such as `Link(s, next) => Chain.Link(s, if let n = next { ... })`
   would reuse the tail's box. The user deferred it to a follow-up on
-  2026-10-21, so a boxed `F?` field is copied, and the box is released with
-  the rest.
+  2026-10-21, so a boxed `F?` field is copied, never reused, and its box is
+  released with the rest.
 
 ## Prior art
 
@@ -68,8 +71,8 @@ Checked with GitHits.
   one release more than ADR 0019's commit per unbound counted part, and per
   tested box, of a shared box. Copying only the bindings would put a count test
   at the use site.
-- An `|` arm with a counted binding and a boxed `F?` field keep the copying
-  commit until the two follow-ups above land.
+- An `|` arm with a counted binding keeps the copying commit, and a boxed `F?`
+  field is copied and never reused, until the two follow-ups above land.
 - The certifier tracks tokens like any owned value: a token must be built into
   or freed exactly once on every path (rule 1).
 - A token made before a loop is not used inside or after it. The pass loses
