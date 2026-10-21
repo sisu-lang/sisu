@@ -216,10 +216,11 @@ fn help_and_no_arguments_exit_0() {
     }
 }
 
-/// Help, version and an explanation that cannot be written are a tool error, not a panic or a
-/// silent success.
+/// Help, version, an explanation and an emitted stage that cannot be written are a tool error,
+/// not a panic or a silent success.
 #[test]
 fn output_into_a_full_stdout_is_a_tool_error() {
+    const MAIN: &str = "fn main() { print(1) }";
     for args in [
         &[][..],
         &["--help"],
@@ -227,6 +228,12 @@ fn output_into_a_full_stdout_is_a_tool_error() {
         &["build", "--help"],
         &["--version"],
         &["explain", "E0001"],
+        &["build", "--emit", "tokens", "-e", MAIN],
+        &["build", "--emit", "ast", "-e", MAIN],
+        &["build", "--emit", "tir", "-e", MAIN],
+        &["build", "--emit", "mir", "-e", MAIN],
+        &["build", "--emit", "ir", "-e", MAIN],
+        &["build", "--emit", "ir-raw", "-e", MAIN],
     ] {
         let full = fs::File::options()
             .write(true)
