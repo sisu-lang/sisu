@@ -7,7 +7,7 @@ SECS =
 BENCH =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup audit-setup build test bless lint deny miri check coverage mutants verify fuzz bench callgrind site
+.PHONY: help setup audit-setup build test bless lint deny miri check coverage mutants verify fuzz fuzz-coverage bench callgrind site
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -56,6 +56,9 @@ verify: ## Coverage, then mutants, since BASE; the last line is the verdict; LOG
 
 fuzz: ## Fuzz the front end for SECS seconds (1800 by default)
 	scripts/fuzz.sh "$(SECS)"
+
+fuzz-coverage: ## Line coverage per compiler stage of the fuzz corpus and seeds
+	scripts/fuzz.sh --coverage
 
 bench: ## Time the benchmarks in bench/ (BENCH='fib sieve' picks some)
 	scripts/bench.sh $(BENCH)
