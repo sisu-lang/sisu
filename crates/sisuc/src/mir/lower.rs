@@ -244,13 +244,14 @@ impl<'a> Lowering<'a> {
     }
 
     /// Counts a construction of variant `variant` of enum `id` once for each enum `F` it has a
-    /// boxed `F` field of, the fields the reuse pass gives a token.
+    /// boxed `F` field of, the fields the reuse pass gives a token. Fields of one type are all
+    /// boxed or all inline, so the first field of each type decides.
     fn count_built(&mut self, id: tir::EnumId, variant: usize) {
         let fields = &self.program.enums[id.0].variants[variant].fields;
         for (i, field) in fields.iter().enumerate() {
             if let TypeKind::Enum(f) = field.ty.kind()
                 && field.boxed
-                && !fields[..i].iter().any(|g| g.boxed && g.ty == field.ty)
+                && !fields[..i].iter().any(|g| g.ty == field.ty)
             {
                 #[cfg(test)]
                 SEEDED.set(SEEDED.get() + 1);

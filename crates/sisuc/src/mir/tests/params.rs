@@ -360,6 +360,17 @@ fn parameter_whose_box_is_reused_stays_owned() {
     );
     let printed = built(include_str!("../../../tests/run/enum_alloc_rewrite.sisu"));
     signature(&printed, "swap", "fn swap(e#0: Expr)");
+    // `Cons` has one boxed field, after an inline one, and `xs` is the second parameter.
+    let printed = built(
+        "enum L {\n    Nil\n    Cons(i64, L)\n}\n\
+         fn bump(k: i64, xs: L) -> L {\n    match xs {\n        Cons(h, t) => L.Cons(h + k, L.Nil)\n        Nil => L.Nil\n    }\n}",
+    );
+    signature(&printed, "bump", "fn bump(k#0: i64, xs#1: L)");
+    has(
+        &printed,
+        "bump",
+        &["= variant L.Cons(_, move _) into [-, _]"],
+    );
 }
 
 /// `weigh` and `eval` test `e`'s boxes, but no arm builds a box, so `e` stays borrowed.
