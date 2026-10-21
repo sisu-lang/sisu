@@ -5,6 +5,7 @@ use std::{fmt, iter};
 
 use rustc_hash::FxHashMap;
 
+use super::enums::VariantInfo;
 use super::expr::int_literal;
 use super::prelude::PRELUDE;
 use super::{
@@ -22,7 +23,8 @@ use crate::tir::{Type, TypeArgs, TypeKind};
 /// the receiver, an argument or the expected type fixes it.
 pub(super) struct Bindings {
     found: Vec<Option<Type>>,
-    /// The parameters the last `unify` or `constrain` bound, which only they need checking.
+    /// The parameters the last `unify` or `constrain` bound: the only ones whose types need
+    /// checking.
     fresh: Vec<usize>,
 }
 
@@ -177,6 +179,17 @@ pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
     }
 }
 
+/// Whether `args` fit parameters `params`, each a resolved type and its label (`None` for a
+/// positional one) in order: a call whose own check reports nothing of its shape.
+fn fits(
+    params: impl ExactSizeIterator<Item = (Option<Type>, Option<Symbol>)>,
+    args: &[ast::Arg],
+) -> bool {
+    params.len() == args.len()
+        && iter::zip(params, args)
+            .all(|((ty, label), arg)| ty.is_some() && arg.label.as_ref().map(|l| l.name) == label)
+}
+
 /// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
 pub(super) fn mismatched(checked: &Checked) -> bool {
     matches!(checked, Err(Poisoned { mismatch: true, .. }))
@@ -264,10 +277,11 @@ impl Checker<'_> {
             Ok(list) if !call.failed => list,
             Ok(_) => return None,
             Err(i) => {
-                // An argument that failed, or a parameter's type that did, may be what would
-                // have bound it, and an `UNKNOWN` context is one that failed.
+                // An argument that failed, or a parameter's or the return type that did, may be
+                // what would have bound it, and an `UNKNOWN` context is one that failed.
                 let errored = call.slots.iter().flatten().any(|c| type_of(c).is_none())
-                    || sig.params.contains(&None);
+                    || sig.params.contains(&None)
+                    || sig.ret.is_none();
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
                     self.cannot_infer(sig, sig.declared[i]);
                 }
@@ -378,22 +392,30 @@ impl Checker<'_> {
 
     /// Whether `e`'s type cannot come from itself: a bare `[]` or `None`; a payload-free
     /// variant of a generic enum; an array literal whose elements all need context; an `if` or
-    /// a block whose every value branch does; or a call or construction of a generic
-    /// declaration, its type arguments not written, whose arguments all do. A name resolves as
-    /// the checker resolves it: a call's callee by its declaration, whatever local takes it.
+    /// a block whose every value branch does; or a call of a generic function or method, or a
+    /// construction of a generic class or variant, its type arguments not written, whose
+    /// arguments fit its declaration and all need context. A name resolves as the checker
+    /// resolves it: a call's callee by its declaration, whatever local takes it. A method's
+    /// receiver is checked here, ahead of its call, and kept for it (see `receiver_ahead`).
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
-    pub(super) fn needs_context(&self, e: &ast::Expr) -> bool {
+    pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
+        self.waits(e, true)
+    }
+
+    /// `needs_context`, where `ahead` says whether a method's receiver may be checked here.
+    fn waits(&mut self, e: &ast::Expr, ahead: bool) -> bool {
         use ast::ExprKind as K;
-        let all = |args: &[ast::Arg]| args.iter().all(|arg| self.needs_context(&arg.value));
         match &e.kind {
             K::NoneLit => true,
-            K::ArrayLit(elements) => elements.iter().all(|e| self.needs_context(e)),
+            K::ArrayLit(elements) => elements.iter().all(|e| self.waits(e, ahead)),
             K::Field {
                 base,
                 name,
                 safe: false,
-            } => self.generic_variant(base, name) == Some(0),
+            } => self
+                .generic_variant(base, name)
+                .is_some_and(|v| v.fields.is_empty()),
             K::MethodCall {
                 receiver,
                 method,
@@ -401,45 +423,67 @@ impl Checker<'_> {
                 args,
                 safe: false,
                 ..
-            } => {
-                types.is_empty()
-                    && (self.generic_variant(receiver, method).is_some()
-                        || self.generic_method(receiver, method))
-                    && all(args)
+            } if types.is_empty() => {
+                let generic = match self.generic_variant(receiver, method) {
+                    // Mixed labels are reported at the declaration.
+                    Some(v) => {
+                        !v.fields.is_empty()
+                            && (v.labels.iter().all(Option::is_some)
+                                || v.labels.iter().all(Option::is_none))
+                            && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args)
+                    }
+                    None => ahead && self.generic_method(receiver, method, args),
+                };
+                generic && args.iter().all(|arg| self.waits(&arg.value, ahead))
             }
             K::Call {
                 callee,
                 types,
                 args,
                 ..
-            } => types.is_empty() && self.generic_callee(callee.name) && all(args),
+            } => {
+                types.is_empty()
+                    && self.generic_callee(callee.name, args)
+                    && args.iter().all(|arg| self.waits(&arg.value, ahead))
+            }
             K::If {
                 then_block,
                 else_block: Some(else_block),
                 ..
-            } => self.branches_need_context(&[then_block, else_block]),
-            K::Block(block) => self.branches_need_context(&[block]),
+            } => self.branches_wait(&[then_block, else_block], ahead),
+            K::Block(block) => self.branches_wait(&[block], ahead),
             _ => false,
         }
     }
 
     /// Whether one of `blocks` ends in a value, and each that does needs context; one that
     /// ends in an exit has none.
-    fn branches_need_context(&self, blocks: &[&ast::Block]) -> bool {
-        let mut values = blocks
-            .iter()
-            .filter_map(|block| match block.stmts.last().map(|stmt| &stmt.kind) {
-                Some(StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue) => None,
-                Some(StmtKind::Expr(e)) => Some(self.needs_context(e)),
-                _ => Some(false),
-            })
-            .peekable();
-        values.peek().is_some() && values.all(|needs| needs)
+    fn branches_wait(&mut self, blocks: &[&ast::Block], ahead: bool) -> bool {
+        let mut any = false;
+        for block in blocks {
+            // shortcut: a receiver may name a local the block declares, not in scope here, so a
+            // block with a `let` checks its methods without context; check such a receiver in
+            // the block's scope if a generic method's value ends one.
+            let ahead = ahead
+                && !block
+                    .stmts
+                    .iter()
+                    .any(|stmt| matches!(stmt.kind, StmtKind::Let { .. }));
+            match block.stmts.last().map(|stmt| &stmt.kind) {
+                Some(StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue) => {}
+                Some(StmtKind::Expr(e)) if self.waits(e, ahead) => any = true,
+                _ => return false,
+            }
+        }
+        any
     }
 
-    /// The field count of `base.member`, a variant of a generic enum that `base` names
-    /// without type arguments.
-    pub(super) fn generic_variant(&self, base: &ast::Expr, member: &ast::Ident) -> Option<usize> {
+    /// The variant `base.member` of a generic enum that `base` names without type arguments.
+    pub(super) fn generic_variant(
+        &self,
+        base: &ast::Expr,
+        member: &ast::Ident,
+    ) -> Option<&VariantInfo> {
         let ast::ExprKind::Name(name) = base.kind else {
             return None;
         };
@@ -448,15 +492,18 @@ impl Checker<'_> {
         };
         let info = &self.enums[id.0];
         let &variant = info.index.get(&member.name)?;
-        (!info.type_params.is_empty()).then(|| info.variants[variant].fields.len())
+        (!info.type_params.is_empty()).then(|| &info.variants[variant])
     }
 
-    /// Whether `receiver.method` calls a method with type parameters of its own.
-    // shortcut: only a local's or a field's type is known before it is checked, so another
-    // receiver's method is checked without context; upgrade once a receiver can be checked
-    // ahead of the ranking and kept.
-    fn generic_method(&self, receiver: &ast::Expr, method: &ast::Ident) -> bool {
-        let (methods, owner) = match self.static_type(receiver).map(Type::kind) {
+    /// Whether `receiver.method(args)` calls a method with type parameters of its own, whose
+    /// declaration `args` fit and whose return type resolved.
+    fn generic_method(
+        &mut self,
+        receiver: &ast::Expr,
+        method: &ast::Ident,
+        args: &[ast::Arg],
+    ) -> bool {
+        let (methods, owner) = match self.receiver_ahead(receiver).map(Type::kind) {
             Some(TypeKind::Class(id, _)) => {
                 let info = &self.classes[id.0];
                 (&info.methods, info.type_params.len())
@@ -467,43 +514,51 @@ impl Checker<'_> {
             }
             _ => return false,
         };
-        matches!(methods.get(&method.name), Some(&Declared::Known(func))
-            if self.signatures[func.0].type_params.len() > owner)
+        let Some(&Declared::Known(func)) = methods.get(&method.name) else {
+            return false;
+        };
+        let sig = &self.signatures[func.0];
+        sig.type_params.len() > owner
+            && sig.ret.is_some()
+            && fits(sig.params.iter().map(|&ty| (ty, None)), args)
     }
 
-    /// The type of `e`, a local or a field of one, known without checking it.
-    fn static_type(&self, e: &ast::Expr) -> Option<Type> {
-        match &e.kind {
-            ast::ExprKind::Name(name) => {
-                self.body
-                    .scopes
-                    .iter()
-                    .rev()
-                    .find_map(|scope| scope.get(name))?
-                    .ty
-            }
-            ast::ExprKind::Field {
-                base,
-                name,
-                safe: false,
-            } => {
-                let ty = self.static_type(base)?;
-                let TypeKind::Class(id, _) = ty.kind() else {
-                    return None;
-                };
-                let fields = &self.classes[id.0].fields;
-                let index = fields.iter().position(|f| f.name.name == name.name)?;
-                self.field_type(ty, index)
-            }
-            _ => None,
+    /// The type of `receiver`, a method's, checked ahead of the call, which `member` then takes
+    /// from `body.receivers`. `None` for a name no local takes: a path, which `type_path`
+    /// checks, or an unknown name.
+    fn receiver_ahead(&mut self, receiver: &ast::Expr) -> Option<Type> {
+        match receiver.kind {
+            ast::ExprKind::Name(name) if self.lookup(name).is_none() => return None,
+            ast::ExprKind::Applied { .. } => return None,
+            _ => {}
         }
+        if let Some(checked) = self.body.receivers.get(&receiver.span) {
+            return type_of(checked);
+        }
+        // An argument is not part of an assignment target's chain.
+        let target = std::mem::take(&mut self.body.in_target);
+        let checked = self.value(receiver, None);
+        self.body.in_target = target;
+        let ty = type_of(&checked);
+        self.body.receivers.insert(receiver.span, checked);
+        ty
     }
 
-    /// Whether a call of `name` calls a generic function or constructs a generic class.
-    fn generic_callee(&self, name: Symbol) -> bool {
+    /// Whether a call of `name` with `args` calls a generic function, whose return type
+    /// resolved, or constructs a generic class; either's declaration `args` fit.
+    fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> bool {
         match (self.class_ids.get(&name), self.function_ids.get(&name)) {
-            (Some(&Declared::Known(class)), _) => !self.classes[class.0].type_params.is_empty(),
-            (None, Some(&Declared::Known(func))) => !self.signatures[func.0].type_params.is_empty(),
+            (Some(&Declared::Known(class)), _) => {
+                let info = &self.classes[class.0];
+                !info.type_params.is_empty()
+                    && fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args)
+            }
+            (None, Some(&Declared::Known(func))) => {
+                let sig = &self.signatures[func.0];
+                !sig.type_params.is_empty()
+                    && sig.ret.is_some()
+                    && fits(sig.params.iter().map(|&ty| (ty, None)), args)
+            }
             _ => false,
         }
     }
@@ -511,7 +566,7 @@ impl Checker<'_> {
     /// Whether `e`'s type comes from its literals' defaults: an integer literal or arithmetic
     /// over them, ranked as an array literal's elements are, or a non-empty array literal whose
     /// elements are each literal-like or need context, one at least literal-like.
-    pub(super) fn literal_like(&self, e: &ast::Expr) -> bool {
+    pub(super) fn literal_like(&mut self, e: &ast::Expr) -> bool {
         match &e.kind {
             ast::ExprKind::ArrayLit(elements) => {
                 elements.iter().any(|e| self.literal_like(e))

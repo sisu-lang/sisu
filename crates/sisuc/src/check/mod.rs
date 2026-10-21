@@ -328,6 +328,9 @@ struct Body {
     /// Each `+` found to join a `string` under an expected `u8`, which a later check of it
     /// checks with no expected type.
     joins: FxHashSet<Span>,
+    /// Each method receiver, by its span, checked ahead of its call to rank the call as an
+    /// argument (see `needs_context`), which `member` takes in place of checking it again.
+    receivers: FxHashMap<Span, Checked>,
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error.

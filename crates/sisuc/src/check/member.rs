@@ -21,7 +21,10 @@ impl Checker<'_> {
         name: &ast::Ident,
         member: impl FnOnce(&mut Self, Checked) -> Checked,
     ) -> Checked {
-        let scrutinee = self.value(receiver, None);
+        let scrutinee = match self.body.receivers.remove(&receiver.span) {
+            Some(checked) => checked,
+            None => self.value(receiver, None),
+        };
         if !safe {
             return member(self, scrutinee);
         }

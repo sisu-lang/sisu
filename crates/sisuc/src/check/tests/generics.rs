@@ -871,6 +871,38 @@ fn generic_methods_wait_for_context() {
             "E.map",
             &["i64", "[string]", "[[string]]"],
         ),
+        // Any receiver is checked ahead of the call, once: a temporary, a call's result, `self`.
+        (
+            "fn g() {\n    let xs: [i64] = id(Box(v: 1).make())\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "fn mk() -> Box<i64> { Box(v: 1) }\nfn g() {\n    let xs: [i64] = id(mk().make())\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "class Cup<T> {\n    v: T\n    fn make<U>(self) -> [U] { [] }\n    fn all(self) -> [i64] { id(self.make()) }\n}",
+            "Cup.make",
+            &["T", "i64", "[i64]"],
+        ),
+        (
+            "fn g(b: Box<i64>, c: bool) {\n    let xs: [i64] = id(if c { b.make() } else { [] })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        // A variant waits whether its payload is labeled or not.
+        (
+            "enum Tag<T> { P(x: [T]) }\nfn g() {\n    let p: Tag<i64> = id(Tag.P(x: []))\n}",
+            "Tag",
+            &["i64", "Tag<i64>"],
+        ),
+        (
+            "fn g() {\n    let w: Wrap<[i64]> = id(Wrap.W([]))\n}",
+            "Wrap",
+            &["[i64]", "Wrap<[i64]>"],
+        ),
     ]);
 }
 
@@ -1320,10 +1352,20 @@ fn generic_method_calls_that_do_not_check() {
             "fn g(b: Box<i64>) {\n    let x = id(b.map_all([]))\n}".to_string(),
             vec![(Code::CannotInfer, (2, 13))],
         ),
-        // shortcut (`generic_method`): only a local's or a field's method waits.
+        // shortcut (`branches_wait`): a block with a `let` checks its method without context,
+        // since its receiver may name a local of the block, not the `c` outside it.
         (
-            "fn g() {\n    let xs: [i64] = id(Box(v: 1).make())\n}".into(),
-            vec![(Code::CannotInfer, (2, 34))],
+            "fn g(c: i64) {\n    let xs: [i64] = id({ let c = Box(v: 1); c.make() })\n}".into(),
+            vec![(Code::CannotInfer, (2, 47))],
+        ),
+        // A path before the `.` is not checked as a value.
+        (
+            "fn g() {\n    let x = id(math.sqrt(2.0))\n}".into(),
+            vec![(Code::MathIdiom, (2, 16))],
+        ),
+        (
+            "fn g() {\n    let t = id(Tree<i64>.Node(Tree.Leaf, 1, Tree.Leaf))\n}".into(),
+            vec![],
         ),
         // A receiver whose type is not known waits for nothing, and reports its own error.
         (
@@ -1338,7 +1380,99 @@ fn generic_method_calls_that_do_not_check() {
             "fn g(b: Box<i64>) {\n    let xs: [i64] = id(b.nope.make())\n}".into(),
             vec![(Code::NoMember, (2, 26))],
         ),
+        (
+            "fn g() {\n    let xs: [i64] = id(nope.make())\n}".into(),
+            vec![(Code::BindingNotFound, (2, 24))],
+        ),
+        // Each call's ranking finds the receiver checked already.
+        (
+            "fn g() {\n    let xs: [i64] = id(id(nope.b.make()))\n}".into(),
+            vec![(Code::BindingNotFound, (2, 27))],
+        ),
     ] {
         codes(&with_generics(&line), &expected);
+    }
+}
+
+/// An argument that would wait for context is checked on its own when its call's shape or
+/// declaration is wrong, so that it reports that, not the enclosing call's inference.
+#[test]
+fn waiting_calls_report_their_own_shape() {
+    for (line, expected) in [
+        // A wrong count, or a label, of a function's, a method's, a class's or a variant's.
+        (
+            "fn g() {\n    let x = id(first())\n}",
+            vec![(Code::ArgumentCount, (2, 16))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let x = id(b.map_all())\n}",
+            vec![(Code::ArgumentCount, (2, 16))],
+        ),
+        (
+            "fn g() {\n    let x = id(Box())\n}",
+            vec![(Code::MissingField, (2, 16))],
+        ),
+        (
+            "fn g() {\n    let x = id(Wrap.W())\n}",
+            vec![(Code::ArgumentCount, (2, 16))],
+        ),
+        // A labeled argument is still checked, as in the call alone.
+        (
+            "fn g() {\n    let x = id(first(xs: []))\n}",
+            vec![
+                (Code::CannotInfer, (2, 16)),
+                (Code::LabeledArgument, (2, 22)),
+            ],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let x = id(b.map_all(u: []))\n}",
+            vec![
+                (Code::CannotInfer, (2, 18)),
+                (Code::LabeledArgument, (2, 26)),
+            ],
+        ),
+        (
+            "fn g() {\n    let x = id(Box(w: []))\n}",
+            vec![(Code::NoMember, (2, 20))],
+        ),
+        (
+            "fn g() {\n    let t = id(Tree.Leaf())\n}",
+            vec![(Code::VariantForm, (2, 25))],
+        ),
+        (
+            "enum Mix<T> { M(x: T, T) }\nfn g() {\n    let m = id(Mix.M(x: [], []))\n}",
+            vec![(Code::MixedLabels, (1, 23))],
+        ),
+        // A parameter's or the return type that is not found poisons the call.
+        (
+            "fn f<T>(x: Nope<T>) -> [T] { [] }\nfn g() {\n    let y = id(f([]))\n}",
+            vec![(Code::UnknownType, (1, 12))],
+        ),
+        (
+            "fn f<T>(x: [T]) -> Nope<T> {}\nfn g() {\n    let y = id(f([]))\n}",
+            vec![(Code::UnknownType, (1, 20))],
+        ),
+        (
+            "fn f<T>(x: [T]) -> Nope<T> {}\nfn g() {\n    let y = f([])\n}",
+            vec![(Code::UnknownType, (1, 20))],
+        ),
+        (
+            "class Bin {\n    fn put<U>(self, x: Nope<U>) -> [U] { [] }\n}\nfn g(b: Bin) {\n    let x = id(b.put([]))\n}",
+            vec![(Code::UnknownType, (2, 24))],
+        ),
+        (
+            "class Bin {\n    fn put<U>(self, x: [U]) -> Nope<U> {}\n}\nfn g(b: Bin) {\n    let x = id(b.put([]))\n}",
+            vec![(Code::UnknownType, (2, 32))],
+        ),
+        (
+            "class Bad<T> {\n    v: Nope<T>\n}\nfn g() {\n    let b = id(Bad(v: []))\n}",
+            vec![(Code::UnknownType, (2, 8))],
+        ),
+        (
+            "enum Bad<T> { P(Nope<T>) }\nfn g() {\n    let b = id(Bad.P([]))\n}",
+            vec![(Code::UnknownType, (1, 17))],
+        ),
+    ] {
+        codes(&with_generics(line), &expected);
     }
 }
