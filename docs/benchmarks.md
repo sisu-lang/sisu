@@ -7,12 +7,7 @@ with no per-language tuning.
 
 ## Results
 
-fib and sieve ran at commit 9cbd44e and binary_trees at 7c8d29e (the change
-between them is the runtime's live count), on 2026-10-12. hello ran at
-commit 4690caa and quicksort at 3dbda29, on 2026-10-15; mandelbrot and
-fannkuch_redux at d8a9603, and nbody at 10bb08f, on 2026-10-16.
-
-All ran on an Intel Core i9-14900K under
+All ran at commit 95cc196 on 2026-10-21, on an Intel Core i9-14900K under
 Linux 7.0. Each figure is the median of 5 runs, pinned to one CPU. Each table
 runs from fastest to slowest wall time, with Sisu in bold.
 
@@ -20,91 +15,91 @@ runs from fastest to slowest wall time, with Sisu in bold.
 
 | Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Rust | 0.17 | 0.17 | 1.9 | 329 | 0.06 |
-| C | 0.18 | 0.18 | 1.4 | 14 | 0.04 |
-| **Sisu** | **0.26** | **0.25** | **1.4** | **317** | **0.03** |
-| Java | 0.27 | 0.26 | 40.3 | - | 0.19 |
-| Go | 0.28 | 0.28 | 1.8 | 1483 | 1.88 |
-| Python | 5.18 | 5.16 | 11.0 | - | - |
+| Rust | 0.16 | 0.16 | 1.9 | 329 | 0.054 |
+| C | 0.18 | 0.18 | 1.8 | 14 | 0.041 |
+| Go | 0.27 | 0.27 | 1.8 | 1483 | 0.084 |
+| Java | 0.27 | 0.26 | 38.4 | - | 0.197 |
+| **Sisu** | **0.27** | **0.27** | **1.4** | **353** | **0.044** |
+| Python | 4.72 | 4.72 | 10.8 | - | - |
 
 ### sieve
 
 | Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Rust | 0.18 | 0.18 | 49.4 | 329 | 0.14 |
-| C | 0.20 | 0.20 | 48.6 | 14 | 0.05 |
-| Go | 0.21 | 0.21 | 49.8 | 1483 | 0.19 |
-| **Sisu** | **0.23** | **0.23** | **48.9** | **317** | **0.04** |
-| Java | 0.24 | 0.23 | 89.1 | - | 0.20 |
-| Python | 2.29 | 2.29 | 392.5 | - | - |
+| Rust | 0.17 | 0.17 | 49.4 | 329 | 0.128 |
+| C | 0.19 | 0.19 | 49.1 | 14 | 0.047 |
+| Go | 0.19 | 0.19 | 49.8 | 1483 | 0.086 |
+| **Sisu** | **0.19** | **0.19** | **48.9** | **353** | **0.045** |
+| Java | 0.23 | 0.23 | 87.2 | - | 0.212 |
+| Python | 2.28 | 2.28 | 392.3 | - | - |
 
 ### binary_trees
 
 | Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Java | 0.37 | 0.36 | 334.0 | - | 0.19 |
-| C | 0.62 | 0.61 | 33.4 | 14 | 0.05 |
-| Rust | 0.72 | 0.71 | 33.9 | 330 | 0.13 |
-| **Sisu** | **0.85** | **0.85** | **33.4** | **317** | **0.05** |
-| Go | 1.33 | 1.32 | 46.3 | 1487 | 0.08 |
-| Python | 19.22 | 19.19 | 107.2 | - | - |
+| Java | 0.39 | 0.37 | 332.7 | - | 0.288 |
+| C | 0.62 | 0.62 | 33.9 | 14 | 0.065 |
+| **Sisu** | **0.72** | **0.72** | **33.7** | **353** | **0.053** |
+| Rust | 0.73 | 0.72 | 33.9 | 330 | 0.078 |
+| Go | 1.35 | 1.35 | 48.4 | 1487 | 0.075 |
+| Python | 19.80 | 19.78 | 107.4 | - | - |
 
 ### hello
 
 | Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| C | 0.00 | 0.00 | 1.1 | 14 | 0.053 |
-| Go | 0.00 | 0.00 | 1.9 | 1483 | 0.037 |
-| Python | 0.00 | 0.00 | 10.5 | - | - |
-| Rust | 0.00 | 0.00 | 1.9 | 328 | 0.073 |
-| **Sisu** | **0.00** | **0.00** | **1.4** | **353** | **0.058** |
-| Java | 0.01 | 0.00 | 39.2 | - | 0.196 |
+| C | 0.00 | 0.00 | 1.6 | 14 | 0.070 |
+| Go | 0.00 | 0.00 | 1.8 | 1483 | 0.091 |
+| Python | 0.00 | 0.00 | 10.8 | - | - |
+| Rust | 0.00 | 0.00 | 1.9 | 328 | 0.112 |
+| **Sisu** | **0.00** | **0.00** | **1.4** | **353** | **0.064** |
+| Java | 0.02 | 0.00 | 37.8 | - | 0.189 |
 
 ### quicksort
 
 | Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| C | 0.53 | 0.52 | 77.3 | 14 | 0.054 |
-| Go | 0.55 | 0.55 | 78.3 | 1487 | 0.069 |
-| Rust | 0.55 | 0.54 | 77.8 | 330 | 0.152 |
-| **Sisu** | **0.62** | **0.61** | **77.6** | **353** | **0.056** |
-| Java | 0.64 | 0.63 | 117.6 | - | 0.196 |
-| Python | 12.66 | 12.65 | 393.7 | - | - |
+| C | 0.53 | 0.53 | 77.6 | 14 | 0.050 |
+| Rust | 0.55 | 0.54 | 77.9 | 330 | 0.082 |
+| Go | 0.56 | 0.55 | 78.3 | 1487 | 0.028 |
+| **Sisu** | **0.58** | **0.58** | **77.6** | **353** | **0.062** |
+| Java | 0.66 | 0.66 | 116.0 | - | 0.199 |
+| Python | 15.21 | 15.20 | 393.6 | - | - |
 
 ### nbody
 
 | Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Rust | 0.12 | 0.12 | 1.9 | 358 | 0.094 |
-| C | 0.14 | 0.14 | 1.7 | 14 | 0.067 |
-| **Sisu** | **0.14** | **0.14** | **1.4** | **357** | **0.067** |
-| Java | 0.20 | 0.19 | 43.8 | - | 0.226 |
-| Go | 0.23 | 0.23 | 1.8 | 1495 | 0.029 |
-| Python | 12.16 | 12.16 | 11.2 | - | - |
+| Rust | 0.11 | 0.11 | 1.9 | 358 | 0.150 |
+| **Sisu** | **0.13** | **0.13** | **1.5** | **357** | **0.068** |
+| C | 0.14 | 0.14 | 1.9 | 14 | 0.067 |
+| Java | 0.20 | 0.20 | 42.3 | - | 0.222 |
+| Go | 0.23 | 0.23 | 1.8 | 1495 | 0.067 |
+| Python | 11.46 | 11.46 | 11.1 | - | - |
 
 ### mandelbrot
 
 | Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| C | 0.58 | 0.58 | 1.7 | 14 | 0.053 |
-| **Sisu** | **0.58** | **0.58** | **1.4** | **353** | **0.042** |
-| Go | 0.59 | 0.59 | 1.8 | 1483 | 0.078 |
-| Rust | 0.59 | 0.58 | 1.9 | 329 | 0.059 |
-| Java | 0.60 | 0.60 | 40.6 | - | 0.202 |
-| Python | 17.15 | 17.15 | 11.1 | - | - |
+| C | 0.58 | 0.58 | 1.9 | 14 | 0.055 |
+| Rust | 0.58 | 0.58 | 1.9 | 329 | 0.100 |
+| Go | 0.59 | 0.59 | 1.8 | 1483 | 0.043 |
+| **Sisu** | **0.59** | **0.59** | **1.4** | **353** | **0.059** |
+| Java | 0.62 | 0.60 | 40.5 | - | 0.192 |
+| Python | 17.64 | 17.63 | 10.7 | - | - |
 
 ### fannkuch_redux
 
 | Language | Wall (s) | CPU (s) | Peak RSS (MiB) | Binary (KiB) | Build (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| C | 0.11 | 0.11 | 1.7 | 14 | 0.065 |
-| Go | 0.12 | 0.12 | 1.8 | 1495 | 0.065 |
-| Rust | 0.12 | 0.12 | 1.9 | 331 | 0.098 |
-| **Sisu** | **0.13** | **0.13** | **1.7** | **357** | **0.061** |
-| Java | 0.17 | 0.16 | 42.9 | - | 0.210 |
-| Python | 2.76 | 2.76 | 11.1 | - | - |
+| C | 0.11 | 0.11 | 1.8 | 14 | 0.062 |
+| Go | 0.12 | 0.12 | 1.8 | 1495 | 0.081 |
+| Rust | 0.12 | 0.12 | 1.9 | 331 | 0.127 |
+| **Sisu** | **0.12** | **0.12** | **1.4** | **357** | **0.078** |
+| Java | 0.17 | 0.16 | 41.1 | - | 0.205 |
+| Python | 2.78 | 2.77 | 10.8 | - | - |
 
-Toolchains: `sisu build -O2` (LLVM 22), Ubuntu clang 18.1.3 with `-O2`, rustc
+Toolchains: `sisu build -O2` (LLVM 23), Ubuntu clang 18.1.3 with `-O2`, rustc
 1.99.0 with `-C opt-level=3`, Go 1.27.2, OpenJDK 25.0.4.1 (Temurin), Python
 3.14.5.
 
@@ -130,10 +125,8 @@ Toolchains: `sisu build -O2` (LLVM 22), Ubuntu clang 18.1.3 with `-O2`, rustc
   they need their runtime installed. A Sisu binary links the runtime
   (`libsisu_runtime.a`, written in Rust) statically, which accounts for most of
   its size.
-- **Build** is the wall time to compile the one file and link it. The hello,
-  quicksort, nbody, mandelbrot and fannkuch_redux tables give the median of
-  5 builds, to the millisecond. The older tables time one build, so Go's
-  1.88 s for fib is a cold build cache.
+- **Build** is the wall time to compile the one file and link it, the median
+  of 5 builds, to the millisecond.
 - Every process runs whole, so startup counts. Java pays for JVM startup and
   JIT warm-up, Python for interpreter startup.
 - `taskset` pins each run to one CPU. Go and the JVM therefore see a single
@@ -149,7 +142,8 @@ ten times the memory.
 
 ## Where binary_trees spends its time
 
-Sisu takes 1.4 times as long as C on binary_trees. Callgrind counted the
+Sisu took 1.4 times as long as C on binary_trees at commit 7c8d29e, and takes
+1.2 times as long now. Callgrind counted the
 instructions in each function, and each suspect was then removed by hand from
 the program's IR (`sisu build -O2 --emit ir`) and the result timed.
 
@@ -162,13 +156,14 @@ the program's IR (`sisu build -O2 --emit ir`) and the result timed.
   instruction and a full memory barrier, paid on every allocation and free.
   That was a quarter of the run: Sisu took 1.10 s before the runtime switched
   to a plain load and store.
-- **`self` is passed owned.** Before `self.left?.check()` the caller adds 1
+- **`self` was passed owned.** Before `self.left?.check()` the caller adds 1
   to the child's count, and `check` subtracts 1 from `self` when it returns.
   No count reaches 0 there, but each call writes two nodes and calls
   `sisu_rc.release.Node`. With `self` borrowed instead, the run took 0.75 s
   instead of 0.84 s. Skipping the add is safe here because `left` and `right` are not `mut`:
   the node holds its children for as long as the caller holds the node.
-  [ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md) borrows it.
+  [ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md) borrows it,
+  and binary_trees now takes 0.72 s.
 - **`?.` and `??` build an optional.** `self.left?.check() ?? 0` makes an
   `i64?` and then picks from it, where C branches once. With the counting
   removed, `check` still runs 1.8 times C's instructions, but they are
