@@ -14,7 +14,7 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
 
-/// How many values of one statement share a fix.
+/// The most values of one statement that share one fix.
 // shortcut: past the cap the warnings offer no fix; store one fix per statement and share it if
 // long `match` statements need fixes.
 const SHARED_FIX_SITES: usize = 8;
