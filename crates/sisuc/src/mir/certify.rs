@@ -1015,7 +1015,7 @@ pub(super) fn counted_value(function: &Function, value: &Operand) -> bool {
             ty.kind(),
             TypeKind::Optional(payload) if matches!(
                 payload.kind(),
-                TypeKind::String | TypeKind::Class(_) | TypeKind::Array(_)
+                TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_)
             )
         ),
         Operand::Const(_) | Operand::Use(_) | Operand::Guarded(_) => false,
@@ -1955,7 +1955,7 @@ impl Region<'_> {
             && states & BORROWED != 0
             && !matches!(
                 self.function.locals[self.local.0].ty.kind(),
-                TypeKind::Class(_)
+                TypeKind::Class(..)
             )
         {
             return Err(self.violation(block, Rule::WriteBorrowed));

@@ -66,7 +66,7 @@ pub(super) enum LetPattern {
 fn matchable(ty: Type) -> bool {
     matches!(
         ty.kind(),
-        TypeKind::Enum(_)
+        TypeKind::Enum(..)
             | TypeKind::I64
             | TypeKind::U8
             | TypeKind::Bool
@@ -316,7 +316,7 @@ impl Checker<'_> {
                 (checked, LetValue::Unwrap { name, bound }, false)
             }
             // `pattern_in_scope` reports any other pattern on an optional.
-            (Some((_, TypeKind::Optional(_) | TypeKind::Enum(_))) | None, _) => {
+            (Some((_, TypeKind::Optional(_) | TypeKind::Enum(..))) | None, _) => {
                 (checked, LetValue::Match { ty }, false)
             }
             (Some((ty, kind)), _) => {
@@ -360,7 +360,7 @@ impl Checker<'_> {
                 let pattern = self.pattern_in_scope(pattern, ty, keyword.word(), None);
                 // An optional takes only a name or `_`, which unwraps it: only an enum gets here.
                 if let (Some(ty), Some((pattern, _))) = (ty, &pattern)
-                    && let TypeKind::Enum(_) = ty.kind()
+                    && let TypeKind::Enum(..) = ty.kind()
                 {
                     let rows = [Row {
                         pattern,
@@ -507,7 +507,7 @@ impl Checker<'_> {
     ) -> Option<tir::PatternKind> {
         let text = name.name.as_str();
         let enum_id = match ty.kind() {
-            TypeKind::Enum(id) => Some(id.0),
+            TypeKind::Enum(id, _) => Some(id.0),
             _ => None,
         };
         if let Some(id) = enum_id
@@ -879,7 +879,7 @@ impl Checker<'_> {
             None => None,
         };
         let id = match ty.kind() {
-            TypeKind::Enum(id) if named.is_none_or(|named| named == ty) => id.0,
+            TypeKind::Enum(id, _) if named.is_none_or(|named| named == ty) => id.0,
             _ => {
                 let want = self.type_name(ty);
                 self.report(DiagnosticKind::PatternMismatch {

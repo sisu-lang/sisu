@@ -195,7 +195,7 @@ impl Builder {
         self.function.locals.push(Local {
             name: Some(name.to_owned()),
             ty,
-            counted: !matches!(ty.kind(), tir::TypeKind::Enum(_)) && ty.is_counted(&[]),
+            counted: !matches!(ty.kind(), tir::TypeKind::Enum(..)) && ty.is_counted(&[]),
             scope: BlockId(0),
             token: false,
         });

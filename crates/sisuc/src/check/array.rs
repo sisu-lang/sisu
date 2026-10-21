@@ -159,7 +159,7 @@ impl Checker<'_> {
         let checked = self.value(value, hint);
         let class = type_of(&checked)
             .map(payload)
-            .filter(|ty| matches!(ty.kind(), TypeKind::Class(_)) && !none_literal(value))
+            .filter(|ty| matches!(ty.kind(), TypeKind::Class(..)) && !none_literal(value))
             .map(|ty| self.type_name(ty));
         if let Some(class) = &class {
             self.report(DiagnosticKind::SameObject {

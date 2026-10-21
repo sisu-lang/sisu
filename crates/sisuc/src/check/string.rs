@@ -74,7 +74,9 @@ impl Checker<'_> {
                     Some(InterpolateHelp::Unwrap)
                 }
                 Some(TypeKind::Array(_) | TypeKind::Optional(_)) => Some(InterpolateHelp::ForLoop),
-                Some(TypeKind::Unit | TypeKind::Class(_) | TypeKind::Enum(_)) => None,
+                Some(
+                    TypeKind::Unit | TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Param(..),
+                ) => None,
             };
             let found = type_of(&value).expect("a part reported here should have a type");
             self.report(DiagnosticKind::CannotInterpolate {

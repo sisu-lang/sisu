@@ -11,7 +11,7 @@ use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
 use crate::graph::components;
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{self, EnumId, Type, TypeKind};
+use crate::tir::{self, EnumId, Type, TypeArgs, TypeKind};
 
 pub(super) struct EnumInfo {
     pub(super) name: ast::Ident,
@@ -125,7 +125,10 @@ impl Checker<'_> {
                     .insert(method.name.name, Declared::Known(func));
             }
             self.signature(method, format!("{owner}.{}", method.name.name));
-            declared.push((method, Some(Type::intern(TypeKind::Enum(id)))));
+            declared.push((
+                method,
+                Some(Type::intern(TypeKind::Enum(id, TypeArgs::NONE))),
+            ));
         }
         for method in &e.broken_methods {
             self.enums[id.0]
@@ -175,7 +178,7 @@ impl Checker<'_> {
         // Built only for a diagnostic.
         let path = format_args!("{enum_name}.{}", member.name);
         let v = &info.variants[variant];
-        let ty = Type::intern(TypeKind::Enum(id));
+        let ty = Type::intern(TypeKind::Enum(id, TypeArgs::NONE));
         let args = match call {
             None if v.fields.is_empty() => Vec::new(),
             Some((args, _)) if !v.fields.is_empty() => {
@@ -374,8 +377,8 @@ impl Checker<'_> {
     fn never_built(&mut self, cyclic: &[bool]) {
         let classes = self.classes.len();
         let node = |ty: &Option<Type>| match ty.map(Type::kind) {
-            Some(TypeKind::Class(id)) => Some(id.0),
-            Some(TypeKind::Enum(id)) => Some(classes + id.0),
+            Some(TypeKind::Class(id, _)) => Some(id.0),
+            Some(TypeKind::Enum(id, _)) => Some(classes + id.0),
             _ => None,
         };
         // Each class, and each variant, as (its type's node, the nodes it needs built).
@@ -469,8 +472,8 @@ impl Checker<'_> {
         let unbuilt = |(name, ty): (&str, Option<Type>)| {
             let ty = ty?;
             let n = match ty.kind() {
-                TypeKind::Class(id) => id.0,
-                TypeKind::Enum(id) => classes + id.0,
+                TypeKind::Class(id, _) => id.0,
+                TypeKind::Enum(id, _) => classes + id.0,
                 _ => return None,
             };
             (!built[n]).then(|| (name.to_string(), self.type_name(ty), n))

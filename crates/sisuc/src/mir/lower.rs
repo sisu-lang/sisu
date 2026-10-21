@@ -258,7 +258,7 @@ impl<'a> Lowering<'a> {
         self.stamp += 1;
         let program = self.program;
         for field in &program.enums[id.0].variants[variant].fields {
-            if let TypeKind::Enum(f) = field.ty.kind()
+            if let TypeKind::Enum(f, _) = field.ty.kind()
                 && field.boxed
             {
                 #[cfg(test)]
@@ -281,7 +281,7 @@ impl<'a> Lowering<'a> {
 
     /// The projection to field `index` of a value of the class type `base`.
     fn field(&self, base: Type, index: usize) -> Projection {
-        let TypeKind::Class(class) = base.kind() else {
+        let TypeKind::Class(class, _) = base.kind() else {
             unreachable!("the checker should allow a field only on a class-typed value")
         };
         Projection::Field {

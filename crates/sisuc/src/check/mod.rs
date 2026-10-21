@@ -26,7 +26,7 @@ use crate::diagnostic::{
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 use constant::{ConstInfo, ConstantSite};
 use enums::EnumInfo;
 use prelude::PRELUDE;
@@ -653,7 +653,10 @@ impl Checker<'_> {
                                 .insert(method.name.name, Declared::Known(func));
                         }
                         self.signature(method, format!("{}.{}", class.name.name, method.name.name));
-                        declared.push((method, Some(Type::intern(TypeKind::Class(id)))));
+                        declared.push((
+                            method,
+                            Some(Type::intern(TypeKind::Class(id, TypeArgs::NONE))),
+                        ));
                     }
                 }
             }
@@ -696,7 +699,7 @@ impl Checker<'_> {
                         #[cfg(test)]
                         FIELD_READS.set(FIELD_READS.get() + 1);
                         match f.ty.map(Type::kind) {
-                            Some(TypeKind::Class(d)) => Some(d.0),
+                            Some(TypeKind::Class(d, _)) => Some(d.0),
                             _ => None,
                         }
                     })
@@ -721,7 +724,7 @@ impl Checker<'_> {
                 .fields
                 .iter()
                 .find_map(|f| match f.ty.map(Type::kind) {
-                    Some(TypeKind::Class(d)) if component[d.0] == component[c] => Some((f, d)),
+                    Some(TypeKind::Class(d, _)) if component[d.0] == component[c] => Some((f, d)),
                     _ => None,
                 })
                 .expect(
@@ -781,9 +784,9 @@ impl Checker<'_> {
                 } else if let Some(named) = built_in_type(name.as_str()) {
                     named
                 } else if let Some(&Declared::Known(id)) = self.class_ids.get(name) {
-                    Type::intern(TypeKind::Class(id))
+                    Type::intern(TypeKind::Class(id, TypeArgs::NONE))
                 } else if let Some(&Declared::Known(id)) = self.enum_ids.get(name) {
-                    Type::intern(TypeKind::Enum(id))
+                    Type::intern(TypeKind::Enum(id, TypeArgs::NONE))
                 } else {
                     let span = Span::new(ty.span.start(), ty.span.start() + name.as_str().len());
                     let types = ["i64", "u8", "f64", "bool", "char", "string"]
@@ -982,8 +985,16 @@ impl Checker<'_> {
 
     fn type_name(&self, ty: Type) -> String {
         match ty.kind() {
-            TypeKind::Class(id) => self.classes[id.0].name.name.to_string(),
-            TypeKind::Enum(id) => self.enums[id.0].name.name.to_string(),
+            TypeKind::Class(id, args) => format!(
+                "{}{}",
+                self.classes[id.0].name.name,
+                args.written(|ty| self.type_name(ty))
+            ),
+            TypeKind::Enum(id, args) => format!(
+                "{}{}",
+                self.enums[id.0].name.name,
+                args.written(|ty| self.type_name(ty))
+            ),
             TypeKind::Array(element) => format!("[{}]", self.type_name(element)),
             TypeKind::Optional(payload) => format!("{}?", self.type_name(payload)),
             _ => ty.to_string(),

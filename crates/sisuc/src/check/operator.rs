@@ -481,7 +481,7 @@ impl Checker<'_> {
             let Some(ty) = type_of(checked) else { break };
             if matches!(
                 payload(ty).kind(),
-                TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(_)
+                TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(..)
             ) || !ty.is_counted(&self.lowered_enums)
             {
                 let kind = DiagnosticKind::IsNeedsObjects {

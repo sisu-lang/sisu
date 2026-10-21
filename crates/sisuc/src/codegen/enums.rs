@@ -26,7 +26,7 @@ use super::layout::HeapBlock;
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, enum_of};
 use crate::mir::{Place, Projection};
-use crate::tir::{Enum, EnumId, LocalId, Payload, Type, TypeKind};
+use crate::tir::{Enum, EnumId, LocalId, Payload, Type, TypeArgs, TypeKind};
 use rustc_hash::FxHashMap;
 
 /// An enum's LLVM types.
@@ -495,9 +495,15 @@ impl<'ctx> Codegen<'ctx, '_> {
         let heads_type = self.heads_type(members.len());
         let heads = self.entry_alloca(heads_type.into(), "heads");
         self.store(heads, heads_type.const_zero().into());
-        let walk = self.helper(Helper::Walk, Type::intern(TypeKind::Enum(id)));
+        let walk = self.helper(
+            Helper::Walk,
+            Type::intern(TypeKind::Enum(id, TypeArgs::NONE)),
+        );
         self.call(walk, &[value.into(), heads.into()]);
-        let drain = self.helper(Helper::Drain, Type::intern(TypeKind::Enum(members[0])));
+        let drain = self.helper(
+            Helper::Drain,
+            Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE)),
+        );
         self.call(drain, &[heads.into()]);
         self.branch_to(done);
     }
@@ -600,7 +606,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .build_load(ptr_type, boxed, "following")
                 .expect(POSITIONED);
             self.store(head, following);
-            let walk = self.helper(Helper::Walk, Type::intern(TypeKind::Enum(member)));
+            let walk = self.helper(
+                Helper::Walk,
+                Type::intern(TypeKind::Enum(member, TypeArgs::NONE)),
+            );
             self.call(walk, &[self.box_value(member, boxed).into(), heads.into()]);
             let (size, align) = self.heap_size(&HeapBlock::Box(member));
             self.call(self.free, &[boxed.into(), size.into(), align.into()]);
@@ -648,7 +657,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(unique);
         self.builder.build_return(Some(&boxed)).expect(POSITIONED);
         self.builder.position_at_end(shared);
-        let ty = Type::intern(TypeKind::Enum(id));
+        let ty = Type::intern(TypeKind::Enum(id, TypeArgs::NONE));
         self.call(self.helper(Helper::Retain, ty), &[out.into()]);
         let minus_one = self
             .context
@@ -818,7 +827,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.position_at_end(entry);
             let component = self.helper(
                 Helper::EqComponent,
-                Type::intern(TypeKind::Enum(members[0])),
+                Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE)),
             );
             let args = [self.member_index(&members, id).into(), a.into(), b.into()];
             let equal = self.call_component(component, &args);

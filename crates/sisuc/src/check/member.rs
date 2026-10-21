@@ -104,7 +104,7 @@ impl Checker<'_> {
             call: (!target).then_some(safe),
         };
         let d = match ty.kind() {
-            TypeKind::Class(class) => {
+            TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
                 if let Some(index) = info.fields.iter().position(|f| f.name.name == name.name) {
                     return Some((class, index));
@@ -122,7 +122,7 @@ impl Checker<'_> {
                     }
                 }
             }
-            TypeKind::Enum(id) => match self.enums[id.0].methods.get(&name.name) {
+            TypeKind::Enum(id, _) => match self.enums[id.0].methods.get(&name.name) {
                 Some(Declared::Known(func)) => {
                     let no_arguments = self.signatures[func.0].params.is_empty();
                     method(self.type_name(ty), no_arguments).into()
@@ -157,7 +157,7 @@ impl Checker<'_> {
     ) -> Option<tir::FuncId> {
         let ty = ty?;
         let d = match ty.kind() {
-            TypeKind::Class(class) => {
+            TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
                 match info.methods.get(&name.name) {
                     Some(&Declared::Known(func)) => return Some(func),
@@ -177,7 +177,7 @@ impl Checker<'_> {
                     no_member(Definition::Method, self.type_name(ty), name, methods)
                 }
             }
-            TypeKind::Enum(id) => {
+            TypeKind::Enum(id, _) => {
                 let info = &self.enums[id.0];
                 match info.methods.get(&name.name) {
                     Some(&Declared::Known(func)) => return Some(func),

@@ -213,7 +213,7 @@ enum Col {
 
 fn column(ty: Type) -> Col {
     match ty.kind() {
-        TypeKind::Enum(id) => Col::Enum(id.0),
+        TypeKind::Enum(id, _) => Col::Enum(id.0),
         TypeKind::I64 => Col::I64,
         TypeKind::U8 => Col::U8,
         TypeKind::Char => Col::Char,

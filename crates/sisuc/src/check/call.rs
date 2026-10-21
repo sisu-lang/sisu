@@ -11,7 +11,7 @@ use crate::ast::{self, ExprKind};
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Suggestion, alias, suggestion};
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
     pub(super) fn call(&mut self, span: Span, callee: &ast::Ident, args: &[ast::Arg]) -> Checked {
@@ -285,7 +285,7 @@ impl Checker<'_> {
         let name = info.name.name.as_str();
         let fields: Vec<(Symbol, Option<Type>)> =
             info.fields.iter().map(|f| (f.name.name, f.ty)).collect();
-        let ty = Type::intern(TypeKind::Class(class));
+        let ty = Type::intern(TypeKind::Class(class, TypeArgs::NONE));
         match self.construct(span, &name, &fields, args) {
             Ok(args) => Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args })),
             Err(failed) => Err(Poisoned::of((!failed).then_some(ty))),

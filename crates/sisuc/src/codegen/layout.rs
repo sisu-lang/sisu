@@ -91,10 +91,13 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Char => Some(self.context.i32_type().into()),
             TypeKind::Unit | TypeKind::Never => None,
             // An object, an array or a string is a pointer to its block.
-            TypeKind::String | TypeKind::Class(_) | TypeKind::Array(_) => {
+            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => {
                 Some(self.context.ptr_type(AddressSpace::default()).into())
             }
-            TypeKind::Enum(id) => Some(self.enum_layout(id).ty.into()),
+            TypeKind::Enum(id, _) => Some(self.enum_layout(id).ty.into()),
+            TypeKind::Param(..) => {
+                panic!("type parameters reach codegen until mono lands in Task 6")
+            }
             TypeKind::Optional(payload) => match self
                 .llvm_type(payload)
                 .expect("the checker should reject an optional of `unit` or `never`, so its payload has a value type")

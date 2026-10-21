@@ -6,7 +6,7 @@ use std::fmt;
 use crate::source::Span;
 
 pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
-pub(crate) use crate::types::{Type, TypeKind};
+pub(crate) use crate::types::{Type, TypeArgs, TypeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LocalId(pub(crate) usize);
@@ -452,8 +452,8 @@ impl Type {
     /// which codegen counts. `enums` are the program's.
     pub(crate) fn is_counted(self, enums: &[Enum]) -> bool {
         match self.kind() {
-            TypeKind::String | TypeKind::Class(_) | TypeKind::Array(_) => true,
-            TypeKind::Enum(id) => enums[id.0].counted,
+            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => true,
+            TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Optional(payload) => payload.is_counted(enums),
             _ => false,
         }
@@ -463,7 +463,7 @@ impl Type {
     /// These are the edges of the holds-inline graph.
     pub(crate) fn inline_enum(self) -> Option<EnumId> {
         match self.kind() {
-            TypeKind::Enum(id) => Some(id),
+            TypeKind::Enum(id, _) => Some(id),
             TypeKind::Optional(payload) => payload.inline_enum(),
             _ => None,
         }
@@ -712,8 +712,9 @@ impl fmt::Display for Type {
             TypeKind::Unit => "unit",
             TypeKind::Never => "never",
             // A class's name lives in the program: `Program::type_name` prints it.
-            TypeKind::Class(id) => return write!(f, "class#{}", id.0),
-            TypeKind::Enum(id) => return write!(f, "enum#{}", id.0),
+            TypeKind::Param(name, _) => return write!(f, "{name}"),
+            TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
+            TypeKind::Enum(id, _) => return write!(f, "enum#{}", id.0),
             TypeKind::Array(element) => return write!(f, "[{element}]"),
             TypeKind::Optional(payload) => return write!(f, "{payload}?"),
         })
@@ -921,7 +922,7 @@ impl Printer<'_> {
             PatternKind::Wild => f.write_str("_"),
             PatternKind::Bind(local) => self.local(f, *local),
             PatternKind::Variant { variant, fields } => {
-                let TypeKind::Enum(id) = ty.kind() else {
+                let TypeKind::Enum(id, _) = ty.kind() else {
                     panic!(
                         "the checker should only emit a variant pattern at an enum position, not `{ty}`"
                     )
@@ -1011,7 +1012,7 @@ impl Printer<'_> {
 
     /// `(. base name)`.
     fn field(&self, f: &mut fmt::Formatter<'_>, base: &Expr, index: usize) -> fmt::Result {
-        let TypeKind::Class(class) = base.ty.kind() else {
+        let TypeKind::Class(class, _) = base.ty.kind() else {
             panic!(
                 "the checker should only emit a field access on a class-typed base, not `{}`",
                 base.ty
@@ -1091,7 +1092,7 @@ impl Program {
     /// The field drop follows in a loop: the last, in declaration order, whose type is
     /// `class` or `class?`.
     pub(crate) fn chain_field(&self, class: ClassId) -> Option<usize> {
-        let own = Type::intern(TypeKind::Class(class));
+        let own = Type::intern(TypeKind::Class(class, TypeArgs::NONE));
         self.classes[class.0].fields.iter().rposition(|field| {
             field.ty == own
                 || matches!(field.ty.kind(), TypeKind::Optional(payload) if payload == own)
@@ -1101,8 +1102,20 @@ impl Program {
     /// A type as `--emit tir` prints it: a class or an enum by its name.
     pub(crate) fn type_name(&self, ty: Type) -> String {
         match ty.kind() {
-            TypeKind::Class(id) => self.classes[id.0].name.clone(),
-            TypeKind::Enum(id) => self.enums[id.0].name.clone(),
+            TypeKind::Class(id, args) => {
+                format!(
+                    "{}{}",
+                    self.classes[id.0].name,
+                    args.written(|ty| self.type_name(ty))
+                )
+            }
+            TypeKind::Enum(id, args) => {
+                format!(
+                    "{}{}",
+                    self.enums[id.0].name,
+                    args.written(|ty| self.type_name(ty))
+                )
+            }
             TypeKind::Array(element) => format!("[{}]", self.type_name(element)),
             TypeKind::Optional(payload) => format!("{}?", self.type_name(payload)),
             _ => ty.to_string(),
@@ -1180,6 +1193,7 @@ fn jump_depth(f: &mut fmt::Formatter<'_>, depth: usize) -> fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::symbol::Symbol;
 
     fn expr(kind: ExprKind, ty: Type) -> Expr {
         Expr {
@@ -1386,7 +1400,7 @@ mod tests {
     /// `match s { Running(c) => c  Idle => 0  _ => 1 }` over `enum State { Idle  Running(i64) }`.
     #[test]
     fn prints_match() {
-        let state = Type::intern(TypeKind::Enum(EnumId(0)));
+        let state = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
         let pattern = |kind| Pattern {
             kind,
             span: Span::new(0, 0),
@@ -1908,7 +1922,8 @@ mod tests {
             name: name.into(),
             fields,
         };
-        let optional = |id: usize| Type::optional(Type::intern(TypeKind::Class(ClassId(id))));
+        let optional =
+            |id: usize| Type::optional(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
         let program = Program {
             classes: vec![
                 class(
@@ -1928,7 +1943,10 @@ mod tests {
                     vec![
                         field("next", optional(2)),
                         field("value", Type::I64),
-                        field("tag", Type::intern(TypeKind::Class(ClassId(3)))),
+                        field(
+                            "tag",
+                            Type::intern(TypeKind::Class(ClassId(3), TypeArgs::NONE)),
+                        ),
                     ],
                 ),
                 class("Tag", vec![]),
@@ -1944,8 +1962,9 @@ mod tests {
 
     #[test]
     fn types_print_their_source_names() {
-        let class = Type::intern(TypeKind::Class(ClassId(3)));
+        let class = Type::intern(TypeKind::Class(ClassId(3), TypeArgs::NONE));
         let nested = Type::optional(Type::array(Type::array(Type::optional(Type::I64))));
+        let param = |name, i| Type::intern(TypeKind::Param(Symbol::intern(name), i));
         for (ty, text) in [
             (Type::I64, "i64"),
             (Type::U8, "u8"),
@@ -1957,6 +1976,7 @@ mod tests {
             (Type::NEVER, "never"),
             (class, "class#3"),
             (nested, "[[i64?]]?"),
+            (param("T", 0), "T"),
         ] {
             assert_eq!(ty.to_string(), text);
         }
@@ -1966,8 +1986,40 @@ mod tests {
 
     #[test]
     fn prints_an_enum_type_by_its_id() {
-        let ty = Type::optional(Type::intern(TypeKind::Enum(EnumId(2))));
+        let ty = Type::optional(Type::intern(TypeKind::Enum(EnumId(2), TypeArgs::NONE)));
         assert_eq!(ty.to_string(), "enum#2?");
+    }
+
+    #[test]
+    fn type_names_write_the_arguments() {
+        let t = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let program = Program {
+            classes: vec![Class {
+                name: "Stack".into(),
+                fields: vec![],
+            }],
+            enums: vec![Enum {
+                name: "Tree".into(),
+                variants: vec![],
+                counted: false,
+                cycle: None,
+            }],
+            functions: vec![],
+        };
+        let args = TypeArgs::intern(&[Type::array(t)]);
+        let pair = TypeArgs::intern(&[Type::I64, t]);
+        let class = |args| Type::intern(TypeKind::Class(ClassId(0), args));
+        let enumeration = |args| Type::intern(TypeKind::Enum(EnumId(0), args));
+        for (ty, text) in [
+            (class(TypeArgs::NONE), "Stack"),
+            (class(args), "Stack<[T]>"),
+            (enumeration(TypeArgs::NONE), "Tree"),
+            (enumeration(pair), "Tree<i64, T>"),
+            (Type::optional(class(args)), "Stack<[T]>?"),
+            (t, "T"),
+        ] {
+            assert_eq!(program.type_name(ty), text);
+        }
     }
 
     #[test]
@@ -1996,7 +2048,13 @@ mod tests {
             variant: 0,
             args: vec![int(1), expr(ExprKind::Return(None), Type::NEVER)],
         };
-        assert!(expr(variant, Type::intern(TypeKind::Enum(EnumId(0)))).exits());
+        assert!(
+            expr(
+                variant,
+                Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE))
+            )
+            .exits()
+        );
         // A `return` in an operand of `is`.
         let is = ExprKind::Is {
             lhs: Box::new(local(0)),

@@ -402,7 +402,7 @@ impl Checker<'_> {
         let (kind, ty) = match place {
             tir::Place::Local(id) => (ExprKind::Local(id), self.body.locals[id.0].ty),
             tir::Place::Field { base, index } => {
-                let TypeKind::Class(class) = base.ty.kind() else {
+                let TypeKind::Class(class, _) = base.ty.kind() else {
                     panic!(
                         "a field place's base should be of a class type, as `find_field` found the field on it"
                     )

@@ -1102,7 +1102,7 @@ fn whole_place(local: LocalId) -> Place {
 
 #[test]
 fn store_to_a_moved_root_faults() {
-    let holder = Type::intern(TypeKind::Class(ClassId(0)));
+    let holder = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
     assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
         let place = Place {
             projections: vec![Projection::Field {
@@ -1152,7 +1152,7 @@ fn check_of_a_moved_array_faults() {
 /// enum field reads the class that holds it.
 #[test]
 fn switch_on_a_field_of_a_moved_class_faults() {
-    let holder = Type::intern(TypeKind::Class(ClassId(0)));
+    let holder = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
     assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
         let shape = Place {
             projections: vec![Projection::Field {

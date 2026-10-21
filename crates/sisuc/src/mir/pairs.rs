@@ -248,7 +248,7 @@ fn allowed(
 ) -> bool {
     match effect {
         Effect::Read | Effect::ReadInPlace => true,
-        Effect::Write => matches!(function.locals[member.0].ty.kind(), TypeKind::Class(_)),
+        Effect::Write => matches!(function.locals[member.0].ty.kind(), TypeKind::Class(..)),
         Effect::Consume => {
             current && matches!(*kind, Kind::Step(u, m) if m == member && !open.contains_key(&u))
         }

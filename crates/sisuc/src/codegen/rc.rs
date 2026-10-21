@@ -44,7 +44,7 @@ pub(super) enum Helper {
 /// pointers, and a `None` of theirs is not `null`.
 pub(super) fn counted_core(ty: Type) -> Option<Type> {
     match ty.kind() {
-        TypeKind::String | TypeKind::Class(_) | TypeKind::Array(_) => Some(ty),
+        TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => Some(ty),
         TypeKind::Optional(payload) => counted_core(payload),
         _ => None,
     }
@@ -130,7 +130,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             };
             let function = self.helpers.borrow()[&(kind, ty)];
             match (kind, ty.kind()) {
-                (_, TypeKind::Enum(id)) => self.define_enum_helper(kind, id, function),
+                (_, TypeKind::Enum(id, _)) => self.define_enum_helper(kind, id, function),
                 (Helper::Release, _) => self.define_release(function, ty),
                 (Helper::Retain, _) => {
                     unreachable!("only an enum type should be queued for a `retain` helper")
@@ -165,7 +165,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_rc.drop.<C>`: releases each counted field but the chain field, frees the
     /// object, then drops the chain's next object in a loop when its count reaches 0.
     fn define_drop(&self, drop: FunctionValue<'ctx>, ty: Type) {
-        let TypeKind::Class(id) = ty.kind() else {
+        let TypeKind::Class(id, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")
         };
         let ptr_type = self.context.ptr_type(AddressSpace::default());
@@ -225,7 +225,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// objects to the objects their chain fields hold and repeats the checks of `eq_entry`, in
     /// one frame.
     fn define_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
-        let TypeKind::Class(id) = ty.kind() else {
+        let TypeKind::Class(id, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")
         };
         let ptr_type = self.context.ptr_type(AddressSpace::default());
@@ -388,8 +388,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn reflexive(&self, ty: Type) -> bool {
         match unwrapped(ty).kind() {
             TypeKind::F64 => false,
-            TypeKind::Class(id) => !self.reaches_f64[id.0],
-            TypeKind::Enum(id) => !self.reaches_f64[self.program.classes.len() + id.0],
+            TypeKind::Class(id, _) => !self.reaches_f64[id.0],
+            TypeKind::Enum(id, _) => !self.reaches_f64[self.program.classes.len() + id.0],
             _ => true,
         }
     }
@@ -405,7 +405,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             return self.call_eq(core, lhs, rhs);
         }
         let payload = match ty.kind() {
-            TypeKind::Enum(_) => {
+            TypeKind::Enum(..) => {
                 return self.equal_at(ty, self.enum_slot(lhs), self.enum_slot(rhs));
             }
             TypeKind::Optional(payload) => payload,
@@ -417,7 +417,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.has_value(ty, rhs, "part"),
         );
         let flags = self.int_compare(IntPredicate::EQ, fa, fb);
-        if let TypeKind::Enum(_) = payload.kind() {
+        if let TypeKind::Enum(..) = payload.kind() {
             // Equal flags decide, unless both are set: a `None`'s payload is never read.
             let function = self.current_function();
             let both = self.builder.build_and(fa, fb, "both").expect(POSITIONED);
@@ -461,7 +461,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         a: PointerValue<'ctx>,
         b: PointerValue<'ctx>,
     ) -> IntValue<'ctx> {
-        if let TypeKind::Enum(_) = ty.kind() {
+        if let TypeKind::Enum(..) = ty.kind() {
             return self.call_eq(ty, a.into(), b.into());
         }
         self.equal(ty, self.load_value(ty, a), self.load_value(ty, b))
@@ -653,7 +653,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// address, with no copy; any other type is loaded. `ty` must be a counted
     /// type: unlike `retain_or_release`, this does not check.
     fn retain_or_release_at(&self, kind: Helper, place: PointerValue<'ctx>, ty: Type) {
-        if let TypeKind::Enum(_) = ty.kind() {
+        if let TypeKind::Enum(..) = ty.kind() {
             self.call(self.helper(kind, ty), &[place.into()]);
         } else {
             self.retain_or_release(kind, self.load_value(ty, place), ty);
@@ -676,7 +676,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             return;
         }
         match ty.kind() {
-            TypeKind::Enum(_) => self.retain_or_release_at(kind, self.enum_slot(value), ty),
+            TypeKind::Enum(..) => self.retain_or_release_at(kind, self.enum_slot(value), ty),
             TypeKind::Optional(payload) => {
                 let function = self.current_function();
                 let some = self.context.append_basic_block(function, "some");
@@ -736,8 +736,8 @@ pub(super) fn reaching_f64(program: &Program) -> Vec<bool> {
         super::TYPE_READS.set(super::TYPE_READS.get() + 1);
         match unwrapped(ty).kind() {
             TypeKind::F64 => reaches[node] = true,
-            TypeKind::Class(id) => holders[id.0].push(node),
-            TypeKind::Enum(id) => holders[classes + id.0].push(node),
+            TypeKind::Class(id, _) => holders[id.0].push(node),
+            TypeKind::Enum(id, _) => holders[classes + id.0].push(node),
             _ => {}
         }
     }
