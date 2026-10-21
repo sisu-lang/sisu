@@ -30,7 +30,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
   <section class="ph"><div class="w">
     <h1>How fast is Sisu?</h1>
     <p class="lede">Eight small programs, each written with the same algorithm in Sisu, C, Rust, Go, Java and Python. The numbers show where Sisu stands today, not how fast it will be.</p>
-    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commits and dates are named below the table · Prose checked against the repository at commit 317f0d9</p>
+    <p class="meta">Intel Core i9-14900K under Linux 7.0 · The commit and date are named below the table · Prose checked against the repository at commit 317f0d9</p>
   </div></section>
   <!-- source: docs/benchmarks.md (intro, Results) -->
 
@@ -44,7 +44,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
     {{bench-results-note}}
     <p class="after">Wall time in seconds, the median of 5 runs. The <code>hello</code>, build row gives build time instead. The full tables, with CPU time, peak memory, binary size and build time, are in <a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md">docs/benchmarks.md</a>.</p>
 
-    <div class="callout"><p>These numbers come from one machine, at the commits named above. They change as the compiler changes, and they are rerun by hand when a change should move them.</p></div>
+    <div class="callout"><p>These numbers come from one machine, at the commit named above. They change as the compiler changes, and they are rerun by hand when a change should move them.</p></div>
   </div></section>
   <!-- source: docs/benchmarks.md (Results tables, What the numbers mean, Where a hello build spends its time, Running them) -->
 
@@ -52,13 +52,13 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
     <div class="s-h"><h2 id="h-gaps">Where the gaps come from</h2><p>Each gap was traced with callgrind and hyperfine, and by removing one cost at a time, by hand, from the program's LLVM IR.</p></div>
     <div class="prose">
       <h3>binary_trees: the counting itself</h3>
-      <p>Sisu takes 1.4 times as long as C here. The allocator costs the same in both programs. What remains is mostly reference counting: a store when an object is made, and a load, subtract and store when it is released. <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0005-reference-counting.md">ADR 0005</a> accepts that cost.</p>
+      <p>Sisu takes 1.2 times as long as C here. The allocator costs the same in both programs. What remains is mostly reference counting: a store when an object is made, and a load, subtract and store when it is released. <a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0005-reference-counting.md">ADR 0005</a> accepts that cost.</p>
       <p>Java is fastest on this program. Its collector allocates by bumping a pointer and frees short-lived objects in bulk. It pays for that with ten times the memory.</p>
       <h3>quicksort: the checks</h3>
       <p>Each element write checks the index against the bounds and the array's count against 1, and each addition checks for overflow. The checks are the whole gap to C. Removing the overflow checks by hand made no measurable difference.</p>
       <p>A loop now makes the arrays it writes unique once, before it starts (<a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md">ADR 0021</a>). In a separate session on a busy machine, that took the fastest run from 690 ms to 640 ms, against C's 610 ms. The bounds checks remain: LLVM cannot prove the index is in range.</p>
       <h3>hello: the link step</h3>
-      <p>Lexing, parsing and checking <code>hello</code> take 1.4 ms, timed with hyperfine on one pinned CPU after a warm-up. The whole <code>sisu build -O2</code> build takes 27.6 ms, and the link through <code>cc</code> alone takes 21.9 ms of that. The bench script neither pins nor warms up its builds, so its 0.058 s reads higher. A faster edit-to-output loop starts with the link, not the compiler.</p>
+      <p>Lexing, parsing and checking <code>hello</code> take 1.4 ms, timed with hyperfine on one pinned CPU after a warm-up. The whole <code>sisu build -O2</code> build takes 27.6 ms, and the link through <code>cc</code> alone takes 21.9 ms of that. The bench script neither pins nor warms up its builds, so its 0.064 s reads higher. A faster edit-to-output loop starts with the link, not the compiler.</p>
     </div>
   </div></section>
   <!-- source: docs/benchmarks.md (Where binary_trees spends its time, quicksort on an array value, Where a hello build spends its time, What the numbers mean) -->
@@ -93,7 +93,7 @@ Eight small programs timed in Sisu, C, Rust, Go, Java and Python, with the numbe
       <div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>Language</th><th>Toolchain and flags</th></tr></thead>
         <tbody>
-          <tr><td>Sisu</td><td><code>sisu build -O2</code>, LLVM 22</td></tr>
+          <tr><td>Sisu</td><td><code>sisu build -O2</code>, LLVM 23</td></tr>
           <tr><td>C</td><td>Ubuntu clang 18.1.3, <code>-O2</code></td></tr>
           <tr><td>Rust</td><td>rustc 1.99.0, <code>-C opt-level=3</code></td></tr>
           <tr><td>Go</td><td>Go 1.27.2</td></tr>
