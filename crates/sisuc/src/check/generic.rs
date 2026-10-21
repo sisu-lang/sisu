@@ -158,12 +158,12 @@ impl Checker<'_> {
     /// (`written` gives every one the receiver does not): (1) those that are neither
     /// literal-like nor need context, each against its parameter's type once that names no
     /// unbound parameter and on its own before; (2) `expected` against the return type, an
-    /// optional's payload against one that is not optional; (3) the literal-like arguments, as
-    /// in (1); (4) those that need context, against their parameter's type. An argument of type
-    /// `unit` or `never` binds only what none of the others does. Returns the arguments in
-    /// source order, the type arguments, and the call's type; `None`, reported, when a
-    /// parameter is left unbound or bound to a type no parameter takes, and then an argument
-    /// that needs context and has none is not checked.
+    /// optional by its payload, which a `T?` takes as it takes the optional; (3) the
+    /// literal-like arguments, as in (1); (4) those that need context, against their
+    /// parameter's type. An argument of type `unit` or `never` binds only what none of the
+    /// others does. Returns the arguments in source order, the type arguments, and the call's
+    /// type; `None`, reported, when a parameter is left unbound or bound to a type no
+    /// parameter takes, and then an argument that needs context and has none is not checked.
     pub(super) fn generic_call(
         &mut self,
         span: Span,
@@ -187,9 +187,9 @@ impl Checker<'_> {
                 self.stray(args);
                 return None;
             };
+            // Unseen, each is a type `bind_param` lets pass: `type_args` rejects the others.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
-                call.seen[owned + i] = true;
             }
         }
         let ranks: Vec<u8> = args
@@ -204,9 +204,8 @@ impl Checker<'_> {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
         }
         if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
-            let want = match (want.kind(), ret.kind()) {
-                (_, TypeKind::Optional(_)) => want,
-                (TypeKind::Optional(payload), _) => payload,
+            let want = match want.kind() {
+                TypeKind::Optional(payload) => payload,
                 _ => want,
             };
             // A return type that cannot meet it is reported where the call's value is used.
@@ -229,10 +228,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            self.report(DiagnosticKind::NoValue {
-                at: e.span,
-                never: ty == Type::NEVER,
-            });
+            self.no_value(e.span, ty);
             call.slots[i] = Some(Err(Poisoned::error()));
         }
         let list = match call.bindings.finish() {

@@ -255,14 +255,21 @@ impl Checker<'_> {
     /// An expression whose value is used: not `unit` or `never`.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
         let checked = self.expr(e, expected);
-        let never = match type_of(&checked) {
-            Some(Type::UNIT) => false,
-            Some(Type::NEVER) => true,
-            _ => return checked,
-        };
-        self.diagnostics
-            .push(DiagnosticKind::NoValue { at: e.span, never }.into());
-        Err(Poisoned::error())
+        match type_of(&checked) {
+            Some(ty @ (Type::UNIT | Type::NEVER)) => {
+                self.no_value(e.span, ty);
+                Err(Poisoned::error())
+            }
+            _ => checked,
+        }
+    }
+
+    /// Reports a value of `ty`, `unit` or `never`, used at `at`.
+    pub(super) fn no_value(&mut self, at: Span, ty: Type) {
+        self.report(DiagnosticKind::NoValue {
+            at,
+            never: ty == Type::NEVER,
+        });
     }
 
     /// A value of type `want`; `None` is `Error`, which every type matches. A `T` where `want`

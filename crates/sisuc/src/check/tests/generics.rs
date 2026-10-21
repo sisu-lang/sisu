@@ -781,6 +781,28 @@ fn arguments_bind_type_parameters() {
             "Ignore",
             &["F", "Ignore<F>"],
         ),
+        // Written type arguments follow the receiver's.
+        (
+            "class Duo<T> {\n    v: T\n    fn both<A, B>(self, a: A, b: B) -> B { b }\n}\nfn g() -> string { Duo(v: true).both<i64, string>(1, \"s\") }",
+            "Duo.both",
+            &["bool", "i64", "string", "string"],
+        ),
+        // A type argument that names no parameter must be the argument's.
+        (
+            "class Two<A, B> {\n    a: A\n    b: B\n}\nfn snd<T>(t: Two<T, i64>) -> T { t.a }\nfn g(t: Two<string, i64>) -> string { snd(t) }",
+            "snd",
+            &["string", "string"],
+        ),
+        (
+            "class Two<A, B> {\n    a: A\n    b: B\n}\nfn g() {\n    let t = Two(a: 1, b: \"s\")\n}",
+            "Two",
+            &["i64", "string", "Two<i64, string>"],
+        ),
+        (
+            "enum Lab<T> { P(x: T, y: T) }\nfn g() {\n    let p = Lab.P(x: 1, y: 2)\n}",
+            "Lab",
+            &["i64", "Lab<i64>"],
+        ),
     ]);
 }
 
@@ -859,6 +881,16 @@ fn literal_like_arguments_follow_the_others() {
             "fill",
             &["f64", "unit"],
         ),
+        (
+            "fn g(x: f64) {\n    let xs = pair([1], [1, x])\n}",
+            "pair",
+            &["[f64]", "[[f64]]"],
+        ),
+        (
+            "fn g(x: f64) {\n    let xs = pair(1, -x)\n}",
+            "pair",
+            &["f64", "[f64]"],
+        ),
     ]);
 }
 
@@ -868,6 +900,7 @@ fn an_optional_parameter_takes_the_payload() {
     infers(&[
         ("fn g() -> i64? { opt(5) }", "opt", &["i64", "i64?"]),
         ("fn g(n: i64?) -> i64? { opt(n) }", "opt", &["i64", "i64?"]),
+        ("fn g() {\n    let x = opt(5)\n}", "opt", &["i64", "i64?"]),
     ]);
 }
 
@@ -909,6 +942,34 @@ fn arguments_that_need_context_wait_for_it() {
             "fn g() {\n    let w: Wrap<[i64]> = id(Wrap.W([]))\n}",
             "Wrap",
             &["[i64]", "Wrap<[i64]>"],
+        ),
+    ]);
+}
+
+/// An argument with no `[]`, `None` or generic name to bind binds on its own, whatever its
+/// form.
+#[test]
+fn other_arguments_bind_on_their_own() {
+    infers(&[
+        (
+            "fn g() {\n    let x = id(make_ints())\n}",
+            "id",
+            &["[i64]", "[i64]"],
+        ),
+        (
+            "fn g(xs: [i64]) {\n    let n = id(xs.len())\n}",
+            "id",
+            &["i64", "i64"],
+        ),
+        (
+            "fn g(c: bool) {\n    let n = id(if c { 1 } else { 2 })\n}",
+            "id",
+            &["i64", "i64"],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let x = id(b.v)\n}",
+            "id",
+            &["i64", "i64"],
         ),
     ]);
 }
@@ -1084,4 +1145,81 @@ fn what_inference_reports() {
     let src = with_generics("fn g() -> Tree<i64> { Tree.Node<i64>(Tree.Leaf, 5, Tree.Leaf) }");
     let d = diagnostic(&src, Code::TypeArguments, (1, 32, "<i64>"), &[]);
     assert!(d.help().is_some());
+}
+
+/// A generic call's arguments in each form reach the report of a non-generic one, and an
+/// argument whose type cannot fit its parameter's leaves the parameter to the others.
+#[test]
+fn generic_arguments_that_do_not_check() {
+    let two = "class Two<A, B> {\n    a: A\n    b: B\n}\n";
+    for (line, expected) in [
+        // A method that takes no type arguments of its own is reported once.
+        (
+            "fn g(p: Pile<i64>) {\n    p.push<i64>(1)\n}".to_string(),
+            vec![(Code::TypeArguments, (2, 11))],
+        ),
+        // A variant's misplaced list leaves nothing to infer.
+        (
+            "fn g() {\n    let x = id(Wrap.W<i64>([]))\n}".into(),
+            vec![(Code::TypeArguments, (2, 22))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let x = id(b.map_all([]))\n}".into(),
+            vec![(Code::CannotInfer, (2, 18))],
+        ),
+        (
+            "fn g() {\n    let x = Wrap.W([])\n}".into(),
+            vec![(Code::CannotInfer, (2, 13))],
+        ),
+        (
+            "fn g() {\n    let x = id({ let y = 1 })\n}".into(),
+            vec![(Code::TypeArgument, (2, 16))],
+        ),
+        (
+            "fn bad<T>(x: T, y: Nope) {}\nfn g() {\n    bad(1, 2)\n}".into(),
+            vec![(Code::UnknownType, (1, 20))],
+        ),
+        (
+            format!(
+                "{two}fn f(a: i64, b: i64, c: i64, d: i64) {{\n    let x = Two(a: a < b, c > (d))\n}}"
+            ),
+            vec![(Code::TypeArguments, (6, 20))],
+        ),
+        (
+            "fn both<T>(b: Box<T>, x: T) {}\nfn g() {\n    both(Pile<string>(top: None), 1)\n}"
+                .into(),
+            vec![(Code::Mismatch, (3, 10))],
+        ),
+        (
+            "fn both<T>(o: Opt2<T>, x: T) {}\nfn g() {\n    both(Wrap.W(\"a\"), 1)\n}".into(),
+            vec![(Code::Mismatch, (3, 10))],
+        ),
+        // A labeled variant is an error, and a missing name too; a bound one is typed.
+        (
+            "fn g() {\n    let n: i64 = Wrap.W(x: 1)\n}".into(),
+            vec![(Code::LabeledArgument, (2, 25))],
+        ),
+        (
+            "fn g() {\n    let n: i64 = Tree.Node(Tree<i64>.Leaf, nope, Tree.Leaf)\n}".into(),
+            vec![(Code::Mismatch, (2, 18)), (Code::BindingNotFound, (2, 44))],
+        ),
+        (
+            "fn g() {\n    let n: i64 = Cell(value: 1, next: nope)\n}".into(),
+            vec![(Code::Mismatch, (2, 18)), (Code::BindingNotFound, (2, 39))],
+        ),
+        (
+            "enum Mix<T> { M(x: T, T) }\nfn g() {\n    let m = Mix.M(x: 1, 2)\n}".into(),
+            vec![(Code::MixedLabels, (1, 23))],
+        ),
+        (
+            "enum Lab<T> { P(x: T, y: T) }\nfn g() {\n    let p = Lab.P(y: 1, x: 2)\n}".into(),
+            vec![(Code::FieldOutOfOrder, (3, 19))],
+        ),
+        (
+            "fn g() {\n    let x = E.map<string>(\"a\")\n}".into(),
+            vec![(Code::MemberKind, (2, 15))],
+        ),
+    ] {
+        codes(&with_generics(&line), &expected);
+    }
 }

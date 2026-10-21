@@ -185,6 +185,12 @@ impl Checker<'_> {
         let (method, types, angles) = (site.name, site.written, site.angles);
         let start = self.diagnostics.len();
         let path = !types.is_empty() && self.path_method(receiver, method);
+        if path && self.generic_variant(receiver, method).is_some() {
+            // Its arguments alone could not bind what the list was meant to.
+            self.variant_args(receiver, method, angles);
+            self.stray(args);
+            return Err(Poisoned::error());
+        }
         // Whether the list is reported only once the member is found: a path's, or a built-in's.
         let mut deferred = path;
         let checked = if !safe
@@ -217,10 +223,7 @@ impl Checker<'_> {
             _ => false,
         });
         if deferred && !unknown {
-            match self.generic_variant(receiver, method) {
-                Some(_) => self.variant_args(receiver, method, angles),
-                None => self.not_generic(method.name, angles),
-            }
+            self.not_generic(method.name, angles);
         }
         checked
     }
@@ -440,7 +443,10 @@ impl Checker<'_> {
             .find_map(|(i, arg)| misplaced(name, fields, i, arg));
         if let Some(d) = mistake {
             self.diagnostics.push(d);
+            self.stray(args);
         } else if let Some(missing) = fields.get(args.len()) {
+            // Checking the arguments records a comparison misread as a call.
+            self.stray(args);
             if !self.misread_in(args) {
                 self.report(DiagnosticKind::MissingField {
                     field: missing.to_string(),
@@ -451,7 +457,6 @@ impl Checker<'_> {
         } else {
             return true;
         }
-        self.stray(args);
         false
     }
 
