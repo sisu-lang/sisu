@@ -23,8 +23,9 @@
 //!   owned outright. Otherwise the caller would release the argument after the call, and the
 //!   call would not be a tail call. A temporary that only pins a local stands for that local.
 //!
-//! Every other consumption, and each parameter of `main`, which the C entry point hands over
-//! owned, seeds one worklist search that visits each edge at most once. A parameter is owned
+//! Every other consumption, each parameter of `main`, which the C entry point hands over owned,
+//! and each parameter lowering marks in `reuses`, whose box a `match` would build a new box into
+//! (part 5), seeds one worklist search that visits each edge at most once. A parameter is owned
 //! when the search reaches it. That is what solving the call graph one component at a time,
 //! callees first, would give, without scanning a component twice.
 //!
@@ -55,8 +56,8 @@ pub(super) fn assumed(program: &tir::Program) -> Vec<Vec<bool>> {
 }
 
 /// Per function and parameter, whether the parameter is borrowed: counted, and not consumed.
-/// `functions` is lowered mir, before any pass.
-pub(super) fn infer(functions: &[Function], main: FuncId) -> Vec<Vec<bool>> {
+/// `functions` is lowered mir, before any pass, and `reuses` marks the parameters it seeds owned.
+pub(super) fn infer(functions: &[Function], main: FuncId, reuses: &[Vec<bool>]) -> Vec<Vec<bool>> {
     let mut first = Vec::with_capacity(functions.len());
     let mut nodes = 0;
     for function in functions {
@@ -72,6 +73,11 @@ pub(super) fn infer(functions: &[Function], main: FuncId) -> Vec<Vec<bool>> {
     };
     for param in 0..functions[main.0].params {
         graph.seed(first[main.0] + param);
+    }
+    for (id, marks) in reuses.iter().enumerate() {
+        for (param, _) in marks.iter().enumerate().filter(|&(_, &marked)| marked) {
+            graph.seed(first[id] + param);
+        }
     }
     for (id, function) in functions.iter().enumerate() {
         Walk {

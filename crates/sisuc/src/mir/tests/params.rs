@@ -3,8 +3,10 @@
 
 use std::fmt::Write as _;
 
+use super::super::lower::{self, SEEDED};
 use super::super::params::FOLLOWED;
 use super::*;
+use crate::tir::FuncId;
 
 const KEEP: &str = "fn keep(p: [i64]) -> [i64] {\n    let q = p\n    q\n}";
 
@@ -340,4 +342,79 @@ fn infer_visits_each_edge_once() {
         two_hundred <= 5 * fifty,
         "{fifty} edges for 50, {two_hundred} for 200"
     );
+}
+
+const TREE_REWRITE: &str = include_str!("../../../../../bench/features/tree_rewrite/main.sisu");
+
+/// Part 4 alone infers `simplify`'s `e` borrowed: `e` reaches only a tail call to itself and
+/// calls whose results go into new boxes. Its `Add(l, r)` arm takes two boxes apart and builds
+/// an `Add`, so the seed keeps `e` owned, and the `Add` is built into the arm's two tokens.
+#[test]
+fn parameter_whose_box_is_reused_stays_owned() {
+    let printed = built(TREE_REWRITE);
+    signature(&printed, "simplify", "fn simplify(e#0: Expr)");
+    has(
+        &printed,
+        "simplify",
+        &["= variant Expr.Add(move _, move _) into [_, _]"],
+    );
+    let printed = built(include_str!("../../../tests/run/enum_alloc_rewrite.sisu"));
+    signature(&printed, "swap", "fn swap(e#0: Expr)");
+}
+
+/// `weigh` and `eval` test `e`'s boxes, but no arm builds a box, so `e` stays borrowed.
+#[test]
+fn parameter_only_read_stays_borrowed() {
+    signature(&built(TREE_REWRITE), "weigh", "fn weigh(e#0: borrow Expr)");
+    let printed = built(include_str!(
+        "../../../../../bench/features/enum_match/main.sisu"
+    ));
+    signature(&printed, "eval", "fn eval(e#0: borrow Expr)");
+}
+
+/// The arm of `REBUILT` takes two boxes apart and builds a box of their enum.
+const REBUILT: &str = "match e {\n        Add(l, r) => Expr.Add(Expr.Num(1), Expr.Num(2))\n        _ => Expr.Num(0)\n    }";
+
+/// `rebuilt` matches its parameter, so the seed keeps it owned. `Holder.rebuilt` matches a field
+/// of `self`, not `self` itself: taking `self.e` apart would not free `self`, which stays
+/// borrowed.
+#[test]
+fn match_on_a_field_is_not_seeded() {
+    let printed = built(&format!(
+        "{EXPR}\nfn rebuilt(e: Expr) -> Expr {{\n    {REBUILT}\n}}\n\
+         class Holder {{\n    e: Expr\n\n    fn rebuilt(self) -> Expr {{\n        {}\n    }}\n}}",
+        REBUILT.replace("match e", "match self.e")
+    ));
+    signature(&printed, "rebuilt", "fn rebuilt(e#0: Expr)");
+    signature(
+        &printed,
+        "Holder.rebuilt",
+        "fn Holder.rebuilt(self#0: borrow Holder)",
+    );
+}
+
+/// Each construction writes one counter and each arm on a parameter reads one twice, so `n`
+/// nested arms, each open around all `n` constructions, cost `n + 2 × n`, not `n × n`.
+#[test]
+fn seed_bookkeeping_is_linear() {
+    let n = 40;
+    let params: Vec<String> = (0..n).map(|i| format!("e{i}: Expr")).collect();
+    let mut lets = String::new();
+    for i in 0..n {
+        writeln!(lets, "let b{i} = Expr.Add(Expr.Num({i}), Expr.Num(0))")
+            .expect("writing to a `String` should not fail");
+    }
+    let mut body = format!("{{\n{lets}Expr.Num(0)\n}}");
+    for i in (0..n).rev() {
+        body = format!("match e{i} {{\n    Add(l{i}, r{i}) => {body}\n    _ => Expr.Num({i})\n}}");
+    }
+    let src = format!("{EXPR}\nfn f({}) -> Expr {{\n{body}\n}}", params.join(", "));
+    let program = checked(&src);
+    let id = (program.functions.iter())
+        .position(|f| f.name == "f")
+        .expect("the program should define `f`");
+    SEEDED.set(0);
+    let (_, _, reuses) = lower::function(&program, FuncId(id), &vec![true; n]);
+    assert_eq!(SEEDED.get(), n + 2 * n);
+    assert_eq!(reuses, vec![true; n]);
 }

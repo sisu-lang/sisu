@@ -411,17 +411,20 @@ impl Terminator {
 /// certifies each function and panics on a violation.
 pub(crate) fn build(program: &tir::Program) -> Program {
     let assumed = params::assumed(program);
-    let (mut functions, consulted): (Vec<_>, Vec<_>) = assumed
+    let (mut functions, (consulted, reuses)): (Vec<_>, (Vec<_>, Vec<_>)) = assumed
         .iter()
         .enumerate()
-        .map(|(id, borrowed)| lower::function(program, FuncId(id), borrowed))
+        .map(|(id, borrowed)| {
+            let (function, consulted, reuses) = lower::function(program, FuncId(id), borrowed);
+            (function, (consulted, reuses))
+        })
         .unzip();
     let main = program
         .functions
         .iter()
         .position(|f| f.name == "main")
         .expect("the checker should reject a program without a `main` function");
-    let modes = params::infer(&functions, FuncId(main));
+    let modes = params::infer(&functions, FuncId(main), &reuses);
     for (id, consulted) in consulted.iter().enumerate() {
         if consulted
             .iter()

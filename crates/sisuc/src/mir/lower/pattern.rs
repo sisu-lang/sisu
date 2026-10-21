@@ -27,10 +27,13 @@
 
 use std::mem;
 
+#[cfg(test)]
+use super::SEEDED;
 use super::{Lowered, Lowering, valued, whole};
 use crate::mir::{BlockId, Const, Operand, Place, Projection, Rvalue, Statement, Terminator};
 use crate::tir::{
-    Arm, BinaryOp, Block, CompareOp, Expr, ExprKind, LocalId, Pattern, PatternKind, Type, TypeKind,
+    Arm, BinaryOp, Block, CompareOp, EnumId, Expr, ExprKind, LocalId, Pattern, PatternKind, Type,
+    TypeKind,
 };
 
 /// An index into `Lowering::targets`: a failure target that has no block until an edge needs it.
@@ -194,7 +197,10 @@ impl Lowering<'_> {
     }
 
     /// `match scrutinee { arms }`, with the scrutinee in `temp`, or tested in place when it is a
-    /// borrowed place.
+    /// borrowed place. A `match` on a borrowed parameter of an enum type marks it in `reuses` when
+    /// an arm would take a box of an enum `F` apart in the owned form and its body builds a
+    /// `Variant` with a boxed `F` field: the arm notes `F`'s count in `built` before its body, and
+    /// the count differs after.
     pub(super) fn match_expr(
         &mut self,
         scrutinee: &Expr,
@@ -205,6 +211,11 @@ impl Lowering<'_> {
     ) -> Lowered {
         let borrowed = self.borrowed_place(scrutinee);
         let borrows = borrowed.is_some();
+        let seed = (borrowed.as_ref())
+            .filter(|place| {
+                place.projections.is_empty() && matches!(scrutinee.ty.kind(), TypeKind::Enum(_))
+            })
+            .map(|place| place.local);
         // `counted`: whether the scrutinee is in a temporary that owns a reference.
         let (place, counted) = if let Some(place) = borrowed {
             (place, false)
@@ -243,7 +254,20 @@ impl Lowering<'_> {
                     None
                 };
                 self.commit(temp, counted, borrows, guards, &arm.bindings, parts);
+                let noted = match seed {
+                    Some(_) => self.noted(&arm.pattern, &place, scrutinee.ty, &arm.bindings),
+                    None => Vec::new(),
+                };
                 self.arm(outer, &arm.body, dest, &mut join);
+                if let Some(param) = seed
+                    && noted.iter().any(|&(f, count)| {
+                        #[cfg(test)]
+                        SEEDED.set(SEEDED.get() + 1);
+                        self.built[f.0] != count
+                    })
+                {
+                    self.reuses[param.0] = true;
+                }
                 if borrows {
                     for &binding in &arm.bindings {
                         self.guarded[binding.0] = false;
@@ -332,6 +356,32 @@ impl Lowering<'_> {
                 self.scope.push((binding, false));
             }
         }
+    }
+
+    /// Each enum a box of which the owned form's commit of `pattern` takes apart, with its count
+    /// in `built`.
+    fn noted(
+        &self,
+        pattern: &Pattern,
+        place: &Place,
+        ty: Type,
+        bindings: &[LocalId],
+    ) -> Vec<(EnumId, usize)> {
+        let mut noted: Vec<(EnumId, usize)> = Vec::new();
+        let tokens = self
+            .parts(pattern, place, ty, bindings)
+            .map(|parts| parts.tokens);
+        for (token, _) in tokens.into_iter().flatten() {
+            let TypeKind::Enum(f) = token.kind() else {
+                unreachable!("a tested box should hold an enum")
+            };
+            if !noted.iter().any(|&(g, _)| g == f) {
+                #[cfg(test)]
+                SEEDED.set(SEEDED.get() + 1);
+                noted.push((f, self.built[f.0]));
+            }
+        }
+        noted
     }
 
     /// The take-apart commit of `parts` on `temp`, whose arm binds `bindings`.

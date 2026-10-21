@@ -40,7 +40,9 @@ use super::{
     Block as MirBlock, BlockId, Const, Function, Local, Loop, Operand, Place as MirPlace,
     Projection, Rvalue, Statement, Terminator,
 };
-use crate::tir::{self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type};
+use crate::tir::{
+    self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type, TypeKind,
+};
 
 /// The mir of `program`, before any pass, each function lowered under its parameters' `modes`:
 /// `Use` operands and borrow sites are still undecided.
@@ -56,12 +58,13 @@ pub(crate) fn lower(program: &tir::Program, modes: &[Vec<bool>]) -> super::Progr
 }
 
 /// The mir of function `id`, before any pass, lowered as if each parameter that `borrowed` marks
-/// is borrowed; and the parameters whose flag decided the form of a `match` or an `if let`.
+/// is borrowed; the parameters whose flag decided the form of a `match` or an `if let`; and those
+/// a `match` would reuse a box of in the owned form (`Lowering::reuses`).
 pub(super) fn function(
     program: &tir::Program,
     id: FuncId,
     borrowed: &[bool],
-) -> (Function, Vec<bool>) {
+) -> (Function, Vec<bool>, Vec<bool>) {
     let f = &program.functions[id.0];
     debug_assert_eq!(
         borrowed.len(),
@@ -85,6 +88,11 @@ struct Lowering<'a> {
     borrowed: &'a [bool],
     /// Per parameter, whether its flag decided the form of a `match` or an `if let`.
     consulted: Vec<bool>,
+    /// Per parameter, whether a `match` on it has an arm that would take a box of some enum `F`
+    /// apart in the owned form, and whose body builds a `Variant` with a boxed `F` field.
+    reuses: Vec<bool>,
+    /// Per enum, the `Variant` constructions lowered so far with a boxed field of that enum.
+    built: Vec<usize>,
     locals: Vec<Local>,
     blocks: Vec<MirBlock>,
     loops: Vec<Loop>,
@@ -167,7 +175,7 @@ impl<'a> Lowering<'a> {
         program: &'a tir::Program,
         f: &tir::Function,
         borrowed: &'a [bool],
-    ) -> (Function, Vec<bool>) {
+    ) -> (Function, Vec<bool>, Vec<bool>) {
         let locals = f
             .locals
             .iter()
@@ -183,6 +191,8 @@ impl<'a> Lowering<'a> {
             program,
             borrowed,
             consulted: vec![false; f.params.len()],
+            reuses: vec![false; f.params.len()],
+            built: vec![0; program.enums.len()],
             locals,
             blocks: Vec::new(),
             loops: Vec::new(),
@@ -226,16 +236,32 @@ impl<'a> Lowering<'a> {
             loops: lowering.loops,
             owners: lowering.owners,
         };
-        (function, lowering.consulted)
+        (function, lowering.consulted, lowering.reuses)
     }
 
     fn counted(&self, ty: Type) -> bool {
         ty.is_counted(&self.program.enums)
     }
 
+    /// Counts a construction of variant `variant` of enum `id` once for each enum `F` it has a
+    /// boxed `F` field of, the fields the reuse pass gives a token.
+    fn count_built(&mut self, id: tir::EnumId, variant: usize) {
+        let fields = &self.program.enums[id.0].variants[variant].fields;
+        for (i, field) in fields.iter().enumerate() {
+            if let TypeKind::Enum(f) = field.ty.kind()
+                && field.boxed
+                && !fields[..i].iter().any(|g| g.boxed && g.ty == field.ty)
+            {
+                #[cfg(test)]
+                SEEDED.set(SEEDED.get() + 1);
+                self.built[f.0] += 1;
+            }
+        }
+    }
+
     /// The projection to field `index` of a value of the class type `base`.
     fn field(&self, base: Type, index: usize) -> Projection {
-        let tir::TypeKind::Class(class) = base.kind() else {
+        let TypeKind::Class(class) = base.kind() else {
             unreachable!("the checker should allow a field only on a class-typed value")
         };
         Projection::Field {
@@ -607,12 +633,16 @@ impl<'a> Lowering<'a> {
                 class: *class,
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
             },
-            ExprKind::Variant { id, variant, args } => Rvalue::Variant {
-                id: *id,
-                variant: *variant,
-                args: self.operands(&args.iter().collect::<Vec<_>>())?,
-                reuse: vec![None; args.len()],
-            },
+            ExprKind::Variant { id, variant, args } => {
+                let args = self.operands(&args.iter().collect::<Vec<_>>())?;
+                self.count_built(*id, *variant);
+                Rvalue::Variant {
+                    id: *id,
+                    variant: *variant,
+                    reuse: vec![None; args.len()],
+                    args,
+                }
+            }
             ExprKind::Field { base, index } => {
                 let (mut place, temp) = self.base(base, true)?;
                 place.projections.push(self.field(base.ty, *index));
@@ -1281,6 +1311,9 @@ thread_local! {
     /// How many guard-membership records `is_guarded` has read on this thread: one flag per
     /// question about a source local.
     pub(super) static PROBED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many reads and writes of a construction counter (`Lowering::built`) lowering has made
+    /// on this thread.
+    pub(super) static SEEDED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `mentions` of `e`'s own node and its children.
