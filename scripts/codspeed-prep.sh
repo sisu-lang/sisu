@@ -30,7 +30,7 @@ reduce() {
     if cmp -s "bench/$b/main.sisu" "$out/$b/main.sisu"; then
         fail "the reduction of $b no longer applies"
     fi
-    target/release/sisuc -O2 "$out/$b/main.sisu" "$out/$b/main" || fail "$b failed to compile"
+    target/release/sisuc build -O2 "$out/$b/main.sisu" -o "$out/$b/main" || fail "$b failed to compile"
 }
 reduce fib 's/fib(40)/fib(27)/'
 reduce sieve 's/sieve(50_000_000)/sieve(1_000_000)/'
@@ -41,7 +41,7 @@ reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
 # bench/features/ programs are sized for simulation and Sisu-only: no reduction.
 for b in strings enum_match shared_arrays compare; do
-    target/release/sisuc -O2 "bench/features/$b/main.sisu" "$out/$b/main" || fail "$b failed to compile"
+    target/release/sisuc build -O2 "bench/features/$b/main.sisu" -o "$out/$b/main" || fail "$b failed to compile"
 done
 
 # step0 returns its argument. stepi adds 1 through an array, a class and an

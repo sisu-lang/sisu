@@ -7,7 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 
-/// `sisuc <flags> <input> <output>`, run from `dir`, after asserting the runtime archive exists.
+/// `sisuc build <flags> <input> -o <output>`, run from `dir`, after asserting the runtime archive
+/// exists.
 pub(crate) fn sisuc(dir: &Path, input: &str, output: &Path, flags: &[&str]) -> Command {
     let sisuc = Path::new(env!("CARGO_BIN_EXE_sisuc"));
     assert!(
@@ -16,7 +17,13 @@ pub(crate) fn sisuc(dir: &Path, input: &str, output: &Path, flags: &[&str]) -> C
          script builds it, or run `cargo build -p sisu-runtime`"
     );
     let mut command = Command::new(sisuc);
-    command.current_dir(dir).args(flags).arg(input).arg(output);
+    command
+        .current_dir(dir)
+        .arg("build")
+        .args(flags)
+        .arg(input)
+        .arg("-o")
+        .arg(output);
     command
 }
 
@@ -247,10 +254,10 @@ pub(crate) fn diagnostics(path: &Path, bless: bool) {
     diagnose(path, path, bless);
 }
 
-/// Checks that `sisuc --check <name>.sisu` on `source`, run from its directory, reports at least
+/// Checks that `sisuc check <name>.sisu` on `source`, run from its directory, reports at least
 /// one diagnostic, prints nothing on stdout, and exits 1 when a stderr line starts with `error`,
 /// else 0. A source named after a code (`E0001.sisu`, `E0001-field.sisu`) reports that code.
-/// `sisuc --format json --check` exits the same, and each of its stderr lines is a JSON object,
+/// `sisuc check --format json` exits the same, and each of its stderr lines is a JSON object,
 /// the summary last. Then the two stderrs are `expected` with the extensions `err` and `json`;
 /// with `bless`, rewrites both files instead.
 pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
@@ -259,7 +266,7 @@ pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
     let sisuc = Path::new(env!("CARGO_BIN_EXE_sisuc"));
     let out = Command::new(sisuc)
         .current_dir(dir)
-        .arg("--check")
+        .arg("check")
         .arg(name)
         .output()
         .expect("sisuc starts");
@@ -286,7 +293,7 @@ pub(crate) fn diagnose(source: &Path, expected: &Path, bless: bool) {
     }
     let out = Command::new(sisuc)
         .current_dir(dir)
-        .args(["--format", "json", "--check"])
+        .args(["check", "--format", "json"])
         .arg(name)
         .output()
         .expect("sisuc starts");
@@ -410,8 +417,8 @@ pub(crate) fn case_dir(source: &Path) -> PathBuf {
 /// the C `main` is internal, so `-O2` would inline a caller with one call site and the caller
 /// would vanish from the IR. The check therefore builds once per distinct caller, with
 /// `SISU_KEEP_FUNCTIONS` set to that caller alone, which marks it `noinline` for
-/// `sisuc --emit ir` and nothing else, and counts in that build. One caller at a time, so that
-/// keeping one caller does not also keep a callee that another marker names as its caller. A
+/// `sisuc build --emit ir` and nothing else, and counts in that build. One caller at a time, so
+/// that keeping one caller does not also keep a callee that another marker names as its caller. A
 /// caller that takes parameters is rejected: kept as a function of its own, it could hold a
 /// call that its real call sites decide away. `main(args)` is the exception: only the C `main`
 /// calls it, with arguments known at run time.
@@ -427,7 +434,7 @@ fn function_text<'a>(ir: &'a str, name: &str) -> Option<&'a str> {
         .and_then(|function| function.split("\n}").next())
 }
 
-/// `sisuc -O2 --emit ir` on the case `path` with `SISU_KEEP_FUNCTIONS=caller`, as the module
+/// `sisuc build -O2 --emit ir` on the case `path` with `SISU_KEEP_FUNCTIONS=caller`, as the module
 /// before and the module after the pipeline.
 fn o2_ir(path: &Path, caller: &str) -> (String, String) {
     let dir = path.parent().expect("a case should sit in a directory");
@@ -435,7 +442,7 @@ fn o2_ir(path: &Path, caller: &str) -> (String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
         .env("SISU_KEEP_FUNCTIONS", caller)
-        .args(["-O2", "--emit", "ir"])
+        .args(["build", "-O2", "--emit", "ir"])
         .arg(name)
         .output()
         .expect("sisuc starts");
@@ -453,7 +460,8 @@ fn o2_ir(path: &Path, caller: &str) -> (String, String) {
     (before.to_string(), after.to_string())
 }
 
-/// Checks each `O2_CALLS` marker in `path` against `sisuc -O2 --emit ir`, built once per caller.
+/// Checks each `O2_CALLS` marker in `path` against `sisuc build -O2 --emit ir`, built once per
+/// caller.
 /// The marked caller is measured as a standalone function. In a real build it is inlined, and a
 /// call to a callee that LLVM infers as `memory(none)` or `readonly` can then be merged with an
 /// identical call at the call site. So mark calls to callees that write memory.

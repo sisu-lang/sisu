@@ -14,7 +14,7 @@ fn emit_tokens() {
     fs::write(dir.join("emit_tokens.sisu"), "fn main() {}\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -31,7 +31,7 @@ fn emit_tokens_names_the_class_and_optional_tokens() {
     .expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_new_tokens.sisu"])
+        .args(["build", "--emit", "tokens", "emit_new_tokens.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -62,7 +62,7 @@ fn emit_tokens_char() {
     fs::write(dir.join("emit_tokens_char.sisu"), "'ä' '\\n'\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_char.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_char.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -79,7 +79,7 @@ fn emit_tokens_float() {
     fs::write(dir.join("emit_tokens_float.sisu"), "1.5e3\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_float.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_float.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -95,7 +95,7 @@ fn emit_tokens_star_star() {
     fs::write(dir.join("emit_tokens_star_star.sisu"), "x ** 2\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_star_star.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_star_star.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -111,7 +111,7 @@ fn emit_tokens_todo() {
     fs::write(dir.join("emit_tokens_todo.sisu"), "todo\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_todo.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_todo.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -131,7 +131,7 @@ fn emit_tokens_strings() {
     .expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_strings.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_strings.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -151,7 +151,7 @@ fn emit_tokens_reserved() {
     fs::write(dir.join("emit_tokens_reserved.sisu"), "record\nconst\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_reserved.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_reserved.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -166,7 +166,7 @@ fn lexer_error_exits_1() {
     fs::write(dir.join("lexer_error_exits_1.sisu"), "a & b\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "lexer_error_exits_1.sisu"])
+        .args(["build", "--emit", "tokens", "lexer_error_exits_1.sisu"])
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
@@ -187,7 +187,7 @@ fn unlexable_source_exits_1_for_tokens_and_ast() {
     for stage in ["tokens", "ast"] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
             .current_dir(dir)
-            .args(["--emit", stage, "unlexable_source.sisu"])
+            .args(["build", "--emit", stage, "unlexable_source.sisu"])
             .output()
             .expect("sisuc starts");
         assert_eq!(out.status.code(), Some(1), "{stage}");
@@ -199,40 +199,81 @@ fn unlexable_source_exits_1_for_tokens_and_ast() {
     }
 }
 
-/// A mode flag with too few arguments, or with the arguments of another mode.
+/// No arguments, `help`, `-h` and `--help` print the usage to stdout and exit 0.
+#[test]
+fn help_and_no_arguments_exit_0() {
+    for args in [&[][..], &["help"], &["-h"], &["--help"]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .args(args)
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for command in ["build", "check", "explain"] {
+            assert!(stdout.contains(command), "{args:?}: {stdout}");
+        }
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "", "{args:?}");
+    }
+}
+
+/// A wrong command line exits 2, and a broken flag rule names the flag with `build`'s usage.
+#[test]
+fn usage_errors_exit_2() {
+    assert_usage_errors(&[
+        &["bogus"],
+        &["build"],
+        &["check"],
+        &["explain"],
+        &["build", "a.sisu", "b.sisu"],
+        &["check", "--emit", "ast", "a.sisu"],
+        &["build", ".."],
+    ]);
+    let stderr = assert_usage_errors(&[&["build", "--emit", "tir", "-O2", "f.sisu"]]);
+    assert!(
+        stderr.starts_with(
+            "error: `-O2` works only when building an executable or with `--emit ir`\n"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("\nUsage: sisuc build "), "{stderr}");
+}
+
+/// A subcommand with too few arguments, or with the arguments of another one.
 #[test]
 fn mode_with_the_wrong_arguments_is_a_usage_error() {
-    assert_usage_errors(&[&["--check"], &["--check", "tir", "f.sisu"]]);
+    assert_usage_errors(&[&["check"], &["check", "tir", "f.sisu"]]);
 }
 
 /// Runs `sisuc` with each of `cases` in the target tmp dir, and checks that each is a usage
-/// error.
-fn assert_usage_errors(cases: &[&[&str]]) {
+/// error: clap's error on stderr, nothing on stdout, and exit 2. Returns the last stderr.
+fn assert_usage_errors(cases: &[&[&str]]) -> String {
+    let mut stderr = String::new();
     for args in cases {
         let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
             .current_dir(env!("CARGO_TARGET_TMPDIR"))
             .args(*args)
             .output()
             .expect("sisuc starts");
-        assert_eq!(out.status.code(), Some(1), "{args:?}");
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(stderr.starts_with("usage: sisuc"), "{args:?}: {stderr}");
+        stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "", "{args:?}");
+        assert!(stderr.starts_with("error: "), "{args:?}: {stderr}");
     }
+    stderr
 }
 
-/// `--rc-checks` is accepted only right after an optional `-O2`, and only for a build or IR.
+/// `--rc-checks` goes only with a build or IR, once.
 #[test]
 fn rc_checks_is_build_or_ir_only() {
-    let cases: [&[&str]; 9] = [
-        &["--rc-checks", "--explain", "E0001"],
-        &["--rc-checks", "--emit", "tir", "f.sisu"],
-        &["--rc-checks", "--emit", "mir", "f.sisu"],
-        &["--rc-checks", "--emit", "tokens", "f.sisu"],
-        &["--rc-checks", "--check", "f.sisu"],
-        &["--rc-checks", "-O2", "f.sisu", "out"],
-        &["--emit", "ir", "--rc-checks"],
-        &["--check", "--rc-checks"],
-        &["--rc-checks", "--rc-checks", "f.sisu"],
+    let cases: [&[&str]; 8] = [
+        &["explain", "--rc-checks", "E0001"],
+        &["build", "--rc-checks", "--emit", "tir", "f.sisu"],
+        &["build", "--rc-checks", "--emit", "mir", "f.sisu"],
+        &["build", "--rc-checks", "--emit", "tokens", "f.sisu"],
+        &["check", "--rc-checks", "f.sisu"],
+        &["build", "--emit", "ir", "--rc-checks"],
+        &["check", "--rc-checks"],
+        &["build", "--rc-checks", "--rc-checks", "f.sisu"],
     ];
     assert_usage_errors(&cases);
 }
@@ -258,13 +299,13 @@ fn emit_ir_with_rc_checks() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     for args in [
-        &["--rc-checks", "--emit", "ir-raw"][..],
-        &["--rc-checks", "--emit", "ir"],
-        &["-O2", "--rc-checks", "--emit", "ir"],
+        &["build", "--rc-checks", "--emit", "ir-raw"][..],
+        &["build", "--rc-checks", "--emit", "ir"],
+        &["build", "-O2", "--rc-checks", "--emit", "ir"],
     ] {
         assert!(ir(args).contains("@sisu_rc_check_exit"), "{args:?}");
     }
-    assert!(!ir(&["--emit", "ir-raw"]).contains("@sisu_rc_check_exit"));
+    assert!(!ir(&["build", "--emit", "ir-raw"]).contains("@sisu_rc_check_exit"));
 }
 
 #[test]
@@ -277,7 +318,7 @@ fn emit_ast() {
     .expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "ast", "emit_ast.sisu"])
+        .args(["build", "--emit", "ast", "emit_ast.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -297,7 +338,7 @@ fn emit_ast_keeps_compound_assign() {
     .expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "ast", "emit_ast_compound.sisu"])
+        .args(["build", "--emit", "ast", "emit_ast_compound.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -318,7 +359,7 @@ fn emit_ast_and_tir_print_mut() {
     let emit = |what: &str| {
         let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
             .current_dir(dir)
-            .args(["--emit", what, "emit_mut.sisu"])
+            .args(["build", "--emit", what, "emit_mut.sisu"])
             .output()
             .expect("sisuc starts");
         assert!(out.status.success());
@@ -340,7 +381,7 @@ fn parse_error_exits_1() {
     fs::write(dir.join("parse_error_exits_1.sisu"), "let x = 1\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "ast", "parse_error_exits_1.sisu"])
+        .args(["build", "--emit", "ast", "parse_error_exits_1.sisu"])
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
@@ -375,9 +416,9 @@ fn run_on(name: &str, source: &str, flags: &[&str]) -> Output {
         .expect("sisuc starts")
 }
 
-/// Runs `sisuc --check` on `source`, saved as `<name>.sisu` in the target tmp dir.
+/// Runs `sisuc check` on `source`, saved as `<name>.sisu` in the target tmp dir.
 fn check(name: &str, source: &str) -> Output {
-    run_on(name, source, &["--check"])
+    run_on(name, source, &["check"])
 }
 
 #[test]
@@ -429,7 +470,7 @@ fn explain_prints_the_explanation() {
     .expect("reads the explanation");
     for code in ["E0001", "e0001"] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
-            .args(["--explain", code])
+            .args(["explain", code])
             .output()
             .expect("sisuc starts");
         assert_eq!(out.status.code(), Some(0), "{code}");
@@ -443,7 +484,7 @@ fn explain_prints_the_explanation() {
 fn explain_prints_a_retired_explanation() {
     for code in ["E0012", "e0012"] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
-            .args(["--explain", code])
+            .args(["explain", code])
             .output()
             .expect("sisuc starts");
         assert_eq!(out.status.code(), Some(0), "{code}");
@@ -458,7 +499,7 @@ fn explain_prints_a_retired_explanation() {
 #[test]
 fn explain_rejects_an_unknown_code() {
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
-        .args(["--explain", "E9999"])
+        .args(["explain", "E9999"])
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
@@ -473,7 +514,7 @@ fn explain_rejects_an_unknown_code() {
 fn unreadable_input_exits_1() {
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(env!("CARGO_TARGET_TMPDIR"))
-        .args(["--check", "no_such_dir/unreadable_input_exits_1.sisu"])
+        .args(["check", "no_such_dir/unreadable_input_exits_1.sisu"])
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
@@ -492,7 +533,7 @@ fn oversized_input_is_a_tool_error() {
     file.set_len((1 << 30) + 1).expect("sets the length");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--check", name])
+        .args(["check", name])
         .output()
         .expect("sisuc starts");
     fs::remove_file(dir.join(name)).expect("removes");
@@ -506,7 +547,7 @@ fn oversized_input_is_a_tool_error() {
 #[test]
 fn check_reads_a_pipe() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_sisuc"))
-        .args(["--check", "/dev/stdin"])
+        .args(["check", "/dev/stdin"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -524,14 +565,14 @@ fn check_reads_a_pipe() {
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
 }
 
-/// Runs `sisuc --check` on a file named `name` that holds `bytes`; returns the exit code and
+/// Runs `sisuc check` on a file named `name` that holds `bytes`; returns the exit code and
 /// stderr.
 fn check_bytes(name: &str, bytes: &[u8]) -> (Option<i32>, String) {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join(name), bytes).expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--check", name])
+        .args(["check", name])
         .output()
         .expect("sisuc starts");
     (
@@ -622,7 +663,7 @@ fn mem2reg_removes_every_alloca() {
     // entry block, or `mem2reg` leaves it in place.
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run"))
-        .args(["--emit", "ir", "loops.sisu"])
+        .args(["build", "--emit", "ir", "loops.sisu"])
         .output()
         .expect("sisuc starts");
     assert_eq!(
@@ -660,7 +701,7 @@ fn emit_ir_error_prints_no_ir() {
     let out = run_on(
         "emit_ir_error_prints_no_ir",
         "fn main() {\n    let n = 0\n    n = 1\n}\n",
-        &["--emit", "ir"],
+        &["build", "--emit", "ir"],
     );
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).starts_with("error[E0001]: cannot assign to `n`"));
@@ -672,7 +713,7 @@ fn emit_ir_warning_still_prints_ir() {
     let out = run_on(
         "emit_ir_warning_still_prints_ir",
         "fn main() {\n    let mut count = 0\n    print(count)\n}\n",
-        &["--emit", "ir"],
+        &["build", "--emit", "ir"],
     );
     assert_eq!(out.status.code(), Some(0));
     assert!(
@@ -682,14 +723,14 @@ fn emit_ir_warning_still_prints_ir() {
     ir_sections(&String::from_utf8_lossy(&out.stdout));
 }
 
-/// A warning does not stop `--emit tokens` or `--emit ast`, as it does not stop `--check`.
+/// A warning does not stop `--emit tokens` or `--emit ast`, as it does not stop `check`.
 #[test]
 fn emit_with_a_redundant_semicolon_still_prints() {
     for (stage, first) in [("tokens", "1:1 Fn fn\n"), ("ast", "(fn main ")] {
         let out = run_on(
             "emit_with_a_redundant_semicolon_still_prints",
             "fn main() {\n    print(1);\n}\n",
-            &["--emit", stage],
+            &["build", "--emit", stage],
         );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(0), "{stage}: {stderr}");
@@ -706,7 +747,7 @@ fn emit_tir() {
     let out = run_on(
         "emit_tir",
         "fn main() {\n    let mut i = 0\n    while i < 2 {\n        i = i + 1\n    }\n}\n",
-        &["--emit", "tir"],
+        &["build", "--emit", "tir"],
     );
     assert_eq!(
         out.status.code(),
@@ -725,7 +766,7 @@ fn emit_mir_shows_moves() {
     let out = run_on(
         "emit_mir_shows_moves",
         "fn f(xs: [i64]) -> [i64] { xs }\nfn main() {}\n",
-        &["--emit", "mir"],
+        &["build", "--emit", "mir"],
     );
     assert_eq!(
         out.status.code(),
@@ -742,7 +783,7 @@ fn emit_mir() {
     let out = run_on(
         "emit_mir",
         "enum E {\n    A(string)\n    B\n}\n\nfn name(e: E) -> string {\n    match e {\n        A(s) => s\n        B => \"b\"\n    }\n}\n\nfn main() {\n    print(name(E.A(\"a\")))\n}\n",
-        &["--emit", "mir"],
+        &["build", "--emit", "mir"],
     );
     assert_eq!(
         out.status.code(),
@@ -757,19 +798,12 @@ fn emit_mir() {
     );
 }
 
-/// A stage `--emit` does not know is a usage error, and the usage lists `mir`.
+/// A stage `--emit` does not know is a usage error, and clap's error lists `mir` among the stages.
 #[test]
 fn emit_unknown_stage_lists_mir() {
-    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
-        .current_dir(env!("CARGO_TARGET_TMPDIR"))
-        .args(["--emit", "bogus", "f.sisu"])
-        .output()
-        .expect("sisuc starts");
-    assert_eq!(out.status.code(), Some(1));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.starts_with("usage: sisuc"), "{stderr}");
+    let stderr = assert_usage_errors(&[&["build", "--emit", "bogus", "f.sisu"]]);
     assert!(
-        stderr.contains("--emit tokens|ast|tir|mir <input.sisu>"),
+        stderr.contains("[possible values: tokens, ast, tir, mir, ir, ir-raw]"),
         "{stderr}"
     );
 }
@@ -777,10 +811,10 @@ fn emit_unknown_stage_lists_mir() {
 #[test]
 fn emit_with_an_error_prints_nothing_on_stdout() {
     let flags: [(&[&str], &str); 3] = [
-        (&["--emit", "tir"], "error[E0001]: "),
-        (&["--emit", "mir"], "error[E0001]: "),
+        (&["build", "--emit", "tir"], "error[E0001]: "),
+        (&["build", "--emit", "mir"], "error[E0001]: "),
         (
-            &["--format", "json", "--emit", "tir"],
+            &["build", "--format", "json", "--emit", "tir"],
             r#"{"version":1,"kind":"diagnostic","code":"E0001","#,
         ),
     ];
@@ -802,11 +836,15 @@ fn emit_with_an_error_prints_nothing_on_stdout() {
 #[test]
 fn json_emit_keeps_stdout() {
     for stage in ["tokens", "ast", "tir", "mir", "ir", "ir-raw"] {
-        let text = run_on("json_emit_keeps_stdout", SQUARE, &["--emit", stage]);
+        let text = run_on(
+            "json_emit_keeps_stdout",
+            SQUARE,
+            &["build", "--emit", stage],
+        );
         let json = run_on(
             "json_emit_keeps_stdout",
             SQUARE,
-            &["--format", "json", "--emit", stage],
+            &["build", "--format", "json", "--emit", stage],
         );
         for out in [&text, &json] {
             assert_eq!(
@@ -831,49 +869,50 @@ const FIB: &str = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1)
 
 #[test]
 fn o2_combinations_are_usage_errors() {
-    let cases: [&[&str]; 15] = [
-        &["-O2", "--explain", "E0001"],
-        &["-O2", "--emit", "mir", "f.sisu"],
-        &["--explain", "E0001", "-O2"],
-        &["-O2", "--check", "f.sisu"],
-        &["-O2", "--emit", "tokens", "f.sisu"],
-        &["-O2", "--emit", "ast", "f.sisu"],
-        &["-O2", "--emit", "tir", "f.sisu"],
-        &["-O2", "--emit", "ir-raw", "f.sisu"],
-        &["f.sisu", "out", "-O2"],
-        &["--emit", "ir", "-O2", "f.sisu"],
-        &["--check", "-O2", "f.sisu"],
-        &["-O2", "-O2", "f.sisu", "out"],
-        &["--emit", "ir", "-O2"],
-        &["--check", "-O2"],
-        &["--emit", "ir-raw", "-O2"],
+    let cases: [&[&str]; 13] = [
+        &["explain", "-O2", "E0001"],
+        &["build", "-O2", "--emit", "mir", "f.sisu"],
+        &["explain", "E0001", "-O2"],
+        &["check", "-O2", "f.sisu"],
+        &["build", "-O2", "--emit", "tokens", "f.sisu"],
+        &["build", "-O2", "--emit", "ast", "f.sisu"],
+        &["build", "-O2", "--emit", "tir", "f.sisu"],
+        &["build", "-O2", "--emit", "ir-raw", "f.sisu"],
+        &["check", "f.sisu", "-O2"],
+        &["build", "-O2", "-O2", "f.sisu", "-o", "out"],
+        &["build", "--emit", "ir", "-O2"],
+        &["check", "-O2"],
+        &["build", "--emit", "ir-raw", "-O2"],
     ];
     assert_usage_errors(&cases);
 }
 
-/// `-O3` takes `-O2`'s place, and `--linker` follows an optional `--rc-checks`, for a build only.
+/// `-O3` takes `-O2`'s place, once, and `--linker` goes with a build only, once.
 #[test]
 fn o3_and_linker_combinations_are_usage_errors() {
-    let cases: [&[&str]; 12] = [
-        &["-O2", "-O3", "f.sisu", "out"],
-        &["-O3", "-O2", "f.sisu", "out"],
-        &["-O3", "--check", "f.sisu"],
-        &["-O3", "--emit", "ir-raw", "f.sisu"],
-        &["--rc-checks", "-O3", "f.sisu", "out"],
-        &["--linker", "lld", "--emit", "ir", "f.sisu"],
-        &["--linker", "lld", "--check", "f.sisu"],
-        &["--linker", "lld", "--rc-checks", "f.sisu", "out"],
-        &["--linker", "lld", "--linker", "lld", "f.sisu", "out"],
-        &["--linker", "ld.lld", "f.sisu", "out"],
-        &["f.sisu", "out", "--linker", "lld"],
-        &["--linker"],
+    let cases: [&[&str]; 9] = [
+        &["build", "-O2", "-O3", "f.sisu", "-o", "out"],
+        &["build", "-O3", "-O2", "f.sisu", "-o", "out"],
+        &["check", "-O3", "f.sisu"],
+        &["build", "-O3", "--emit", "ir-raw", "f.sisu"],
+        &["build", "--linker", "lld", "--emit", "ir", "f.sisu"],
+        &["check", "--linker", "lld", "f.sisu"],
+        &[
+            "build", "--linker", "lld", "--linker", "lld", "f.sisu", "-o", "out",
+        ],
+        &["build", "--linker", "ld.lld", "f.sisu", "-o", "out"],
+        &["build", "--linker"],
     ];
     assert_usage_errors(&cases);
 }
 
 #[test]
 fn emit_ir_raw_parses_back() {
-    let out = run_on("emit_ir_raw_parses_back", FIB, &["--emit", "ir-raw"]);
+    let out = run_on(
+        "emit_ir_raw_parses_back",
+        FIB,
+        &["build", "--emit", "ir-raw"],
+    );
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -896,7 +935,7 @@ fn emit_ir_raw_is_the_ir_before_mem2reg() {
     let emit = |stage| {
         let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
             .current_dir(dir)
-            .args(["--emit", stage, "loops.sisu"])
+            .args(["build", "--emit", stage, "loops.sisu"])
             .output()
             .expect("sisuc starts");
         assert_eq!(out.status.code(), Some(0));
@@ -912,7 +951,7 @@ const SQUARE: &str =
 
 #[test]
 fn emit_ir_o2() {
-    let out = run_on("emit_ir_o2", SQUARE, &["-O2", "--emit", "ir"]);
+    let out = run_on("emit_ir_o2", SQUARE, &["build", "-O2", "--emit", "ir"]);
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -968,7 +1007,7 @@ fn latches(ir: &str) -> usize {
 #[test]
 fn emit_ir_o3_runs_the_o3_pipeline() {
     let loops = |level: &str| {
-        let out = run_on("emit_ir_o3", UNSWITCH, &[level, "--emit", "ir"]);
+        let out = run_on("emit_ir_o3", UNSWITCH, &["build", level, "--emit", "ir"]);
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
         assert_eq!(out.status.code(), Some(0), "{stdout}");
         assert!(
@@ -994,7 +1033,7 @@ fn print_in_a_loop_keeps_no_bounds_check_at_o2() {
                   for round in 0..1000 {\n        for i in 0..10_000 {\n\
                   if xs[i] == 0 { print(i) }\n            total += xs[i]\n        }\n    }\n\
                   print(total)\n}\n";
-    let out = run_on("print_in_a_loop", source, &["-O2", "--emit", "ir"]);
+    let out = run_on("print_in_a_loop", source, &["build", "-O2", "--emit", "ir"]);
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -1015,7 +1054,11 @@ fn print_in_a_loop_keeps_no_bounds_check_at_o2() {
 fn inclusive_for_folds_at_o2() {
     let source = "fn main() {\n    let n = 10\n    let mut total = 0\n\
                   for i in 0..=n {\n        total += i\n    }\n    print(total)\n}\n";
-    let out = run_on("inclusive_for_folds", source, &["-O2", "--emit", "ir"]);
+    let out = run_on(
+        "inclusive_for_folds",
+        source,
+        &["build", "-O2", "--emit", "ir"],
+    );
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -1038,7 +1081,7 @@ const CLEAN_SUMMARY: &str =
 fn json_unreadable_input_is_a_tool_error() {
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(env!("CARGO_TARGET_TMPDIR"))
-        .args(["--format", "json", "--check", "no_such_dir/missing.sisu"])
+        .args(["check", "--format", "json", "no_such_dir/missing.sisu"])
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
@@ -1053,19 +1096,18 @@ fn json_unreadable_input_is_a_tool_error() {
     );
 }
 
-/// `--format` is accepted only as the first two arguments, with `text` or `json`, and never with
-/// `--explain`. A usage error stays text, also after `--format json`.
+/// `--format` takes `text` or `json`, and never goes with `explain`. A usage error is clap's
+/// text, also with `--format json`.
 #[test]
 fn format_usage_errors() {
     assert_usage_errors(&[
-        &["--format", "json"],
-        &["--format", "yaml", "--check", "a.sisu"],
-        &["--format", "text", "--explain", "E0001"],
-        // A later `--format` would otherwise fill the input slot of a valid shape.
-        &["--check", "--format"],
-        &["--emit", "tir", "--format"],
-        &["-O2", "--emit", "ir", "--format"],
-        &["--explain", "--format"],
+        &["check", "--format", "json"],
+        &["check", "--format", "yaml", "a.sisu"],
+        &["explain", "--format", "text", "E0001"],
+        &["check", "--format"],
+        &["build", "--emit", "tir", "--format"],
+        &["build", "-O2", "--emit", "ir", "--format"],
+        &["explain", "--format"],
     ]);
 }
 
@@ -1080,11 +1122,13 @@ fn json_link_failure_stays_json() {
         .env("PATH", &only_cc)
         .env_remove("COMPILER_PATH")
         .args([
+            "build",
             "--format",
             "json",
             "--linker",
             "mold",
             "json_link_failure.sisu",
+            "-o",
             "json_link_failure_out",
         ])
         .output()
@@ -1124,9 +1168,11 @@ fn json_overwrite_is_a_tool_error() {
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
         .args([
+            "build",
             "--format",
             "json",
             "json_overwrite.sisu",
+            "-o",
             "json_overwrite.sisu",
         ])
         .output()
@@ -1158,7 +1204,7 @@ fn warnings_only_build_succeeds_with_summary() {
     let exe = dir.join("warnings_only_build");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .arg("warnings_only_build.sisu")
+        .args(["build", "warnings_only_build.sisu", "-o"])
         .arg(&exe)
         .output()
         .expect("sisuc starts");
@@ -1178,11 +1224,11 @@ fn warnings_only_build_succeeds_with_summary() {
 #[test]
 fn format_text_is_the_default() {
     let source = "fn main() {\n    let n = 0\n    n = 1\n}\n";
-    let plain = run_on("format_text_is_the_default", source, &["--check"]);
+    let plain = run_on("format_text_is_the_default", source, &["check"]);
     let text = run_on(
         "format_text_is_the_default",
         source,
-        &["--format", "text", "--check"],
+        &["check", "--format", "text"],
     );
     assert_eq!(text.status.code(), Some(1));
     assert!(
@@ -1203,7 +1249,7 @@ fn emit_tokens_format_spec() {
     .expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_format_spec.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_format_spec.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -1219,7 +1265,7 @@ fn emit_tokens_enum() {
     fs::write(dir.join("emit_tokens_enum.sisu"), "enum\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_enum.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_enum.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -1235,7 +1281,7 @@ fn emit_tokens_match() {
     fs::write(dir.join("emit_tokens_match.sisu"), "match =>\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_match.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_match.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -1251,7 +1297,7 @@ fn emit_tokens_pipe_and_inclusive_range() {
     fs::write(dir.join("emit_tokens_pipe.sisu"), "| ..= ||\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .args(["--emit", "tokens", "emit_tokens_pipe.sisu"])
+        .args(["build", "--emit", "tokens", "emit_tokens_pipe.sisu"])
         .output()
         .expect("sisuc starts");
     assert!(out.status.success());
@@ -1285,7 +1331,11 @@ fn enum_layouts_follow_the_target() {
          print(Wide.V256 == Wide.V0)\n\
          }}\n"
     );
-    let out = run_on("enum_layouts_follow_the_target", &source, &["--emit", "ir"]);
+    let out = run_on(
+        "enum_layouts_follow_the_target",
+        &source,
+        &["build", "--emit", "ir"],
+    );
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -1321,7 +1371,7 @@ fn missing_runtime_is_found_before_the_compile() {
     let out = Command::new(&sisuc)
         .current_dir(&dir)
         .env("TMPDIR", dir.join("absent"))
-        .args(["one.sisu", "one"])
+        .args(["build", "one.sisu", "-o", "one"])
         .output()
         .expect("sisuc starts");
     assert_eq!(out.status.code(), Some(1));
@@ -1359,10 +1409,140 @@ fn bad_output_path_is_found_before_the_compile() {
         let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
             .current_dir(&dir)
             .env("TMPDIR", dir.join("absent"))
-            .args(["one.sisu", output])
+            .args(["build", "one.sisu", "-o", output])
             .output()
             .expect("sisuc starts");
         assert_eq!(out.status.code(), Some(1), "{output}");
         assert_eq!(String::from_utf8_lossy(&out.stderr), expected);
     }
+}
+
+/// `build`'s flags go before or after the file, in any order.
+#[test]
+fn flags_in_any_order() {
+    let dir = scratch_path::empty_dir("flags_in_any_order");
+    fs::write(dir.join("f.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
+    // `ld.lld` is in LLVM's `bin`.
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        std::iter::once(Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin"))
+            .chain(std::env::split_paths(&path)),
+    )
+    .expect("PATH joins");
+    let sisuc = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(&dir)
+            .env("PATH", &path)
+            .args(args)
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out
+    };
+    for args in [
+        &[
+            "build",
+            "--rc-checks",
+            "-O2",
+            "--linker",
+            "bfd",
+            "f.sisu",
+            "-o",
+            "e",
+        ][..],
+        &["build", "f.sisu", "-o", "e", "-O2", "--rc-checks"],
+        &["build", "--rc-checks", "-O3", "f.sisu", "-o", "e"],
+        &[
+            "build",
+            "--linker",
+            "lld",
+            "--rc-checks",
+            "f.sisu",
+            "-o",
+            "e",
+        ],
+        &["build", "f.sisu", "-o", "e", "--linker", "lld"],
+    ] {
+        // It is absent before the first build, so a failure here is expected and harmless.
+        let _ = fs::remove_file(dir.join("e"));
+        sisuc(args);
+        let run = Command::new(dir.join("e"))
+            .output()
+            .expect("the program starts");
+        assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n", "{args:?}");
+    }
+    let out = sisuc(&["build", "--emit", "ir", "-O2", "f.sisu"]);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).starts_with("; before default<O2>\n"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+/// Without `-o`, `build` names the executable after the file, without its extension, in the
+/// current directory, wherever the file is.
+#[test]
+fn build_writes_the_stem_in_the_current_directory() {
+    let dir = scratch_path::empty_dir("build_writes_the_stem");
+    let source = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run"));
+    fs::copy(source.join("loops.sisu"), dir.join("loops.sisu")).expect("copies");
+    fs::create_dir(dir.join("sub")).expect("creates");
+    let expected = fs::read_to_string(source.join("loops.out")).expect("reads");
+    for (cwd, args, exe) in [
+        (&dir, &["build", "loops.sisu"][..], dir.join("loops")),
+        (
+            &dir,
+            &["build", "loops.sisu", "-o", "sub/x"],
+            dir.join("sub/x"),
+        ),
+        (
+            &dir.join("sub"),
+            &["build", "../loops.sisu"],
+            dir.join("sub/loops"),
+        ),
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .expect("sisuc starts");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = Command::new(&exe).output().expect("the program starts");
+        assert_eq!(String::from_utf8_lossy(&run.stdout), expected, "{args:?}");
+    }
+}
+
+/// `--format` follows the subcommand.
+#[test]
+fn format_after_the_subcommand() {
+    let out = run_on(
+        "format_after_the_subcommand",
+        "fn main() {\n    let n = 0\n    n = 1\n}\n",
+        &["check", "--format", "json"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+        .collect();
+    assert_eq!(lines.len(), 2, "{stderr}");
+    assert_eq!(lines[0]["code"], "E0001", "{stderr}");
+    assert_eq!(lines[1]["kind"], "summary", "{stderr}");
+}
+
+/// `--emit` prints to stdout, so it takes no `-o`.
+#[test]
+fn emit_with_output_is_a_usage_error() {
+    assert_usage_errors(&[&["build", "--emit", "ast", "f.sisu", "-o", "x"]]);
 }

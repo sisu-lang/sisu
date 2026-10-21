@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 annotate-snippets = "0.12.16"
+clap = { version = "4.6.7", features = ["derive"] }
 rustc-hash = "2.1.3"
 # llvm23-1 binds llvm-sys 231, which finds LLVM through LLVM_SYS_231_PREFIX
 # (set in .cargo/config.toml). No inkwell release has llvm23-1 yet, so this

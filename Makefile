@@ -60,9 +60,9 @@ fuzz: ## Fuzz the front end for SECS seconds (1800 by default)
 bench: ## Time the benchmarks in bench/ (BENCH='fib sieve' picks some)
 	scripts/bench.sh $(BENCH)
 
-callgrind: ## Count the instructions of sisuc --check, as CodSpeed does
+callgrind: ## Count the instructions of sisuc check, as CodSpeed does
 	scripts/codspeed-prep.sh
-	valgrind --tool=callgrind --callgrind-out-file=/dev/null target/release/sisuc --check target/codspeed/large/main.sisu
+	valgrind --tool=callgrind --callgrind-out-file=/dev/null target/release/sisuc check target/codspeed/large/main.sisu
 
 site: ## Build the site into site/_site and check it
 	uv run --locked --script site/build.py --test && uv run --locked --script site/build.py

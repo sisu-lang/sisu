@@ -2,4 +2,4 @@
 benchmarks:
   - name: build_large
     id: build_large
-    exec: target/release/sisuc -O2 target/codspeed/large/main.sisu target/codspeed/build_large/main
+    exec: target/release/sisuc build -O2 target/codspeed/large/main.sisu -o target/codspeed/build_large/main

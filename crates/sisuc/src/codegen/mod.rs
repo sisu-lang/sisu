@@ -1090,10 +1090,14 @@ impl<'ctx> Codegen<'ctx, '_> {
 }
 
 /// How hard LLVM optimizes: not at all (`mem2reg` only), `-O2` or `-O3`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum OptLevel {
+    /// No `-O` flag names it.
+    #[value(skip)]
     O0,
+    #[value(name = "2")]
     O2,
+    #[value(name = "3")]
     O3,
 }
 

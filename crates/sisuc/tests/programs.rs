@@ -1034,6 +1034,45 @@ fn output_naming_the_input_is_refused() {
     }
 }
 
+/// Without `-o`, a file with no extension would be built over itself, and a stem with a space
+/// names the executable whole.
+#[test]
+fn build_names_the_executable_after_the_whole_stem() {
+    let dir = empty_dir("build_whole_stem");
+    let source = "fn main() {\n    print(1)\n}\n";
+    let build = |input: &str| {
+        Command::new(env!("CARGO_BIN_EXE_sisuc"))
+            .current_dir(&dir)
+            .args(["build", input])
+            .output()
+            .expect("sisuc starts")
+    };
+    fs::write(dir.join("my prog"), source).expect("writes");
+    let out = build("my prog");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "sisuc: output my prog would overwrite the input\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("my prog")).expect("reads"),
+        source
+    );
+    fs::remove_file(dir.join("my prog")).expect("removes");
+    fs::write(dir.join("my prog.sisu"), source).expect("writes");
+    let out = build("my prog.sisu");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("my prog"))
+        .output()
+        .expect("the program starts");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n");
+}
+
 /// Builds the `tests/run` case `loops` with `flags` and `PATH`, runs it, and checks its output.
 /// Returns the executable's bytes.
 fn build_loops(exe: &str, flags: &[&str], path: &OsStr) -> Vec<u8> {

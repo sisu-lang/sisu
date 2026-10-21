@@ -175,11 +175,10 @@ leaves it out.
 
 ## JSON output
 
-`sisuc --format json` writes every line on stderr as one JSON object (JSON
-Lines). It works with `--check`, a build and `--emit`; stdout is the same as
-in text, and stays empty when there is an error. `--format` comes first, before
-any other argument. A usage error stays a plain text line, since the format
-is not known until the arguments parse.
+`--format json` writes every line on stderr as one JSON object (JSON
+Lines). It works with `check` and `build`, with or without `--emit`; stdout is
+the same as in text, and stays empty when there is an error. A usage error is
+clap's text on stderr, with exit code 2, in either format.
 
 Every object has `version`, which is `1` and is bumped on any breaking
 change, and `kind`, one of `diagnostic`, `tool_error` and `summary`. Keys

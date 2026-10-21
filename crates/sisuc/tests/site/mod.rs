@@ -78,7 +78,7 @@ pub(crate) fn pending(path: &Path) {
     let name = path.file_name().expect("a case should have a file name");
     let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
         .current_dir(dir)
-        .arg("--check")
+        .arg("check")
         .arg(name)
         .output()
         .expect("sisuc starts");
@@ -91,7 +91,7 @@ pub(crate) fn pending(path: &Path) {
     );
     assert!(
         out.status.code() == Some(1) && stderr.lines().any(|l| l.starts_with("error[")),
-        "{display}: sisuc --check exits {:?} without reporting an error:\n{stderr}",
+        "{display}: sisuc check exits {:?} without reporting an error:\n{stderr}",
         out.status
     );
 }

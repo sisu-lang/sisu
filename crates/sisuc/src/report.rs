@@ -9,6 +9,7 @@ use crate::front_end;
 use crate::source::LineIndex;
 
 /// How the reporter writes.
+#[derive(Clone, clap::ValueEnum)]
 pub(crate) enum Format {
     Text,
     Json,
