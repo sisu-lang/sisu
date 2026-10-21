@@ -129,6 +129,8 @@ impl Bindings {
 thread_local! {
     /// How many bindings inference has checked or undone on this thread.
     pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many entries of `body.ahead` lookups have inspected on this thread.
+    pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A generic callee as a call sees it: a function or method, a class's constructor, or an
@@ -229,7 +231,11 @@ impl Checker<'_> {
     ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
         let mark = self.body.ahead.len();
         let call = self.infer_call(span, sig, written, args, expected);
-        self.body.ahead.truncate(mark);
+        // A key is kept again only once its last entry is used, so an earlier entry of a key
+        // truncated here, if any, is used, and dropping the key loses nothing.
+        for (key, _) in self.body.ahead.drain(mark..) {
+            self.body.ahead_at.remove(&key);
+        }
         call
     }
 
@@ -520,8 +526,7 @@ impl Checker<'_> {
                 self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
                 self.body.in_target = target;
                 // Its place, held before the value's ranking keeps work of its own.
-                self.body.ahead.push((block.span, None));
-                (self.body.ahead.len() - 1, so_far)
+                (self.keep((block.span, true), None), so_far)
             };
         let waits = self.waits(tail, fit);
         let scope = self
@@ -536,13 +541,19 @@ impl Checker<'_> {
     /// Takes the work kept for `span` (see `Ahead`), a block's if `block`, else a receiver's,
     /// with its place in `body.ahead`.
     pub(super) fn kept(&mut self, span: Span, block: bool) -> Option<(usize, Ahead)> {
-        let index = self.body.ahead.iter().rposition(|(at, kept)| {
-            *at == span
-                && kept
-                    .as_ref()
-                    .is_some_and(|k| matches!(k, Ahead::Block(..)) == block)
-        })?;
+        let index = *self.body.ahead_at.get(&(span, block))?;
+        #[cfg(test)]
+        INSPECTED.set(INSPECTED.get() + 1);
         self.body.ahead[index].1.take().map(|kept| (index, kept))
+    }
+
+    /// Keeps `work` in `body.ahead` for `key`, a span and whether it is a block's, and returns
+    /// its place there.
+    fn keep(&mut self, key: (Span, bool), work: Option<Ahead>) -> usize {
+        let index = self.body.ahead.len();
+        self.body.ahead.push((key, work));
+        self.body.ahead_at.insert(key, index);
+        index
     }
 
     /// The variant `base.member` of a generic enum that `base` names without type arguments.
@@ -599,26 +610,19 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        let kept = self
-            .body
-            .ahead
-            .iter()
-            .rev()
-            .find_map(|(at, kept)| match kept {
-                Some(Ahead::Receiver(checked)) if *at == receiver.span => Some(checked),
-                _ => None,
-            });
-        if let Some(checked) = kept {
-            return type_of(checked);
+        if let Some(&index) = self.body.ahead_at.get(&(receiver.span, false)) {
+            #[cfg(test)]
+            INSPECTED.set(INSPECTED.get() + 1);
+            if let Some(Ahead::Receiver(checked)) = &self.body.ahead[index].1 {
+                return type_of(checked);
+            }
         }
         // An argument is not part of an assignment target's chain.
         let target = std::mem::take(&mut self.body.in_target);
         let checked = self.value(receiver, None);
         self.body.in_target = target;
         let ty = type_of(&checked);
-        self.body
-            .ahead
-            .push((receiver.span, Some(Ahead::Receiver(checked))));
+        self.keep((receiver.span, false), Some(Ahead::Receiver(checked)));
         ty
     }
 

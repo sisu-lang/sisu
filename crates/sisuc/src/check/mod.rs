@@ -328,8 +328,11 @@ struct Body {
     /// Each `+` found to join a `string` under an expected `u8`, which a later check of it
     /// checks with no expected type.
     joins: FxHashSet<Span>,
-    /// Work ranking arguments did ahead of its turn, innermost last; `None` once used.
-    ahead: Vec<(Span, Option<generic::Ahead>)>,
+    /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done
+    /// for and whether that is a block's; `None` once used.
+    ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
+    /// Where in `ahead` the last work kept for each span and kind is.
+    ahead_at: FxHashMap<(Span, bool), usize>,
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error.

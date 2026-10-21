@@ -956,6 +956,27 @@ fn inference_checks_each_binding_once() {
     assert_eq!(visits(128), 128);
 }
 
+/// Work kept ahead of a call is found by its span in one step, so finding it grows with the
+/// call's arguments, not with their square: one step per receiver and per block.
+#[test]
+fn work_kept_ahead_is_found_in_one_step() {
+    let inspected = |n: usize, arg: &str, ty: &str| {
+        let params: Vec<_> = (0..n).map(|i| format!("x{i}: T")).collect();
+        let src = with_generics(&format!(
+            "fn many<T>({}) -> T {{ x0 }}\nfn g(b: Box<i64>) {{\n    let x: {ty} = many({})\n}}",
+            params.join(", "),
+            vec![arg; n].join(", ")
+        ));
+        generic::INSPECTED.set(0);
+        clean(&src);
+        generic::INSPECTED.get()
+    };
+    for (arg, ty) in [("b.make()", "[i64]"), ("{ let n = true; n }", "bool")] {
+        assert_eq!(inspected(64, arg, ty), 64, "{arg}");
+        assert_eq!(inspected(128, arg, ty), 128, "{arg}");
+    }
+}
+
 /// A literal-like argument takes its type from the others, as an array literal's element
 /// does from its neighbours.
 #[test]
