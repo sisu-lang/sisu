@@ -16,7 +16,7 @@ small_sections=20
 
 cargo build --release --locked -p sisuc -p sisu-runtime
 rm -rf "$out"
-mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare}
+mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite}
 
 fail() {
     echo "codspeed-prep: $*" >&2
@@ -40,7 +40,7 @@ reduce nbody 's/let steps = 5_000_000/let steps = 100_000/'
 reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
 # bench/features/ programs are sized for simulation and Sisu-only: no reduction.
-for b in strings enum_match shared_arrays compare; do
+for b in strings enum_match shared_arrays compare tree_rewrite; do
     target/release/sisu build -O2 "bench/features/$b/main.sisu" -o "$out/$b/main" || fail "$b failed to compile"
 done
 
@@ -175,6 +175,7 @@ expected() {
         enum_match) printf '%s\n' 987548 816672 ;;
         shared_arrays) printf '%s\n' 20000 519500 ;;
         compare) printf '%s\n' 1494 640 2880 ;;
+        tree_rewrite) printf '%s\n' 732347 163697 ;;
         *) return 1 ;;
     esac
 }
