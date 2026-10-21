@@ -1,4 +1,5 @@
-// A take-apart whose tested box keeps a rest, and one in a loop arm that `break`s. Strings are
+// A take-apart whose tested box keeps a rest, one whose box sits below an unboxed field, and one
+// in a loop arm that `break`s. Strings are
 // built at run time, so Valgrind and `--rc-checks` see each part released exactly once.
 enum Tagged {
     Leaf(string)
@@ -6,11 +7,25 @@ enum Tagged {
     Two(Tagged, Tagged)
 }
 
+// `Outer` is outside `Tagged`'s cycle, so its `Tagged` field is unboxed.
+enum Outer {
+    O(Tagged, string)
+}
+
 // The tested `Tag` box keeps a rest, its unbound `Tagged`, beside the moved `s`, while the
 // scrutinee keeps none: the move zeroes `s`'s source in the token's value, which is released.
 fn tag_of(t: Tagged) -> string {
     match t {
         Two(Tag(s, _), Leaf(u)) => s + u
+        _ => "none"
+    }
+}
+
+// The token is the `Leaf` box below the unboxed `Two`; the scrutinee keeps a rest, the `Two`'s
+// second box, beside the moved `s`.
+fn below(o: Outer) -> string {
+    match o {
+        O(Two(Leaf(a), _), s) => a + s
         _ => "none"
     }
 }
@@ -34,6 +49,7 @@ fn joined_at(n: i64) -> string {
 
 fn main() {
     print(tag_of(Tagged.Two(Tagged.Tag("t" + "", Tagged.Leaf("x" + "")), Tagged.Leaf("u" + ""))))
+    print(below(Outer.O(Tagged.Two(Tagged.Leaf("a" + ""), Tagged.Leaf("c" + "")), "b" + "")))
     print(joined_at(5))
     print(joined_at(1))
 }
