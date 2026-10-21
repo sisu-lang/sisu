@@ -44,6 +44,18 @@ pub(super) struct Attrs {
     pub(super) nounwind: bool,
     pub(super) noreturn: bool,
     pub(super) memory: Option<u64>,
+    pub(super) allocator: Allocator,
+}
+
+/// A function's part in LLVM's allocator model, which lets `-O2` delete an allocation that
+/// nothing reads and pair it with its free.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Allocator {
+    None,
+    /// Returns fresh, uninitialized memory that nothing else points to.
+    Alloc,
+    /// Frees its first parameter and keeps no copy of it.
+    Free,
 }
 
 /// One function the runtime exports: its name, its parameters, its return value (`None` for
@@ -59,6 +71,7 @@ const NONE: Attrs = Attrs {
     nounwind: false,
     noreturn: false,
     memory: None,
+    allocator: Allocator::None,
 };
 /// The runtime is built with `panic = "abort"`, so it never unwinds.
 const NOUNWIND: Attrs = Attrs {
@@ -68,6 +81,16 @@ const NOUNWIND: Attrs = Attrs {
 const NORETURN: Attrs = Attrs {
     noreturn: true,
     ..NONE
+};
+/// `sisu_alloc`: `NOUNWIND`, and the allocator that `sisu_free` frees.
+const ALLOC: Attrs = Attrs {
+    allocator: Allocator::Alloc,
+    ..NOUNWIND
+};
+/// `sisu_free`: `NOUNWIND`, and the free of what `sisu_alloc` returns.
+const FREE: Attrs = Attrs {
+    allocator: Allocator::Free,
+    ..NOUNWIND
 };
 
 /// `NOUNWIND`, with the `memory` attribute value `memory`.
@@ -127,7 +150,7 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_alloc",
         params: &[Abi::I64, Abi::I64],
         ret: Some(Abi::Ptr),
-        attrs: NONE,
+        attrs: ALLOC,
     },
     RuntimeFn {
         name: "sisu_eprint_bool",
@@ -157,7 +180,7 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         name: "sisu_free",
         params: &[Abi::Ptr, Abi::I64, Abi::I64],
         ret: None,
-        attrs: NONE,
+        attrs: FREE,
     },
     RuntimeFn {
         name: "sisu_panic",
@@ -364,6 +387,24 @@ pub(super) fn declare<'ctx>(module: &Module<'ctx>, row: &RuntimeFn) -> FunctionV
     }
     if row.attrs.noreturn {
         function.add_attribute(AttributeLoc::Function, attribute("noreturn", 0));
+    }
+    let family = || context.create_string_attribute("alloc-family", "sisu");
+    match row.attrs.allocator {
+        Allocator::None => {}
+        Allocator::Alloc => {
+            function.add_attribute(AttributeLoc::Return, attribute("noalias", 0));
+            // `AllocFnKind` `Alloc` 1 | `Uninitialized` 8.
+            function.add_attribute(AttributeLoc::Function, attribute("allockind", 0b1001));
+            function.add_attribute(AttributeLoc::Function, family());
+        }
+        Allocator::Free => {
+            function.add_attribute(AttributeLoc::Param(0), attribute("allocptr", 0));
+            // `CaptureComponents::None`.
+            function.add_attribute(AttributeLoc::Param(0), attribute("captures", 0));
+            // `AllocFnKind` `Free` 4.
+            function.add_attribute(AttributeLoc::Function, attribute("allockind", 0b100));
+            function.add_attribute(AttributeLoc::Function, family());
+        }
     }
     function
 }

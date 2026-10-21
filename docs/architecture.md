@@ -147,6 +147,12 @@ intrinsic, except `hypot`, which calls `hypot` from `libm`.
 `codegen/abi.rs` declares every runtime function from one table, `RUNTIME`,
 of names, types and attributes. A unit test reads the runtime's source and
 fails when an export has no row, or a row's types differ from its signature.
+`sisu_alloc` and `sisu_free` carry LLVM's allocator attributes as a pair. At
+`-O2` LLVM may delete an allocation and its free, including when it can compute
+every value the program reads without the heap block, such as an array's length
+or an element of a fill. An allocation too large for the machine aborts with
+exit code 134 when its allocator call remains; at `-O0` every such allocation
+aborts.
 
 `codegen/layout.rs` holds how a value sits in memory: the LLVM type of each
 Sisu type, the layouts of an object, an array block and a string block, the

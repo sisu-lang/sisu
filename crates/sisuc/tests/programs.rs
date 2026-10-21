@@ -105,9 +105,10 @@ fn heap_allocs(exe: &Path) -> (String, u64) {
     )
 }
 
-/// Builds `<name>.sisu` as written and with its first line `fn iterations() -> i64 { 1000 }`
-/// changed to `{ 0 }`, at `-O2` if `o2`, and returns both builds' stdout and the difference in
-/// allocations. The zero-iteration build is the baseline: the runtime's own allocations cancel.
+/// Builds `<name>.sisu` twice, with its first line `fn iterations() -> i64 { 1000 }` replaced by
+/// `fn iterations() -> i64 { (read_line() ?? "").len() + k }`, for `k` = 1000 and `k` = 0, at `-O2`
+/// if `o2`. Returns both builds' stdout and the difference in allocations. The `k` = 0 build is
+/// the baseline: the runtime's own allocations cancel.
 fn extra_allocs(name: &str, o2: bool) -> (String, String, i64) {
     const FIRST_LINE: &str = "fn iterations() -> i64 { 1000 }\n";
     let source =
@@ -115,12 +116,16 @@ fn extra_allocs(name: &str, o2: bool) -> (String, String, i64) {
     let rest = source
         .strip_prefix(FIRST_LINE)
         .unwrap_or_else(|| panic!("{name}.sisu should start with `{}`", FIRST_LINE.trim_end()));
-    let baseline = format!("{}{rest}", FIRST_LINE.replace("1000", "0"));
+    // Standard input is empty, so `iterations()` is `k`, but LLVM cannot know it. A constant `0`
+    // makes the loop dead, and at `-O2` LLVM deletes an allocation that nothing reads, which the
+    // other build still makes.
+    let build =
+        |k: &str| format!("fn iterations() -> i64 {{ (read_line() ?? \"\").len() + {k} }}\n{rest}");
 
     // Own file names, so these builds never share an executable with the test of `<name>.out`.
-    let (stdout, allocs) = heap_allocs(&compile_tmp(&format!("{name}_k1000"), &source, o2));
+    let (stdout, allocs) = heap_allocs(&compile_tmp(&format!("{name}_k1000"), &build("1000"), o2));
     let (base_stdout, base_allocs) =
-        heap_allocs(&compile_tmp(&format!("{name}_k0"), &baseline, o2));
+        heap_allocs(&compile_tmp(&format!("{name}_k0"), &build("0"), o2));
     let extra = i64::try_from(allocs).expect("a count fits i64")
         - i64::try_from(base_allocs).expect("a count fits i64");
     (stdout, base_stdout, extra)
@@ -458,12 +463,13 @@ fn fill_case(value: &str, len: &str, col: usize) -> (String, String) {
 
 /// The largest block the size checks allow, `i64::MAX` rounded down to the alignment of 8,
 /// passes them and reaches the allocator, which cannot provide it: `sisu_alloc` calls
-/// `handle_alloc_error` rather than aborting on an invalid layout, which prints nothing.
+/// `handle_alloc_error` rather than aborting on an invalid layout, which prints nothing. The
+/// program loops over the elements: LLVM cannot work out the loads from the fill, so the allocation
+/// stays at `-O2`, while a single `xs[0]` read lets it vanish.
 #[test]
 fn largest_array_reaches_the_allocator() {
     // 16 + 9_223_372_036_854_775_784 bytes is 9_223_372_036_854_775_800.
-    let source =
-        "fn main() {\n    let xs = [false; 9_223_372_036_854_775_784]\n    print(xs.len())\n}\n";
+    let source = "fn main() {\n    let xs = [false; 9_223_372_036_854_775_784]\n    let mut k = 0\n    for x in xs { if x { k += 1 } }\n    print(k)\n}\n";
     for o2 in [false, true] {
         let out = Command::new(compile_tmp("largest_array", source, o2))
             .output()
