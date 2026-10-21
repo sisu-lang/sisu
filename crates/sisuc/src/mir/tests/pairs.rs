@@ -241,6 +241,7 @@ fn row_of_a_nested_index_is_borrowed() {
     );
     assert_eq!(f.matches("= borrow g#0[").count(), 2, "{f}");
     assert!(!f.contains("= copy g#0["), "{f}");
-    // Only the parameter's release is left.
-    assert_eq!(f.matches("release ").count(), 1, "{f}");
+    // The grid is a borrowed parameter, so nothing is released.
+    assert!(f.contains("g#0: borrow [[i64]]"), "{f}");
+    assert!(!f.contains("release "), "{f}");
 }
