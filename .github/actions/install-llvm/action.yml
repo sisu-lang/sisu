@@ -3,8 +3,10 @@ description: Restores or installs the project-local LLVM in .llvm/23 that llvm-s
 runs:
   using: composite
   steps:
-    # llvm-config names these system libraries; libzstd.a by absolute path.
+    # llvm-config names these system libraries; libzstd.a by absolute path. The macOS
+    # runners already have them.
     - name: Install LLVM's system libraries
+      if: runner.os == 'Linux'
       shell: bash
       run: |
         sudo apt-get update

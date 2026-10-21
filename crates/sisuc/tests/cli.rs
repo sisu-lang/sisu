@@ -219,6 +219,10 @@ fn help_and_no_arguments_exit_0() {
 /// Help, version, an explanation and an emitted stage that cannot be written are a tool error,
 /// not a panic or a silent success.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
 fn output_into_a_full_stdout_is_a_tool_error() {
     const MAIN: &str = "fn main() { print(1) }";
     for args in [

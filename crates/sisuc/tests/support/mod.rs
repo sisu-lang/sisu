@@ -84,10 +84,11 @@ impl Invocation {
         Invocation { stdin, args }
     }
 
-    /// Runs `exe` with this standard input and these arguments; with `valgrind`, under
-    /// Valgrind, where any leak or memory error makes it exit 1.
+    /// Runs `exe` with this standard input and these arguments; with `valgrind` on Linux, under
+    /// Valgrind, where any leak or memory error makes it exit 1. Elsewhere Valgrind does not
+    /// run, so `exe` runs natively and the Linux jobs alone check for leaks.
     pub(crate) fn run(&self, exe: &Path, valgrind: bool) -> Output {
-        let mut command = if valgrind {
+        let mut command = if valgrind && cfg!(target_os = "linux") {
             let mut command = Command::new("valgrind");
             command
                 .args([
