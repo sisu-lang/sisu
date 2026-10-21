@@ -56,6 +56,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         specs: Vec::new(),
         warnings,
         labels: Vec::new(),
+        split: None,
     }
     .program()
 }
@@ -149,6 +150,12 @@ fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
 /// How deep the syntax tree may nest. Every later stage walks the tree recursively, and so does
 /// dropping it, so the parser is the one place that bounds the stack they need.
 const MAX_DEPTH: usize = 256;
+
+#[cfg(test)]
+thread_local! {
+    /// How many tokens `type_args_follow` has visited on this thread.
+    static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// An infix operator other than the comparisons of level 4.
 enum Infix {
@@ -279,6 +286,8 @@ struct Parser<'a> {
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
     labels: Vec<Ident>,
+    /// The position of a `>=` token whose `>` closed a type-argument list: it reads as `=` now.
+    split: Option<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -432,7 +441,18 @@ impl<'a> Parser<'a> {
             (TypeKind::Array(Box::new(element)), start.to(close.span))
         } else {
             let ident = self.ident("a type")?;
-            (TypeKind::Name(ident.name), ident.span)
+            if self.at(&TokenKind::Lt) {
+                let args = self.type_args()?;
+                (
+                    TypeKind::Applied {
+                        name: ident.name,
+                        args,
+                    },
+                    ident.span.to(self.closing_angle()),
+                )
+            } else {
+                (TypeKind::Name(ident.name), ident.span)
+            }
         };
         let optional = self.eat(&TokenKind::Question).is_some();
         if optional {
@@ -459,6 +479,146 @@ impl<'a> Parser<'a> {
             optional,
             span,
         })
+    }
+
+    /// `<` types `>` at the next token, with an optional trailing comma. The caller has seen the
+    /// `<`, and for an expression, that `type_args_follow` holds.
+    fn type_args(&mut self) -> Result<Vec<TypeExpr>, Diagnostic> {
+        self.bump();
+        let base = self.depth;
+        let mut reach = base;
+        let mut args = Vec::new();
+        loop {
+            args.push(self.child(base, &mut reach, Self::parse_type)?);
+            if self.eat(&TokenKind::Comma).is_none()
+                || matches!(self.peek().kind, TokenKind::Gt | TokenKind::Ge)
+            {
+                break;
+            }
+        }
+        self.close_angle()?;
+        self.depth = reach;
+        Ok(args)
+    }
+
+    /// The `>` that closes a list. A `>=` closes it too, and then reads as the `=` it holds: in
+    /// `let s: Stack<i64>= x`, the `>` is the list's.
+    fn close_angle(&mut self) -> Result<(), Diagnostic> {
+        if self.eat(&TokenKind::Gt).is_some() {
+            return Ok(());
+        }
+        if self.at(&TokenKind::Ge) && self.split != Some(self.pos) {
+            self.split = Some(self.pos);
+            return Ok(());
+        }
+        Err(self.expected("`,` or `>`"))
+    }
+
+    /// The span of the `>` that `close_angle` just took.
+    fn closing_angle(&self) -> Span {
+        if self.split == Some(self.pos) {
+            let ge = self.peek().span;
+            Span::new(ge.start(), ge.start() + 1)
+        } else {
+            self.last_span()
+        }
+    }
+
+    /// `=`, or the half of a `>=` that is left after a type-argument list took its `>`.
+    fn expect_eq(&mut self) -> Result<(), Diagnostic> {
+        if self.split == Some(self.pos) {
+            self.bump();
+            return Ok(());
+        }
+        self.expect(&TokenKind::Eq).map(drop)
+    }
+
+    /// Whether the `<` at the next token starts a type-argument list in an expression: the tokens
+    /// from it form one by the type grammar, and a `(` or `.` follows its `>`. Anything else is a
+    /// comparison. The scan builds nothing, so a failed scan leaves no diagnostic behind.
+    fn type_args_follow(&self) -> bool {
+        let mut at = self.pos;
+        self.scan_list(&mut at, 0) && matches!(self.scanned(at), TokenKind::LParen | TokenKind::Dot)
+    }
+
+    /// The kind of the token at `at`, which the scan counts as visited.
+    fn scanned(&self, at: usize) -> &'a TokenKind {
+        #[cfg(test)]
+        SCANNED.set(SCANNED.get() + 1);
+        &self.tokens[at].kind
+    }
+
+    /// Scans a list from its `<` at `at` through its `>`, which `at` then follows. A list nested
+    /// deeper than `MAX_DEPTH` is none (`scan_type` stops it), and that cutoff keeps a run of
+    /// `a < a < a < …` linear: a name followed by `<` inside a list opens a nested one, so
+    /// `MAX_DEPTH + 1` scans visit a token at most.
+    fn scan_list(&self, at: &mut usize, depth: usize) -> bool {
+        *at += 1;
+        loop {
+            if !self.scan_type(at, depth + 1) {
+                return false;
+            }
+            match self.scanned(*at) {
+                TokenKind::Comma => {
+                    *at += 1;
+                    if *self.scanned(*at) == TokenKind::Gt {
+                        *at += 1;
+                        return true;
+                    }
+                }
+                TokenKind::Gt => {
+                    *at += 1;
+                    return true;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Scans a type: a name and its list, or `[type]`, then an optional `?`.
+    fn scan_type(&self, at: &mut usize, depth: usize) -> bool {
+        if depth > MAX_DEPTH {
+            return false;
+        }
+        match self.scanned(*at) {
+            TokenKind::LBracket => {
+                *at += 1;
+                if !self.scan_type(at, depth + 1) || *self.scanned(*at) != TokenKind::RBracket {
+                    return false;
+                }
+                *at += 1;
+            }
+            TokenKind::Ident(_) => {
+                *at += 1;
+                if *self.scanned(*at) == TokenKind::Lt && !self.scan_list(at, depth) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        if *self.scanned(*at) == TokenKind::Question {
+            *at += 1;
+        }
+        true
+    }
+
+    /// `<T, U>` after the name of a function, class or enum, with an optional trailing comma;
+    /// empty when no `<` follows.
+    fn type_params(&mut self) -> Result<Vec<Ident>, Diagnostic> {
+        let mut params = Vec::new();
+        if self.eat(&TokenKind::Lt).is_none() {
+            return Ok(params);
+        }
+        loop {
+            params.push(self.name("a type parameter")?);
+            if self.eat(&TokenKind::Comma).is_none() || self.at(&TokenKind::Gt) {
+                break;
+            }
+        }
+        if self.eat(&TokenKind::Gt).is_none() {
+            return Err(self.expected("`,` or `>`"));
+        }
+        Ok(params)
     }
 
     /// The program, which keeps the lexer's `breaks`.
@@ -740,6 +900,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Class, Diagnostic> {
         self.expect(&TokenKind::Class)?;
         let name = self.name("a class name")?;
+        let type_params = self.type_params()?;
         self.expect(&TokenKind::LBrace)?;
         let mut members = Vec::new();
         let mut broken_methods = Vec::new();
@@ -767,6 +928,7 @@ impl<'a> Parser<'a> {
         self.bump();
         Ok(Class {
             name,
+            type_params,
             members,
             broken_methods,
         })
@@ -868,6 +1030,7 @@ impl<'a> Parser<'a> {
             .into());
         }
         let name = self.name("an enum name")?;
+        let type_params = self.type_params()?;
         let owner = Owner::Enum(name.name.to_string());
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
@@ -903,6 +1066,7 @@ impl<'a> Parser<'a> {
         self.bump();
         Ok(Enum {
             name,
+            type_params,
             variants,
             methods: fns,
             broken_methods,
@@ -998,6 +1162,7 @@ impl<'a> Parser<'a> {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            split: None,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -1031,7 +1196,7 @@ impl<'a> Parser<'a> {
             None => None,
         };
         self.depth = 0;
-        self.expect(&TokenKind::Eq)?;
+        self.expect_eq()?;
         let value = self.expr()?;
         if self.pos != end {
             return Err(self.end_of_line());
@@ -1043,6 +1208,7 @@ impl<'a> Parser<'a> {
     fn function(&mut self, owner: Option<&Owner>) -> Result<Function, Diagnostic> {
         let fn_token = self.expect(&TokenKind::Fn)?;
         let name = self.name("a function name")?;
+        let type_params = self.type_params()?;
         self.expect(&TokenKind::LParen)?;
         let mut self_param = None;
         let mut params = Vec::new();
@@ -1108,6 +1274,7 @@ impl<'a> Parser<'a> {
         let body = self.block()?;
         Ok(Function {
             name,
+            type_params,
             self_param,
             params,
             ret,
@@ -2084,7 +2251,7 @@ impl<'a> Parser<'a> {
             Some(_) => Some(self.child(base, &mut reach, Self::parse_type)?),
             None => None,
         };
-        self.expect(&TokenKind::Eq)?;
+        self.expect_eq()?;
         if let Some(error) = self.label_not_on_loop() {
             return Err(error);
         }
@@ -2407,6 +2574,11 @@ impl<'a> Parser<'a> {
             let access = self.bump();
             let safe = access.kind == TokenKind::QuestionDot;
             let name = self.ident("a field or method name")?;
+            let types = if self.at(&TokenKind::Lt) && self.type_args_follow() {
+                self.type_args()?
+            } else {
+                Vec::new()
+            };
             expr = if self.at(&TokenKind::LParen) {
                 self.depth = base + 1;
                 let open = self.peek().span;
@@ -2417,11 +2589,15 @@ impl<'a> Parser<'a> {
                     kind: ExprKind::MethodCall {
                         receiver: Box::new(expr),
                         method: name,
+                        types,
                         args,
                         parens: open.to(close),
                         safe,
                     },
                 }
+            } else if !types.is_empty() {
+                // A field takes no type arguments, so `a.b<i64>.c` has nowhere to put them.
+                return Err(self.expected("`(`"));
             } else {
                 Expr {
                     span: expr.span.to(name.span),
@@ -2531,16 +2707,32 @@ impl<'a> Parser<'a> {
                 if let Some(error) = self.path_idiom(token.span) {
                     return Err(error);
                 }
+                let types = if self.at(&TokenKind::Lt) && self.type_args_follow() {
+                    self.type_args()?
+                } else {
+                    Vec::new()
+                };
+                let callee = Ident {
+                    name,
+                    span: token.span,
+                };
                 if self.at(&TokenKind::LParen) {
                     let (args, close) = self.args()?;
                     return Ok(Expr {
                         span: token.span.to(close),
                         kind: ExprKind::Call {
-                            callee: Ident {
-                                name,
-                                span: token.span,
-                            },
+                            callee,
+                            types,
                             args,
+                        },
+                    });
+                }
+                if !types.is_empty() {
+                    return Ok(Expr {
+                        span: token.span.to(self.last_span()),
+                        kind: ExprKind::Applied {
+                            name: callee,
+                            types,
                         },
                     });
                 }
@@ -3998,6 +4190,206 @@ mod tests {
         // The span runs through the `?`.
         let f = first_fn("fn f() -> Tree? {}");
         assert_eq!(f.ret.expect("has a return type").span, Span::new(10, 15));
+    }
+
+    #[test]
+    fn generic_declarations() {
+        let rows = [
+            (
+                "fn first<T>(xs: [T]) -> T? {}",
+                "(fn first<T> ((xs [T])) T? (block))",
+            ),
+            (
+                "fn pair<K, V,>(k: K, v: V) {}",
+                "(fn pair<K, V> ((k K) (v V)) unit (block))",
+            ),
+            (
+                "class Stack<T> {\n    mut items: [T]\n}",
+                "(class Stack<T> (mut items [T]))",
+            ),
+            (
+                "enum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}",
+                "(enum Tree<T> Leaf (Node Tree<T> T Tree<T>))",
+            ),
+            (
+                "class Stack<T> {\n    fn map_all<U>(self, f: U) {}\n}",
+                "(class Stack<T> (fn map_all<U> (self (f U)) unit (block)))",
+            ),
+            ("const c: Stack<i64>= x", "(const c Stack<i64> x)"),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(program(src), expected, "{src}");
+        }
+    }
+
+    #[test]
+    fn type_parameters_hold_names_only() {
+        // A bound waits for interfaces: the list closes at `,` or `>`.
+        assert_eq!(parse_err("fn f<T: Ord>() {}"), (Code::Expected, 1, 7));
+        assert_eq!(parse_err("fn f<>() {}"), (Code::Expected, 1, 6));
+        assert_eq!(parse_err("class A<_> {}"), (Code::UnderscoreName, 1, 9));
+        assert_eq!(parse_err("enum E<T: Ord> {}"), (Code::Expected, 1, 9));
+        assert_eq!(parse_err("fn f(x: Stack<1>) {}"), (Code::Expected, 1, 15));
+    }
+
+    #[test]
+    fn generic_types() {
+        let rows = [
+            ("Stack<i64>", "Stack<i64>"),
+            ("[Stack<i64>]", "[Stack<i64>]"),
+            ("Stack<i64>?", "Stack<i64>?"),
+            ("Map<string, [i64]>", "Map<string, [i64]>"),
+            ("Map<string, [i64],>", "Map<string, [i64]>"),
+            ("Stack<Stack<i64>>", "Stack<Stack<i64>>"),
+        ];
+        for (ty, expected) in rows {
+            let src = format!("fn main() {{ let x: {ty} = y }}");
+            assert_eq!(body(&src), format!("(block (let x {expected} y))"), "{src}");
+        }
+    }
+
+    /// `>=` closes the list that ends before it, and the `=` stays for the `let`.
+    #[test]
+    fn a_greater_equal_closes_a_type_argument_list() {
+        for (src, expected) in [
+            ("let s: Stack<i64>= x", "(let s Stack<i64> x)"),
+            ("let t: A<B<i64>>= y", "(let t A<B<i64>> y)"),
+            ("let t: A<B<i64>,>= y", "(let t A<B<i64>> y)"),
+        ] {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+        // The type ends with its `>`, not with the `>=`.
+        let src = "fn main() { let s: Stack<i64>= x }";
+        let StmtKind::Let { ty: Some(ty), .. } = &first_fn(src).body.stmts[0].kind else {
+            panic!("expected a typed let");
+        };
+        assert_eq!(&src[ty.span.range()], "Stack<i64>");
+        // One `>=` closes one list, so the outer list is left open.
+        assert_eq!(expr_err("let t: A<B<i64>= y"), (Code::Expected, 1, 27));
+    }
+
+    #[test]
+    fn type_arguments_in_expressions() {
+        let rows = [
+            ("f<i64>(x)", "(call f<i64> x)"),
+            ("f<i64,>(x)", "(call f<i64> x)"),
+            ("f<i64?>(x)", "(call f<i64?> x)"),
+            ("f<Stack<i64>>(x)", "(call f<Stack<i64>> x)"),
+            (
+                "Stack<string>(items: [])",
+                "(call Stack<string> (: items (array)))",
+            ),
+            ("Tree<i64>.Leaf", "(. Tree<i64> Leaf)"),
+            ("Tree<i64>.Node(x)", "(call (. Tree<i64> Node) x)"),
+            ("s.map_all<f64>(1.5)", "(call (. s map_all<f64>) 1.5)"),
+            ("largest<[i64]>([])", "(call largest<[i64]> (array))"),
+            ("a < b > (c)", "(call a<b> c)"),
+            ("f(a < b, c > (d))", "(call f (call a<b, c> d))"),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+    }
+
+    /// A `<` that no type-argument list and `(` or `.` completes is a comparison.
+    #[test]
+    fn a_less_than_is_a_comparison_unless_type_arguments_follow() {
+        let rows = [
+            ("f(a < b, c > d)", "(call f (< a b) (> c d))"),
+            ("a < b", "(< a b)"),
+            ("x < y.len()", "(< x (call (. y len)))"),
+            ("while i < n { }", "(while (< i n) (block))"),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+    }
+
+    #[test]
+    fn a_non_list_after_a_less_than_keeps_its_diagnostic() {
+        for (src, code, col) in [
+            ("a < b > c", Code::ComparisonDirection, 19),
+            ("a < [b] > c", Code::ComparisonDirection, 21),
+            ("a < [b, c] > (d)", Code::ComparisonDirection, 24),
+            ("a < b c > (d)", Code::Expected, 19),
+            ("a < [] > (d)", Code::ComparisonDirection, 20),
+            // A field takes no type arguments, so there is nowhere to put these.
+            ("a.b<i64>.c", Code::Expected, 21),
+        ] {
+            assert_eq!(expr_err(src), (code, 1, col), "{src}");
+        }
+    }
+
+    /// Whether `type_args_follow` holds at the `<` that is the second token of `src`.
+    fn follows(src: &str) -> bool {
+        let lexed = lex(src).expect("source lexes");
+        Parser {
+            source: lexed.source,
+            tokens: &lexed.tokens,
+            pos: 1,
+            depth: 0,
+            lexer: &lexed.diagnostics,
+            comments: &lexed.comments,
+            breaks: &lexed.breaks,
+            specs: Vec::new(),
+            warnings: Vec::new(),
+            split: None,
+        }
+        .type_args_follow()
+    }
+
+    /// A list nested more than `MAX_DEPTH` levels below its `<` is none, however its nesting is
+    /// made: the type below `MAX_DEPTH - 1` brackets or lists is the deepest one allowed.
+    #[test]
+    fn type_argument_lists_end_at_max_depth() {
+        for allowed in [true, false] {
+            let n = MAX_DEPTH - 1 + usize::from(!allowed);
+            let brackets = format!("f<{}i64{}>(x)", "[".repeat(n), "]".repeat(n));
+            let lists = format!("f<{}i64{}>(x)", "A<".repeat(n), ">".repeat(n));
+            assert_eq!(follows(&brackets), allowed, "{n} brackets");
+            assert_eq!(follows(&lists), allowed, "{n} lists");
+        }
+    }
+
+    /// A list that scans as one can still be too deep to parse, below the depth of its call.
+    #[test]
+    fn type_arguments_count_toward_the_nesting_limit() {
+        let source = |name: &str, types: &str| {
+            let n = MAX_DEPTH - 8;
+            format!(
+                "fn main() {{ {}{name}<{types}>(x){} }}",
+                "(".repeat(n),
+                ")".repeat(n)
+            )
+        };
+        let nested = format!("{}i64{}", "[".repeat(9), "]".repeat(9));
+        // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
+        let codes = std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || {
+                ["f", "s.f"].map(|name| {
+                    let fits = parsed(&source(name, "i64")).diagnostics.len();
+                    (fits, parse_err(&source(name, &nested)).0)
+                })
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the parse should not overflow the stack");
+        // One `i64` fits where nine brackets around it do not.
+        assert_eq!(codes, [(0, Code::NestingTooDeep); 2]);
+    }
+
+    /// Every operand opens a nested scan, so the cutoff at `MAX_DEPTH` is what keeps a chain
+    /// linear: each token is then scanned by at most `MAX_DEPTH + 1` of them.
+    #[test]
+    fn long_comparison_chains_scan_linearly() {
+        let scanned = |n: usize| {
+            let chain = vec!["a"; n].join(" < ");
+            SCANNED.set(0);
+            first_fn(&format!("fn main() {{ print({chain}) }}"));
+            SCANNED.get()
+        };
+        crate::mir::tests::assert_near_linear(scanned(1000), scanned(2000), scanned(3000));
     }
 
     #[test]

@@ -111,6 +111,10 @@ impl Checker<'_> {
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
     ) -> Option<Checked> {
+        assert!(
+            !matches!(base.kind, ast::ExprKind::Applied { .. }),
+            "type arguments in expressions land in Task 4"
+        );
         let ast::ExprKind::Name(name) = base.kind else {
             return None;
         };

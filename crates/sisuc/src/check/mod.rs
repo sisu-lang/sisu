@@ -452,6 +452,10 @@ impl Checker<'_> {
         for item in &program.items {
             match item {
                 ast::Item::Class(class) => {
+                    assert!(
+                        class.type_params.is_empty(),
+                        "generic declarations land in Task 3"
+                    );
                     let id = tir::ClassId(self.classes.len());
                     self.classes.push(ClassInfo {
                         name: class.name.clone(),
@@ -480,6 +484,10 @@ impl Checker<'_> {
                     next_function += 1;
                 }
                 ast::Item::Enum(e) => {
+                    assert!(
+                        e.type_params.is_empty(),
+                        "generic declarations land in Task 3"
+                    );
                     let id = tir::EnumId(self.enums.len());
                     self.enums.push(EnumInfo {
                         name: e.name.clone(),
@@ -670,6 +678,10 @@ impl Checker<'_> {
     }
 
     fn signature(&mut self, f: &ast::Function, name: String) {
+        assert!(
+            f.type_params.is_empty(),
+            "generic declarations land in Task 3"
+        );
         let params = f.params.iter().map(|p| self.resolve(&p.ty)).collect();
         let ret = f
             .ret
@@ -775,6 +787,7 @@ impl Checker<'_> {
     fn resolve(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
         let named = match &ty.kind {
             ast::TypeKind::Array(element) => Type::array(self.resolve(element)?),
+            ast::TypeKind::Applied { .. } => panic!("generic declarations land in Task 3"),
             ast::TypeKind::Name(name) => {
                 // A broken name poisons every use, a built-in type's too.
                 if let Some(Declared::Broken) = self.class_ids.get(name) {

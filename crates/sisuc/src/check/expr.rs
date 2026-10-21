@@ -99,7 +99,20 @@ impl Checker<'_> {
             ExprKind::Index { base, index } => self.index(e.span, base, index),
             ExprKind::NoneLit => self.none(e.span, expected),
             ExprKind::Name(name) => self.name(e.span, *name),
-            ExprKind::Call { callee, args } => self.call(e.span, callee, args),
+            ExprKind::Call {
+                callee,
+                types,
+                args,
+            } => {
+                assert!(
+                    types.is_empty(),
+                    "type arguments in expressions land in Task 4"
+                );
+                self.call(e.span, callee, args)
+            }
+            ExprKind::Applied { .. } => {
+                unreachable!("an applied name should be the base of a `.`, which `type_path` takes")
+            }
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
             ExprKind::SelfValue => {
                 let Some(ty) = self.body.self_type else {
@@ -120,10 +133,17 @@ impl Checker<'_> {
             ExprKind::MethodCall {
                 receiver,
                 method,
+                types,
                 args,
                 parens,
                 safe,
-            } => self.method_expr(e.span, *safe, receiver, method, args, *parens),
+            } => {
+                assert!(
+                    types.is_empty(),
+                    "type arguments in expressions land in Task 4"
+                );
+                self.method_expr(e.span, *safe, receiver, method, args, *parens)
+            }
             ExprKind::Coalesce { lhs, rhs } => self.coalesce(e.span, lhs, rhs),
             ExprKind::Is { lhs, rhs } => self.is(e.span, lhs, rhs),
             ExprKind::Unary { op, operand } => {

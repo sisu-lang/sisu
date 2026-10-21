@@ -494,6 +494,7 @@ fn single_term(e: &ast::Expr) -> bool {
         | ExprKind::Str(_)
         | ExprKind::Interpolate(_)
         | ExprKind::Name(_)
+        | ExprKind::Applied { .. }
         | ExprKind::SelfValue
         | ExprKind::NoneLit
         | ExprKind::Call { .. }
