@@ -1577,3 +1577,135 @@ fn format_after_the_subcommand() {
 fn emit_with_output_is_a_usage_error() {
     assert_usage_errors(&[&["build", "--emit", "ast", "f.sisu", "-o", "x"]]);
 }
+
+/// Runs `sisuc <args>` in the target tmp dir.
+fn sisuc_in_tmp(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_sisuc"))
+        .current_dir(env!("CARGO_TARGET_TMPDIR"))
+        .args(args)
+        .output()
+        .expect("sisuc starts")
+}
+
+/// `check -e` reports a program given on the command line, named `<inline>`.
+#[test]
+fn check_takes_an_inline_program() {
+    let out = sisuc_in_tmp(&["check", "-e", "fn main() { print(1) }"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+
+    let out = sisuc_in_tmp(&["check", "-e", "fn main() { let mut x = 1; print(x) }"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.starts_with(
+            "warning[W0002]: `x` is never reassigned\n --> <inline>:1:21\n  |\n\
+             1 | fn main() { let mut x = 1; print(x) }\n"
+        ),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn inline_program_in_json() {
+    let out = sisuc_in_tmp(&["check", "--format", "json", "-e", "fn main() { x }"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let first = stderr.lines().next().expect("a diagnostic");
+    let record: serde_json::Value = serde_json::from_str(first).expect("JSON");
+    assert_eq!(record["primary"]["file"], "<inline>", "{stderr}");
+}
+
+#[test]
+fn build_takes_an_inline_program() {
+    let dir = scratch_path::empty_dir("build_takes_an_inline_program");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+        .current_dir(&dir)
+        .args(["build", "-e", "fn main() { print(7) }", "-o", "e"])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("e"))
+        .output()
+        .expect("the program starts");
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "7\n");
+
+    let out = sisuc_in_tmp(&["build", "--emit", "tir", "-e", "fn main() {}"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("main"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+/// An inline program has no name to give an executable.
+#[test]
+fn inline_build_needs_an_output() {
+    let stderr = assert_usage_errors(&[&["build", "-e", "fn main() {}"]]);
+    assert!(
+        stderr.starts_with("error: an inline program needs `-o <output>` to build an executable\n"),
+        "{stderr}"
+    );
+}
+
+/// A file and `-e` exclude each other, and `-e` takes one program.
+#[test]
+fn file_and_inline_program_conflict() {
+    assert_usage_errors(&[
+        &["check", "f.sisu", "-e", "fn main() {}"],
+        &["build", "f.sisu", "-e", "fn main() {}", "-o", "x"],
+        &["check", "-e", "a", "-e", "b"],
+        &["check", "-e"],
+    ]);
+}
+
+#[test]
+fn inline_panic_names_inline() {
+    let dir = scratch_path::empty_dir("inline_panic_names_inline");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+        .current_dir(&dir)
+        .args([
+            "build",
+            "-e",
+            "fn main() { let a = [1]; print(a[3]) }",
+            "-o",
+            "e",
+        ])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("e"))
+        .output()
+        .expect("the program starts");
+    assert_eq!(run.status.code(), Some(101));
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.starts_with("sisu: panic at <inline>:1:"), "{stderr}");
+}
+
+#[test]
+fn inline_program_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+        .args(["check", "-e"])
+        .arg(std::ffi::OsStr::from_bytes(b"fn main() { \xff }"))
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.starts_with("error[E0072]: source is not valid UTF-8\n --> <inline>:1:13\n"),
+        "{stderr}"
+    );
+}

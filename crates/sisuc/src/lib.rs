@@ -18,6 +18,7 @@ mod symbol;
 mod tir;
 mod types;
 
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, ErrorKind, IsTerminal, Read, Stderr, Write};
 use std::path::{Path, PathBuf};
@@ -41,22 +42,29 @@ enum Mode {
     Help,
     Emit {
         stage: Stage,
-        input: PathBuf,
+        input: Source,
         level: OptLevel,
         rc_checks: bool,
     },
     Check {
-        input: PathBuf,
+        source: Source,
     },
     /// Print the explanation of a diagnostic code.
     Explain {
         code: String,
     },
     Build {
-        input: PathBuf,
+        input: Source,
         output: PathBuf,
         backend: Backend,
     },
+}
+
+/// Where the program's text comes from.
+pub(crate) enum Source {
+    File(PathBuf),
+    /// An inline program, from `-e`.
+    Inline(OsString),
 }
 
 /// How an executable is built: the optimization level, the count checks, and the linker.
@@ -124,7 +132,7 @@ fn execute(reporter: &mut Report, mode: Mode) -> ExitCode {
             level,
             rc_checks,
         } => emit(reporter, &stage, &input, level, rc_checks),
-        Mode::Check { input } => run_check(reporter, &input),
+        Mode::Check { source } => run_check(reporter, &source),
         Mode::Explain { code } => explain(reporter, &code),
         Mode::Build {
             input,
@@ -180,17 +188,24 @@ fn read_at_most(reader: impl Read, len: u64, limit: usize) -> io::Result<Option<
     Ok((bytes.len() <= limit).then_some(bytes))
 }
 
-/// Reads `input`, or reports why it cannot. Text that is not UTF-8 is a diagnostic at its first
-/// invalid byte, rendered over the valid text before it, so the renderer never sees bad UTF-8.
-fn read(reporter: &mut Report, input: &Path) -> Option<String> {
-    let path = input.to_string_lossy();
-    let bytes = read_bytes(reporter, input)?;
+/// The name diagnostics and panics give `input`, and its text, or why it cannot be read. Text
+/// that is not UTF-8 is a diagnostic at its first invalid byte, rendered over the valid text
+/// before it, so the renderer never sees bad UTF-8.
+fn read_source(reporter: &mut Report, input: &Source) -> Option<(String, String)> {
+    let (name, bytes) = match input {
+        Source::File(path) => (
+            path.to_string_lossy().into_owned(),
+            read_bytes(reporter, path)?,
+        ),
+        Source::Inline(code) => ("<inline>".to_owned(), code.as_encoded_bytes().to_vec()),
+    };
     front_end::decode(bytes)
         .inspect_err(|e| {
             let (shown, d) = &**e;
-            reporter.diagnostics(&path, shown, std::slice::from_ref(d));
+            reporter.diagnostics(&name, shown, std::slice::from_ref(d));
         })
         .ok()
+        .map(|text| (name, text))
 }
 
 /// Prints one stage's output for `input` to stdout; the IR stages build in count checks with
@@ -198,12 +213,11 @@ fn read(reporter: &mut Report, input: &Path) -> Option<String> {
 fn emit(
     reporter: &mut Report,
     stage: &Stage,
-    input: &Path,
+    input: &Source,
     level: OptLevel,
     rc_checks: bool,
 ) -> ExitCode {
-    let path = input.to_string_lossy();
-    let Some(source) = read(reporter, input) else {
+    let Some((path, source)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
     match stage {
@@ -330,14 +344,11 @@ fn emit_ir_raw(reporter: &mut Report, path: &str, source: &str, rc_checks: bool)
 }
 
 /// Lexes, parses and checks `input`; reports every diagnostic. Fails if any is an error.
-fn run_check(reporter: &mut Report, input: &Path) -> ExitCode {
-    let Some(bytes) = read_bytes(reporter, input) else {
+fn run_check(reporter: &mut Report, input: &Source) -> ExitCode {
+    let Some((name, text)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
-    if check_bytes(reporter, &input.to_string_lossy(), bytes)
-        .program
-        .is_some()
-    {
+    if front_end(reporter, &name, &text).is_some() {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -383,11 +394,14 @@ pub(crate) fn check_bytes<W: Write>(
 }
 
 /// Compiles `input` into the executable `output`.
-fn build(reporter: &mut Report, input: &Path, output: &Path, backend: &Backend) -> ExitCode {
+fn build(reporter: &mut Report, input: &Source, output: &Path, backend: &Backend) -> ExitCode {
     // `cc -o` would replace the source with the executable.
-    let overwrites_input = match (fs::canonicalize(input), fs::canonicalize(output)) {
-        (Ok(input), Ok(output)) => input == output,
-        _ => input == output,
+    let overwrites_input = match input {
+        Source::File(input) => match (fs::canonicalize(input), fs::canonicalize(output)) {
+            (Ok(input), Ok(output)) => input == output,
+            _ => input == output,
+        },
+        Source::Inline(_) => false,
     };
     if overwrites_input {
         reporter.tool_error(&format!(
@@ -407,8 +421,7 @@ fn build(reporter: &mut Report, input: &Path, output: &Path, backend: &Backend) 
             return ExitCode::FAILURE;
         }
     };
-    let path = input.to_string_lossy();
-    let Some(source) = read(reporter, input) else {
+    let Some((path, source)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
     let Some(program) = front_end(reporter, &path, &source) else {

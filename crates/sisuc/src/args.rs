@@ -9,7 +9,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
 use crate::codegen::OptLevel;
 use crate::report::Format;
-use crate::{Backend, Mode, Stage};
+use crate::{Backend, Mode, Source, Stage};
 
 /// The Sisu compiler.
 #[derive(Parser)]
@@ -28,8 +28,8 @@ enum Command {
         /// Print this stage to stdout instead of building
         #[arg(long, value_enum, conflicts_with = "output")]
         emit: Option<Stage>,
-        /// The program
-        file: PathBuf,
+        #[command(flatten)]
+        program: Program,
         /// The executable to write; by default the file's name without its extension, in the
         /// current directory
         #[arg(short)]
@@ -39,11 +39,31 @@ enum Command {
     Check {
         #[arg(long, value_enum, default_value = "text")]
         format: Format,
-        /// The program
-        file: PathBuf,
+        #[command(flatten)]
+        program: Program,
     },
     /// Print the explanation of a diagnostic code
     Explain { code: String },
+}
+
+/// The program `build` and `check` take: a file, or the text of one with `-e`.
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct Program {
+    /// The program
+    file: Option<PathBuf>,
+    /// The program, as text on the command line
+    #[arg(short = 'e', value_name = "CODE")]
+    inline: Option<OsString>,
+}
+
+impl Program {
+    fn into_source(self) -> Source {
+        self.file
+            .map(Source::File)
+            .or(self.inline.map(Source::Inline))
+            .expect("clap should require a file or `-e`")
+    }
 }
 
 /// The flags `build` takes besides its own.
@@ -71,7 +91,7 @@ pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> 
         Command::Build {
             flags,
             emit,
-            file,
+            program,
             output,
         } => {
             let backend = Backend {
@@ -79,9 +99,17 @@ pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> 
                 rc_checks: flags.rc_checks,
                 linker: flags.linker,
             };
-            (flags.format, build_mode(backend, emit, file, output)?)
+            (
+                flags.format,
+                build_mode(backend, emit, program.into_source(), output)?,
+            )
         }
-        Command::Check { format, file } => (format, Mode::Check { input: file }),
+        Command::Check { format, program } => (
+            format,
+            Mode::Check {
+                source: program.into_source(),
+            },
+        ),
         Command::Explain { code } => (Format::Text, Mode::Explain { code }),
     })
 }
@@ -90,21 +118,26 @@ pub(crate) fn parse(args: Vec<OsString>) -> Result<(Format, Mode), clap::Error> 
 fn build_mode(
     backend: Backend,
     emit: Option<Stage>,
-    file: PathBuf,
+    source: Source,
     output: Option<PathBuf>,
 ) -> Result<Mode, clap::Error> {
     let Some(stage) = emit else {
-        let output = match output {
-            Some(output) => output,
-            None => PathBuf::from(file.file_stem().ok_or_else(|| {
+        let output = match (output, &source) {
+            (Some(output), _) => output,
+            (None, Source::File(file)) => PathBuf::from(file.file_stem().ok_or_else(|| {
                 build_error(format!(
                     "cannot name an executable after `{}`; give one with `-o <output>`",
                     file.display()
                 ))
             })?),
+            (None, Source::Inline(_)) => {
+                return Err(build_error(
+                    "an inline program needs `-o <output>` to build an executable",
+                ));
+            }
         };
         return Ok(Mode::Build {
-            input: file,
+            input: source,
             output,
             backend,
         });
@@ -133,7 +166,7 @@ fn build_mode(
     }
     Ok(Mode::Emit {
         stage,
-        input: file,
+        input: source,
         level: backend.level,
         rc_checks: backend.rc_checks,
     })

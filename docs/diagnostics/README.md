@@ -195,7 +195,8 @@ A diagnostic about the source:
 - `message`: what is wrong.
 - `primary`: the offending code. `secondary`: a list of other spans that
   explain it. Each span has:
-  - `file`: the input path exactly as given on the command line;
+  - `file`: the input path exactly as given on the command line, or `<inline>` for a
+    program given with `-e`;
   - `start` and `end`: a half-open byte range of the input;
   - `line` and `column`: where `start` is, both 1-based; the column counts
     characters, not bytes;
