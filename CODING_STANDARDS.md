@@ -41,6 +41,8 @@ Reviewers apply these rules to every diff. Clippy, rustfmt and prek already enfo
 
 - **Sizes come from `TargetData`.** Sizes and alignments in generated code are measured with LLVM's `TargetData`, never written as numbers. The 16-byte array header is two `i64`s measured the same way.
 
+- **Prefer a crate to hand-written code.** Where a well-maintained crate that `deny.toml` allows does the job, use it, and check it with GitHits first.
+
 ## Performance
 
 - **Borrow or move before you clone.** Code that only reads a value takes a reference, and code that hands it on moves it. Anywhere in `sisuc`, a `clone()`, `to_string()`, `to_vec()` or new allocation needs a reason: the receiver keeps the value and the source still needs it. On a per-token, per-node or per-lookup path, the reason is also measured or obvious. Names travel as `Symbol`s and become a `String` only where they leave for `tir` or a diagnostic.
