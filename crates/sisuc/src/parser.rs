@@ -4403,8 +4403,28 @@ mod tests {
             parse_err("fn f() {\n    let s: Box<i64>\n    = x\n}"),
             (Code::Expected, 2, 20)
         );
+    }
+
+    /// A header's line that ends in type arguments ends the header, so a `{` on the next line
+    /// is E0004, as after a type with none.
+    #[test]
+    fn a_brace_after_a_header_ending_in_type_arguments() {
         assert_eq!(
             parse_err("fn f() -> Box<i64>\n{\n}"),
+            (Code::BraceOnNewLine, 2, 1)
+        );
+        // A return type at a line's end ends the header, as `-> i64` does.
+        assert_eq!(
+            parse_err("fn f() -> Box<i64>\nfn g() {}"),
+            (Code::Expected, 1, 19)
+        );
+        // After another statement too, ended by a line break or a `;`: the header is its own.
+        assert_eq!(
+            parse_err("const a = 1\nfn f() -> Box<i64>\n{\n}"),
+            (Code::BraceOnNewLine, 3, 1)
+        );
+        assert_eq!(
+            parse_err("const a = 1; fn f() -> Box<i64>\n{\n}"),
             (Code::BraceOnNewLine, 2, 1)
         );
         // Inside the header's parentheses too: the statement around them is still the header.

@@ -329,22 +329,21 @@ fn way_back(
     from: usize,
     to: usize,
 ) -> Vec<usize> {
-    // Each node reached, by its cost and the edge that reached it at that cost.
-    let mut reached: FxHashMap<usize, (usize, Option<usize>)> = FxHashMap::default();
-    reached.insert(from, (0, None));
+    // Each node reached, by the edge that first reached it: the queue's order makes it a
+    // cheapest.
+    let mut reached: FxHashMap<usize, Option<usize>> = FxHashMap::default();
+    reached.insert(from, None);
     let mut queue = VecDeque::from([from]);
     while let Some(n) = queue.pop_front() {
         if n == to {
             break;
         }
-        let cost = reached[&n].0;
         for &i in &out[n] {
             let edge = &graph.edges[i];
-            let step = usize::from(edge.instance.is_some());
             let m = edge.to;
             if component[m] == component[from] && !reached.contains_key(&m) {
-                reached.insert(m, (cost + step, Some(i)));
-                if step == 0 {
+                reached.insert(m, Some(i));
+                if edge.instance.is_none() {
                     queue.push_front(m);
                 } else {
                     queue.push_back(m);
@@ -354,7 +353,7 @@ fn way_back(
     }
     let mut path = Vec::new();
     let mut n = to;
-    while let (_, Some(i)) = reached[&n] {
+    while let Some(i) = reached[&n] {
         path.push(i);
         n = graph.edges[i].from;
     }

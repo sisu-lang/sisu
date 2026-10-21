@@ -2824,6 +2824,26 @@ mod tests {
         assert_eq!(newlines("fn f() -> bool {\n    x < y >\n        z\n}"), 2);
     }
 
+    /// An interpolated string is one bracket to the statement around it: after it closes, a `{`
+    /// that starts a line after a `>` asks that statement, not the one outside it nor the one in
+    /// the bracket the string stood in.
+    #[test]
+    fn an_interpolated_string_closes_like_a_bracket() {
+        let braces = |src: &str| {
+            let lexed = lex(src).expect("the source should lex");
+            lexed
+                .diagnostics
+                .iter()
+                .filter(|d| d.code() == Code::BraceOnNewLine)
+                .count()
+        };
+        assert_eq!(braces("fn f() {\n    b = (\"{x}\") >\n        { 1 }\n}"), 0);
+        assert_eq!(
+            braces("fn f(x: Box<i64> = { \"{y}\" }, y: Box<i64>\n{}) {}"),
+            1
+        );
+    }
+
     #[test]
     fn newline_after_rparen() {
         use TokenKind::{Eof, LParen, Newline, RParen};
