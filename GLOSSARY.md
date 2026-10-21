@@ -386,6 +386,11 @@ How mir hands over a **Last use**: a consuming read that leaves the local
 empty.
 _Avoid_: transfer
 
+**Reuse token**:
+The block of a box that a `match` took apart while it held the box's only
+reference. The arm builds a new box of the same enum into it, or frees it.
+_Avoid_: reset, hole
+
 **Borrowed read**:
 A read of a local that uses its value without a reference of its own,
 because nothing can release or replace the local before the use ends: the
