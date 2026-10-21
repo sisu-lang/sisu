@@ -91,8 +91,12 @@ struct Lowering<'a> {
     /// Per parameter, whether a `match` on it has an arm that would take a box of some enum `F`
     /// apart in the owned form, and whose body builds a `Variant` with a boxed `F` field.
     reuses: Vec<bool>,
-    /// Per enum, the `Variant` constructions lowered so far with a boxed field of that enum.
-    built: Vec<usize>,
+    /// Per enum looked at so far, the `Variant` constructions lowered with a boxed field of that
+    /// enum, and the stamp of the last construction or arm that looked at it, so that one counts
+    /// an enum once however many of its fields hold it. A missing enum has count zero.
+    built: FxHashMap<tir::EnumId, (usize, usize)>,
+    /// The stamp of the last construction or arm that looked at `built`.
+    stamp: usize,
     locals: Vec<Local>,
     blocks: Vec<MirBlock>,
     loops: Vec<Loop>,
@@ -192,7 +196,8 @@ impl<'a> Lowering<'a> {
             borrowed,
             consulted: vec![false; f.params.len()],
             reuses: vec![false; f.params.len()],
-            built: vec![0; program.enums.len()],
+            built: FxHashMap::default(),
+            stamp: 0,
             locals,
             blocks: Vec::new(),
             loops: Vec::new(),
@@ -236,6 +241,8 @@ impl<'a> Lowering<'a> {
             loops: lowering.loops,
             owners: lowering.owners,
         };
+        #[cfg(test)]
+        COUNTERS.set(lowering.built.len());
         (function, lowering.consulted, lowering.reuses)
     }
 
@@ -244,20 +251,30 @@ impl<'a> Lowering<'a> {
     }
 
     /// Counts a construction of variant `variant` of enum `id` once for each enum `F` it has a
-    /// boxed `F` field of, the fields the reuse pass gives a token. Fields of one type are all
-    /// boxed or all inline, so the first field of each type decides.
+    /// boxed `F` field of, the fields the reuse pass gives a token.
     fn count_built(&mut self, id: tir::EnumId, variant: usize) {
-        let fields = &self.program.enums[id.0].variants[variant].fields;
-        for (i, field) in fields.iter().enumerate() {
+        self.stamp += 1;
+        let program = self.program;
+        for field in &program.enums[id.0].variants[variant].fields {
             if let TypeKind::Enum(f) = field.ty.kind()
                 && field.boxed
-                && !fields[..i].iter().any(|g| g.ty == field.ty)
             {
                 #[cfg(test)]
-                SEEDED.set(SEEDED.get() + 1);
-                self.built[f.0] += 1;
+                DEDUPED.set(DEDUPED.get() + 1);
+                let (count, stamp) = self.built.entry(f).or_default();
+                if *stamp != self.stamp {
+                    *stamp = self.stamp;
+                    *count += 1;
+                    #[cfg(test)]
+                    SEEDED.set(SEEDED.get() + 1);
+                }
             }
         }
+    }
+
+    /// How many constructions with a boxed field of enum `f` lowering has counted.
+    fn built_of(&self, f: tir::EnumId) -> usize {
+        self.built.get(&f).map_or(0, |&(count, _)| count)
     }
 
     /// The projection to field `index` of a value of the class type `base`.
@@ -1315,6 +1332,13 @@ thread_local! {
     /// How many reads and writes of a construction counter (`Lowering::built`) lowering has made
     /// on this thread.
     pub(super) static SEEDED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times lowering has asked whether the construction or arm at hand already looked
+    /// at an enum: once per boxed enum field of a construction, and once per tested box of an arm
+    /// on a parameter.
+    pub(super) static DEDUPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many construction counters (`Lowering::built`) the last function lowered on this
+    /// thread held.
+    pub(super) static COUNTERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `mentions` of `e`'s own node and its children.

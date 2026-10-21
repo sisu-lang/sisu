@@ -28,7 +28,7 @@
 use std::mem;
 
 #[cfg(test)]
-use super::SEEDED;
+use super::{DEDUPED, SEEDED};
 use super::{Lowered, Lowering, valued, whole};
 use crate::mir::{BlockId, Const, Operand, Place, Projection, Rvalue, Statement, Terminator};
 use crate::tir::{
@@ -263,7 +263,7 @@ impl Lowering<'_> {
                     && noted.iter().any(|&(f, count)| {
                         #[cfg(test)]
                         SEEDED.set(SEEDED.get() + 1);
-                        self.built[f.0] != count
+                        self.built_of(f) != count
                     })
                 {
                     self.reuses[param.0] = true;
@@ -359,14 +359,15 @@ impl Lowering<'_> {
     }
 
     /// Each enum a box of which the owned form's commit of `pattern` takes apart, with its count
-    /// in `built`.
+    /// in `built`. It builds the whole `Parts` to read its tokens, as the owned form's commit does.
     fn noted(
-        &self,
+        &mut self,
         pattern: &Pattern,
         place: &Place,
         ty: Type,
         bindings: &[LocalId],
     ) -> Vec<(EnumId, usize)> {
+        self.stamp += 1;
         let mut noted: Vec<(EnumId, usize)> = Vec::new();
         let tokens = self
             .parts(pattern, place, ty, bindings)
@@ -375,10 +376,14 @@ impl Lowering<'_> {
             let TypeKind::Enum(f) = token.kind() else {
                 unreachable!("a tested box should hold an enum")
             };
-            if !noted.iter().any(|&(g, _)| g == f) {
+            #[cfg(test)]
+            DEDUPED.set(DEDUPED.get() + 1);
+            let (count, stamp) = self.built.entry(f).or_default();
+            if *stamp != self.stamp {
+                *stamp = self.stamp;
                 #[cfg(test)]
                 SEEDED.set(SEEDED.get() + 1);
-                noted.push((f, self.built[f.0]));
+                noted.push((f, *count));
             }
         }
         noted
