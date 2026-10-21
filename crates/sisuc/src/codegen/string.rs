@@ -236,8 +236,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         let mut formats_in_order = formats.iter().peekable();
         let bound = |bytes| i64_type.const_int(bytes, false);
         // The most bytes each part's text takes: see `sisu_write_int`, `_f64`, `_f64_fixed`,
-        // `_bool` and `_char`, plus the width when it is padded. A string's length is below
-        // 2^57 on x86-64 and aarch64 Linux, so the sum cannot overflow.
+        // `_bool` and `_char`, plus the width when it is padded.
+        // shortcut: each string is below 2^57 bytes on x86-64 and aarch64 Linux, but one string
+        // in 128 holes could overflow the `nuw` sum; check these adds if memory ever allows it.
         let cap = parts
             .iter()
             .enumerate()

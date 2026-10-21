@@ -23,7 +23,7 @@
     { "id": "mir", "type": "backend", "label": "mir", "sublabel": "mir/", "pos": [850, 200], "size": [130, 60] },
     { "id": "codegen", "type": "backend", "label": "Codegen", "sublabel": "codegen/, inkwell", "pos": [1040, 200], "size": [130, 60] },
     { "id": "diagnostics", "type": "frontend", "label": "Diagnostics", "sublabel": "text or JSON on stderr", "pos": [470, 40], "size": [130, 60] },
-    { "id": "llvm", "type": "cloud", "label": "LLVM 23", "sublabel": "passes, x86-64 code", "pos": [1040, 380], "size": [130, 60] },
+    { "id": "llvm", "type": "cloud", "label": "LLVM 23", "sublabel": "passes, machine code", "pos": [1040, 380], "size": [130, 60] },
     { "id": "link", "type": "cloud", "label": "cc", "sublabel": "linker, run by link.rs", "pos": [800, 380], "size": [130, 60] },
     { "id": "runtime", "type": "database", "label": "sisu-runtime", "sublabel": "libsisu_runtime.a", "pos": [800, 540], "size": [130, 60] },
     { "id": "binary", "type": "external", "label": "Executable", "sublabel": "x86-64 or ARM64 Linux", "pos": [560, 380], "size": [130, 60] }
