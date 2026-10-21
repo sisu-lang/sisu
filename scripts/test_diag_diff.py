@@ -30,9 +30,9 @@ class DiagDiff(unittest.TestCase):
                 open(os.path.join(tmp, f'{stem}.sisu'), 'w').close()
             moved = E0032.replace('"column":9', '"column":10')
             base = fake_sisu(tmp, 'base', {'same': E0032, 'accepted': E0032, 'rejected': W0001,
-                                            'moved': E0032, 'crash': E0032})
+                                           'moved': E0032, 'crash': E0032})
             head = fake_sisu(tmp, 'head', {'same': E0032, 'accepted': W0001, 'rejected': E0032,
-                                            'moved': moved})
+                                           'moved': moved})
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 status = dd.main(base, head, tmp)

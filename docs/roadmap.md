@@ -664,8 +664,8 @@ once the decisions it needs are settled:
   with `panic("msg")` in milestone 5, stage 1, so `test` blocks can panic.
   Scheduled right after milestone 6: tests in the source file,
   `test "add handles negatives" { assert(add(-1, 1) == 0) }`, with a built-in
-  `assert`. A normal build drops `test` blocks; `sisu test`, later
-  `sisu test`, builds a `main` that runs each one and reports which panicked.
+  `assert`. A normal build drops `test` blocks; `sisu test` builds a `main`
+  that runs each one and reports which panicked.
   A test is in the same module, so it sees private names. A panic ends the
   whole process (`sisu_panic`), so the spec decides how the other tests still
   run: one child process per test, or stopping at the first failure. Tests
