@@ -1162,6 +1162,10 @@ fn linker_lld_links_with_lld() {
 
 /// gcc finds a linker in `COMPILER_PATH` too, so `--linker` does not require it on `PATH`.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "passes `--linker bfd` and `lld`, which Apple's clang rejects"
+)]
 fn linker_off_path_links_when_cc_finds_it() {
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("loops-compiler-path");
     let out = support::sisu(Path::new(RUN), "loops.sisu", &exe, &["--linker", "lld"])
@@ -1694,13 +1698,16 @@ fn same_name_in_two_modes() {
     });
 }
 
-/// Each program builds to the same bytes twice, at two different output paths.
+/// Each program builds to the same bytes twice, at two different output paths. Their file names
+/// match, because macOS's linker signs each executable under its file name.
 #[test]
 fn builds_are_deterministic() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     for name in ["life", "optionals", "arrays"] {
         let [a, b] = ["a", "b"].map(|build| {
-            let exe = dir.join(format!("deterministic-{name}-{build}"));
+            let build_dir = dir.join(format!("deterministic-{build}"));
+            fs::create_dir_all(&build_dir).expect("creates the build directory");
+            let exe = build_dir.join(name);
             support::compile(Path::new(RUN), name, &exe, &["-O2"]);
             fs::read(&exe).expect("reads the build")
         });

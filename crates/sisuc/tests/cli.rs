@@ -1571,6 +1571,10 @@ fn bad_output_path_is_found_before_the_compile() {
 
 /// `build`'s flags go before or after the file, in any order.
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "passes `--linker bfd` and `lld`, which Apple's clang rejects"
+)]
 fn flags_in_any_order() {
     let dir = scratch_path::empty_dir("flags_in_any_order");
     fs::write(dir.join("f.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
