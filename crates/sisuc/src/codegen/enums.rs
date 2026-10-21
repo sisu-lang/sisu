@@ -27,6 +27,7 @@ use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, enum_of};
 use crate::mir::{Place, Projection};
 use crate::tir::{Enum, EnumId, LocalId, Payload, Type, TypeKind};
+use rustc_hash::FxHashMap;
 
 /// An enum's LLVM types.
 pub(super) struct EnumLayout<'ctx> {
@@ -650,9 +651,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         bindings: &[(LocalId, Place)],
         rest: &[Place],
     ) {
-        // Each token's place, and the slot its box's value went to.
-        let mut unboxed: Vec<(&[Projection], PointerValue<'ctx>)> =
-            Vec::with_capacity(tokens.len());
+        let mut unboxed = Unboxed {
+            child: FxHashMap::default(),
+            out: vec![None],
+        };
         for (token, place) in tokens {
             let Some((&Projection::Payload { variant, field }, outer)) =
                 place.projections.split_last()
@@ -678,25 +680,30 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .basic()
                 .expect("`unbox` should return a pointer, as `helper` declares it");
             self.store(self.slot(*token).0, boxed);
-            unboxed.push((&place.projections, out));
+            unboxed.insert(&place.projections, out);
         }
+        // Each rest's address, and whether each value keeps a rest.
+        let mut kept = vec![false; unboxed.out.len()];
+        let rest: Vec<(PointerValue<'ctx>, Type)> = (rest.iter())
+            .map(|place| {
+                let (address, ty, value) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
+                kept[value] = true;
+                (address, ty)
+            })
+            .collect();
         for (binding, place) in bindings {
-            let (address, _, root) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
+            let (address, _, value) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
             let (slot, ty) = self.slot(*binding);
-            let value = self
+            let moved = self
                 .builder
                 .build_load(ty, address, "moved")
                 .expect(POSITIONED);
-            self.store(slot, value);
-            if rest
-                .iter()
-                .any(|kept| kept.projections[..] == place.projections[..root])
-            {
+            self.store(slot, moved);
+            if kept[value] {
                 self.store(address, ty.const_zero());
             }
         }
-        for place in rest {
-            let (address, ty, _) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
+        for (address, ty) in rest {
             self.release_at(address, ty);
         }
         if self.flagged[scrutinee.0] {
@@ -705,34 +712,35 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// The address of the value at `projections` from `scrutinee`, its type, and how many of
-    /// the projections reach the value that holds it: the scrutinee, or the box of a token in
-    /// `unboxed`, whose value is in that token's slot.
+    /// The address of the value at `projections` from `scrutinee`, its type, and the node in
+    /// `unboxed` of the value that holds it: the scrutinee, node 0, or a token's box, whose value
+    /// is in that token's slot.
     fn unboxed_at(
         &self,
         scrutinee: LocalId,
         projections: &[Projection],
-        unboxed: &[(&[Projection], PointerValue<'ctx>)],
+        unboxed: &Unboxed<'ctx>,
     ) -> (PointerValue<'ctx>, Type, usize) {
         let (mut address, _) = self.slot(scrutinee);
         let mut ty = self.types[scrutinee.0];
-        let mut root = 0;
-        for (i, projection) in projections.iter().enumerate() {
+        let mut node = Some(0);
+        let mut value = 0;
+        for projection in projections {
             let &Projection::Payload { variant, field } = projection else {
                 unreachable!("a take-apart's places should hold only payload projections")
             };
             let id = enum_of(ty);
             ty = self.program.enums[id.0].variants[variant].fields[field].ty;
-            let token = unboxed.iter().find(|(at, _)| at[..] == projections[..=i]);
-            address = match token {
-                Some(&(_, out)) => {
-                    root = i + 1;
+            node = node.and_then(|node| unboxed.child(node, variant, field));
+            address = match node.and_then(|node| Some((node, unboxed.out[node]?))) {
+                Some((node, out)) => {
+                    value = node;
                     out
                 }
                 None => self.field_slot(address, id, variant, field),
             };
         }
-        (address, ty, root)
+        (address, ty, value)
     }
 
     /// `@sisu_rc.eq.<E>(a, b) -> i1`: with boxes, `eq_component` of `E`'s component, given
@@ -995,5 +1003,40 @@ impl<'ctx> Codegen<'ctx, '_> {
         arms.into_iter()
             .map(|(variant, _, block)| (variant, block))
             .collect()
+    }
+}
+
+/// A `take_apart`'s token places as a trie of their prefixes, so that finding a place's token
+/// costs one lookup per projection: node 0 is the scrutinee, and a node's child is keyed by the
+/// node and the payload projection that reaches it.
+struct Unboxed<'ctx> {
+    child: FxHashMap<(usize, usize, usize), usize>,
+    /// The slot each node's token's box went to, for a node that is a token's place.
+    out: Vec<Option<PointerValue<'ctx>>>,
+}
+
+impl<'ctx> Unboxed<'ctx> {
+    fn child(&self, node: usize, variant: usize, field: usize) -> Option<usize> {
+        #[cfg(test)]
+        super::TAKE_APART_PROBES.set(super::TAKE_APART_PROBES.get() + 1);
+        self.child.get(&(node, variant, field)).copied()
+    }
+
+    /// Records that the box at `projections`, a token's place, went to `out`.
+    fn insert(&mut self, projections: &[Projection], out: PointerValue<'ctx>) {
+        let mut node = 0;
+        for projection in projections {
+            let &Projection::Payload { variant, field } = projection else {
+                unreachable!("a take-apart's places should hold only payload projections")
+            };
+            #[cfg(test)]
+            super::TAKE_APART_PROBES.set(super::TAKE_APART_PROBES.get() + 1);
+            let next = self.out.len();
+            node = *self.child.entry((node, variant, field)).or_insert(next);
+            if node == next {
+                self.out.push(None);
+            }
+        }
+        self.out[node] = Some(out);
     }
 }

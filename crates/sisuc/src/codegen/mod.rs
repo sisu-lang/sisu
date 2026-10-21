@@ -51,6 +51,8 @@ thread_local! {
     /// How many class fields and enum payload fields the reflexivity analysis has read on this
     /// thread.
     static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many token places and rest places a `take_apart` has visited on this thread.
+    static TAKE_APART_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl<'ctx, 'src> Codegen<'ctx, 'src> {

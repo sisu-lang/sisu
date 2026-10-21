@@ -350,9 +350,8 @@ impl Lowering<'_> {
         let tokens: Vec<(LocalId, Place)> = (parts.tokens.into_iter())
             .map(|(ty, place)| (self.token(ty), place))
             .collect();
-        let rest = (parts.rest.iter().zip(&parts.kept))
-            .filter(|&(_, &kept)| kept)
-            .map(|(place, _)| place.clone())
+        let rest = (parts.rest.into_iter().zip(parts.kept))
+            .filter_map(|(place, kept)| kept.then_some(place))
             .collect();
         let new_tokens: Vec<LocalId> = tokens.iter().map(|&(token, _)| token).collect();
         self.push(Statement::TakeApart {

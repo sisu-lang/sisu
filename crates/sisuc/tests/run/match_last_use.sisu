@@ -1,7 +1,7 @@
 // A scrutinee in its last use moves into the `match`. At the commit the `match` takes it apart:
-// each binding moves its part out, and a box it tests is emptied, so the parts it held alone go
-// to the bindings, and a part another copy shares stays shared. Arrays and strings are built at run time, so Valgrind and
-// `--rc-checks` see each part released exactly once.
+// each binding moves its part out, and a box it tests is emptied, so the parts it held alone go to
+// the bindings, and a part another copy shares stays shared. Arrays and strings are built at run
+// time, so Valgrind and `--rc-checks` see each part released exactly once.
 class Counter {
     mut count: i64
 }
