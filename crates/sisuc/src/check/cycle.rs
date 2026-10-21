@@ -97,9 +97,6 @@ impl Graph {
 
 /// Calls `found` with the index of each type parameter `ty` mentions.
 fn mentions(ty: Type, found: &mut impl FnMut(usize)) {
-    if !ty.has_param() {
-        return;
-    }
     match ty.kind() {
         TypeKind::Param(_, i) => found(i as usize),
         TypeKind::Array(inner) | TypeKind::Optional(inner) => mentions(inner, found),

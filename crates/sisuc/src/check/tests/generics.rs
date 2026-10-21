@@ -1555,6 +1555,35 @@ fn cycles() {
             (1, 17),
             vec![(4, 5)],
         ),
+        // An argument mentions a parameter inside a class, an enum or an optional, and a
+        // second class or enum is numbered after the first.
+        (
+            "class B<T> { v: T }\nclass C<T> { next: C<B<T>>? }",
+            (2, 20),
+            vec![],
+        ),
+        (
+            "enum E<T> { A(T)\n B }\nenum N<T> { A(N<E<T>>)\n B }",
+            (3, 15),
+            vec![],
+        ),
+        ("class C<T> { next: C<[T?]>? }", (1, 20), vec![]),
+        // Calls inside a guard, a loop and an appended value.
+        (
+            "fn f<T>(x: T) -> bool {\n    match 1 {\n        n if f([x]) => true\n        _ => false\n    }\n}",
+            (3, 14),
+            vec![],
+        ),
+        (
+            "fn f<T>(x: T) {\n    while true {\n        f([x])\n    }\n}",
+            (3, 9),
+            vec![],
+        ),
+        (
+            "fn f<T>(x: T) -> string {\n    let mut xs = [\"\"]\n    xs[0] = xs[0] + f([x])\n    xs[0]\n}",
+            (3, 21),
+            vec![],
+        ),
     ] {
         assert_eq!(
             found(&format!("{src}\nfn main() {{}}")),
