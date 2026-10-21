@@ -338,7 +338,7 @@ unsafe extern "C" {
     fn signal(signum: i32, handler: usize) -> usize;
 }
 
-// shortcut: Linux x86-64 values, the only target; upgrade if another target is added.
+// The values glibc uses on x86-64 and aarch64 Linux; check them when adding another target.
 const SIGPIPE: i32 = 13;
 const SIG_IGN: usize = 1;
 

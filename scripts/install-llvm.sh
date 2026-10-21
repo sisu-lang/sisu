@@ -8,8 +8,21 @@
 set -euo pipefail
 
 version=23.1.3
-sha256=ca9fe385a5d9e2d88132dc0e23a00e9f87f38fa75f67207b5e457d208e71d013
-url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}/LLVM-${version}-Linux-X64.tar.xz"
+case "$(uname -m)" in
+x86_64)
+    arch=X64
+    sha256=ca9fe385a5d9e2d88132dc0e23a00e9f87f38fa75f67207b5e457d208e71d013
+    ;;
+aarch64)
+    arch=ARM64
+    sha256=56d005e339c979a696ed6c244e6472e16f3b1371e48987a07e6145bda7ee0d03
+    ;;
+*)
+    echo "install-llvm.sh: no LLVM release for $(uname -m); Sisu builds on x86-64 and aarch64 Linux" >&2
+    exit 1
+    ;;
+esac
+url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}/LLVM-${version}-Linux-${arch}.tar.xz"
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 dest="$root/.llvm/23"
@@ -35,7 +48,7 @@ mkdir -p "$dest"
 # with its ld.lld link, for the `--linker lld` tests. That is about 570 MB of
 # the 12 GB release; the rest (clang and other tools) would not fit the 10 GB
 # GitHub Actions cache.
-top="LLVM-${version}-Linux-X64"
+top="LLVM-${version}-Linux-${arch}"
 members=("$top/bin/llvm-config" "$top/bin/lld" "$top/bin/ld.lld" "$top/include/llvm" "$top/include/llvm-c"
     "$top/lib/libLLVM*.a" "$top/lib/libPolly*.a")
 if $audit; then

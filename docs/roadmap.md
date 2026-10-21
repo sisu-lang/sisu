@@ -445,12 +445,13 @@ so it does not wait for the later goals:
 - A TextMate grammar for syntax highlighting in VS Code, from milestone 3,
   once classes and arrays fix most of the syntax. It is one JSON file and
   needs no compiler changes.
-- ARM64 Linux and macOS on ARM64 as hosts. LLVM publishes `Linux-ARM64` and
-  `macOS-ARM64` builds, so `scripts/install-llvm.sh` picks the download by
-  `uname -s` and `uname -m`, and CI gets a job for each. The compiler should
-  need no changes, but this is untested. On macOS, `cc` is Apple's clang, so
-  tests that assume GNU tools or ELF files break. LLVM publishes no build for
-  Intel Macs. Check which GitHub Actions runners the repository can use first.
+- ARM64 Linux as a host works: `scripts/install-llvm.sh` picks LLVM's
+  `Linux-X64` or `Linux-ARM64` build by `uname -m`, and CI's "Test (ARM64)"
+  job runs the tests on an `ubuntu-26.04-arm` runner on each push to `main`.
+  macOS on ARM64 is next: LLVM publishes a `macOS-ARM64` build, so the script
+  also checks `uname -s`, and CI gets a job. On macOS, `cc` is Apple's clang,
+  so tests that assume GNU tools or ELF files break. LLVM publishes no build
+  for Intel Macs.
 - A `--leaks` build mode that finds reference cycles (ADR 0008). The runtime
   records each live allocation with the place it was made. When `main`
   returns, every object still alive has leaked. Codegen emits, only in this
@@ -1175,8 +1176,8 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
 - **Standard library scope.** Milestone 11 names `Map`, and
   milestone 12 brings files. Time, processes, directories, networking,
   regular expressions and JSON are not planned.
-- **Platforms.** Sisu builds only for x86-64 Linux. ARM64 Linux and macOS
-  are under "Early tooling", untested, and Windows is a stretch goal.
+- **Platforms.** Sisu builds only for x86-64 and ARM64 Linux. macOS is
+  under "Early tooling", untested, and Windows is a stretch goal.
   WebAssembly with WASI (`wasm32-wasip1`), run by `wasmtime`, is the cheapest
   new target: LLVM 23 in `.llvm/23` has the backend, and reference counting
   needs nothing from the host. It needs cross-compiling (`--target`, a

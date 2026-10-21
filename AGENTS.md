@@ -1,6 +1,6 @@
 # Sisu
 
-Sisu is a small, statically typed language compiled to native x86-64 Linux code through LLVM 23. This Cargo workspace holds two crates:
+Sisu is a small, statically typed language compiled to native x86-64 and ARM64 Linux code through LLVM 23. This Cargo workspace holds two crates:
 
 - `crates/sisuc`: the compiler (`sisu`).
 - `crates/runtime`: `sisu-runtime`, a `staticlib` with a C ABI that is linked into every compiled program.

@@ -80,8 +80,9 @@ Every file that names the LLVM major:
 - `deny.toml`: the `allow-git` entry, while inkwell is a git dependency.
 - `.cargo/config.toml`: the `LLVM_SYS_<major><minor>_PREFIX` name and the
   `.llvm/<major>` path.
-- `scripts/install-llvm.sh`: `version`, `sha256` (of the release's
-  `LLVM-<version>-Linux-X64.tar.xz`) and `dest`. Check that the tar paths still
+- `scripts/install-llvm.sh`: `version`, the two `sha256` values (of the
+  release's `LLVM-<version>-Linux-X64.tar.xz` and `-Linux-ARM64.tar.xz`) and
+  `dest`. Check that the tar paths still
   exist in the new archive.
 - `.github/actions/install-llvm/action.yml`: the cache `path` and the
   description. The cache key hashes the script, so it changes on its own.
