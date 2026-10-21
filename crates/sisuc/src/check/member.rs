@@ -72,7 +72,14 @@ impl Checker<'_> {
         let Some((class, index)) = self.find_field(type_of(&base), receiver, name, false) else {
             return Err(Poisoned::error());
         };
-        let ty = self.classes[class.0].fields[index].ty;
+        // A generic class's field is of the type its arguments make it.
+        let args = match type_of(&base).map(Type::kind) {
+            Some(TypeKind::Class(_, args)) => args.get(),
+            _ => &[],
+        };
+        let ty = self.classes[class.0].fields[index]
+            .ty
+            .map(|ty| ty.subst(args));
         match (base, ty) {
             (Ok(base), Some(ty)) => Ok(tir::Expr {
                 kind: tir::ExprKind::Field {

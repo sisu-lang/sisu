@@ -157,14 +157,14 @@ impl Checker<'_> {
         let hint = element.or(expected.filter(|&ty| ty == UNKNOWN));
         // `operand`, split so the class rule runs between the check and the wrap.
         let checked = self.value(value, hint);
-        let class = type_of(&checked)
-            .map(payload)
-            .filter(|ty| matches!(ty.kind(), TypeKind::Class(..)) && !none_literal(value))
-            .map(|ty| self.type_name(ty));
-        if let Some(class) = &class {
+        let class = type_of(&checked).map(payload).filter(|ty| {
+            matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Param(..)) && !none_literal(value)
+        });
+        if let Some(class) = class {
             self.report(DiagnosticKind::SameObject {
-                class: class.clone(),
+                class: self.type_name(class),
                 at: value.span,
+                param: matches!(class.kind(), TypeKind::Param(..)),
             });
         }
         let (checked, mismatched) = match element {
@@ -222,13 +222,13 @@ impl Checker<'_> {
         None
     }
 
-    /// `receiver.method(args)` on `receiver`, an array of type `ty`. The methods: `len()`,
-    /// `sum()` on an `[i64]` or an `[f64]`, and `contains(x)`, whose argument is checked as an
-    /// element.
+    /// `receiver.method(args)` on `receiver`, an array of type `ty`, written at `at`. The
+    /// methods: `len()`, `sum()` on an `[i64]` or an `[f64]`, and `contains(x)`, whose argument
+    /// is checked as an element, which has `==` unless its type names a type parameter.
     pub(super) fn array_method(
         &mut self,
         span: Span,
-        receiver: Checked,
+        (receiver, at): (Checked, Span),
         ty: Type,
         method: &ast::Ident,
         args: &[ast::Arg],
@@ -274,6 +274,15 @@ impl Checker<'_> {
             "sum" => {
                 let kind = receiver.ok().map(|r| tir::ExprKind::Sum(Box::new(r)));
                 typed(span, element, false, kind)
+            }
+            _ if element.has_param() => {
+                let d = DiagnosticKind::ParamLacks {
+                    ty: self.type_name(element),
+                    op: "==".to_string(),
+                    at,
+                    contains: true,
+                };
+                self.rejected(d.into(), args)
             }
             _ => {
                 let labeled = self.labels(args);

@@ -191,6 +191,9 @@ codes! {
     InterpolatedPattern = "E0134",
     BadRange = "E0135",
     AlternativeBindings = "E0136",
+    TypeArguments = "E0137",
+    TypeArgument = "E0138",
+    ParamLacks = "E0139",
     BreakValueNotLoop = "E0141",
     LabelClash = "E0142",
     LabelReused = "E0143",
@@ -340,8 +343,9 @@ pub(crate) enum DiagnosticKind {
     },
     /// A program with no `main`.
     NoMain,
-    /// A `main` at `at` that takes anything but nothing or one `[string]`, or returns a value.
-    MainSignature { at: Span },
+    /// A `main` at `at` that takes anything but nothing or one `[string]`, or returns a value;
+    /// or, by `form`, that takes type parameters.
+    MainSignature { at: Span, form: MainForm },
     /// The type `name`, at `at`, which is not built in and names no class.
     UnknownType {
         name: String,
@@ -416,8 +420,9 @@ pub(crate) enum DiagnosticKind {
     /// An `is` at `at` with `None` on one side. `tested`, when `== None` would be right, is the
     /// path of the other side as written.
     IsTestsNone { tested: Option<String>, at: Span },
-    /// An `is` whose operand at `at`, of type `found`, is no object.
-    IsNeedsObjects { found: String, at: Span },
+    /// An `is` whose operand at `at`, of type `found`, is no object. `help` when `==` may
+    /// compare it: its type names no type parameter.
+    IsNeedsObjects { found: String, at: Span, help: bool },
     /// A comparison at `at` of a `left` with a `right`.
     CannotCompare {
         left: String,
@@ -549,8 +554,13 @@ pub(crate) enum DiagnosticKind {
         fields: Vec<String>,
         at: Span,
     },
-    /// The value at `at` of an array fill, an object of `class` or an optional of one.
-    SameObject { class: String, at: Span },
+    /// The value at `at` of an array fill, an object of `class` or an optional of one; with
+    /// `param`, `class` is a type parameter, which may be a class.
+    SameObject {
+        class: String,
+        at: Span,
+        param: bool,
+    },
     /// An index into the value at `at`, of type `ty`, which is no array.
     CannotIndex { ty: String, at: Span },
     /// A `sum` at `at` of an array of type `ty`, which is neither `[i64]` nor `[f64]`.
@@ -887,6 +897,51 @@ pub(crate) enum DiagnosticKind {
         negated: bool,
         fix: Option<NanFix>,
     },
+    /// Type arguments that `name` does not take as written; `form` says how.
+    TypeArguments {
+        name: String,
+        at: Span,
+        form: ArgumentsForm,
+    },
+    /// The type argument at `at`, `ty`, which no parameter may take: `unit`, `never`, or, with
+    /// `optional`, an optional.
+    TypeArgument {
+        ty: String,
+        at: Span,
+        optional: bool,
+    },
+    /// The operator `op` on the operand at `at`, whose type `ty` names a type parameter, which
+    /// has no operators; `contains` when `op` is the `==` of a `contains` on the array at `at`,
+    /// whose element type is `ty`.
+    ParamLacks {
+        ty: String,
+        op: String,
+        at: Span,
+        contains: bool,
+    },
+}
+
+/// How written type arguments do not fit what they follow.
+pub(crate) enum ArgumentsForm {
+    /// A generic declaration that takes `want` of them, with `found`.
+    Count { want: usize, found: usize },
+    /// A generic declaration, with none, whose parameters are `params`.
+    Missing { params: Vec<String> },
+    /// A declaration that takes none. The fix deletes the list, the diagnostic's span; it is
+    /// unsafe when the list holds a comment.
+    NotGeneric { safe: bool },
+    /// A value, which is not generic. `compare` is the text the list starts with, the value
+    /// through the first argument, which a comparison would put in parentheses.
+    Value { compare: String },
+}
+
+/// Why `main`'s signature is wrong.
+pub(crate) enum MainForm {
+    /// It takes something but nothing or one `[string]`, or returns a value.
+    Signature,
+    /// It takes type parameters. The fix deletes `remove`, the list, when nothing else in
+    /// `main` names them.
+    TypeParams { remove: Option<Span> },
 }
 
 /// How a loop label at a jump also reads as something else.
@@ -1635,12 +1690,30 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::NoMain => {
                 Diagnostic::coded(code, Span::new(0, 0), "no `main` function")
             }
-            DiagnosticKind::MainSignature { at } => {
-                Diagnostic::coded(
-                    code,
-                    at,
-                    "`main` takes no parameters, or one `[string]`, and returns no value",
-                )
+            DiagnosticKind::MainSignature {
+                at,
+                form: MainForm::Signature,
+            } => Diagnostic::coded(
+                code,
+                at,
+                "`main` takes no parameters, or one `[string]`, and returns no value",
+            ),
+            DiagnosticKind::MainSignature {
+                at,
+                form: MainForm::TypeParams { remove },
+            } => {
+                let d = Diagnostic::coded(code, at, "`main` takes no type parameters");
+                match remove {
+                    Some(span) => d.with_fix(Fix {
+                        message: "remove the type parameters".to_string(),
+                        safe: true,
+                        edits: vec![Edit {
+                            span,
+                            replacement: String::new(),
+                        }],
+                    }),
+                    None => d,
+                }
             }
             DiagnosticKind::UnknownType {
                 name,
@@ -1888,9 +1961,13 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::IsNeedsObjects { found, at } => {
-                Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"))
-                    .with_help("use `==` to compare values")
+            DiagnosticKind::IsNeedsObjects { found, at, help } => {
+                let d = Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"));
+                if help {
+                    d.with_help("use `==` to compare values")
+                } else {
+                    d
+                }
             }
             DiagnosticKind::CannotCompare { left, right, at } => {
                 Diagnostic::coded(code, at, format!("cannot compare `{left}` with `{right}`"))
@@ -2137,13 +2214,29 @@ impl From<DiagnosticKind> for Diagnostic {
                 format!("expected field `{field}` here, found `{found}`"),
             )
             .with_help(field_order(&fields)),
-            DiagnosticKind::SameObject { class, at } => Diagnostic::coded(
+            DiagnosticKind::SameObject {
+                class,
+                at,
+                param: false,
+            } => Diagnostic::coded(
                 code,
                 at,
                 format!("every element would be the same `{class}` object"),
             )
             .with_help(format!(
                 "start from `[None; n]` with type `[{class}?]` and fill it in a loop"
+            )),
+            DiagnosticKind::SameObject {
+                class,
+                at,
+                param: true,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!("every element could be the same `{class}` object"),
+            )
+            .with_label(format!(
+                "`{class}` may be a class, and every element would be the same object"
             )),
             DiagnosticKind::CannotIndex { ty, at } => {
                 Diagnostic::coded(code, at, format!("cannot index `{ty}`"))
@@ -3031,6 +3124,63 @@ impl From<DiagnosticKind> for Diagnostic {
                     d.with_fix(safe_fix("write `loop`", at, "loop"))
                 } else {
                     d
+                }
+            }
+            DiagnosticKind::TypeArguments { name, at, form } => match form {
+                ArgumentsForm::Count { want, found } => {
+                    let s = if want == 1 { "" } else { "s" };
+                    let were = if found == 1 { "was" } else { "were" };
+                    Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{name}` takes {want} type argument{s}, but {found} {were} given"),
+                    )
+                }
+                ArgumentsForm::Missing { params } => {
+                    let s = if params.len() == 1 { "" } else { "s" };
+                    let each = params
+                        .iter()
+                        .map(|p| format!("`{p}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    Diagnostic::coded(code, at, format!("`{name}` needs its type argument{s}"))
+                        .with_help(format!("write `{name}<...>` with a type for {each}"))
+                }
+                ArgumentsForm::NotGeneric { safe } => {
+                    Diagnostic::coded(code, at, format!("`{name}` takes no type arguments"))
+                        .with_fix(Fix {
+                            message: "remove the type arguments".to_string(),
+                            safe,
+                            edits: vec![Edit {
+                                span: at,
+                                replacement: String::new(),
+                            }],
+                        })
+                }
+                ArgumentsForm::Value { compare } => {
+                    Diagnostic::coded(code, at, format!("`{name}` is not generic"))
+                        .with_help(format!("to compare, write `({compare})`"))
+                }
+            },
+            DiagnosticKind::TypeArgument { ty, at, optional } => {
+                let d = Diagnostic::coded(code, at, format!("`{ty}` cannot be a type argument"));
+                if optional {
+                    d.with_label("an optional cannot be a type argument yet")
+                } else {
+                    d
+                }
+            }
+            DiagnosticKind::ParamLacks {
+                ty,
+                op,
+                at,
+                contains,
+            } => {
+                let d = Diagnostic::coded(code, at, format!("`{ty}` has no `{op}`"));
+                if contains {
+                    d.with_label("`contains` compares elements with `==`")
+                } else {
+                    d.with_label(format!("this is a `{ty}`"))
                 }
             }
             DiagnosticKind::NanComparison { at, negated, fix } => {

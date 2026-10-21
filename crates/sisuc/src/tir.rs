@@ -109,6 +109,8 @@ pub(crate) struct Program {
 #[derive(Debug)]
 pub(crate) struct Class {
     pub(crate) name: String,
+    /// The names of its type parameters, in order; empty when it is not generic.
+    pub(crate) type_params: Vec<String>,
     pub(crate) fields: Vec<Field>,
 }
 
@@ -116,6 +118,8 @@ pub(crate) struct Class {
 #[derive(Debug)]
 pub(crate) struct Enum {
     pub(crate) name: String,
+    /// The names of its type parameters, in order; empty when it is not generic.
+    pub(crate) type_params: Vec<String>,
     pub(crate) variants: Vec<Variant>,
     /// Whether a value has counted parts: a boxed field, or a field of a counted type.
     pub(crate) counted: bool,
@@ -148,6 +152,10 @@ pub(crate) struct Field {
 #[derive(Debug)]
 pub(crate) struct Function {
     pub(crate) name: String,
+    /// The names of the type parameters in scope: a method's owner's, then its own.
+    pub(crate) type_params: Vec<String>,
+    /// How many of `type_params` belong to the class or enum of a method.
+    pub(crate) owner_params: usize,
     pub(crate) params: Vec<LocalId>,
     pub(crate) ret: Type,
     pub(crate) locals: Vec<Local>,
@@ -457,6 +465,11 @@ impl Type {
             TypeKind::Optional(payload) => payload.is_counted(enums),
             _ => false,
         }
+    }
+
+    /// Whether a value of this type may be counted: it is, or a type argument may make it so.
+    pub(crate) fn may_be_counted(self, enums: &[Enum]) -> bool {
+        self.is_counted(enums) || self.has_param()
     }
 
     /// The enum a payload field of this type holds inline unless boxed: `F`'s for `F` or `F?`.
@@ -1123,12 +1136,25 @@ impl Program {
     }
 }
 
+/// `<T, U>`, or nothing for no type parameters.
+fn angled(params: &[String]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    format!("<{}>", params.join(", "))
+}
+
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Classes first, then enums, then functions, one per line.
         let mut separator = "";
         for class in &self.classes {
-            write!(f, "{separator}(class {}", class.name)?;
+            write!(
+                f,
+                "{separator}(class {}{}",
+                class.name,
+                angled(&class.type_params)
+            )?;
             for field in &class.fields {
                 let keyword = if field.mutable { "mut " } else { "" };
                 let ty = self.type_name(field.ty);
@@ -1138,7 +1164,7 @@ impl fmt::Display for Program {
             separator = "\n";
         }
         for e in &self.enums {
-            write!(f, "{separator}(enum {}", e.name)?;
+            write!(f, "{separator}(enum {}{}", e.name, angled(&e.type_params))?;
             for variant in &e.variants {
                 if variant.fields.is_empty() {
                     write!(f, " {}", variant.name)?;
@@ -1165,7 +1191,13 @@ impl fmt::Display for Program {
                 program: self,
                 function,
             };
-            write!(f, "(fn {} (", function.name)?;
+            let (owner, own) = function.type_params.split_at(function.owner_params);
+            match function.name.split_once('.') {
+                Some((class, method)) => {
+                    write!(f, "(fn {class}{}.{method}{} (", angled(owner), angled(own))?;
+                }
+                None => write!(f, "(fn {}{} (", function.name, angled(own))?,
+            }
             for (j, param) in function.params.iter().enumerate() {
                 if j > 0 {
                     f.write_str(" ")?;
@@ -1365,6 +1397,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::I64,
                 locals,
@@ -1446,6 +1480,7 @@ mod tests {
             classes: vec![],
             enums: vec![Enum {
                 name: "State".into(),
+                type_params: Vec::new(),
                 variants: vec![
                     Variant {
                         name: "Idle".into(),
@@ -1464,6 +1499,8 @@ mod tests {
             }],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::I64,
                 locals: vec![
@@ -1514,6 +1551,8 @@ mod tests {
         // fn second(a: i64, ok: bool) -> bool { first(); ok && (a == 3 && a < 4) }
         let first = Function {
             name: "first".into(),
+            type_params: Vec::new(),
+            owner_params: 0,
             params: vec![],
             ret: Type::UNIT,
             locals: vec![],
@@ -1545,6 +1584,8 @@ mod tests {
         let value = binary(BinaryOp::And, ok, binary(BinaryOp::And, a_eq_3, a_lt_4));
         let second = Function {
             name: "second".into(),
+            type_params: Vec::new(),
+            owner_params: 0,
             params: vec![LocalId(0), LocalId(1)],
             ret: Type::BOOL,
             locals: vec![param("a", Type::I64), param("ok", Type::BOOL)],
@@ -1591,6 +1632,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -1623,6 +1666,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("c", Type::CHAR)],
@@ -1650,6 +1695,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -1668,6 +1715,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -1687,6 +1736,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING)],
@@ -1714,6 +1765,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING)],
@@ -1747,6 +1800,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING), param("n", Type::I64)],
@@ -1795,6 +1850,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
                 ret: Type::UNIT,
                 locals: vec![param("n", Type::I64), param("x", Type::F64)],
@@ -1819,6 +1876,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![
@@ -1861,6 +1920,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![Local {
@@ -1893,6 +1954,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -1920,6 +1983,7 @@ mod tests {
         };
         let class = |name: &str, fields: Vec<Field>| Class {
             name: name.into(),
+            type_params: Vec::new(),
             fields,
         };
         let optional =
@@ -1996,10 +2060,12 @@ mod tests {
         let program = Program {
             classes: vec![Class {
                 name: "Stack".into(),
+                type_params: Vec::new(),
                 fields: vec![],
             }],
             enums: vec![Enum {
                 name: "Tree".into(),
+                type_params: Vec::new(),
                 variants: vec![],
                 counted: false,
                 cycle: None,

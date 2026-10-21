@@ -1,0 +1,14 @@
+error[E0137]: `Point` takes no type arguments
+ --> E0137-not-generic.sisu:5:19
+  |
+5 | fn origin(p: Point<i64>) -> bool {
+  |                   ^^^^^
+  |
+help: remove the type arguments
+  |
+5 - fn origin(p: Point<i64>) -> bool {
+5 + fn origin(p: Point) -> bool {
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0137

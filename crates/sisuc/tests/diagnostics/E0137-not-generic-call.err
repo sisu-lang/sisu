@@ -1,0 +1,14 @@
+error[E0137]: `Point` takes no type arguments
+ --> E0137-not-generic-call.sisu:6:18
+  |
+6 |     let p = Point<i64>(x: 1)
+  |                  ^^^^^
+  |
+help: remove the type arguments
+  |
+6 -     let p = Point<i64>(x: 1)
+6 +     let p = Point(x: 1)
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0137

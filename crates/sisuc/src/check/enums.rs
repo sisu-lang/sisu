@@ -15,6 +15,7 @@ use crate::tir::{self, EnumId, Type, TypeArgs, TypeKind};
 
 pub(super) struct EnumInfo {
     pub(super) name: ast::Ident,
+    pub(super) type_params: Vec<Symbol>,
     /// The first variant of each name, in declaration order.
     pub(super) variants: Vec<VariantInfo>,
     /// Each variant's index in `variants`, by name.
@@ -100,10 +101,14 @@ impl Checker<'_> {
             for label in payload.iter().filter_map(|field| field.label.as_ref()) {
                 self.first_definition(&mut labels, Definition::Field, Some(owner), label);
             }
+            self.body
+                .type_params
+                .clone_from(&self.enums[id.0].type_params);
             let fields = payload
                 .iter()
                 .map(|field| self.resolve(&field.ty))
                 .collect();
+            self.body.type_params.clear();
             if self.first_definition(&mut first, Definition::Variant, Some(owner), name) {
                 let info = &mut self.enums[id.0];
                 info.index.insert(name.name, info.variants.len());
@@ -117,6 +122,10 @@ impl Checker<'_> {
                 });
             }
         }
+        let receiver = Type::intern(TypeKind::Enum(
+            id,
+            super::own_args(&self.enums[id.0].type_params),
+        ));
         for method in &e.methods {
             let func = tir::FuncId(self.signatures.len());
             if self.first_definition(&mut first, Definition::Method, Some(owner), &method.name) {
@@ -124,11 +133,12 @@ impl Checker<'_> {
                     .methods
                     .insert(method.name.name, Declared::Known(func));
             }
-            self.signature(method, format!("{owner}.{}", method.name.name));
-            declared.push((
+            self.signature(
                 method,
-                Some(Type::intern(TypeKind::Enum(id, TypeArgs::NONE))),
-            ));
+                format!("{owner}.{}", method.name.name),
+                &e.type_params,
+            );
+            declared.push((method, Some(receiver)));
         }
         for method in &e.broken_methods {
             self.enums[id.0]
@@ -346,6 +356,7 @@ impl Checker<'_> {
                 let boxed = variants.iter().flat_map(|v| &v.fields).any(|f| f.boxed);
                 tir::Enum {
                     name: info.name.name.to_string(),
+                    type_params: info.type_params.iter().map(Symbol::to_string).collect(),
                     variants,
                     counted: false,
                     cycle: boxed.then_some(component[e]),
@@ -361,7 +372,7 @@ impl Checker<'_> {
                 .variants
                 .iter()
                 .flat_map(|v| &v.fields)
-                .any(|f| f.boxed || f.ty.is_counted(&lowered));
+                .any(|f| f.boxed || f.ty.may_be_counted(&lowered));
             lowered[e].counted = counted;
         }
         self.never_built(cyclic);
@@ -369,89 +380,39 @@ impl Checker<'_> {
     }
 
     /// Reports each enum no value can be built of. Which classes and enums can be built is a
-    /// least fixed point over them all: a class can when every field's type can, an enum when
-    /// every field of some variant can, and every other type always can. A class in `cyclic`
-    /// counts as built, and so does an enum with no variant, since each has its error already.
-    /// Each component of the rest that needs no other is reported once, at its first enum; a
-    /// type that only needs one of those is not.
+    /// least fixed point over them all, with the arguments they are given: a class can when
+    /// every field's type can, an enum when every field of some variant can, and every other
+    /// type always can. A class in `cyclic` counts as built, and so does an enum with no
+    /// variant, since each has its error already. Each component of the rest that needs no
+    /// other is reported once, at its first enum; a type that only needs one of those is not.
     fn never_built(&mut self, cyclic: &[bool]) {
+        let mut fix = Buildable::new(self, cyclic);
+        fix.run();
         let classes = self.classes.len();
-        let node = |ty: &Option<Type>| match ty.map(Type::kind) {
-            Some(TypeKind::Class(id, _)) => Some(id.0),
-            Some(TypeKind::Enum(id, _)) => Some(classes + id.0),
-            _ => None,
-        };
-        // Each class, and each variant, as (its type's node, the nodes it needs built).
-        let mut slots: Vec<(usize, Vec<usize>)> = Vec::new();
-        for (c, class) in self.classes.iter().enumerate() {
-            let needs = if cyclic[c] {
-                Vec::new()
-            } else {
-                class.fields.iter().filter_map(|f| node(&f.ty)).collect()
-            };
-            slots.push((c, needs));
-        }
-        for (e, info) in self.enums.iter().enumerate() {
-            if info.variants.is_empty() {
-                slots.push((classes + e, Vec::new()));
-            }
-            for variant in &info.variants {
-                slots.push((
-                    classes + e,
-                    variant.fields.iter().filter_map(node).collect(),
-                ));
-            }
-        }
-        let nodes = classes + self.enums.len();
-        let mut waiting = vec![Vec::new(); nodes];
-        for (s, (_, needs)) in slots.iter().enumerate() {
-            for &need in needs {
-                waiting[need].push(s);
-            }
-        }
-        let mut missing: Vec<usize> = slots.iter().map(|(_, needs)| needs.len()).collect();
-        let mut built = vec![false; nodes];
-        let mut ready: Vec<usize> = Vec::new();
-        let complete = |s: usize, built: &mut Vec<bool>, ready: &mut Vec<usize>| {
-            let owner = slots[s].0;
-            if !built[owner] {
-                built[owner] = true;
-                ready.push(owner);
-            }
-        };
-        for s in (0..slots.len()).filter(|&s| missing[s] == 0) {
-            complete(s, &mut built, &mut ready);
-        }
-        while let Some(n) = ready.pop() {
-            for &s in &waiting[n] {
-                missing[s] -= 1;
-                if missing[s] == 0 {
-                    complete(s, &mut built, &mut ready);
+        // What each declaration no value can be built of needs that none can be built of.
+        let mut needs = vec![Vec::new(); fix.slots.len()];
+        for (n, wants) in needs.iter_mut().enumerate() {
+            if !fix.built[fix.root(n)] {
+                for &ty in fix.slots[n].iter().flatten().flatten() {
+                    fix.blame(ty, wants);
                 }
             }
         }
-        // What each node no value can be built of needs that none can be built of.
-        let mut needs = vec![Vec::new(); nodes];
-        for (owner, wants) in &slots {
-            if !built[*owner] {
-                needs[*owner].extend(wants.iter().copied().filter(|&n| !built[n]));
-            }
-        }
         let component = components(&needs);
-        let mut leaves = vec![true; nodes];
+        let mut leaves = vec![true; needs.len()];
         for (n, wants) in needs.iter().enumerate() {
             if wants.iter().any(|&w| component[w] != component[n]) {
                 leaves[component[n]] = false;
             }
         }
-        let mut reported = vec![false; nodes];
+        let mut reported = vec![false; needs.len()];
         for e in 0..self.enums.len() {
             let n = classes + e;
-            if built[n] || !leaves[component[n]] || reported[component[n]] {
+            if fix.built[fix.root(n)] || !leaves[component[n]] || reported[component[n]] {
                 continue;
             }
             reported[component[n]] = true;
-            let chain = self.chain(n, &built);
+            let chain = self.chain(n, &fix);
             let name = &self.enums[e].name;
             self.report(DiagnosticKind::NeverConstructed {
                 name: name.name.to_string(),
@@ -462,43 +423,237 @@ impl Checker<'_> {
     }
 
     /// The chain of fields from the enum at node `start`, through types none of which can be
-    /// `built`: each link's holder (`E.V` or `K.f`) and the type held. At an enum it takes the
-    /// first variant's first such field, at a class the first such field, and it ends at the
-    /// first type it meets again.
-    fn chain(&self, start: usize, built: &[bool]) -> Vec<(String, String)> {
+    /// built by `fix`: each link's holder (`E.V` or `K.f`) and the type held, with the arguments
+    /// the chain gives it. At an enum it takes the first variant's first such field, at a class
+    /// the first such field, and it ends at the first type it meets again.
+    fn chain(&self, start: usize, fix: &Buildable) -> Vec<(String, String)> {
         let classes = self.classes.len();
+        // The chain starts at an enum with every parameter's argument buildable.
+        let params = &self.enums[start - classes].type_params;
+        let flags = vec![true; params.len()];
         // A field named `name` of type `ty`, if that type cannot be built: its name, its type's
-        // name and its node.
-        let unbuilt = |(name, ty): (&str, Option<Type>)| {
-            let ty = ty?;
-            let n = match ty.kind() {
-                TypeKind::Class(id, _) => id.0,
-                TypeKind::Enum(id, _) => classes + id.0,
+        // name, and its node and arguments.
+        let unbuilt = |(name, ty): (&str, Type)| {
+            let (n, args) = match ty.kind() {
+                TypeKind::Class(id, args) => (id.0, args),
+                TypeKind::Enum(id, args) => (classes + id.0, args),
                 _ => return None,
             };
-            (!built[n]).then(|| (name.to_string(), self.type_name(ty), n))
+            let key = fix.key_of(n, args, &flags);
+            (!fix.built[key]).then(|| (name.to_string(), self.type_name(ty), (n, args), key))
         };
         let mut chain = Vec::new();
-        let mut on_chain = vec![false; built.len()];
-        let mut at = start;
-        while !std::mem::replace(&mut on_chain[at], true) {
+        let mut on_chain = vec![false; fix.keys.len()];
+        let (mut at, mut args) = (start, super::own_args(params));
+        let mut key = fix.root(start);
+        while !std::mem::replace(&mut on_chain[key], true) {
+            let with = args.get();
+            let held = |ty: &Option<Type>| ty.map(|ty| ty.subst(with));
             let (holder, field) = if at < classes {
                 let class = &self.classes[at];
-                let mut fields = class.fields.iter().map(|f| (f.name.name.as_str(), f.ty));
+                let mut fields = class
+                    .fields
+                    .iter()
+                    .filter_map(|f| Some((f.name.name.as_str(), held(&f.ty)?)));
                 (&class.name, fields.find_map(unbuilt))
             } else {
                 let e = &self.enums[at - classes];
                 let mut fields = e.variants.first().into_iter().flat_map(|v| {
                     let name = v.name.name.as_str();
-                    v.fields.iter().map(move |&ty| (name, ty))
+                    v.fields
+                        .iter()
+                        .filter_map(move |ty| Some((name, held(ty)?)))
                 });
                 (&e.name, fields.find_map(unbuilt))
             };
-            let (name, held, next) =
+            let (name, ty, next, next_key) =
                 field.expect("a type no value can be built of should need another such type");
-            chain.push((format!("{}.{name}", holder.name), held));
-            at = next;
+            chain.push((format!("{}.{name}", holder.name), ty));
+            ((at, args), key) = (next, next_key);
         }
         chain
+    }
+}
+
+/// Which declarations can be built, given which of their type parameters' arguments can: the
+/// least fixed point over keys, each a declaration (a class's node is its `ClassId`, an
+/// enum's follows the classes) and a flag for each of its parameters.
+struct Buildable {
+    classes: usize,
+    /// By node, its slots, each of which builds it when all its field types can be built: a
+    /// class's fields, or each variant's payload. A class on a cycle of fields, and an enum with
+    /// no variant, have one empty slot.
+    slots: Vec<Vec<Vec<Option<Type>>>>,
+    /// By node, how many type parameters it has.
+    params: Vec<usize>,
+    /// The most keys there can be: for each declaration, 2 to the power of its parameters.
+    bound: usize,
+    ids: FxHashMap<(usize, Vec<bool>), usize>,
+    keys: Vec<(usize, Vec<bool>)>,
+    built: Vec<bool>,
+    /// By key, the slots of other keys that wait for it to be built.
+    waiting: Vec<Vec<(usize, usize)>>,
+    /// Slots of keys to try: a key and the index of one of its node's slots.
+    queue: Vec<(usize, usize)>,
+}
+
+impl Buildable {
+    fn new(checker: &Checker<'_>, cyclic: &[bool]) -> Buildable {
+        let mut slots = Vec::new();
+        let mut params = Vec::new();
+        for (c, class) in checker.classes.iter().enumerate() {
+            let fields = class.fields.iter().map(|f| f.ty);
+            slots.push(vec![if cyclic[c] {
+                Vec::new()
+            } else {
+                fields.collect()
+            }]);
+            params.push(class.type_params.len());
+        }
+        for info in &checker.enums {
+            let variants = info.variants.iter().map(|v| v.fields.clone());
+            slots.push(if info.variants.is_empty() {
+                vec![Vec::new()]
+            } else {
+                variants.collect()
+            });
+            params.push(info.type_params.len());
+        }
+        let bound = params
+            .iter()
+            .map(|&p| {
+                u32::try_from(p)
+                    .ok()
+                    .and_then(|p| 1usize.checked_shl(p))
+                    .unwrap_or(usize::MAX)
+            })
+            .fold(0, usize::saturating_add);
+        let mut fix = Buildable {
+            classes: checker.classes.len(),
+            slots,
+            params: params.clone(),
+            bound,
+            ids: FxHashMap::default(),
+            keys: Vec::new(),
+            built: Vec::new(),
+            waiting: Vec::new(),
+            queue: Vec::new(),
+        };
+        for (n, &p) in params.iter().enumerate() {
+            fix.key(n, vec![true; p]);
+        }
+        fix
+    }
+
+    /// The key of `node` with `flags`, interned, its slots queued, when it is new.
+    fn key(&mut self, node: usize, flags: Vec<bool>) -> usize {
+        if let Some(&key) = self.ids.get(&(node, flags.clone())) {
+            return key;
+        }
+        assert!(
+            self.keys.len() < self.bound,
+            "the can-be-built keys should be a declaration and its parameters' flags"
+        );
+        let key = self.keys.len();
+        self.ids.insert((node, flags.clone()), key);
+        self.keys.push((node, flags));
+        self.built.push(false);
+        self.waiting.push(Vec::new());
+        self.queue
+            .extend((0..self.slots[node].len()).map(|s| (key, s)));
+        key
+    }
+
+    /// The key of `node` with every parameter's argument buildable, which `new` interned.
+    fn root(&self, node: usize) -> usize {
+        self.ids[&(node, vec![true; self.params[node]])]
+    }
+
+    /// The key `node` has when given `args`, with their parameters' arguments as `flags` says,
+    /// which `run` interned if a field holds it.
+    fn key_of(&self, node: usize, args: TypeArgs, flags: &[bool]) -> usize {
+        let flags = args
+            .get()
+            .iter()
+            .map(|&arg| self.reached(arg, flags))
+            .collect();
+        self.ids[&(node, flags)]
+    }
+
+    /// Whether `ty`, with its parameters' arguments as `flags` says, was found buildable.
+    fn reached(&self, ty: Type, flags: &[bool]) -> bool {
+        let (node, args) = match ty.kind() {
+            TypeKind::Param(_, i) => return flags[i as usize],
+            TypeKind::Class(id, args) => (id.0, args),
+            TypeKind::Enum(id, args) => (self.classes + id.0, args),
+            _ => return true,
+        };
+        let inner = args
+            .get()
+            .iter()
+            .map(|&arg| self.reached(arg, flags))
+            .collect();
+        self.built[self.ids[&(node, inner)]]
+    }
+
+    /// Adds to `wants` each declaration `ty` names that cannot be built with any arguments.
+    fn blame(&self, ty: Type, wants: &mut Vec<usize>) {
+        let (node, args) = match ty.kind() {
+            TypeKind::Class(id, args) => (id.0, args),
+            TypeKind::Enum(id, args) => (self.classes + id.0, args),
+            _ => return,
+        };
+        if !self.built[self.root(node)] {
+            wants.push(node);
+        }
+        for &arg in args.get() {
+            self.blame(arg, wants);
+        }
+    }
+
+    /// Whether `ty` can be built, where a type parameter's argument can when `flags` says so.
+    /// Each declaration `ty` names that cannot be built yet is added to `consulted`.
+    fn buildable(&mut self, ty: Option<Type>, flags: &[bool], consulted: &mut Vec<usize>) -> bool {
+        let Some(ty) = ty else { return true };
+        let (node, args) = match ty.kind() {
+            TypeKind::Param(_, i) => return flags[i as usize],
+            TypeKind::Class(id, args) => (id.0, args),
+            TypeKind::Enum(id, args) => (self.classes + id.0, args),
+            _ => return true,
+        };
+        let args = args
+            .get()
+            .iter()
+            .map(|&arg| self.buildable(Some(arg), flags, consulted))
+            .collect();
+        let key = self.key(node, args);
+        if !self.built[key] {
+            consulted.push(key);
+        }
+        self.built[key]
+    }
+
+    fn run(&mut self) {
+        while let Some((key, s)) = self.queue.pop() {
+            if self.built[key] {
+                continue;
+            }
+            let (node, flags) = self.keys[key].clone();
+            let mut consulted = Vec::new();
+            // Every field is tried, so that every key a field reaches is interned and tried.
+            let mut all = true;
+            for ty in self.slots[node][s].clone() {
+                all &= self.buildable(ty, &flags, &mut consulted);
+            }
+            if all {
+                self.built[key] = true;
+                let waiting = std::mem::take(&mut self.waiting[key]);
+                self.queue.extend(waiting);
+            } else {
+                for c in consulted {
+                    self.waiting[c].push((key, s));
+                }
+            }
+        }
     }
 }

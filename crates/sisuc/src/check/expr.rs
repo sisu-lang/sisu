@@ -102,15 +102,23 @@ impl Checker<'_> {
             ExprKind::Call {
                 callee,
                 types,
+                angles,
                 args,
             } => {
-                assert!(
-                    types.is_empty(),
-                    "type arguments in expressions land in Task 4"
-                );
+                if let Some(value) = self.named_args(callee, types, *angles) {
+                    self.stray(args);
+                    return Err(value);
+                }
                 self.call(e.span, callee, args)
             }
-            ExprKind::Applied { .. } => panic!("type arguments in expressions land in Task 4"),
+            ExprKind::Applied {
+                name,
+                types,
+                angles,
+            } => match self.named_args(name, types, *angles) {
+                Some(value) => Err(value),
+                None => self.name(name.span, name.name),
+            },
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
             ExprKind::SelfValue => {
                 let Some(ty) = self.body.self_type else {
@@ -132,16 +140,18 @@ impl Checker<'_> {
                 receiver,
                 method,
                 types,
+                angles,
                 args,
                 parens,
                 safe,
-            } => {
-                assert!(
-                    types.is_empty(),
-                    "type arguments in expressions land in Task 4"
-                );
-                self.method_expr(e.span, *safe, receiver, method, args, *parens)
-            }
+            } => self.method_expr(
+                e.span,
+                *safe,
+                receiver,
+                (method, types, *angles),
+                args,
+                *parens,
+            ),
             ExprKind::Coalesce { lhs, rhs } => self.coalesce(e.span, lhs, rhs),
             ExprKind::Is { lhs, rhs } => self.is(e.span, lhs, rhs),
             ExprKind::Unary { op, operand } => {

@@ -111,23 +111,31 @@ impl Checker<'_> {
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
     ) -> Option<Checked> {
-        assert!(
-            !matches!(base.kind, ast::ExprKind::Applied { .. }),
-            "type arguments in expressions land in Task 4"
-        );
-        let ast::ExprKind::Name(name) = base.kind else {
-            return None;
+        let (name, angles) = match &base.kind {
+            ast::ExprKind::Name(name) => (*name, None),
+            ast::ExprKind::Applied { name, angles, .. } => (name.name, Some(*angles)),
+            _ => return None,
         };
         // A local cannot take an enum's name, so the enum wins over one that tried.
         match self.enum_ids.get(&name) {
-            Some(&Declared::Known(id)) => return Some(self.enum_path(span, id, member, call)),
+            Some(&Declared::Known(id)) => {
+                if let Some(angles) = angles {
+                    assert!(
+                        self.enums[id.0].type_params.is_empty(),
+                        "type arguments in expressions land in Task 4"
+                    );
+                    self.not_generic(name, angles);
+                }
+                return Some(self.enum_path(span, id, member, call));
+            }
             Some(Declared::Broken) => {
                 self.stray(call.map_or(&[], |(args, _)| args));
                 return Some(Err(Poisoned::error()));
             }
             None => {}
         }
-        if self.lookup(name).is_some() {
+        // Any other base with type arguments is checked as a value, which reports them.
+        if angles.is_some() || self.lookup(name).is_some() {
             return None;
         }
         let written = base.span.to(member.span);

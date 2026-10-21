@@ -469,11 +469,12 @@ impl<'a> Parser<'a> {
         } else {
             let ident = self.ident("a type")?;
             if self.at(&TokenKind::Lt) {
-                let args = self.type_args()?;
+                let (args, angles) = self.type_args()?;
                 (
                     TypeKind::Applied {
                         name: ident.name,
                         args,
+                        angles,
                     },
                     Span::new(ident.span.start(), self.closing_angle()),
                 )
@@ -508,10 +509,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `<` types `>` at the next token, with an optional trailing comma. The caller has seen the
-    /// `<`, and for an expression, that `type_args_follow` holds.
-    fn type_args(&mut self) -> Result<Vec<TypeExpr>, Diagnostic> {
-        self.bump();
+    /// `<` types `>` at the next token, with an optional trailing comma, and its span. The caller
+    /// has seen the `<`, and for an expression, that `type_args_follow` holds.
+    fn type_args(&mut self) -> Result<(Vec<TypeExpr>, Span), Diagnostic> {
+        let open = self.bump().span;
         let base = self.depth;
         let mut reach = base;
         let mut args = Vec::new();
@@ -525,7 +526,7 @@ impl<'a> Parser<'a> {
         }
         self.close_angle()?;
         self.depth = reach;
-        Ok(args)
+        Ok((args, Span::new(open.start(), self.closing_angle())))
     }
 
     /// The `>` that closes a list. A `>=` closes it too, and then reads as the `=` it holds: in
@@ -1227,7 +1228,13 @@ impl<'a> Parser<'a> {
     fn function(&mut self, owner: Option<&Owner>) -> Result<Function, Diagnostic> {
         let fn_token = self.expect(&TokenKind::Fn)?;
         let name = self.name("a function name")?;
+        let open = self.peek().span;
         let type_params = self.type_params()?;
+        let angles = if type_params.is_empty() {
+            Span::new(name.span.end(), name.span.end())
+        } else {
+            open.to(self.last_span())
+        };
         self.expect(&TokenKind::LParen)?;
         let mut self_param = None;
         let mut params = Vec::new();
@@ -1294,6 +1301,7 @@ impl<'a> Parser<'a> {
         Ok(Function {
             name,
             type_params,
+            angles,
             self_param,
             params,
             ret,
@@ -2596,10 +2604,11 @@ impl<'a> Parser<'a> {
             // The type arguments and the value arguments are siblings of the receiver: each
             // starts at the receiver's own level and only the deepest counts.
             let mut types = Vec::new();
+            let mut angles = Span::new(name.span.end(), name.span.end());
             let mut types_reach = wrapped;
             if self.at(&TokenKind::Lt) && self.type_args_follow() {
                 self.depth = base + 1;
-                types = self.type_args()?;
+                (types, angles) = self.type_args()?;
                 types_reach = self.depth.max(wrapped);
             }
             expr = if self.at(&TokenKind::LParen) {
@@ -2613,6 +2622,7 @@ impl<'a> Parser<'a> {
                         receiver: Box::new(expr),
                         method: name,
                         types,
+                        angles,
                         args,
                         parens: open.to(close),
                         safe,
@@ -2733,10 +2743,10 @@ impl<'a> Parser<'a> {
                 // The type arguments and the value arguments are siblings: each starts at the
                 // callee's level and only the deepest counts.
                 let base = self.depth;
-                let types = if self.at(&TokenKind::Lt) && self.type_args_follow() {
+                let (types, angles) = if self.at(&TokenKind::Lt) && self.type_args_follow() {
                     self.type_args()?
                 } else {
-                    Vec::new()
+                    (Vec::new(), Span::new(token.span.end(), token.span.end()))
                 };
                 let types_reach = self.depth;
                 let callee = Ident {
@@ -2752,6 +2762,7 @@ impl<'a> Parser<'a> {
                         kind: ExprKind::Call {
                             callee,
                             types,
+                            angles,
                             args,
                         },
                     });
@@ -2762,6 +2773,7 @@ impl<'a> Parser<'a> {
                         kind: ExprKind::Applied {
                             name: callee,
                             types,
+                            angles,
                         },
                     });
                 }

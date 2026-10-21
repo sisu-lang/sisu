@@ -1,0 +1,9 @@
+class Point {
+    x: i64
+}
+
+fn origin(p: Point<i64>) -> bool {
+    p.x == 0
+}
+
+fn main() {}

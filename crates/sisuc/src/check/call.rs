@@ -162,22 +162,34 @@ impl Checker<'_> {
             })
     }
 
-    /// `receiver.method(args)` as written, `(args)` at `parens`, which `safe` makes
-    /// `receiver?.method(args)`. A type or `math` before the `.` may make it an idiom.
+    /// `receiver.method<types>(args)` as written, the type arguments in `angles`, `(args)` at
+    /// `parens`, which `safe` makes `receiver?.method(args)`. A type or `math` before the `.`
+    /// may make it an idiom.
     pub(super) fn method_expr(
         &mut self,
         span: Span,
         safe: bool,
         receiver: &ast::Expr,
-        method: &ast::Ident,
+        (method, types, angles): (&ast::Ident, &[ast::TypeExpr], Span),
         args: &[ast::Arg],
         parens: Span,
     ) -> Checked {
+        let path = !types.is_empty() && self.path_method(receiver, method);
+        if path {
+            self.not_generic(method.name, angles);
+        }
         if !safe && let Some(checked) = self.type_path(span, receiver, method, Some((args, parens)))
         {
             return checked;
         }
         self.member(span, safe, receiver, method, |c, checked| {
+            if !path
+                && let Some((first, _)) = types.split_first()
+                && let Some(value) = c.method_args(&checked, receiver, method, first, angles)
+            {
+                c.stray(args);
+                return Err(value);
+            }
             c.method_call(span, checked, receiver, method, args)
         })
     }
@@ -195,7 +207,7 @@ impl Checker<'_> {
         let target = std::mem::take(&mut self.body.in_target);
         match type_of(&receiver) {
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
-                return self.array_method(span, receiver, ty, method, args);
+                return self.array_method(span, (receiver, receiver_expr.span), ty, method, args);
             }
             Some(Type::STRING) => return self.string_method(span, receiver, method, args),
             Some(ty @ (Type::I64 | Type::F64)) => {
@@ -223,13 +235,17 @@ impl Checker<'_> {
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
         if params.len() != args.len() {
-            self.report(DiagnosticKind::ArgumentCount {
-                name,
-                want: params.len(),
-                found: args.len(),
-                at: span,
-            });
+            let misread = self.body.misread;
             self.stray(args);
+            // A comparison misread as a call took the commas around it.
+            if self.body.misread == misread {
+                self.report(DiagnosticKind::ArgumentCount {
+                    name,
+                    want: params.len(),
+                    found: args.len(),
+                    at: span,
+                });
+            }
             return Err(Poisoned::error());
         }
         let (checked, mismatched): (Vec<_>, Vec<_>) = args

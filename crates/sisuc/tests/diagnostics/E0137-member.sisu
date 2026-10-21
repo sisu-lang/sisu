@@ -1,0 +1,10 @@
+class Point {
+    x: i64
+}
+
+fn main() {
+    let p = Point(x: 1)
+    let b = 2
+    let c = 3
+    print(p.x < b, c > (c))
+}

@@ -31,15 +31,11 @@ pub(crate) enum TypeKind {
     Class(ClassId, TypeArgs),
     /// An enum, with the type arguments of a generic one (`TypeArgs::NONE` when it takes none).
     Enum(EnumId, TypeArgs),
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 3 first builds a parameter")
-    )]
     /// A type parameter: its name and its index in its declaration's list.
     Param(Symbol, u32),
     /// `[T]`.
     Array(Type),
-    /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Enum` or `Array`.
+    /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Enum`, `Param` or `Array`.
     Optional(Type),
 }
 
@@ -61,7 +57,6 @@ pub(crate) struct TypeArgs(u32);
 
 #[derive(Default)]
 struct ArgsInterner {
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 3 first builds a list"))]
     ids: FxHashMap<&'static [Type], TypeArgs>,
     /// Each list, with whether an element names a type parameter, at its handle.
     lists: Vec<(&'static [Type], bool)>,
@@ -86,7 +81,6 @@ impl TypeArgs {
     /// No arguments: the arguments of every non-generic class and enum.
     pub(crate) const NONE: TypeArgs = TypeArgs(0);
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 3 first builds a list"))]
     pub(crate) fn intern(list: &[Type]) -> TypeArgs {
         let mut args = args();
         if let Some(&interned) = args.ids.get(list) {
@@ -121,10 +115,6 @@ impl TypeArgs {
         args().lists[self.0 as usize].1
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 3 first builds a substitution")
-    )]
     fn subst(self, with: &[Type]) -> TypeArgs {
         let list: Vec<Type> = self.get().iter().map(|ty| ty.subst(with)).collect();
         TypeArgs::intern(&list)
@@ -251,10 +241,6 @@ impl Type {
 
     /// The type with each `Param(_, i)` replaced by `args[i]`. A type without a parameter comes
     /// back as it is. An optional is rebuilt with `Type::optional`, so it never flattens.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Task 3 first builds a substitution")
-    )]
     pub(crate) fn subst(self, args: &[Type]) -> Type {
         if !self.has_param() {
             return self;

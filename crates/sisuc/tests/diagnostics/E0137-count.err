@@ -1,0 +1,8 @@
+error[E0137]: `Stack` takes 1 type argument, but 2 were given
+ --> E0137-count.sisu:5:17
+  |
+5 | fn size(s: Stack<i64, string>) -> i64 {
+  |                 ^^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0137
