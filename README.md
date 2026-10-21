@@ -165,6 +165,18 @@ sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0052
 ```
 
+`sisu run` compiles a program and runs it in one step. Everything after the
+file goes to the program, and `sisu` exits with the program's exit code.
+`-e` takes the program as text, and `;` separates two statements on one line:
+
+```console
+$ sisu run wc.sisu words.txt
+$ sisu run -e 'fn main() { let x = 2; print(x * 21) }'
+42
+$ sisu run -e 'class P { x: i64; y: i64 } fn main() { print(P(x: 1, y: 2).y) }'
+2
+```
+
 `sisu explain E0001` prints why the rule exists, with a broken and a fixed
 program. `sisu check --format json` writes the same diagnostics as JSON Lines for
 editors and agents, and marks each fix as safe or unsafe.

@@ -390,14 +390,19 @@ so it does not wait for the later goals:
 
 - One `sisu` binary with subcommands, as with the `go` and `zig` commands.
   One binary means the compiler and the build tool can never be different
-  versions, unlike Cargo and `rustc`. Planned for milestone 2, it did not
-  land and is not scheduled yet. It renames `sisu` to `sisu` and adds two
-  subcommands:
-  - `sisu build` does what `sisu` does today, with the same flags.
-  - `sisu run file.sisu` compiles to a temporary executable and runs it.
+  versions, unlike Cargo and `rustc`. Planned for milestone 2, it is done:
+  the binary is `sisu`, and `sisuc` is gone.
+  - `sisu build` writes the executable, with the old flags in any order.
+  - `sisu run file.sisu [args]` compiles to a temporary executable, runs it
+    and exits with its exit code.
+  - `sisu check` and `sisu explain` replace `--check` and `--explain`.
+  - `-e '<code>'` gives an inline program in place of a file.
+  - `sisu --version --verbose` prints the commit, the host and the LLVM
+    version.
 
-  Later subcommands are `sisu check` (type checking only), `sisu fmt`,
-  `sisu test` and `sisu lsp`. No manifest at first: a single file, or a
+  A build directory and `sisu clean` wait for modules (milestone 11), when
+  per-file objects are worth keeping. `sisu fmt`, `sisu test` and
+  `sisu lsp` are still later. No manifest at first: a single file, or a
   directory whose entry point is `main.sisu`, builds without one. A `sisu.toml`
   arrives only when a project needs dependencies.
 - A `-O2` flag, added in milestone 2. It runs LLVM's `default<O2>` pass

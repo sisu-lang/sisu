@@ -224,7 +224,7 @@ intro = "The commands around the compiler."
 note = ""
 
 [[area.feature]]
-text = "<code>sisu</code>: build, check, show IR"
+text = "<code>sisu</code>: build, run, check, explain, show IR"
 state = "works"
 notes = [["Developing Sisu", "docs/development.md#look-inside-the-compiler"]]
 
@@ -234,7 +234,7 @@ state = "works"
 notes = [["Benchmarks", "docs/benchmarks.md#running-them"], ["Developing Sisu", "docs/development.md#coverage-and-performance"]]
 
 [[area.feature]]
-text = "One <code>sisu</code> command: build, run, test, fmt"
+text = "<code>sisu test</code>, <code>sisu fmt</code> and <code>sisu lsp</code>"
 state = "planned"
 notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"]]
 

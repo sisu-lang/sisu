@@ -340,6 +340,36 @@ $ ./fib
 832040
 ```
 
+`sisu run` builds into a private temporary directory, runs the program and
+removes the directory. The program has `sisu`'s stdin, stdout and stderr, gets
+everything after the file as its arguments (a `--` there is not passed on), and
+its exit code is `sisu`'s; a panic gives 101. `sisu`'s own flags go before the
+file. A program that does not compile does not run, and `sisu` exits with 1:
+
+```console
+$ target/debug/sisu run crates/sisuc/tests/run/fib.sisu
+832040
+$ target/debug/sisu run -O2 wc.sisu words.txt
+```
+
+`-e` gives an inline program in place of the file, to `build`, `run` and
+`check`. The text is a whole program, and diagnostics and panics name the
+source `<inline>`. `build -e` needs `-o`, because there is no file name to
+take the output name from. After `run -e code`, every argument is the
+program's:
+
+```console
+$ target/debug/sisu run -e 'fn main() { let x = 2; print(x * 21) }'
+42
+$ target/debug/sisu check -e 'fn main() { print(1 }'
+$ target/debug/sisu build -e 'fn main() { print(1) }' -o one
+```
+
+`sisu --version` prints `sisu <version>`. With `--verbose` (`-vV`), it adds the
+commit, the host and the LLVM version, which a bug report needs because Sisu
+has no releases. A wrong command line exits with 2, so it differs from a
+program that does not compile (1). `sisu help` and `sisu` alone print the usage.
+
 `sisu` links every program with `libsisu_runtime.a`, which it looks for
 next to its own executable. `cargo build --workspace` puts both files there;
 `cargo build -p sisuc` does not build the runtime.
