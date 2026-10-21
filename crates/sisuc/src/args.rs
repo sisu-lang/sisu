@@ -13,7 +13,7 @@ use crate::{Backend, Mode, Stage};
 
 /// The Sisu compiler.
 #[derive(Parser)]
-#[command(name = "sisuc")]
+#[command(name = "sisuc", args_conflicts_with_subcommands = true)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

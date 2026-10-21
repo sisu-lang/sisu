@@ -216,6 +216,24 @@ fn help_and_no_arguments_exit_0() {
     }
 }
 
+/// The help of a bare `sisuc` that cannot be written is a tool error, not a panic.
+#[test]
+fn help_into_a_full_stdout_is_a_tool_error() {
+    let full = fs::File::options()
+        .write(true)
+        .open("/dev/full")
+        .expect("/dev/full exists on Linux");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
+        .stdout(full)
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1), "{:?}", out.status);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "sisuc: cannot write to stdout: No space left on device (os error 28)\n"
+    );
+}
+
 /// A wrong command line exits 2, and a broken flag rule names the flag with `build`'s usage.
 #[test]
 fn usage_errors_exit_2() {
@@ -276,6 +294,14 @@ fn rc_checks_is_build_or_ir_only() {
         &["build", "--rc-checks", "--rc-checks", "f.sisu"],
     ];
     assert_usage_errors(&cases);
+    let stderr = assert_usage_errors(&[&["build", "--rc-checks", "--emit", "tir", "f.sisu"]]);
+    assert!(
+        stderr.starts_with(
+            "error: `--rc-checks` works only when building an executable or with `--emit ir` or \
+             `--emit ir-raw`\n"
+        ),
+        "{stderr}"
+    );
 }
 
 /// `--rc-checks` with `--emit ir-raw` and `--emit ir` prints the module with the count checks
@@ -904,6 +930,11 @@ fn o3_and_linker_combinations_are_usage_errors() {
         &["build", "--linker"],
     ];
     assert_usage_errors(&cases);
+    let stderr = assert_usage_errors(&[&["build", "--linker", "lld", "--emit", "ir", "f.sisu"]]);
+    assert!(
+        stderr.starts_with("error: `--linker` works only when building an executable\n"),
+        "{stderr}"
+    );
 }
 
 #[test]

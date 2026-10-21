@@ -14,7 +14,7 @@ from pathlib import Path
 
 def diagnostics(sisuc, path):
     """Each diagnostic sisuc reports on `path`: (code, severity, line, column, secondaries)."""
-    run = subprocess.run([sisuc, '--format', 'json', '--check', str(path)],
+    run = subprocess.run([sisuc, 'check', '--format', 'json', str(path)],
                          capture_output=True, text=True)
     if run.returncode not in (0, 1):
         return [('crash', 'error', run.returncode, 0, ())]

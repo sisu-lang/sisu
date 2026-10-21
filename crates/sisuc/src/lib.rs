@@ -109,8 +109,14 @@ pub fn cli() -> ExitCode {
 fn execute(reporter: &mut Report, mode: Mode) -> ExitCode {
     match mode {
         Mode::Help => {
-            print!("{}", args::help());
-            ExitCode::SUCCESS
+            let mut stdout = io::stdout().lock();
+            match write!(stdout, "{}", args::help()).and_then(|()| stdout.flush()) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    reporter.tool_error(&format!("cannot write to stdout: {e}"));
+                    ExitCode::FAILURE
+                }
+            }
         }
         Mode::Emit {
             stage,
@@ -338,13 +344,13 @@ fn run_check(reporter: &mut Report, input: &Path) -> ExitCode {
     }
 }
 
-/// What `sisuc --check` reported for one source.
+/// What `sisuc check` reported for one source.
 pub(crate) struct Checked {
     /// The text the diagnostics point into: the source, or for bytes that are not UTF-8,
     /// the replacement text `decode` returns.
     pub(crate) source: String,
     pub(crate) diagnostics: Vec<Diagnostic>,
-    /// The program, unless a diagnostic is an error. `--check` passes when it is `Some`.
+    /// The program, unless a diagnostic is an error. `check` passes when it is `Some`.
     pub(crate) program: Option<Program>,
 }
 

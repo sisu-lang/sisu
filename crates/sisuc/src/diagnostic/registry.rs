@@ -197,7 +197,7 @@ codes! {
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
-/// "Numbers"). `sisuc --explain` still prints them.
+/// "Numbers"). `sisuc explain` still prints them.
 pub(crate) const RETIRED: &[(&str, &str)] = &[(
     "E0012",
     include_str!("../../../../docs/diagnostics/E0012.md"),

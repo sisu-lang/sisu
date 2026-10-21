@@ -71,7 +71,7 @@ fn broken_program(code: &str, markdown: &str) -> Vec<u8> {
 }
 
 /// Checks the pending case at `path`, a program the site shows before it compiles: `sisuc
-/// --check <name>`, run from its directory, reports an error. The day it compiles, this fails,
+/// check <name>`, run from its directory, reports an error. The day it compiles, this fails,
 /// asking for it to become a `site/programs/run/` case.
 pub(crate) fn pending(path: &Path) {
     let dir = path.parent().expect("a case should sit in a directory");

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compares the `sisu_rc.*` call sites of two sisuc binaries, per program, function and helper.
-# Each program of the snapshot list is compiled with `--emit ir-raw`; a count that differs
+# Each program of the snapshot list is compiled with `build --emit ir-raw`; a count that differs
 # prints a tab-separated line `program function helper base N head M`. Exits 1 if a head count
 # is higher than the base's, unless `scripts/rc-calls.allow` lists that `program<TAB>function<TAB>
 # helper` (one per line, each a leak fix with its Valgrind case). Prints `rc-calls: identical`
@@ -20,7 +20,7 @@ trap 'rm -rf "$tmp"' EXIT
 # "function<TAB>helper<TAB>count" for each `sisu_rc.*` call site group of one program: the
 # program's raw IR from the binary, then the count into the file.
 count() {
-  "$1" --emit ir-raw "$2" >"$tmp/ll" 2>&1 || { echo "rc-calls: $1 failed on $2" >&2; exit 2; }
+  "$1" build --emit ir-raw "$2" >"$tmp/ll" 2>&1 || { echo "rc-calls: $1 failed on $2" >&2; exit 2; }
   awk '/^define/ { match($0, /@"?[^"(]+/); f = substr($0, RSTART, RLENGTH) }
        /call .*@"?sisu_rc\./ { match($0, /@"?sisu_rc\.[^"(]+/); n[f "\t" substr($0, RSTART, RLENGTH)]++ }
        END { for (k in n) print k "\t" n[k] }' "$tmp/ll" | sort

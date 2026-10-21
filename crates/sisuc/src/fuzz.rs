@@ -1,4 +1,4 @@
-//! The entry point of the front-end fuzz target: `sisuc --check` on one input, with checks that
+//! The entry point of the front-end fuzz target: `sisuc check` on one input, with checks that
 //! every span it reports is well formed and every safe fix it shows keeps its promise. An input
 //! that checks clean is also printed as a typed tree and compiled to LLVM IR, which LLVM must
 //! verify. The bug signal is a panic.
@@ -12,7 +12,7 @@ use crate::source::Span;
 use crate::tir::Program;
 use crate::{codegen, mir};
 
-/// Runs `sisuc --check` on `data` as the file `input.sisu`, reports it as colored text and then
+/// Runs `sisuc check` on `data` as the file `input.sisu`, reports it as colored text and then
 /// as JSON, and asserts that every span of every diagnostic is well formed and that every safe
 /// fix shown is safe. When the input checks clean, asserts that it compiles too. Returns the
 /// text report followed by the JSON report.
