@@ -56,6 +56,8 @@ pub(crate) struct Var {
     pub(crate) assignable: bool,
     /// For a `string`: the most chars its first value or a plain assignment may hold.
     pub(crate) base: u64,
+    /// For a `string`: the most chars it can ever hold, its base and its room at declaration.
+    pub(crate) size: u64,
     /// For a `string`: the chars that `+=` may still add, summed over every run of each one.
     pub(crate) room: u64,
     /// How many loops are around its declaration.
@@ -63,9 +65,34 @@ pub(crate) struct Var {
 }
 
 impl Var {
-    /// The most chars the value can hold.
-    pub(crate) fn size(&self) -> u64 {
-        self.base + self.room
+    /// A local or a parameter, with `base` and `room` as a `string` has them, 0 otherwise.
+    pub(crate) fn new(
+        name: String,
+        ty: Ty,
+        assignable: bool,
+        base: u64,
+        room: u64,
+        loops: usize,
+    ) -> Var {
+        Var {
+            name,
+            ty,
+            assignable,
+            base,
+            size: base + room,
+            room,
+            loops,
+        }
+    }
+
+    /// The most chars one run of a `+=` may add, when it runs `times` times.
+    pub(crate) fn append_max(&self, times: u64) -> u64 {
+        self.room / times.max(1)
+    }
+
+    /// Takes the room of a `+=` that adds at most `added` chars, `times` times.
+    pub(crate) fn append(&mut self, added: u64, times: u64) {
+        self.room -= added * times;
     }
 }
 

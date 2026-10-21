@@ -44,7 +44,12 @@ impl Gen<'_> {
         }
         if jump && self.pick(4) == 3 && self.spend(1) {
             self.w.line();
-            self.jump();
+            if self.blocks < MAX_BLOCKS && self.pick(2) == 1 {
+                self.cost.statement();
+                self.if_stmt(true);
+            } else {
+                self.jump();
+            }
         }
     }
 
@@ -110,7 +115,7 @@ impl Gen<'_> {
                 self.expr(&ty, base);
             }
             Rule::Compound => self.compound(),
-            Rule::If => self.if_stmt(),
+            Rule::If => self.if_stmt(false),
             Rule::While => self.while_stmt(),
             Rule::For => self.for_stmt(),
             Rule::Call => {
@@ -139,19 +144,14 @@ impl Gen<'_> {
         };
         let init = self.expr(&ty, base);
         let base = if mutable { base } else { init.size };
-        self.scope.vars.push(Var {
-            name,
-            ty,
-            assignable: mutable,
-            base,
-            room,
-            loops: self.cost.depth(),
-        });
+        let var = Var::new(name, ty, mutable, base, room, self.cost.depth());
+        debug_assert!(var.size <= MAX_SIZE, "a string may hold {} chars", var.size);
+        self.scope.vars.push(var);
     }
 
     /// `v op= e` on a number, or `v += e` on a `string`, whose room is what each run of it,
     /// in every loop since `v`'s declaration, takes.
-    fn compound(&mut self) {
+    pub(crate) fn compound(&mut self) {
         const OPS: [&str; 5] = [" += ", " -= ", " *= ", " /= ", " %= "];
         let vars: Vec<usize> = (0..self.scope.vars.len())
             .filter(|&v| compoundable(&self.scope.vars[v]))
@@ -164,10 +164,13 @@ impl Gen<'_> {
         if ty == Ty::String {
             let times = self.cost.times_since(loops);
             self.w.text(&format!("{name} += "));
-            // The room is out of reach while `e` is written, so a `+=` in `e` adds nothing.
+            let max = self.scope.vars[v].append_max(times);
+            // While `e` is written, `v` reads at its full size, and a `+=` in `e` adds nothing.
             let room = std::mem::take(&mut self.scope.vars[v].room);
-            let added: Info = self.expr(&Ty::String, room / times.max(1));
-            self.scope.vars[v].room = room - added.size * times;
+            let added: Info = self.expr(&Ty::String, max);
+            let var = &mut self.scope.vars[v];
+            var.room = room;
+            var.append(added.size, times);
         } else {
             self.w.text(&name);
             self.one_of(&OPS);
@@ -176,22 +179,34 @@ impl Gen<'_> {
     }
 
     /// `if c { ... } [else if d { ... }] [else { ... }]`. Every branch but an `else` may end in
-    /// a jump, so the `if` always can finish: a value block after it needs its value (E0043).
-    fn if_stmt(&mut self) {
+    /// a jump: an `if` that cannot finish leaves a value block after it no value (E0043). If
+    /// `last`, the block's last statement, every branch ends in a jump and the `else` is there.
+    fn if_stmt(&mut self, last: bool) {
+        let branch = |g: &mut Self| {
+            if last {
+                g.jumping_block();
+            } else {
+                g.statement_block(true);
+            }
+        };
         self.w.text("if ");
         self.expr(&Ty::Bool, 0);
         self.conditionally(|g| {
             g.w.text(" ");
-            g.statement_block(true);
+            branch(g);
             while g.pick(3) == 2 && g.spend(1) {
                 g.w.text(" else if ");
                 g.expr(&Ty::Bool, 0);
                 g.w.text(" ");
-                g.statement_block(true);
+                branch(g);
             }
-            if g.pick(2) == 1 {
+            if last || g.pick(2) == 1 {
                 g.w.text(" else ");
-                g.statement_block(false);
+                if last {
+                    g.jumping_block();
+                } else {
+                    g.statement_block(false);
+                }
             }
         });
     }
@@ -206,18 +221,12 @@ impl Gen<'_> {
         self.w.line();
         self.cost.statement();
         self.w.text(&format!("while {counter} > 0"));
-        self.scope.vars.push(Var {
-            name: counter.clone(),
-            ty: Ty::I64,
-            assignable: false,
-            base: 0,
-            room: 0,
-            loops: self.cost.depth(),
-        });
+        let var = Var::new(counter.clone(), Ty::I64, false, 0, 0, self.cost.depth());
+        self.scope.vars.push(var);
         self.conditionally(|g| {
             if g.pick(2) == 1 {
                 g.w.text(" && ");
-                g.cost.enter_loop(bound + 1);
+                g.cost.enter_condition(bound);
                 g.expr(&Ty::Bool, 0);
                 g.cost.exit_loop();
             }
@@ -262,14 +271,8 @@ impl Gen<'_> {
         self.jumps.in_loop = true;
         self.open_block();
         if let Some(name) = name {
-            self.scope.vars.push(Var {
-                name,
-                ty: Ty::I64,
-                assignable: false,
-                base: 0,
-                room: 0,
-                loops: self.cost.depth(),
-            });
+            let var = Var::new(name, Ty::I64, false, 0, 0, self.cost.depth());
+            self.scope.vars.push(var);
         }
         if !first.is_empty() {
             self.w.line();
@@ -285,6 +288,15 @@ impl Gen<'_> {
     fn statement_block(&mut self, jump: bool) {
         self.open_block();
         self.stmts(jump);
+        self.close_block();
+    }
+
+    /// `{ statements jump }`.
+    fn jumping_block(&mut self) {
+        self.open_block();
+        self.stmts(false);
+        self.w.line();
+        self.jump();
         self.close_block();
     }
 

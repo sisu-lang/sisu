@@ -18,7 +18,7 @@ const SIZES: [u64; 3] = [0, 16, 100];
 /// What a constant expression is known to be: an integer's or a `char`'s value, and a
 /// `string`'s length.
 #[derive(Clone, Copy)]
-struct Folded {
+pub(crate) struct Folded {
     value: i64,
     size: u64,
 }
@@ -129,9 +129,13 @@ impl Gen<'_> {
         self.w.close();
         self.w.line();
         self.scope.close();
-        self.scope.func = None;
+        let own = self
+            .scope
+            .func
+            .take()
+            .expect("a function's body should be open");
         let costs: Vec<[u64; DEPTHS]> = self.scope.funcs.iter().map(|f| f.cost).collect();
-        let cost = self.cost.of_function(&costs[..costs.len() - 1]);
+        let cost = self.cost.of_function(&costs, own);
         self.scope
             .funcs
             .last_mut()
@@ -160,7 +164,7 @@ impl Gen<'_> {
 
     /// A constant expression of type `ty`, at most `max` chars if a `string`: literals, earlier
     /// constants, operators and the conversions that cannot fail.
-    fn const_expr(&mut self, ty: &Ty, max: u64) -> Folded {
+    pub(crate) fn const_expr(&mut self, ty: &Ty, max: u64) -> Folded {
         let names: Vec<usize> = (0..self.scope.consts.len())
             .filter(|&c| self.scope.consts[c].ty == *ty && self.scope.consts[c].size <= max)
             .collect();
@@ -371,12 +375,5 @@ impl Gen<'_> {
 
 /// A parameter: in scope, never assigned.
 fn param(name: String, ty: Ty, size: u64) -> Var {
-    Var {
-        name,
-        ty,
-        assignable: false,
-        base: size,
-        room: 0,
-        loops: 0,
-    }
+    Var::new(name, ty, false, size, 0, 0)
 }

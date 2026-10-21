@@ -9,7 +9,8 @@ use std::fmt::Write as _;
 
 use rustc_hash::FxHashSet;
 
-use super::{BUDGET, Cost, Generated, Shape, generate};
+use super::scope::{Const, Func, Ty, Var};
+use super::{BUDGET, Cost, DEPTHS, FUEL, Gen, Generated, MAX_BOUND, MAX_SIZE, Shape, generate};
 use crate::diagnostic::Severity;
 use crate::front_end::front_end;
 use crate::types::{Type, TypeKind};
@@ -125,7 +126,7 @@ const NOT_YET: [&str; 71] = [
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
 /// tree's variant.
-const RECEIVERS: [(&str, &[&str]); 8] = [
+const RECEIVERS: [(&str, &[&str]); 7] = [
     ("tir::ExprKind::Len", &["String", "Array"]),
     ("tir::ExprKind::Chars", &["String"]),
     ("tir::ExprKind::Bytes", &["String"]),
@@ -133,8 +134,28 @@ const RECEIVERS: [(&str, &[&str]); 8] = [
     ("tir::ExprKind::FromChars", &["Array"]),
     ("tir::ExprKind::Sum", &["Array"]),
     ("tir::ExprKind::Contains", &["Array"]),
-    // `i64(e)` takes a `u8`, a `char` or an `f64`; `u8(e)`, `char(e)` and `f64(e)` an `i64`.
-    ("tir::ExprKind::Convert", &["I64", "U8", "Char", "F64"]),
+];
+
+/// The scalar conversions, from and to, as `convert` in `check/string.rs` takes them: `i64(e)`
+/// of a `u8`, a `char` or an `f64`, and `u8(e)`, `char(e)` and `f64(e)` of an `i64`.
+const CONVERSIONS: [(&str, &str); 6] = [
+    ("U8", "I64"),
+    ("Char", "I64"),
+    ("F64", "I64"),
+    ("I64", "U8"),
+    ("I64", "Char"),
+    ("I64", "F64"),
+];
+
+/// What the code of the generated programs reaches between them, which no variant shows: without
+/// one, a capability of the generator is off.
+const REACH: [&str; 6] = [
+    "reach: a parameter other than `depth` is read",
+    "reach: `main` calls a function at a depth of 1 or more",
+    "reach: a function calls itself",
+    "reach: a loop runs its body",
+    "reach: a string literal holds an escape",
+    "reach: an `if` statement jumps in every branch",
 ];
 
 /// Whether a program's text holds a form.
@@ -271,6 +292,12 @@ fn universe() -> FxHashSet<String> {
             universe.insert(format!("{variant} on {receiver}"));
         }
     }
+    for (from, to) in CONVERSIONS {
+        universe.insert(format!("tir::ExprKind::Convert from {from} to {to}"));
+    }
+    for key in REACH {
+        universe.insert(key.to_string());
+    }
     for (feature, _) in TEXT {
         universe.insert(feature.to_string());
     }
@@ -289,8 +316,9 @@ fn bool_fields(owner: &str, fields: &syn::Fields, universe: &mut FxHashSet<Strin
     }
 }
 
-/// The rows of the array `const name`, each as the last path segment or the string of its
-/// elements: `(MathOp::Abs, Receivers::F64, 0)` is `["Abs", "F64", "0"]`, `"print"` is
+/// The rows of the array `const name`, a tuple row as its elements and any other row as one:
+/// each element is the last segment of its path, the value of its string literal, or empty
+/// otherwise. `(MathOp::Abs, Receivers::F64, 0)` is `["Abs", "F64", ""]`, and `"print"` is
 /// `["print"]`.
 fn const_rows(file: &syn::File, name: &str) -> Vec<Vec<String>> {
     let array = file
@@ -328,12 +356,20 @@ fn const_rows(file: &syn::File, name: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// What the generated programs hold, and where an inexact value reaches more than decision 11
-/// lets it.
+/// What the generated programs hold, where an inexact value reaches more than decision 11 lets
+/// it, and which loops are not bounded as decision 5 has them.
 #[derive(Default)]
 struct Walk {
     seen: FxHashSet<String>,
     leaks: Vec<String>,
+    unbounded: Vec<String>,
+    /// The functions of the program being walked.
+    funcs: FxHashSet<String>,
+    /// The function being walked, and its parameters.
+    func: String,
+    params: Vec<String>,
+    /// The text of the program being walked.
+    source: String,
 }
 
 impl Walk {
@@ -345,6 +381,7 @@ impl Walk {
 
     fn program(&mut self, g: &Generated) {
         let (ast, tir) = checked(g);
+        self.source.clone_from(&g.program);
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -355,6 +392,14 @@ impl Walk {
     }
 
     fn ast(&mut self, program: &ast::Program) {
+        self.funcs = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::Function(f) => Some(f.name.name.as_str().to_string()),
+                ast::Item::Class(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+            })
+            .collect();
         for broken in &program.broken {
             self.mark(match broken.kind {
                 ast::BrokenKind::Function => "ast::BrokenKind::Function",
@@ -406,8 +451,11 @@ impl Walk {
     }
 
     fn ast_function(&mut self, f: &ast::Function) {
+        self.func = f.name.name.as_str().to_string();
+        self.params.clear();
         for param in &f.params {
             self.type_expr(&param.ty);
+            self.params.push(param.name.name.as_str().to_string());
         }
         if let Some(ret) = &f.ret {
             self.type_expr(ret);
@@ -427,8 +475,67 @@ impl Walk {
     }
 
     fn ast_block(&mut self, block: &ast::Block) {
-        for stmt in &block.stmts {
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            if let ast::StmtKind::While { cond, body } = &stmt.kind {
+                let before = i.checked_sub(1).map(|at| &block.stmts[at]);
+                self.while_bound(before, cond, body);
+            }
             self.ast_stmt(stmt);
+        }
+    }
+
+    /// Checks that a `while` counts down (decision 5): `let mut c = n` before it, with `n` at most
+    /// `MAX_BOUND`, a condition that starts `c > 0`, and `c -= 1` first in its body.
+    fn while_bound(&mut self, before: Option<&ast::Stmt>, cond: &ast::Expr, body: &ast::Block) {
+        let start = if let ast::ExprKind::Binary {
+            op: ast::BinaryOp::And,
+            lhs,
+            ..
+        } = &cond.kind
+        {
+            lhs
+        } else {
+            cond
+        };
+        let counted = if let ast::ExprKind::Compare { operands, ops } = &start.kind
+            && ops[..] == [ast::CompareOp::Gt]
+            && int(&operands[1]) == Some(0)
+        {
+            name(&operands[0])
+        } else {
+            None
+        };
+        let bound = before.and_then(|stmt| {
+            if let ast::StmtKind::Let {
+                mutable: Some(_),
+                name: let_name,
+                init,
+                ..
+            } = &stmt.kind
+                && Some(let_name.name.as_str()) == counted
+            {
+                int(init)
+            } else {
+                None
+            }
+        });
+        let steps = body.stmts.first().is_some_and(|stmt| {
+            matches!(&stmt.kind, ast::StmtKind::CompoundAssign {
+                op: ast::BinaryOp::Sub,
+                target,
+                value,
+                ..
+            } if counted.is_some() && name(target) == counted && int(value) == Some(1))
+        });
+        match bound {
+            Some(n) if steps && (0..=i128::from(MAX_BOUND)).contains(&n) => {
+                if n > 0 {
+                    self.mark("reach: a loop runs its body");
+                }
+            }
+            _ => self
+                .unbounded
+                .push(format!("a `while` at byte {}", cond.span.start())),
         }
     }
 
@@ -469,6 +576,19 @@ impl Walk {
                         inclusive,
                     } => {
                         self.mark("ast::ForSource::Range");
+                        let runs = int(start)
+                            .zip(int(end))
+                            .map(|(start, end)| end - start + i128::from(*inclusive));
+                        match runs {
+                            Some(runs) if runs <= i128::from(MAX_BOUND) => {
+                                if runs > 0 {
+                                    self.mark("reach: a loop runs its body");
+                                }
+                            }
+                            _ => self
+                                .unbounded
+                                .push(format!("a `for` at byte {}", start.span.start())),
+                        }
                         self.mark(&format!("ast::ForSource::Range.inclusive = {inclusive}"));
                         self.ast_expr(start);
                         self.ast_expr(end);
@@ -499,6 +619,13 @@ impl Walk {
             }
             ast::StmtKind::Expr(e) => {
                 self.mark("ast::StmtKind::Expr");
+                // A statement `if`: not a value `if`, written `(if ...)`, nor an `else if`,
+                // which the parser folds into a statement of the `else` block.
+                let before = self.source[..e.span.start()].trim_end();
+                let bare = !before.ends_with('(') && !before.ends_with("else");
+                if matches!(e.kind, ast::ExprKind::If { .. }) && bare && jumps(stmt) {
+                    self.mark("reach: an `if` statement jumps in every branch");
+                }
                 self.ast_expr(e);
             }
         }
@@ -534,7 +661,12 @@ impl Walk {
             ast::ExprKind::Float(_) => self.mark("ast::ExprKind::Float"),
             ast::ExprKind::Bool(_) => self.mark("ast::ExprKind::Bool"),
             ast::ExprKind::Char(_) => self.mark("ast::ExprKind::Char"),
-            ast::ExprKind::Str(_) => self.mark("ast::ExprKind::Str"),
+            ast::ExprKind::Str(text) => {
+                self.mark("ast::ExprKind::Str");
+                if text.chars().any(|c| "\t\\\"'{}\0\r\n\u{1F600}".contains(c)) {
+                    self.mark("reach: a string literal holds an escape");
+                }
+            }
             ast::ExprKind::Interpolate(parts) => {
                 self.mark("ast::ExprKind::Interpolate");
                 for part in parts {
@@ -548,10 +680,25 @@ impl Walk {
                     }
                 }
             }
-            ast::ExprKind::Name(_) => self.mark("ast::ExprKind::Name"),
+            ast::ExprKind::Name(name) => {
+                self.mark("ast::ExprKind::Name");
+                if name.as_str() != "depth" && self.params.iter().any(|p| p == name.as_str()) {
+                    self.mark("reach: a parameter other than `depth` is read");
+                }
+            }
             ast::ExprKind::Call { callee, args } => {
                 self.mark("ast::ExprKind::Call");
-                self.mark(&format!("prelude {}", callee.name.as_str()));
+                let callee = callee.name.as_str();
+                self.mark(&format!("prelude {callee}"));
+                if self.funcs.contains(callee) {
+                    if callee == self.func {
+                        self.mark("reach: a function calls itself");
+                    }
+                    let depth = args.first().and_then(|arg| int(&arg.value));
+                    if self.func == "main" && depth.is_some_and(|depth| depth >= 1) {
+                        self.mark("reach: `main` calls a function at a depth of 1 or more");
+                    }
+                }
                 self.ast_args(args);
             }
             ast::ExprKind::Todo { args, .. } => {
@@ -761,22 +908,8 @@ impl Walk {
         }
     }
 
-    /// The receiver kind's name, as `RECEIVERS` writes it.
     fn receiver(&mut self, variant: &str, receiver: &tir::Expr) {
-        let kind = match receiver.ty.kind() {
-            TypeKind::I64 => "I64",
-            TypeKind::U8 => "U8",
-            TypeKind::F64 => "F64",
-            TypeKind::Bool => "Bool",
-            TypeKind::Char => "Char",
-            TypeKind::String => "String",
-            TypeKind::Unit => "Unit",
-            TypeKind::Never => "Never",
-            TypeKind::Class(_) => "Class",
-            TypeKind::Enum(_) => "Enum",
-            TypeKind::Array(_) => "Array",
-            TypeKind::Optional(_) => "Optional",
-        };
+        let kind = kind_name(receiver.ty);
         self.mark(&format!("{variant} on {kind}"));
     }
 
@@ -866,7 +999,14 @@ impl Walk {
             }
             tir::ExprKind::Convert(operand) => {
                 self.mark("tir::ExprKind::Convert");
-                self.receiver("tir::ExprKind::Convert", operand);
+                // A conversion that can fail gives an optional.
+                let to = if let TypeKind::Optional(to) = e.ty.kind() {
+                    to
+                } else {
+                    e.ty
+                };
+                let (from, to) = (kind_name(operand.ty), kind_name(to));
+                self.mark(&format!("tir::ExprKind::Convert from {from} to {to}"));
                 self.tir_expr(operand, Parent::Other);
             }
             tir::ExprKind::Print { stream, operand } => {
@@ -1063,6 +1203,73 @@ impl Walk {
     }
 }
 
+/// A type's kind, as `RECEIVERS` and `CONVERSIONS` write it.
+fn kind_name(ty: Type) -> &'static str {
+    match ty.kind() {
+        TypeKind::I64 => "I64",
+        TypeKind::U8 => "U8",
+        TypeKind::F64 => "F64",
+        TypeKind::Bool => "Bool",
+        TypeKind::Char => "Char",
+        TypeKind::String => "String",
+        TypeKind::Unit => "Unit",
+        TypeKind::Never => "Never",
+        TypeKind::Class(_) => "Class",
+        TypeKind::Enum(_) => "Enum",
+        TypeKind::Array(_) => "Array",
+        TypeKind::Optional(_) => "Optional",
+    }
+}
+
+/// The value of an integer literal, negated or not.
+fn int(e: &ast::Expr) -> Option<i128> {
+    if let ast::ExprKind::Int { value, .. } = &e.kind {
+        Some(i128::from(*value))
+    } else if let ast::ExprKind::Unary {
+        op: ast::UnaryOp::Neg,
+        operand,
+    } = &e.kind
+    {
+        int(operand).map(|n| -n)
+    } else {
+        None
+    }
+}
+
+/// The name `e` is, if it is one.
+fn name(e: &ast::Expr) -> Option<&str> {
+    if let ast::ExprKind::Name(name) = &e.kind {
+        Some(name.as_str())
+    } else {
+        None
+    }
+}
+
+/// Whether `stmt` never finishes: a jump, or an `if` whose every branch ends in one.
+fn jumps(stmt: &ast::Stmt) -> bool {
+    let ends = |block: &ast::Block| block.stmts.last().is_some_and(jumps);
+    if matches!(
+        stmt.kind,
+        ast::StmtKind::Return(_) | ast::StmtKind::Break | ast::StmtKind::Continue
+    ) {
+        return true;
+    }
+    let ast::StmtKind::Expr(e) = &stmt.kind else {
+        return false;
+    };
+    if let ast::ExprKind::If {
+        then_block,
+        else_block,
+        ..
+    } = &e.kind
+    {
+        ends(then_block) && else_block.as_ref().is_some_and(ends)
+    } else {
+        matches!(&e.kind, ast::ExprKind::Todo { .. })
+            || matches!(&e.kind, ast::ExprKind::Call { callee, .. } if callee.name.as_str() == "panic")
+    }
+}
+
 /// Where a typed expression's value goes, as decision 11 sees it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Parent {
@@ -1210,6 +1417,7 @@ fn cost_multiplies_nested_loops() {
     for bound in [8, 5, 2] {
         cost.enter_loop(bound);
     }
+    assert_eq!(cost.depth(), 3);
     for _ in 0..3 {
         cost.statement();
     }
@@ -1217,6 +1425,10 @@ fn cost_multiplies_nested_loops() {
         cost.exit_loop();
     }
     assert_eq!(cost.of_main(&[]), 240);
+    // A statement after the loops runs once.
+    assert_eq!(cost.depth(), 0);
+    cost.statement();
+    assert_eq!(cost.of_main(&[]), 241);
 }
 
 #[test]
@@ -1227,7 +1439,8 @@ fn cost_counts_call_fanout() {
     body.statement();
     body.call(0, None);
     body.call(0, None);
-    let f = body.of_function(&[]);
+    // `f` is function 0, whose cost is not set yet.
+    let f = body.of_function(&[[1; DEPTHS]], 0);
     assert_eq!(f, [1, 4, 10, 22, 46]);
     let mut main = Cost::default();
     main.call(0, Some(4));
@@ -1257,4 +1470,211 @@ fn sizes_are_counted_and_capped() {
     };
     assert!(class(999).fits());
     assert!(!class(1_000).fits());
+}
+
+#[test]
+fn cost_counts_calls_in_loops() {
+    // Eight runs of a call costing 17, then one statement: 8 * 17 + 1.
+    let mut main = Cost::default();
+    main.enter_loop(8);
+    main.call(0, Some(1));
+    main.exit_loop();
+    main.statement();
+    assert_eq!(main.of_main(&[[1, 17, 17, 17, 17]]), 137);
+}
+
+#[test]
+fn a_while_condition_runs_once_more_than_its_body() {
+    // A statement in the condition of a `while` of 8 runs 9 times, one in its body 8 times.
+    let mut cost = Cost::default();
+    cost.enter_condition(8);
+    cost.statement();
+    cost.exit_loop();
+    cost.enter_loop(8);
+    cost.statement();
+    cost.exit_loop();
+    assert_eq!(cost.of_main(&[]), 17);
+}
+
+#[test]
+fn the_costliest_statement_fits_the_reserve() {
+    // A statement in the conditions of three nested `while`s of 8, each in a value block of the
+    // condition around it, runs 9 * 9 * 9 times: the most any statement can, which
+    // `Cost::statement` asserts the reserve for `main`'s statements covers.
+    let mut cost = Cost::default();
+    for _ in 0..3 {
+        cost.enter_condition(MAX_BOUND);
+    }
+    cost.statement();
+    assert_eq!(cost.of_main(&[]), 729);
+}
+
+#[test]
+fn main_calls_fit_the_budget_left() {
+    // `f1` costs 300,000 at depth 2, 354,201 at depth 3 and 100,000 at depth 1. Called twice in
+    // a loop of 2, out of the 1,000,000 budget less 400 statements of 729 runs each: 708,400.
+    // The first call fits depths 0 to 2 (2 * 354,201 is 708,402) and takes depth 2, leaving
+    // 108,400; the second fits only depth 0 (2 * 100,000 is over).
+    let data = [2, 1];
+    let mut g = Gen::new(&data);
+    g.scope.funcs.push(Func {
+        name: "f1".to_string(),
+        params: Vec::new(),
+        ret: Ty::Unit,
+        ret_size: 0,
+        cost: [1, 100_000, 300_000, 354_201, 1_000_000],
+    });
+    g.cost.enter_loop(2);
+    g.call(&Ty::Unit, 0);
+    g.call(&Ty::Unit, 0);
+    assert_eq!(g.w.out.program, "f1(2)f1(0)");
+}
+
+#[test]
+fn fuel_runs_out() {
+    let mut g = Gen::new(&[]);
+    let spent = (0..=FUEL).filter(|_| g.spend(1)).count();
+    assert_eq!(u64::try_from(spent).expect("the count should fit"), FUEL);
+}
+
+/// A `Gen` over `data` in `main`, holding `let mut s0: string` with `base` and `room`, inside
+/// a loop of `bound` runs if any.
+fn with_string(data: &[u8], base: u64, room: u64, bound: Option<u64>) -> Gen<'_> {
+    let mut g = Gen::new(data);
+    let var = Var::new("s0".to_string(), Ty::String, true, base, room, 0);
+    g.scope.vars.push(var);
+    if let Some(bound) = bound {
+        g.cost.enter_loop(bound);
+    }
+    g
+}
+
+#[test]
+fn appending_keeps_a_strings_most_size() {
+    // Room for 500 chars: a `+=` of 300 leaves room for 200, and the string can hold 500.
+    let mut var = Var::new("s0".to_string(), Ty::String, true, 0, 500, 0);
+    var.append(300, 1);
+    assert_eq!((var.size, var.room), (500, 200));
+    // In a loop of 8, each run may add an eighth of that room; a run of 25 takes it all.
+    assert_eq!(var.append_max(8), 25);
+    var.append(25, 8);
+    assert_eq!((var.size, var.room), (500, 0));
+}
+
+#[test]
+fn a_string_appends_itself_only_within_its_room() {
+    // `s0 += s0` adds all `s0` holds: with room 500 and nothing held yet, once fits ...
+    let appended = |bound| {
+        (0..=u8::MAX).any(|b| {
+            let data = [b; 16];
+            let mut g = with_string(&data, 0, 500, bound);
+            g.compound();
+            g.w.out.program.starts_with("s0 += s0\n") || g.w.out.program == "s0 += s0"
+        })
+    };
+    assert!(appended(None));
+    // ... and in a loop of 8 it does not: each run may add only 62.
+    assert!(!appended(Some(8)));
+}
+
+#[test]
+fn a_string_at_half_the_cap_does_not_double() {
+    // `let mut s0 = <500 chars>` with room 500 may reach 1,000 chars: `s0 += s0` could reach
+    // 2,000 and `s0 + s0` 4,000.
+    for b in 0..=u8::MAX {
+        let data = [b; 64];
+        let mut g = with_string(&data, 500, 500, None);
+        g.compound();
+        g.w.line();
+        g.expr(&Ty::String, MAX_SIZE);
+        let text = &g.w.out.program;
+        assert!(
+            !text.contains("s0 += s0") && !text.contains("(s0 + s0"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_constant_string_stays_within_its_most() {
+    // `c0` holds 600 chars, so `(c0 + c0)` would hold 1,200, over the 1,000 of a constant: the
+    // right operand, chosen as a name where one fits, is not `c0`.
+    let data = [2, 1, 1];
+    let mut g = Gen::new(&data);
+    g.scope.consts.push(Const {
+        name: "c0".to_string(),
+        ty: Ty::String,
+        value: 0,
+        size: 600,
+    });
+    g.const_expr(&Ty::String, MAX_SIZE);
+    assert!(!g.w.out.program.contains("c0 + c0"), "{}", g.w.out.program);
+}
+
+#[test]
+fn printed_sizes_are_the_longest_values() {
+    let chars = |text: &str| u64::try_from(text.chars().count()).expect("the count should fit");
+    assert_eq!(Ty::I64.printed(0, None), chars(&i64::MIN.to_string()));
+    assert_eq!(Ty::U8.printed(0, None), chars("255"));
+    assert_eq!(Ty::Bool.printed(0, None), chars("false"));
+    assert_eq!(Ty::Char.printed(0, None), 1);
+    assert_eq!(Ty::String.printed(7, None), 7);
+    // `print` writes an `f64` as Rust's `{:?}`, and with a precision as `{:.p$}`
+    // (`crates/runtime/src/float.rs`).
+    assert_eq!(
+        Ty::F64.printed(0, None),
+        chars(&format!("{:?}", -2.225_073_858_507_201_4e-308))
+    );
+    // With no decimals, the point goes too: one char under the bound.
+    assert_eq!(
+        Ty::F64.printed(0, Some(0)),
+        chars(&format!("{:.0}", -f64::MAX)) + 1
+    );
+    for p in 1..=6 {
+        let longest = format!(
+            "{:.p$}",
+            -f64::MAX,
+            p = usize::try_from(p).expect("a precision should fit a `usize`")
+        );
+        assert_eq!(Ty::F64.printed(0, Some(p)), chars(&longest));
+    }
+}
+
+#[test]
+fn a_part_whose_spec_does_not_fit_is_written_without_it() {
+    // One `f64` part, `0.0`, with 6 decimals: up to 317 chars, over a room of 30. The part is
+    // written without its spec and counts the 24 chars of the longest `f64`.
+    let data = [0, 0, 2, 0, 0, 0, 1, 6];
+    let mut g = Gen::new(&data);
+    let info = g.interpolate(30);
+    assert_eq!((g.w.out.program.as_str(), info.size), ("\"{0.0}\"", 24));
+}
+
+#[test]
+fn rare_constant_forms_check_clean() {
+    // Each input chooses, byte by byte, an item, a constant, its type, no annotation, and then
+    // its form, ending once the bytes run out, where every choice is the first.
+    for (data, form) in [
+        // `-(e)` of the smallest `i64`, which has no negation: `e` alone.
+        (
+            &[1, 0, 0, 0, 1, 0, 7, 1][..],
+            "const c1 = (-9223372036854775808)\n",
+        ),
+        // `(a && b)` and `(a || b)` of `bool`s.
+        (&[1, 0, 3, 0, 3, 1][..], "const c1 = (false && false)\n"),
+        (
+            &[1, 0, 3, 0, 3, 1, 0, 0, 1][..],
+            "const c1 = (false || false)\n",
+        ),
+    ] {
+        let g = generate(data);
+        assert!(g.program.starts_with(form), "{}", g.program);
+        checked(&g);
+    }
+}
+
+#[test]
+fn every_loop_is_bounded() {
+    let unbounded = walk().unbounded;
+    assert!(unbounded.is_empty(), "loops not bounded: {unbounded:?}");
 }

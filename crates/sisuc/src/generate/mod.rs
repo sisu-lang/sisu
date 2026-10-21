@@ -70,20 +70,7 @@ const STATEMENT_MOST: u64 = (MAX_BOUND + 1) * (MAX_BOUND + 1) * (MAX_BOUND + 1);
 
 /// Accepts every byte string. When `data` runs out, every choice is the smallest valid one.
 pub(crate) fn generate(data: &[u8]) -> Generated {
-    let mut g = Gen {
-        u: Unstructured::new(data),
-        w: Writer::default(),
-        scope: Scope::default(),
-        fuel: FUEL,
-        nesting: 0,
-        stdin: String::new(),
-        cost: Cost::default(),
-        one_line: false,
-        budget: BUDGET - FUEL * STATEMENT_MOST,
-        jumps: stmt::Jumps::default(),
-        blocks: 0,
-        synth: false,
-    };
+    let mut g = Gen::new(data);
     let cost = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]
@@ -125,7 +112,24 @@ struct Gen<'a> {
     synth: bool,
 }
 
-impl Gen<'_> {
+impl<'a> Gen<'a> {
+    fn new(data: &'a [u8]) -> Gen<'a> {
+        Gen {
+            u: Unstructured::new(data),
+            w: Writer::default(),
+            scope: Scope::default(),
+            fuel: FUEL,
+            nesting: 0,
+            stdin: String::new(),
+            cost: Cost::default(),
+            one_line: false,
+            budget: BUDGET - FUEL * STATEMENT_MOST,
+            jumps: stmt::Jumps::default(),
+            blocks: 0,
+            synth: false,
+        }
+    }
+
     /// One of `0..n`, `n > 0`.
     fn pick(&mut self, n: usize) -> usize {
         self.u.choose_index(n).unwrap_or(0)
@@ -226,6 +230,12 @@ impl Cost {
         self.loops.push(bound);
     }
 
+    /// The condition of a `while` of `bound` runs, which runs once more than its body; leave it
+    /// with `exit_loop`.
+    pub(crate) fn enter_condition(&mut self, bound: u64) {
+        self.loops.push(bound + 1);
+    }
+
     pub(crate) fn exit_loop(&mut self) {
         self.loops.pop();
     }
@@ -236,7 +246,9 @@ impl Cost {
     }
 
     pub(crate) fn statement(&mut self) {
-        self.statements = self.statements.saturating_add(self.times());
+        let times = self.times();
+        debug_assert!(times <= STATEMENT_MOST, "a statement runs {times} times");
+        self.statements = self.statements.saturating_add(times);
     }
 
     /// A call of the function `callee` passing `depth`, `None` for `depth - 1`.
@@ -250,20 +262,25 @@ impl Cost {
     }
 
     /// The cost of a call of the function whose body this is, at each depth, where `costs` are
-    /// the earlier functions'; the function is the next one. The `depth <= 0` check costs 1.
-    pub(crate) fn of_function(&self, costs: &[[u64; DEPTHS]]) -> [u64; DEPTHS] {
-        let mut own = [1; DEPTHS];
+    /// the functions' and `own` is this one's index, whose entry is not set yet. The
+    /// `depth <= 0` check costs 1.
+    pub(crate) fn of_function(&self, costs: &[[u64; DEPTHS]], own: usize) -> [u64; DEPTHS] {
+        let mut cost = [1; DEPTHS];
         for depth in 1..DEPTHS {
-            let cost =
-                self.calls
-                    .iter()
-                    .fold(self.statements.saturating_add(1), |sum: u64, call| {
-                        let callee = costs.get(call.callee).unwrap_or(&own);
-                        sum.saturating_add(call.times.saturating_mul(callee[depth - 1]))
-                    });
-            own[depth] = cost;
+            let at = self
+                .calls
+                .iter()
+                .fold(self.statements.saturating_add(1), |sum: u64, call| {
+                    let callee = if call.callee == own {
+                        &cost
+                    } else {
+                        &costs[call.callee]
+                    };
+                    sum.saturating_add(call.times.saturating_mul(callee[depth - 1]))
+                });
+            cost[depth] = at;
         }
-        own
+        cost
     }
 
     /// The cost of `main`, whose calls pass literal depths, where `costs` are the functions'.

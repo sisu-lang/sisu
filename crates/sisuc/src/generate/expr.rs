@@ -1,7 +1,7 @@
 //! The expression rules: each writes one construct of the wanted type. Every expression but a
 //! literal, a name and a call is written in parentheses, so it is an operand wherever it goes.
 
-use super::scope::Ty;
+use super::scope::{Scope, Ty};
 use super::stmt::MAX_BLOCKS;
 use super::{Gen, LINE, MAX_NESTING, MAX_SIZE};
 
@@ -278,33 +278,15 @@ impl Gen<'_> {
     }
 
     fn has_name(&self, ty: &Ty, max: u64) -> bool {
-        self.scope
-            .vars
-            .iter()
-            .any(|var| var.ty == *ty && var.size() <= max)
-            || self
-                .scope
-                .consts
-                .iter()
-                .any(|c| c.ty == *ty && c.size <= max)
+        names(&self.scope, ty, max).next().is_some()
     }
 
     fn name(&mut self, ty: &Ty, max: u64) -> Info {
-        let vars = self
-            .scope
-            .vars
-            .iter()
-            .filter(|var| var.ty == *ty && var.size() <= max)
-            .map(|var| (var.name.clone(), var.size()));
-        let consts = self
-            .scope
-            .consts
-            .iter()
-            .filter(|c| c.ty == *ty && c.size <= max)
-            .map(|c| (c.name.clone(), c.size));
-        let names: Vec<(String, u64)> = vars.chain(consts).collect();
-        let (name, size) = names[self.pick(names.len())].clone();
-        self.w.text(&name);
+        let pick = self.pick(names(&self.scope, ty, max).count());
+        let (name, size) = names(&self.scope, ty, max)
+            .nth(pick)
+            .expect("the rule should be chosen only when a name fits");
+        self.w.text(name);
         Info::leaf(size)
     }
 
@@ -556,7 +538,7 @@ impl Gen<'_> {
     }
 
     /// `"text{part:spec}..."`, the parts' printed lengths summed within `max`.
-    fn interpolate(&mut self, max: u64) -> Info {
+    pub(crate) fn interpolate(&mut self, max: u64) -> Info {
         let one_line = std::mem::replace(&mut self.one_line, true);
         self.w.text("\"");
         let mut size = 0;
@@ -716,6 +698,21 @@ impl Gen<'_> {
         }
         Info::of(&[], 0, false)
     }
+}
+
+/// The locals, then the constants, of type `ty` that hold at most `max` chars, and their sizes.
+fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'s str, u64)> {
+    let vars = scope
+        .vars
+        .iter()
+        .filter(move |var| var.ty == *ty && var.size <= max)
+        .map(|var| (var.name.as_str(), var.size));
+    let consts = scope
+        .consts
+        .iter()
+        .filter(move |c| c.ty == *ty && c.size <= max)
+        .map(|c| (c.name.as_str(), c.size));
+    vars.chain(consts)
 }
 
 /// `n` with a `_` between each group of three digits.
