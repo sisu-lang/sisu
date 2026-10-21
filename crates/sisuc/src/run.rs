@@ -2,9 +2,9 @@
 //! directory, and exits with the program's exit code.
 
 use std::ffi::OsString;
-use std::fs::{self, DirBuilder};
+use std::fs::{self, DirBuilder, Permissions};
 use std::io::ErrorKind;
-use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus};
@@ -30,8 +30,6 @@ pub(crate) fn run(
     let spawned = Command::new(&exe).args(args).spawn();
     // `spawn` returns once `exec` has worked, and the running program keeps its inode, so the
     // directory can go before the program ends, whatever ends it.
-    // shortcut: a Ctrl-C between `spawn` returning and this removal leaves the directory; a
-    // signal handler would close that gap, if it ever matters.
     if let Err(e) = fs::remove_dir_all(&dir) {
         tool_error_after_summary(format, &format!("cannot remove {}: {e}", dir.display()));
     }
@@ -60,6 +58,9 @@ fn build(reporter: &mut Report, source: &Source, backend: &Backend) -> Option<(P
         .ok()?;
     let (name, text) = read_source(reporter, source)?;
     let program = front_end(reporter, &name, &text)?;
+    // shortcut: a Ctrl-C from here until `run` removes the directory, through the compile, the
+    // link and the spawn, leaves it behind; a signal handler would close that gap, if it ever
+    // matters.
     let dir = private_dir(&std::env::temp_dir(), fresh_names(""))
         .inspect_err(|message| reporter.tool_error(message))
         .ok()?;
@@ -85,7 +86,19 @@ fn private_dir(parent: &Path, names: impl IntoIterator<Item = String>) -> Result
     for name in names {
         let dir = parent.join(name);
         match builder.create(&dir) {
-            Ok(()) => return Ok(dir),
+            // The umask can take bits from `mode`, as it did 0o700 under `umask 0777`, but not
+            // from `set_permissions`.
+            Ok(()) => {
+                return match fs::set_permissions(&dir, Permissions::from_mode(0o700)) {
+                    Ok(()) => Ok(dir),
+                    Err(e) => {
+                        let message = format!("cannot set the mode of {}: {e}", dir.display());
+                        fs::remove_dir(&dir)
+                            .map_err(|e| format!("{message}; cannot remove it: {e}"))
+                            .and(Err(message))
+                    }
+                };
+            }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
             Err(e) => return Err(format!("cannot create {}: {e}", dir.display())),
         }
@@ -108,8 +121,6 @@ fn exit_code(status: ExitStatus) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use super::*;
 
     #[test]

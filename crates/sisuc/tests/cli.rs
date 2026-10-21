@@ -2043,16 +2043,16 @@ fn run_link_failure_leaves_nothing() {
 fn missing_temp_dir_is_a_tool_error() {
     let dir = scratch_path::empty_dir("missing_temp_dir");
     let absent = dir.join("absent");
+    let output = dir.join("out");
+    let output = output.to_str().expect("the scratch path should be UTF-8");
     for (args, suffix) in [
         (&["run", "run/args_none.sisu"][..], ""),
-        (&["build", "run/args_none.sisu", "-o"], ".o"),
+        (&["build", "run/args_none.sisu", "-o", output], ".o"),
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisuc"))
             .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"))
             .env("TMPDIR", &absent)
             .args(args)
-            // `build`'s output; for `run`, an argument of a program that never starts.
-            .arg(dir.join("out"))
             .output()
             .expect("sisuc starts");
         assert_eq!(out.status.code(), Some(1), "{args:?}");
@@ -2067,4 +2067,190 @@ fn missing_temp_dir_is_a_tool_error() {
             "{args:?}: {stderr}"
         );
     }
+}
+
+/// Under a umask that takes the owner's write bit, `run` still makes its directory the
+/// owner's, runs the program and leaves nothing behind. `umask 0777` shows the same bug but
+/// would make the coverage run's own profile file unreadable.
+#[test]
+fn run_under_a_restrictive_umask_leaves_nothing() {
+    let tmp = scratch_path::empty_dir("run_under_a_restrictive_umask");
+    let out = Command::new("sh")
+        .args(["-c", "umask 0200; exec \"$@\"", "sh"])
+        .arg(env!("CARGO_BIN_EXE_sisuc"))
+        .args(["run", "-e", "fn main() { print(42) }"])
+        .env("TMPDIR", &tmp)
+        .output()
+        .expect("sh starts");
+    // Unlocks what a failure leaves, which the next run could not remove.
+    assert_eq!(unlock_and_empty(&tmp), 0);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "42\n");
+}
+
+/// A program with one warning, so text output has a summary.
+const WARNS: &str = "fn main() { let mut x = 1; print(x) }";
+
+/// The summary `WARNS` gets.
+const WARNS_SUMMARY: &str =
+    "sisuc: 1 warning\nsisuc: for more on a code, run `sisuc --explain <code>`: W0002\n";
+
+/// A `PATH` whose `cc` the environment variable `FAKE_CC` steers, to make `run` fail where it
+/// otherwise cannot:
+/// - `no-output` writes no executable;
+/// - `lock-parent` links with the real `cc`, then takes write permission from the temp dir,
+///   so the private directory, empty by then, cannot be removed;
+/// - `lock-dir-and-fail` takes write permission from the private directory and fails.
+fn fake_cc(name: &str) -> std::ffi::OsString {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_path::empty_dir(name);
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let real = std::env::split_paths(&path)
+        .map(|dir| dir.join("cc"))
+        .find(|cc| cc.is_file())
+        .expect("cc is on PATH");
+    let script = format!(
+        "#!/bin/sh\n\
+         for arg; do out=$arg; done\n\
+         dir=$(dirname \"$out\")\n\
+         case $FAKE_CC in\n\
+         no-output) exit 0 ;;\n\
+         lock-parent) '{}' \"$@\" || exit; chmod 500 \"$(dirname \"$dir\")\" ;;\n\
+         lock-dir-and-fail) chmod 500 \"$dir\"; exit 1 ;;\n\
+         esac\n",
+        real.display()
+    );
+    let cc = dir.join("cc");
+    fs::write(&cc, script).expect("writes");
+    fs::set_permissions(&cc, fs::Permissions::from_mode(0o755)).expect("makes it executable");
+    std::env::join_paths(std::iter::once(dir).chain(std::env::split_paths(&path)))
+        .expect("PATH joins")
+}
+
+/// A program that cannot start is a tool error after the summary, in text and in JSON, and
+/// its directory is gone.
+#[test]
+fn run_reports_a_program_that_cannot_start_after_the_summary() {
+    let tmp = scratch_path::empty_dir("run_program_cannot_start");
+    let path = fake_cc("run_program_cannot_start_cc");
+    let prefix = format!("cannot run {}/sisuc-", tmp.display());
+    let suffix = "/program: No such file or directory (os error 2)";
+    let out = sisuc_run(&tmp)
+        .env("PATH", &path)
+        .env("FAKE_CC", "no-output")
+        .args(["-e", WARNS])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let (_, after) = stderr.split_once(WARNS_SUMMARY).expect("a summary");
+    let error = after
+        .strip_prefix(&format!("sisuc: {prefix}"))
+        .unwrap_or_else(|| panic!("{stderr}"));
+    assert!(error.ends_with(&format!("{suffix}\n")), "{stderr}");
+    assert_eq!(after.lines().count(), 1, "{stderr}");
+
+    let out = sisuc_run(&tmp)
+        .env("PATH", &path)
+        .env("FAKE_CC", "no-output")
+        .args(["--format", "json", "-e", WARNS])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let records: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+        .collect();
+    let kinds: Vec<&str> = records
+        .iter()
+        .map(|r| r["kind"].as_str().expect("a kind"))
+        .collect();
+    assert_eq!(kinds, ["diagnostic", "summary", "tool_error"], "{stderr}");
+    let message = records[2]["message"].as_str().expect("a message");
+    assert!(
+        message.starts_with(&prefix) && message.ends_with(suffix),
+        "{message}"
+    );
+    assert_empty(&tmp);
+}
+
+/// Gives the owner back write permission on `tmp` and what is in it, removes what is in it,
+/// and returns how many entries there were.
+fn unlock_and_empty(tmp: &Path) -> usize {
+    use std::os::unix::fs::PermissionsExt;
+
+    let writable = || fs::Permissions::from_mode(0o700);
+    fs::set_permissions(tmp, writable()).expect("unlocks the temp dir");
+    let entries: Vec<_> = fs::read_dir(tmp)
+        .expect("reads the temp dir")
+        .map(|entry| entry.expect("reads an entry").path())
+        .collect();
+    for entry in &entries {
+        fs::set_permissions(entry, writable()).expect("unlocks the entry");
+        fs::remove_dir_all(entry).expect("removes the entry");
+    }
+    entries.len()
+}
+
+/// A private directory that cannot be removed is a tool error: after the summary once the
+/// program has started, which still runs and keeps its exit code; before it after a failed
+/// link, after the link's own error.
+#[test]
+fn run_reports_a_directory_it_cannot_remove() {
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = scratch_path::empty_dir("run_directory_cannot_be_removed");
+    if fs::metadata(&tmp).expect("reads metadata").uid() == 0 {
+        eprintln!("skipped: root can remove a directory without write permission");
+        return;
+    }
+    let path = fake_cc("run_directory_cannot_be_removed_cc");
+    let cannot_remove = format!("sisuc: cannot remove {}/sisuc-", tmp.display());
+    let denied = ": Permission denied (os error 13)";
+
+    let out = sisuc_run(&tmp)
+        .env("PATH", &path)
+        .env("FAKE_CC", "lock-parent")
+        .args(["-e", WARNS])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(unlock_and_empty(&tmp), 1);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
+    let (_, after) = stderr.split_once(WARNS_SUMMARY).expect("a summary");
+    assert!(after.starts_with(&cannot_remove), "{stderr}");
+    assert!(after.ends_with(&format!("{denied}\n")), "{stderr}");
+    assert_eq!(after.lines().count(), 1, "{stderr}");
+
+    let out = sisuc_run(&tmp)
+        .env("PATH", &path)
+        .env("FAKE_CC", "lock-dir-and-fail")
+        .args(["-e", WARNS])
+        .output()
+        .expect("sisuc starts");
+    assert_eq!(unlock_and_empty(&tmp), 1);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let before = stderr
+        .strip_suffix(WARNS_SUMMARY)
+        .expect("the summary last");
+    let tool_errors: Vec<&str> = before.lines().rev().take(2).collect();
+    assert_eq!(
+        tool_errors[1], "sisuc: cc failed: exit status: 1",
+        "{stderr}"
+    );
+    assert!(
+        tool_errors[0].starts_with(&cannot_remove) && tool_errors[0].ends_with(denied),
+        "{stderr}"
+    );
 }
