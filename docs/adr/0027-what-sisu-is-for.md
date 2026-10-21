@@ -127,8 +127,8 @@ These hold beyond 1.0:
   cluster (ADR 0014). The file tool's spec says whether 1.0 needs display
   width or grapheme clusters, and its tests include such text.
 - **Deferred until their priority is chosen**: property tests in `sisu test`,
-  stack traces, a panic on stack overflow in place of `SIGSEGV`, macOS
-  hosts, and a language server.
+  stack traces, a panic on stack overflow in place of `SIGSEGV`, and a
+  language server.
 
 ## Considered options
 
