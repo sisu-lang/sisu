@@ -104,7 +104,7 @@ codes! {
     CannotCompare = "E0047",
     CoalesceNotOptional = "E0048",
     SafeAccessNotOptional = "E0049",
-    CannotInfer = "E0050",
+    CannotInfer | CannotInferParam = "E0050",
     UnwrapNeedsOptional = "E0051",
     FunctionNotFound = "E0052",
     ArgumentCount = "E0053",
@@ -441,6 +441,14 @@ pub(crate) enum DiagnosticKind {
     },
     /// A `None` or `[]` (`literal`) at `at` whose type nothing fixes.
     CannotInfer { literal: Literal, at: Span },
+    /// A call at `at` of `callee` that binds nothing to its type parameter `param`; `example`
+    /// writes the call with its type arguments.
+    CannotInferParam {
+        param: String,
+        callee: String,
+        example: String,
+        at: Span,
+    },
     /// The value at `at`, of type `found`, that `keyword` unwraps, and which is not optional.
     UnwrapNeedsOptional {
         keyword: Unwrap,
@@ -934,6 +942,8 @@ pub(crate) enum ArgumentsForm {
     /// the list starts with, the value through the first argument, which a comparison would put
     /// in parentheses; before a `.` it was no comparison.
     Value { compare: Option<String> },
+    /// A variant of a generic enum, which takes its enum's: `instead` writes them on the enum.
+    Variant { instead: String },
 }
 
 /// Why `main`'s signature is wrong.
@@ -1996,6 +2006,13 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot infer the type of `{literal}`"))
                     .with_help(format!("write the type: `{example}`"))
             }
+            DiagnosticKind::CannotInferParam {
+                param,
+                callee,
+                example,
+                at,
+            } => Diagnostic::coded(code, at, format!("cannot infer `{param}` for `{callee}`"))
+                .with_help(format!("annotate the result, or write the type: `{example}`")),
             DiagnosticKind::UnwrapNeedsOptional {
                 keyword,
                 found,
@@ -3164,6 +3181,10 @@ impl From<DiagnosticKind> for Diagnostic {
                         Some(compare) => d.with_help(format!("to compare, write `({compare})`")),
                         None => d,
                     }
+                }
+                ArgumentsForm::Variant { instead } => {
+                    Diagnostic::coded(code, at, format!("`{name}` takes no type arguments"))
+                        .with_help(format!("write `{instead}`"))
                 }
             },
             DiagnosticKind::TypeArgument { ty, at, optional } => {

@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use super::generic::Site;
 use super::{Binding, Checked, Checker, Poisoned, UNKNOWN, payload, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -109,7 +110,13 @@ impl Checker<'_> {
                     self.stray(args);
                     return Err(value);
                 }
-                self.call(e.span, callee, args)
+                let site = Site {
+                    name: callee,
+                    written: types,
+                    angles: *angles,
+                    expected,
+                };
+                self.call(e.span, site, args)
             }
             ExprKind::Applied {
                 name,
@@ -129,7 +136,7 @@ impl Checker<'_> {
                 node(tir::ExprKind::Local(tir::LocalId(0)), ty)
             }
             ExprKind::Field { base, name, safe } => {
-                if !safe && let Some(checked) = self.type_path(e.span, base, name, None) {
+                if !safe && let Some(checked) = self.type_path(e.span, base, name, None, expected) {
                     return checked;
                 }
                 self.member(e.span, *safe, base, name, |c, checked| {
@@ -144,14 +151,15 @@ impl Checker<'_> {
                 args,
                 parens,
                 safe,
-            } => self.method_expr(
-                e.span,
-                *safe,
-                receiver,
-                (method, types, *angles),
-                args,
-                *parens,
-            ),
+            } => {
+                let site = Site {
+                    name: method,
+                    written: types,
+                    angles: *angles,
+                    expected,
+                };
+                self.method_expr(e.span, *safe, receiver, site, args, *parens)
+            }
             ExprKind::Coalesce { lhs, rhs } => self.coalesce(e.span, lhs, rhs),
             ExprKind::Is { lhs, rhs } => self.is(e.span, lhs, rhs),
             ExprKind::Unary { op, operand } => {

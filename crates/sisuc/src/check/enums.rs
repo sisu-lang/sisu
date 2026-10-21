@@ -5,7 +5,8 @@ use std::fmt;
 
 use rustc_hash::FxHashMap;
 
-use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned};
+use super::generic::{GenericSig, Site, mismatched};
+use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, own_args};
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
 use crate::graph::components;
@@ -122,10 +123,7 @@ impl Checker<'_> {
                 });
             }
         }
-        let receiver = Type::intern(TypeKind::Enum(
-            id,
-            super::own_args(&self.enums[id.0].type_params),
-        ));
+        let receiver = Type::intern(TypeKind::Enum(id, own_args(&self.enums[id.0].type_params)));
         for method in &e.methods {
             let func = tir::FuncId(self.signatures.len());
             if self.first_definition(&mut first, Definition::Method, Some(owner), &method.name) {
@@ -148,13 +146,15 @@ impl Checker<'_> {
     }
 
     /// `Enum.member`, or `Enum.member(args)` when `call` gives the arguments and the span of their
-    /// parentheses, where `Enum` is the enum `id`: the variant `member` built, or an error.
+    /// parentheses, where `Enum` is the enum `id`, which `site` writes: the variant `member`
+    /// built, or an error.
     pub(super) fn enum_path(
         &mut self,
         span: Span,
         id: EnumId,
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
+        site: Site<'_>,
     ) -> Checked {
         let info = &self.enums[id.0];
         let enum_name = info.name.name.as_str();
@@ -189,7 +189,11 @@ impl Checker<'_> {
         let path = format_args!("{enum_name}.{}", member.name);
         let v = &info.variants[variant];
         let ty = Type::intern(TypeKind::Enum(id, TypeArgs::NONE));
+        let generic = !info.type_params.is_empty();
         let args = match call {
+            _ if generic && call.is_some() != v.fields.is_empty() => {
+                return self.generic_variant_args(span, (id, variant), member, call, site);
+            }
             None if v.fields.is_empty() => Vec::new(),
             Some((args, _)) if !v.fields.is_empty() => {
                 // Checking the arguments needs the whole checker, so the field types are copied.
@@ -245,16 +249,71 @@ impl Checker<'_> {
         }))
     }
 
-    /// The arguments of `path(args)`, a variant whose payload declares no labels, checked
-    /// against its `fields` in order. `Err` holds whether a mistake was reported here, rather
-    /// than in an argument.
-    fn positional(
+    /// `Enum.member` or `Enum.member(args)`, the variant `variant` of the generic enum `id`
+    /// written in its form, `call` holding the arguments when it has a payload: the variant
+    /// built with the type arguments its arguments and `site` bind, or an error.
+    fn generic_variant_args(
+        &mut self,
+        span: Span,
+        (id, variant): (EnumId, usize),
+        member: &ast::Ident,
+        call: Option<(&[ast::Arg], Span)>,
+        site: Site<'_>,
+    ) -> Checked {
+        let info = &self.enums[id.0];
+        let v = &info.variants[variant];
+        let path = format!("{}.{}", info.name.name, member.name);
+        let (declared, fields, labels) =
+            (info.type_params.clone(), v.fields.clone(), v.labels.clone());
+        let args = call.map_or(&[][..], |(args, _)| args);
+        let labeled = if labels.iter().all(Option::is_some) && !labels.is_empty() {
+            let names: Vec<_> = labels.iter().flatten().copied().collect();
+            if !self.shaped(span, &path, &names, args) {
+                return Err(Poisoned::error());
+            }
+            false
+        } else if labels.iter().all(Option::is_none) {
+            match self.positional_shape(span, &path, fields.len(), args) {
+                Some(labeled) => labeled,
+                None => return Err(Poisoned::error()),
+            }
+        } else {
+            // Mixed labels are reported at the declaration.
+            self.stray(args);
+            return Err(Poisoned::error());
+        };
+        let sig = GenericSig {
+            name: site.name,
+            variant: Some(member),
+            declared: &declared,
+            owner: &[],
+            params: &fields,
+            ret: Some(Type::intern(TypeKind::Enum(id, own_args(&declared)))),
+        };
+        let written = (site.written, site.angles);
+        let Some((args, _, Some(ty))) = self.generic_call(span, &sig, written, args, site.expected)
+        else {
+            return Err(Poisoned::error());
+        };
+        let failed = labeled || args.iter().any(mismatched);
+        match args.into_iter().collect() {
+            Ok(args) if !failed => Ok(self.spilled(span, ty, args, |args| {
+                tir::ExprKind::Variant { id, variant, args }
+            })),
+            _ => Err(Poisoned::of((!failed).then_some(ty))),
+        }
+    }
+
+    /// Reports the labels of `path(args)`, a variant whose payload declares none, and a count
+    /// of `args` that is not `want`. `None` when the count is wrong, else whether there was a
+    /// label.
+    fn positional_shape(
         &mut self,
         span: Span,
         path: &dyn fmt::Display,
-        fields: &[Option<Type>],
+        want: usize,
         args: &[ast::Arg],
-    ) -> Result<Vec<tir::Expr>, bool> {
+    ) -> Option<bool> {
         // Each `label: ` and the space after it, which the fix deletes.
         let labels: Vec<_> = args
             .iter()
@@ -273,18 +332,34 @@ impl Checker<'_> {
                 }),
             });
         }
-        if fields.len() != args.len() {
+        if want != args.len() {
             self.stray(args);
             if !self.misread_in(args) {
                 self.report(DiagnosticKind::ArgumentCount {
                     name: path.to_string(),
-                    want: fields.len(),
+                    want,
                     found: args.len(),
                     at: span,
                 });
             }
-            return Err(true);
+            return None;
         }
+        Some(labeled)
+    }
+
+    /// The arguments of `path(args)`, a variant whose payload declares no labels, checked
+    /// against its `fields` in order. `Err` holds whether a mistake was reported here, rather
+    /// than in an argument.
+    fn positional(
+        &mut self,
+        span: Span,
+        path: &dyn fmt::Display,
+        fields: &[Option<Type>],
+        args: &[ast::Arg],
+    ) -> Result<Vec<tir::Expr>, bool> {
+        let Some(labeled) = self.positional_shape(span, path, fields.len(), args) else {
+            return Err(true);
+        };
         let (checked, mismatched): (Vec<_>, Vec<_>) = args
             .iter()
             .zip(fields)
@@ -454,7 +529,7 @@ impl Checker<'_> {
         };
         let mut chain = Vec::new();
         let mut on_chain = vec![false; fix.keys.len()];
-        let (mut at, mut args) = (start, super::own_args(params));
+        let (mut at, mut args) = (start, own_args(params));
         let mut key = fix.root(start);
         while !std::mem::replace(&mut on_chain[key], true) {
             let with = args.get();

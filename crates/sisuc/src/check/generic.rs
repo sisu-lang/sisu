@@ -1,22 +1,453 @@
-//! Generic declarations: type parameters, the type arguments written for them, and what a value
-//! of a type parameter may not do.
+//! Generic declarations: type parameters, the type arguments written for them or inferred at
+//! a call, and what a value of a type parameter may not do.
 
-use std::fmt;
+use std::{fmt, iter};
 
 use rustc_hash::FxHashMap;
 
 use super::prelude::PRELUDE;
 use super::{
-    Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, built_in_type, type_of,
+    Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN, built_in_type,
+    type_of,
 };
-use crate::ast;
+use crate::ast::{self, StmtKind, UnaryOp};
 use crate::diagnostic::{ArgumentsForm, MainForm};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
 
+/// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
+/// the receiver, an argument or the expected type fixes it.
+pub(super) struct Bindings {
+    found: Vec<Option<Type>>,
+}
+
+impl Bindings {
+    /// `count` parameters, the first of them bound to `owner`, a receiver's arguments.
+    fn new(count: usize, owner: &[Type]) -> Self {
+        let unbound = iter::repeat_n(None, count - owner.len());
+        Bindings {
+            found: owner.iter().copied().map(Some).chain(unbound).collect(),
+        }
+    }
+
+    /// Binds the parameters `pattern` names, the callee's, so that it is `value`, every
+    /// parameter of which is the caller's and a fixed type. A `T?` binds `T` to a value that is
+    /// not optional, which the call then wraps. `false`, binding nothing, when they cannot.
+    pub(super) fn unify(&mut self, pattern: Type, value: Type) -> bool {
+        let before = self.found.clone();
+        let unified = self.bind(pattern, value);
+        if !unified {
+            self.found = before;
+        }
+        unified
+    }
+
+    fn bind(&mut self, pattern: Type, value: Type) -> bool {
+        if !pattern.has_param() {
+            return pattern == value;
+        }
+        match (pattern.kind(), value.kind()) {
+            (TypeKind::Param(_, i), _) => *self.found[i as usize].get_or_insert(value) == value,
+            (TypeKind::Array(p), TypeKind::Array(v))
+            | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.bind(p, v),
+            (TypeKind::Optional(p), _) => self.bind(p, value),
+            (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => self.bind_all(p, v),
+            (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => self.bind_all(p, v),
+            _ => false,
+        }
+    }
+
+    fn bind_all(&mut self, patterns: TypeArgs, values: TypeArgs) -> bool {
+        iter::zip(patterns.get(), values.get()).all(|(&p, &v)| self.bind(p, v))
+    }
+
+    /// `ty`, a callee's, with its parameters' bindings in their place; `None` while it names
+    /// one that is unbound.
+    pub(super) fn known(&self, ty: Type) -> Option<Type> {
+        if !ty.has_param() {
+            return Some(ty);
+        }
+        Some(match ty.kind() {
+            TypeKind::Param(_, i) => self.found[i as usize]?,
+            TypeKind::Array(element) => Type::array(self.known(element)?),
+            TypeKind::Optional(payload) => Type::optional(self.known(payload)?),
+            TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.known_all(args)?)),
+            TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.known_all(args)?)),
+            _ => unreachable!("only a kind with a child can name a parameter"),
+        })
+    }
+
+    fn known_all(&self, args: TypeArgs) -> Option<TypeArgs> {
+        let list: Option<Vec<Type>> = args.get().iter().map(|&ty| self.known(ty)).collect();
+        list.map(|list| TypeArgs::intern(&list))
+    }
+
+    /// Every parameter's binding; `Err` holds the first unbound one's index.
+    pub(super) fn finish(self) -> Result<TypeArgs, usize> {
+        let list = self
+            .found
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| ty.ok_or(i))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(TypeArgs::intern(&list))
+    }
+}
+
+/// A generic callee as a call sees it: a function or method, a class's constructor, or an
+/// enum's variant.
+pub(super) struct GenericSig<'a> {
+    /// The name the call writes: the function's, the method's, the class's, or the variant's
+    /// enum's.
+    pub(super) name: &'a ast::Ident,
+    /// The variant after `name`, which the call builds.
+    pub(super) variant: Option<&'a ast::Ident>,
+    /// Every type parameter, a method's receiver's first.
+    pub(super) declared: &'a [Symbol],
+    /// The receiver's type arguments, which bind the first of `declared`.
+    pub(super) owner: &'a [Type],
+    pub(super) params: &'a [Option<Type>],
+    pub(super) ret: Option<Type>,
+}
+
+/// How a call writes its callee: its name, the type arguments in `angles` (none written when
+/// `written` is empty), and the type the call's context expects.
+#[derive(Clone, Copy)]
+pub(super) struct Site<'a> {
+    pub(super) name: &'a ast::Ident,
+    pub(super) written: &'a [ast::TypeExpr],
+    pub(super) angles: Span,
+    pub(super) expected: Option<Type>,
+}
+
+/// A generic call while its arguments bind its callee's parameters.
+struct Inference {
+    bindings: Bindings,
+    /// Whether each parameter's binding, once it has one, was checked to be a type argument.
+    seen: Vec<bool>,
+    /// Each argument once checked, in source order.
+    slots: Vec<Option<Checked>>,
+    /// The arguments of type `unit` or `never`, which bind only what no other argument does.
+    last: Vec<(usize, Type)>,
+    /// Whether a parameter was bound to a type that no parameter takes.
+    failed: bool,
+}
+
+/// `checked`, an argument, made `Error` that its rule rejected when `mismatched`.
+pub(super) fn mark((checked, mismatched): (Checked, bool)) -> Checked {
+    if mismatched {
+        Err(Poisoned {
+            ty: None,
+            mismatch: true,
+        })
+    } else {
+        checked
+    }
+}
+
+/// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
+pub(super) fn mismatched(checked: &Checked) -> bool {
+    matches!(checked, Err(Poisoned { mismatch: true, .. }))
+}
+
 impl Checker<'_> {
+    /// The arguments of a call of the generic `sig`, which the caller has matched to its
+    /// parameters by count and label, checked in four passes that bind its type parameters
+    /// (`written` gives every one the receiver does not): (1) those that are neither
+    /// literal-like nor need context, each against its parameter's type once that names no
+    /// unbound parameter and on its own before; (2) `expected` against the return type, an
+    /// optional's payload against one that is not optional; (3) the literal-like arguments, as
+    /// in (1); (4) those that need context, against their parameter's type. An argument of type
+    /// `unit` or `never` binds only what none of the others does. Returns the arguments in
+    /// source order, the type arguments, and the call's type; `None`, reported, when a
+    /// parameter is left unbound or bound to a type no parameter takes, and then an argument
+    /// that needs context and has none is not checked.
+    pub(super) fn generic_call(
+        &mut self,
+        span: Span,
+        sig: &GenericSig<'_>,
+        (written, angles): (&[ast::TypeExpr], Span),
+        args: &[ast::Arg],
+        expected: Option<Type>,
+    ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
+        let owned = sig.owner.len();
+        let mut call = Inference {
+            bindings: Bindings::new(sig.declared.len(), sig.owner),
+            seen: vec![true; owned],
+            slots: args.iter().map(|_| None).collect(),
+            last: Vec::new(),
+            failed: false,
+        };
+        call.seen.resize(sig.declared.len(), false);
+        if !written.is_empty() {
+            let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
+            else {
+                self.stray(args);
+                return None;
+            };
+            for (i, &ty) in list.get().iter().enumerate() {
+                call.bindings.found[owned + i] = Some(ty);
+                call.seen[owned + i] = true;
+            }
+        }
+        let ranks: Vec<u8> = args
+            .iter()
+            .map(|arg| match &arg.value {
+                e if self.needs_context(e) => 2,
+                e if self.literal_like(e) => 1,
+                _ => 0,
+            })
+            .collect();
+        for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 0) {
+            self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
+        }
+        if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
+            let want = match (want.kind(), ret.kind()) {
+                (_, TypeKind::Optional(_)) => want,
+                (TypeKind::Optional(payload), _) => payload,
+                _ => want,
+            };
+            // A return type that cannot meet it is reported where the call's value is used.
+            let _ = self.bind_param(&mut call, ret, want, span);
+        }
+        for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 1) {
+            self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
+        }
+        for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 2) {
+            // An argument whose type would name an unbound parameter waits, unchecked.
+            if sig.params[i].is_none_or(|param| call.bindings.known(param).is_some()) {
+                self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
+            }
+        }
+        for (i, ty) in std::mem::take(&mut call.last) {
+            let (e, param) = (&args[i].value, sig.params[i]);
+            if let Some(param) = param
+                && call.bindings.known(param).is_none()
+                && self.bind_param(&mut call, param, ty, e.span)
+            {
+                continue;
+            }
+            self.report(DiagnosticKind::NoValue {
+                at: e.span,
+                never: ty == Type::NEVER,
+            });
+            call.slots[i] = Some(Err(Poisoned::error()));
+        }
+        let list = match call.bindings.finish() {
+            Ok(list) if !call.failed => list,
+            Ok(_) => return None,
+            Err(i) => {
+                // An argument that failed may be what would have bound it, and an `UNKNOWN`
+                // context is one that failed.
+                let errored = call.slots.iter().flatten().any(|c| type_of(c).is_none());
+                if !errored && !call.failed && expected != Some(UNKNOWN) {
+                    self.cannot_infer(sig, sig.declared[i]);
+                }
+                return None;
+            }
+        };
+        let checked = call
+            .slots
+            .into_iter()
+            .map(|slot| {
+                slot.expect("every argument should be checked once each parameter is bound")
+            })
+            .collect();
+        Some((checked, list, sig.ret.map(|ret| ret.subst(list.get()))))
+    }
+
+    /// Checks `e`, the argument at `i` for `param`: against `param` once the call binds what it
+    /// names, and otherwise on its own, which binds what its type fixes.
+    fn infer_arg(&mut self, call: &mut Inference, i: usize, e: &ast::Expr, param: Option<Type>) {
+        let pattern = match param.map(|param| (param, call.bindings.known(param))) {
+            None => {
+                call.slots[i] = Some(mark(self.operand(e, None)));
+                return;
+            }
+            Some((_, Some(want))) => {
+                call.slots[i] = Some(mark(self.operand(e, Some(want))));
+                return;
+            }
+            Some((pattern, None)) => pattern,
+        };
+        let checked = self.expr(e, None);
+        call.slots[i] = Some(match type_of(&checked) {
+            Some(ty @ (Type::UNIT | Type::NEVER)) => {
+                call.last.push((i, ty));
+                checked
+            }
+            Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
+                let d = self.mismatch(e.span, Some(e), pattern, ty);
+                self.diagnostics.push(d);
+                mark((checked, true))
+            }
+            Some(_) => {
+                let want = call.bindings.known(pattern);
+                debug_assert!(
+                    want.is_some(),
+                    "a unified pattern should name only bound parameters"
+                );
+                mark(self.against(e, checked, want))
+            }
+            // `Error`, which binds nothing.
+            None => checked,
+        });
+    }
+
+    /// `Bindings::unify`, reporting at `at` each parameter it binds to a type that no type
+    /// parameter takes.
+    fn bind_param(&mut self, call: &mut Inference, pattern: Type, value: Type, at: Span) -> bool {
+        if !call.bindings.unify(pattern, value) {
+            return false;
+        }
+        for (found, seen) in iter::zip(&call.bindings.found, &mut call.seen) {
+            let Some(ty) = *found else { continue };
+            if *seen {
+                continue;
+            }
+            *seen = true;
+            let optional = matches!(ty.kind(), TypeKind::Optional(_));
+            if optional || matches!(ty, Type::UNIT | Type::NEVER) {
+                self.report(DiagnosticKind::TypeArgument {
+                    ty: self.type_name(ty),
+                    at,
+                    optional,
+                });
+                call.failed = true;
+            }
+        }
+        true
+    }
+
+    /// Reports the call of `sig` that binds nothing to its parameter `param`.
+    fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: Symbol) {
+        let name = sig.name;
+        let dots = vec!["..."; sig.declared.len() - sig.owner.len()].join(", ");
+        let (callee, example, at) = match sig.variant {
+            Some(variant) => {
+                let payload = if sig.params.is_empty() { "" } else { "(...)" };
+                (
+                    format!("{}.{}", name.name, variant.name),
+                    format!("{}<{dots}>.{}{payload}", name.name, variant.name),
+                    name.span.to(variant.span),
+                )
+            }
+            None => (
+                name.name.to_string(),
+                format!("{}<{dots}>(...)", name.name),
+                name.span,
+            ),
+        };
+        self.report(DiagnosticKind::CannotInferParam {
+            param: param.to_string(),
+            callee,
+            example,
+            at,
+        });
+    }
+
+    /// Whether `e`'s type cannot come from itself: a bare `[]` or `None`; a payload-free
+    /// variant of a generic enum; an array literal whose elements all need context; an `if` or
+    /// a block whose every value branch does; or a call or construction of a generic
+    /// declaration, its type arguments not written, whose arguments all do. A name resolves as
+    /// the checker resolves it: a call's callee by its declaration, whatever local takes it.
+    // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
+    // nesting; remember the answer by span if deep nests appear.
+    pub(super) fn needs_context(&self, e: &ast::Expr) -> bool {
+        use ast::ExprKind as K;
+        let all = |args: &[ast::Arg]| args.iter().all(|arg| self.needs_context(&arg.value));
+        match &e.kind {
+            K::NoneLit => true,
+            K::ArrayLit(elements) => elements.iter().all(|e| self.needs_context(e)),
+            K::Field {
+                base,
+                name,
+                safe: false,
+            } => self.generic_variant(base, name) == Some(0),
+            K::MethodCall {
+                receiver,
+                method,
+                types,
+                args,
+                safe: false,
+                ..
+            } => types.is_empty() && self.generic_variant(receiver, method).is_some() && all(args),
+            K::Call {
+                callee,
+                types,
+                args,
+                ..
+            } => types.is_empty() && self.generic_callee(callee.name) && all(args),
+            K::If {
+                then_block,
+                else_block: Some(else_block),
+                ..
+            } => self.branches_need_context(&[then_block, else_block]),
+            K::Block(block) => self.branches_need_context(&[block]),
+            _ => false,
+        }
+    }
+
+    /// Whether one of `blocks` ends in a value, and each that does needs context; one that
+    /// ends in an exit has none.
+    fn branches_need_context(&self, blocks: &[&ast::Block]) -> bool {
+        let mut values = blocks
+            .iter()
+            .filter_map(|block| match block.stmts.last().map(|stmt| &stmt.kind) {
+                Some(StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue) => None,
+                Some(StmtKind::Expr(e)) => Some(self.needs_context(e)),
+                _ => Some(false),
+            })
+            .peekable();
+        values.peek().is_some() && values.all(|needs| needs)
+    }
+
+    /// The field count of `base.member`, a variant of a generic enum that `base` names
+    /// without type arguments.
+    pub(super) fn generic_variant(&self, base: &ast::Expr, member: &ast::Ident) -> Option<usize> {
+        let ast::ExprKind::Name(name) = base.kind else {
+            return None;
+        };
+        let Some(&Declared::Known(id)) = self.enum_ids.get(&name) else {
+            return None;
+        };
+        let info = &self.enums[id.0];
+        let &variant = info.index.get(&member.name)?;
+        (!info.type_params.is_empty()).then(|| info.variants[variant].fields.len())
+    }
+
+    /// Whether a call of `name` calls a generic function or constructs a generic class.
+    fn generic_callee(&self, name: Symbol) -> bool {
+        match (self.class_ids.get(&name), self.function_ids.get(&name)) {
+            (Some(&Declared::Known(class)), _) => !self.classes[class.0].type_params.is_empty(),
+            (None, Some(&Declared::Known(func))) => !self.signatures[func.0].type_params.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Whether `e`'s type comes from its literals' defaults: an integer literal, `-` of one,
+    /// or a non-empty array literal whose elements are each literal-like or need context, one
+    /// at least literal-like.
+    pub(super) fn literal_like(&self, e: &ast::Expr) -> bool {
+        use ast::ExprKind as K;
+        match &e.kind {
+            K::Int { .. } => true,
+            K::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } => matches!(operand.kind, K::Int { .. }),
+            K::ArrayLit(elements) => {
+                elements.iter().any(|e| self.literal_like(e))
+                    && elements
+                        .iter()
+                        .all(|e| self.literal_like(e) || self.needs_context(e))
+            }
+            _ => false,
+        }
+    }
+
     /// The type parameters `owner`, a method's class's or enum's, then `own`, a declaration's.
     /// Reports each of `own` that takes a built-in type's name, or the name of one before it;
     /// `owner`'s are reported where they are declared. Every name keeps its place, so that a
@@ -188,7 +619,6 @@ impl Checker<'_> {
         };
         match params {
             Some(0) => self.not_generic(n, angles),
-            Some(_) => panic!("type arguments in expressions land in Task 4"),
             None if PRELUDE.contains(&n.as_str()) || built_in_type(n.as_str()).is_some() => {
                 self.not_generic(n, angles);
             }
@@ -197,8 +627,8 @@ impl Checker<'_> {
             {
                 return Some(self.misread(name.span, call.then_some(first)));
             }
-            // A broken or unknown name: its use reports it.
-            None => {}
+            // A generic's call or use checks them; a broken or unknown name's use reports it.
+            _ => {}
         }
         None
     }
@@ -212,14 +642,14 @@ impl Checker<'_> {
             _ => return false,
         };
         if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
+            // A generic method's list waits for the member's report, which says it is a method.
             let info = &self.enums[id.0];
-            if let Some(&Declared::Known(func)) = info.methods.get(&method.name) {
-                assert!(
-                    self.signatures[func.0].type_params.len() == info.type_params.len(),
-                    "type arguments in expressions land in Task 4"
-                );
-            }
-            return true;
+            return match info.methods.get(&method.name) {
+                Some(&Declared::Known(func)) => {
+                    self.signatures[func.0].type_params.len() == info.type_params.len()
+                }
+                _ => true,
+            };
         }
         (built_in_type(name.as_str()).is_some() || matches!(name.as_str(), "math" | "Math"))
             && self.lookup(name).is_none()
@@ -252,16 +682,32 @@ impl Checker<'_> {
             _ => return None,
         };
         match methods.get(&method.name).copied() {
-            Some(Declared::Known(func)) => {
-                assert!(
-                    self.signatures[func.0].type_params.len() == owner_params,
-                    "type arguments in expressions land in Task 4"
-                );
-                self.not_generic(method.name, angles);
-                None
+            // A method with parameters of its own takes the list at its call.
+            Some(Declared::Known(func))
+                if self.signatures[func.0].type_params.len() > owner_params => {}
+            Some(Declared::Known(_)) => self.not_generic(method.name, angles),
+            None if field => {
+                return Some(self.misread(receiver_expr.span.to(method.span), Some(first)));
             }
-            None if field => Some(self.misread(receiver_expr.span.to(method.span), Some(first))),
-            _ => None,
+            _ => {}
         }
+        None
+    }
+
+    /// Reports the type arguments in `angles` after `variant`, a variant of the generic enum
+    /// `base` names, which takes its enum's: the help writes them on the enum.
+    pub(super) fn variant_args(&mut self, base: &ast::Expr, variant: &ast::Ident, angles: Span) {
+        let text = self.source.text;
+        let instead = format!(
+            "{}{}.{}",
+            &text[base.span.range()],
+            &text[angles.range()],
+            variant.name
+        );
+        self.report(DiagnosticKind::TypeArguments {
+            name: text[base.span.start()..variant.span.end()].to_string(),
+            at: angles,
+            form: ArgumentsForm::Variant { instead },
+        });
     }
 }

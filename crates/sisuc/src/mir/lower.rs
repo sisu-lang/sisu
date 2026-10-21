@@ -644,7 +644,7 @@ impl<'a> Lowering<'a> {
                     .expect("a constant or a local should be a leaf operand"),
             ),
             ExprKind::Str(text) => Rvalue::CopyStr(text.clone()),
-            ExprKind::Call { func, args } => Rvalue::Call {
+            ExprKind::Call { func, args, .. } => Rvalue::Call {
                 func: *func,
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
                 borrowed: vec![false; args.len()],

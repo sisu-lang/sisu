@@ -285,6 +285,9 @@ pub(crate) enum ExprKind {
     Local(LocalId),
     Call {
         func: FuncId,
+        /// The callee's type arguments, a method's receiver's first; `NONE` when it is not
+        /// generic.
+        types: TypeArgs,
         args: Vec<Expr>,
     },
     New {
@@ -813,9 +816,10 @@ impl Printer<'_> {
             ExprKind::Str(s) => write!(f, "{s:?}"),
             ExprKind::None => f.write_str("None"),
             ExprKind::Local(id) => self.local(f, *id),
-            ExprKind::Call { func, args } => {
+            ExprKind::Call { func, types, args } => {
                 let name = &self.program.functions[func.0].name;
-                self.list(f, format_args!("call {name}"), args)
+                let types = types.written(|ty| self.program.type_name(ty));
+                self.list(f, format_args!("call {name}{types}"), args)
             }
             ExprKind::New { class, args } => {
                 let name = &self.program.classes[class.0].name;
@@ -1371,6 +1375,7 @@ mod tests {
         let call = expr(
             ExprKind::Call {
                 func: FuncId(0),
+                types: TypeArgs::NONE,
                 args: vec![neg3],
             },
             Type::I64,
@@ -1554,6 +1559,7 @@ mod tests {
         let call = expr(
             ExprKind::Call {
                 func: FuncId(0),
+                types: TypeArgs::intern(&[Type::I64]),
                 args: vec![],
             },
             Type::UNIT,
@@ -1596,7 +1602,7 @@ mod tests {
         assert_eq!(
             program.to_string(),
             "(fn first () unit (block (return)))\n\
-             (fn second ((a#0 i64) (ok#1 bool)) bool (block (call first) (&& ok#1 (&& (== a#0 3) (< a#0 4)))))"
+             (fn second ((a#0 i64) (ok#1 bool)) bool (block (call first<i64>) (&& ok#1 (&& (== a#0 3) (< a#0 4)))))"
         );
     }
 
@@ -2098,6 +2104,7 @@ mod tests {
         let ret = expr(ExprKind::Return(None), Type::NEVER);
         let call = ExprKind::Call {
             func: FuncId(0),
+            types: TypeArgs::NONE,
             args: vec![int(1), ret],
         };
         assert!(expr(call, Type::UNIT).exits());

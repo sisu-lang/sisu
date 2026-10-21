@@ -33,7 +33,7 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::source::Span;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 /// One arm's pattern: a row of the matrix.
 pub(super) struct Row<'a> {
@@ -198,11 +198,11 @@ fn bottom(guarded: bool) -> StackId {
     if guarded { GUARDED } else { EMPTY }
 }
 
-/// The type of a column as coverage sees it: its enum, a type whose literals or ranges a
-/// pattern names, or `Other`, a type whose values no pattern names.
+/// The type of a column as coverage sees it: its enum with its type arguments, a type whose
+/// literals or ranges a pattern names, or `Other`, a type whose values no pattern names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Col {
-    Enum(usize),
+    Enum(usize, TypeArgs),
     I64,
     U8,
     Char,
@@ -213,7 +213,7 @@ enum Col {
 
 fn column(ty: Type) -> Col {
     match ty.kind() {
-        TypeKind::Enum(id, _) => Col::Enum(id.0),
+        TypeKind::Enum(id, args) => Col::Enum(id.0, args),
         TypeKind::I64 => Col::I64,
         TypeKind::U8 => Col::U8,
         TypeKind::Char => Col::Char,
@@ -479,7 +479,7 @@ impl Solver<'_> {
         match &p.kind {
             tir::PatternKind::Wild | tir::PatternKind::Bind(_) => WILD,
             tir::PatternKind::Variant { variant, fields } => {
-                let Col::Enum(enum_id) = col else {
+                let Col::Enum(enum_id, args) = col else {
                     panic!("a variant pattern should sit at an enum")
                 };
                 let enums = self.enums;
@@ -487,7 +487,9 @@ impl Solver<'_> {
                 let fields = fields
                     .iter()
                     .zip(payload)
-                    .map(|(field, payload)| self.intern(field, column(payload.ty)))
+                    .map(|(field, payload)| {
+                        self.intern(field, column(payload.ty.subst(args.get())))
+                    })
                     .collect();
                 self.pat(Pat::Variant {
                     enum_id,
@@ -846,7 +848,7 @@ impl Solver<'_> {
             .filter(|k| !bucket.contains_key(k))
             .collect();
         let constructors = match col {
-            Col::Enum(e) => Some(self.enums[e].variants.len()),
+            Col::Enum(e, _) => Some(self.enums[e].variants.len()),
             Col::Bool => Some(2),
             Col::I64 | Col::U8 | Col::Char => Some(intervals.len()),
             Col::Str | Col::Other => None,
@@ -922,7 +924,7 @@ impl Solver<'_> {
     fn child_rows(&mut self, frame: &Frame) -> Box<[StackId]> {
         let child = &frame.children[frame.next];
         let heads: Vec<_> = child.members.iter().map(|&e| frame.expanded[e]).collect();
-        let Col::Enum(enum_id) = frame.col else {
+        let Col::Enum(enum_id, args) = frame.col else {
             return heads.into_iter().map(|head| head.tail).collect();
         };
         if !child.bucket {
@@ -939,7 +941,7 @@ impl Solver<'_> {
                     .rev()
                     .fold(head.tail, |tail, (k, field)| {
                         let pat = self.field(head.head, k);
-                        self.push(pat, column(field.ty), tail)
+                        self.push(pat, column(field.ty.subst(args.get())), tail)
                     })
             })
             .collect()
@@ -951,7 +953,7 @@ impl Solver<'_> {
         let witness = frame.best.map(|(order, child, witness, _)| {
             let head = match frame.col {
                 // A bucket's witness starts with the variant's fields: they become its payload.
-                Col::Enum(enum_id) if frame.children[child].bucket => {
+                Col::Enum(enum_id, _) if frame.children[child].bucket => {
                     let count = self.enums[enum_id].variants[order].fields.len();
                     let mut fields = Vec::with_capacity(count);
                     let mut rest = witness;
@@ -968,7 +970,7 @@ impl Solver<'_> {
                     return self.push(head, frame.col, rest);
                 }
                 // The default stands for a variant when a row names another.
-                Col::Enum(enum_id) if frame.children.len() > 1 => {
+                Col::Enum(enum_id, _) if frame.children.len() > 1 => {
                     if let Some(&head) = self.defaults.get(&(enum_id, order)) {
                         head
                     } else {

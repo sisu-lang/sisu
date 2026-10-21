@@ -4,9 +4,12 @@
 use std::fmt;
 
 use super::expr::{no_member, postfix};
+use super::generic::{GenericSig, Site, mark, mismatched};
 use super::number;
 use super::prelude::PRELUDE;
-use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, built_in_type, type_of};
+use super::{
+    Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, built_in_type, own_args, type_of,
+};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, Suggestion, alias, suggestion,
@@ -16,7 +19,9 @@ use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
-    pub(super) fn call(&mut self, span: Span, callee: &ast::Ident, args: &[ast::Arg]) -> Checked {
+    /// `callee(args)`, which `site` writes with its type arguments.
+    pub(super) fn call(&mut self, span: Span, site: Site<'_>, args: &[ast::Arg]) -> Checked {
+        let callee = site.name;
         let declared = (
             self.class_ids.get(&callee.name).copied(),
             self.function_ids.get(&callee.name).copied(),
@@ -40,8 +45,8 @@ impl Checker<'_> {
             return self.convert(span, callee.span, to, args);
         }
         match declared {
-            (Some(Declared::Known(class)), _) => self.construct_class(span, class, args),
-            (_, Some(Declared::Known(func))) => self.invoke(span, func, None, args),
+            (Some(Declared::Known(class)), _) => self.construct_class(span, class, site, args),
+            (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
             _ => match self.bare_variant(callee.name, callee.span) {
                 Some(d) => {
                     self.diagnostics.push(d);
@@ -167,22 +172,24 @@ impl Checker<'_> {
     /// `receiver.method<types>(args)` as written, the type arguments in `angles`, `(args)` at
     /// `parens`, which `safe` makes `receiver?.method(args)`. A type or `math` before the `.`
     /// may make it an idiom. Type arguments on a member the receiver has not are not reported:
-    /// the unknown member is.
+    /// the unknown member is. `site` writes the method's name with its type arguments.
     pub(super) fn method_expr(
         &mut self,
         span: Span,
         safe: bool,
         receiver: &ast::Expr,
-        (method, types, angles): (&ast::Ident, &[ast::TypeExpr], Span),
+        site: Site<'_>,
         args: &[ast::Arg],
         parens: Span,
     ) -> Checked {
+        let (method, types, angles) = (site.name, site.written, site.angles);
         let start = self.diagnostics.len();
         let path = !types.is_empty() && self.path_method(receiver, method);
         // Whether the list is reported only once the member is found: a path's, or a built-in's.
         let mut deferred = path;
         let checked = if !safe
-            && let Some(checked) = self.type_path(span, receiver, method, Some((args, parens)))
+            && let Some(checked) =
+                self.type_path(span, receiver, method, Some((args, parens)), site.expected)
         {
             checked
         } else {
@@ -199,7 +206,7 @@ impl Checker<'_> {
                         )
                     });
                 }
-                c.method_call(span, checked, receiver, method, args)
+                c.method_call(span, checked, receiver, site, args)
             })
         };
         // The member was found unknown, or the receiver of a path that is no idiom was: a name
@@ -210,7 +217,10 @@ impl Checker<'_> {
             _ => false,
         });
         if deferred && !unknown {
-            self.not_generic(method.name, angles);
+            match self.generic_variant(receiver, method) {
+                Some(_) => self.variant_args(receiver, method, angles),
+                None => self.not_generic(method.name, angles),
+            }
         }
         checked
     }
@@ -221,9 +231,10 @@ impl Checker<'_> {
         span: Span,
         receiver: Checked,
         receiver_expr: &ast::Expr,
-        method: &ast::Ident,
+        site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
+        let method = site.name;
         // The arguments are not part of an assignment target's chain; `expr` restores the flag.
         let target = std::mem::take(&mut self.body.in_target);
         match type_of(&receiver) {
@@ -241,20 +252,23 @@ impl Checker<'_> {
             self.stray(args);
             return Err(Poisoned::error());
         };
-        self.invoke(span, func, Some(receiver), args)
+        self.invoke(span, func, Some(receiver), site, args)
     }
 
-    /// A call of `func`. `receiver` is a method's `self`; `args` match the other parameters.
+    /// A call of `func`, which `site` writes. `receiver` is a method's `self`; `args` match the
+    /// other parameters.
     fn invoke(
         &mut self,
         span: Span,
         func: tir::FuncId,
         receiver: Option<Checked>,
+        site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
+        let declared = sig.type_params.clone();
         if params.len() != args.len() {
             self.stray(args);
             if !self.misread_in(args) {
@@ -267,16 +281,43 @@ impl Checker<'_> {
             }
             return Err(Poisoned::error());
         }
-        let (checked, mismatched): (Vec<_>, Vec<_>) = args
-            .iter()
-            .zip(&params)
-            .map(|(arg, &param)| self.operand(&arg.value, param))
-            .unzip();
-        let failed = labeled || mismatched.contains(&true);
-        match (receiver.into_iter().chain(checked).collect(), ret) {
-            (Ok(args), Some(ret)) if !failed => {
-                Ok(self.spilled(span, ret, args, |args| tir::ExprKind::Call { func, args }))
+        let (checked, types, ret) = if declared.is_empty() {
+            let checked = args
+                .iter()
+                .zip(&params)
+                .map(|(arg, &param)| mark(self.operand(&arg.value, param)))
+                .collect();
+            (checked, TypeArgs::NONE, ret)
+        } else {
+            // A method's receiver binds its owner's parameters.
+            let owner = match receiver.as_ref().and_then(type_of).map(Type::kind) {
+                Some(TypeKind::Class(_, owner) | TypeKind::Enum(_, owner)) => owner.get(),
+                _ => &[],
+            };
+            // A list on a method that takes none of its own is reported already.
+            let written = if declared.len() > owner.len() {
+                site.written
+            } else {
+                &[]
+            };
+            let sig = GenericSig {
+                name: site.name,
+                variant: None,
+                declared: &declared,
+                owner,
+                params: &params,
+                ret,
+            };
+            match self.generic_call(span, &sig, (written, site.angles), args, site.expected) {
+                Some(call) => call,
+                None => return Err(Poisoned::error()),
             }
+        };
+        let failed = labeled || checked.iter().any(mismatched);
+        match (receiver.into_iter().chain(checked).collect(), ret) {
+            (Ok(args), Some(ret)) if !failed => Ok(self.spilled(span, ret, args, |args| {
+                tir::ExprKind::Call { func, types, args }
+            })),
             (_, ret) => Err(Poisoned::of(ret.filter(|_| !failed))),
         }
     }
@@ -335,21 +376,83 @@ impl Checker<'_> {
         labeled
     }
 
-    /// `C(f: e, ...)`, a construction of the class `class`.
-    fn construct_class(&mut self, span: Span, class: tir::ClassId, args: &[ast::Arg]) -> Checked {
+    /// `C(f: e, ...)`, a construction of the class `class`, which `site` writes.
+    fn construct_class(
+        &mut self,
+        span: Span,
+        class: tir::ClassId,
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) -> Checked {
         let info = &self.classes[class.0];
-        assert!(
-            info.type_params.is_empty(),
-            "type arguments in expressions land in Task 4"
-        );
         let name = info.name.name.as_str();
         let fields: Vec<(Symbol, Option<Type>)> =
             info.fields.iter().map(|f| (f.name.name, f.ty)).collect();
+        if !info.type_params.is_empty() {
+            let declared = info.type_params.clone();
+            let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
+            if !self.shaped(span, &name, &names, args) {
+                return Err(Poisoned::error());
+            }
+            let params: Vec<_> = fields.iter().map(|(_, ty)| *ty).collect();
+            let sig = GenericSig {
+                name: site.name,
+                variant: None,
+                declared: &declared,
+                owner: &[],
+                params: &params,
+                ret: Some(Type::intern(TypeKind::Class(class, own_args(&declared)))),
+            };
+            let written = (site.written, site.angles);
+            let Some((args, _, Some(ty))) =
+                self.generic_call(span, &sig, written, args, site.expected)
+            else {
+                return Err(Poisoned::error());
+            };
+            let failed = args.iter().any(mismatched);
+            return match args.into_iter().collect() {
+                Ok(args) => {
+                    Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
+                }
+                Err(_) => Err(Poisoned::of((!failed).then_some(ty))),
+            };
+        }
         let ty = Type::intern(TypeKind::Class(class, TypeArgs::NONE));
         match self.construct(span, &name, &fields, args) {
             Ok(args) => Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args })),
             Err(failed) => Err(Poisoned::of((!failed).then_some(ty))),
         }
+    }
+
+    /// Whether the labels of `name(f: e, ...)`, a generic class's constructor or a variant with
+    /// labels, name every one of `fields` in declaration order; the first mistake is reported,
+    /// and then every argument is checked for its own.
+    pub(super) fn shaped(
+        &mut self,
+        span: Span,
+        name: &dyn fmt::Display,
+        fields: &[Symbol],
+        args: &[ast::Arg],
+    ) -> bool {
+        let mistake = args
+            .iter()
+            .enumerate()
+            .find_map(|(i, arg)| misplaced(name, fields, i, arg));
+        if let Some(d) = mistake {
+            self.diagnostics.push(d);
+        } else if let Some(missing) = fields.get(args.len()) {
+            if !self.misread_in(args) {
+                self.report(DiagnosticKind::MissingField {
+                    field: missing.to_string(),
+                    fields: fields.iter().map(ToString::to_string).collect(),
+                    at: span,
+                });
+            }
+        } else {
+            return true;
+        }
+        self.stray(args);
+        false
     }
 
     /// The arguments of `name(f: e, ...)`, a class's constructor or a variant with labels,

@@ -887,8 +887,8 @@ impl Checker<'_> {
                 false
             }
         };
-        let id = match ty.kind() {
-            TypeKind::Enum(id, _) if fits => id.0,
+        let (id, args) = match ty.kind() {
+            TypeKind::Enum(id, args) if fits => (id.0, args),
             _ => {
                 let want = self.type_name(ty);
                 self.report(DiagnosticKind::PatternMismatch {
@@ -936,7 +936,11 @@ impl Checker<'_> {
                 found: fields.len(),
                 at: span,
             },
-            _ => return Some((variant, info.variants[variant].fields.clone())),
+            _ => {
+                let fields = &info.variants[variant].fields;
+                let fields = fields.iter().map(|ty| ty.map(|ty| ty.subst(args.get())));
+                return Some((variant, fields.collect()));
+            }
         };
         self.report(kind);
         None

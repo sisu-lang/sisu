@@ -42,14 +42,6 @@ fn generic_declarations_check_clean() {
     }
 }
 
-/// A generic class is constructed with type arguments only from Task 4 on, so its fields are
-/// never read with none.
-#[test]
-#[should_panic(expected = "type arguments in expressions land in Task 4")]
-fn constructing_a_generic_class_waits_for_type_arguments() {
-    checked("class C<T> {\n    x: T?\n}\nfn main() {\n    let c = C(x: None)\n    let _ = c.x\n}");
-}
-
 /// `tir` names each declaration's type parameters, a method's owner's before its own.
 #[test]
 fn type_parameters_reach_tir() {
@@ -572,4 +564,524 @@ fn type_arguments_on_an_unknown_member() {
     ] {
         codes(&with_decls(src), &expected);
     }
+}
+
+/// The generic declarations the inference rows call, after `DECLS`.
+const GENERIC: &str = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T? {\n    if xs.len() == 0 { return None }\n    xs[0]\n}\nfn pair<T>(a: T, b: T) -> [T] { [a, b] }\nfn opt<T>(x: T?) -> T? { x }\nfn wrap<T>(x: T) -> [T] { [x] }\nfn make<T>() -> [T] { [] }\nfn make_ints() -> [i64] { [1] }\nfn fill<T>(xs: [T], s: Stack<T>) {}\nfn take<U>(x: U, n: i64) {}\nclass Pile<T> {\n    mut top: Cell<T>?\n    fn push(self, x: T) { self.top = Cell(value: x, next: self.top) }\n}\nclass Box<T> {\n    v: T\n    fn map_all<U>(self, u: U) -> [U] { [u] }\n}\nenum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}\nenum Opt2<T> {\n    S(T)\n    N\n}\nenum Wrap<T> { W(T) }\nenum E<T> {\n    A(T)\n    fn map<U>(self, u: U) -> [U] { [u] }\n}";
+
+/// `line` on line 1, then `GENERIC` and `DECLS`.
+fn with_generics(line: &str) -> String {
+    format!("{line}\n{GENERIC}\n{DECLS}")
+}
+
+/// The type arguments of the first call of `callee` in `src`'s `tir`, before `mono`, then the
+/// call's type, each as a program writes it. `callee` names a function (`Box.map_all` for a
+/// method), or a class or an enum, whose construction's arguments are its type's.
+fn call_types(src: &str, callee: &str) -> Vec<String> {
+    let (program, ds) = checked(src);
+    assert!(ds.is_empty(), "{ds:?}");
+    let program = program.expect("a program without diagnostics should have a tir");
+    let mut exprs = Vec::new();
+    for function in &program.functions {
+        block_exprs(&function.body, &mut exprs);
+    }
+    let call = exprs.into_iter().find_map(|e| {
+        let (name, types) = match (&e.kind, e.ty.kind()) {
+            (tir::ExprKind::Call { func, types, .. }, _) => {
+                (&program.functions[func.0].name, *types)
+            }
+            (tir::ExprKind::New { .. }, TypeKind::Class(id, args)) => {
+                (&program.classes[id.0].name, args)
+            }
+            (tir::ExprKind::Variant { .. }, TypeKind::Enum(id, args)) => {
+                (&program.enums[id.0].name, args)
+            }
+            _ => return None,
+        };
+        (name == callee).then_some((types, e.ty))
+    });
+    let (types, ty) = call.unwrap_or_else(|| panic!("`{callee}` should be called in {src}"));
+    let mut names: Vec<_> = types.get().iter().map(|&t| program.type_name(t)).collect();
+    names.push(program.type_name(ty));
+    names
+}
+
+/// `e` and every expression inside it, outermost first.
+fn exprs<'a>(e: &'a tir::Expr, out: &mut Vec<&'a tir::Expr>) {
+    use tir::ExprKind as K;
+    out.push(e);
+    match &e.kind {
+        K::Int(_)
+        | K::Float(_)
+        | K::Bool(_)
+        | K::Char(_)
+        | K::Str(_)
+        | K::None
+        | K::Local(_)
+        | K::ReadLine
+        | K::Break
+        | K::Continue
+        | K::Return(None) => {}
+        K::Call { args, .. }
+        | K::New { args, .. }
+        | K::Variant { args, .. }
+        | K::ArrayLit(args)
+        | K::Math { operands: args, .. }
+        | K::Interpolate { parts: args, .. }
+        | K::Compare { operands: args, .. } => args.iter().for_each(|a| exprs(a, out)),
+        K::Field { base: e, .. }
+        | K::Wrap(e)
+        | K::Convert(e)
+        | K::Print { operand: e, .. }
+        | K::Panic(e)
+        | K::Len(e)
+        | K::Chars(e)
+        | K::Bytes(e)
+        | K::Words(e)
+        | K::FromChars(e)
+        | K::Sum(e)
+        | K::Unary { operand: e, .. }
+        | K::Return(Some(e)) => exprs(e, out),
+        K::ArrayFill { value: a, len: b }
+        | K::Index { base: a, index: b }
+        | K::Contains { base: a, value: b }
+        | K::Binary { lhs: a, rhs: b, .. }
+        | K::Concat { lhs: a, rhs: b }
+        | K::Equal { lhs: a, rhs: b, .. }
+        | K::Is { lhs: a, rhs: b } => {
+            exprs(a, out);
+            exprs(b, out);
+        }
+        K::If {
+            cond: first,
+            then_block,
+            else_block,
+        }
+        | K::IfSome {
+            scrutinee: first,
+            then_block,
+            else_block,
+            ..
+        } => {
+            exprs(first, out);
+            block_exprs(then_block, out);
+            if let Some(b) = else_block {
+                block_exprs(b, out);
+            }
+        }
+        K::Match {
+            scrutinee, arms, ..
+        } => {
+            exprs(scrutinee, out);
+            for arm in arms {
+                arm.guard.iter().for_each(|g| exprs(g, out));
+                block_exprs(&arm.body, out);
+            }
+        }
+        K::Loop(block) | K::Block(block) => block_exprs(block, out),
+    }
+}
+
+/// Every expression in `block`, in order.
+fn block_exprs<'a>(block: &'a tir::Block, out: &mut Vec<&'a tir::Expr>) {
+    for stmt in &block.stmts {
+        match stmt {
+            tir::Stmt::Let { init: e, .. } | tir::Stmt::Expr(e) => exprs(e, out),
+            tir::Stmt::Assign { place, value } | tir::Stmt::Append { place, value } => {
+                place_exprs(place, out);
+                exprs(value, out);
+            }
+        }
+    }
+    block.value.iter().for_each(|v| exprs(v, out));
+}
+
+fn place_exprs<'a>(place: &'a tir::Place, out: &mut Vec<&'a tir::Expr>) {
+    match place {
+        tir::Place::Local(_) => {}
+        tir::Place::Field { base, .. } => exprs(base, out),
+        tir::Place::Index { base, index } => {
+            place_exprs(base, out);
+            exprs(index, out);
+        }
+    }
+}
+
+/// Each row's `callee` is called with the type arguments and type after it (see `call_types`).
+fn infers(rows: &[(&str, &str, &[&str])]) {
+    for &(line, callee, expected) in rows {
+        assert_eq!(call_types(&with_generics(line), callee), expected, "{line}");
+    }
+}
+
+/// Arguments and a method's receiver bind the callee's type parameters, or written type
+/// arguments give them; the result's type is the return type with them substituted.
+#[test]
+fn arguments_bind_type_parameters() {
+    infers(&[
+        (
+            "fn g() -> i64? { first([3, 9, 2]) }",
+            "first",
+            &["i64", "i64?"],
+        ),
+        (
+            "fn g() -> string? { first<string>([]) }",
+            "first",
+            &["string", "string?"],
+        ),
+        (
+            "fn g(x: [string]) -> string? { first(x) }",
+            "first",
+            &["string", "string?"],
+        ),
+        (
+            "fn g() -> Cell<i64> { Cell(value: 1, next: None) }",
+            "Cell",
+            &["i64", "Cell<i64>"],
+        ),
+        (
+            "fn g() -> Stack<i64> { Stack<i64>(top: None) }",
+            "Stack",
+            &["i64", "Stack<i64>"],
+        ),
+        // `Pile.push` builds a `Cell<T>` of its own parameter.
+        ("fn g() {}", "Cell", &["T", "Cell<T>"]),
+        (
+            "fn g(s: Pile<string>) { s.push(\"a\") }",
+            "Pile.push",
+            &["string", "unit"],
+        ),
+        (
+            "fn g() -> [string] { Box(v: 1).map_all(\"a\") }",
+            "Box.map_all",
+            &["i64", "string", "[string]"],
+        ),
+        (
+            "fn g() -> [f64] { Box(v: 1).map_all<f64>(2.5) }",
+            "Box.map_all",
+            &["i64", "f64", "[f64]"],
+        ),
+        (
+            "fn g() -> [string] { E.A(1).map(\"a\") }",
+            "E.map",
+            &["i64", "string", "[string]"],
+        ),
+        (
+            "fn g() -> Tree<i64> { Tree.Node(Tree.Leaf, 5, Tree.Leaf) }",
+            "Tree",
+            &["i64", "Tree<i64>"],
+        ),
+        (
+            "fn g() -> Tree<i64> { Tree<i64>.Leaf }",
+            "Tree",
+            &["i64", "Tree<i64>"],
+        ),
+        (
+            "enum Ignore<T> { A }\nenum F { A(Ignore<F>) }\nfn g() -> F { F.A(Ignore.A) }",
+            "Ignore",
+            &["F", "Ignore<F>"],
+        ),
+    ]);
+}
+
+/// The expected type binds what no other argument does, an optional one's payload a return
+/// type that is not optional.
+#[test]
+fn the_expected_type_binds_the_rest() {
+    infers(&[
+        (
+            "fn g() {\n    let s: Stack<string> = Stack(top: None)\n}",
+            "Stack",
+            &["string", "Stack<string>"],
+        ),
+        (
+            "fn g() {\n    let t: Tree<string> = Tree.Leaf\n}",
+            "Tree",
+            &["string", "Tree<string>"],
+        ),
+        ("fn g() {\n    let x: f64 = id(1)\n}", "id", &["f64", "f64"]),
+        (
+            "fn g() {\n    let x: i64? = id(5)\n}",
+            "id",
+            &["i64", "i64"],
+        ),
+        (
+            "fn g() {\n    let xs: [i64] = id(make())\n}",
+            "make",
+            &["i64", "[i64]"],
+        ),
+    ]);
+}
+
+/// A literal-like argument takes its type from the others, as an array literal's element
+/// does from its neighbours.
+#[test]
+fn literal_like_arguments_follow_the_others() {
+    infers(&[
+        ("fn g() -> [i64] { pair(1, 2) }", "pair", &["i64", "[i64]"]),
+        (
+            "fn g() -> [f64] { pair(1, 2.5) }",
+            "pair",
+            &["f64", "[f64]"],
+        ),
+        (
+            "fn g() -> [f64] { pair(2.5, 1) }",
+            "pair",
+            &["f64", "[f64]"],
+        ),
+        (
+            "fn g() -> [f64] { pair(-1, 2.5) }",
+            "pair",
+            &["f64", "[f64]"],
+        ),
+        (
+            "fn g(x: f64) -> [f64] { pair(x, 1) }",
+            "pair",
+            &["f64", "[f64]"],
+        ),
+        (
+            "fn g() -> [[i64]] { pair(make_ints(), []) }",
+            "pair",
+            &["[i64]", "[[i64]]"],
+        ),
+        (
+            "fn g() {\n    let xs: [f64] = id([1, 2])\n}",
+            "id",
+            &["[f64]", "[f64]"],
+        ),
+        (
+            "fn g() {\n    let xs: [f64?] = id([1, None])\n}",
+            "id",
+            &["[f64?]", "[f64?]"],
+        ),
+        (
+            "fn g(s: Stack<f64>) { fill([1, 2], s) }",
+            "fill",
+            &["f64", "unit"],
+        ),
+    ]);
+}
+
+/// A `T?` parameter takes an optional's payload, or a value the call wraps.
+#[test]
+fn an_optional_parameter_takes_the_payload() {
+    infers(&[
+        ("fn g() -> i64? { opt(5) }", "opt", &["i64", "i64?"]),
+        ("fn g(n: i64?) -> i64? { opt(n) }", "opt", &["i64", "i64?"]),
+    ]);
+}
+
+/// An argument that needs context is checked against its parameter once the others bind it.
+#[test]
+fn arguments_that_need_context_wait_for_it() {
+    infers(&[
+        (
+            "fn g() {\n    let xs: [i64] = id(id([]))\n}",
+            "id",
+            &["[i64]", "[i64]"],
+        ),
+        (
+            "fn g(c: bool) {\n    let xs: [i64] = id(if c { [] } else { [] })\n}",
+            "id",
+            &["[i64]", "[i64]"],
+        ),
+        (
+            "fn g(c: bool) -> [i64] {\n    let xs: [i64] = id(if c { return [] } else { [] })\n    xs\n}",
+            "id",
+            &["[i64]", "[i64]"],
+        ),
+        (
+            "fn g() {\n    let xs: [i64] = id({ [] })\n}",
+            "id",
+            &["[i64]", "[i64]"],
+        ),
+        (
+            "fn g() {\n    let xs: [[i64]] = id([[], []])\n}",
+            "id",
+            &["[[i64]]", "[[i64]]"],
+        ),
+        (
+            "fn g() {\n    let s: Stack<i64> = id(Stack(top: None))\n}",
+            "id",
+            &["Stack<i64>", "Stack<i64>"],
+        ),
+        (
+            "fn g() {\n    let w: Wrap<[i64]> = id(Wrap.W([]))\n}",
+            "Wrap",
+            &["[i64]", "Wrap<[i64]>"],
+        ),
+    ]);
+}
+
+/// Whether an argument needs context goes by what its names resolve to: a call's callee by
+/// its declaration, whatever local takes the name, and a local before a variant.
+#[test]
+fn context_follows_name_resolution() {
+    infers(&[
+        (
+            "fn g() {\n    let make = 42\n    print(make)\n    let xs: [i64] = id(make())\n}",
+            "id",
+            &["[i64]", "[i64]"],
+        ),
+        (
+            "fn g() -> i64 {\n    let Leaf = 1\n    id(Leaf)\n}",
+            "id",
+            &["i64", "i64"],
+        ),
+    ]);
+}
+
+/// Inside a generic body, the caller's parameters are fixed types that bind the callee's.
+#[test]
+fn callee_params_are_not_the_callers() {
+    infers(&[
+        (
+            "fn g<T>(xs: [T]) -> T? { first(xs) }",
+            "first",
+            &["T", "T?"],
+        ),
+        ("fn h<T>(x: T) -> [T] { wrap(x) }", "wrap", &["T", "[T]"]),
+    ]);
+}
+
+/// A field, a method's signature and a pattern's payload take the receiver's or the
+/// scrutinee's arguments, and coverage splits the substituted payload.
+#[test]
+fn members_and_patterns_substitute_the_arguments() {
+    for line in [
+        "fn g(s: Stack<string>) -> Cell<string>? { s.top }",
+        "fn g(s: Stack<i64>) { s.top = None }",
+        "fn g(o: Opt2<bool>) -> i64 {\n    match o {\n        Opt2.S(true) => 1\n        Opt2.S(false) => 2\n        Opt2.N => 3\n    }\n}",
+        "fn g(o: Opt2<i64>) -> i64 {\n    match o {\n        Opt2.S(n) => n\n        Opt2.N => 0\n    }\n}",
+        "class Q<T> {\n    v: T\n    fn put(self, x: T) {}\n}\nfn g(q: Q<i64>) { q.put(1) }",
+    ] {
+        clean(&with_generics(line));
+    }
+}
+
+/// An argument that may exit after one whose type names a parameter, or a generic enum's
+/// variant, spills it, as for a call of a declaration that is not generic.
+#[test]
+fn generic_calls_spill_their_arguments() {
+    contains(
+        &with_generics("fn h<T>(x: T, c: bool) {\n    take(x, if c { return } else { 0 })\n}"),
+        &["(let #2 x#0)"],
+    );
+    contains(
+        &with_generics(
+            "fn k(w: Wrap<string>, n: i64) {}\nfn h(s: string, c: bool) {\n    k(Wrap.W(s), if c { return } else { 0 })\n}",
+        ),
+        &["(let #2 (variant Wrap.W s#0))"],
+    );
+}
+
+#[test]
+fn generic_calls_that_do_not_check() {
+    let infer = |at| vec![(Code::CannotInfer, at)];
+    let arguments = |at| vec![(Code::TypeArguments, at)];
+    let argument = |at| vec![(Code::TypeArgument, at)];
+    for (line, expected) in [
+        // The call's result meets the expected type after `n` binds `T`.
+        (
+            "fn g() {\n    let n: i64 = 1\n    let x: f64 = id(n)\n}",
+            vec![(Code::Mismatch, (3, 18))],
+        ),
+        ("fn g() {\n    let x = first([])\n}", infer((2, 13))),
+        ("fn g() {\n    let t = Tree.Leaf\n}", infer((2, 13))),
+        // A later use binds nothing.
+        (
+            "fn g() {\n    let s = Pile(top: None)\n    s.push(1)\n}",
+            infer((2, 13)),
+        ),
+        ("fn g() {\n    let x = id(make())\n}", infer((2, 13))),
+        (
+            "fn g(b: Box<i64>) {\n    let x = b.map_all([])\n}",
+            infer((2, 15)),
+        ),
+        // An argument that cannot fit its parameter binds nothing, and is the call's error.
+        (
+            "fn g() {\n    let x = first(5)\n}",
+            vec![(Code::Mismatch, (2, 19))],
+        ),
+        (
+            "fn g() {\n    let x = pair(1, \"a\")\n}",
+            vec![(Code::Mismatch, (2, 18))],
+        ),
+        (
+            "fn g() {\n    let x = id(Leaf)\n}",
+            vec![(Code::BareVariant, (2, 16))],
+        ),
+        (
+            "fn f<T>(o: Opt2<T>) -> i64 {\n    match o { Opt2.N => 0 }\n}",
+            vec![(Code::NonExhaustive, (2, 5))],
+        ),
+        (
+            "fn g() -> Tree<i64> { Tree.Node<i64>(Tree.Leaf, 5, Tree.Leaf) }",
+            arguments((1, 32)),
+        ),
+        (
+            "fn g() {\n    let x = first<i64, string>([])\n}",
+            arguments((2, 18)),
+        ),
+        (
+            "fn g() {\n    let x = Box(v: 1).map_all<f64, f64>(2.5)\n}",
+            arguments((2, 30)),
+        ),
+        (
+            "fn g() {\n    let x = first<i64?>([])\n}",
+            argument((2, 19)),
+        ),
+        // `never` binds only what nothing else does.
+        (
+            "fn g() {\n    let x = id(panic(\"x\"))\n}",
+            argument((2, 16)),
+        ),
+        (
+            "fn g() {\n    let x = pair(panic(\"x\"), 1)\n}",
+            vec![(Code::NoValue, (2, 18))],
+        ),
+        // A variant's base is a type, which no assignment takes.
+        (
+            "fn g() {\n    Tree<i64>.Leaf = 1\n}",
+            vec![(Code::TypeAsValue, (2, 5))],
+        ),
+        (
+            "fn g() {\n    let x = id(1, 2)\n}",
+            vec![(Code::ArgumentCount, (2, 13))],
+        ),
+        (
+            "fn g() {\n    let x = id(x: 1)\n}",
+            vec![(Code::LabeledArgument, (2, 16))],
+        ),
+        (
+            "fn g() {\n    let c = Cell(value: 1)\n}",
+            vec![(Code::MissingField, (2, 13))],
+        ),
+        (
+            "fn g() {\n    let c = Cell(next: None, value: 1)\n}",
+            vec![(Code::FieldOutOfOrder, (2, 18))],
+        ),
+        (
+            "fn g() {\n    let t = Tree.Node(Tree.Leaf, 5)\n}",
+            vec![(Code::ArgumentCount, (2, 13))],
+        ),
+    ] {
+        codes(&with_generics(line), &expected);
+    }
+}
+
+/// The new form of `CannotInfer` is at the callee's name, with a help, and so is the list on a
+/// variant; an inferred optional's `TypeArgument` is at the argument that binds it.
+#[test]
+fn what_inference_reports() {
+    let src = with_generics("fn g() {\n    let x = first([])\n}");
+    let d = diagnostic(&src, Code::CannotInfer, (2, 13, "first"), &[]);
+    assert!(d.help().is_some());
+    let src = with_generics("fn g() {\n    let t = Tree.Leaf\n}");
+    diagnostic(&src, Code::CannotInfer, (2, 13, "Tree.Leaf"), &[]);
+    let src = with_generics("fn g() {\n    let n: i64? = None\n    let x = id(n)\n}");
+    diagnostic(&src, Code::TypeArgument, (3, 16, "n"), &[]);
+    let src = with_generics("fn g() -> Tree<i64> { Tree.Node<i64>(Tree.Leaf, 5, Tree.Leaf) }");
+    let d = diagnostic(&src, Code::TypeArguments, (1, 32, "<i64>"), &[]);
+    assert!(d.help().is_some());
 }
