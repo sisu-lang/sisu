@@ -11,9 +11,9 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit 8e7bd64</p>
+    <p class="meta">{{adr-count}} records · at commit 6b3a8aa</p>
   </div></section>
-  <!-- source: docs/adr/ (29 files, 0001 to 0025 and 0027 to 0030), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (30 files, 0001 to 0030), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -25,6 +25,7 @@ The design decisions behind Sisu, each written down as a short record with its r
       <li><a href="#types">Types</a></li>
       <li><a href="#errors">Errors and diagnostics</a></li>
       <li><a href="#runtime">Runtime, I/O and concurrency</a></li>
+      <li><a href="#compiler">The compiler</a></li>
       <li><a href="#avoided">What Sisu deliberately avoids</a></li>
       <li><a href="#propose">Proposing a change</a></li>
     </ol></nav>
@@ -105,6 +106,12 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0010-tasks-share-no-objects.md"><span class="num">0010</span><b>Tasks share no objects<small>proposed</small></b><span>A value that crosses into another task is copied; only channel and task handles are shared.</span></a></li>
       </ul>
       <!-- source: docs/adr/0009-runtime-owns-io.md, docs/adr/0016-word-functions-trust-the-utf-8-invariant.md, docs/adr/0010-tasks-share-no-objects.md -->
+
+      <h2 id="compiler">The compiler</h2>
+      <ul class="rows">
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0026-one-compiler-crate.md"><span class="num">0026</span><b>The compiler stays one crate</b><span>A split before LLVM was measured against a rule set in advance: an edit already rebuilds the tests in about 2 s, so a split cannot pay for itself.</span></a></li>
+      </ul>
+      <!-- source: docs/adr/0026-one-compiler-crate.md -->
 
       <h2 id="avoided">What Sisu deliberately avoids</h2>
       <p>These come from the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#deliberately-avoided">Deliberately avoided</a> list.</p>
