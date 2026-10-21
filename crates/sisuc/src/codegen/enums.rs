@@ -336,6 +336,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             tag.const_int(tag_value, false).into(),
         );
         let fields = &self.program.enums[id.0].variants[variant].fields;
+        debug_assert_eq!(
+            reuse.len(),
+            values.len(),
+            "a construction should carry one reuse entry per field"
+        );
         for (field, ((&value, payload), &token)) in values.iter().zip(fields).zip(reuse).enumerate()
         {
             let place = self.field_slot(slot, id, variant, field);

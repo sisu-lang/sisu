@@ -48,8 +48,8 @@ fn joined_at(n: i64) -> string {
 }
 
 fn main() {
-    print(tag_of(Tagged.Two(Tagged.Tag("t" + "", Tagged.Leaf("x" + "")), Tagged.Leaf("u" + ""))))
-    print(below(Outer.O(Tagged.Two(Tagged.Leaf("a" + ""), Tagged.Leaf("c" + "")), "b" + "")))
-    print(joined_at(5))
-    print(joined_at(1))
+    print(tag_of(Tagged.Two(Tagged.Tag("t" + "", Tagged.Leaf("x" + "")), Tagged.Leaf("u" + ""))))  // tu
+    print(below(Outer.O(Tagged.Two(Tagged.Leaf("a" + ""), Tagged.Leaf("c" + "")), "b" + "")))  // ab
+    print(joined_at(5))  // a2b
+    print(joined_at(1))  // none
 }

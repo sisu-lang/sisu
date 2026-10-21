@@ -92,10 +92,10 @@ fn wrap(e: Expr, neg: bool) -> Expr {
 
 fn main() {
     let e = Expr.Add(Expr.Add(Expr.Num(1), Expr.Num(2)), Expr.Num(3))
-    print(show(mirror(e)))
-    print(show(rotate(Expr.Add(Expr.Add(Expr.Num(1), Expr.Num(2)), Expr.Num(3)))))
-    print(show(grow(Expr.Add(Expr.Num(5), Expr.Num(6)), 2)))
-    print(show(wrap(Expr.Add(Expr.Num(1), Expr.Num(2)), true)))
-    print(show(wrap(Expr.Add(Expr.Num(1), Expr.Num(2)), false)))
-    print(size(convert(4)))
+    print(show(mirror(e)))  // (3 (2 1))
+    print(show(rotate(Expr.Add(Expr.Add(Expr.Num(1), Expr.Num(2)), Expr.Num(3)))))  // (1 (2 3))
+    print(show(grow(Expr.Add(Expr.Num(5), Expr.Num(6)), 2)))  // (((5 1) 1) 6)
+    print(show(wrap(Expr.Add(Expr.Num(1), Expr.Num(2)), true)))  // (-1 2)
+    print(show(wrap(Expr.Add(Expr.Num(1), Expr.Num(2)), false)))  // (1 2)
+    print(size(convert(4)))  // 2
 }

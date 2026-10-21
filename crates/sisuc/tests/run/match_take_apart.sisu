@@ -98,34 +98,34 @@ fn inner_left(e: Expr) -> Expr {
 }
 
 fn main() {
-    print(guarded(3))
-    print(guarded(30))
-    print(early(4))
-    print(early(-4))
+    print(guarded(3))  // 3 named x3
+    print(guarded(30))  // big x30
+    print(early(4))  // 6
+    print(early(-4))  // 0
 
     // A shared box: `w` holds the same boxes, so the bindings copy.
     let v = leaf(5)
     let w = v
     match v {
-        Add(Num(n), Name(s)) => print("{n} {s}")
-        _ => print("no")
+        Add(Num(n), Name(s)) => print("{n} {s}")  // 5 x5
+        _ => print("no")  // never runs
     }
-    print(show(w))
+    print(show(w))  // (5 + x5)
 
     // The inner value stays boxed inside its binding: no sub-pattern looks into `l`.
     match Expr.Add(Expr.Add(Expr.Num(1), Expr.Num(2)), Expr.Num(3)) {
-        Add(l, Num(k)) => print("{show(l)} and {k}")
-        _ => print("no")
+        Add(l, Num(k)) => print("{show(l)} and {k}")  // (1 + 2) and 3
+        _ => print("no")  // never runs
     }
 
     // Inner boxes shared with `keep`, outer box unique.
     let u = Expr.Add(Expr.Num(6), Expr.Name("y" + ""))
     let keep = u
     match Expr.Add(u, Expr.Num(7)) {
-        Add(Add(a, b), c) => print("{show(a)} {show(b)} {show(c)}")
-        _ => print("no")
+        Add(Add(a, b), c) => print("{show(a)} {show(b)} {show(c)}")  // 6 y 7
+        _ => print("no")  // never runs
     }
-    print(show(keep))
+    print(show(keep))  // (6 + y)
 
     // A take-apart followed by `continue` frees its tokens on that edge.
     let mut total = 0
@@ -140,47 +140,47 @@ fn main() {
             _ => {}
         }
     }
-    print(total)
+    print(total)  // 8
 
-    print(show(flip(leaf(8), false)))
-    print(show(flip(leaf(9), true)))
-    print(either_name(2))
+    print(show(flip(leaf(8), false)))  // (x8 + 8)
+    print(show(flip(leaf(9), true)))  // 0
+    print(either_name(2))  // x2
 
     // A token beside a rest: unique, then shared with `b`.
-    print(show(first(leaf(10))))
+    print(show(first(leaf(10))))  // 10
     let a = leaf(11)
     let b = a
-    print(show(first(a)))
-    print(show(b))
+    print(show(first(a)))  // 11
+    print(show(b))  // (11 + x11)
     match Expr.Add(Expr.Name("z" + ""), Expr.Name("w" + "")) {
-        Add(Name(s), _) => print(s)
-        _ => print("no")
+        Add(Name(s), _) => print(s)  // z
+        _ => print("no")  // never runs
     }
     let p = Expr.Add(Expr.Name("p" + ""), Expr.Name("q" + ""))
     let q = p
     match p {
-        Add(Name(s), _) => print(s)
-        _ => print("no")
+        Add(Name(s), _) => print(s)  // p
+        _ => print("no")  // never runs
     }
-    print(show(q))
+    print(show(q))  // (p + q)
 
     // A shared tested box with an unbound counted part.
     let u = Expr.Add(Expr.Add(Expr.Name("u" + ""), Expr.Name("v" + "")), Expr.Num(1))
     let w = u
-    print(show(inner_left(u)))
-    print(show(w))
+    print(show(inner_left(u)))  // u
+    print(show(w))  // ((u + v) + 1)
 
     // `|` arms, each on a unique value, then on one shared with another local.
-    print(show(small(Expr.Add(Expr.Name("a" + ""), Expr.Num(1)))))
-    print(show(small(leaf(3))))
+    print(show(small(Expr.Add(Expr.Name("a" + ""), Expr.Num(1)))))  // (a + 2)
+    print(show(small(leaf(3))))  // 3
     let g = leaf(4)
     let h = g
-    print(show(small(g)))
-    print(show(h))
+    print(show(small(g)))  // 4
+    print(show(h))  // (4 + x4)
     let i = Expr.Add(Expr.Name("b" + ""), Expr.Num(0))
     let j = i
-    print(show(small(i)))
-    print(show(j))
+    print(show(small(i)))  // (b + 2)
+    print(show(j))  // (b + 0)
 
     // The scrutinee is a copy of `n`, which stays live: the string moves into `s` and is
     // still shared with `n`, so the append copies it.
@@ -189,19 +189,19 @@ fn main() {
         Name(s) => {
             let mut t = s
             t += "!"
-            print(t)
+            print(t)  // ab!
         }
-        _ => print("no")
+        _ => print("no")  // never runs
     }
-    print(show(n))
+    print(show(n))  // ab
 
     // A boxed `Chain?` field: its binding copies, its box is never a token, and it
     // stays in the scrutinee beside the moved string.
     match Chain.Link("ab" + "", Chain.Link("c" + "", None)) {
         Link(s, next) => {
             let rest = if let m = next { 1 } else { 0 }
-            print(s.len() + rest)
+            print(s.len() + rest)  // 3
         }
-        End => print(0)
+        End => print(0)  // never runs
     }
 }
