@@ -4,7 +4,8 @@ This guide covers building `sisu`, compiling a Sisu program with it, and
 running the same checks as CI. Sisu builds and runs on x86-64 and ARM64 Linux and
 on ARM64 macOS. CI runs the tests on ARM64 Linux and ARM64 macOS on each push
 to `main`. On macOS the tests that need Valgrind, `/dev/full`, GNU ld or gcc
-are skipped.
+are skipped, and `make coverage`, `make verify`, `make fuzz`, `make bench` and
+`make callgrind` do not work.
 
 ## Prerequisites
 
@@ -480,8 +481,8 @@ stderr as JSON Lines. `build`, `run` and `check` take it; `explain` does not.
 
 `sisu build --linker lld file.sisu` links with `ld.lld` instead of `cc`'s
 default linker; `bfd`, `gold` and `mold` work the same way. `sisu` passes the
-name to `cc -fuse-ld=`. When the link fails and `ld.<name>` is not on `PATH`,
-the error names `ld.<name>`, where gcc names only `ld`. `--linker` works only
+name to `cc -fuse-ld=`. When the link fails and `ld.<name>` (`ld64.<name>` on
+macOS) is not on `PATH`, the error names it, where gcc names only `ld`. `--linker` works only
 when building an executable.
 `scripts/install-llvm.sh` puts `ld.lld` in `.llvm/23/bin`; the tests put that
 directory on `PATH`, or in gcc's `COMPILER_PATH`, for the `--linker lld` tests.

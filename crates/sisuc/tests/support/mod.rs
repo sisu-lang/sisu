@@ -182,25 +182,28 @@ pub(crate) fn run(path: &Path, bless: bool) {
     });
     let stdout = agreed(path, "stdout", &out0.stdout, &out2.stdout);
     let stderr = agreed(path, "stderr", &out0.stderr, &out2.stderr);
-    for exe in [o0, o2] {
-        let checked = invocation.run(&exe, true);
-        let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
-        assert_eq!(
-            checked.status.code(),
-            Some(0),
-            "{}: {valgrind_stderr}",
-            exe.display()
-        );
-        // shortcut: Valgrind 3.26 runs arm64 FMINNM and FMAXNM as FMIN and FMAX
-        // (VEX/priv/guest_arm64_toIR.c:32), so `min` or `max` of a `nan` prints `nan` under it;
-        // compare stdout on aarch64 again once a Valgrind release fixes that.
-        if !cfg!(target_arch = "aarch64") {
+    // macOS has no Valgrind, and the native runs above already checked these builds.
+    if cfg!(target_os = "linux") {
+        for exe in [o0, o2] {
+            let checked = invocation.run(&exe, true);
+            let valgrind_stderr = String::from_utf8_lossy(&checked.stderr);
             assert_eq!(
-                String::from_utf8_lossy(&checked.stdout),
-                stdout,
+                checked.status.code(),
+                Some(0),
                 "{}: {valgrind_stderr}",
                 exe.display()
             );
+            // shortcut: Valgrind 3.26 runs arm64 FMINNM and FMAXNM as FMIN and FMAX
+            // (VEX/priv/guest_arm64_toIR.c:32), so `min` or `max` of a `nan` prints `nan` under it;
+            // compare stdout on aarch64 again once a Valgrind release fixes that.
+            if !cfg!(target_arch = "aarch64") {
+                assert_eq!(
+                    String::from_utf8_lossy(&checked.stdout),
+                    stdout,
+                    "{}: {valgrind_stderr}",
+                    exe.display()
+                );
+            }
         }
     }
     let checked = invocation.run(&rc, false);

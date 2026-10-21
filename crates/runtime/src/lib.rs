@@ -1010,12 +1010,10 @@ mod tests {
     /// signal, whether stdout is full or a pipe with no reader.
     #[test]
     #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
-    #[cfg_attr(
-        not(target_os = "linux"),
-        ignore = "writes to /dev/full, which only Linux has"
-    )]
     fn rc_fault_reports_when_the_stdout_flush_fails() {
-        for case in ["fault_full_stdout", "fault_closed_stdout_pipe"] {
+        // Only Linux has /dev/full.
+        let full = cfg!(target_os = "linux").then_some("fault_full_stdout");
+        for case in full.into_iter().chain(["fault_closed_stdout_pipe"]) {
             assert_rc_exit(
                 case,
                 Some(102),

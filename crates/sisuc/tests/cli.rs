@@ -1569,12 +1569,9 @@ fn bad_output_path_is_found_before_the_compile() {
     }
 }
 
-/// `build`'s flags go before or after the file, in any order.
+/// `build`'s flags go before or after the file, in any order. The `--linker` rows run on Linux
+/// only: Apple's clang has no `bfd`, and for `lld` it looks for `ld64.lld`, which `.llvm/23` lacks.
 #[test]
-#[cfg_attr(
-    not(target_os = "linux"),
-    ignore = "passes `--linker bfd` and `lld`, which Apple's clang rejects"
-)]
 fn flags_in_any_order() {
     let dir = scratch_path::empty_dir("flags_in_any_order");
     fs::write(dir.join("f.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
@@ -1623,7 +1620,10 @@ fn flags_in_any_order() {
             "e",
         ],
         &["build", "f.sisu", "-o", "e", "--linker", "lld"],
-    ] {
+    ]
+    .into_iter()
+    .filter(|args| cfg!(target_os = "linux") || !args.contains(&"--linker"))
+    {
         // It is absent before the first build, so a failure here is expected and harmless.
         let _ = fs::remove_file(dir.join("e"));
         sisu(args);

@@ -77,6 +77,8 @@ jobs:
     name: Test (macOS)
     if: github.event_name != 'pull_request'
     runs-on: macos-26
+    # A cache miss compiles LLVM with llc for about 5 minutes; the tests take about 2.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

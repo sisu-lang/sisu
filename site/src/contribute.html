@@ -79,7 +79,7 @@ $ make miri      # only when you change crates/runtime
 $ make verify    # coverage, then mutants, on your diff
 </pre></figure>
       <ul>
-        <li><code>make test</code> runs the tests with nextest, not <code>cargo test</code>. Its setup script builds the runtime that the end-to-end tests link against. The end-to-end tests run each program under Valgrind.</li>
+        <li><code>make test</code> runs the tests with nextest, not <code>cargo test</code>. Its setup script builds the runtime that the end-to-end tests link against. On Linux, the end-to-end tests run each program under Valgrind.</li>
         <li>Clippy and the compiler run with <code>-D warnings</code>, so one warning fails CI. Silence a single site with <code>#[expect(lint, reason = "...")]</code>, never a bare <code>#[allow]</code>.</li>
         <li><code>make miri</code> runs the runtime's unit tests under Miri on nightly, which stops at undefined behaviour. CI runs it too.</li>
         <li><code>make verify</code> ends with one line, <code>verify: PASS</code> or <code>verify: FAIL</code>. Cover or explain each uncovered region, and kill or explain each surviving mutant.</li>

@@ -39,8 +39,14 @@ pub(crate) fn link(object: &Path, linking: &Linking) -> Result<(), String> {
     }
     let mut message = format!("cc failed: {}", out.status);
     // A missing `ld.lld` makes gcc say only "cannot find 'ld'", which names the wrong program.
-    // `cc` also finds linkers off PATH, so the check waits until it has failed.
-    if let Some(program) = linker.map(|linker| format!("ld.{linker}"))
+    // `cc` also finds linkers off PATH, so the check waits until it has failed. Clang on macOS
+    // looks for `ld64.<name>`.
+    let prefix = if cfg!(target_os = "macos") {
+        "ld64"
+    } else {
+        "ld"
+    };
+    if let Some(program) = linker.map(|linker| format!("{prefix}.{linker}"))
         && !on_path(&program)
     {
         message = format!("linker {program} not found on PATH; {message}");

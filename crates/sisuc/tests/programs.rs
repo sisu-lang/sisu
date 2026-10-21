@@ -1164,7 +1164,7 @@ fn linker_lld_links_with_lld() {
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
-    ignore = "passes `--linker bfd` and `lld`, which Apple's clang rejects"
+    ignore = "links with `--linker lld`, and Apple's clang looks for `ld64.lld`, which `.llvm/23` lacks"
 )]
 fn linker_off_path_links_when_cc_finds_it() {
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("loops-compiler-path");
@@ -1186,7 +1186,8 @@ fn linker_off_path_links_when_cc_finds_it() {
     assert!(executable.windows(11).any(|w| w == b"Linker: LLD"));
 }
 
-/// With only `cc` on `PATH`, `cc` runs and fails to find `ld.mold`; `sisu` names it.
+/// With only `cc` on `PATH`, `cc` runs and fails to find `ld.mold` (`ld64.mold` on macOS);
+/// `sisu` names it.
 #[test]
 fn a_missing_linker_is_named() {
     let empty = empty_dir("no_linker_on_path");
@@ -1198,9 +1199,16 @@ fn a_missing_linker_is_named() {
         .expect("sisu starts");
     assert_eq!(out.status.code(), Some(1));
     // cc's own message follows on the next lines.
+    let linker = if cfg!(target_os = "macos") {
+        "ld64.mold"
+    } else {
+        "ld.mold"
+    };
     assert_eq!(
         String::from_utf8_lossy(&out.stderr).lines().next(),
-        Some("sisu: linker ld.mold not found on PATH; cc failed: exit status: 1")
+        Some(
+            format!("sisu: linker {linker} not found on PATH; cc failed: exit status: 1").as_str()
+        )
     );
     assert_empty(&empty);
 }

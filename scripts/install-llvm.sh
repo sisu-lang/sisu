@@ -43,10 +43,11 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 curl --fail --location --retry 3 --no-progress-meter --output "$tmp/llvm.tar.xz" "$url"
-# macOS has neither sha256sum nor GNU tar; its bsdtar matches wildcards without a flag.
+# macOS has neither sha256sum nor GNU tar; its bsdtar matches wildcards without a flag. By path,
+# because Homebrew's GNU tar can come first on PATH.
 if [[ "$(uname -s)" == Darwin ]]; then
     echo "$sha256  $tmp/llvm.tar.xz" | shasum -a 256 --check --quiet
-    tar=(tar)
+    tar=(/usr/bin/tar)
 else
     echo "$sha256  $tmp/llvm.tar.xz" | sha256sum --check --quiet
     tar=(tar --wildcards)
@@ -70,7 +71,9 @@ fi
 # The macOS release's static libraries hold LLVM 23 bitcode (it is built with ThinLTO), which
 # Apple's linker cannot read, so llc compiles each member to a native object, once, here.
 if [[ "$(uname -s)" == Darwin ]]; then
-    for lib in $("$dest/bin/llvm-config" --libnames); do
+    # An assignment, so a failing llvm-config stops the script; llvm-sys asks for the same list.
+    libs=$("$dest/bin/llvm-config" --libnames --link-static)
+    for lib in $libs; do
         objects="$tmp/objects/$lib"
         mkdir -p "$objects"
         (cd "$objects" && ar x "$dest/lib/$lib")
@@ -79,6 +82,7 @@ if [[ "$(uname -s)" == Darwin ]]; then
         rm "$dest/lib/$lib"
         ar rcs "$dest/lib/$lib" "$objects"/*.native
     done
+    rm "$dest/bin/llc"
 fi
 # Written last, so an interrupted run is redone on the next call.
 echo "$version" >"$dest/VERSION"
