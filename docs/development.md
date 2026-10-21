@@ -175,7 +175,9 @@ coverage. Agents run it before the mutants. Commit new files, or
 `git add -N` them, so the diff sees them.
 
 `make verify [BASE=<base>]` runs coverage, then mutants, and always ends with
-one line: `verify: PASS`, or `verify: FAIL` and why. PASS needs no uncovered
+one line: `verify: PASS`, or `verify: FAIL` and why, ending
+`(HEAD <sha>)`, or `(HEAD <sha> with uncommitted changes)` when the working tree
+has uncommitted Rust changes. PASS needs no uncovered
 region touching the changes and no surviving mutant. A region you explain
 rather than cover still fails it, so read the reasons, not only the word. A
 diff that changes no `.rs` file passes at once, with nothing run.
@@ -526,6 +528,6 @@ must accept any syntax those programs use.
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The front-end fuzz target, its own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |

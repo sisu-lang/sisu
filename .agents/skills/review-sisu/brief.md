@@ -133,7 +133,11 @@ vague or generic error, or with none.
   `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU DIR`. It prints
   each program the head newly accepts, newly rejects or reports
   differently, with the codes and positions of both.
-- When "Focus" names a verify log, check that its first line is the
+- When the diff re-blesses expected files by a fixed rewording, run
+  `python3 scripts/golden_diff.py <base>..<head> OLD NEW [OLD NEW]...`
+  and sample a few files rather than read them all. It fails on any
+  changed line that is not the old line with those substitutions.
+- When "Focus" names a verify log, check that its last line names the
   target's head commit, then check the note on each surviving mutant and
   uncovered region. Otherwise, name the riskiest changed path that no
   test runs.
