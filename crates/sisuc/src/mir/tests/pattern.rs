@@ -816,6 +816,42 @@ fn or_on_uncounted_values_takes_apart() {
     assert!(!f.contains("copy l#1"), "{f}");
 }
 
+/// An `|` at a box that tests no box inside it: `Add(_, _)` leaves its boxes untested, and the
+/// `0 | 1` inside `Num` tests an uncounted value. The arm takes its scrutinee apart, and the
+/// box the `|` sits at stays in the rest.
+#[test]
+fn or_that_tests_no_box_takes_apart() {
+    let printed = built(&swap_arm("Add(l, Num(0 | 1) | Add(_, _)) => l"));
+    has(
+        &printed,
+        "f",
+        &["take_apart _: _ = token (_ as 1).0, l#1 = (_ as 1).0, rest _\n"],
+    );
+}
+
+/// An `|` below a variant whose alternatives bind `s` at different places: the arm copies `s`.
+#[test]
+fn or_below_a_variant_keeps_the_copying_commit() {
+    let printed = built(&format!(
+        "{NAMED_EXPR}fn f(e: Expr) -> string {{\n    match e {{\n        \
+         Add(_, Name(s) | Add(Name(s), _)) => s\n        _ => \"\"\n    }}\n}}"
+    ));
+    let f = function(&printed, "f");
+    assert!(!f.contains("take_apart"), "{f}");
+    has(&printed, "f", &["s#1 = copy s#1"]);
+}
+
+/// Only an enum is taken apart: a string scrutinee's binding copies.
+#[test]
+fn string_scrutinee_keeps_the_copying_commit() {
+    let printed = built(
+        "fn f(s: string) -> string {\n    match s + \"\" {\n        \"a\" => \"b\"\n        t => t\n    }\n}",
+    );
+    let f = function(&printed, "f");
+    assert!(!f.contains("take_apart"), "{f}");
+    has(&printed, "f", &["t#1 = copy t#1"]);
+}
+
 /// A boxed `Chain?` is never a token: `next` copies before the take-apart, and its field stays
 /// in the rest.
 #[test]

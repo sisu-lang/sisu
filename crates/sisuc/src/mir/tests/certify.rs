@@ -2579,6 +2579,16 @@ fn free_of_a_freed_token_is_rejected() {
     rejects(&b.finish(), 0, tok, Rule::Token);
 }
 
+/// A free of an empty token leaves it empty, as a scope release does, so a second free on the
+/// same path frees `null` again.
+#[test]
+fn free_of_an_empty_token_leaves_it_empty() {
+    let mut b = Builder::new("f");
+    let tok = token(&mut b);
+    b.block(vec![Statement::Free(tok), Statement::Free(tok)], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
 #[test]
 fn token_leaked_on_one_path_is_rejected() {
     let mut b = Builder::new("f");

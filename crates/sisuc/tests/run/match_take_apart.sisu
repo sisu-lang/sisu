@@ -15,6 +15,12 @@ enum Chain {
     Link(string, Chain?)
 }
 
+enum Tagged {
+    Leaf(string)
+    Tag(string, Tagged)
+    Two(Tagged, Tagged)
+}
+
 fn show(e: Expr) -> string {
     match e {
         Num(n) => "{n}"
@@ -94,6 +100,15 @@ fn inner_left(e: Expr) -> Expr {
     match e {
         Add(Add(l, _), _) => l
         other => other
+    }
+}
+
+// The tested `Tag` box keeps a rest, its unbound `Tagged`, beside the moved `s`, while the
+// scrutinee keeps none: the move zeroes `s`'s source in the token's value, which is released.
+fn tag_of(t: Tagged) -> string {
+    match t {
+        Two(Tag(s, _), Leaf(u)) => s + u
+        _ => "none"
     }
 }
 
@@ -204,4 +219,6 @@ fn main() {
         }
         End => print(0)
     }
+
+    print(tag_of(Tagged.Two(Tagged.Tag("t" + "", Tagged.Leaf("x" + "")), Tagged.Leaf("u" + ""))))
 }
