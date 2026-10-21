@@ -506,7 +506,8 @@ follow it, ahead of the rest of milestone 8.
    obeys, the certifier checks. Done.
 2. Path-precise releases. Built; awaits its measured verdict.
 3. Retain/release pair removal. Built; awaits its measured verdict.
-4. Borrowed-parameter inference (replaces ADR 0012).
+4. Borrowed-parameter inference ([ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md),
+   which replaces ADR 0012). Built; awaits its measured verdict.
 5. Reuse of freed boxes.
 
 Each step down from `tir` to LLVM IR is a
@@ -520,8 +521,8 @@ understood; it does not optimize. Codegen emits LLVM IR from `mir`.
 rules. General optimization (inlining, loops, constants) stays with LLVM,
 which does it better. The first of these needs introduces `mir`:
 - Reference-count elision: removing increment and decrement pairs that
-  cancel out, which is why Swift has SIL. ADR 0012 (proposed) removes the
-  pair around a method's `self` without it.
+  cancel out, which is why Swift has SIL. ADR 0029 removes the pair around
+  an argument that its function only reads without it.
 - Explicit count statements. Codegen once decided where to add and
   subtract 1 while it emitted LLVM IR, and a separate last-use pass had to
   repeat codegen's evaluation order by hand. In `mir`, lowering writes every
@@ -1013,20 +1014,19 @@ These do not make code nicer to write, so they wait:
 - Debug info (DWARF), so `gdb` steps through Sisu source. Stepping does not
   enter runtime functions such as a reference-count update, as Mojo keeps
   the debugger out of its built-in operators.
-- Borrowing every counted parameter, after ADR 0012 is built and measured.
-  ADR 0012 borrows only `self`, and leaves the other parameters until a
-  benchmark shows that argument counting matters. Then infer it, as Lean 4
-  does ("Counting Immutable Beans") and Roc does. A parameter starts
-  borrowed. It becomes owned when the function stores it, returns it, passes
-  it to an owned parameter, or puts it in a `let mut` local that it then
-  changes. The last case keeps ADR 0007's handover: a borrowed array has
-  count 2, so the first write would copy it. Recursive functions are solved
-  together, one strongly connected group of the call graph at a time. The
-  result is one flag per parameter, inferred on `mir` (its part 4), and the
-  ownership pass must not move a borrowed parameter. Callers keep
-  ADR 0012's rule: they add 1 to an argument read from a `mut` field, a weak
-  field or an array element. A function called through a closure keeps owned
-  parameters.
+- Borrowing every counted parameter. Built as part 4 of mir
+  ([ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md)), which
+  replaces ADR 0012 (borrow only `self`, never built); it awaits its measured
+  verdict. The compiler infers it, as Lean 4 ("Counting Immutable Beans") and
+  Roc do. A parameter is borrowed unless its function consumes it: stores it,
+  returns it, passes it to an owned parameter, or assigns it to a named local,
+  which keeps ADR 0007's handover to a `let mut`. The result is one flag per
+  parameter, and the ownership pass never moves a borrowed parameter. Callers
+  copy an argument read from a `mut` field, a weak field or an array element
+  before the call. Among the limits that remain: a function called through a
+  closure keeps owned parameters, and a `for` over a parameter keeps it owned,
+  as does a `match` on a binding of a borrowed `match`, because the loop's
+  iterable or the inner scrutinee is a temporary that outlives its block.
 - Reusing a box in `match`. Milestone 7 boxes the enum fields that close a
   cycle. When a `match` takes apart the last reference to a box, and its arm
   builds a box of the same enum type, as

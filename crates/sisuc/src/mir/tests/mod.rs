@@ -8,6 +8,7 @@ pub(crate) mod hoist;
 mod lower;
 mod ownership;
 mod pairs;
+mod params;
 mod pattern;
 
 /// A program whose `f` holds every kind of expression and statement lowering handles.
@@ -67,15 +68,20 @@ fn checked(src: &str) -> tir::Program {
     program.unwrap_or_else(|| panic!("{diagnostics:?}"))
 }
 
-/// The mir of `src` as lowering leaves it, before any pass.
-pub(super) fn lowered_program(src: &str) -> Program {
-    lower(&checked(src))
+/// The mir of `program` as lowering leaves it under the assumed flags, before any pass.
+pub(super) fn lowered_of(program: &tir::Program) -> Program {
+    lower(program, &super::params::assumed(program))
 }
 
-/// The printed mir of `src` as lowering leaves it, before any pass.
+/// The mir of `src` as lowering leaves it under the assumed flags, before any pass.
+pub(super) fn lowered_program(src: &str) -> Program {
+    lowered_of(&checked(src))
+}
+
+/// The printed mir of `src` as lowering leaves it under the assumed flags, before any pass.
 pub(super) fn lowered(src: &str) -> String {
     let program = checked(src);
-    print(&lower(&program), &program)
+    print(&lowered_of(&program), &program)
 }
 
 /// The printed mir of `src` as `build` gives it, with its copies, moves and releases placed.
@@ -155,6 +161,7 @@ impl Builder {
             function: Function {
                 name: name.to_owned(),
                 params: 0,
+                borrowed: Vec::new(),
                 ret: Type::UNIT,
                 locals: Vec::new(),
                 blocks: Vec::new(),
@@ -172,7 +179,13 @@ impl Builder {
             "parameters should come first"
         );
         self.function.params += 1;
+        self.function.borrowed.push(false);
         self.local(name, ty)
+    }
+
+    /// Marks `param` borrowed.
+    pub(crate) fn borrowed(&mut self, param: LocalId) {
+        self.function.borrowed[param.0] = true;
     }
 
     /// A named local of `ty`, which holds no enum: counted when `ty` is.
@@ -243,6 +256,7 @@ pub(super) fn fresh(dest: LocalId) -> Statement {
         Rvalue::Call {
             func: FuncId(0),
             args: Vec::new(),
+            borrowed: Vec::new(),
         },
     )
 }

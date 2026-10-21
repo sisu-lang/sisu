@@ -1,0 +1,13 @@
+// 100 000 tail calls that pass `walk` its own borrowed string: the caller has nothing to release
+// after the call, so at -O2 the recursion is a loop. Without -O2, it overflows the small stack.
+fn walk(s: string, n: i64) -> i64 {
+    if n == 0 {
+        s.len()
+    } else {
+        walk(s, n - 1)
+    }
+}
+
+fn main() {
+    print(walk("ab", 100_000))
+}

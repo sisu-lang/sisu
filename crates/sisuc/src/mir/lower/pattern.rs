@@ -10,6 +10,13 @@
 //! committed body do not. The last arm's failure is `unreachable`: the checker proves some arm
 //! matches.
 //!
+//! A scrutinee that is a borrowed place, a borrowed parameter or a field without `mut` of one,
+//! is not copied. A `match` tests the place itself; its commit copies and releases nothing, and
+//! the counted bindings join the scope stack borrowed, so each edge that leaves the arm ends
+//! them. An `if let` borrows the optional into a temporary, ended after the join and on each
+//! edge that leaves the branches, and its binding borrows the payload. The bindings stay
+//! borrowed through the arm.
+//!
 //! A failure target becomes a block only when an edge reaches it, so every block stays
 //! reachable: an arm whose pattern cannot fail and has no guard leaves the arms after it
 //! unlowered.
@@ -19,7 +26,7 @@ use std::mem;
 use super::{Lowered, Lowering, valued, whole};
 use crate::mir::{BlockId, Const, Operand, Place, Projection, Rvalue, Statement, Terminator};
 use crate::tir::{
-    Arm, BinaryOp, Block, CompareOp, Expr, LocalId, Pattern, PatternKind, Type, TypeKind,
+    Arm, BinaryOp, Block, CompareOp, Expr, ExprKind, LocalId, Pattern, PatternKind, Type, TypeKind,
 };
 
 /// An index into `Lowering::targets`: a failure target that has no block until an edge needs it.
@@ -99,8 +106,34 @@ impl Lowering<'_> {
         block
     }
 
+    /// The place `e` names when it is a borrowed place of a counted value: a borrowed parameter,
+    /// or a field without `mut` of a borrowed place. Marks the parameter at its root consulted.
+    fn borrowed_place(&mut self, e: &Expr) -> Option<Place> {
+        if !self.counted(e.ty) {
+            return None;
+        }
+        match &e.kind {
+            ExprKind::Local(local) if self.borrowed.get(local.0) == Some(&true) => {
+                self.consulted[local.0] = true;
+                Some(whole(*local))
+            }
+            ExprKind::Field { base, index } => {
+                let projection = self.field(base.ty, *index);
+                if !projection.stable() {
+                    return None;
+                }
+                let mut place = self.borrowed_place(base)?;
+                place.projections.push(projection);
+                Some(place)
+            }
+            _ => None,
+        }
+    }
+
     /// `if let bind = scrutinee { then } else { else_ }`: the optional into a temporary, then
-    /// `if_present`. The `Some` edge moves the payload out into `bind`.
+    /// `if_present`. The `Some` edge moves the payload out into `bind`. A borrowed place is
+    /// borrowed into the temporary instead, which is ended where the branches join and on each
+    /// edge that leaves them, and `bind` borrows the payload.
     pub(super) fn if_some(
         &mut self,
         bind: LocalId,
@@ -110,22 +143,54 @@ impl Lowering<'_> {
         ty: Type,
         dest: Option<LocalId>,
     ) -> Lowered {
-        let optional = self.temp_of(scrutinee)?;
-        self.branches(
+        let Some(place) = self.borrowed_place(scrutinee) else {
+            let optional = self.temp_of(scrutinee)?;
+            return self.branches(
+                |some, none| Terminator::IfPresent {
+                    optional,
+                    some,
+                    none,
+                },
+                Some((bind, optional, false)),
+                then_block,
+                else_block,
+                ty,
+                dest,
+            );
+        };
+        let optional = self.temp(scrutinee.ty);
+        self.owners.insert(optional, place.local);
+        self.push(Statement::Assign {
+            dest: Some(optional),
+            value: Rvalue::Borrow(place),
+        });
+        self.scope.push((optional, true));
+        let value = self.branches(
             |some, none| Terminator::IfPresent {
                 optional,
                 some,
                 none,
             },
-            Some((bind, optional)),
+            Some((bind, optional, true)),
             then_block,
             else_block,
             ty,
             dest,
-        )
+        );
+        let popped = self.scope.pop();
+        debug_assert_eq!(
+            popped,
+            Some((optional, true)),
+            "the optional should top the scope stack"
+        );
+        if value.is_some() {
+            self.push(Statement::End(optional));
+        }
+        value
     }
 
-    /// `match scrutinee { arms }`, with the scrutinee in `temp`.
+    /// `match scrutinee { arms }`, with the scrutinee in `temp`, or tested in place when it is a
+    /// borrowed place.
     pub(super) fn match_expr(
         &mut self,
         scrutinee: &Expr,
@@ -134,20 +199,27 @@ impl Lowering<'_> {
         ty: Type,
         dest: Option<LocalId>,
     ) -> Lowered {
-        self.locals[temp.0].scope = self.here();
-        self.into(scrutinee, Some(temp))?;
+        let borrowed = self.borrowed_place(scrutinee);
+        let borrows = borrowed.is_some();
+        // `counted`: whether the scrutinee is in a temporary that owns a reference.
+        let (place, counted) = if let Some(place) = borrowed {
+            (place, false)
+        } else {
+            self.locals[temp.0].scope = self.here();
+            self.into(scrutinee, Some(temp))?;
+            (whole(temp), self.locals[temp.0].counted)
+        };
         let dest = valued(ty).then(|| dest.unwrap_or_else(|| self.temp(ty)));
-        let counted = self.locals[temp.0].counted;
         for arm in arms {
             for &binding in &arm.bindings {
-                self.owners.insert(binding, temp);
+                self.owners.insert(binding, place.local);
             }
         }
         let (outer, guards) = (self.scope.len(), self.guard.len());
         let mut join = None;
         for arm in arms {
             if counted {
-                self.scope.push(temp);
+                self.scope.push((temp, false));
             }
             let start = self.here();
             for &binding in &arm.bindings {
@@ -155,14 +227,19 @@ impl Lowering<'_> {
             }
             self.open_guards(&arm.bindings);
             let fail = self.target(Kind::Fail);
-            let retry = self.test(&arm.pattern, &whole(temp), scrutinee.ty, fail);
+            let retry = self.test(&arm.pattern, &place, scrutinee.ty, fail);
             let passed = match &arm.guard {
                 None => true,
                 Some(guard) => self.guard_holds(guard, retry),
             };
             if passed {
-                self.commit(temp, counted, guards, &arm.bindings);
+                self.commit(temp, counted, borrows, guards, &arm.bindings);
                 self.arm(outer, &arm.body, dest, &mut join);
+                if borrows {
+                    for &binding in &arm.bindings {
+                        self.guarded[binding.0] = false;
+                    }
+                }
             }
             self.scope.truncate(outer);
             self.close_guards(guards);
@@ -194,9 +271,27 @@ impl Lowering<'_> {
 
     /// The commit of an arm whose pattern and guard held: each counted binding copies its
     /// borrowed value, then `temp`, when `counted`, is released and leaves the scope stack, and
-    /// the counted bindings join it. The bindings are no longer borrowed.
-    fn commit(&mut self, temp: LocalId, counted: bool, guards: usize, bindings: &[LocalId]) {
+    /// the counted bindings join it. The bindings are no longer borrowed. When the match
+    /// `borrows` its scrutinee, the bindings copy nothing: they stay borrowed through the body,
+    /// and join the scope stack as borrowed, so each edge that leaves the arm ends them.
+    fn commit(
+        &mut self,
+        temp: LocalId,
+        counted: bool,
+        borrows: bool,
+        guards: usize,
+        bindings: &[LocalId],
+    ) {
         self.close_guards(guards);
+        if borrows {
+            for &binding in bindings {
+                self.guarded[binding.0] = true;
+                if self.locals[binding.0].counted {
+                    self.scope.push((binding, true));
+                }
+            }
+            return;
+        }
         for &binding in bindings {
             if self.locals[binding.0].counted {
                 self.push(Statement::Assign {
@@ -208,11 +303,15 @@ impl Lowering<'_> {
         if counted {
             self.push(Statement::ScopeRelease(temp));
             let popped = self.scope.pop();
-            debug_assert_eq!(popped, Some(temp), "`temp` should top the scope stack");
+            debug_assert_eq!(
+                popped,
+                Some((temp, false)),
+                "`temp` should top the scope stack"
+            );
         }
         for &binding in bindings {
             if self.locals[binding.0].counted {
-                self.scope.push(binding);
+                self.scope.push((binding, false));
             }
         }
     }

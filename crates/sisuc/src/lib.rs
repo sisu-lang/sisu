@@ -6,6 +6,7 @@ mod codegen;
 mod diagnostic;
 mod front_end;
 mod fuzz;
+mod graph;
 mod lexer;
 mod link;
 mod mir;

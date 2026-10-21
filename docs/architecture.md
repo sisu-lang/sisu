@@ -106,8 +106,14 @@ its `kind()` gives the structure, and equal structures get the same handle.
 ([ADR 0025](adr/0025-mir-holds-every-count.md)), built on the build path only,
 so `--check` does not pay for it. `mir::build` lowers each function of `tir` to
 typed locals and basic blocks in which every copy, move and release is its own
-statement (`lower.rs`). The ownership pass (`ownership.rs`) then decides each
-read of a counted local by liveness (`liveness.rs`): a read that is the local's
+statement (`lower.rs`). Parameter inference (`params.rs`,
+[ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md)) then searches
+the whole program for the counted parameters that their functions only read,
+marks them borrowed, and rewrites each call to pass such an argument in place;
+a function that tests a parameter that came out owned with `match` or `if let`
+is lowered again. The call graph's strongly connected components come from
+`graph.rs`, which the checker's search for recursive enums shares. The
+ownership pass (`ownership.rs`) then decides each read of a counted local by liveness (`liveness.rs`): a read that is the local's
 last use moves its reference instead of sharing it, so a later write to the
 array it holds can skip the copy
 ([ADR 0007](adr/0007-arrays-are-values.md)). The hoist (`hoist.rs`) moves the

@@ -3,11 +3,11 @@
 
 use super::*;
 
-const REPEATS: &str = "fn repeats(xs: [string]) -> i64 {\n    let mut n = 0\n    for i in 0..xs.len() {\n        for j in 0..i {\n            if xs[i] == xs[j] { n += 1 }\n        }\n    }\n    n\n}\n\
-    fn main() {\n    print(repeats([\"a\", \"b\", \"a\"]))\n}";
+const REPEATS: &str = "fn repeats() -> i64 {\n    let xs = [\"a\", \"b\", \"a\"]\n    let mut n = 0\n    for i in 0..xs.len() {\n        for j in 0..i {\n            if xs[i] == xs[j] { n += 1 }\n        }\n    }\n    n\n}\n\
+    fn main() {\n    print(repeats())\n}";
 
 const NUDGE: &str = "class P {\n    mut x: f64\n}\n\
-    fn nudge(ps: [P]) {\n    for j in 0..ps.len() {\n        let p = ps[j]\n        p.x = p.x + 1.0\n        print(p.x)\n    }\n}";
+    fn nudge() {\n    let ps = [P(x: 1.0)]\n    for j in 0..ps.len() {\n        let p = ps[j]\n        p.x = p.x + 1.0\n        print(p.x)\n    }\n}";
 
 const BOX: &str = "class Box {\n    mut s: string\n}\n";
 
@@ -18,7 +18,7 @@ fn elements_compared_in_a_loop_are_borrowed() {
     assert_eq!(f.matches("= borrow xs#0[").count(), 2, "{f}");
     assert!(!f.contains("= copy xs#0["), "{f}");
     assert_eq!(f.matches("\n    end _").count(), 2, "{f}");
-    // Only the parameter's release is left.
+    // Only the array's release is left.
     assert_eq!(f.matches("release ").count(), 1, "{f}");
 }
 
@@ -28,7 +28,7 @@ fn elements_compared_in_a_loop_are_borrowed() {
 fn field_compared_with_a_key_is_borrowed() {
     let printed = built(
         "class Entry {\n    name: string\n}\n\
-         fn count(es: [Entry], key: string) -> i64 {\n    let mut n = 0\n    for e in es { if e.name == key { n += 1 } }\n    n\n}",
+         fn count(es: [Entry]) -> i64 {\n    let key = \"k\"\n    let mut n = 0\n    for e in es { if e.name == key { n += 1 } }\n    n\n}",
     );
     has(
         &printed,
@@ -123,7 +123,7 @@ fn for_loop_element_is_borrowed() {
 #[test]
 fn store_through_a_copied_object_is_borrowed() {
     let printed = built(&format!(
-        "{BOX}fn set(b: Box) {{\n    b.s = \"x\"\n    print(b.s)\n}}"
+        "{BOX}fn set() {{\n    let b = Box(s: \"a\")\n    b.s = \"x\"\n    print(b.s)\n}}"
     ));
     has(
         &printed,

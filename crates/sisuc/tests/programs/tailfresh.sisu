@@ -1,0 +1,13 @@
+// 100 000 tail calls, each handing `walk` a fresh string. `s + "x"` consumes `s`, so `walk` owns
+// it, and the tail rule lets the caller hand the new string over: at -O2 the recursion is a loop.
+fn walk(s: string, n: i64) -> i64 {
+    if n == 0 {
+        s.len()
+    } else {
+        walk(s + "x", n - 1)
+    }
+}
+
+fn main() {
+    print(walk("", 100_000))
+}

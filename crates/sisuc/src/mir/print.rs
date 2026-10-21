@@ -44,7 +44,7 @@ struct Printer<'a> {
 }
 
 impl Printer<'_> {
-    /// `fn name(x#0: string) -> i64 {`, the blocks, and `}`.
+    /// `fn name(x#0: string, y#1: borrow string) -> i64 {`, the blocks, and `}`.
     fn function(&mut self) {
         let f = self.function;
         self.push(&format!("fn {}(", f.name));
@@ -54,7 +54,8 @@ impl Printer<'_> {
             }
             let name = self.local(LocalId(i));
             let ty = self.tir.type_name(local.ty);
-            self.push(&format!("{name}: {ty}"));
+            let mode = if f.borrowed[i] { "borrow " } else { "" };
+            self.push(&format!("{name}: {mode}{ty}"));
         }
         let ret = self.tir.type_name(f.ret);
         self.push(&format!(") -> {ret} {{\n"));
@@ -83,13 +84,13 @@ impl Printer<'_> {
         local_name(self.function, id)
     }
 
-    /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`.
+    /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`, `(p#4 as some)`.
     fn place(&self, place: &Place) -> String {
         let mut text = self.local(place.local);
         for projection in &place.projections {
             match projection {
-                Projection::Field(field) => {
-                    write!(text, ".{field}").expect("writing to a string should not fail");
+                Projection::Field { index, .. } => {
+                    write!(text, ".{index}").expect("writing to a string should not fail");
                 }
                 Projection::Payload { variant, field } => {
                     text = format!("({text} as {variant}).{field}");
@@ -98,6 +99,7 @@ impl Printer<'_> {
                     let index = self.operand(index);
                     write!(text, "[{index}]").expect("writing to a string should not fail");
                 }
+                Projection::Some => text = format!("({text} as some)"),
             }
         }
         text
@@ -129,7 +131,7 @@ impl Printer<'_> {
             Rvalue::CopyStr(text) => format!("copy {text:?}"),
             Rvalue::Borrow(place) => format!("borrow {}", self.place(place)),
             Rvalue::Unwrap(operand) => format!("unwrap {}", self.operand(operand)),
-            Rvalue::Call { func, args } => {
+            Rvalue::Call { func, args, .. } => {
                 let name = &self.tir.functions[func.0].name;
                 format!("call {name}({})", self.list(args))
             }

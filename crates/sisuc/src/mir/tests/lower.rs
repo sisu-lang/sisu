@@ -200,6 +200,7 @@ fn unreachable_blocks_finds_a_disconnected_cycle() {
     let f = Function {
         name: "f".to_owned(),
         params: 0,
+        borrowed: Vec::new(),
         ret: Type::UNIT,
         locals: Vec::new(),
         blocks: vec![
@@ -532,7 +533,8 @@ fn base_borrowed_when_the_sibling_leaves_locals() {
 /// the sibling condition sees a read, not a move, so `xs` is borrowed, not copied.
 #[test]
 fn base_borrowed_when_the_sibling_moves_another_local() {
-    let src = "fn moved(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    xs\n}";
+    let src =
+        "fn moved(xs: [i64]) -> [i64] {\n    let ys = [true]\n    print(xs[ys.len()])\n    xs\n}";
     has(&lowered(src), "moved", &["_ = len ys#1\n    _ = xs#0[_]"]);
     // The ownership pass then moves `ys`, its last use, and still reads `xs` in place.
     has(
@@ -640,7 +642,7 @@ fn pins_walk_the_body_once() {
     );
     let program = checked(&src);
     WALKED.set(0);
-    let printed = print(&lower(&program), &program);
+    let printed = print(&lowered_of(&program), &program);
     // Print, Len, ArrayLit and its elements; Print, the sums and their operands; the last line.
     let nodes = (3 + wide + 1) + (1 + 2 * deep + 1) + (3 + 5);
     assert_eq!(WALKED.get(), nodes);
@@ -692,9 +694,35 @@ fn interpolation_examines_each_format_once() {
         "{a:>3}".repeat(parts)
     );
     let program = checked(&src);
-    let mir = lower(&program);
+    let mir = lowered_of(&program);
     EXAMINED.set(0);
     let printed = print(&mir, &program);
     assert_eq!(EXAMINED.get(), parts);
     assert_eq!(printed.matches(", \">3\")").count(), parts);
+}
+
+/// The present value of an optional prints as a pattern would bind it.
+#[test]
+fn some_projection_prints_as_a_pattern() {
+    let program = checked("");
+    let mut b = Builder::new("f");
+    let p = b.param("p", Type::optional(Type::STRING));
+    let x = b.local("x", Type::STRING);
+    b.block(
+        vec![
+            assign(
+                x,
+                Rvalue::Borrow(Place {
+                    projections: vec![Projection::Some],
+                    ..whole(p)
+                }),
+            ),
+            Statement::End(x),
+        ],
+        Terminator::Return(None),
+    );
+    let mir = Program {
+        functions: vec![b.finish()],
+    };
+    has(&print(&mir, &program), "f", &["x#1 = borrow (p#0 as some)"]);
 }

@@ -615,7 +615,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (value, ty) = self.operand(op);
                 self.optional_value(ty, value, "value")
             }
-            Rvalue::Call { func, args } => {
+            Rvalue::Call { func, args, .. } => {
                 let args: Vec<BasicMetadataValueEnum> =
                     args.iter().map(|arg| self.operand(arg).0.into()).collect();
                 return self.call_value(*func, &args);
@@ -769,20 +769,37 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The value at `place`, not retained, and its type. With `checked`, each index is checked
     /// against its array's length first, as a read does; a `take` follows its place's `check`.
     fn read(&self, place: &Place, checked: bool) -> (BasicValueEnum<'ctx>, Type) {
-        match place.projections.split_last() {
+        self.read_at(place.local, &place.projections, checked)
+    }
+
+    /// `read` of `local` through `projections`.
+    fn read_at(
+        &self,
+        local: LocalId,
+        projections: &[Projection],
+        checked: bool,
+    ) -> (BasicValueEnum<'ctx>, Type) {
+        match projections.split_last() {
             None => {
-                self.check_not_moved(place.local);
-                (self.load_local(place.local), self.types[place.local.0])
+                self.check_not_moved(local);
+                (self.load_local(local), self.types[local.0])
             }
             // `payload_value` reads a boxed `F?`, which has no address.
             Some((&Projection::Payload { variant, field }, outer)) => {
-                let (address, ty, _) = self.address(place.local, outer, checked);
+                let (address, ty, _) = self.address(local, outer, checked);
                 let id = enum_of(ty);
                 let ty = self.program.enums[id.0].variants[variant].fields[field].ty;
                 (self.payload_value(address, id, variant, field), ty)
             }
-            Some((Projection::Field(_) | Projection::Index { .. }, _)) => {
-                let (address, ty, tag) = self.address(place.local, &place.projections, checked);
+            Some((Projection::Some, outer)) => {
+                let (optional, ty) = self.read_at(local, outer, checked);
+                let TypeKind::Optional(payload) = ty.kind() else {
+                    unreachable!("mir should project `some` only out of an optional")
+                };
+                (self.optional_value(ty, optional, "some"), payload)
+            }
+            Some((Projection::Field { .. } | Projection::Index { .. }, _)) => {
+                let (address, ty, tag) = self.address(local, projections, checked);
                 let llvm_ty = self.llvm_type(ty).expect(
                     "the checker should give every field and element a value type, never `unit` or `never`",
                 );
@@ -809,7 +826,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         let mut tag = None;
         for projection in projections {
             (address, ty, tag) = match projection {
-                Projection::Field(index) => {
+                Projection::Field { index, .. } => {
                     let class = class_of(ty);
                     let object = self.load_pointer(address);
                     (
@@ -838,6 +855,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                         element,
                         Some(self.element_tag),
                     )
+                }
+                Projection::Some => {
+                    panic!("`some` should only ever be the last projection, which `read` reads")
                 }
             };
         }

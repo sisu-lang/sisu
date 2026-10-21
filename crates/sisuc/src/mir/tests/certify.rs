@@ -4,7 +4,9 @@
 use super::*;
 use crate::mir::certify::range::RangeMin;
 use crate::mir::certify::wavelet::Wavelet;
-use crate::mir::certify::{READS, Rule, Violation, certify, scope_release_states};
+use crate::mir::certify::{
+    Effect, READS, Rule, Violation, certify, scope_release_states, statement,
+};
 use crate::mir::elaborate::flagged;
 use crate::source::Span;
 use crate::tir::TypeKind;
@@ -33,13 +35,14 @@ fn first(local: LocalId) -> Place {
     }
 }
 
-/// `call f(args)`, with a `unit` result.
-fn call(args: Vec<Operand>) -> Statement {
+/// `call f(args)`, with a `unit` result, and `borrowed` the argument flags.
+fn call(args: Vec<Operand>, borrowed: Vec<bool>) -> Statement {
     Statement::Assign {
         dest: None,
         value: Rvalue::Call {
             func: FuncId(0),
             args,
+            borrowed,
         },
     }
 }
@@ -333,7 +336,10 @@ fn borrowed_operand_whose_owner_a_later_sibling_consumes() {
     let mut b = Builder::new("f");
     let a = b.param("a", Type::array(Type::I64));
     b.block(
-        vec![call(vec![Operand::Read(first(a)), Operand::Move(a)])],
+        vec![call(
+            vec![Operand::Read(first(a)), Operand::Move(a)],
+            vec![false, false],
+        )],
         ret(),
     );
     rejects(&b.finish(), 0, a, Rule::Borrow);
@@ -344,7 +350,10 @@ fn borrowed_operand_whose_owner_a_later_sibling_consumes() {
 fn consuming_argument_read_in_place() {
     let mut b = Builder::new("f");
     let s = b.param("s", Type::STRING);
-    b.block(vec![call(vec![read(s)]), Statement::Release(s)], ret());
+    b.block(
+        vec![call(vec![read(s)], vec![false]), Statement::Release(s)],
+        ret(),
+    );
     rejects(&b.finish(), 0, s, Rule::Consume);
 }
 
@@ -794,7 +803,7 @@ fn local_enters_a_loop_owned_then_is_reassigned_and_moved() {
         vec![
             Statement::ScopeRelease(s),
             fresh(s),
-            call(vec![Operand::Move(s)]),
+            call(vec![Operand::Move(s)], vec![false]),
         ],
         goto(1),
     );
@@ -1044,10 +1053,24 @@ fn borrow_chain_root_live() {
 // Rule 3's other clauses: a write to a borrow's root ends it, and so does a clobber when it
 // borrows through a field or an element.
 
-/// `local.0`.
+/// `local.0`, a `mut` field.
 fn field(local: LocalId) -> Place {
     Place {
-        projections: vec![Projection::Field(0)],
+        projections: vec![Projection::Field {
+            index: 0,
+            mutable: true,
+        }],
+        ..whole(local)
+    }
+}
+
+/// `local.0`, a field that is not `mut`.
+fn fixed(local: LocalId) -> Place {
+    Place {
+        projections: vec![Projection::Field {
+            index: 0,
+            mutable: false,
+        }],
         ..whole(local)
     }
 }
@@ -1132,7 +1155,7 @@ fn borrow_through_an_element_is_ended_by_a_call() {
     b.block(
         vec![
             assign(x, Rvalue::Borrow(first(xs))),
-            call(vec![]),
+            call(vec![], vec![]),
             show(read(x)),
             Statement::End(x),
             Statement::Release(xs),
@@ -1215,7 +1238,7 @@ fn chain_member_keeps_its_heads_clobbers() {
             assign(t, Rvalue::Borrow(first(xs))),
             assign(u, Rvalue::Borrow(whole(t))),
             Statement::End(t),
-            call(vec![]),
+            call(vec![], vec![]),
             show(read(u)),
             Statement::End(u),
             Statement::Release(xs),
@@ -1240,7 +1263,7 @@ fn payload_of_an_unstable_borrow_keeps_its_clobbers() {
             assign(t, Rvalue::Borrow(field(o))),
             borrow(u, t),
             Statement::End(t),
-            call(vec![]),
+            call(vec![], vec![]),
             show(read(u)),
             Statement::End(u),
             Statement::Release(o),
@@ -1267,7 +1290,7 @@ fn instability_reaches_a_borrow_in_an_earlier_block() {
         vec![
             assign(u, Rvalue::Borrow(whole(t))),
             Statement::End(t),
-            call(vec![]),
+            call(vec![], vec![]),
             show(read(u)),
             Statement::End(u),
             Statement::Release(o),
@@ -1321,7 +1344,7 @@ fn clobber_after_the_last_event_of_a_block() {
     let x = b.local("b", Type::STRING);
     b.owner(x, xs);
     b.block(
-        vec![assign(x, Rvalue::Borrow(first(xs))), call(vec![])],
+        vec![assign(x, Rvalue::Borrow(first(xs))), call(vec![], vec![])],
         goto(1),
     );
     b.block(
@@ -1340,7 +1363,7 @@ fn clobber_in_a_covered_block() {
     let x = b.local("b", Type::STRING);
     b.owner(x, xs);
     b.block(vec![assign(x, Rvalue::Borrow(first(xs)))], goto(1));
-    b.block(vec![call(vec![])], goto(2));
+    b.block(vec![call(vec![], vec![])], goto(2));
     b.block(
         vec![show(read(x)), Statement::End(x), Statement::Release(xs)],
         ret(),
@@ -1381,7 +1404,7 @@ fn borrow_through_a_payload_survives_a_call() {
         vec![
             fresh(s),
             borrow(x, s),
-            call(vec![]),
+            call(vec![], vec![]),
             show(read(x)),
             Statement::End(x),
             Statement::Release(s),
@@ -1402,7 +1425,7 @@ fn borrow_of_a_whole_local_survives_a_call() {
         vec![
             fresh(s),
             assign(x, Rvalue::Borrow(whole(s))),
-            call(vec![]),
+            call(vec![], vec![]),
             show(read(x)),
             Statement::End(x),
             Statement::Release(s),
@@ -1410,6 +1433,197 @@ fn borrow_of_a_whole_local_survives_a_call() {
         ret(),
     );
     assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// The counted-store case above, with the borrow through a field that is not `mut`. The borrow's
+/// place decides stability, whatever field the store writes: no store can replace the field the
+/// borrow reads, so the store does not end the borrow.
+#[test]
+fn borrow_through_a_fixed_field_survives_a_counted_store() {
+    let mut b = Builder::new("f");
+    let o = b.param("o", object());
+    let p = b.param("p", object());
+    let x = b.local("b", Type::STRING);
+    let value = b.local("s", Type::STRING);
+    let old = b.local("_t", Type::STRING);
+    b.owner(x, o);
+    b.block(
+        vec![
+            fresh(value),
+            Statement::Take {
+                dest: old,
+                place: fixed(p),
+            },
+            assign(x, Rvalue::Borrow(fixed(o))),
+            Statement::Store {
+                place: fixed(p),
+                value: Operand::Move(value),
+            },
+            Statement::Release(old),
+            show(read(x)),
+            Statement::End(x),
+            Statement::Release(o),
+            Statement::Release(p),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// `b = borrow o.0` with `o.0` not `mut`: a call cannot replace the field.
+#[test]
+fn borrow_through_a_fixed_field_survives_a_call() {
+    let mut b = Builder::new("f");
+    let o = b.param("o", object());
+    let x = b.local("b", Type::STRING);
+    b.owner(x, o);
+    b.block(
+        vec![
+            assign(x, Rvalue::Borrow(fixed(o))),
+            call(vec![], vec![]),
+            show(read(x)),
+            Statement::End(x),
+            Statement::Release(o),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// `s = borrow o.0`, an optional field that is not `mut`, then `b = borrow (s as some)`: both
+/// steps are stable, so a call ends neither borrow. `o` is a borrowed parameter, as `self` is in
+/// `self.left?.check()`.
+#[test]
+fn borrow_through_a_some_survives_a_call() {
+    let mut b = Builder::new("f");
+    let o = b.param("o", object());
+    b.borrowed(o);
+    let s = b.local("s", Type::optional(object()));
+    let x = b.local("b", object());
+    b.owner(s, o);
+    b.owner(x, s);
+    b.block(
+        vec![
+            assign(s, Rvalue::Borrow(fixed(o))),
+            assign(
+                x,
+                Rvalue::Borrow(Place {
+                    projections: vec![Projection::Some],
+                    ..whole(s)
+                }),
+            ),
+            call(vec![], vec![]),
+            show(read(x)),
+            Statement::End(x),
+            Statement::End(s),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+// Borrowed parameters, and the arguments a call borrows.
+
+/// `p` is borrowed from the caller for the whole body, so it may reach `return` borrowed.
+#[test]
+fn borrowed_parameter_reaches_return_borrowed() {
+    let mut b = Builder::new("f");
+    let p = b.param("p", Type::array(Type::I64));
+    b.borrowed(p);
+    b.block(vec![show(read(p))], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+#[test]
+fn scope_release_of_a_borrowed_parameter_is_rejected() {
+    let mut b = Builder::new("f");
+    let p = b.param("p", Type::array(Type::I64));
+    b.borrowed(p);
+    b.block(vec![Statement::ScopeRelease(p)], ret());
+    rejects(&b.finish(), 0, p, Rule::Consume);
+}
+
+#[test]
+fn move_of_a_borrowed_parameter_is_rejected() {
+    let mut b = Builder::new("f");
+    let p = b.param("p", Type::array(Type::I64));
+    b.borrowed(p);
+    let t = b.local("t", Type::array(Type::I64));
+    b.block(
+        vec![
+            assign(t, Rvalue::Use(Operand::Move(p))),
+            Statement::Release(t),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, p, Rule::Consume);
+}
+
+/// A move into a borrowed position hands nothing on: `t` is still owned at `return`.
+#[test]
+fn move_into_a_borrowed_position_leaks() {
+    let mut b = Builder::new("f");
+    let t = b.local("t", Type::array(Type::I64));
+    b.block(
+        vec![fresh(t), call(vec![Operand::Move(t)], vec![true])],
+        ret(),
+    );
+    rejects(&b.finish(), 0, t, Rule::Return);
+}
+
+#[test]
+fn read_at_a_borrowed_position_is_accepted() {
+    let mut b = Builder::new("f");
+    let t = b.local("t", Type::array(Type::I64));
+    b.block(
+        vec![
+            fresh(t),
+            call(vec![read(t)], vec![true]),
+            Statement::Release(t),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// An owned position consumes its argument, and a read in place hands on a reference `t` keeps.
+#[test]
+fn read_at_an_owned_position_is_rejected() {
+    let mut b = Builder::new("f");
+    let t = b.local("t", Type::array(Type::I64));
+    b.block(vec![fresh(t), call(vec![read(t)], vec![false])], ret());
+    rejects(&b.finish(), 0, t, Rule::Consume);
+}
+
+/// On mir as lowering left it, the visitor reports a `use` and a guard mark as the move each may
+/// become, where the certifier's own walk panics.
+#[test]
+fn lowered_use_and_guard_consume_their_local() {
+    for op in [Operand::Use(LocalId(0)), Operand::Guarded(LocalId(0))] {
+        let stmt = assign(LocalId(1), Rvalue::Use(op));
+        let mut effects = Vec::new();
+        statement(&stmt, true, &mut |local, effect, _| {
+            effects.push((local, effect));
+        });
+        assert!(effects == [(LocalId(0), Effect::Consume), (LocalId(1), Effect::Assign)]);
+    }
+}
+
+/// The certifier reads mir after the ownership pass, where no `use` is left: one there is a bug.
+#[test]
+#[should_panic(expected = "the ownership pass should leave no `use` and no guard mark")]
+fn use_after_the_ownership_pass_panics() {
+    let mut b = Builder::new("f");
+    let s = b.param("s", Type::STRING);
+    let t = b.local("t", Type::STRING);
+    b.block(
+        vec![
+            assign(t, Rvalue::Use(Operand::Use(s))),
+            Statement::Release(t),
+        ],
+        ret(),
+    );
+    let _ = certify(&b.finish());
 }
 
 /// `make_unique b` with `b` a borrow of the array `xs` finds the buffer unique, though `xs`
@@ -1615,8 +1829,11 @@ fn read_of_a_field_beside_a_taken_one() {
     let t = b.local("t", Type::STRING);
     let u = b.local("u", Type::STRING);
     let old = b.local("old", Type::STRING);
-    let field = |at| Place {
-        projections: vec![Projection::Field(at)],
+    let field = |index| Place {
+        projections: vec![Projection::Field {
+            index,
+            mutable: true,
+        }],
         ..whole(o)
     };
     b.block(
@@ -2105,7 +2322,7 @@ fn clobbers_before_many_borrows_read_linearly() {
     let reads = |n: usize| {
         let mut b = Builder::new("f");
         let xs = b.param("xs", Type::array(Type::STRING));
-        let mut stmts: Vec<Statement> = (0..n).map(|_| call(vec![])).collect();
+        let mut stmts: Vec<Statement> = (0..n).map(|_| call(vec![], vec![])).collect();
         for i in 0..n {
             let x = b.local(&format!("b_{i}"), Type::STRING);
             b.owner(x, xs);

@@ -468,7 +468,7 @@ fn helpers_pass_inline_enum_fields_by_address() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, c: Holder, d: Holder, e: Tree, f: Tree) -> bool { a == b && c == d && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn main() {}",
+        "enum Inner {\n    P(string, i64, i64, i64)\n    Q\n}\nenum Outer {\n    W(Inner)\n    V\n}\nenum Tree {\n    Leaf\n    Node(Tree, Inner)\n}\nclass Holder {\n    inner: Inner\n}\nfn same(a: Outer, b: Outer, c: Holder, d: Holder, e: Tree, f: Tree) -> bool { a == b && c == d && e == f }\nfn keep(o: Outer) -> [Outer] { [o, o] }\nfn drop(o: Outer, t: Tree) {\n    let k = o\n    let u = t\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
@@ -965,6 +965,7 @@ fn print_after_move() -> mir::Function {
                 Rvalue::Call {
                     func: FuncId(0),
                     args: vec![mir::Operand::Move(s)],
+                    borrowed: vec![false],
                 },
             ),
             assign(
@@ -1038,9 +1039,13 @@ fn assert_root_read_faults(
             let at = mir.functions.iter().position(|f| f.name == name);
             FuncId(at.expect("the source should define the function"))
         };
-        let call = |func, args| Statement::Assign {
+        let call = |func, args: Vec<mir::Operand>| Statement::Assign {
             dest: None,
-            value: Rvalue::Call { func, args },
+            value: Rvalue::Call {
+                func,
+                borrowed: vec![false; args.len()],
+                args,
+            },
         };
         let mut b = mir::tests::Builder::new("main");
         let r = b.local("r", root);
@@ -1051,6 +1056,7 @@ fn assert_root_read_faults(
                 value: Rvalue::Call {
                     func: func(make),
                     args: Vec::new(),
+                    borrowed: Vec::new(),
                 },
             },
             call(func(take), vec![mir::Operand::Move(r)]),
@@ -1099,7 +1105,10 @@ fn store_to_a_moved_root_faults() {
     let holder = Type::intern(TypeKind::Class(ClassId(0)));
     assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
         let place = Place {
-            projections: vec![Projection::Field(0)],
+            projections: vec![Projection::Field {
+                index: 0,
+                mutable: true,
+            }],
             ..whole_place(r)
         };
         let value = mir::Operand::Const(Const::Int(5, Type::I64));
@@ -1146,7 +1155,10 @@ fn switch_on_a_field_of_a_moved_class_faults() {
     let holder = Type::intern(TypeKind::Class(ClassId(0)));
     assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
         let shape = Place {
-            projections: vec![Projection::Field(2)],
+            projections: vec![Projection::Field {
+                index: 2,
+                mutable: true,
+            }],
             ..whole_place(r)
         };
         let term = Terminator::SwitchTag {
@@ -1460,7 +1472,7 @@ fn len_and_field_of_a_local_skip_base_count() {
         "class O {\n    n: i64\n    a: [i64]\n}\n\
          fn len(xs: [i64]) -> [i64] {\n    print(xs.len() + xs.len())\n    xs\n}\n\
          fn field(o: O) -> O {\n    print(o.n + o.n)\n    o\n}\n\
-         fn keep(xs: [i64]) {}\n\
+         fn keep(xs: [i64]) {\n    let kept = xs\n}\n\
          fn counted(o: O) -> O {\n    let a = o.a\n    print(a[0])\n    keep(a)\n    o\n}\n\
          fn main() {}",
     )
@@ -1794,12 +1806,12 @@ fn words_releases_a_base_that_is_not_a_local() {
     let ir = compiled(
         &context,
         "fn make() -> string { \"a \" + \"b\" }\nfn value() -> [string] { make().words() }\n\
-         fn local(s: string) -> i64 {\n    let ws = s.words()\n    s.len()\n}\nfn main() {}",
+         fn local() -> i64 {\n    let s = make()\n    let ws = s.words()\n    s.len()\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
     let value = function_body(&ir, "define internal ptr @sisu.value()");
-    let local = function_body(&ir, "define internal i64 @sisu.local(ptr");
+    let local = function_body(&ir, "define internal i64 @sisu.local()");
     let release = "@sisu_rc.release.string(";
     assert_eq!(value.matches(release).count(), 1, "{value}");
     // The local's one release is its scope end: `words()` itself released nothing.
@@ -1863,7 +1875,7 @@ fn general_path_releases_base() {
 }
 
 /// An index built only from whitelisted nodes reads the base in place; one with a call copies
-/// the base, which is released before the element is printed. `call` indexes a field, `q.xs`:
+/// the base, which is released before the element is printed. `call` indexes a `mut` field, `q.xs`:
 /// a borrow of a whole local survives a call, so pair removal (`mir/pairs.rs`) would make a
 /// copy of a whole local a borrow. In `moved` the index's read of `ys` is its last use, which
 /// the ownership pass makes a move, and `xs` is still read in place:
@@ -1873,13 +1885,13 @@ fn fast_path_follows_the_index_whitelist() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class O {\n    n: i64\n}\nclass Q {\n    xs: [i64]\n}\nfn g() -> i64 { 0 }\n\
+        "class O {\n    n: i64\n}\nclass Q {\n    mut xs: [i64]\n}\nfn g() -> i64 { 0 }\n\
          fn unary(xs: [i64], i: i64) -> [i64] {\n    print(xs[-i + 1])\n    xs\n}\n\
          fn convert(xs: [i64], b: u8) -> [i64] {\n    print(xs[i64(b)])\n    xs\n}\n\
          fn field(xs: [i64], o: O) -> [i64] {\n    print(xs[o.n])\n    print(o.n)\n    xs\n}\n\
          fn length(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    print(ys.len())\n    xs\n}\n\
          fn call(q: Q) -> Q {\n    print(q.xs[1 + g()])\n    q\n}\n\
-         fn moved(xs: [i64], ys: [bool]) -> [i64] {\n    print(xs[ys.len()])\n    xs\n}\nfn main() {}",
+         fn moved(xs: [i64]) -> [i64] {\n    let ys = [true]\n    print(xs[ys.len()])\n    xs\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
@@ -1977,7 +1989,7 @@ fn conditional_release_keeps_null_store() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "fn keep(p: [i64]) {}\nfn f(xs: [i64], c: bool) {\n    if c {\n        keep(xs)\n    }\n}\nfn main() {}",
+        "fn keep(p: [i64]) {\n    let kept = p\n}\nfn f(xs: [i64], c: bool) {\n    if c {\n        keep(xs)\n    }\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
@@ -2240,6 +2252,25 @@ fn partition_makes_its_array_unique_once() {
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
 }
 
+/// `binary_trees`' `Node.check` borrows `self.left` and `self.right` and passes each payload in
+/// place: its `-O2` IR calls no counting helper.
+#[test]
+fn optional_field_method_counts_nothing() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "class Node {\n    left: Node?\n    right: Node?\n\n    fn check(self) -> i64 {\n        1 + (self.left?.check() ?? 0) + (self.right?.check() ?? 0)\n    }\n}\n\n\
+         fn make(depth: i64) -> Node {\n    if depth == 0 {\n        Node(left: None, right: None)\n    } else {\n        Node(left: make(depth - 1), right: make(depth - 1))\n    }\n}\n\n\
+         fn main() {\n    print(make(4).check())\n}",
+    );
+    keep_functions(&module, "Node.check");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let check = function_body(&ir, "define internal fastcc i64 @sisu.Node.check(");
+    assert!(!check.contains("@sisu_rc."), "{check}");
+}
+
 /// `partition_makes_its_array_unique_once` with a `return a` in the loop, which bars the hoist:
 /// the writes in the loop call `unique` again, so the copy path that the TBAA tags and
 /// `unique`'s early release fold away is still there to guard. Same assertions.
@@ -2299,6 +2330,26 @@ fn element_comparison_in_a_loop_retains_nothing() {
     let ir = module.print_to_string().to_string();
     let repeats = function_body(&ir, "@sisu.repeats(");
     assert!(!repeats.contains("sisu_rc.retain"), "{repeats}");
+}
+
+/// `look` passes its borrowed array to `size`, which borrows it too: at `-O2` neither function
+/// counts it. Before inference, `look` moved `xs` into `size`, which released it.
+#[test]
+fn size_of_a_borrowed_array_counts_nothing() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn size(xs: [i64]) -> i64 {\n    xs.len()\n}\nfn look(xs: [i64]) -> i64 { size(xs) }\n\
+         fn main() {\n    print(look([1, 2]))\n}",
+    );
+    keep_functions(&module, "look,size");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    for name in ["look", "size"] {
+        let body = function_body(&ir, &format!("@sisu.{name}("));
+        assert!(!body.contains("sisu_rc."), "{body}");
+    }
 }
 
 /// A loop makes the arrays it writes unique before it starts. `f`'s raw IR, split at each
