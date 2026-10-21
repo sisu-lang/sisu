@@ -6,23 +6,21 @@ Status: accepted, 2026-10-21.
 at the `mir` seam: an LLVM-free front crate (`source`, `lexer`, `parser`,
 `ast`, `symbol`, `types`, `graph`, `check`, `tir`, `mir`, `diagnostic`,
 `report`, `front_end`) and a back end (`codegen`, `link`, `fuzz`, the
-driver). The aim was shorter edit-and-test cycles: a front-end edit would
-not recompile codegen or relink unit tests against LLVM.
+driver: `lib.rs`, `args`, `run`, `main.rs`). The aim was shorter edit-and-
+test cycles: the front crate's unit tests would link without LLVM, and an
+edit to the front end would rebuild the back end only incrementally.
 
-We chose `mir` over `tir` as the seam because `codegen` reads `tir` in ten
-`use` lines and `mir` in two, a `tir` seam would make `check`'s tests
-import `mir::tests` backwards across it, and `mir/` is where the work
-lands through M8 and M9.
-
-We did not build the split. Today's numbers already show that an edit
-rebuilds the test binaries in about 2 s, so the rule below cannot be met.
+No split was built or measured. On 2026-10-21 the user ruled one crate from
+the table below alone, because the decision rule's first condition cannot
+hold: an edit already rebuilds the test binaries in about 2 s.
 
 ## Measurements
 
-Base commit 2337f25, one `sisuc` crate. Machine: 32 cores, rustc 1.99.0,
-shared with other sessions (load 5 to 9). Each row is the median of five
-timed runs after an untimed warm-up. An edit inserts one line at the top
-of the file, so every span in it shifts. After each run the file is
+Base commit 2337f25, one `sisuc` crate. Machine: 32 cores, rustc 1.99.0.
+Other sessions were light: the 1-minute load was 1.4 before M1 and 5.7 to
+8.6 during M2 to M7, mostly from M1's own builds. Each row is the median of
+five timed runs after an untimed warm-up. An edit inserts one line at the
+top of the file, so every span in it shifts. After each run the file is
 restored and rebuilt untimed.
 
 | Id | Measurement | Median (s) |
@@ -44,14 +42,23 @@ The decision rule, set before measuring: **split** when both hold.
 1. A split's M2, M3 or M7 is at least 30 % and at least 5 s below today's.
 2. A split's M4 is no more than 10 % above today's.
 
-Otherwise one crate. The user rules on the table.
+Otherwise one crate.
 
-## Decision
+Condition 1 cannot hold. M2, M3 and M7 are 1.94 to 2.11 s, so a rebuild
+that took no time would save at most 2.11 s, short of 5 s. Incremental
+compilation already reuses the unchanged parts of the crate, and after a
+split `sisuc` would still rebuild incrementally and relink on every
+front-end edit.
 
-One crate. Condition 1 cannot hold: M2, M3 and M7 are about 2 s, so even
-a free rebuild saves under 2 s, short of 5 s. Incremental compilation
-already reuses the unchanged parts of the crate. After a split, `sisuc`
-would still rebuild incrementally and relink on every front-end edit.
+## Considered options
+
+- **Split at `mir`**: rejected by the rule. It would have put `mir/`, where
+  the work lands through M8 and M9, in the LLVM-free crate. `codegen`
+  reads `mir` in three `use` lines and `tir` in ten.
+- **Split at `tir`**: rejected. It adds `mir`'s imports (`tir`, `source`,
+  `graph::components`) to the edges across the seam, and `check`'s tests
+  would import `mir::tests` backwards across it.
+- **One crate**: chosen.
 
 ## Consequences
 
