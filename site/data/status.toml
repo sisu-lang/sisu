@@ -207,6 +207,11 @@ state = "planned"
 notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
 
 [[area.feature]]
+text = "A report of the bounds checks the optimizer keeps"
+state = "planned"
+notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
+
+[[area.feature]]
 text = "Fuzzing for wrong answers"
 state = "planned"
 notes = [["Roadmap: fuzzing", "docs/roadmap.md#fuzzing"]]
@@ -232,6 +237,11 @@ notes = [["Developing Sisu", "docs/development.md#look-inside-the-compiler"]]
 text = "Benchmarks on every pull request that touches the code"
 state = "works"
 notes = [["Benchmarks", "docs/benchmarks.md#running-them"], ["Developing Sisu", "docs/development.md#coverage-and-performance"]]
+
+[[area.feature]]
+text = "<code>sisu run</code> reuses the build of an unchanged script"
+state = "planned"
+notes = [["Roadmap: early tooling", "docs/roadmap.md#early-tooling"]]
 
 [[area.feature]]
 text = "<code>sisu test</code>, <code>sisu fmt</code> and <code>sisu lsp</code>"

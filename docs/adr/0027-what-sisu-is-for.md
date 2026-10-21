@@ -101,7 +101,10 @@ These hold beyond 1.0:
   "Concurrency" proposal, a panic ends the whole program, and a task that
   dies alone is listed under "Later". The options are in "Recovering from a
   panic": a supervisor such as systemd restarts the process, or a panic ends
-  only its task. The service's spec must also say how an accepted connection
+  only its task, and a loop in the service restarts the task and logs the
+  panic. In the second, whatever the task opened outside its memory, such as
+  a socket, must be closed by the runtime or by user drop code. The service's
+  spec must also say how an accepted connection
   reaches the task that serves it, since a handle that cannot be copied
   cannot cross tasks.
 - **The service's scale.** How many connections at once a thread per task
