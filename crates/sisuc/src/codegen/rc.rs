@@ -29,6 +29,11 @@ pub(super) enum Helper {
     Drain,
     /// `@sisu_rc.eq_component.<F0>(kind, a, b)`: `==` on values of a component's member `kind`.
     EqComponent,
+    /// `@sisu_rc.unbox.<F>(slot, out) -> ptr`: moves the value out of the box in `slot`, and
+    /// gives the box when nothing else holds it.
+    Unbox,
+    /// `@sisu_rc.free.<F>(token)`: frees a token's box, if it holds one.
+    Free,
 }
 
 /// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with any
@@ -43,9 +48,10 @@ pub(super) fn counted_core(ty: Type) -> Option<Type> {
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
-    /// Declares `sisu_rc.<retain|release|drop|eq|unique|walk|drain|eq_component>.<name>` on first
-    /// use and queues its body; `name` is a class's or an enum's name, `string`, or
-    /// `[<element name>]` for an array (`[Node?]`, `[[i64]]`).
+    /// Declares `sisu_rc.<kind>.<name>` on first use and queues its body: `kind` is `retain`,
+    /// `release`, `drop`, `eq`, `unique`, `walk`, `drain`, `eq_component`, `unbox` or `free`,
+    /// and `name` is a class's or an enum's name, `string`, or `[<element name>]` for an array
+    /// (`[Node?]`, `[[i64]]`).
     pub(super) fn helper(&self, kind: Helper, ty: Type) -> FunctionValue<'ctx> {
         let key = (kind, ty);
         if let Some(function) = self.helpers.borrow().get(&key) {
@@ -72,6 +78,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .fn_type(&[ptr_type.into(), ptr_type.into()], false),
             ),
             Helper::Drain => ("drain", takes_object),
+            Helper::Unbox => (
+                "unbox",
+                ptr_type.fn_type(&[ptr_type.into(), ptr_type.into()], false),
+            ),
+            Helper::Free => ("free", takes_object),
             Helper::EqComponent => (
                 "eq_component",
                 self.context.bool_type().fn_type(
@@ -129,6 +140,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
                 (Helper::Walk | Helper::Drain | Helper::EqComponent, _) => {
                     unreachable!("only an enum type should be queued for a component helper")
+                }
+                (Helper::Unbox | Helper::Free, _) => {
+                    unreachable!("only an enum type should be queued for a box's helper")
                 }
             }
         }
@@ -561,7 +575,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// Starts helper `function`, which returns at once when its object is `null`. Leaves the
     /// builder in the block for a real object; returns the object and the returning block.
-    fn helper_entry(
+    pub(super) fn helper_entry(
         &self,
         function: FunctionValue<'ctx>,
     ) -> (PointerValue<'ctx>, BasicBlock<'ctx>) {

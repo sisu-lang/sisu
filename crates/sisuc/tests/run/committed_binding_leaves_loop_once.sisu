@@ -1,8 +1,9 @@
 // A `match` arm in a loop whose binding is still owned when the arm leaves by `break`,
 // `continue` or `return` (mir part 1, Review Focus 3). Each guard prints its binding while the
-// binding is borrowed, and no body consumes it, so the commit's copy must be released once on
-// each exit, and the scrutinee only at the commit. Valgrind finds a leak if an exit skips the
-// binding, and `--rc-checks` finds a release too many. The strings are built at run time.
+// binding is borrowed, and no body consumes it, so the binding, which the commit moves out of
+// the scrutinee it takes apart, must be released once on each exit, and nothing of the
+// scrutinee after the commit. Valgrind finds a leak if an exit skips the binding, and
+// `--rc-checks` finds a release too many. The strings are built at run time.
 enum Step {
     Stop(string)
     Skip(string)

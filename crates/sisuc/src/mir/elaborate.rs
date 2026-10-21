@@ -59,7 +59,9 @@ pub(super) fn elaborate(function: &mut Function) {
                 | Statement::Release(_)
                 | Statement::MakeUnique(_)
                 | Statement::Check(_)
-                | Statement::End(_) => Some(stmt),
+                | Statement::End(_)
+                | Statement::TakeApart { .. }
+                | Statement::Free(_) => Some(stmt),
             })
             .collect();
     }

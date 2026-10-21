@@ -101,7 +101,12 @@ impl Placer<'_> {
                 self.place(place);
                 self.operand(value);
             }
-            Statement::Release(_) | Statement::ScopeRelease(_) | Statement::End(_) => {}
+            // A take-apart's places are its scrutinee's own, read where it consumes it.
+            Statement::Release(_)
+            | Statement::ScopeRelease(_)
+            | Statement::End(_)
+            | Statement::TakeApart { .. }
+            | Statement::Free(_) => {}
         }
     }
 
@@ -232,6 +237,7 @@ impl Placer<'_> {
             ty,
             counted: true,
             scope: self.at.0,
+            token: false,
         });
         LocalId(self.locals.len() - 1)
     }

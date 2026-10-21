@@ -5,7 +5,7 @@ use super::*;
 use crate::mir::certify::range::RangeMin;
 use crate::mir::certify::wavelet::Wavelet;
 use crate::mir::certify::{
-    Effect, READS, Rule, Violation, certify, scope_release_states, statement,
+    EMPTY, Effect, OWNED, READS, Rule, Violation, certify, scope_release_states, statement,
 };
 use crate::mir::elaborate::flagged;
 use crate::source::Span;
@@ -2503,4 +2503,146 @@ fn arm_chain_reads_linearly() {
         READS.get()
     };
     assert_near_linear(reads(100), reads(200), reads(300));
+}
+
+// Reuse tokens and `take_apart`.
+
+/// `e`, an owned parameter of enum 0. `Builder::local` never counts an enum, so it is counted
+/// here, as an enum with a box is.
+fn enum_param(b: &mut Builder) -> LocalId {
+    let e = b.param("e", Type::intern(TypeKind::Enum(EnumId(0))));
+    b.function.locals[e.0].counted = true;
+    e
+}
+
+/// A token of enum 0.
+fn token(b: &mut Builder) -> LocalId {
+    b.token("tok", Type::intern(TypeKind::Enum(EnumId(0))))
+}
+
+/// `take_apart scrutinee: tok = token (scrutinee as 0).0`, and each of `bindings` moved from
+/// the same place.
+fn take_apart(scrutinee: LocalId, tok: LocalId, bindings: &[LocalId]) -> Statement {
+    Statement::TakeApart {
+        scrutinee,
+        tokens: vec![(tok, payload(scrutinee))],
+        bindings: bindings.iter().map(|&b| (b, payload(scrutinee))).collect(),
+        rest: Vec::new(),
+    }
+}
+
+/// Each iteration builds `x` and takes it apart, and the `continue` edge scope releases the
+/// token, which would release the box's contents again.
+#[test]
+fn token_scope_released_on_a_continue_edge_is_rejected() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::BOOL);
+    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0))));
+    b.function.locals[x.0].counted = true;
+    let tok = token(&mut b);
+    b.scope(x, BlockId(1));
+    b.scope(tok, BlockId(1));
+    b.block(vec![], goto(1));
+    b.block(
+        vec![
+            assign(
+                x,
+                Rvalue::Variant {
+                    id: EnumId(0),
+                    variant: 0,
+                    args: Vec::new(),
+                },
+            ),
+            take_apart(x, tok, &[]),
+        ],
+        branch(c, 2, 3),
+    );
+    b.block(vec![Statement::ScopeRelease(tok)], goto(1));
+    b.block(vec![Statement::Free(tok)], ret());
+    b.add_loop(BlockId(0), BlockId(1), vec![BlockId(1), BlockId(2)]);
+    rejects(&b.finish(), 2, tok, Rule::Token);
+}
+
+#[test]
+fn free_of_a_freed_token_is_rejected() {
+    let mut b = Builder::new("f");
+    let e = enum_param(&mut b);
+    let tok = token(&mut b);
+    b.block(
+        vec![
+            take_apart(e, tok, &[]),
+            Statement::Free(tok),
+            Statement::Free(tok),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, tok, Rule::Token);
+}
+
+#[test]
+fn token_leaked_on_one_path_is_rejected() {
+    let mut b = Builder::new("f");
+    let e = enum_param(&mut b);
+    let c = b.param("c", Type::BOOL);
+    let tok = token(&mut b);
+    b.block(vec![take_apart(e, tok, &[])], branch(c, 1, 2));
+    b.block(vec![Statement::Free(tok)], ret());
+    b.block(vec![], ret());
+    rejects(&b.finish(), 2, tok, Rule::Return);
+}
+
+/// The token is owned where the `match` took `e` apart and empty where it released `e`: the
+/// `free` sees {owned, empty}, which its helper's `null` test covers.
+#[test]
+fn free_of_a_token_that_may_be_empty_is_accepted() {
+    let mut b = Builder::new("f");
+    let e = enum_param(&mut b);
+    let c = b.param("c", Type::BOOL);
+    let tok = token(&mut b);
+    b.block(vec![], branch(c, 1, 2));
+    b.block(vec![take_apart(e, tok, &[])], goto(3));
+    b.block(vec![Statement::Release(e)], goto(3));
+    b.block(vec![Statement::Free(tok)], ret());
+    let f = b.finish();
+    assert_eq!(certify(&f), Ok(()));
+    let named: Vec<bool> = (0..f.locals.len()).map(|i| i == tok.0).collect();
+    assert_eq!(
+        scope_release_states(&f, &named).get(&(BlockId(3), 0)),
+        Some(&(OWNED | EMPTY))
+    );
+}
+
+#[test]
+fn free_of_a_local_that_is_not_a_token_is_rejected() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    b.block(vec![literal(s), Statement::Free(s)], ret());
+    rejects(&b.finish(), 0, s, Rule::Token);
+}
+
+/// `take_apart` consumes `e`, so a binding still borrowing from it breaks rule 3: lowering ends
+/// each binding's borrow first.
+#[test]
+fn take_apart_while_a_binding_borrows_is_rejected() {
+    let function = |end_first: bool| {
+        let mut b = Builder::new("f");
+        let e = enum_param(&mut b);
+        let x = b.local("x", Type::STRING);
+        let tok = token(&mut b);
+        b.owner(x, e);
+        let mut stmts = vec![borrow(x, e)];
+        if end_first {
+            stmts.push(Statement::End(x));
+        }
+        stmts.extend([
+            take_apart(e, tok, &[x]),
+            Statement::Release(x),
+            Statement::Free(tok),
+        ]);
+        b.block(stmts, ret());
+        (b.finish(), x)
+    };
+    let (f, x) = function(false);
+    rejects(&f, 0, x, Rule::Borrow);
+    assert_eq!(certify(&function(true).0), Ok(()));
 }

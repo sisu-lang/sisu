@@ -469,7 +469,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             .locals
             .iter()
             .map(|local| {
-                let ty = self.llvm_type(local.ty)?;
+                let ty = if local.token {
+                    self.context.ptr_type(AddressSpace::default()).into()
+                } else {
+                    self.llvm_type(local.ty)?
+                };
                 let name = local.name.as_deref().unwrap_or("");
                 Some((self.entry_alloca(ty, name), ty))
             })
@@ -549,6 +553,16 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let array = self.load_pointer(address);
                 let (index, _) = self.operand(index);
                 self.check_bounds(array, index.into_int_value(), *span);
+            }
+            Statement::TakeApart {
+                scrutinee,
+                tokens,
+                bindings,
+                rest,
+            } => self.take_apart(*scrutinee, tokens, bindings, rest),
+            Statement::Free(token) => {
+                let free = self.helper(Helper::Free, self.types[token.0]);
+                self.call(free, &[self.load_local(*token).into()]);
             }
             Statement::End(_) => {}
         }

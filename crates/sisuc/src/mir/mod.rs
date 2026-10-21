@@ -3,12 +3,14 @@
 //! mir is not SSA: a local is a mutable slot, and a value that `tir` gives an `if` or a block
 //! is assigned to a destination local on each path to the join.
 //!
-//! Lowering (`lower.rs`) evaluates operands in source order and writes the count work that
-//! the source implies as statements: a `copy` of every string literal, a `release` of every
-//! temporary that a borrowing statement read, a scope release (`release?`) of each source local
-//! on every edge that leaves its scope, and `check`, `make_unique` and `take` for each write
-//! through a place. Two forms are left for a later pass to decide: `Use`, a consuming read of a
-//! whole counted local, and a borrow site, a place whose root a statement reads in place.
+//! Lowering (`lower.rs`) evaluates operands in source order and writes the count work that the
+//! source implies as statements: a `copy` of every string literal, a `release` of every temporary
+//! that a borrowing statement read, a scope release (`release?`) of each source local on every edge
+//! that leaves its scope, and `check`, `make_unique` and `take` for each write through a place. A
+//! `match` arm on an owned enum commits with a `take_apart` (ADR 0030), whose reuse tokens get a
+//! `free` on every edge that leaves their scope. Two forms are left for a later pass to decide:
+//! `Use`, a consuming read of a whole counted local, and a borrow site, a place whose root a
+//! statement reads in place.
 //!
 //! Inference (`params.rs`) then decides which counted parameters are borrowed: those their
 //! function never consumes, across the whole program's calls (ADR 0029). Each function is lowered
@@ -95,6 +97,9 @@ pub(crate) struct Local {
     /// The block that was current when lowering created the local, which dominates every
     /// block that mentions it. A source local that lowering never reaches keeps the entry block.
     pub(crate) scope: BlockId,
+    /// Whether the local is a reuse token: a pointer to a box of the enum `ty` that `take_apart`
+    /// emptied, owned until a `free`, `null` when the box was shared.
+    pub(crate) token: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -317,6 +322,18 @@ pub(crate) enum Statement {
     Check(Place),
     /// A borrow ends.
     End(LocalId),
+    /// A `match` arm's commit on an owned scrutinee: each tested box's block becomes its token,
+    /// outermost first, each counted binding moves out of its place, and each value that keeps
+    /// a counted part nothing moved is released. Every place is rooted at `scrutinee`, which the
+    /// statement consumes.
+    TakeApart {
+        scrutinee: LocalId,
+        tokens: Vec<(LocalId, Place)>,
+        bindings: Vec<(LocalId, Place)>,
+        rest: Vec<Place>,
+    },
+    /// Frees a token's block, if it holds one; the block's contents were moved out.
+    Free(LocalId),
 }
 
 #[derive(Debug)]

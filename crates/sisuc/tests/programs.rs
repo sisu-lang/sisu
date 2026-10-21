@@ -202,6 +202,9 @@ allocation_counts! {
     (enum_alloc_handover_box, "1000\n", "0\n", 1000),
     // Through a shared box: one new box and one array copy per step.
     (enum_alloc_shared_box, "1000\n499500\n", "0\n0\n", 2000),
+    // Each step frees `e`'s two boxes and allocates two for the new `Add`. Building into the old
+    // boxes would make it 0.
+    (enum_alloc_rewrite, "12\n", "12\n", 2000),
 }
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.

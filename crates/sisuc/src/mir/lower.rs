@@ -176,6 +176,7 @@ impl<'a> Lowering<'a> {
                 ty: local.ty,
                 counted: local.ty.is_counted(&program.enums),
                 scope: BlockId(0),
+                token: false,
             })
             .collect();
         let mut lowering = Lowering {
@@ -280,6 +281,20 @@ impl<'a> Lowering<'a> {
             ty,
             counted: self.counted(ty),
             scope,
+            token: false,
+        });
+        LocalId(self.locals.len() - 1)
+    }
+
+    /// A new reuse token for a box of the enum `ty`, whose scope is the current block.
+    fn token(&mut self, ty: Type) -> LocalId {
+        let scope = self.here();
+        self.locals.push(Local {
+            name: None,
+            ty,
+            counted: true,
+            scope,
+            token: true,
         });
         LocalId(self.locals.len() - 1)
     }
@@ -360,13 +375,15 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// Scope-releases the locals above `mark`, or ends the borrowed ones, newest first, without
-    /// popping them.
+    /// Scope-releases the locals above `mark`, frees the tokens, or ends the borrowed ones,
+    /// newest first, without popping them.
     fn release_scope(&mut self, mark: usize) {
         for i in (mark..self.scope.len()).rev() {
             let (local, borrowed) = self.scope[i];
             self.push(if borrowed {
                 Statement::End(local)
+            } else if self.locals[local.0].token {
+                Statement::Free(local)
             } else {
                 Statement::ScopeRelease(local)
             });

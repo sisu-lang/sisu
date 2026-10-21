@@ -24,8 +24,9 @@ use inkwell::values::{
 
 use super::layout::HeapBlock;
 use super::rc::{Helper, param};
-use super::{Codegen, POSITIONED};
-use crate::tir::{Enum, EnumId, Payload, Type, TypeKind};
+use super::{Codegen, POSITIONED, enum_of};
+use crate::mir::{Place, Projection};
+use crate::tir::{Enum, EnumId, LocalId, Payload, Type, TypeKind};
 
 /// An enum's LLVM types.
 pub(super) struct EnumLayout<'ctx> {
@@ -412,6 +413,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::Drain => self.define_drain(id, function),
             Helper::Eq => self.define_enum_eq(id, function),
             Helper::EqComponent => self.define_eq_component(id, function),
+            Helper::Unbox => self.define_unbox(id, function),
+            Helper::Free => self.define_free(id, function),
             Helper::Drop | Helper::Unique => {
                 unreachable!("an enum should never be queued for a `drop` or `unique` helper")
             }
@@ -575,6 +578,161 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.position_at_end(empty);
         }
         self.builder.build_return(None).expect(POSITIONED);
+    }
+
+    /// `@sisu_rc.unbox.<F>(slot, out) -> ptr`: `slot` holds a box of `F`, never `null`. Copies
+    /// the box's value to `out` and stores `null` into `slot`. A box with count 1 is returned,
+    /// its value moved out. A shared box keeps its value: `out` is retained, the box loses the
+    /// slot's reference, and `null` is returned. Its count was at least 2, so it stays above 0.
+    fn define_unbox(&self, id: EnumId, function: FunctionValue<'ctx>) {
+        let nth = |n| {
+            function
+                .get_nth_param(n)
+                .expect("the generated `unbox` helper should be declared with two parameters")
+                .into_pointer_value()
+        };
+        let (slot, out) = (nth(0), nth(1));
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let block = |name| self.context.append_basic_block(function, name);
+        let (entry, unique, shared) = (block("entry"), block("unique"), block("shared"));
+        self.builder.position_at_end(entry);
+        let boxed = self
+            .builder
+            .build_load(ptr_type, slot, "box")
+            .expect(POSITIONED)
+            .into_pointer_value();
+        let value_ty = self.enums[id.0].ty;
+        let value = self
+            .builder
+            .build_load(value_ty, self.box_value(id, boxed), "value")
+            .expect(POSITIONED);
+        self.store(out, value);
+        self.store(slot, ptr_type.const_null().into());
+        let count = self.load_count(boxed, "count");
+        let one = self.int_compare(
+            IntPredicate::EQ,
+            count,
+            self.context.i64_type().const_int(1, false),
+        );
+        self.branch_on(one, unique, shared);
+        self.builder.position_at_end(unique);
+        self.builder.build_return(Some(&boxed)).expect(POSITIONED);
+        self.builder.position_at_end(shared);
+        let ty = Type::intern(TypeKind::Enum(id));
+        self.call(self.helper(Helper::Retain, ty), &[out.into()]);
+        let minus_one = self
+            .context
+            .i64_type()
+            .const_int((-1_i64).cast_unsigned(), false);
+        self.add_to_count(boxed, minus_one);
+        self.builder
+            .build_return(Some(&ptr_type.const_null()))
+            .expect(POSITIONED);
+    }
+
+    /// `@sisu_rc.free.<F>(token)`: frees the box of `F` that `token` holds, whose value was
+    /// moved out; nothing when it is `null`.
+    fn define_free(&self, id: EnumId, function: FunctionValue<'ctx>) {
+        let (boxed, done) = self.helper_entry(function);
+        let (size, align) = self.heap_size(&HeapBlock::Box(id));
+        self.call(self.free, &[boxed.into(), size.into(), align.into()]);
+        self.branch_to(done);
+    }
+
+    /// `take_apart`, straight-line (see `Statement::TakeApart`): unboxes each token's box,
+    /// outermost first, into a slot of its own; moves each binding out of its place, zeroing the
+    /// source when its value keeps a rest; releases each rest; then zeroes the scrutinee's slot
+    /// when it is flagged, as a move does.
+    pub(super) fn take_apart(
+        &self,
+        scrutinee: LocalId,
+        tokens: &[(LocalId, Place)],
+        bindings: &[(LocalId, Place)],
+        rest: &[Place],
+    ) {
+        // Each token's place, and the slot its box's value went to.
+        let mut unboxed: Vec<(&[Projection], PointerValue<'ctx>)> =
+            Vec::with_capacity(tokens.len());
+        for (token, place) in tokens {
+            let Some((&Projection::Payload { variant, field }, outer)) =
+                place.projections.split_last()
+            else {
+                unreachable!("lowering should make a token only of a payload field")
+            };
+            let (parent, ty, _) = self.unboxed_at(scrutinee, outer, &unboxed);
+            let slot = self.field_slot(parent, enum_of(ty), variant, field);
+            let inner = self.types[token.0];
+            let value_ty = self
+                .llvm_type(inner)
+                .expect("a token's enum should have a value type");
+            let out = self.entry_alloca(value_ty, "unboxed");
+            let boxed = self
+                .builder
+                .build_call(
+                    self.helper(Helper::Unbox, inner),
+                    &[slot.into(), out.into()],
+                    "token",
+                )
+                .expect(POSITIONED)
+                .try_as_basic_value()
+                .basic()
+                .expect("`unbox` should return a pointer, as `helper` declares it");
+            self.store(self.slot(*token).0, boxed);
+            unboxed.push((&place.projections, out));
+        }
+        for (binding, place) in bindings {
+            let (address, _, root) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
+            let (slot, ty) = self.slot(*binding);
+            let value = self
+                .builder
+                .build_load(ty, address, "moved")
+                .expect(POSITIONED);
+            self.store(slot, value);
+            if rest
+                .iter()
+                .any(|kept| kept.projections[..] == place.projections[..root])
+            {
+                self.store(address, ty.const_zero());
+            }
+        }
+        for place in rest {
+            let (address, ty, _) = self.unboxed_at(scrutinee, &place.projections, &unboxed);
+            self.release_at(address, ty);
+        }
+        if self.flagged[scrutinee.0] {
+            let (slot, ty) = self.slot(scrutinee);
+            self.store(slot, ty.const_zero());
+        }
+    }
+
+    /// The address of the value at `projections` from `scrutinee`, its type, and how many of
+    /// the projections reach the value that holds it: the scrutinee, or the box of a token in
+    /// `unboxed`, whose value is in that token's slot.
+    fn unboxed_at(
+        &self,
+        scrutinee: LocalId,
+        projections: &[Projection],
+        unboxed: &[(&[Projection], PointerValue<'ctx>)],
+    ) -> (PointerValue<'ctx>, Type, usize) {
+        let (mut address, _) = self.slot(scrutinee);
+        let mut ty = self.types[scrutinee.0];
+        let mut root = 0;
+        for (i, projection) in projections.iter().enumerate() {
+            let &Projection::Payload { variant, field } = projection else {
+                unreachable!("a take-apart's places should hold only payload projections")
+            };
+            let id = enum_of(ty);
+            ty = self.program.enums[id.0].variants[variant].fields[field].ty;
+            let token = unboxed.iter().find(|(at, _)| at[..] == projections[..=i]);
+            address = match token {
+                Some(&(_, out)) => {
+                    root = i + 1;
+                    out
+                }
+                None => self.field_slot(address, id, variant, field),
+            };
+        }
+        (address, ty, root)
     }
 
     /// `@sisu_rc.eq.<E>(a, b) -> i1`: with boxes, `eq_component` of `E`'s component, given

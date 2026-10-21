@@ -341,7 +341,10 @@ impl Walk<'_> {
 
 /// Whether a statement may sit between a tail call and its `return`.
 const fn cleanup(stmt: &Statement) -> bool {
-    matches!(stmt, Statement::ScopeRelease(_) | Statement::End(_))
+    matches!(
+        stmt,
+        Statement::ScopeRelease(_) | Statement::End(_) | Statement::Free(_)
+    )
 }
 
 /// Each block's `Exit`, each chain of blocks followed once.

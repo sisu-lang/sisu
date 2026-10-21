@@ -1,8 +1,9 @@
 fn iterations() -> i64 { 1000 }
 
-// The handover through a shared box: `saved` shares `t`'s box during each `match`, so releasing
-// `t` at the commit leaves the box and its array alive, `xs` keeps count 2, and `ys[0]` copies
-// the array. Each step allocates one box and one array copy.
+// The handover through a shared box: `saved` shares `t`'s box during each `match`, so taking `t`
+// apart at the commit leaves the box and its array alive: `xs` gets a copy of the box's value,
+// retained, the array has count 2, and `ys[0]` copies it. Each step allocates one box and one
+// array copy.
 enum Tree {
     Leaf([i64])
     Node(Tree)

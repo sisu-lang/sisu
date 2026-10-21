@@ -78,6 +78,9 @@ pub(crate) enum Rule {
     Unended,
     /// An owned value leaves the local's region: it can never be consumed.
     Escape,
+    /// A token is released, consumed or read, or freed where it may be ended or borrowed; or a
+    /// local that is not a token is freed or built into.
+    Token,
 }
 
 impl fmt::Display for Rule {
@@ -100,6 +103,10 @@ impl fmt::Display for Rule {
             Rule::End => "its borrow ends where it may own a reference",
             Rule::Unended => "still borrowed outside its arm",
             Rule::Escape => "may still own a reference where its scope ends",
+            Rule::Token => {
+                "a reuse token released, moved, read or freed twice, or a value that is not a \
+                 token freed or built into"
+            }
         })
     }
 }
@@ -154,7 +161,7 @@ pub(super) fn scope_release_states(
         |region, scratch| {
             seen.clear();
             let observed = region.check(scratch, &mut |event, set| {
-                if event.effect == Effect::ScopeRelease {
+                if matches!(event.effect, Effect::ScopeRelease | Effect::Free) {
                     *seen.entry((BlockId(event.block), event.at)).or_insert(0) |= set;
                 }
             });
@@ -334,7 +341,9 @@ impl Clobbers {
                     Statement::Release(_)
                     | Statement::ScopeRelease(_)
                     | Statement::Check(_)
-                    | Statement::End(_) => false,
+                    | Statement::End(_)
+                    | Statement::TakeApart { .. }
+                    | Statement::Free(_) => false,
                 };
                 so_far += usize::from(clobbers);
             }
@@ -638,6 +647,14 @@ pub(super) enum Effect {
     /// The root of a place that a `take`, a store or a `make_unique` writes through. It reads
     /// the local in place, as `ReadInPlace` does, and also ends a borrow of it.
     Write,
+    /// `free tok`: a token's block is freed if the token holds one.
+    Free,
+    /// A construction builds into a token's block.
+    #[expect(
+        dead_code,
+        reason = "a construction that builds into a token lands in Task 3"
+    )]
+    Reuse,
 }
 
 impl Effect {
@@ -648,7 +665,9 @@ impl Effect {
             | Effect::Release
             | Effect::ScopeRelease
             | Effect::Assign
-            | Effect::AssignBorrowed => true,
+            | Effect::AssignBorrowed
+            | Effect::Free
+            | Effect::Reuse => true,
             Effect::Read
             | Effect::ReadInPlace
             | Effect::ReadConsumed
@@ -703,6 +722,19 @@ pub(super) fn statement<'a>(
         Statement::MakeUnique(place) => self::place(place, Effect::Write, lowered, f),
         Statement::Check(place) => self::place(place, Effect::ReadInPlace, lowered, f),
         Statement::End(local) => f(*local, Effect::End, None),
+        // The places are the scrutinee's own, so the statement reads nothing else.
+        Statement::TakeApart {
+            scrutinee,
+            tokens,
+            bindings,
+            rest: _,
+        } => {
+            f(*scrutinee, Effect::Consume, None);
+            for (local, _) in tokens.iter().chain(bindings) {
+                f(*local, Effect::Assign, None);
+            }
+        }
+        Statement::Free(local) => f(*local, Effect::Free, None),
     }
 }
 
@@ -1870,18 +1902,42 @@ impl Region<'_> {
     /// One effect on the set, checked against rules 1, 2, 5, a write while borrowed and the end
     /// of a borrow.
     fn apply(&self, block: usize, effect: Effect, states: States) -> Result<States, Violation> {
+        let token = self.function.locals[self.local.0].token;
+        let misused = match effect {
+            Effect::Read
+            | Effect::ReadInPlace
+            | Effect::Consume
+            | Effect::Release
+            | Effect::ScopeRelease => token,
+            Effect::Free | Effect::Reuse => !token,
+            Effect::ReadConsumed
+            | Effect::Write
+            | Effect::Assign
+            | Effect::AssignBorrowed
+            | Effect::End => false,
+        };
+        if misused {
+            return Err(self.violation(block, Rule::Token));
+        }
         let (bad, rule, after) = match effect {
             // `mentions` rejects a counted `ReadConsumed` before any region is checked.
             Effect::Read | Effect::ReadInPlace | Effect::ReadConsumed | Effect::Write => {
                 (EMPTY | ENDED, Rule::Read, states)
             }
-            Effect::Consume => (EMPTY | BORROWED | ENDED, Rule::Consume, EMPTY),
+            // A construction built into a token consumes it as a move does.
+            Effect::Consume | Effect::Reuse => (EMPTY | BORROWED | ENDED, Rule::Consume, EMPTY),
             Effect::Release => (EMPTY | BORROWED | ENDED, Rule::Consume, ENDED),
             // An empty slot holds the zero value where a `release?` can read it; only an owned
             // value is freed and left in the slot.
             Effect::ScopeRelease => (
                 BORROWED | ENDED,
                 Rule::Consume,
+                states & EMPTY | if states & OWNED == 0 { 0 } else { ENDED },
+            ),
+            // A free has a scope release's transfer: a second one sees the token ended.
+            Effect::Free => (
+                BORROWED | ENDED,
+                Rule::Token,
                 states & EMPTY | if states & OWNED == 0 { 0 } else { ENDED },
             ),
             Effect::Assign => (OWNED, Rule::Assign, OWNED),

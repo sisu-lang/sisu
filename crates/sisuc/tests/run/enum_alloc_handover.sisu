@@ -1,8 +1,8 @@
 fn iterations() -> i64 { 1000 }
 
-// `h = step(h)` hands `h` to `step` at its last use, so the `match` owns it. At the commit `xs`
-// adds 1 and the `match` releases `h`, which held the array alone: `xs` has count 1 again, so
-// `ys[0]` writes in place and no step copies the array.
+// `h = step(h)` hands `h` to `step` at its last use, so the `match` owns it. At the commit the
+// `match` takes `h` apart, and `xs` moves the array out of it, which `h` held alone: `xs` has
+// count 1, so `ys[0]` writes in place and no step copies the array.
 enum Holder {
     W([i64])
 }

@@ -2479,3 +2479,29 @@ fn reflexivity_reads_linearly() {
     };
     assert_near_linear(reads(100), reads(200), reads(300));
 }
+
+/// `swap` takes its scrutinee apart: an unbox of each box, which retains nothing when the box
+/// has count 1, where the copying commit retained each binding.
+#[test]
+fn take_apart_of_swap_retains_nothing() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\n\
+         fn swap(e: Expr) -> Expr {\n    match e {\n        Add(l, r) => Expr.Add(r, l)\n        other => other\n    }\n}\n\
+         fn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    let header = ir
+        .lines()
+        .find(|line| line.starts_with("define") && line.contains("@sisu.swap("))
+        .unwrap_or_else(|| panic!("no swap in\n{ir}"));
+    let swap = function_body(&ir, header);
+    assert_eq!(
+        swap.matches("call ptr @sisu_rc.unbox.Expr(").count(),
+        2,
+        "{swap}"
+    );
+    assert!(!swap.contains("@sisu_rc.retain.Expr("), "{swap}");
+}

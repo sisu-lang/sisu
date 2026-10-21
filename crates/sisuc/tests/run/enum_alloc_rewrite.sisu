@@ -1,0 +1,27 @@
+fn iterations() -> i64 { 1000 }
+
+// Each step takes `e`'s two boxes apart in `match`, each with count 1, and builds a new `Add`
+// with its operands swapped. Taking the boxes apart frees them and the new `Add` allocates two,
+// unless the new `Add` is built into the blocks the `match` took apart.
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
+fn swap(e: Expr) -> Expr {
+    match e {
+        Add(l, r) => Expr.Add(r, l)
+        other => other
+    }
+}
+
+fn main() {
+    let mut e = Expr.Add(Expr.Num(1), Expr.Num(2))
+    for _ in 0..iterations() {
+        e = swap(e)
+    }
+    match e {
+        Add(Num(a), Num(b)) => print(a * 10 + b) // 12 (12 with no iterations)
+        _ => panic("not an Add")
+    }
+}

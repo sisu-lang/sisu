@@ -257,7 +257,9 @@ fn allowed(
         | Effect::ScopeRelease
         | Effect::Assign
         | Effect::AssignBorrowed
-        | Effect::End => false,
+        | Effect::End
+        | Effect::Free
+        | Effect::Reuse => false,
     }
 }
 
@@ -304,12 +306,13 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
         Statement::Take { dest, .. } if function.locals[dest.0].counted => Kind::Clobber,
         Statement::Store { value, .. } if certify::counted_value(function, value) => Kind::Clobber,
         Statement::MakeUnique(_) => Kind::Clobber,
-        Statement::Release(local) => Kind::Release(*local),
+        Statement::Release(local) | Statement::Free(local) => Kind::Release(*local),
         Statement::Take { .. }
         | Statement::Store { .. }
         | Statement::ScopeRelease(_)
         | Statement::Check(_)
-        | Statement::End(_) => Kind::Other,
+        | Statement::End(_)
+        | Statement::TakeApart { .. } => Kind::Other,
     }
 }
 
@@ -368,6 +371,8 @@ fn borrowed(stmt: Statement) -> Statement {
         | Statement::ScopeRelease(_)
         | Statement::MakeUnique(_)
         | Statement::Check(_)
-        | Statement::End(_) => panic!("a pair's copy or chain step should be an assignment"),
+        | Statement::End(_)
+        | Statement::TakeApart { .. }
+        | Statement::Free(_) => panic!("a pair's copy or chain step should be an assignment"),
     }
 }
