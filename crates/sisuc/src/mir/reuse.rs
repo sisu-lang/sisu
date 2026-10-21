@@ -43,10 +43,6 @@ pub(super) fn reuse(function: &mut Function, program: &tir::Program) {
 pub(super) fn available(function: &Function, program: &tir::Program) -> Vec<Vec<LocalId>> {
     let blocks = function.blocks.len();
     let order = reverse_post_order(function);
-    let mut position = vec![usize::MAX; blocks];
-    for (i, block) in order.iter().enumerate() {
-        position[block.0] = i;
-    }
     // An unreachable predecessor never runs, so it holds back nothing.
     let mut preds = vec![Vec::new(); blocks];
     for &block in &order {
@@ -57,16 +53,17 @@ pub(super) fn available(function: &Function, program: &tir::Program) -> Vec<Vec<
     let mut entry = vec![Vec::new(); blocks];
     let mut exit: Vec<Vec<LocalId>> = vec![Vec::new(); blocks];
     for &block in &order {
-        let preds = &preds[block.0];
-        let mut set = match preds.split_first() {
-            Some((&first, rest)) if preds.iter().all(|&p| position[p] < position[block.0]) => {
+        // A back-edge predecessor comes later in the order, so its exit is still empty here, and
+        // so is the intersection.
+        let mut set = match preds[block.0].split_first() {
+            Some((&first, rest)) => {
                 let mut set = exit[first].clone();
                 for &p in rest {
                     set.retain(|token| exit[p].binary_search_by_key(&token.0, |t| t.0).is_ok());
                 }
                 set
             }
-            Some(_) | None => Vec::new(),
+            None => Vec::new(),
         };
         entry[block.0].clone_from(&set);
         for stmt in &function.blocks[block.0].stmts {

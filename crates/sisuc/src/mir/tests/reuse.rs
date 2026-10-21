@@ -106,6 +106,33 @@ fn join_offers_only_tokens_both_paths_hold() {
     assert_eq!(f.matches("free").count(), 1, "{f}");
 }
 
+/// The `Neg` arm frees its token before the join, and the `return` arm reaches no join, so the
+/// `Neg` after the `match` has no token to take.
+#[test]
+fn freed_token_is_not_taken_after_the_join() {
+    let printed = built(
+        "enum Expr {\n    Num(i64)\n    Neg(Expr)\n}\n\
+         fn after(e: Expr) -> Expr {\n    let x = match e {\n        Neg(x) => x\n        \
+         other => return other\n    }\n    Expr.Neg(x)\n}\n",
+    );
+    let f = function(&printed, "after");
+    assert!(f.contains("free _\n    goto"), "{f}");
+    assert!(!f.contains(" into ["), "{f}");
+}
+
+/// `Wrap` is outside `Expr`'s cycle, so `W` holds its `Expr` inline, and an inline field takes
+/// no token.
+#[test]
+fn inline_field_takes_no_token() {
+    let printed = built(
+        "enum Expr {\n    Num(i64)\n    Neg(Expr)\n}\nenum Wrap {\n    W(Expr)\n}\n\
+         fn wrap(e: Expr) -> Wrap {\n    match e {\n        Neg(x) => Wrap.W(x)\n        \
+         other => Wrap.W(other)\n    }\n}\n",
+    );
+    has(&printed, "wrap", &["variant Wrap.W(move x#1)\n    free _"]);
+    assert!(!function(&printed, "wrap").contains(" into ["), "{printed}");
+}
+
 /// Each of 40 nested `match`es takes two boxes apart, 80 tokens in all, yet no block is
 /// offered more than `MAX_OPEN`, and the innermost blocks reach it.
 #[test]
