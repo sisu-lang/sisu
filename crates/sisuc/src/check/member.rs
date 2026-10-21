@@ -1,6 +1,7 @@
 //! Members: fields and methods found through `.` and `?.`.
 
 use super::expr::{if_some, local, no_member, path};
+use super::generic::Ahead;
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, optional_of, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind};
@@ -21,9 +22,9 @@ impl Checker<'_> {
         name: &ast::Ident,
         member: impl FnOnce(&mut Self, Checked) -> Checked,
     ) -> Checked {
-        let scrutinee = match self.body.receivers.remove(&receiver.span) {
-            Some(checked) => checked,
-            None => self.value(receiver, None),
+        let scrutinee = match self.kept(receiver.span, false) {
+            Some((_, Ahead::Receiver(checked))) => checked,
+            _ => self.value(receiver, None),
         };
         if !safe {
             return member(self, scrutinee);

@@ -8,9 +8,10 @@ use rustc_hash::FxHashMap;
 use super::enums::VariantInfo;
 use super::expr::int_literal;
 use super::prelude::PRELUDE;
+use super::stmt::BlockSoFar;
 use super::{
-    Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN, built_in_type,
-    type_of,
+    Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN,
+    built_in_type, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, MainForm};
@@ -190,6 +191,15 @@ fn fits(
             .all(|((ty, label), arg)| ty.is_some() && arg.label.as_ref().map(|l| l.name) == label)
 }
 
+/// Work that ranking an argument did ahead of its turn (see `needs_context`), kept in
+/// `body.ahead` by the span it was done for until checking reaches it: a method's checked
+/// receiver, or a block's scope and its statements before its value. It lives no longer than
+/// the generic call that ranked it, nor than the diagnostics and locals it made.
+pub(super) enum Ahead {
+    Receiver(Checked),
+    Block(FxHashMap<Symbol, Binding>, BlockSoFar),
+}
+
 /// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
 pub(super) fn mismatched(checked: &Checked) -> bool {
     matches!(checked, Err(Poisoned { mismatch: true, .. }))
@@ -206,8 +216,25 @@ impl Checker<'_> {
     /// parameter's type. An argument of type `unit` or `never` binds only what none of the
     /// others does. Returns the arguments in source order, the type arguments, and the call's
     /// type; `None`, reported, when a parameter is left unbound or bound to a type no
-    /// parameter takes, and then an argument that needs context and has none is not checked.
+    /// parameter takes, and then an argument that needs context and has none is not checked,
+    /// unless a call in it does not fit its declaration, which it then reports. What ranking
+    /// the arguments checked ahead (see `Ahead`) and left unused is dropped.
     pub(super) fn generic_call(
+        &mut self,
+        span: Span,
+        sig: &GenericSig<'_>,
+        written: (&[ast::TypeExpr], Span),
+        args: &[ast::Arg],
+        expected: Option<Type>,
+    ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
+        let mark = self.body.ahead.len();
+        let call = self.infer_call(span, sig, written, args, expected);
+        self.body.ahead.truncate(mark);
+        call
+    }
+
+    /// `generic_call`, before what ranking kept is dropped.
+    fn infer_call(
         &mut self,
         span: Span,
         sig: &GenericSig<'_>,
@@ -233,10 +260,11 @@ impl Checker<'_> {
                 call.bindings.found[owned + i] = Some(ty);
             }
         }
-        let ranks: Vec<u8> = args
-            .iter()
-            .map(|arg| match &arg.value {
-                e if self.needs_context(e) => 2,
+        // Whether every call in an argument fits its declaration.
+        let mut fit = vec![true; args.len()];
+        let ranks: Vec<u8> = iter::zip(args, &mut fit)
+            .map(|(arg, fit)| match &arg.value {
+                e if self.waits(e, fit) => 2,
                 e if self.literal_like(e) => 1,
                 _ => 0,
             })
@@ -257,8 +285,9 @@ impl Checker<'_> {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
         }
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 2) {
-            // An argument whose type would name an unbound parameter waits, unchecked.
-            if sig.params[i].is_none_or(|param| call.bindings.known(param).is_some()) {
+            // An argument whose type would name an unbound parameter waits, unchecked, unless
+            // it holds a call that reports its own mistake, on its own.
+            if !fit[i] || sig.params[i].is_none_or(|param| call.bindings.known(param).is_some()) {
                 self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
             }
         }
@@ -400,22 +429,25 @@ impl Checker<'_> {
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
     pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
-        self.waits(e, true)
+        self.waits(e, &mut true)
     }
 
-    /// `needs_context`, where `ahead` says whether a method's receiver may be checked here.
-    fn waits(&mut self, e: &ast::Expr, ahead: bool) -> bool {
+    /// `needs_context`, where `fit` is cleared when a call that waits does not fit its
+    /// declaration: count, labels, and every parameter's and the return type resolved.
+    fn waits(&mut self, e: &ast::Expr, fit: &mut bool) -> bool {
         use ast::ExprKind as K;
-        match &e.kind {
-            K::NoneLit => true,
-            K::ArrayLit(elements) => elements.iter().all(|e| self.waits(e, ahead)),
+        let (generic, shaped, args) = match &e.kind {
+            K::NoneLit => return true,
+            K::ArrayLit(elements) => return elements.iter().all(|e| self.waits(e, fit)),
             K::Field {
                 base,
                 name,
                 safe: false,
-            } => self
-                .generic_variant(base, name)
-                .is_some_and(|v| v.fields.is_empty()),
+            } => {
+                return self
+                    .generic_variant(base, name)
+                    .is_some_and(|v| v.fields.is_empty());
+            }
             K::MethodCall {
                 receiver,
                 method,
@@ -424,58 +456,98 @@ impl Checker<'_> {
                 safe: false,
                 ..
             } if types.is_empty() => {
-                let generic = match self.generic_variant(receiver, method) {
+                let (generic, shaped) = if let Some(v) = self.generic_variant(receiver, method) {
                     // Mixed labels are reported at the declaration.
-                    Some(v) => {
-                        !v.fields.is_empty()
-                            && (v.labels.iter().all(Option::is_some)
-                                || v.labels.iter().all(Option::is_none))
-                            && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args)
-                    }
-                    None => ahead && self.generic_method(receiver, method, args),
+                    let shaped = !v.fields.is_empty()
+                        && (v.labels.iter().all(Option::is_some)
+                            || v.labels.iter().all(Option::is_none))
+                        && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
+                    (true, shaped)
+                } else {
+                    self.generic_method(receiver, method, args)
                 };
-                generic && args.iter().all(|arg| self.waits(&arg.value, ahead))
+                (generic, shaped, args)
             }
             K::Call {
                 callee,
                 types,
                 args,
                 ..
-            } => {
-                types.is_empty()
-                    && self.generic_callee(callee.name, args)
-                    && args.iter().all(|arg| self.waits(&arg.value, ahead))
+            } if types.is_empty() => {
+                let (generic, shaped) = self.generic_callee(callee.name, args);
+                (generic, shaped, args)
             }
             K::If {
                 then_block,
                 else_block: Some(else_block),
                 ..
-            } => self.branches_wait(&[then_block, else_block], ahead),
-            K::Block(block) => self.branches_wait(&[block], ahead),
-            _ => false,
-        }
+            } => return self.branches_wait(&[then_block, else_block], fit),
+            K::Block(block) => return self.branches_wait(&[block], fit),
+            _ => return false,
+        };
+        let waits = generic && args.iter().all(|arg| self.waits(&arg.value, fit));
+        *fit &= !waits || shaped;
+        waits
     }
 
     /// Whether one of `blocks` ends in a value, and each that does needs context; one that
     /// ends in an exit has none.
-    fn branches_wait(&mut self, blocks: &[&ast::Block], ahead: bool) -> bool {
+    fn branches_wait(&mut self, blocks: &[&ast::Block], fit: &mut bool) -> bool {
         let mut any = false;
         for block in blocks {
-            // shortcut: a receiver may name a local the block declares, not in scope here, so a
-            // block with a `let` checks its methods without context; check such a receiver in
-            // the block's scope if a generic method's value ends one.
-            let ahead = ahead
-                && !block
-                    .stmts
-                    .iter()
-                    .any(|stmt| matches!(stmt.kind, StmtKind::Let { .. }));
             match block.stmts.last().map(|stmt| &stmt.kind) {
                 Some(StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue) => {}
-                Some(StmtKind::Expr(e)) if self.waits(e, ahead) => any = true,
+                Some(StmtKind::Expr(tail)) if self.tail_waits(block, tail, fit) => any = true,
                 _ => return false,
             }
         }
         any
+    }
+
+    /// Whether `tail`, the value of `block`, needs context, in the block's scope: the
+    /// statements before it are checked here, once, and kept with that scope for `block`.
+    fn tail_waits(&mut self, block: &ast::Block, tail: &ast::Expr, fit: &mut bool) -> bool {
+        // Ranked before: its scope comes back for the value, and goes back after.
+        let index = if let Some((index, Ahead::Block(scope, so_far))) = self.kept(block.span, true)
+        {
+            self.body.scopes.push(scope);
+            self.body.ahead[index].1 = Some(Ahead::Block(FxHashMap::default(), so_far));
+            index
+        } else {
+            self.body.scopes.push(FxHashMap::default());
+            let mut so_far = BlockSoFar::default();
+            // A statement is not part of an assignment target's chain.
+            let target = std::mem::take(&mut self.body.in_target);
+            self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
+            self.body.in_target = target;
+            let kept = Ahead::Block(FxHashMap::default(), so_far);
+            self.body.ahead.push((block.span, Some(kept)));
+            self.body.ahead.len() - 1
+        };
+        let waits = self.waits(tail, fit);
+        let scope = self
+            .body
+            .scopes
+            .pop()
+            .expect("the block's scope should be open while its value is ranked");
+        if let Some(Ahead::Block(kept, _)) = &mut self.body.ahead[index].1 {
+            *kept = scope;
+        }
+        waits
+    }
+
+    /// Takes the work kept for `span` (see `Ahead`), a block's if `block`, else a receiver's,
+    /// with its place in `body.ahead`.
+    pub(super) fn kept(&mut self, span: Span, block: bool) -> Option<(usize, Ahead)> {
+        let index = self.body.ahead.iter().rposition(|(at, kept)| {
+            *at == span
+                && match kept {
+                    Some(Ahead::Block(..)) => block,
+                    Some(Ahead::Receiver(_)) => !block,
+                    None => false,
+                }
+        })?;
+        Some((index, self.body.ahead[index].1.take()?))
     }
 
     /// The variant `base.member` of a generic enum that `base` names without type arguments.
@@ -495,14 +567,14 @@ impl Checker<'_> {
         (!info.type_params.is_empty()).then(|| &info.variants[variant])
     }
 
-    /// Whether `receiver.method(args)` calls a method with type parameters of its own, whose
-    /// declaration `args` fit and whose return type resolved.
+    /// Whether `receiver.method(args)` calls a method with type parameters of its own, and
+    /// whether `args` fit its declaration, whose return type resolved.
     fn generic_method(
         &mut self,
         receiver: &ast::Expr,
         method: &ast::Ident,
         args: &[ast::Arg],
-    ) -> bool {
+    ) -> (bool, bool) {
         let (methods, owner) = match self.receiver_ahead(receiver).map(Type::kind) {
             Some(TypeKind::Class(id, _)) => {
                 let info = &self.classes[id.0];
@@ -512,27 +584,36 @@ impl Checker<'_> {
                 let info = &self.enums[id.0];
                 (&info.methods, info.type_params.len())
             }
-            _ => return false,
+            _ => return (false, false),
         };
         let Some(&Declared::Known(func)) = methods.get(&method.name) else {
-            return false;
+            return (false, false);
         };
         let sig = &self.signatures[func.0];
-        sig.type_params.len() > owner
-            && sig.ret.is_some()
-            && fits(sig.params.iter().map(|&ty| (ty, None)), args)
+        (
+            sig.type_params.len() > owner,
+            sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args),
+        )
     }
 
-    /// The type of `receiver`, a method's, checked ahead of the call, which `member` then takes
-    /// from `body.receivers`. `None` for a name no local takes: a path, which `type_path`
-    /// checks, or an unknown name.
+    /// The type of `receiver`, a method's, checked ahead of the call and kept for `member`.
+    /// `None` for a name no local takes: a path, which `type_path` checks, or an unknown name.
     fn receiver_ahead(&mut self, receiver: &ast::Expr) -> Option<Type> {
         match receiver.kind {
             ast::ExprKind::Name(name) if self.lookup(name).is_none() => return None,
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        if let Some(checked) = self.body.receivers.get(&receiver.span) {
+        let kept = self
+            .body
+            .ahead
+            .iter()
+            .rev()
+            .find_map(|(at, kept)| match kept {
+                Some(Ahead::Receiver(checked)) if *at == receiver.span => Some(checked),
+                _ => None,
+            });
+        if let Some(checked) = kept {
             return type_of(checked);
         }
         // An argument is not part of an assignment target's chain.
@@ -540,26 +621,31 @@ impl Checker<'_> {
         let checked = self.value(receiver, None);
         self.body.in_target = target;
         let ty = type_of(&checked);
-        self.body.receivers.insert(receiver.span, checked);
+        self.body
+            .ahead
+            .push((receiver.span, Some(Ahead::Receiver(checked))));
         ty
     }
 
-    /// Whether a call of `name` with `args` calls a generic function, whose return type
-    /// resolved, or constructs a generic class; either's declaration `args` fit.
-    fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> bool {
+    /// Whether a call of `name` with `args` calls a generic function or constructs a generic
+    /// class, and whether `args` fit its declaration, a function's return type resolved.
+    fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> (bool, bool) {
         match (self.class_ids.get(&name), self.function_ids.get(&name)) {
             (Some(&Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];
-                !info.type_params.is_empty()
-                    && fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args)
+                (
+                    !info.type_params.is_empty(),
+                    fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args),
+                )
             }
             (None, Some(&Declared::Known(func))) => {
                 let sig = &self.signatures[func.0];
-                !sig.type_params.is_empty()
-                    && sig.ret.is_some()
-                    && fits(sig.params.iter().map(|&ty| (ty, None)), args)
+                (
+                    !sig.type_params.is_empty(),
+                    sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args),
+                )
             }
-            _ => false,
+            _ => (false, false),
         }
     }
 

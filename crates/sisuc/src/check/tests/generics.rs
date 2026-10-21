@@ -892,6 +892,23 @@ fn generic_methods_wait_for_context() {
             "Box.make",
             &["i64", "i64", "[i64]"],
         ),
+        // A block's value is ranked in the block's scope, which its `let`s are in.
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id({ let n = 1; b.make() })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "fn g(c: i64) {\n    let xs: [i64] = id({ let c = Box(v: 1); c.make() })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        // Each call that ranks the block ranks its value in that scope.
+        (
+            "fn g() {\n    let xs: [i64] = id(id({ let c = Box(v: 1); c.make() }))\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
         // A method without type parameters of its own takes its receiver's, so does not wait.
         (
             "class Jar<T> {\n    v: T\n    fn put(self, xs: [T]) -> [T] { xs }\n}\nfn g(j: Jar<i64>) {\n    let xs = id(j.put([]))\n}",
@@ -1358,20 +1375,13 @@ fn generic_method_calls_that_do_not_check() {
             "fn g(b: Box<i64>) {\n    let x = id(b.map_all([]))\n}".to_string(),
             vec![(Code::CannotInfer, (2, 13))],
         ),
-        // shortcut (`branches_wait`): a block with a `let` checks its method without context,
-        // since its receiver may name a local of the block, not the `c` outside it.
+        // The statements before a waiting block's value are checked, even when nothing binds.
         (
-            "fn g(c: i64) {\n    let xs: [i64] = id({ let c = Box(v: 1); c.make() })\n}".into(),
-            vec![(Code::CannotInfer, (2, 47))],
-        ),
-        // A path before the `.` is not checked as a value.
-        (
-            "fn g() {\n    let x = id(math.sqrt(2.0))\n}".into(),
-            vec![(Code::MathIdiom, (2, 16))],
-        ),
-        (
-            "fn g() {\n    let t = id(Tree<i64>.Node(Tree.Leaf, 1, Tree.Leaf))\n}".into(),
-            vec![],
+            "fn g(b: Box<i64>) {\n    let x = id({ let n = nope; b.make() })\n}".into(),
+            vec![
+                (Code::CannotInfer, (2, 13)),
+                (Code::BindingNotFound, (2, 26)),
+            ],
         ),
         // A receiver whose type is not known waits for nothing, and reports its own error.
         (
@@ -1404,8 +1414,60 @@ fn generic_method_calls_that_do_not_check() {
     }
 }
 
-/// An argument that would wait for context is checked on its own when its call's shape or
-/// declaration is wrong, so that it reports that, not the enclosing call's inference.
+/// Ranking an argument checks a method's receiver, and the statements before a block's value,
+/// once: what checking the argument reports, it reports once.
+#[test]
+fn work_done_ahead_is_not_done_again() {
+    for (line, expected) in [
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id({ let n = nope; b.make() })\n}",
+            vec![(Code::BindingNotFound, (2, 34))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [[i64]] = id([{ let n = nope; b.make() }])\n}",
+            vec![(Code::BindingNotFound, (2, 37))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id(id({ let n = nope; b.make() }))\n}",
+            vec![(Code::BindingNotFound, (2, 37))],
+        ),
+        (
+            "fn g(b: Box<i64>, c: bool) {\n    let xs: [i64] = id(if c { let n = nope; b.make() } else { let m = 1; b.make() })\n}",
+            vec![(Code::BindingNotFound, (2, 39))],
+        ),
+        // A join checked again checks again what its first check ranked ahead.
+        (
+            "class Bx {\n    fn make<U>(self) -> [U] { [] }\n}\nfn f<T>(x: T) -> string { \"\" }\nfn g() {\n    let n: u8 = f(({ nope; Bx() }).make()) + \"x\"\n}",
+            vec![
+                (Code::CannotInfer, (6, 17)),
+                (Code::BindingNotFound, (6, 22)),
+            ],
+        ),
+    ] {
+        codes(&with_generics(line), &expected);
+    }
+}
+
+/// A path before the `.` is not checked as a value, so a call on it does not wait.
+#[test]
+fn calls_on_paths_do_not_wait() {
+    for (line, expected) in [
+        (
+            "fn g() {\n    let x = id(math.sqrt(2.0))\n}",
+            vec![(Code::MathIdiom, (2, 16))],
+        ),
+        (
+            "fn g() {\n    let t = id(Tree<i64>.Node(Tree.Leaf, 1, Tree.Leaf))\n}",
+            vec![],
+        ),
+    ] {
+        codes(&with_generics(line), &expected);
+    }
+}
+
+/// An argument that would wait for context, with a call whose shape or declaration is wrong,
+/// reports that, not the enclosing call's inference: it is checked with context when there is
+/// some, else on its own.
 #[test]
 fn waiting_calls_report_their_own_shape() {
     for (line, expected) in [
@@ -1426,7 +1488,32 @@ fn waiting_calls_report_their_own_shape() {
             "fn g() {\n    let x = id(Wrap.W())\n}",
             vec![(Code::ArgumentCount, (2, 16))],
         ),
-        // A labeled argument is still checked, as in the call alone.
+        // With context, a wrong shape reports only itself.
+        (
+            "fn g() {\n    let x: [i64]? = id(first(xs: []))\n}",
+            vec![(Code::LabeledArgument, (2, 30))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [[i64]] = id(b.map_all(u: []))\n}",
+            vec![(Code::LabeledArgument, (2, 36))],
+        ),
+        (
+            "fn g() {\n    let w: Wrap<[i64]> = id(Wrap.W(x: []))\n}",
+            vec![(Code::LabeledArgument, (2, 36))],
+        ),
+        (
+            "enum Tag<T> { P(x: [T]) }\nfn g() {\n    let p: Tag<i64> = id(Tag.P(y: []))\n}",
+            vec![(Code::NoMember, (3, 32))],
+        ),
+        (
+            "class Two<A, B> {\n    a: A\n    b: B\n}\nfn g() {\n    let t: Two<[i64], [i64]> = id(Two(b: [], a: []))\n}",
+            vec![(Code::FieldOutOfOrder, (6, 39))],
+        ),
+        (
+            "class Two<A, B> {\n    a: A\n    b: B\n}\nfn g() {\n    let t = id(Two(b: [], a: []))\n}",
+            vec![(Code::FieldOutOfOrder, (6, 20))],
+        ),
+        // Without, a labeled argument is still checked, as in the call alone.
         (
             "fn g() {\n    let x = id(first(xs: []))\n}",
             vec![
