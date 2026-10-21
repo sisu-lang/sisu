@@ -611,6 +611,7 @@ impl<'a> Lowering<'a> {
                 id: *id,
                 variant: *variant,
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
+                reuse: vec![None; args.len()],
             },
             ExprKind::Field { base, index } => {
                 let (mut place, temp) = self.base(base, true)?;

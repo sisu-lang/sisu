@@ -34,6 +34,9 @@ pub(super) enum Helper {
     Unbox,
     /// `@sisu_rc.free.<F>(token)`: frees a token's box, if it holds one.
     Free,
+    /// `@sisu_rc.reuse.<F>(token) -> ptr`: a token's box, or a new block for a box of `F` when
+    /// the token is `null`.
+    Reuse,
 }
 
 /// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with any
@@ -49,9 +52,9 @@ pub(super) fn counted_core(ty: Type) -> Option<Type> {
 
 impl<'ctx> Codegen<'ctx, '_> {
     /// Declares `sisu_rc.<kind>.<name>` on first use and queues its body: `kind` is `retain`,
-    /// `release`, `drop`, `eq`, `unique`, `walk`, `drain`, `eq_component`, `unbox` or `free`,
-    /// and `name` is a class's or an enum's name, `string`, or `[<element name>]` for an array
-    /// (`[Node?]`, `[[i64]]`).
+    /// `release`, `drop`, `eq`, `unique`, `walk`, `drain`, `eq_component`, `unbox`, `free` or
+    /// `reuse`, and `name` is a class's or an enum's name, `string`, or `[<element name>]` for an
+    /// array (`[Node?]`, `[[i64]]`).
     pub(super) fn helper(&self, kind: Helper, ty: Type) -> FunctionValue<'ctx> {
         let key = (kind, ty);
         if let Some(function) = self.helpers.borrow().get(&key) {
@@ -83,6 +86,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 ptr_type.fn_type(&[ptr_type.into(), ptr_type.into()], false),
             ),
             Helper::Free => ("free", takes_object),
+            Helper::Reuse => ("reuse", ptr_type.fn_type(&[ptr_type.into()], false)),
             Helper::EqComponent => (
                 "eq_component",
                 self.context.bool_type().fn_type(
@@ -141,7 +145,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 (Helper::Walk | Helper::Drain | Helper::EqComponent, _) => {
                     unreachable!("only an enum type should be queued for a component helper")
                 }
-                (Helper::Unbox | Helper::Free, _) => {
+                (Helper::Unbox | Helper::Free | Helper::Reuse, _) => {
                     unreachable!("only an enum type should be queued for a box's helper")
                 }
             }

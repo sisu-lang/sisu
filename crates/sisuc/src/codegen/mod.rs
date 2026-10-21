@@ -637,9 +637,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 return self.call_value(*func, &args);
             }
             Rvalue::New { class, args } => self.new_object(*class, &self.values(args)).into(),
-            Rvalue::Variant { id, variant, args } => {
-                self.variant(*id, *variant, &self.values(args))
-            }
+            Rvalue::Variant {
+                id,
+                variant,
+                args,
+                reuse,
+            } => self.variant(*id, *variant, &self.values(args), reuse),
             Rvalue::ArrayLit(elements) => self.array_lit(ty(), &self.values(elements)).into(),
             Rvalue::ArrayFill { value, len, span } => {
                 let (filler, _) = self.operand(value);

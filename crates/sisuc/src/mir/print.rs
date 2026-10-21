@@ -139,10 +139,23 @@ impl Printer<'_> {
                 let name = &self.tir.classes[class.0].name;
                 format!("new {name}({})", self.list(args))
             }
-            Rvalue::Variant { id, variant, args } => {
+            Rvalue::Variant {
+                id,
+                variant,
+                args,
+                reuse,
+            } => {
                 let e = &self.tir.enums[id.0];
                 let name = &e.variants[*variant].name;
-                format!("variant {}.{name}({})", e.name, self.list(args))
+                let mut text = format!("variant {}.{name}({})", e.name, self.list(args));
+                if reuse.iter().any(Option::is_some) {
+                    let tokens: Vec<_> = (reuse.iter())
+                        .map(|token| token.map_or_else(|| "-".to_owned(), |t| self.local(t)))
+                        .collect();
+                    write!(text, " into [{}]", tokens.join(", "))
+                        .expect("writing to a `String` should not fail");
+                }
+                text
             }
             Rvalue::ArrayLit(elements) => format!("array[{}]", self.list(elements)),
             Rvalue::ArrayFill { value, len, .. } => {

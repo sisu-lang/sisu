@@ -2509,20 +2509,20 @@ fn arm_chain_reads_linearly() {
 
 /// `e`, an owned parameter of enum 0. `Builder::local` never counts an enum, so it is counted
 /// here, as an enum with a box is.
-fn enum_param(b: &mut Builder) -> LocalId {
+pub(super) fn enum_param(b: &mut Builder) -> LocalId {
     let e = b.param("e", Type::intern(TypeKind::Enum(EnumId(0))));
     b.function.locals[e.0].counted = true;
     e
 }
 
 /// A token of enum 0.
-fn token(b: &mut Builder) -> LocalId {
+pub(super) fn token(b: &mut Builder) -> LocalId {
     b.token("tok", Type::intern(TypeKind::Enum(EnumId(0))))
 }
 
 /// `take_apart scrutinee: tok = token (scrutinee as 0).0`, and each of `bindings` moved from
 /// the same place.
-fn take_apart(scrutinee: LocalId, tok: LocalId, bindings: &[LocalId]) -> Statement {
+pub(super) fn take_apart(scrutinee: LocalId, tok: LocalId, bindings: &[LocalId]) -> Statement {
     Statement::TakeApart {
         scrutinee,
         tokens: vec![(tok, payload(scrutinee))],
@@ -2551,6 +2551,7 @@ fn token_scope_released_on_a_continue_edge_is_rejected() {
                     id: EnumId(0),
                     variant: 0,
                     args: Vec::new(),
+                    reuse: Vec::new(),
                 },
             ),
             take_apart(x, tok, &[]),
@@ -2655,4 +2656,65 @@ fn take_apart_while_a_binding_borrows_is_rejected() {
     let (f, x) = function(false);
     rejects(&f, 0, x, Rule::Borrow);
     assert_eq!(certify(&function(true).0), Ok(()));
+}
+
+/// `dest = variant V(_) into [tok]`, a construction of enum 0 that builds into `tok`.
+pub(super) fn reused(dest: LocalId, tok: LocalId) -> Statement {
+    assign(
+        dest,
+        Rvalue::Variant {
+            id: EnumId(0),
+            variant: 0,
+            args: vec![Operand::Const(Const::Int(1, Type::I64))],
+            reuse: vec![Some(tok)],
+        },
+    )
+}
+
+/// `take_apart e: tok = ..`, then `x = variant V(1) into [tok]`, then `free tok`.
+pub(super) fn free_after_reuse() -> (Function, LocalId) {
+    let mut b = Builder::new("f");
+    let e = enum_param(&mut b);
+    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0))));
+    let tok = token(&mut b);
+    b.block(
+        vec![
+            take_apart(e, tok, &[]),
+            reused(x, tok),
+            Statement::Free(tok),
+        ],
+        ret(),
+    );
+    (b.finish(), tok)
+}
+
+/// The construction empties the token, so the `free` sees {empty}.
+#[test]
+fn free_after_reuse_is_accepted() {
+    let (f, tok) = free_after_reuse();
+    assert_eq!(certify(&f), Ok(()));
+    let named: Vec<bool> = (0..f.locals.len()).map(|i| i == tok.0).collect();
+    assert_eq!(
+        scope_release_states(&f, &named).get(&(BlockId(0), 2)),
+        Some(&EMPTY)
+    );
+}
+
+#[test]
+fn reuse_of_a_token_twice_is_rejected() {
+    let mut b = Builder::new("f");
+    let e = enum_param(&mut b);
+    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0))));
+    let y = b.local("y", Type::intern(TypeKind::Enum(EnumId(0))));
+    let tok = token(&mut b);
+    b.block(
+        vec![
+            take_apart(e, tok, &[]),
+            reused(x, tok),
+            reused(y, tok),
+            Statement::Free(tok),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, tok, Rule::Consume);
 }

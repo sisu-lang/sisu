@@ -23,24 +23,30 @@
 //! 2. A released value never reaches it: a release leaves the local ended, which the certifier
 //!    rejects at a scope release, so a slot that a static `release x` leaves dangling is never
 //!    tested.
+//!
+//! A token's `free` is decided the same way, except that a token owned on every path stays a
+//! `free`, whose helper tests for `null`: one that is empty on every path, because a
+//! construction built into it, is removed. A kept `free` flags its token, so a construction
+//! that builds into it leaves `null` in its slot.
 
 use super::certify::{self, EMPTY, OWNED};
 use super::{BlockId, Function, Statement};
 
-/// Whether each local of `function` is flagged, indexed by `LocalId`: a `release?` still names
-/// it, so a move of it must leave the zero value in its slot.
+/// Whether each local of `function` is flagged, indexed by `LocalId`: a `release?` or a `free`
+/// still names it, so a move of it, or a construction built into it, must leave the zero value
+/// in its slot.
 pub(crate) fn flagged(function: &Function) -> Vec<bool> {
     let mut flagged = vec![false; function.locals.len()];
     for stmt in function.blocks.iter().flat_map(|block| &block.stmts) {
-        if let Statement::ScopeRelease(local) = stmt {
+        if let Statement::ScopeRelease(local) | Statement::Free(local) = stmt {
             flagged[local.0] = true;
         }
     }
     flagged
 }
 
-/// Removes each scope release of `function` that releases nothing, and makes each one of an
-/// owned local a plain release.
+/// Removes each scope release and each `free` of `function` that releases nothing, and makes
+/// each scope release of an owned local a plain release.
 pub(super) fn elaborate(function: &mut Function) {
     let states = certify::scope_release_states(function, &flagged(function));
     for (b, block) in function.blocks.iter_mut().enumerate() {
@@ -53,6 +59,10 @@ pub(super) fn elaborate(function: &mut Function) {
                     Some(&OWNED) => Some(Statement::Release(local)),
                     Some(_) | None => Some(stmt),
                 },
+                Statement::Free(_) => match states.get(&(BlockId(b), at)) {
+                    Some(&set) if set & !EMPTY == 0 => None,
+                    Some(_) | None => Some(stmt),
+                },
                 Statement::Assign { .. }
                 | Statement::Take { .. }
                 | Statement::Store { .. }
@@ -60,8 +70,7 @@ pub(super) fn elaborate(function: &mut Function) {
                 | Statement::MakeUnique(_)
                 | Statement::Check(_)
                 | Statement::End(_)
-                | Statement::TakeApart { .. }
-                | Statement::Free(_) => Some(stmt),
+                | Statement::TakeApart { .. } => Some(stmt),
             })
             .collect();
     }

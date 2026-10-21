@@ -318,12 +318,13 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// the tag and each field stored into a scratch slot, which is loaded whole. The slot is
     /// zeroed first, so that the whole load never reads a byte that no store gave a value, and
     /// a boxed `F?` field given `None` keeps its `null`. A boxed field's value moves into a new
-    /// box with count 1.
+    /// box with count 1, built into its token's block when `reuse` gives it one.
     pub(super) fn variant(
         &self,
         id: EnumId,
         variant: usize,
         values: &[BasicValueEnum<'ctx>],
+        reuse: &[Option<LocalId>],
     ) -> BasicValueEnum<'ctx> {
         let layout = self.enum_layout(id);
         let (ty, tag) = (layout.ty, layout.tag);
@@ -335,10 +336,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             tag.const_int(tag_value, false).into(),
         );
         let fields = &self.program.enums[id.0].variants[variant].fields;
-        for (field, (&value, payload)) in values.iter().zip(fields).enumerate() {
+        for (field, ((&value, payload), &token)) in values.iter().zip(fields).zip(reuse).enumerate()
+        {
             let place = self.field_slot(slot, id, variant, field);
             if payload.boxed {
-                self.store_boxed(place, value, payload.ty);
+                self.store_boxed(place, value, payload.ty, token);
             } else {
                 self.store(place, value);
             }
@@ -348,8 +350,16 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
-    /// Stores at `place` a new box that holds `value`, of type `F`, or of `F?` when present.
-    fn store_boxed(&self, place: PointerValue<'ctx>, value: BasicValueEnum<'ctx>, ty: Type) {
+    /// Stores at `place` a new box that holds `value`, of type `F`, or of `F?` when present. With
+    /// a `token`, the box's block comes from `@sisu_rc.reuse.<F>`, and a flagged token's slot is
+    /// left `null`.
+    fn store_boxed(
+        &self,
+        place: PointerValue<'ctx>,
+        value: BasicValueEnum<'ctx>,
+        ty: Type,
+        token: Option<LocalId>,
+    ) {
         let (value, present) = match ty.kind() {
             TypeKind::Optional(_) => {
                 let function = self.current_function();
@@ -362,15 +372,28 @@ impl<'ctx> Codegen<'ctx, '_> {
             _ => (value, None),
         };
         let inner = boxed_enum(ty);
-        let (size, align) = self.heap_size(&HeapBlock::Box(inner));
-        let boxed = self
-            .builder
-            .build_call(self.alloc, &[size.into(), align.into()], "box")
-            .expect(POSITIONED)
-            .try_as_basic_value()
-            .basic()
-            .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
-            .into_pointer_value();
+        let boxed = match token {
+            Some(token) => {
+                let boxed = self
+                    .builder
+                    .build_call(
+                        self.helper(Helper::Reuse, self.types[token.0]),
+                        &[self.load_local(token).into()],
+                        "box",
+                    )
+                    .expect(POSITIONED)
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("`reuse` should return a pointer, as `helper` declares it");
+                if self.flagged[token.0] {
+                    let (slot, ty) = self.slot(token);
+                    self.store(slot, ty.const_zero());
+                }
+                boxed
+            }
+            None => self.alloc_box(inner),
+        }
+        .into_pointer_value();
         self.init_count(boxed);
         self.store(self.box_value(inner, boxed), value);
         self.store(place, boxed.into());
@@ -416,6 +439,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             Helper::EqComponent => self.define_eq_component(id, function),
             Helper::Unbox => self.define_unbox(id, function),
             Helper::Free => self.define_free(id, function),
+            Helper::Reuse => self.define_reuse(id, function),
             Helper::Drop | Helper::Unique => {
                 unreachable!("an enum should never be queued for a `drop` or `unique` helper")
             }
@@ -629,6 +653,33 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .build_return(Some(&ptr_type.const_null()))
             .expect(POSITIONED);
+    }
+
+    /// A new block for a box of `F`, from `sisu_alloc`.
+    fn alloc_box(&self, id: EnumId) -> BasicValueEnum<'ctx> {
+        let (size, align) = self.heap_size(&HeapBlock::Box(id));
+        self.builder
+            .build_call(self.alloc, &[size.into(), align.into()], "box")
+            .expect(POSITIONED)
+            .try_as_basic_value()
+            .basic()
+            .expect("`sisu_alloc` should return a pointer, as the runtime declares it")
+    }
+
+    /// `@sisu_rc.reuse.<F>(token) -> ptr`: `token` when it holds a box of `F`, whose value was
+    /// moved out, and a new block from `sisu_alloc` when it is `null`.
+    fn define_reuse(&self, id: EnumId, function: FunctionValue<'ctx>) {
+        let block = |name| self.context.append_basic_block(function, name);
+        let (entry, held, empty) = (block("entry"), block("held"), block("empty"));
+        self.builder.position_at_end(entry);
+        let token = param(function);
+        let null = self.builder.build_is_null(token, "null").expect(POSITIONED);
+        self.branch_on(null, empty, held);
+        self.builder.position_at_end(held);
+        self.builder.build_return(Some(&token)).expect(POSITIONED);
+        self.builder.position_at_end(empty);
+        let boxed = self.alloc_box(id);
+        self.builder.build_return(Some(&boxed)).expect(POSITIONED);
     }
 
     /// `@sisu_rc.free.<F>(token)`: frees the box of `F` that `token` holds, whose value was

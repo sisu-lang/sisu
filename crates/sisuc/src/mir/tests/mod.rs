@@ -10,6 +10,7 @@ mod ownership;
 mod pairs;
 mod params;
 mod pattern;
+mod reuse;
 
 /// A program whose `f` holds every kind of expression and statement lowering handles.
 pub(super) const EVERY_KIND: &str = "class O {\n    mut n: i64\n    mut s: string\n}\n\

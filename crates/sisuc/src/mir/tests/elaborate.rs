@@ -88,3 +88,21 @@ fn release_in_a_failing_region_is_kept() {
         })
     );
 }
+
+/// A construction took the token on the only path, so its `free` frees nothing and is removed.
+#[test]
+fn free_after_reuse_is_removed() {
+    let (mut f, tok) = certify::free_after_reuse();
+    elaborate(&mut f);
+    let stmts = &f.blocks[0].stmts;
+    assert!(
+        matches!(
+            stmts.as_slice(),
+            [
+                Statement::TakeApart { .. },
+                Statement::Assign { value: Rvalue::Variant { reuse, .. }, .. },
+            ] if reuse == &[Some(tok)]
+        ),
+        "{stmts:?}"
+    );
+}

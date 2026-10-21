@@ -19,6 +19,9 @@
 //! call reads a borrowed argument in place, and the caller releases a temporary it passed there
 //! after the call. A borrowed parameter has no scope release.
 //!
+//! The reuse pass (`reuse.rs`) then gives each boxed field of a construction a token of its
+//! enum that every path into it holds, so the box is built into the token's block.
+//!
 //! The ownership pass (`ownership.rs`) decides them by liveness (`liveness.rs`): a `Use` moves
 //! the local when nothing reads it later and copies it otherwise, and a borrow site reads its
 //! root in place unless that is the root's last use, when the root moves into a temporary that
@@ -55,6 +58,7 @@ mod ownership;
 mod pairs;
 mod params;
 mod print;
+mod reuse;
 
 pub(crate) use elaborate::flagged;
 #[cfg(test)]
@@ -219,10 +223,13 @@ pub(crate) enum Rvalue {
         class: ClassId,
         args: Vec<Operand>,
     },
+    /// `reuse` holds one entry per field: `Some(tok)` at a boxed `F` field builds its box into
+    /// the token `tok` of `F`, which the reuse pass gave it.
     Variant {
         id: EnumId,
         variant: usize,
         args: Vec<Operand>,
+        reuse: Vec<Option<LocalId>>,
     },
     ArrayLit(Vec<Operand>),
     /// `[value; len]`; a negative or oversized length panics at `span`.
@@ -397,10 +404,11 @@ impl Terminator {
     }
 }
 
-/// The mir of `program`, with each parameter that its function does not consume borrowed, its
-/// copies, moves and releases placed, and each loop's `make_unique` of the arrays it writes
-/// hoisted to its pre-header, each scope release elaborated, and each retain/release pair within
-/// a block removed. A debug build certifies each function and panics on a violation.
+/// The mir of `program`, with each parameter that its function does not consume borrowed, each
+/// box that a token can hold built into it, its copies, moves and releases placed, and each
+/// loop's `make_unique` of the arrays it writes hoisted to its pre-header, each scope release and
+/// `free` elaborated, and each retain/release pair within a block removed. A debug build
+/// certifies each function and panics on a violation.
 pub(crate) fn build(program: &tir::Program) -> Program {
     let assumed = params::assumed(program);
     let (mut functions, consulted): (Vec<_>, Vec<_>) = assumed
@@ -428,6 +436,7 @@ pub(crate) fn build(program: &tir::Program) -> Program {
         modes_checked(&functions);
     }
     for function in &mut functions {
+        reuse::reuse(function, program);
         ownership::place(function);
         hoist::hoist(function);
         elaborate::elaborate(function);

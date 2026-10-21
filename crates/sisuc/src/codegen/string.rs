@@ -538,7 +538,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Drain
             | Helper::EqComponent
             | Helper::Unbox
-            | Helper::Free => {
+            | Helper::Free
+            | Helper::Reuse => {
                 unreachable!("only a string's `drop` and `eq` should reach `define_string_helper`")
             }
         }

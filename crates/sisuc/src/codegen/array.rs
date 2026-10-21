@@ -350,7 +350,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Drain
             | Helper::EqComponent
             | Helper::Unbox
-            | Helper::Free => {
+            | Helper::Free
+            | Helper::Reuse => {
                 unreachable!(
                     "`define_helpers` should define every `release` itself, and queue `retain`, the component helpers and a box's only for an enum"
                 )

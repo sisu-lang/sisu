@@ -650,10 +650,6 @@ pub(super) enum Effect {
     /// `free tok`: a token's block is freed if the token holds one.
     Free,
     /// A construction builds into a token's block.
-    #[expect(
-        dead_code,
-        reason = "a construction that builds into a token lands in Task 3"
-    )]
     Reuse,
 }
 
@@ -777,8 +773,15 @@ fn rvalue<'a>(
                 }
             }
         }
+        Rvalue::Variant { args, reuse, .. } => {
+            for op in args {
+                consumed(op, lowered, f);
+            }
+            for token in reuse.iter().flatten() {
+                f(*token, Effect::Reuse, None);
+            }
+        }
         Rvalue::New { args, .. }
-        | Rvalue::Variant { args, .. }
         | Rvalue::ArrayLit(args)
         | Rvalue::Interpolate { parts: args, .. } => {
             for op in args {

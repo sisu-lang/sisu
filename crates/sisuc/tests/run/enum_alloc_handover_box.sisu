@@ -1,9 +1,8 @@
 fn iterations() -> i64 { 1000 }
 
-// The handover through a box with count one: releasing `t` at the commit frees its box, which
-// held the array alone, so `xs` has count 1 again and `ys[0]` writes in place. Each step
-// allocates one new box for `Node` and copies no array. Reusing the old box would make it no
-// allocation at all; `match` does not reuse boxes yet.
+// The handover through a box with count one: taking `t` apart at the commit moves `xs` out of
+// its box, which held the array alone, so `xs` has count 1 and `ys[0]` writes in place. Each
+// step copies no array. `match` reuses the old box, so each step allocates nothing.
 enum Tree {
     Leaf([i64])
     Node(Tree)
