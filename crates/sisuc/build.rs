@@ -9,15 +9,24 @@ fn main() {
         "cargo::rustc-env=SISU_COMMIT={}",
         commit().unwrap_or_else(|| "unknown".into())
     );
-    // `HEAD` changes on a checkout, the reflog on every commit, checkout and reset, whether the
-    // branch's ref is loose or packed. A watched file that is missing makes Cargo rerun on
-    // every build, so only the ones that exist are watched.
-    for name in ["HEAD", "logs/HEAD"] {
-        if let Some(path) = git(&["rev-parse", "--git-path", name]).map(PathBuf::from)
-            && path.exists()
-        {
-            println!("cargo::rerun-if-changed={}", path.display());
-        }
+    // `HEAD` changes on a checkout. The HEAD reflog gets a line on every commit, checkout and
+    // reset, whether the branch's ref is loose or packed, but it is missing when
+    // `core.logAllRefUpdates` is false; then the current branch's ref and `packed-refs` stand in.
+    // A watched file that is missing makes Cargo rerun on every build, so only existing ones
+    // are watched.
+    let git_path = |name: &str| git(&["rev-parse", "--git-path", name]).map(PathBuf::from);
+    let mut watched = vec![git_path("HEAD"), git_path("logs/HEAD")];
+    if !watched[1].as_ref().is_some_and(|path| path.exists()) {
+        let branch = git(&["rev-parse", "--symbolic-full-name", "HEAD"]);
+        watched.push(
+            branch
+                .filter(|name| name != "HEAD")
+                .and_then(|name| git_path(&name)),
+        );
+        watched.push(git_path("packed-refs"));
+    }
+    for path in watched.into_iter().flatten().filter(|path| path.exists()) {
+        println!("cargo::rerun-if-changed={}", path.display());
     }
 }
 
