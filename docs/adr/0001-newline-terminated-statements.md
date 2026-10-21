@@ -33,3 +33,6 @@ newlines".
   Already decided: from milestone 2, a line starting with `.` continues the
   previous one, so method chains can put each call on its own line (as in
   Swift and Kotlin).
+- From milestone 8, a `>` can end a statement too, as the close of type
+  arguments (`b: Box<i64>`). The parser drops the line break after a `>`
+  that compares, so `a >` still continues onto the next line.

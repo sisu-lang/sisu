@@ -2519,7 +2519,11 @@ impl<'a> Parser<'a> {
                 }
                 .into());
             }
-            self.bump();
+            // A line break after a `>` ends a statement, for type arguments; one that compares
+            // goes on to its operand.
+            if self.bump().kind == TokenKind::Gt {
+                self.eat(&TokenKind::Newline);
+            }
             ops.push(op);
             self.depth = base + 1;
             operands.push(self.binary(5)?);
@@ -4310,6 +4314,46 @@ mod tests {
         assert_eq!(expr_err("let t: A<B<i64>= y"), (Code::Expected, 1, 28));
         assert_eq!(expr_err("let t: [A<i64>= y] = z"), (Code::Expected, 1, 27));
         assert_eq!(parse_err("fn f(x: A<i64>= 1) {}"), (Code::Expected, 1, 15));
+    }
+
+    /// A line break after the `>` that closes type arguments ends a statement, as one after a
+    /// type with none does; inside `( )` it does not, and after a `>` that compares, the line goes
+    /// on.
+    #[test]
+    fn a_line_break_after_type_arguments_ends_the_statement() {
+        for (src, expected) in [
+            (
+                "class D {\n    b: Box<i64>\n    n: i64\n}",
+                "(class D (b Box<i64>) (n i64))",
+            ),
+            (
+                "fn f(\n    a: Box<i64>\n) {}",
+                "(fn f ((a Box<i64>)) unit (block))",
+            ),
+            (
+                "fn f(a: Box<i64>,\n    b: i64) {}",
+                "(fn f ((a Box<i64>) (b i64)) unit (block))",
+            ),
+            (
+                "fn f() {\n    let t = Tree<i64>\n        .Leaf\n}",
+                "(fn f () unit (block (let t (. Tree<i64> Leaf))))",
+            ),
+            (
+                "fn f() {\n    let b = a >\n        c\n    let d = a >\n        - c\n    let e = (a >\n        c)\n}",
+                "(fn f () unit (block (let b (> a c)) (let d (> a (- c))) (let e (> a c))))",
+            ),
+        ] {
+            assert_eq!(program(src), expected, "{src}");
+        }
+        // As after `i64`: the `=` cannot start the next line, nor the `{`.
+        assert_eq!(
+            parse_err("fn f() {\n    let s: Box<i64>\n    = x\n}"),
+            (Code::Expected, 2, 20)
+        );
+        assert_eq!(
+            parse_err("fn f() -> Box<i64>\n{\n}"),
+            (Code::BraceOnNewLine, 2, 1)
+        );
     }
 
     #[test]

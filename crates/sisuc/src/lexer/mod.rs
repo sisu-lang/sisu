@@ -375,8 +375,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                 kind
             }
             '-' if matches!(chars.peek(), Some(&(_, ' ' | '\t')))
-                && before_semicolons(&tokens, brackets.trailing_semicolons)
-                    .is_some_and(|t| t.kind == TokenKind::Newline) =>
+                && starts_statement(&tokens, brackets.trailing_semicolons) =>
             {
                 let at = Span::new(start, start + 1);
                 if !after_skip(source, &tokens, &brackets, skipped) {
@@ -881,6 +880,14 @@ fn before_semicolons(tokens: &[Token], trailing: usize) -> Option<&Token> {
     tokens.get(tokens.len().checked_sub(trailing + 1)?)
 }
 
+/// Whether the next token starts a statement: the token before the last `trailing` tokens, which
+/// are `;`s that separate statements, is a `Newline`, and not one after a `>`, whose `Newline`
+/// the parser drops when the `>` compares.
+fn starts_statement(tokens: &[Token], trailing: usize) -> bool {
+    before_semicolons(tokens, trailing).is_some_and(|t| t.kind == TokenKind::Newline)
+        && before_semicolons(tokens, trailing + 1).is_none_or(|t| t.kind != TokenKind::Gt)
+}
+
 fn newline(span: Span) -> Token {
     Token {
         kind: TokenKind::Newline,
@@ -891,8 +898,11 @@ fn newline(span: Span) -> Token {
 /// Whether a line break here ends a statement: the token before the last `trailing` tokens, which
 /// are `;`s that separate statements, can end one, and the innermost open bracket, if any, is a
 /// block. A `;` is transparent, so `x;\n` ends a statement as `x\n` does, and `{;\n` does not.
+/// A `>` ends one too, as the close of type arguments (`b: Box<i64>`); after a `>` that
+/// compares, the parser drops the `Newline`, so `a >\n b` goes on.
 fn ends_statement(tokens: &[Token], open: &[Open], trailing: usize) -> bool {
-    can_end_statement(before_semicolons(tokens, trailing))
+    let last = before_semicolons(tokens, trailing);
+    (can_end_statement(last) || last.is_some_and(|t| t.kind == TokenKind::Gt))
         && open.last().is_none_or(|&(c, _)| c == '{')
 }
 
@@ -948,7 +958,7 @@ fn check_line_start(
             match code {
                 Some(code)
                     if can_end_statement(Some(code))
-                        || matches!(code.kind, TokenKind::Else | TokenKind::Loop) =>
+                        || matches!(code.kind, TokenKind::Else | TokenKind::Loop | TokenKind::Gt) =>
                 {
                     // Only a header takes the `{`: joining it to another statement almost never
                     // gives a valid one (`print(1) {`, `let x = 1 {`, `} {`). Inside `(` or `[`
