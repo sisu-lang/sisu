@@ -407,10 +407,14 @@ so it does not wait for the later goals:
     version.
 
   A build directory and `sisu clean` wait for modules (milestone 11), when
-  per-file objects are worth keeping. `sisu fmt`, `sisu test` and
-  `sisu lsp` are still later. No manifest at first: a single file, or a
-  directory whose entry point is `main.sisu`, builds without one. A `sisu.toml`
-  arrives only when a project needs dependencies.
+  per-file objects are worth keeping. Before that, `sisu run` can keep the
+  executable it builds, keyed by a hash of the source and the compiler's
+  version, so a script that has not changed starts without a build. Scripts
+  that drive other programs (ADR 0027) run often and change rarely.
+  `sisu fmt`, `sisu test` and `sisu lsp` are still later. No manifest at
+  first: a single file, or a directory whose entry point is `main.sisu`,
+  builds without one. A `sisu.toml` arrives only when a project needs
+  dependencies.
 - A `-O2` flag, added in milestone 2. It runs LLVM's `default<O2>` pass
   pipeline in place of `mem2reg`, both for `--emit ir` and for the
   executable. Without the flag, only `mem2reg` runs, as in milestone 1.
@@ -575,12 +579,33 @@ A benchmark that would push it over shrinks its input, or moves to
 
 The first candidates:
 
+- Now, since enums exist: a small interpreter that parses program text into
+  an enum tree and then runs it, so string scanning, box allocation and
+  `match` dispatch are measured together, as a real tool uses them.
 - 8: a generic container used at two types, and a call through an interface.
 - 9: an iterator chain next to the same loop written by hand, with both
   printing the same result, so the cost of the chain shows.
-- 10: comparing and printing records.
-- 11: word frequency with `Map`; `strings` grows into it.
-- 12: `?` on a path that runs often.
+- 10: comparing and printing records. Two programs shape them: a request
+  handler that parses fields into a record and prints a reply, the inner
+  loop of a service (ADR 0027); and an array of records with string fields,
+  run once with short strings and once with long ones, so small-string
+  optimisation has data.
+- 11: word frequency with `Map`, run on short and on long words; `strings`
+  grows into it. An LRU cache, a `Map` plus a list of class objects with
+  `weak` back links, is the worst case for reference counting. A
+  breadth-first search over a graph held as `[[i64]]` measures uniqueness
+  and bounds checks on nested arrays.
+- 12: `?` on a path that runs often: a calculator whose every parse and
+  evaluation step returns a `Result`.
+
+A program that also gets ports for the tables in
+[Benchmarks](benchmarks.md) runs at three input sizes, so a cost that grows
+faster than the input shows, and reports the size of the data it holds next
+to its peak memory. The set includes programs Sisu is expected to lose, such
+as the LRU cache, and a control where every language should tie, so a gap
+there points at the harness. For a new program with linked nodes, such as
+the LRU cache, the Rust port uses a `Vec` and indices, as Rust programmers
+write such code; binary_trees keeps its `Box` port.
 
 ### The growing proof program
 
@@ -640,7 +665,7 @@ settle before work starts.
 | Milestone 8: generics and interfaces | 4, 7 | 12, iterator methods (9), generated conformances on request (10), the standard library (11) |
 | Milestone 12: `Result` and `?` | 7, 8 | File I/O, the standard library (11), concurrency |
 | `weak` fields (ADR 0008) | None | Closures that capture their owner |
-| Milestone 9: closures and function types | `weak` fields. Decisions: closure syntax, weak captures, argument labels | Iterator methods (9), concurrency |
+| Milestone 9: closures and function types | `weak` fields. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
 | Milestone 9: lazy iterator methods | 8, closures | The standard library (11) |
 | Milestone 10: named arguments, default parameters | Decision: argument labels | Records (10) |
 | Milestone 10: records, tuples, newtypes | 4 for `print`. Decisions: values with fields, argument labels | Generated conformances on request, tuple patterns in closure parameters (9) |
@@ -752,6 +777,12 @@ Each is small once its milestone's main feature exists:
   shared state. A class that stores a closure capturing that same object is a
   cycle, so the closure needs a way to capture weakly, as Swift's
   `[weak self]` does (ADR 0008; see "Weak captures" in "Open decisions").
+- Milestone 9: a closure that does not escape needs no box. A closure passed
+  as an argument and never stored, returned or captured ends with the call,
+  so its captured values can stay in the caller's frame with no allocation
+  and no count updates. A closure captures by value, so a program cannot tell
+  the two apart: this is a `mir` optimization, not syntax. Swift marks the
+  closures that escape with `@escaping`; Sisu needs no mark.
 - Milestone 9: `weak` fields (ADR 0008), at the latest. A stored closure
   that captures its owner is the first cycle ordinary code makes without
   meaning to.
@@ -1083,7 +1114,15 @@ These do not make code nicer to write, so they wait:
   ([Benchmarks](benchmarks.md#quicksort-on-an-array-value)). `for j in lo..hi`
   indexes `a[j]` with no proof that `hi` is below the length. A first step is
   to find which checks LLVM keeps that a range fact about the loop would
-  remove.
+  remove. A flag can list them: each call to `sisu_panic_bounds` that is left
+  after `-O2` still passes the source location it would print, so the
+  compiler can report the lines whose checks survived. Later, an attribute
+  such as `@checkfree` on a function could make a surviving check a compile
+  error, so a hot loop cannot lose its proof without notice; it waits for
+  "Attribute syntax" in "Open decisions". Index types, which carry the proof
+  that an index fits a given array, are rejected: an array is a value that an
+  assignment can replace with a shorter one, so no index stays in bounds by
+  its type alone.
 - Link-time optimization with the runtime. Build `sisu-runtime` as LLVM
   bitcode and link it into the program's module, so LLVM can inline runtime
   calls such as `sisu_alloc` and `sisu_free`. The reference-count helpers
@@ -1161,7 +1200,12 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
 - **A language reference.** Milestone specs are not published, so the
   compiler and its tests define the language today. Users and tool authors
   need a reference that says what a program means, apart from what `sisu`
-  happens to do.
+  happens to do. Write it a milestone at a time, not all at once before 1.0:
+  each milestone adds its features. It has three layers for three readers: a
+  tutorial by example; a reference that shows each feature with an example
+  the tests compile and run, linked to the rule it shows; and a specification
+  with the exact rules and a list of what is still open and what was
+  resolved.
 - **A stability promise.** Nothing says which programs keep compiling from
   one version to the next, how a feature is deprecated, or whether Sisu has
   editions as Rust does. Sisu has no users yet, so this costs little now and
@@ -1238,7 +1282,9 @@ accepted.
 ## Deliberately avoided
 
 - Lifetimes and a borrow checker. Reference counting keeps Sisu in the Swift
-  and Kotlin ergonomic camp.
+  and Kotlin ergonomic camp. Inferring lifetimes without annotations does not
+  remove the cost: it moves it into the compiler, whose analysis grows a new
+  rule for each correct program it wrongly rejects.
 - Header files.
 - Unrestricted operator overloading.
 - Inheritance. A `class` is a reference type, not a hierarchy. Composition,
@@ -1264,6 +1310,10 @@ accepted.
 - Gleam's `use`, which turns the rest of a block into a callback. Gleam
   needs it because it has no early return; Sisu has `return`, and `?` in
   milestone 12.
+- A `return` that leaves several functions at once, such as a return from a
+  caller named at the `return`. The functions in between would end early with
+  nothing in their signatures to show it. `Result` and `?` (milestone 12)
+  pass a failure up one visible step at a time.
 - Separate float operators such as Gleam's `+.`. The checker knows each
   operand's type, so `+` can serve both, as long as milestone 6 keeps `i64`
   and `f64` from mixing without a conversion.
@@ -1351,7 +1401,12 @@ accepted.
   5's `words()` returns `[string]`.
 - **Small-string optimisation.** Store short strings inside the variable's
   slot, as Swift and C++ do. Programs cannot observe it. Decide when a
-  benchmark asks for it.
+  benchmark asks for it: the array of records with short and long strings
+  in "Benchmarks keep up" is the first to measure it. Enum layout is a
+  related choice. An enum takes the room of its largest payload ("Values
+  with fields"), so an array of mostly small variants carries unused space;
+  sizing each element by its variant or boxing large payloads would change
+  that, and is decided the same way.
 - **Values with fields.** Agreed 2026-10-14. Resolved for enums in milestone
   7 ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md));
   records and tuples (milestone 10) reuse the mechanism and confirm the rest:
@@ -1422,6 +1477,13 @@ accepted.
   `Num(n) if xs.any(x => x > n) => ...`. An arm body may itself be a closure,
   and `=>` groups to the right: `F(n) => x => x + n`. Still to decide in
   milestone 9: the closure forms beyond these.
+- **`return` inside a closure.** Decide in milestone 9. In a closure passed
+  to a method such as `any` or `filter`, a `return` could leave the closure,
+  as in Swift and Rust, or the function that wrote the closure, as in Kotlin's
+  inline lambdas and Ruby's blocks. Leaving the function lets an iterator
+  method read like a loop, but only works for a closure that does not escape,
+  and the same word then means two things. Leaving the closure is the simpler
+  rule; lazy iterators and `break` in a `for` loop cover early exit.
 - **Weak captures.** Decide before closures. A closure stored in a field of
   the object it captures is a cycle that a `weak` field cannot break
   (ADR 0008). Decide how a closure captures one name weakly, as Swift's
@@ -1439,7 +1501,12 @@ accepted.
     needs a way to leave the task's frames (LLVM unwinding, or a heap per
     task freed whole), and the runtime must know which task owns each file
     handle so it can close them. Milestone 12 would have to record that
-    owner, which is expensive to add to file handles later.
+    owner, which is expensive to add to file handles later. A loop in the
+    program restarts a task that died, and logs the panic message that
+    `join` hands back, as an Erlang supervisor does. Freeing a task's heap
+    whole runs no drop code, so whatever else the task opened, such as a
+    socket or a C library's handle, stays open until user drop code closes
+    it; decide the two together.
   - A `catch` inside a task, as Rust's `catch_unwind` and Go's `recover`
     do. Code after the catch can see class objects left half changed, and
     it is a second way to handle errors beside `Result`.
@@ -1492,11 +1559,17 @@ accepted.
     Zig (a change to a body can then break a distant constant); and whether
     LLVM's JIT or a mir interpreter runs them.
   - Reflection. From narrowest to widest: generated conformances only
-    (milestone 10); compile-time reflection that generates typed code;
+    (milestone 10); a loop that the compiler expands over a type's fields, an
+    enum's variants, a list of types or a list of constants, which leaves no
+    metadata in the binary and runs no user code at compile time, so it does
+    not wait for compile-time evaluation; compile-time reflection that
+    generates typed code;
     compile-time reflection that produces a type description for run-time
     code to walk; run-time reflection with metadata in the binary, as Go has.
     The case for it is serialization, such as JSON for servers (ADR 0027),
-    without a code-generation script. Any design must report an error at the
+    without a code-generation script. Milestone 10's generated conformances
+    walk the same fields and variants as the expanded loop, so they can share
+    that walk. Any design must report an error at the
     call, not inside a generic body (ADR 0023), keep private fields private
     (milestone 11's `pub`), and keep code reviewable (ADR 0027).
   - Specialization and type tests on `T`, such as `if T is i64`, belong to
