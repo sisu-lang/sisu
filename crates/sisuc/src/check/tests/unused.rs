@@ -148,6 +148,11 @@ fn unused_value_fix_drops_every_branch() {
     type Warned<'a> = (usize, usize, &'a str);
     let rows: &[(&str, &[Warned])] = &[
         ("if c { 1 } else { 2 }", &[(10, 12, "1"), (10, 23, "2")]),
+        // A loop body's tail is a root of its own, `discard_tail`.
+        (
+            "while c { if d { 1 } else { 2 } }",
+            &[(10, 22, "1"), (10, 33, "2")],
+        ),
         (
             "if let v = o { v } else { 0 }",
             &[(10, 20, "v"), (10, 31, "0")],
@@ -198,6 +203,35 @@ fn unused_value_fix_edits_every_branch() {
         for d in &ds {
             assert_eq!(fixes(&src, d), [(false, edits.clone())], "{src}");
         }
+    }
+}
+
+/// A statement with up to `SHARED_FIX_SITES` values shares one fix among its warnings; with more,
+/// each warning keeps its span and offers no fix, so the output stays linear.
+#[test]
+fn unused_value_fix_is_shared_up_to_a_cap() {
+    let arms = |n: usize| {
+        let numbered: Vec<_> = (0..n - 1)
+            .map(|i| format!("\n        {i} => {i}"))
+            .collect();
+        let numbered = numbered.concat();
+        in_body(&format!("match n {{{numbered}\n        _ => 0\n    }}"))
+    };
+    let src = arms(8);
+    let ds = diags(&src);
+    assert_eq!(ds.len(), 8, "{ds:?}");
+    for d in &ds {
+        assert_eq!(d.code(), Code::UnusedValue);
+        assert_eq!(d.fixes().len(), 1);
+        assert_eq!(d.fixes()[0].edits().len(), 8 * 2, "{src}");
+        clean(&applied(&src, d));
+    }
+    let src = arms(9);
+    let ds = diags(&src);
+    assert_eq!(ds.len(), 9, "{ds:?}");
+    for d in &ds {
+        assert_eq!(d.code(), Code::UnusedValue);
+        assert!(d.fixes().is_empty(), "{d:?}");
     }
 }
 

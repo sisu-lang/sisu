@@ -656,6 +656,7 @@ pub(crate) enum DiagnosticKind {
     /// uses. `arm` when it is a `match` arm's whole body, which takes no statement outside a block.
     /// `sites` are the values the fix drops, `at` among them, each with its own `arm`: those of
     /// the whole statement, since a branch with no value beside one with a value is an error.
+    /// Empty when the statement has too many values for one fix to list; then there is no fix.
     UnusedValue {
         ty: String,
         at: Span,
@@ -2335,7 +2336,11 @@ impl From<DiagnosticKind> for Diagnostic {
                         });
                     }
                 }
-                d.with_help(help).with_fix(Fix {
+                let d = d.with_help(help);
+                if edits.is_empty() {
+                    return d;
+                }
+                d.with_fix(Fix {
                     message: "drop it on purpose".to_string(),
                     safe: false,
                     edits,

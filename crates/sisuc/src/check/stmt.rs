@@ -14,6 +14,11 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
 
+/// How many values of one statement share a fix.
+// shortcut: past the cap the warnings offer no fix; store one fix per statement and share it if
+// long `match` statements need fixes.
+const SHARED_FIX_SITES: usize = 8;
+
 impl Checker<'_> {
     /// `never` once a statement is `never`, else the type of the last statement (`unit` when
     /// there is none). Warns "unreachable code" on the first statement after a `never` one.
@@ -218,9 +223,15 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports each of `unused`, one statement's values, with the fix that drops them all.
+    /// Reports each of `unused`, one statement's values, with the fix that drops them all, unless
+    /// there are more than `SHARED_FIX_SITES`: each fix lists every value, so N values cost N^2
+    /// edits.
     fn report_unused(&mut self, unused: Vec<(String, Span, bool)>) {
-        let sites: Vec<_> = unused.iter().map(|&(_, at, arm)| (at, arm)).collect();
+        let sites: Vec<_> = if unused.len() <= SHARED_FIX_SITES {
+            unused.iter().map(|&(_, at, arm)| (at, arm)).collect()
+        } else {
+            Vec::new()
+        };
         for (ty, at, arm) in unused {
             self.report(DiagnosticKind::UnusedValue {
                 ty,
