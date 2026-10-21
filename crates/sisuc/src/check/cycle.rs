@@ -319,7 +319,9 @@ impl Checker<'_> {
 
 /// The edges of a shortest path from node `from` to node `to`, which are in one component, by
 /// instantiations: an edge into a type's node from one of its parts costs nothing, so a way
-/// through a deeper type argument is no longer for it (a 0-1 breadth-first search).
+/// through a deeper type argument is no longer for it (a 0-1 breadth-first search). Every edge
+/// into a node costs the same, nothing into a type's node and one into a parameter, so the first
+/// way a node is reached is a cheapest one.
 fn way_back(
     graph: &Graph,
     out: &[Vec<usize>],
@@ -340,9 +342,7 @@ fn way_back(
             let edge = &graph.edges[i];
             let step = usize::from(edge.instance.is_some());
             let m = edge.to;
-            if component[m] == component[from]
-                && reached.get(&m).is_none_or(|&(c, _)| cost + step < c)
-            {
+            if component[m] == component[from] && !reached.contains_key(&m) {
                 reached.insert(m, (cost + step, Some(i)));
                 if step == 0 {
                     queue.push_front(m);

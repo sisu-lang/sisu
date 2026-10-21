@@ -2778,6 +2778,21 @@ mod tests {
         tokens(src).into_iter().map(|t| t.kind).collect()
     }
 
+    /// A line-end `>` ends the statement only where it closes a type annotation, and the scan
+    /// back for the annotation steps over brackets, stops at its block's `{` and skips the `;`s.
+    #[test]
+    fn a_line_end_gt_ends_only_a_type_annotation() {
+        let newlines = |src: &str| {
+            all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count()
+        };
+        assert_eq!(newlines("class D {\n    b: Box<[i64]>\n    n: i64\n}"), 3);
+        assert_eq!(newlines("class D {\n    b: Box<i64>;\n    n: i64\n}"), 3);
+        assert_eq!(newlines("fn f() -> bool {\n    x < y >\n        z\n}"), 2);
+    }
+
     #[test]
     fn newline_after_rparen() {
         use TokenKind::{Eof, LParen, Newline, RParen};
