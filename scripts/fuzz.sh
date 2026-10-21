@@ -2,12 +2,12 @@
 # Fuzzes the compiler (fuzz/fuzz_targets/front_end.rs) with cargo-fuzz: the front end on every
 # input, and codegen on each input that checks clean.
 # Every libFuzzer flag lives here, so CI never repeats one.
-#   scripts/fuzz.sh [--target <target>] [seconds]    fuzz for <seconds>, 1800 by default
+#   scripts/fuzz.sh [--target <target>] [seconds]   fuzz for <seconds>, 1800 by default
 #   scripts/fuzz.sh [--target <target>] --replay <input>   run one input
-#   scripts/fuzz.sh [--target <target>] --tmin <input>     minimize one input into fuzz/artifacts/<target>/
-#   scripts/fuzz.sh [--target <target>] --cmin             minimize fuzz/corpus/<target> in place
-#   scripts/fuzz.sh [--target <target>] --coverage         line coverage per compiler stage of the
-#                                      corpus and seeds, and how many inputs reach codegen
+#   scripts/fuzz.sh [--target <target>] --tmin <input>   minimize one input into fuzz/artifacts/<target>/
+#   scripts/fuzz.sh [--target <target>] --cmin   minimize fuzz/corpus/<target> in place
+#   scripts/fuzz.sh [--target <target>] --coverage   line coverage per compiler stage of the corpus
+#                                     and seeds, and how many inputs reach codegen
 # <target> is front_end, the default.
 # A fuzz run writes fuzz/artifacts/fuzz.log, run.txt and summary.md, and failing inputs
 # land in fuzz/artifacts/<target>/. Each new crash- input is then replayed once, and its
@@ -25,14 +25,6 @@ if [[ ${1:-} == --target ]]; then
     target=$2
     shift 2
 fi
-
-# Resolve the input before the cd, so a path relative to the caller's directory works.
-case ${1:-} in
---replay | --tmin) input=$(realpath "${2:?$1 needs an input}") ;;
-esac
-# The script's own checkout, not the caller's: run from another worktree, it still fuzzes this one.
-cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
-export RUST_BACKTRACE=1
 case $target in
 front_end)
     limits=(-max_len=16384 -timeout=60 -rss_limit_mb=2048)
@@ -43,12 +35,75 @@ front_end)
     exit 2
     ;;
 esac
+
+# Resolve the input before the cd, so a path relative to the caller's directory works.
+case ${1:-} in
+--replay | --tmin) input=$(realpath "${2:?$1 needs an input}") ;;
+esac
+# The script's own checkout, not the caller's: run from another worktree, it still fuzzes this one.
+cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+export RUST_BACKTRACE=1
 # Seconds for the replay of one crash, past libFuzzer's own -timeout, and how many crashes
 # are replayed: a regression can leave one crash- per corpus input, and the job has a limit.
 replay_seconds=120
 replay_limit=3
 corpus=fuzz/corpus/$target
 found=fuzz/artifacts/$target
+
+# Line coverage of the corpus and seeds, summed per stage, then how many of those inputs reach
+# codegen. Run `cargo fuzz coverage` over the corpus first; its profile feeds llvm-cov.
+coverage() {
+    local host bin
+    host=$(rustc -vV | awk '/^host:/ { print $2 }')
+    bin=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-cov
+    mkdir -p "$corpus"
+    cargo fuzz coverage --sanitizer none "$target" "$corpus" "$seeds"
+    # `export`, not `report`: report shows names without their longest common directory, which
+    # depends on which other files the binary has; export has absolute paths.
+    local lines
+    lines=$("$bin" export "target/$host/coverage/$host/release/$target" \
+        -instr-profile="fuzz/coverage/$target/coverage.profdata" \
+        -ignore-filename-regex='(\.cargo|\.rustup|/rustc/|/fuzz/|/tests/|tests\.rs)' \
+        -summary-only |
+        jq -r '
+            [.data[0].files[]
+             | select(.filename | test("/crates/sisuc/src/"))
+             | {stage: (.filename | sub("^.*/crates/sisuc/src/"; "") | sub("(\\.rs|/.*)$"; "")),
+                count: .summary.lines.count, covered: .summary.lines.covered}]
+            | group_by(.stage)
+            | map({key: .[0].stage,
+                   value: {count: (map(.count) | add), covered: (map(.covered) | add)}})
+            | from_entries
+            | . as $by
+            | ["lexer", "parser", "check", "mir", "codegen"][]
+            | "\(.) \($by[.].count // 0) \($by[.].covered // 0)"')
+    local stage count covered empty=false
+    while read -r stage count covered; do
+        if ((count == 0)); then
+            echo "scripts/fuzz.sh: no coverage lines for stage ${stage}" >&2
+            empty=true
+            continue
+        fi
+        awk -v s="$stage" -v c="$count" -v v="$covered" \
+            'BEGIN { printf "%-8s %5.1f%% of %d lines\n", s, 100 * v / c, c }'
+    done <<<"$lines"
+    if [[ $empty == true ]]; then exit 1; fi
+    cargo build --quiet -p sisuc
+    local reached=0 inputs=0 f
+    for f in "$corpus"/* "$seeds"/*; do
+        [[ -f $f ]] || continue
+        inputs=$((inputs + 1))
+        if target/debug/sisu check "$f" >/dev/null 2>&1; then reached=$((reached + 1)); fi
+    done
+    echo "inputs reaching codegen: ${reached} of ${inputs}"
+}
+
+# These exec cargo, so the trap below would never run: they come before the seeds exist.
+case ${1:-} in
+--replay) exec cargo fuzz run --sanitizer none "$target" "$input" -- "${limits[@]}" ;;
+--tmin) exec cargo fuzz tmin --sanitizer none "$target" "$input" -- "${limits[@]}" ;;
+--cmin) exec cargo fuzz cmin --sanitizer none "$target" "$corpus" -- "${limits[@]}" ;;
+esac
 
 # Every .sisu file under the test tree, copied under a unique name into a temp directory.
 seeds=$(mktemp -d)
@@ -60,52 +115,10 @@ while IFS= read -r -d '' f; do
     cp "$f" "$seeds/$i-${f##*/}"
 done < <(find crates/sisuc/tests -name '*.sisu' -print0)
 
-# Line coverage of the corpus and seeds, summed per stage, then how many of those inputs reach
-# codegen. Run `cargo fuzz coverage` over the corpus first; its profile feeds llvm-cov.
-coverage() {
-    local host bin
-    host=$(rustc -vV | awk '/^host:/ { print $2 }')
-    bin=$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-cov
-    mkdir -p "$corpus"
-    cargo fuzz coverage --sanitizer none "$target" "$corpus" "$seeds"
-    "$bin" report "target/$host/coverage/$host/release/$target" \
-        -instr-profile="fuzz/coverage/$target/coverage.profdata" \
-        -ignore-filename-regex='(\.cargo|/rustc/|/fuzz/|/tests/|tests\.rs)' \
-        -show-region-summary=false -show-branch-summary=false |
-        awk '
-            /^crates\/sisuc\/src\// || /\/crates\/sisuc\/src\// {
-                stage = $1
-                sub(/.*crates\/sisuc\/src\//, "", stage)
-                sub(/(\.rs|\/.*)$/, "", stage)
-                total[stage] += $5
-                missed[stage] += $6
-            }
-            END {
-                n = split("lexer parser check mir codegen", stages, " ")
-                for (i = 1; i <= n; i++) {
-                    s = stages[i]
-                    printf "%-8s %5.1f%% of %d lines\n", s, total[s] ? 100 * (total[s] - missed[s]) / total[s] : 0, total[s]
-                }
-            }'
-    cargo build --quiet -p sisuc
-    local reached=0 inputs=0 f
-    for f in "$corpus"/* "$seeds"/*; do
-        [[ -f $f ]] || continue
-        inputs=$((inputs + 1))
-        if target/debug/sisu check "$f" >/dev/null 2>&1; then reached=$((reached + 1)); fi
-    done
-    echo "inputs reaching codegen: ${reached} of ${inputs}"
-}
-
-case ${1:-} in
---replay) exec cargo fuzz run --sanitizer none "$target" "$input" -- "${limits[@]}" ;;
---tmin) exec cargo fuzz tmin --sanitizer none "$target" "$input" -- "${limits[@]}" ;;
---cmin) exec cargo fuzz cmin --sanitizer none "$target" "$corpus" -- "${limits[@]}" ;;
---coverage)
+if [[ ${1:-} == --coverage ]]; then
     coverage
     exit 0
-    ;;
-esac
+fi
 
 seconds=${1:-1800}
 if [[ ! $seconds =~ ^[0-9]+$ ]]; then
