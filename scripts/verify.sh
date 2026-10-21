@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs scripts/coverage.sh, then scripts/mutants.sh, on the changes since <base>,
-# and always ends with one verdict line that starts "verify: PASS" or "verify: FAIL".
+# and always ends with one verdict line that starts "verify: PASS" or "verify: FAIL"
+# and ends "(HEAD <sha>)", the commit it measured.
 # PASS needs no uncovered region touching the changes and no surviving mutant.
 # A region you explain instead of covering still fails the verdict, so the
 # mutants run anyway: one job reports both. A failing test run stops it early.
@@ -11,27 +12,30 @@ set -euo pipefail
 verdict=
 report=
 # Any early exit, from set -e included, still prints a verdict line.
-trap 'rm -f "$report"; [[ -n $verdict ]] || echo "verify: FAIL: stopped early (see the error above)"' EXIT
+trap 'rm -f "$report"; [[ -n $verdict ]] || echo "verify: FAIL: stopped early (see the error above) (HEAD ${head:-unknown})"' EXIT
 
 cd "$(git rev-parse --show-toplevel)"
+# The verdict names the commit it measured, so a log is checked by its last line alone.
+head=$(git rev-parse HEAD)
+git diff --quiet HEAD -- '*.rs' || head+=' with uncommitted changes'
 base=${1:-$(git merge-base main HEAD)}
 # Coverage and mutants measure Rust code only, so a diff without any has nothing to check.
 if git diff --quiet "$base" -- '*.rs'; then
 	verdict="verify: PASS: no Rust changes since $base"
-	echo "$verdict"
+	echo "$verdict (HEAD $head)"
 	exit 0
 fi
 report=$(mktemp)
 
 if ! scripts/coverage.sh "$base" | tee "$report"; then
 	verdict="verify: FAIL: the coverage run failed; mutants not run"
-	echo "$verdict"
+	echo "$verdict (HEAD $head)"
 	exit 1
 fi
 header='Uncovered regions touching changed code:'
 if ! grep -qxF "$header" "$report"; then
 	verdict="verify: FAIL: the coverage report has no \"$header\" list"
-	echo "$verdict"
+	echo "$verdict (HEAD $head)"
 	exit 1
 fi
 uncovered=$(sed -n "/^$header\$/,/^\$/p" "$report" | sed '1d;/^$/d;/^(none)$/d' | wc -l)
@@ -50,7 +54,7 @@ fi
 
 if ((uncovered == 0 && status == 0)); then
 	verdict="verify: PASS: no uncovered region touches the changes; mutants: $mutants"
-	echo "$verdict"
+	echo "$verdict (HEAD $head)"
 	exit 0
 fi
 reasons=
@@ -58,5 +62,5 @@ reasons=
 reasons+="mutants: $mutants"
 ((status == 0)) || reasons+=" (cargo mutants exit $status, see mutants.out/)"
 verdict="verify: FAIL: $reasons"
-echo "$verdict"
+echo "$verdict (HEAD $head)"
 exit 1
