@@ -892,6 +892,12 @@ fn generic_methods_wait_for_context() {
             "Box.make",
             &["i64", "i64", "[i64]"],
         ),
+        // A method without type parameters of its own takes its receiver's, so does not wait.
+        (
+            "class Jar<T> {\n    v: T\n    fn put(self, xs: [T]) -> [T] { xs }\n}\nfn g(j: Jar<i64>) {\n    let xs = id(j.put([]))\n}",
+            "Jar.put",
+            &["i64", "[i64]"],
+        ),
         // A variant waits whether its payload is labeled or not.
         (
             "enum Tag<T> { P(x: [T]) }\nfn g() {\n    let p: Tag<i64> = id(Tag.P(x: []))\n}",
@@ -1378,6 +1384,10 @@ fn generic_method_calls_that_do_not_check() {
         ),
         (
             "fn g(b: Box<i64>) {\n    let xs: [i64] = id(b.nope.make())\n}".into(),
+            vec![(Code::NoMember, (2, 26))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id(b.nope())\n}".into(),
             vec![(Code::NoMember, (2, 26))],
         ),
         (
