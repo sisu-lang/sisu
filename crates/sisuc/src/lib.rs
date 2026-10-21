@@ -108,12 +108,15 @@ pub fn cli() -> ExitCode {
     let (format, mode) = match args::parse(std::env::args_os().collect()) {
         Ok(parsed) => parsed,
         Err(e) => {
-            // Not `e.exit()`, which would end the process from the compiler's thread. With
-            // stderr gone, there is nowhere to say that printing failed.
+            // Not `e.exit()`, which would end the process from the compiler's thread. A usage
+            // error that cannot reach stderr has nowhere to be reported, so it only sets the exit
+            // code.
             if let Err(write) = e.print()
                 && !e.use_stderr()
+                && write.kind() != ErrorKind::BrokenPipe
             {
-                // A help or version that did not reach stdout is not a success.
+                // A help or version that did not reach stdout is not a success, unless the
+                // reader left (`sisu --help | head -1`), which ends quietly as in coreutils.
                 report::tool_error_after_summary(
                     &Format::Text,
                     &format!("cannot write to stdout: {write}"),
@@ -165,7 +168,9 @@ fn execute(mut reporter: Report, format: &Format, mode: Mode) -> ExitCode {
 fn print_stdout(reporter: &mut Report, text: &str) -> ExitCode {
     let mut stdout = io::stdout().lock();
     match write!(stdout, "{text}").and_then(|()| stdout.flush()) {
+        // A reader that left (`sisu explain E0001 | head -1`) ends the output quietly.
         Ok(()) => ExitCode::SUCCESS,
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => {
             reporter.tool_error(&format!("cannot write to stdout: {e}"));
             ExitCode::FAILURE

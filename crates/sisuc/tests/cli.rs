@@ -246,6 +246,25 @@ fn output_into_a_full_stdout_is_a_tool_error() {
     }
 }
 
+/// A reader that has already left is a quiet end, not an error: `sisu --help | head -1`. The read
+/// end is closed before `sisu` starts, so the write fails every time.
+#[test]
+fn output_into_a_closed_pipe_is_quiet() {
+    // `--help` is written by clap in several writes, `explain` by `print_stdout`.
+    for args in [&["--help"][..], &["explain", "E0001"]] {
+        let (reader, writer) = std::io::pipe().expect("a pipe should open");
+        drop(reader);
+        let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+            .args(args)
+            .stdout(writer)
+            .stderr(Stdio::piped())
+            .output()
+            .expect("sisu starts");
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {:?}", out.status);
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "", "{args:?}");
+    }
+}
+
 /// A wrong command line exits 2, and a broken flag rule names the flag with `build`'s usage.
 #[test]
 fn usage_errors_exit_2() {
