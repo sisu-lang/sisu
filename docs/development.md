@@ -4,8 +4,8 @@ This guide covers building `sisu`, compiling a Sisu program with it, and
 running the same checks as CI. Sisu builds and runs on x86-64 and ARM64 Linux and
 on ARM64 macOS. CI runs the tests on ARM64 Linux and ARM64 macOS on each push
 to `main`. On macOS the tests that need Valgrind, `/dev/full`, GNU ld or gcc
-are skipped, and `make coverage`, `make verify`, `make fuzz`, `make bench` and
-`make callgrind` do not work.
+are skipped, and `make coverage`, `make mutants`, `make verify`, `make fuzz`,
+`make bench` and `make callgrind` do not work.
 
 ## Prerequisites
 
@@ -81,7 +81,7 @@ The end-to-end cases are files. The `cases` test binary runs one test per
 
 | Directory | The program must | Expected output |
 | --- | --- | --- |
-| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind, and in a `--rc-checks` build | `<name>.out`: stdout; optional `<name>.err`: stderr |
+| `run/` | exit 0 with empty stderr unless there is a `<name>.err`, in a plain and an `-O2` build, both also under Valgrind on Linux, and in a `--rc-checks` build | `<name>.out`: stdout; optional `<name>.err`: stderr |
 | `run-fail/` | panic with exit code 101, the same in a plain and an `-O2` build | `<name>.out`: stdout; `<name>.err`: stderr |
 | `diagnostics/` | report diagnostics under `sisu check`, exiting 1 if one is an error and 0 if all are warnings; a case named `<CODE>.sisu` or `<CODE>-<case>.sisu` reports that code | `<name>.err`: the diagnostics; `<name>.json`: the same under `--format json` |
 
@@ -123,8 +123,8 @@ exactly that to stderr. Without the file, stderr must stay empty. The Valgrind
 runs' stderr holds Valgrind's own log, so they check only stdout and the exit
 code. To add the file to a case, `touch` it like any expected file.
 
-The runs go in order: plain and `-O2` without Valgrind, then both under
-Valgrind, then `--rc-checks`, and the first failure ends the case. A double
+The runs go in order: plain and `-O2` without Valgrind, then, on Linux, both
+under Valgrind, then `--rc-checks`, and the first failure ends the case. A double
 free usually aborts in the plain run, so Valgrind never reports it there. To
 show what Valgrind says about a broken build, run its binary under
 `valgrind --error-exitcode=1` yourself.
@@ -487,7 +487,8 @@ when building an executable.
 `scripts/install-llvm.sh` puts `ld.lld` in `.llvm/23/bin`; the tests put that
 directory on `PATH`, or in gcc's `COMPILER_PATH`, for the `--linker lld` tests.
 On macOS, Apple's clang has no `bfd`, and for `lld` it runs `ld64.lld`, which
-`.llvm/23` does not have, so the `--linker` tests run only on Linux.
+`.llvm/23` does not have, so the tests that link with `--linker` run only on
+Linux.
 
 `sisu build --rc-checks file.sisu` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is

@@ -138,8 +138,9 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 }
 
 /// Checks a `tests/run` case: both builds differ, exit 0, agree on stdout and on stderr, and
-/// print the same under Valgrind, which finds no leak or memory error, and in a `--rc-checks`
-/// build, which finds no count fault or live object at exit; then that stdout is `<name>.out`.
+/// print the same under Valgrind on Linux, which finds no leak or memory error, and in a
+/// `--rc-checks` build, which finds no count fault or live object at exit; then that stdout is
+/// `<name>.out`.
 /// Stderr is empty, unless `<name>.err` exists: then the stderr of the plain, `-O2` and
 /// `--rc-checks` runs is that file. The Valgrind runs' stderr holds Valgrind's own log, so it is
 /// never compared.
