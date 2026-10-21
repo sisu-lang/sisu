@@ -141,6 +141,134 @@ fn unused_value_fix() {
     clean(&fixed);
 }
 
+/// Every warning of one statement carries the fix that drops all of the statement's values, so
+/// applying any one of them leaves no branch without a value beside one with a value.
+#[test]
+fn unused_value_fix_drops_every_branch() {
+    type Warned<'a> = (usize, usize, &'a str);
+    let rows: &[(&str, &[Warned])] = &[
+        ("if c { 1 } else { 2 }", &[(10, 12, "1"), (10, 23, "2")]),
+        // A loop body's tail is a root of its own, `discard_tail`.
+        (
+            "while c { if d { 1 } else { 2 } }",
+            &[(10, 22, "1"), (10, 33, "2")],
+        ),
+        (
+            "if let v = o { v } else { 0 }",
+            &[(10, 20, "v"), (10, 31, "0")],
+        ),
+        (
+            "if c { if d { 1 } else { 2 } } else { 3 }",
+            &[(10, 19, "1"), (10, 30, "2"), (10, 43, "3")],
+        ),
+        (
+            "match n {\n        0 => {\n            1\n        }\n        _ => 2\n    }",
+            &[(12, 13, "1"), (14, 14, "2")],
+        ),
+    ];
+    for (body, expected) in rows {
+        let src = in_body(body);
+        warns(&src, expected);
+        for d in &diags(&src) {
+            clean(&applied(&src, d));
+        }
+    }
+}
+
+/// The fix's edits: one per value, or two around an arm's whole body, the same on each warning.
+#[test]
+fn unused_value_fix_edits_every_branch() {
+    type Edit = (usize, usize, &'static str, String);
+    let rows: &[(&str, Vec<Edit>)] = &[
+        (
+            "if c { 1 } else { 2 }",
+            vec![
+                (10, 12, "", "let _ = ".into()),
+                (10, 23, "", "let _ = ".into()),
+            ],
+        ),
+        (
+            "match n {\n        0 => {\n            1\n        }\n        _ => 2\n    }",
+            vec![
+                (12, 13, "", "let _ = ".into()),
+                (14, 14, "", "{ let _ = ".into()),
+                (14, 15, "", " }".into()),
+            ],
+        ),
+    ];
+    for (body, edits) in rows {
+        let src = in_body(body);
+        let ds = diags(&src);
+        assert_eq!(ds.len(), 2, "{ds:?}");
+        for d in &ds {
+            assert_eq!(fixes(&src, d), [(false, edits.clone())], "{src}");
+        }
+    }
+}
+
+/// A statement with up to `SHARED_FIX_SITES` values shares one fix among its warnings; with more,
+/// each warning keeps its span and offers no fix, so the output stays linear.
+#[test]
+fn unused_value_fix_is_shared_up_to_a_cap() {
+    let arms = |n: usize| {
+        let numbered: Vec<_> = (0..n - 1)
+            .map(|i| format!("\n        {i} => {i}"))
+            .collect();
+        let numbered = numbered.concat();
+        in_body(&format!("match n {{{numbered}\n        _ => 0\n    }}"))
+    };
+    let src = arms(8);
+    let ds = diags(&src);
+    assert_eq!(ds.len(), 8, "{ds:?}");
+    for d in &ds {
+        assert_eq!(d.code(), Code::UnusedValue);
+        assert_eq!(d.fixes().len(), 1);
+        assert_eq!(d.fixes()[0].edits().len(), 8 * 2, "{src}");
+        clean(&applied(&src, d));
+    }
+    let src = arms(9);
+    let ds = diags(&src);
+    assert_eq!(ds.len(), 9, "{ds:?}");
+    for d in &ds {
+        assert_eq!(d.code(), Code::UnusedValue);
+        assert!(d.fixes().is_empty(), "{d:?}");
+    }
+}
+
+/// An `if let` on an enum lowers to a `match`: its warnings share one fix too.
+#[test]
+fn unused_value_fix_drops_every_enum_if_let_branch() {
+    let src = "enum E {\n    A\n    B\n}\nfn main() {\n    let e = E.A\n    if let A = e { 1 } else { 2 }\n    print(1)\n}";
+    warns(src, &[(7, 20, "1"), (7, 31, "2")]);
+    let ds = diags(src);
+    let edits = vec![
+        (7, 20, "", "let _ = ".into()),
+        (7, 31, "", "let _ = ".into()),
+    ];
+    for d in &ds {
+        assert_eq!(fixes(src, d), [(false, edits.clone())], "{src}");
+        clean(&applied(src, d));
+    }
+}
+
+/// Two statements never share a fix: each fix drops only its own statement's values.
+#[test]
+fn unused_value_fix_stays_within_its_statement() {
+    let src = in_body("if c { 1 } else { 2 }\n    if d { 3 } else { 4 }");
+    warns(
+        &src,
+        &[(10, 12, "1"), (10, 23, "2"), (11, 12, "3"), (11, 23, "4")],
+    );
+    let ds = diags(&src);
+    for (d, line) in ds.iter().zip([10, 10, 11, 11]) {
+        let edits = vec![
+            (line, 12, "", "let _ = ".into()),
+            (line, 23, "", "let _ = ".into()),
+        ];
+        assert_eq!(fixes(&src, d), [(false, edits)], "{src}");
+    }
+}
+
 /// A `match` statement is not itself the value: each arm's is.
 #[test]
 fn match_unused_value() {

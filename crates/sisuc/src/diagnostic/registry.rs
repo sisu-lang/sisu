@@ -654,7 +654,15 @@ pub(crate) enum DiagnosticKind {
     },
     /// The expression statement, or branch or body tail, at `at`, whose value of type `ty` nothing
     /// uses. `arm` when it is a `match` arm's whole body, which takes no statement outside a block.
-    UnusedValue { ty: String, at: Span, arm: bool },
+    /// `sites` are the values the fix drops, `at` among them, each with its own `arm`: those of
+    /// the whole statement, since a branch with no value beside one with a value is an error.
+    /// Empty when the statement has too many values for one fix to list; then there is no fix.
+    UnusedValue {
+        ty: String,
+        at: Span,
+        arm: bool,
+        sites: Vec<(Span, bool)>,
+    },
     /// The built-in type or class `name`, at `at`, read as a value.
     TypeAsValue { name: String, at: Span },
     /// The member of `math`, `Math` or `f64`, written at `written`, which is not how Sisu writes
@@ -2302,29 +2310,41 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::UnusedValue { ty, at, arm } => {
+            DiagnosticKind::UnusedValue { ty, at, arm, sites } => {
                 let d = Diagnostic::coded(code, at, format!("unused value of type `{ty}`"));
-                let start = Span::new(at.start(), at.start());
-                if arm {
-                    d.with_help("use it, or write `{ let _ = ... }` to drop it on purpose")
-                        .with_fix(Fix {
-                            message: "drop it on purpose".to_string(),
-                            safe: false,
-                            edits: vec![
-                                Edit {
-                                    span: start,
-                                    replacement: "{ let _ = ".to_string(),
-                                },
-                                Edit {
-                                    span: Span::new(at.end(), at.end()),
-                                    replacement: " }".to_string(),
-                                },
-                            ],
-                        })
+                let help = if arm {
+                    "use it, or write `{ let _ = ... }` to drop it on purpose"
                 } else {
-                    d.with_help("use it, or write `let _ =` to drop it on purpose")
-                        .with_fix(unsafe_fix("drop it on purpose", start, "let _ = "))
+                    "use it, or write `let _ =` to drop it on purpose"
+                };
+                let mut edits = Vec::new();
+                for (site, arm) in sites {
+                    let start = Span::new(site.start(), site.start());
+                    if arm {
+                        edits.push(Edit {
+                            span: start,
+                            replacement: "{ let _ = ".to_string(),
+                        });
+                        edits.push(Edit {
+                            span: Span::new(site.end(), site.end()),
+                            replacement: " }".to_string(),
+                        });
+                    } else {
+                        edits.push(Edit {
+                            span: start,
+                            replacement: "let _ = ".to_string(),
+                        });
+                    }
                 }
+                let d = d.with_help(help);
+                if edits.is_empty() {
+                    return d;
+                }
+                d.with_fix(Fix {
+                    message: "drop it on purpose".to_string(),
+                    safe: false,
+                    edits,
+                })
             }
             DiagnosticKind::TypeAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a type, not a value"))
