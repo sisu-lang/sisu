@@ -65,7 +65,21 @@ members=("$top/bin/llvm-config" "$top/bin/lld" "$top/bin/ld.lld" "$top/include/l
 if $audit; then
     members+=("$top/bin/opt" "$top/bin/clang" "$top/bin/clang-23" "$top/lib/clang")
 fi
+[[ "$(uname -s)" == Darwin ]] && members+=("$top/bin/llc")
 "${tar[@]}" -xJf "$tmp/llvm.tar.xz" -C "$dest" --strip-components=1 "${members[@]}"
+# The macOS release's static libraries hold LLVM 23 bitcode (it is built with ThinLTO), which
+# Apple's linker cannot read, so llc compiles each member to a native object, once, here.
+if [[ "$(uname -s)" == Darwin ]]; then
+    for lib in $("$dest/bin/llvm-config" --libnames); do
+        objects="$tmp/objects/$lib"
+        mkdir -p "$objects"
+        (cd "$objects" && ar x "$dest/lib/$lib")
+        find "$objects" -name '*.o' -print0 |
+            xargs -0 -P "$(sysctl -n hw.ncpu)" -I{} "$dest/bin/llc" -O2 -filetype=obj {} -o {}.native
+        rm "$dest/lib/$lib"
+        ar rcs "$dest/lib/$lib" "$objects"/*.native
+    done
+fi
 # Written last, so an interrupted run is redone on the next call.
 echo "$version" >"$dest/VERSION"
 echo "Installed LLVM $version in $dest"
