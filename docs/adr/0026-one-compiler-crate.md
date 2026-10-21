@@ -6,9 +6,9 @@ Status: accepted, 2026-10-21.
 at the `mir` seam: an LLVM-free front crate (`source`, `lexer`, `parser`,
 `ast`, `symbol`, `types`, `graph`, `check`, `tir`, `mir`, `diagnostic`,
 `report`, `front_end`) and a back end (`codegen`, `link`, `fuzz`, the
-driver: `lib.rs`, `args`, `run`, `main.rs`). The aim was shorter edit-and-
-test cycles: the front crate's unit tests would link without LLVM, and an
-edit to the front end would rebuild the back end only incrementally.
+driver: `lib.rs`, `args`, `run`, `main.rs`). The aim was shorter
+edit-and-test cycles: the front crate's unit tests would link without LLVM,
+and an edit to the front end would rebuild the back end only incrementally.
 
 No split was built or measured. On 2026-10-21 the user ruled one crate from
 the table below alone, because the decision rule's first condition cannot
@@ -17,8 +17,9 @@ hold: an edit already rebuilds the test binaries in about 2 s.
 ## Measurements
 
 Base commit 2337f25, one `sisuc` crate. Machine: 32 cores, rustc 1.99.0.
-Other sessions were light: the 1-minute load was 1.4 before M1 and 5.7 to
-8.6 during M2 to M7, mostly from M1's own builds. Each row is the median of
+The 1-minute load was 1.4 before M1, so other sessions were light then. It
+was 5.7 to 8.6 during M2 to M7, mostly from this measurement's own builds.
+Each row is the median of
 five timed runs after an untimed warm-up. An edit inserts one line at the
 top of the file, so every span in it shifts. After each run the file is
 restored and rebuilt untimed.
@@ -52,12 +53,11 @@ front-end edit.
 
 ## Considered options
 
-- **Split at `mir`**: rejected by the rule. It would have put `mir/`, where
-  the work lands through M8 and M9, in the LLVM-free crate. `codegen`
-  reads `mir` in three `use` lines and `tir` in ten.
-- **Split at `tir`**: rejected. It adds `mir`'s imports (`tir`, `source`,
-  `graph::components`) to the edges across the seam, and `check`'s tests
-  would import `mir::tests` backwards across it.
+- **Split at `mir`**: the better seam (`mir/`, where the work lands through
+  M8 and M9, stays LLVM-free), but rejected by the rule.
+- **Split at `tir`**: rejected. `mir`'s own imports of `tir`, `source` and
+  `graph::components` would cross the seam, and `check`'s tests would
+  import `mir::tests` backwards across it.
 - **One crate**: chosen.
 
 ## Consequences
