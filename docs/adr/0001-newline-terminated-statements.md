@@ -35,4 +35,7 @@ newlines".
   Swift and Kotlin).
 - From milestone 8, a `>` can end a statement too, as the close of type
   arguments (`b: Box<i64>`). The parser drops the line break after a `>`
-  that compares, so `a >` still continues onto the next line.
+  that compares, so `a >` still continues onto the next line, and after the
+  type parameters of a function's header, so `fn f<T>` goes on to its
+  parameters. A call's type arguments get no such exception: `f<i64>` then
+  `(x)` on the next line ends at the line break, as `f` then `(x)` does.

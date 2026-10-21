@@ -30,34 +30,36 @@ enum Instance {
     Type(Type),
 }
 
-/// An edge between type parameters, from an instantiation at `site` inside the declaration
-/// `holder`.
+/// An edge of the graph, from an instantiation at `site` inside the declaration `holder`; or,
+/// with no `instance`, into a type's node from the node of one of its parts.
 struct Edge {
     from: usize,
     to: usize,
     growing: bool,
     holder: usize,
     site: Span,
-    instance: Instance,
+    instance: Option<Instance>,
 }
 
 struct Graph {
     /// By declaration, its first node: the functions', then the classes', then the enums'; then
-    /// the number of nodes.
+    /// the number of parameter nodes.
     first: Vec<usize>,
     functions: usize,
     classes: usize,
     edges: Vec<Edge>,
-    /// By type, the indices of the type parameters it mentions, each once, in order: each
-    /// interned type is looked at once, however many types share it.
-    mentioned: FxHashMap<Type, Vec<usize>>,
+    /// By declaration and type, the node of a type argument that mentions a parameter, after
+    /// the parameters' nodes. Its parts' edges into it stand for "mentions": a parameter reaches
+    /// the node of each type that mentions it, so an argument needs one edge however many
+    /// parameters it mentions, and each type of a declaration is looked at once.
+    typed: FxHashMap<(usize, Type), usize>,
     /// The types `types` has walked, with the site each was written at.
     walked: FxHashSet<(Span, Type)>,
 }
 
 impl Graph {
-    /// The edges into the parameters of the declaration `target` from those of `holder` that
-    /// each of `args`, its arguments, mentions.
+    /// The edges into the parameters of the declaration `target` from `args`, its arguments,
+    /// inside `holder`: growing unless the argument is a parameter itself.
     fn args(
         &mut self,
         holder: usize,
@@ -66,60 +68,95 @@ impl Graph {
         site: Span,
         instance: Instance,
     ) {
-        for (q, &arg) in args.iter().enumerate() {
-            for p in self.mentions(arg) {
-                self.edges.push(Edge {
-                    from: self.first[holder] + p,
-                    to: self.first[target] + q,
-                    growing: !matches!(arg.kind(), TypeKind::Param(_, i) if i as usize == p),
-                    holder,
-                    site,
-                    instance,
-                });
-            }
+        for (q, &arg) in args.iter().enumerate().filter(|(_, arg)| arg.has_param()) {
+            let from = self.node(holder, arg);
+            self.edges.push(Edge {
+                from,
+                to: self.first[target] + q,
+                growing: !matches!(arg.kind(), TypeKind::Param(..)),
+                holder,
+                site,
+                instance: Some(instance),
+            });
         }
     }
 
-    /// The indices of the type parameters `ty` mentions, each once, in order.
-    fn mentions(&mut self, ty: Type) -> Vec<usize> {
-        if let Some(found) = self.mentioned.get(&ty) {
-            return found.clone();
+    /// The node of `ty`, which mentions a parameter, inside `holder`: a parameter's own, or one
+    /// made, with its parts' after them, by a walk that keeps its own stack, as a type can nest
+    /// deeper than the program's stack allows.
+    fn node(&mut self, holder: usize, ty: Type) -> usize {
+        let mut stack = vec![(ty, false)];
+        while let Some((t, parts_made)) = stack.pop() {
+            if self.made(holder, t).is_some() {
+                continue;
+            }
+            if !parts_made {
+                stack.push((t, true));
+                stack.extend(parts(t).map(|part| (part, false)));
+                continue;
+            }
+            let n = self.first[self.first.len() - 1] + self.typed.len();
+            self.typed.insert((holder, t), n);
+            for part in parts(t) {
+                let from = self
+                    .made(holder, part)
+                    .expect("a type's parts should be made before it");
+                self.edges.push(Edge {
+                    from,
+                    to: n,
+                    growing: false,
+                    holder,
+                    site: Span::new(0, 0),
+                    instance: None,
+                });
+            }
         }
-        let mut found = match ty.kind() {
-            TypeKind::Param(_, i) => vec![i as usize],
-            TypeKind::Array(inner) | TypeKind::Optional(inner) => self.mentions(inner),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args
-                .get()
-                .iter()
-                .flat_map(|&arg| self.mentions(arg))
-                .collect(),
-            _ => Vec::new(),
-        };
-        found.sort_unstable();
-        found.dedup();
-        self.mentioned.insert(ty, found.clone());
-        found
+        self.made(holder, ty)
+            .expect("the walk should make the type it starts at")
+    }
+
+    /// The node of `ty` inside `holder`, if it has one yet.
+    fn made(&self, holder: usize, ty: Type) -> Option<usize> {
+        match ty.kind() {
+            TypeKind::Param(_, i) => Some(self.first[holder] + i as usize),
+            _ => self.typed.get(&(holder, ty)).copied(),
+        }
     }
 
     /// The edges of each generic class and enum in `ty`, written at `site` inside `holder`; a
     /// type shared inside `ty` is walked once.
     fn types(&mut self, holder: usize, ty: Type, site: Span) {
-        if !ty.has_param() || !self.walked.insert((site, ty)) {
-            return;
-        }
-        let (target, args) = match ty.kind() {
-            TypeKind::Array(inner) | TypeKind::Optional(inner) => {
-                return self.types(holder, inner, site);
+        let mut stack = vec![ty];
+        while let Some(ty) = stack.pop() {
+            if !ty.has_param() || !self.walked.insert((site, ty)) {
+                continue;
             }
-            TypeKind::Class(id, args) => (self.functions + id.0, args),
-            TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
-            _ => return,
-        };
-        self.args(holder, args.get(), target, site, Instance::Type(ty));
-        for &arg in args.get() {
-            self.types(holder, arg, site);
+            let (target, args) = match ty.kind() {
+                TypeKind::Array(inner) | TypeKind::Optional(inner) => {
+                    stack.push(inner);
+                    continue;
+                }
+                TypeKind::Class(id, args) => (self.functions + id.0, args),
+                TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
+                _ => continue,
+            };
+            self.args(holder, args.get(), target, site, Instance::Type(ty));
+            stack.extend(args.get());
         }
     }
+}
+
+/// The parts of `ty` that mention a parameter.
+fn parts(ty: Type) -> impl Iterator<Item = Type> {
+    let (inner, args) = match ty.kind() {
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => (Some(inner), &[][..]),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => (None, args.get()),
+        _ => (None, &[][..]),
+    };
+    inner
+        .into_iter()
+        .chain(args.iter().copied())
+        .filter(|part| part.has_param())
 }
 
 impl Checker<'_> {
@@ -133,6 +170,70 @@ impl Checker<'_> {
         functions: &[Option<tir::Function>],
         unbuilt: &[bool],
     ) {
+        let graph = self.instantiation_graph(functions, unbuilt);
+        let declared = graph.functions;
+        let nodes = graph.first[graph.first.len() - 1] + graph.typed.len();
+        let mut out = vec![Vec::new(); nodes];
+        for (i, edge) in graph.edges.iter().enumerate() {
+            out[edge.from].push(i);
+        }
+        let targets: Vec<Vec<usize>> = out
+            .iter()
+            .map(|edges| edges.iter().map(|&i| graph.edges[i].to).collect())
+            .collect();
+        let component = components(&targets);
+        // By component, its first growing edge in source order.
+        let mut growing: Vec<Option<usize>> = vec![None; nodes];
+        for (i, edge) in graph.edges.iter().enumerate() {
+            let k = component[edge.from];
+            if edge.growing
+                && component[edge.to] == k
+                && growing[k].is_none_or(|g| edge.site.start() < graph.edges[g].site.start())
+            {
+                growing[k] = Some(i);
+            }
+        }
+        // Components that grow at one site, as `f([x], [y])` does for each parameter, are
+        // reported once.
+        let mut reported = FxHashSet::default();
+        for g in growing.into_iter().flatten() {
+            let edge = &graph.edges[g];
+            if !reported.insert(edge.site) {
+                continue;
+            }
+            let back = way_back(&graph, &out, &component, edge.to, edge.from);
+            // A call that gives two parameters their arguments is one site, shown once.
+            let mut shown = FxHashSet::from_iter([edge.site]);
+            let through = back
+                .into_iter()
+                .map(|i| &graph.edges[i])
+                .filter_map(|e| {
+                    e.instance
+                        .filter(|_| shown.insert(e.site))
+                        .map(|i| (e.site, i))
+                })
+                .map(|(site, instance)| (site, self.instance_name(functions, instance)))
+                .collect();
+            let name = match edge.holder.checked_sub(declared) {
+                None => self.signatures[edge.holder].name.clone(),
+                Some(c) if c < self.classes.len() => self.classes[c].name.name.to_string(),
+                Some(c) => self.enums[c - self.classes.len()].name.name.to_string(),
+            };
+            self.report(DiagnosticKind::InstantiationCycle {
+                name,
+                at: edge.site,
+                instance: self.instance_name(
+                    functions,
+                    edge.instance
+                        .expect("a growing edge should be an instantiation"),
+                ),
+                through,
+            });
+        }
+    }
+
+    /// The instantiation graph of the program: see `instantiation_cycles`.
+    fn instantiation_graph(&self, functions: &[Option<tir::Function>], unbuilt: &[bool]) -> Graph {
         let counts = self.signatures.iter().map(|s| s.type_params.len());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
@@ -146,7 +247,7 @@ impl Checker<'_> {
             functions: declared,
             classes: self.classes.len(),
             edges: Vec::new(),
-            mentioned: FxHashMap::default(),
+            typed: FxHashMap::default(),
             walked: FxHashSet::default(),
         };
         let mut exprs = Vec::new();
@@ -190,50 +291,7 @@ impl Checker<'_> {
                 }
             }
         }
-        let nodes = graph.first[graph.first.len() - 1];
-        let mut out = vec![Vec::new(); nodes];
-        for (i, edge) in graph.edges.iter().enumerate() {
-            out[edge.from].push(i);
-        }
-        let targets: Vec<Vec<usize>> = out
-            .iter()
-            .map(|edges| edges.iter().map(|&i| graph.edges[i].to).collect())
-            .collect();
-        let component = components(&targets);
-        // By component, its first growing edge in source order.
-        let mut growing: Vec<Option<usize>> = vec![None; nodes];
-        for (i, edge) in graph.edges.iter().enumerate() {
-            let k = component[edge.from];
-            if edge.growing
-                && component[edge.to] == k
-                && growing[k].is_none_or(|g| edge.site.start() < graph.edges[g].site.start())
-            {
-                growing[k] = Some(i);
-            }
-        }
-        for g in growing.into_iter().flatten() {
-            let edge = &graph.edges[g];
-            let back = way_back(&graph, &out, &component, edge.to, edge.from);
-            // A call that gives two parameters their arguments is one site, shown once.
-            let mut shown = FxHashSet::from_iter([edge.site]);
-            let through = back
-                .into_iter()
-                .map(|i| &graph.edges[i])
-                .filter(|e| shown.insert(e.site))
-                .map(|e| (e.site, self.instance_name(functions, e.instance)))
-                .collect();
-            let name = match edge.holder.checked_sub(declared) {
-                None => self.signatures[edge.holder].name.clone(),
-                Some(c) if c < self.classes.len() => self.classes[c].name.name.to_string(),
-                Some(c) => self.enums[c - self.classes.len()].name.name.to_string(),
-            };
-            self.report(DiagnosticKind::InstantiationCycle {
-                name,
-                at: edge.site,
-                instance: self.instance_name(functions, edge.instance),
-                through,
-            });
-        }
+        graph
     }
 
     /// `instance` as the program writes it: `f<[T]>`, `C<[T]>.m<U>`, or a type.
@@ -298,46 +356,84 @@ mod tests {
     use crate::symbol::Symbol;
     use crate::tir::ClassId;
 
-    /// `levels` of `Pair<_, _>` over `T`, each level's arguments one shared type.
-    fn shared(levels: usize) -> Type {
-        let mut ty = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
-        for _ in 0..levels {
-            ty = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[ty, ty])));
-        }
-        ty
+    fn param(i: u32) -> Type {
+        Type::intern(TypeKind::Param(Symbol::intern("T"), i))
     }
 
-    /// A function `f<T>` and a class `Pair<A, B>`.
-    fn graph() -> Graph {
+    fn pair(a: Type, b: Type) -> Type {
+        Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[a, b])))
+    }
+
+    /// A function with `params` type parameters and a class `Pair<A, B>`.
+    fn graph(params: usize) -> Graph {
         Graph {
-            first: vec![0, 1, 3],
+            first: vec![0, params, params + 2],
             functions: 1,
             classes: 1,
             edges: Vec::new(),
-            mentioned: FxHashMap::default(),
+            typed: FxHashMap::default(),
             walked: FxHashSet::default(),
         }
     }
 
-    /// A type that shares its arguments, `2^20` paths to `T` in 21 types, gives one edge per
-    /// dependency and is looked at once per type, not per path.
+    /// A type that shares its arguments, `2^20` paths to `T` in 21 types, is looked at once per
+    /// type, not per path.
     #[test]
     fn shared_type_arguments_are_walked_once() {
-        let ty = shared(20);
-        let mut g = graph();
+        let mut ty = param(0);
+        for _ in 0..20 {
+            ty = pair(ty, ty);
+        }
         let site = Span::new(0, 1);
+        let mut g = graph(1);
         g.args(0, &[ty], 0, site, Instance::Type(ty));
-        assert_eq!(g.edges.len(), 1);
-        assert_eq!(g.mentioned.len(), 21);
-        // A type in the table is not walked again: an entry planted for the level below shows.
-        let mut g = graph();
-        g.mentioned.insert(shared(19), Vec::new());
-        g.args(0, &[ty], 0, site, Instance::Type(ty));
-        assert!(g.edges.is_empty());
+        // A node per `Pair`, an edge from each of its two arguments, and the call's edge.
+        assert_eq!(g.typed.len(), 20);
+        assert_eq!(g.edges.len(), 2 * 20 + 1);
         // Written as a field's type: each level's `Pair` gives an edge into each of its two
-        // parameters, once.
-        let mut g = graph();
+        // parameters, once, from the nodes of the 19 levels below the top.
+        let mut g = graph(1);
         g.types(0, ty, site);
-        assert_eq!(g.edges.len(), 2 * 20);
+        assert_eq!(g.edges.len(), 2 * 20 + 2 * 19);
+    }
+
+    /// An argument that mentions `n` parameters, `Pair<…Pair<T0, T1>…, Tn>`, costs a node and
+    /// two edges per `Pair` once, and one edge at each further site: never a copy of what each
+    /// part mentions.
+    #[test]
+    fn arguments_mentioning_many_parameters_stay_linear() {
+        for n in [16_u32, 256] {
+            let mut ty = param(0);
+            for i in 1..=n {
+                ty = pair(ty, param(i));
+            }
+            let mut g = graph(n as usize + 1);
+            for site in 0..10 {
+                g.args(0, &[ty], 0, Span::new(site, site + 1), Instance::Type(ty));
+            }
+            assert_eq!(g.typed.len(), n as usize);
+            assert_eq!(g.edges.len(), 2 * n as usize + 10);
+        }
+    }
+
+    /// A type nested deeper than the stack allows recursing into is walked with a stack of its
+    /// own, as an argument and as a field's type.
+    #[test]
+    fn deep_types_are_walked_without_recursion() {
+        let levels = 100_000;
+        let mut ty = param(0);
+        for _ in 0..levels {
+            ty = Type::intern(TypeKind::Array(ty));
+        }
+        let mut g = graph(1);
+        g.args(0, &[ty], 0, Span::new(0, 1), Instance::Type(ty));
+        assert_eq!(g.typed.len(), levels);
+        let mut ty = param(0);
+        for _ in 0..levels {
+            ty = pair(ty, param(0));
+        }
+        let mut g = graph(1);
+        g.types(0, ty, Span::new(0, 1));
+        assert_eq!(g.walked.len(), levels + 1);
     }
 }

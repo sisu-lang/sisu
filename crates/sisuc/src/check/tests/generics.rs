@@ -1542,6 +1542,14 @@ fn cycles() {
         ),
         // `U` grows into `T` and `T` comes back into `U` at the same call, noted once.
         ("fn f<T, U>(x: T, y: U) { f(y, [x]) }", (1, 26), vec![]),
+        // Each parameter grows into itself at one call, reported once.
+        ("fn f<T, U>(x: T, y: U) { f([x], [y]) }", (1, 26), vec![]),
+        ("class P<A, B> { next: P<[A], [B]>? }", (1, 23), vec![]),
+        (
+            "class Cell<T> {\n    v: T\n    fn spread<U>(self, x: U) { Cell(v: [self.v]).spread([x]) }\n}",
+            (3, 32),
+            vec![],
+        ),
         // Two growing edges, one error, at the first in source order: the payload, not the
         // field, though classes are numbered first.
         (
@@ -1608,6 +1616,19 @@ fn cycles() {
     ] {
         clean(&format!("{src}\nfn main() {{}}"));
     }
+}
+
+/// Instantiation cycles beside each other and beside other errors.
+#[test]
+fn cycles_with_other_errors() {
+    // Each parameter grows into itself at a call of its own, reported at each.
+    codes(
+        "fn f<T, U>(x: T, y: U) {\n    f([x], y)\n    f(x, [y])\n}\nfn main() {}",
+        &[
+            (Code::InstantiationCycle, (2, 5)),
+            (Code::InstantiationCycle, (3, 5)),
+        ],
+    );
     // A declaration no value can be built of has that error alone.
     codes(
         "enum Nest<T> { A(Nest<[T]>) }\nfn main() {}",

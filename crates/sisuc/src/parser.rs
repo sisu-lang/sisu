@@ -1235,6 +1235,15 @@ impl<'a> Parser<'a> {
         } else {
             open.to(self.last_span())
         };
+        // A line break after the `>` of `fn f<T>` ends no statement before its `(`: the header
+        // goes on, as it did before a `>` could end a line. A `;`, a `Newline` with a width,
+        // still ends it.
+        if self.at(&TokenKind::Newline)
+            && self.peek().span.range().is_empty()
+            && self.tokens[self.pos + 1].kind == TokenKind::LParen
+        {
+            self.bump();
+        }
         self.expect(&TokenKind::LParen)?;
         let mut self_param = None;
         let mut params = Vec::new();
@@ -4342,9 +4351,27 @@ mod tests {
                 "fn f() {\n    let b = a >\n        c\n    let d = a >\n        - c\n    let e = (a >\n        c)\n}",
                 "(fn f () unit (block (let b (> a c)) (let d (> a (- c))) (let e (> a c))))",
             ),
+            // A `{` after a comparison's `>` is its operand, outside parentheses and inside.
+            (
+                "fn f() {\n    let b = 2 >\n        { 1 }\n    print(2 >\n        { 1 })\n}",
+                "(fn f () unit (block (let b (> 2 (block 1))) (call print (> 2 (block 1)))))",
+            ),
+            // A function's header goes on after its type parameters.
+            ("fn f<T>\n(x: T) {}", "(fn f<T> ((x T)) unit (block))"),
         ] {
             assert_eq!(program(src), expected, "{src}");
         }
+        // A header's condition that ends in `>` takes the `{` as its operand, so the error is
+        // the missing body, with no join to offer.
+        for src in [
+            "fn f() {\n    if a >\n    {\n    }\n}",
+            "fn f() {\n    while a >\n    {\n    }\n}",
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::Expected, "{src}");
+            assert!(fix_edits(&d).is_none(), "{src}");
+        }
+        assert_eq!(parse_err("fn f<T>; (x: T) {}"), (Code::Expected, 1, 8));
         // As after `i64`: the `=` cannot start the next line, nor the `{`.
         assert_eq!(
             parse_err("fn f() {\n    let s: Box<i64>\n    = x\n}"),

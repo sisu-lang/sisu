@@ -940,10 +940,11 @@ fn can_end_statement(token: Option<&Token>) -> bool {
 
 /// Layout rules 2 and 3 where the parser cannot see them; `kind` starts a line.
 /// A `{` only ever follows `fn …`, `if …`, `else`, `match …` or `while …` on its own line, so a
-/// line-initial `{` after a token that could end a statement, or after `else`, breaks
-/// rule 2 at any depth. Inside `( )` and `[ ]`, where no `Newline` reaches the parser, so does
-/// a line-initial `else` (rule 3), and a line-initial `[` after a token that could end a
-/// statement, which would silently index the line above.
+/// line-initial `{` after a token that could end a statement, after `else`, or after the `>`
+/// of a `fn`, `class` or `enum` header's type arguments, breaks rule 2 at any depth; after a
+/// `>` that compares, the `{` is its operand. Inside `( )` and `[ ]`, where no `Newline`
+/// reaches the parser, so does a line-initial `else` (rule 3), and a line-initial `[` after a
+/// token that could end a statement, which would silently index the line above.
 fn check_line_start(
     source: &str,
     tokens: &[Token],
@@ -958,7 +959,8 @@ fn check_line_start(
             match code {
                 Some(code)
                     if can_end_statement(Some(code))
-                        || matches!(code.kind, TokenKind::Else | TokenKind::Loop | TokenKind::Gt) =>
+                        || matches!(code.kind, TokenKind::Else | TokenKind::Loop)
+                        || code.kind == TokenKind::Gt && closes_header(tokens) =>
                 {
                     // Only a header takes the `{`: joining it to another statement almost never
                     // gives a valid one (`print(1) {`, `let x = 1 {`, `} {`). Inside `(` or `[`
@@ -1060,6 +1062,14 @@ fn is_header(t: &Token) -> bool {
             | TokenKind::For
             | TokenKind::Loop
     )
+}
+
+/// Whether the statement `tokens` ends with is a `fn`, `class` or `enum` header, where a `>` can
+/// only close type arguments, never compare.
+fn closes_header(tokens: &[Token]) -> bool {
+    last_statement(tokens)
+        .first()
+        .is_some_and(|t| matches!(t.kind, TokenKind::Fn | TokenKind::Class | TokenKind::Enum))
 }
 
 /// Whether `line`, the code before a `{` that starts a line, holds a header keyword that has no
