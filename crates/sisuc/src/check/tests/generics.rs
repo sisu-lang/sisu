@@ -1574,6 +1574,12 @@ fn cycles() {
             (3, 14),
             vec![],
         ),
+        // An enum's method, its enum's parameters first.
+        (
+            "enum E<T> {\n    A(T)\n    B\n    fn m(self, x: T) { E.A([x]).m([x]) }\n}",
+            (4, 24),
+            vec![],
+        ),
         (
             "fn f<T>(x: T) {\n    while true {\n        f([x])\n    }\n}",
             (3, 9),
@@ -1610,5 +1616,13 @@ fn cycles() {
     codes(
         "class C<T> {\n    next: C<[T]>\n}\nfn main() {}",
         &[(Code::NeverConstructed, (2, 5))],
+    );
+    // A class that cannot be built only through another's error keeps its own cycle.
+    codes(
+        "enum Bad { A(Bad) }\nclass C<T> {\n    b: Bad\n    next: C<[T]>?\n}\nfn main() {}",
+        &[
+            (Code::NeverConstructed, (1, 6)),
+            (Code::InstantiationCycle, (4, 11)),
+        ],
     );
 }

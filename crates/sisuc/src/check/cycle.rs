@@ -48,6 +48,11 @@ struct Graph {
     functions: usize,
     classes: usize,
     edges: Vec<Edge>,
+    /// By type, the indices of the type parameters it mentions, each once, in order: each
+    /// interned type is looked at once, however many types share it.
+    mentioned: FxHashMap<Type, Vec<usize>>,
+    /// The types `types` has walked, with the site each was written at.
+    walked: FxHashSet<(Span, Type)>,
 }
 
 impl Graph {
@@ -62,7 +67,7 @@ impl Graph {
         instance: Instance,
     ) {
         for (q, &arg) in args.iter().enumerate() {
-            mentions(arg, &mut |p| {
+            for p in self.mentions(arg) {
                 self.edges.push(Edge {
                     from: self.first[holder] + p,
                     to: self.first[target] + q,
@@ -71,13 +76,35 @@ impl Graph {
                     site,
                     instance,
                 });
-            });
+            }
         }
     }
 
-    /// The edges of each generic class and enum in `ty`, written at `site` inside `holder`.
+    /// The indices of the type parameters `ty` mentions, each once, in order.
+    fn mentions(&mut self, ty: Type) -> Vec<usize> {
+        if let Some(found) = self.mentioned.get(&ty) {
+            return found.clone();
+        }
+        let mut found = match ty.kind() {
+            TypeKind::Param(_, i) => vec![i as usize],
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => self.mentions(inner),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args
+                .get()
+                .iter()
+                .flat_map(|&arg| self.mentions(arg))
+                .collect(),
+            _ => Vec::new(),
+        };
+        found.sort_unstable();
+        found.dedup();
+        self.mentioned.insert(ty, found.clone());
+        found
+    }
+
+    /// The edges of each generic class and enum in `ty`, written at `site` inside `holder`; a
+    /// type shared inside `ty` is walked once.
     fn types(&mut self, holder: usize, ty: Type, site: Span) {
-        if !ty.has_param() {
+        if !ty.has_param() || !self.walked.insert((site, ty)) {
             return;
         }
         let (target, args) = match ty.kind() {
@@ -95,26 +122,12 @@ impl Graph {
     }
 }
 
-/// Calls `found` with the index of each type parameter `ty` mentions.
-fn mentions(ty: Type, found: &mut impl FnMut(usize)) {
-    match ty.kind() {
-        TypeKind::Param(_, i) => found(i as usize),
-        TypeKind::Array(inner) | TypeKind::Optional(inner) => mentions(inner, found),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
-            for &arg in args.get() {
-                mentions(arg, found);
-            }
-        }
-        _ => {}
-    }
-}
-
 impl Checker<'_> {
     /// Reports each strongly connected component of the instantiation graph (see the module
     /// doc) that holds a growing edge, once, at its first growing edge in source order, with a
     /// note at each other edge of a shortest way back. `functions` are the lowered bodies, by
-    /// `FuncId`; `unbuilt`, by class and then enum, marks the declarations no value can be built
-    /// of, whose error stands for their cycle.
+    /// `FuncId`; `unbuilt`, by class and then enum, marks the declarations that have their own
+    /// error for no value being buildable, which stands for their cycle.
     pub(super) fn instantiation_cycles(
         &mut self,
         functions: &[Option<tir::Function>],
@@ -133,6 +146,8 @@ impl Checker<'_> {
             functions: declared,
             classes: self.classes.len(),
             edges: Vec::new(),
+            mentioned: FxHashMap::default(),
+            walked: FxHashSet::default(),
         };
         let mut exprs = Vec::new();
         for (holder, function) in functions.iter().enumerate() {
@@ -275,4 +290,54 @@ fn way_back(
     }
     path.reverse();
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::symbol::Symbol;
+    use crate::tir::ClassId;
+
+    /// `levels` of `Pair<_, _>` over `T`, each level's arguments one shared type.
+    fn shared(levels: usize) -> Type {
+        let mut ty = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        for _ in 0..levels {
+            ty = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[ty, ty])));
+        }
+        ty
+    }
+
+    /// A function `f<T>` and a class `Pair<A, B>`.
+    fn graph() -> Graph {
+        Graph {
+            first: vec![0, 1, 3],
+            functions: 1,
+            classes: 1,
+            edges: Vec::new(),
+            mentioned: FxHashMap::default(),
+            walked: FxHashSet::default(),
+        }
+    }
+
+    /// A type that shares its arguments, `2^20` paths to `T` in 21 types, gives one edge per
+    /// dependency and is looked at once per type, not per path.
+    #[test]
+    fn shared_type_arguments_are_walked_once() {
+        let ty = shared(20);
+        let mut g = graph();
+        let site = Span::new(0, 1);
+        g.args(0, &[ty], 0, site, Instance::Type(ty));
+        assert_eq!(g.edges.len(), 1);
+        assert_eq!(g.mentioned.len(), 21);
+        // A type in the table is not walked again: an entry planted for the level below shows.
+        let mut g = graph();
+        g.mentioned.insert(shared(19), Vec::new());
+        g.args(0, &[ty], 0, site, Instance::Type(ty));
+        assert!(g.edges.is_empty());
+        // Written as a field's type: each level's `Pair` gives an edge into each of its two
+        // parameters, once.
+        let mut g = graph();
+        g.types(0, ty, site);
+        assert_eq!(g.edges.len(), 2 * 20);
+    }
 }

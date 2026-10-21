@@ -469,8 +469,8 @@ impl Checker<'_> {
     /// variant, since each has its error already. Each component of the rest that needs no
     /// other, by what the fixed point found each one to need, is reported once, at its first
     /// enum, or else its first class; a type that only needs one of those is not. Returns, by
-    /// node (the classes, then the enums), whether no value of it can be built, or it is a class
-    /// in `cyclic`.
+    /// node (the classes, then the enums), whether it is in a component reported here, or is a
+    /// class in `cyclic`: whether it has an error of that kind of its own.
     fn never_built(&mut self, cyclic: &[bool]) -> Vec<bool> {
         let mut fix = Buildable::new(self, cyclic);
         fix.run();
@@ -512,7 +512,7 @@ impl Checker<'_> {
             });
         }
         (0..nodes)
-            .map(|n| unbuilt(&fix, n) || n < classes && cyclic[n])
+            .map(|n| reported[component[n]] || n < classes && cyclic[n])
             .collect()
     }
 
