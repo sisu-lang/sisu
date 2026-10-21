@@ -408,9 +408,11 @@ so it does not wait for the later goals:
 
   A build directory and `sisu clean` wait for modules (milestone 11), when
   per-file objects are worth keeping. Before that, `sisu run` can keep the
-  executable it builds, keyed by a hash of the source and the compiler's
-  version, so a script that has not changed starts without a build. Scripts
-  that drive other programs (ADR 0027) run often and change rarely.
+  executable it builds, so a script that has not changed starts without a
+  build. The key must cover everything the executable depends on: the
+  source, its path (panic messages print it), the build flags, and the
+  compiler's commit, not only its version number. Scripts that drive other
+  programs (ADR 0027) run often and change rarely.
   `sisu fmt`, `sisu test` and `sisu lsp` are still later. No manifest at
   first: a single file, or a directory whose entry point is `main.sisu`,
   builds without one. A `sisu.toml` arrives only when a project needs
@@ -1310,10 +1312,11 @@ accepted.
 - Gleam's `use`, which turns the rest of a block into a callback. Gleam
   needs it because it has no early return; Sisu has `return`, and `?` in
   milestone 12.
-- A `return` that leaves several functions at once, such as a return from a
-  caller named at the `return`. The functions in between would end early with
-  nothing in their signatures to show it. `Result` and `?` (milestone 12)
-  pass a failure up one visible step at a time.
+- A `return` that names a function further up the call stack and leaves
+  every function in between. Those functions would end early with nothing in
+  their signatures to show it. `Result` and `?` (milestone 12) pass a failure
+  up one visible step at a time. A `return` inside a closure is a separate,
+  open question ("Open decisions").
 - Separate float operators such as Gleam's `+.`. The checker knows each
   operand's type, so `+` can serve both, as long as milestone 6 keeps `i64`
   and `f64` from mixing without a conversion.

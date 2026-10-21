@@ -128,7 +128,7 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><strong><code>import *</code>.</strong> A reader must always see where a name comes from.</li>
         <li><strong>A pipe operator <code>|&gt;</code> and function captures.</strong> Method chains and continuation lines already do this, and two ways to write one call break "one obvious way".</li>
         <li><strong>Gleam's <code>use</code>.</strong> Gleam needs it because it has no early return; Sisu has <code>return</code>.</li>
-        <li><strong>A <code>return</code> that leaves several functions at once.</strong> The functions in between would end early with nothing in their signatures to show it; <code>Result</code> and <code>?</code> pass a failure up one visible step at a time.</li>
+        <li><strong>A <code>return</code> that names a function further up the call stack.</strong> The functions in between would end early with nothing in their signatures to show it; <code>Result</code> and <code>?</code> pass a failure up one visible step at a time.</li>
         <li><strong>Separate float operators such as <code>+.</code>.</strong> The checker knows each operand's type, so <code>+</code> serves both.</li>
         <li><strong>Integers without a size limit, or division by zero that gives 0.</strong> Sisu's fixed-size integers panic on overflow and on a zero divisor.</li>
         <li><strong>Mutable memory shared between tasks.</strong> Tasks share no objects, so counts stay non-atomic and Sisu code cannot have a data race (ADR 0010, proposed).</li>
