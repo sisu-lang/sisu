@@ -280,8 +280,7 @@ fn emit(
                 return ExitCode::FAILURE;
             }
             reporter.diagnostics(&path, &source, &lexed.warnings);
-            print!("{}", lexer::dump(&source, &lexed.tokens));
-            ExitCode::SUCCESS
+            print_stdout(reporter, &lexer::dump(&source, &lexed.tokens))
         }
         Stage::Ast => {
             let Some(lexed) = lex(reporter, &path, &source) else {
@@ -296,21 +295,14 @@ fn emit(
             {
                 return ExitCode::FAILURE;
             }
-            println!("{}", parsed.program);
-            ExitCode::SUCCESS
+            print_stdout(reporter, &format!("{}\n", parsed.program))
         }
         Stage::Tir => match front_end(reporter, &path, &source) {
-            Some(program) => {
-                println!("{program}");
-                ExitCode::SUCCESS
-            }
+            Some(program) => print_stdout(reporter, &format!("{program}\n")),
             None => ExitCode::FAILURE,
         },
         Stage::Mir => match front_end(reporter, &path, &source) {
-            Some(program) => {
-                print!("{}", mir::print(&mir::build(&program), &program));
-                ExitCode::SUCCESS
-            }
+            Some(program) => print_stdout(reporter, &mir::print(&mir::build(&program), &program)),
             None => ExitCode::FAILURE,
         },
         Stage::Ir => emit_ir(reporter, &path, &source, level, rc_checks),
@@ -364,10 +356,7 @@ fn emit_ir(
 /// Prints `text`, or reports the error.
 fn print_or_report(reporter: &mut Report, text: Result<String, String>) -> ExitCode {
     match text {
-        Ok(text) => {
-            print!("{text}");
-            ExitCode::SUCCESS
-        }
+        Ok(text) => print_stdout(reporter, &text),
         Err(message) => {
             reporter.tool_error(&message);
             ExitCode::FAILURE

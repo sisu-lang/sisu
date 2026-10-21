@@ -111,6 +111,10 @@ fn tool_error_line(format: &Format, message: &str) -> String {
 /// Writes a tool error to stderr after `finish` has written the summary: the one exception to
 /// the summary being the last line, for what goes wrong in `sisu run` once the program is
 /// built.
+#[expect(
+    clippy::print_stderr,
+    reason = "a failed write to stderr has nowhere left to be reported"
+)]
 pub(crate) fn tool_error_after_summary(format: &Format, message: &str) {
     eprintln!("{}", tool_error_line(format, message));
 }
