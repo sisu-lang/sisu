@@ -1230,15 +1230,12 @@ fn generic_arguments_that_do_not_check() {
             "fn g() {\n    let x = id(Wrap.W<i64>([]))\n}".into(),
             vec![(Code::TypeArguments, (2, 22))],
         ),
-        // The generic method waits for `id`, which nothing binds.
+        // A unification that fails part way undoes what it bound, which `1` then binds.
         (
-            "fn g(b: Box<i64>) {\n    let x = id(b.map_all([]))\n}".into(),
-            vec![(Code::CannotInfer, (2, 13))],
-        ),
-        // shortcut (`generic_method`): only a local's or a field's method waits.
-        (
-            "fn g() {\n    let xs: [i64] = id(Box(v: 1).make())\n}".into(),
-            vec![(Code::CannotInfer, (2, 34))],
+            format!(
+                "{two}fn same<T>(t: Two<T, T>, x: T) {{}}\nfn g(t: Two<string, bool>) {{\n    same(t, 1)\n}}"
+            ),
+            vec![(Code::Mismatch, (7, 10))],
         ),
         // A parameter's type that is not found may be what would have bound it.
         (
@@ -1307,6 +1304,39 @@ fn generic_arguments_that_do_not_check() {
         (
             "fn g() {\n    let x = E.map<string>(\"a\")\n}".into(),
             vec![(Code::MemberKind, (2, 15))],
+        ),
+    ] {
+        codes(&with_generics(&line), &expected);
+    }
+}
+
+/// A generic method's call that cannot check reports once, whether it waits for context or
+/// its receiver's type is not known.
+#[test]
+fn generic_method_calls_that_do_not_check() {
+    for (line, expected) in [
+        // The generic method waits for `id`, which nothing binds.
+        (
+            "fn g(b: Box<i64>) {\n    let x = id(b.map_all([]))\n}".to_string(),
+            vec![(Code::CannotInfer, (2, 13))],
+        ),
+        // shortcut (`generic_method`): only a local's or a field's method waits.
+        (
+            "fn g() {\n    let xs: [i64] = id(Box(v: 1).make())\n}".into(),
+            vec![(Code::CannotInfer, (2, 34))],
+        ),
+        // A receiver whose type is not known waits for nothing, and reports its own error.
+        (
+            "fn g() {\n    let xs: [i64] = id(nope.b.make())\n}".into(),
+            vec![(Code::BindingNotFound, (2, 24))],
+        ),
+        (
+            "fn g(n: i64) {\n    let xs: [i64] = id(n.b.make())\n}".into(),
+            vec![(Code::NoMember, (2, 26))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id(b.nope.make())\n}".into(),
+            vec![(Code::NoMember, (2, 26))],
         ),
     ] {
         codes(&with_generics(&line), &expected);
