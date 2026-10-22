@@ -26,7 +26,7 @@ const MAX_VARIANTS: usize = 4;
 const CAPS: [u64; 3] = [0, 8, 32];
 /// The most size of a class object, or of an enum's first variant: a few of them still fit
 /// an array.
-const MOST: u64 = 100;
+pub(crate) const MOST: u64 = 100;
 
 /// What a constant expression is known to be: an integer's or a `char`'s value, and a
 /// `string`'s length.
@@ -211,7 +211,7 @@ impl Gen<'_> {
 
     /// A field's or a payload field's type: a type declared before, unless its floor would take
     /// the holder past `MOST`, where an `i64` takes its place.
-    fn field_type(&mut self, size: u64) -> Ty {
+    pub(crate) fn field_type(&mut self, size: u64) -> Ty {
         let ty = self.any_type();
         if size + ty.floor() > MOST {
             Ty::I64
@@ -222,7 +222,7 @@ impl Gen<'_> {
 
     /// `class K { [mut] f: T ... fn m(self, ...) ... }`: fields of types declared before, each
     /// with a cap on its size, then methods, which may take and give the class itself.
-    fn class(&mut self) {
+    pub(crate) fn class(&mut self) {
         let id = self.scope.classes.len();
         self.w.text(&format!("class K{id} "));
         self.w.open();

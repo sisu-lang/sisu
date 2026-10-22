@@ -9,7 +9,8 @@ use std::fmt::Write as _;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::scope::{Const, Func, Ty, Var};
+use super::item::MOST;
+use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::{
     BUDGET, Cost, DEPTHS, FUEL, Gen, Generated, MAX_BOUND, MAX_NESTING, MAX_SIZE, Shape, generate,
 };
@@ -2211,8 +2212,10 @@ fn an_element_appends_another_only_within_the_room() {
 #[test]
 fn an_expression_stays_within_its_most() {
     // Every type, written where it has an expected type and where it has none, within a most
-    // from none to a few elements' worth, holds no more than that most.
+    // from its least value's to a few elements' worth, holds no more than that most: a `K0`
+    // optional below the 9 of a `K0` among them.
     let string = || Box::new(Ty::String);
+    let class = || Ty::Class { id: 0, size: 9 };
     let types = [
         Ty::I64,
         Ty::Char,
@@ -2223,15 +2226,27 @@ fn an_expression_stays_within_its_most() {
         Ty::Array(Box::new(Ty::U8)),
         Ty::Optional(string()),
         Ty::Optional(Box::new(Ty::Array(string()))),
+        class(),
+        E0,
+        Ty::Optional(Box::new(class())),
+        Ty::Optional(Box::new(E0)),
+        Ty::Array(Box::new(E0)),
     ];
     for ty in &types {
-        for max in [0, 1, 2, 3, 7, 40] {
-            for synth in [false, true].into_iter().filter(|_| ty.least() <= max) {
+        for max in [0, 1, 2, 3, 7, 9, 40]
+            .into_iter()
+            .filter(|max| ty.floor() <= *max)
+        {
+            for synth in [false, true]
+                .into_iter()
+                .filter(|&synth| !synth || ty.least() <= max)
+            {
                 for mut state in 0..64 {
                     let data: Vec<u8> = (0..8)
                         .flat_map(|_| splitmix64(&mut state).to_le_bytes())
                         .collect();
                     let mut g = Gen::new(&data);
+                    declare(&mut g);
                     g.synth = synth;
                     let size = g.expr(ty, max).size;
                     let text = &g.w.out.program;
@@ -2380,5 +2395,651 @@ fn a_panicking_index_builds_its_array_within_the_cap() {
     assert!(
         panics[1] > 0,
         "some input should put the string of 999 in one"
+    );
+}
+
+#[test]
+fn the_walker_bounds_a_while_let_only_on_a_chain_it_steps_down() {
+    // `a` is a chain of 2 nodes that its `while let` steps down a node a run. Each other
+    // `while let` falls short of that in one way, so the walker lists it as unbounded: no `let`
+    // before it, an immutable one, a pattern that is not a variant's or binds no rest first, a
+    // body that does not step to the rest, a chain of 9 nodes, and a value that is not a chain
+    // of literals.
+    let program = "enum E {
+    A(E, i64)
+    B
+}
+
+class O {
+    c: E
+}
+
+fn make() -> E {
+    return E.B
+}
+
+fn mk() -> O {
+    return O(c: E.B)
+}
+
+fn walk(e: E) {
+    while let E.A(t, _) = e {
+        print(1)
+    }
+}
+
+fn main() {
+    let mut a = E.A(E.A(E.B, 1), 2)
+    while let E.A(t, _) = a {
+        a = t
+    }
+    let b = E.A(E.B, 1)
+    while let E.A(t, _) = b {
+        print(1)
+    }
+    let mut n: i64? = 1
+    while let v = n {
+        n = None
+    }
+    let mut c = E.B
+    while let E.B = c {
+        c = E.B
+    }
+    let mut d = E.A(E.B, 1)
+    while let E.A(E.B, _) = d {
+        d = E.B
+    }
+    let mut f = E.A(E.B, 1)
+    while let E.A(t, _) = f {
+    }
+    let mut g = E.A(E.B, 1)
+    while let E.A(t, _) = g {
+        g = E.B
+    }
+    let mut h = make()
+    while let E.A(t, _) = h {
+        h = t
+    }
+    let mut i = mk().c
+    while let E.A(t, _) = i {
+        i = t
+    }
+    let o = mk()
+    let mut j = o.c
+    while let E.A(t, _) = j {
+        j = t
+    }
+    let mut k = E.A(make(), 1)
+    while let E.A(t, _) = k {
+        k = t
+    }
+    let mut m = E.A(E.A(E.A(E.A(E.A(E.A(E.A(E.A(E.A(E.B, 1), 1), 1), 1), 1), 1), 1), 1), 1)
+    while let E.A(t, _) = m {
+        m = t
+    }
+}
+";
+    let mut walk = Walk::default();
+    walk.program(&Generated {
+        program: program.to_string(),
+        rewritten: program.to_string(),
+        stdin: String::new(),
+        known: Vec::new(),
+        cost: 0,
+    });
+    let chain = program.find("a {").expect("the program should walk `a`");
+    assert_eq!(walk.chains.iter().copied().collect::<Vec<_>>(), [chain]);
+    assert!(
+        walk.seen
+            .contains("reach: a `while let` walks an enum chain")
+    );
+    let unbounded: Vec<&str> = walk
+        .unbounded
+        .iter()
+        .filter_map(|loop_| {
+            let at: usize = loop_.strip_prefix("a `while let` at byte ")?.parse().ok()?;
+            Some(&program[at..=at])
+        })
+        .collect();
+    assert_eq!(
+        unbounded,
+        ["e", "b", "n", "c", "d", "f", "g", "h", "i", "j", "k", "m"],
+        "{:?}",
+        walk.unbounded
+    );
+}
+
+#[test]
+fn the_walker_lists_each_class_object_stored_in_a_field_or_an_element() {
+    // Decision 4's test reads this list: it finds an object put in a field and one put in an
+    // element, but not one bound to a local or a number put in a field.
+    let program = "class P {
+    mut q: P?
+    mut r: [P]
+    mut n: i64
+}
+
+fn main() {
+    let a = P(q: None, r: [], n: 0)
+    let b = P(q: None, r: [], n: 0)
+    a.q = b
+    a.r[0] = b
+    a.n = 1
+    let mut c = a
+    c = b
+    print(c.n)
+}
+";
+    let mut walk = Walk::default();
+    walk.program(&Generated {
+        program: program.to_string(),
+        rewritten: program.to_string(),
+        stdin: String::new(),
+        known: Vec::new(),
+        cost: 0,
+    });
+    let stored: Vec<&str> = walk
+        .heap_classes
+        .iter()
+        .filter_map(|store| {
+            let at: usize = store.strip_prefix("an assignment at byte ")?.parse().ok()?;
+            Some(program[..at].lines().last()?.trim())
+        })
+        .collect();
+    assert_eq!(stored, ["a.q =", "a.r[0] ="], "{:?}", walk.heap_classes);
+}
+
+/// What `declare` puts in a scope, as a program declares it.
+const DECLARED: &str = "class K0 {
+    mut g0: string
+    g1: i64
+}
+
+enum E0 {
+    V0
+    V1(E0, string, K0)
+    V2(u8, char, bool)
+    V3(string, K0)
+}
+";
+
+/// `E0`, as `declare` declares it.
+const E0: Ty = Ty::Enum { id: 0, least: 1 };
+
+/// `K0`, a class of 9, and `E0`, which holds it, in each variant but the first two, and in
+/// `V1` itself.
+fn declare(g: &mut Gen) {
+    let class = Ty::Class { id: 0, size: 9 };
+    let field = |name: &str, ty, mutable, cap| Field {
+        name: name.to_string(),
+        ty,
+        mutable,
+        cap,
+    };
+    g.scope.classes.push(Class {
+        fields: vec![
+            field("g0", Ty::String, true, 8),
+            field("g1", Ty::I64, false, 0),
+        ],
+        size: 9,
+    });
+    let variant = |name: &str, fields| Variant {
+        name: name.to_string(),
+        fields,
+        labels: Vec::new(),
+    };
+    g.scope.enums.push(Enum {
+        variants: vec![
+            variant("V0", Vec::new()),
+            variant("V1", vec![E0, Ty::String, class.clone()]),
+            variant("V2", vec![Ty::U8, Ty::Char, Ty::Bool]),
+            variant("V3", vec![Ty::String, class.clone()]),
+        ],
+        least: 1,
+        has_class: true,
+    });
+    g.scope.types.extend([class, E0]);
+}
+
+/// The expression `let v = ...` or `let mut v = ...` starts `text` with.
+fn first_init(text: &str) -> ast::Expr {
+    let source = format!("fn main() {{\n{text}\n}}\n");
+    let lexed = lexer::lex(&source).expect("a generated expression should lex");
+    let mut items = parser::parse(lexed).program.items.into_iter();
+    let Some(ast::Item::Function(main)) = items.next() else {
+        panic!("`main` should be the only item: {source}")
+    };
+    let Some(ast::StmtKind::Let { init, .. }) = main.body.stmts.into_iter().next().map(|s| s.kind)
+    else {
+        panic!("`main` should start with a `let`: {source}")
+    };
+    init
+}
+
+/// The size of a value of `K0`s, `E0`s, strings, arrays and scalars written as literals: a
+/// slot per element and per node, each string's chars, and each `K0`'s 9, which its fields may
+/// grow to; none for anything else.
+fn held(e: &ast::Expr) -> Option<u64> {
+    let all = |es: &mut dyn Iterator<Item = &ast::Expr>| es.map(held).sum::<Option<u64>>();
+    match &e.kind {
+        ast::ExprKind::Int { .. }
+        | ast::ExprKind::Float(_)
+        | ast::ExprKind::Bool(_)
+        | ast::ExprKind::Char(_) => Some(0),
+        ast::ExprKind::Unary { operand, .. } => held(operand),
+        ast::ExprKind::Str(text) => u64::try_from(text.chars().count()).ok(),
+        ast::ExprKind::ArrayLit(elements) => {
+            Some(u64::try_from(elements.len()).ok()? + all(&mut elements.iter())?)
+        }
+        ast::ExprKind::Call { callee, .. } if callee.name.as_str() == "K0" => Some(9),
+        ast::ExprKind::Field { base, .. } if name(base) == Some("E0") => Some(1),
+        ast::ExprKind::MethodCall { receiver, args, .. } if name(receiver) == Some("E0") => {
+            Some(1 + all(&mut args.iter().map(|arg| &arg.value))?)
+        }
+        _ => None,
+    }
+}
+
+#[test]
+fn a_variant_counts_its_node_and_fields() {
+    // Nested as deep as can be, a variant's fields are literals, and it holds no `E0` itself:
+    // what it holds is no more than it counts, which is no more than its most. Above that, one
+    // holds `E0` itself.
+    let mut measured = 0;
+    let mut recursive = false;
+    for max in [1, 2, 9, 10, 11, 40, 111] {
+        for mut state in 0..256 {
+            let data: Vec<u8> = (0..8)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            for nesting in [0, MAX_NESTING] {
+                let mut g = Gen::new(&data);
+                declare(&mut g);
+                g.nesting = nesting;
+                let size = g.variant(&E0, max, None).size;
+                let text = format!("let v = {}", g.w.out.program);
+                assert!(size <= max, "{size} within {max}: {text}");
+                let init = first_init(&text);
+                let own = matches!(&init.kind, ast::ExprKind::MethodCall { method, .. }
+                    if method.name.as_str() == "V1");
+                assert!(nesting < MAX_NESTING || !own, "{text}");
+                recursive |= own;
+                if let Some(holds) = held(&init) {
+                    assert!(holds <= size, "{holds} counted as {size}: {text}");
+                    measured += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        recursive,
+        "no variant above the deepest nesting should hold `E0`"
+    );
+    assert!(measured > 1_000, "only {measured} variants were literals");
+}
+
+#[test]
+fn a_chain_counts_each_node_within_its_room() {
+    // `let mut c = E0.V1(E0.V1(... end ...), s, k)`: at most `MAX_BOUND` nodes, then another
+    // variant, each within a ninth of `MAX_SIZE`, so all of them within it, as `c` counts them;
+    // and `c` counts no less than they hold. Nested as deep as can be, their fields are literals,
+    // which show what they hold; at the top, they count the most.
+    const ROOM: u64 = MAX_SIZE / (MAX_BOUND + 1);
+    let mut longest = 0;
+    let mut measured = 0;
+    for (nesting, mut state) in [0, MAX_NESTING]
+        .into_iter()
+        .flat_map(|n| (0..512).map(move |s| (n, s)))
+    {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        declare(&mut g);
+        g.nesting = nesting;
+        g.while_chain(0, 1);
+        let text = &g.w.out.program;
+        let chain = text
+            .strip_prefix("let mut ")
+            .and_then(|rest| rest.split_once(' '))
+            .expect("a chain should start with its `let mut`")
+            .0;
+        let size = g
+            .scope
+            .vars
+            .iter()
+            .find(|var| var.name == chain)
+            .expect("the chain should be in scope")
+            .size;
+        assert!(size <= MAX_SIZE, "{size}: {text}");
+        let init = first_init(text);
+        let (mut node, mut nodes, mut holds) = (&init, 0, Some(0));
+        while let ast::ExprKind::MethodCall { method, args, .. } = &node.kind
+            && method.name.as_str() == "V1"
+        {
+            let own = args[1..]
+                .iter()
+                .map(|arg| held(&arg.value))
+                .sum::<Option<u64>>()
+                .map(|parts| 1 + parts);
+            assert!(own.is_none_or(|own| own <= ROOM), "{own:?}: {text}");
+            holds = holds.zip(own).map(|(sum, own)| sum + own);
+            node = &args[0].value;
+            nodes += 1;
+        }
+        let end = held(node);
+        assert!(end.is_none_or(|end| end <= ROOM), "{end:?}: {text}");
+        assert!(nodes <= MAX_BOUND, "{nodes} nodes: {text}");
+        assert!(
+            size <= (nodes + 1) * ROOM,
+            "{size} for {nodes} nodes: {text}"
+        );
+        longest = longest.max(nodes);
+        if let Some(holds) = holds.zip(end).map(|(sum, end)| sum + end) {
+            assert!(holds <= size, "{holds} counted as {size}: {text}");
+            measured += 1;
+        }
+    }
+    assert_eq!(
+        longest, MAX_BOUND,
+        "no chain should fail to reach {MAX_BOUND} nodes"
+    );
+    assert!(measured > 300, "only {measured} chains were literals");
+}
+
+#[test]
+fn a_chain_ends_in_a_variant_within_its_room() {
+    // `E0.V2(K0())` holds 112, past the ninth of `MAX_SIZE` each node of a chain has, so a
+    // chain of `E0.V1` ends in `E0.V0`.
+    for mut state in 0..64 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        let class = Ty::Class { id: 0, size: 111 };
+        g.scope.classes.push(Class {
+            fields: Vec::new(),
+            size: 111,
+        });
+        let variant = |name: &str, fields| Variant {
+            name: name.to_string(),
+            fields,
+            labels: Vec::new(),
+        };
+        g.scope.enums.push(Enum {
+            variants: vec![
+                variant("V0", Vec::new()),
+                variant("V1", vec![E0, Ty::I64]),
+                variant("V2", vec![class.clone()]),
+            ],
+            least: 1,
+            has_class: true,
+        });
+        g.scope.types.extend([class, E0]);
+        g.while_chain(0, 1);
+        let text = &g.w.out.program;
+        let init = first_init(text);
+        let mut node = &init;
+        while let ast::ExprKind::MethodCall { method, args, .. } = &node.kind
+            && method.name.as_str() == "V1"
+        {
+            node = &args[0].value;
+        }
+        let ast::ExprKind::Field { name, .. } = &node.kind else {
+            panic!("the chain should end in `E0.V0`: {text}")
+        };
+        assert_eq!(name.name.as_str(), "V0", "{text}");
+    }
+}
+
+#[test]
+fn every_match_checks_without_an_unreachable_arm() {
+    // Matches of each tested type, `E0` among them, with guards, alternatives and nested
+    // patterns: no arm overlaps one above it, and `_` or a name comes only where the arms leave
+    // a value unmatched (W0006 otherwise, and E0130 where it does not come but should).
+    let mut program = format!("{DECLARED}\nfn main() {{\n");
+    for mut state in 0..4_096 {
+        let data: Vec<u8> = (0..8)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        declare(&mut g);
+        // Literals leave the input to the arms.
+        g.nesting = MAX_NESTING;
+        g.blocks = 1;
+        g.match_expr(&Ty::I64, 0, false);
+        // Its arms are a block, which it leaves.
+        assert_eq!(g.blocks, 1);
+        writeln!(program, "    let _ = {}", g.w.out.program)
+            .expect("writing to a `String` should succeed");
+    }
+    program.push_str("}\n");
+    let (_, diagnostics) = front_end(&program);
+    let wrong: Vec<String> = diagnostics
+        .iter()
+        .filter(|d| d.severity() == Severity::Error || d.code().as_str() == "W0006")
+        .map(|d| {
+            let line = program[..d.span().start()].matches('\n').count();
+            let text = program.lines().nth(line).unwrap_or_default();
+            format!("{} at line {}: {text}", d.code().as_str(), line + 1)
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // And each kind of pattern comes: a letter, a negative number, an inclusive range, a lone
+    // `bool`, a word alone and with another, a variant named with its enum, and a variant
+    // within a variant within a variant, but no deeper; and a guard.
+    let arms: Vec<&str> = program
+        .lines()
+        .filter(|line| line.contains(" => "))
+        .collect();
+    assert!(
+        arms.iter().any(|arm| arm.contains(" if ")),
+        "no arm has a guard"
+    );
+    let patterns: Vec<&str> = arms
+        .iter()
+        .filter_map(|arm| arm.trim().split(" => ").next()?.split(" if ").next())
+        .collect();
+    let kinds: [(&str, Is); 9] = [
+        ("a letter", |p| p.contains('\'')),
+        ("a negative number", |p| p.starts_with('-')),
+        ("an inclusive range", |p| p.contains("..=")),
+        ("a lone `bool`", |p| p == "true" || p == "false"),
+        ("a lone word", |p| p.starts_with('"') && !p.contains(" | ")),
+        ("two words", |p| p.starts_with('"') && p.contains(" | ")),
+        ("a qualified variant", |p| p.starts_with("E0.V")),
+        ("a nested variant", |p| {
+            p.contains("(V") || p.contains("(E0.V")
+        }),
+        ("a variant three deep", |p| depth(p) == 3),
+    ];
+    for (kind, is) in kinds {
+        assert!(patterns.iter().any(|p| is(p)), "no pattern is {kind}");
+    }
+    let deepest = patterns.iter().map(|p| depth(p)).max();
+    assert_eq!(deepest, Some(3), "a variant pattern nests too deep");
+}
+
+/// Whether a pattern's text is of some kind.
+type Is = fn(&str) -> bool;
+
+/// How deep the parentheses of `pattern` nest.
+fn depth(pattern: &str) -> usize {
+    let mut open = 0usize;
+    let mut deepest = 0;
+    for c in pattern.chars() {
+        match c {
+            '(' => {
+                open += 1;
+                deepest = deepest.max(open);
+            }
+            ')' => open -= 1,
+            _ => {}
+        }
+    }
+    deepest
+}
+
+#[test]
+fn a_cap_holds_the_least_value_of_its_field() {
+    // A `K0` of 50, or a `K0` optional, takes its 50 and more; a number takes none.
+    let class = Ty::Class { id: 0, size: 50 };
+    for byte in 0..3 {
+        let data = [byte];
+        let mut g = Gen::new(&data);
+        assert_eq!(g.size_for(&class, &[0, 8, 32]), 50);
+        let mut g = Gen::new(&data);
+        assert!(g.size_for(&Ty::Optional(Box::new(class.clone())), &[0, 8, 32]) >= 50);
+        let mut g = Gen::new(&data);
+        assert_eq!(g.size_for(&Ty::I64, &[0, 8, 32]), 0);
+    }
+}
+
+#[test]
+fn a_part_holds_at_most_its_whole_or_a_class_its_own() {
+    // A class object counts its size wherever it is, so its own is the tighter of the two.
+    assert_eq!(Ty::String.within(40), 40);
+    assert_eq!(Ty::Optional(Box::new(Ty::String)).within(40), 40);
+    assert_eq!(Ty::Class { id: 0, size: 9 }.within(40), 9);
+}
+
+#[test]
+fn a_field_type_past_most_is_an_i64() {
+    // A field of a class of 50 fits a holder of 50 within `MOST`, but not one of 51.
+    for (size, fits) in [(50, true), (51, false)] {
+        let mut g = Gen::new(&[6]);
+        let class = Ty::Class { id: 0, size: 50 };
+        g.scope.types.push(class.clone());
+        let ty = g.field_type(size);
+        assert_eq!(ty, if fits { class } else { Ty::I64 }, "within {size}");
+    }
+}
+
+#[test]
+fn a_field_cap_past_most_is_an_i64() {
+    // `class K1 { g: K0, g: string }`, the string's cap 32: after a `K0` of 67 it reaches
+    // `MOST`, after one of 68 it is past it, and an `i64` takes its place.
+    for (held, fits) in [(67, true), (68, false)] {
+        let mut g = Gen::new(&[2, 6, 0, 5, 2]);
+        g.scope.classes.push(Class {
+            fields: Vec::new(),
+            size: held,
+        });
+        g.scope.types.push(Ty::Class { id: 0, size: held });
+        g.class();
+        let class = &g.scope.classes[1];
+        let last = &class.fields[1];
+        let (ty, cap) = if fits { (Ty::String, 32) } else { (Ty::I64, 0) };
+        assert_eq!((&last.ty, last.cap), (&ty, cap), "{}", g.w.out.program);
+        assert_eq!(class.size, 1 + held + cap, "{}", g.w.out.program);
+    }
+}
+
+#[test]
+fn declared_types_keep_their_sizes() {
+    // A class's size is a node and its fields' caps, within `MOST`, and each cap holds its
+    // field's least value, or the least value of the type an optional field holds. An enum's
+    // least is its first variant's, which holds no value of the enum, and it holds a class
+    // where a field of a variant may.
+    let (mut optional_classes, mut enum_classes) = (0, 0);
+    for seed in 0..512 {
+        let mut state = seed;
+        let data: Vec<u8> = (0..SEED_LEN / 8)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        g.program();
+        let text = &g.w.out.program;
+        for class in &g.scope.classes {
+            let caps: u64 = class.fields.iter().map(|field| field.cap).sum();
+            assert_eq!(class.size, 1 + caps, "{text}");
+            assert!(class.size <= MOST, "{text}");
+            for field in &class.fields {
+                let least = match &field.ty {
+                    Ty::Optional(payload) => payload.floor(),
+                    ty => ty.floor(),
+                };
+                assert!(field.cap >= least, "{}: {text}", field.name);
+                optional_classes += usize::from(
+                    matches!(&field.ty, Ty::Optional(payload) if matches!(**payload, Ty::Class { .. })),
+                );
+            }
+        }
+        for (id, e) in g.scope.enums.iter().enumerate() {
+            let own = |ty: &Ty| matches!(ty, Ty::Enum { id: of, .. } if *of == id);
+            let first = &e.variants[0].fields;
+            assert!(!first.iter().any(own), "{text}");
+            assert_eq!(
+                e.least,
+                1 + first.iter().map(Ty::floor).sum::<u64>(),
+                "{text}"
+            );
+            let holds = e
+                .variants
+                .iter()
+                .flat_map(|variant| &variant.fields)
+                .any(|field| !own(field) && g.scope.contains_class(field));
+            assert_eq!(e.has_class, holds, "{text}");
+            enum_classes += usize::from(holds);
+        }
+    }
+    assert!(
+        optional_classes > 0,
+        "no class should fail to hold a class optional"
+    );
+    assert!(enum_classes > 0, "no enum should fail to hold a class");
+}
+
+#[test]
+fn a_mutable_array_of_large_elements_holds_fewer_of_them() {
+    // `E0`'s least value is 100, a node and a `K0` of 99: with a base of 116 or 164, fewer than
+    // `MAX_BOUND` elements fit `MAX_SIZE`.
+    let mut fewer = 0;
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..8)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        let class = Ty::Class { id: 0, size: 99 };
+        g.scope.classes.push(Class {
+            fields: vec![Field {
+                name: "g0".to_string(),
+                ty: Ty::String,
+                mutable: true,
+                cap: 98,
+            }],
+            size: 99,
+        });
+        let variant = |name: &str, fields| Variant {
+            name: name.to_string(),
+            fields,
+            labels: Vec::new(),
+        };
+        g.scope.enums.push(Enum {
+            variants: vec![
+                variant("V0", vec![class.clone()]),
+                variant("V1", Vec::new()),
+            ],
+            least: 100,
+            has_class: true,
+        });
+        let element = Ty::Enum { id: 0, least: 100 };
+        g.scope.types.extend([class, element.clone()]);
+        g.array_let(
+            "v0".to_string(),
+            Ty::Array(Box::new(element.clone())),
+            &element,
+        );
+        let var = &g.scope.vars[0];
+        assert!(
+            var.len + var.len * var.base <= var.size && var.size <= MAX_SIZE,
+            "{}",
+            g.w.out.program
+        );
+        fewer += usize::from(var.len > 0 && (var.len + 1) * (1 + var.base) > MAX_SIZE);
+    }
+    assert!(
+        fewer > 0,
+        "no array should fail to fill all the elements that fit"
     );
 }

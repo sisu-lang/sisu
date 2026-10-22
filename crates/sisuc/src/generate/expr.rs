@@ -1296,7 +1296,7 @@ impl Gen<'_> {
     /// `(match s { p [if g] => e ... })`, an arm a line, of a `bool`, a number, a `char`, a
     /// `string` or an enum value: arms whose patterns do not overlap, so none is unreachable,
     /// then `_` or a binding where they leave a value unmatched.
-    fn match_expr(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
+    pub(crate) fn match_expr(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
         let enums = self.scope.enums.len();
         // The enums share one choice with the other types.
         let choice = self.pick(MATCHED.len() + usize::from(enums > 0));
@@ -1343,11 +1343,7 @@ impl Gen<'_> {
                 let vars = g.scope.vars.len();
                 let loops = g.cost.depth();
                 for (name, ty) in arm.binds {
-                    // A part of the value holds at most what it does; a class object, its own.
-                    let size = match ty {
-                        Ty::Class { size, .. } => size,
-                        _ => scrutinee.size,
-                    };
+                    let size = ty.within(scrutinee.size);
                     g.scope.vars.push(Var::new(name, ty, false, size, 0, loops));
                 }
                 if arm.guard {
@@ -1401,11 +1397,8 @@ impl Gen<'_> {
     fn word_arms(&mut self) -> Vec<Arm> {
         let mut left: Vec<&str> = WORDS.to_vec();
         let mut arms = Vec::new();
-        // Three arms of two words at most take six of the five words: stop when they run out.
+        // Two arms take four words at most, which leaves one for a third.
         for _ in 0..=self.pick(2) {
-            if left.is_empty() {
-                break;
-            }
             let mut pattern = left.remove(self.pick(left.len())).to_string();
             if !left.is_empty() && self.pick(3) == 0 {
                 pattern += " | ";

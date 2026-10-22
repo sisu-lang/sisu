@@ -67,6 +67,15 @@ impl Ty {
         }
     }
 
+    /// The most a part of this type holds of a value that holds at most `whole`: all of it, but
+    /// a class object, which holds its own size.
+    pub(crate) fn within(&self, whole: u64) -> u64 {
+        match self {
+            Ty::Class { size, .. } => *size,
+            _ => whole,
+        }
+    }
+
     /// Whether a fill of it would share one object among its elements (E0067): a class or
     /// a class optional.
     pub(crate) fn shared(&self) -> bool {

@@ -429,7 +429,7 @@ impl Gen<'_> {
     /// variant `variant` of the enum `id` that ends in another variant, and
     /// `while let V(t, ...) = c { c = t ... }`, which takes one node a run, so runs once a node
     /// (decision 5).
-    fn while_chain(&mut self, id: usize, variant: usize) {
+    pub(crate) fn while_chain(&mut self, id: usize, variant: usize) {
         let ty = Ty::Enum {
             id,
             least: self.scope.enums[id].least,
@@ -453,11 +453,7 @@ impl Gen<'_> {
                 parts.push("_".to_string());
             } else {
                 let bound = self.scope.fresh("v");
-                // A class object holds its own size; any other part, what the chain does.
-                let most = match field {
-                    Ty::Class { size, .. } => *size,
-                    _ => size,
-                };
+                let most = field.within(size);
                 vars.push(Var::new(
                     bound.clone(),
                     field.clone(),
