@@ -3,7 +3,7 @@
 
 use super::scope::{Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
-use super::{Gen, LINE, MAX_NESTING, MAX_SIZE};
+use super::{Gen, LINE, MAX_BOUND, MAX_NESTING, MAX_SIZE};
 
 /// What a rule wrote.
 #[derive(Clone, Copy)]
@@ -183,8 +183,12 @@ impl Gen<'_> {
         }
         let rule = rules[self.pick(rules.len())];
         self.nesting += 1;
-        let info = self.rule(rule, ty, max, synth);
+        let mut info = self.rule(rule, ty, max, synth);
         self.nesting -= 1;
+        // A value of a type without a size counts none, whatever its parts held.
+        if !ty.sized() {
+            info.size = 0;
+        }
         debug_assert!(
             info.size <= max,
             "{rule:?} wrote {} chars over {max}",
@@ -392,7 +396,7 @@ impl Gen<'_> {
     }
 
     /// `[a, b, ...]`, of one element at least if `synth`, each one of its own type then.
-    fn array_literal(&mut self, element: &Ty, max: u64, synth: bool) -> Info {
+    pub(crate) fn array_literal(&mut self, element: &Ty, max: u64, synth: bool) -> Info {
         let least = if synth { element.least() } else { 0 };
         let most = (max / (1 + least)).min(4);
         let len = u64::from(synth) + self.upto(most - u64::from(synth));
@@ -414,13 +418,13 @@ impl Gen<'_> {
         }
     }
 
-    /// `[v; n]`, with a literal `n`.
-    fn fill(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
+    /// `[v; n]`, with a literal `n` of at most `MAX_BOUND`, so a `for` may run over it.
+    pub(crate) fn fill(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
         let Ty::Array(element) = ty else {
             unreachable!("only an array is filled")
         };
         let least = if synth { element.least() } else { 0 };
-        let len = self.upto((max / (1 + least)).min(10));
+        let len = self.upto((max / (1 + least)).min(MAX_BOUND));
         self.w.text("[");
         self.synth = synth;
         let value = self.expr(element, (max - len).checked_div(len).unwrap_or(max));
@@ -515,22 +519,17 @@ impl Gen<'_> {
             self.w.text(&format!("({name}[{at}])"));
             return Info::of(&[], elem, false);
         }
-        let most = (MAX_SIZE / (1 + ty.least())).min(4);
-        let len = 1 + self.upto(most - 1);
-        let each = max.min((MAX_SIZE - len) / len);
-        self.w.text("([");
-        let mut parts = Vec::new();
-        for i in 0..len {
-            if i > 0 {
-                self.w.text(", ");
-            }
-            self.synth = true;
-            parts.push(self.expr(ty, each));
-        }
-        let at = self.upto(len - 1);
-        self.w.text(&format!("][{at}])"));
-        let size = parts.iter().map(|part| part.size).max().unwrap_or(0);
-        Info::of(&parts, size, false)
+        // Its elements, of one at least, hold `max` between them at most if they have a size.
+        let most = if ty.sized() {
+            MAX_SIZE.min(max + 1)
+        } else {
+            MAX_SIZE
+        };
+        self.w.text("(");
+        let array = self.array_literal(ty, most, true);
+        let at = self.upto(array.len - 1);
+        self.w.text(&format!("[{at}])"));
+        Info::of(&[array], array.size - array.len, false)
     }
 
     /// Runs `write` where the code may not run (decision 2).
@@ -557,7 +556,12 @@ impl Gen<'_> {
         if choice < values {
             return Ty::VALUES[choice].clone();
         }
-        let inner = self.type_within(nesting - 1);
+        // Arrays of strings, whose elements `+=` may grow, come more often.
+        let inner = if choice == values && self.pick(4) == 0 {
+            Ty::String
+        } else {
+            self.type_within(nesting - 1)
+        };
         match (choice - values, inner) {
             (0, inner) => Ty::Array(Box::new(inner)),
             // `optional_of` does not nest optionals.
@@ -870,12 +874,12 @@ impl Gen<'_> {
     /// A format spec `[:[align][width][.precision]]`, its width, and its precision; only an
     /// `f64` takes a precision (E0111).
     fn format_spec(&mut self, ty: &Ty) -> (String, u64, Option<u64>) {
-        let width = if self.pick(2) == 0 {
+        let width = if self.pick(3) == 0 {
             0
         } else {
             self.upto(11) + 1
         };
-        let precision = (*ty == Ty::F64 && self.pick(2) == 1).then(|| self.upto(6));
+        let precision = (*ty == Ty::F64 && self.pick(3) != 0).then(|| self.upto(6));
         if width == 0 && precision.is_none() {
             return (String::new(), 0, None);
         }

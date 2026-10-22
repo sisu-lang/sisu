@@ -115,7 +115,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 9] = [
+const REACH: [&str; 10] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -125,6 +125,7 @@ const REACH: [&str; 9] = [
     "reach: a `for` over an array runs its body",
     "reach: a `while let` takes its `Some` branch",
     "reach: an index is in bounds",
+    "reach: an index is meant to panic",
 ];
 
 /// Whether a program's text holds a form.
@@ -332,6 +333,8 @@ struct Walk {
     seen: FxHashSet<String>,
     leaks: Vec<String>,
     unbounded: Vec<String>,
+    /// Indexes neither in bounds nor the one meant to panic, `[e][1]` (decision 3).
+    out_of_bounds: Vec<String>,
     /// The functions of the program being walked.
     funcs: FxHashSet<String>,
     /// The function being walked, and its parameters.
@@ -796,10 +799,16 @@ impl Walk {
                 self.mark("ast::ExprKind::Index");
                 let len =
                     name(base).map_or_else(|| array_len(base), |name| self.lens.get(name).copied());
-                if let (Some(len), Some(at)) = (len, int(index))
-                    && (0..len).contains(&at)
-                {
-                    self.mark("reach: an index is in bounds");
+                match (len, int(index)) {
+                    (Some(len), Some(at)) if (0..len).contains(&at) => {
+                        self.mark("reach: an index is in bounds");
+                    }
+                    (Some(1), Some(1)) if name(base).is_none() => {
+                        self.mark("reach: an index is meant to panic");
+                    }
+                    _ => self
+                        .out_of_bounds
+                        .push(format!("an index at byte {}", e.span.start())),
                 }
                 self.ast_expr(base);
                 self.ast_expr(index);
@@ -1731,15 +1740,61 @@ fn every_loop_is_bounded() {
     assert!(unbounded.is_empty(), "loops not bounded: {unbounded:?}");
 }
 
-/// What `expr` writes for `ty` within `max`, and the size it counts, over 4,096 short inputs.
-fn written(ty: &Ty, max: u64) -> impl Iterator<Item = (String, u64)> {
+#[test]
+fn every_index_is_in_bounds_or_meant_to_panic() {
+    let out_of_bounds = walk().out_of_bounds;
+    assert!(out_of_bounds.is_empty(), "{out_of_bounds:?}");
+}
+
+#[test]
+fn the_walker_reports_unbounded_loops_and_stray_indexes() {
+    // Two indexes past the end that are not `[e][1]`, and a `while`, a `while let` and a `for`
+    // of 9 runs or no bound at all: the walker lists each.
+    let program = "fn main() {
+    let a = [1, 2]
+    let _ = a[2]
+    let _ = [1, 2][2]
+    let _ = [1][1]
+    let mut c = 9
+    while c > 0 {
+        c -= 1
+    }
+    while let v = read_line() {
+        print(v)
+    }
+    for v in [1, 2, 3, 4, 5, 6, 7, 8, 9] {
+        print(v)
+    }
+}
+";
+    let mut walk = Walk::default();
+    walk.program(&Generated {
+        program: program.to_string(),
+        rewritten: program.to_string(),
+        stdin: String::new(),
+        known: Vec::new(),
+        cost: 0,
+    });
+    assert_eq!(walk.out_of_bounds.len(), 2, "{:?}", walk.out_of_bounds);
+    assert!(walk.seen.contains("reach: an index is meant to panic"));
+    let unbounded: Vec<&str> = walk
+        .unbounded
+        .iter()
+        .filter_map(|loop_| Some(loop_.split_once(" at byte")?.0))
+        .collect();
+    assert_eq!(unbounded, ["a `while`", "a `while let`", "a `for`"]);
+}
+
+/// What `expr` writes for `ty` within `max`, the size it counts and the elements it knows of,
+/// over 4,096 short inputs.
+fn written(ty: &Ty, max: u64) -> impl Iterator<Item = (String, u64, u64)> {
     (0..4_096).map(move |mut state| {
         let data: Vec<u8> = (0..4)
             .flat_map(|_| splitmix64(&mut state).to_le_bytes())
             .collect();
         let mut g = Gen::new(&data);
-        let size = g.expr(ty, max).size;
-        (g.w.out.program, size)
+        let info = g.expr(ty, max);
+        (g.w.out.program, info.size, info.len)
     })
 }
 
@@ -1751,20 +1806,28 @@ fn plain(text: &str) -> Option<(u64, &str)> {
     (!literal.contains(['\\', '{'])).then_some((chars, rest))
 }
 
+/// The chars of each element of `text`, an array literal of string literals with no escape or
+/// interpolation.
+fn plain_list(text: &str) -> Option<Vec<u64>> {
+    let mut rest = text.strip_prefix('[')?;
+    let mut parts = Vec::new();
+    while let Some((chars, after)) = plain(rest) {
+        parts.push(chars);
+        rest = after.strip_prefix(", ").unwrap_or(after);
+    }
+    (rest == "]").then_some(parts)
+}
+
 #[test]
 fn an_array_literal_counts_its_slots_and_elements() {
     // `["ab", "c"]` is 2 slots and 3 chars: 5.
     let mut seen = 0;
-    for (text, size) in written(&Ty::Array(Box::new(Ty::String)), 40) {
-        let mut rest = text.strip_prefix('[').unwrap_or("");
-        let mut parts = Vec::new();
-        while let Some((chars, after)) = plain(rest) {
-            parts.push(chars);
-            rest = after.strip_prefix(", ").unwrap_or(after);
-        }
-        if rest == "]" && parts.len() >= 2 && parts.iter().sum::<u64>() > 0 {
+    for (text, size, known) in written(&Ty::Array(Box::new(Ty::String)), 40) {
+        let parts = plain_list(&text).unwrap_or_default();
+        if parts.len() >= 2 && parts.iter().sum::<u64>() > 0 {
             let len = u64::try_from(parts.len()).expect("the count should fit");
             assert_eq!(size, len + parts.iter().sum::<u64>(), "{text}");
+            assert_eq!(known, len, "{text}");
             seen += 1;
         }
     }
@@ -1778,7 +1841,7 @@ fn an_array_literal_counts_its_slots_and_elements() {
 fn a_fill_counts_each_copy() {
     // `["ab"; 3]` is 3 slots of 2 chars each: 9.
     let mut seen = 0;
-    for (text, size) in written(&Ty::Array(Box::new(Ty::String)), 100) {
+    for (text, size, known) in written(&Ty::Array(Box::new(Ty::String)), 100) {
         let fill = text
             .strip_prefix('[')
             .and_then(plain)
@@ -1792,6 +1855,7 @@ fn a_fill_counts_each_copy() {
             });
         if let Some((chars, len)) = fill.filter(|&(chars, len)| chars > 0 && len >= 2) {
             assert_eq!(size, len + len * chars, "{text}");
+            assert_eq!(known, len, "{text}");
             seen += 1;
         }
     }
@@ -1811,7 +1875,7 @@ fn a_split_counts_what_its_parts_can_take() {
         (Ty::String, "words", |n| n + 1),
     ] {
         let mut seen = 0;
-        for (text, size) in written(&Ty::Array(Box::new(element.clone())), 100) {
+        for (text, size, _) in written(&Ty::Array(Box::new(element.clone())), 100) {
             let suffix = format!(").{method}())");
             let split = text.strip_prefix("((").and_then(plain);
             if let Some((chars, rest)) = split.filter(|(chars, rest)| *chars > 0 && *rest == suffix)
@@ -1881,4 +1945,113 @@ fn an_element_appends_another_only_within_the_room() {
     assert!(appended(None));
     // ... and in a loop of 8 it does not: each run may add only 62.
     assert!(!appended(Some(8)));
+}
+
+#[test]
+fn an_expression_stays_within_its_most() {
+    // Every type, written where it has an expected type and where it has none, within a most
+    // from none to a few elements' worth, holds no more than that most.
+    let string = || Box::new(Ty::String);
+    let types = [
+        Ty::I64,
+        Ty::Char,
+        Ty::String,
+        Ty::Array(string()),
+        Ty::Array(Box::new(Ty::Array(string()))),
+        Ty::Array(Box::new(Ty::Char)),
+        Ty::Array(Box::new(Ty::U8)),
+        Ty::Optional(string()),
+        Ty::Optional(Box::new(Ty::Array(string()))),
+    ];
+    for ty in &types {
+        for max in [0, 1, 2, 3, 7, 40] {
+            for synth in [false, true].into_iter().filter(|_| ty.least() <= max) {
+                for mut state in 0..64 {
+                    let data: Vec<u8> = (0..8)
+                        .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                        .collect();
+                    let mut g = Gen::new(&data);
+                    g.synth = synth;
+                    let size = g.expr(ty, max).size;
+                    let text = &g.w.out.program;
+                    assert!(size <= max, "{} within {max}: {size} for {text}", ty.name());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_program_spends_no_more_than_its_fuel() {
+    // Holding fuel back for `main` keeps the total `FUEL`: the cost reserve for `main`'s
+    // statements assumes no more.
+    for data in seeds() {
+        let mut g = Gen::new(&data);
+        g.program();
+        assert!(g.fuel <= FUEL, "{} left of {FUEL}", g.fuel);
+    }
+}
+
+#[test]
+fn a_mutable_array_counts_its_slots_bases_and_room() {
+    // Each `let mut` array's most size covers a slot and a base per element and the room left
+    // for `+=` on them, within `MAX_SIZE`: 8 strings of 64 chars, 520 in all, leave room for at
+    // most 480 more, so not the 500 a `string` local may have.
+    let mut widest = 0;
+    for element in [Ty::String, Ty::I64, Ty::Array(Box::new(Ty::String))] {
+        for mut state in 0..1_024 {
+            let data: Vec<u8> = (0..8)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            let mut g = Gen::new(&data);
+            let ty = Ty::Array(Box::new(element.clone()));
+            g.array_let("v0".to_string(), ty, &element);
+            let var = &g.scope.vars[0];
+            let least = var.len + var.len * var.base + var.room;
+            assert!(
+                least <= var.size && var.size <= MAX_SIZE,
+                "{}",
+                g.w.out.program
+            );
+            if element == Ty::String && var.len == MAX_BOUND && var.base == 64 {
+                widest += 1;
+            }
+        }
+    }
+    assert!(
+        widest > 0,
+        "no input should fail to write 8 strings of 64 chars"
+    );
+}
+
+#[test]
+fn an_index_of_a_local_stays_below_its_length() {
+    // `a0` holds 3 `i64`s: `(a0[i])` reads one with `i` from 0 to 2.
+    let mut seen = [false; 3];
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..8)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        let mut var = Var::new(
+            "a0".to_string(),
+            Ty::Array(Box::new(Ty::I64)),
+            false,
+            0,
+            0,
+            0,
+        );
+        var.len = 3;
+        g.scope.vars.push(var);
+        g.expr(&Ty::I64, 0);
+        for read in g.w.out.program.split("(a0[").skip(1) {
+            let at: usize = read
+                .split_once(']')
+                .and_then(|(at, _)| at.parse().ok())
+                .expect("an index of `a0` should be a literal");
+            assert!(at < 3, "{}", g.w.out.program);
+            seen[at] = true;
+        }
+    }
+    assert_eq!(seen, [true; 3]);
 }

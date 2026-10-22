@@ -180,7 +180,7 @@ impl Gen<'_> {
 
     /// The literal or fill of a mutable array of `len` elements, each at most `base` but for
     /// what `+=` adds to them, all of them within the `string` elements' room.
-    fn array_let(&mut self, name: String, ty: Ty, element: &Ty) {
+    pub(crate) fn array_let(&mut self, name: String, ty: Ty, element: &Ty) {
         const BASES: [u64; 3] = [0, 16, 64];
         let base = if element.sized() {
             BASES[self.pick(BASES.len())]
@@ -397,33 +397,19 @@ impl Gen<'_> {
     fn for_array(&mut self) {
         let element = self.any_type();
         let name = self.scope.fresh("v");
-        self.w.text(&format!("for {name} in ["));
+        self.w.text(&format!("for {name} in "));
         // The source has no expected type.
-        let (count, size) = if self.pick(2) == 0 {
-            let most = (MAX_SIZE / (1 + element.least())).min(MAX_BOUND);
-            let count = 1 + self.upto(most - 1);
-            let each = (MAX_SIZE - count) / count;
-            let mut size = 0;
-            for i in 0..count {
-                if i > 0 {
-                    self.w.text(", ");
-                }
-                self.synth = true;
-                size = size.max(self.expr(&element, each).size);
-            }
-            (count, size)
+        let array = if self.pick(2) == 0 {
+            self.array_literal(&element, MAX_SIZE, true)
         } else {
-            let count = self.upto(MAX_BOUND);
-            self.synth = true;
-            let each = (MAX_SIZE - count).checked_div(count).unwrap_or(MAX_SIZE);
-            let size = self.expr(&element, each).size;
-            self.w.text(&format!("; {count}"));
-            (count, size)
+            self.fill(&Ty::Array(Box::new(element.clone())), MAX_SIZE, true)
         };
-        self.w.text("] ");
+        self.w.text(" ");
+        // Each element holds at most what they all hold.
+        let size = array.size - array.len;
         let var = Var::new(name, element, false, size, 0, self.cost.depth() + 1);
         self.conditionally(|g| {
-            g.cost.enter_loop(count);
+            g.cost.enter_loop(array.len);
             g.loop_body("", Some(var));
             g.cost.exit_loop();
         });
