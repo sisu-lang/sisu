@@ -22,15 +22,14 @@ use crate::tir::{Type, TypeArgs, TypeKind};
 
 /// Whether `ty` names the type parameter at `i`.
 fn names_param(ty: Type, i: usize) -> bool {
-    ty.has_param()
-        && match ty.kind() {
-            TypeKind::Param(_, j) => j as usize == i,
-            TypeKind::Array(inner) | TypeKind::Optional(inner) => names_param(inner, i),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
-                args.get().iter().any(|&arg| names_param(arg, i))
-            }
-            _ => false,
+    match ty.kind() {
+        TypeKind::Param(_, j) => j as usize == i,
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => names_param(inner, i),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            args.get().iter().any(|&arg| names_param(arg, i))
         }
+        _ => false,
+    }
 }
 
 /// Whether the type argument `arg` could be a value: a name that is not a built-in type, with

@@ -210,6 +210,16 @@ fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
             "fn f(b: i64) -> bool { h(U.A < b, b > (1)) }\nenum U { A }",
             vec![(Code::TypeArguments, (1, 26))],
         ),
+        // A list without a comma after a built-in's method, or one after another receiver's
+        // method, takes no type arguments.
+        (
+            "fn f(a: [i64], b: i64) -> i64 { a.len<b>() }",
+            vec![(Code::TypeArguments, (1, 38))],
+        ),
+        (
+            "fn f(k: K, a: bool) { k.m<C, C>(a, a) }",
+            vec![(Code::TypeArguments, (1, 26))],
+        ),
         (
             "fn f(b: i64) -> bool { h(undefined < b, b > (1)) }",
             vec![(Code::FunctionNotFound, (1, 26))],
