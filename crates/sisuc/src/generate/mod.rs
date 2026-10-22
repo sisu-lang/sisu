@@ -42,6 +42,12 @@ pub(crate) struct Known {
     pub(crate) answer: Answer,
 }
 
+/// The line `main` prints just before the panic site `marker`: the one place its text is
+/// written, for the generator and for property 5.
+pub(crate) fn panic_line(marker: &str) -> String {
+    format!("@{marker} panics")
+}
+
 pub(crate) enum Answer {
     Value(String),
     /// The runtime's message: `integer overflow` or `division by zero`.

@@ -291,16 +291,20 @@ impl Gen<'_> {
             folds: info.folds && CONSTANT.contains(ty),
             ..Site::default()
         };
-        let mut rewrites = vec![Rewrite::Block, Rewrite::Let, Rewrite::Const];
         // A `let` needs a statement to go before, and a value to hold.
-        if !self.w.can_bind() || *ty == Ty::Unit {
-            rewrites.retain(|&rewrite| rewrite != Rewrite::Let);
-        }
-        rewrites.retain(|&rewrite| allowed(rewrite, &site));
-        if rewrites.is_empty() || self.rewrite_pick(8) != 7 {
+        let can_bind = self.w.can_bind() && *ty != Ty::Unit;
+        let mut rewrites = [Rewrite::Block, Rewrite::Let, Rewrite::Const]
+            .into_iter()
+            .filter(|&rewrite| (rewrite != Rewrite::Let || can_bind) && allowed(rewrite, &site));
+        let count = rewrites.clone().count();
+        if count == 0 || self.rewrite_pick(8) != 7 {
             return;
         }
-        match rewrites[self.rewrite_pick(rewrites.len())] {
+        let pick = self.rewrite_pick(count);
+        match rewrites
+            .nth(pick)
+            .expect("the pick should be below the count")
+        {
             Rewrite::Block => self.w.block(start),
             Rewrite::Let => self.w.bind(start, ty),
             Rewrite::Const => self.w.constant(start, ty),
@@ -1913,5 +1917,15 @@ mod tests {
                 g.w.out.rewritten
             );
         }
+    }
+
+    #[test]
+    fn a_panicking_step_of_literals_does_not_fold() {
+        // Its parts fold, but a `const` lifted over it would not check (E0088), so the Const
+        // rewrite must not take it.
+        let mut g = Gen::new(&[1, 5, 3, 0, 0, 0]);
+        let info = g.rule(Rule::Arithmetic, &Ty::I64, MAX_SIZE, false);
+        assert_eq!(g.w.out.program, "(15 / 0)");
+        assert_eq!((info.value, info.pure, info.folds), (None, false, false));
     }
 }

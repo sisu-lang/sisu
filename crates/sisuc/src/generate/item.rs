@@ -96,12 +96,16 @@ impl Gen<'_> {
             });
         }
         self.main_stmts();
-        // One panic site at most, the last statement, which a `return` would skip.
-        let panic = panics.into_iter().next().filter(|_| !self.returns);
+        // One panic site at most, the last statement, which a `return` would skip; and seldom,
+        // since a panic ends the run before `--rc-checks` looks for leaks.
+        let panic = panics
+            .into_iter()
+            .next()
+            .filter(|_| !self.returns && self.rewrite_pick(8) == 0);
         if let Some(site) = &panic {
             self.known_text(|g| {
                 g.w.line();
-                g.w.text(&format!("print(\"@{} panics\")", site.marker));
+                g.w.text(&format!("print(\"{}\")", super::panic_line(&site.marker)));
                 g.w.line();
                 g.w.text(&format!("print({})", site.call));
             });

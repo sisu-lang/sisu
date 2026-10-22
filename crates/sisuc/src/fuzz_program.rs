@@ -5,6 +5,7 @@
 //! and all three the same way; property 4 is that the rewritten copy runs as the program does;
 //! property 5 is that the program prints the known integer answers.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -223,7 +224,7 @@ fn section(out: &mut String, name: &str, text: &[u8]) {
     }
 }
 
-/// Properties 1 to 3 for `g`, built in `dir`. A failure comes with the record of the builds
+/// Properties 1 to 5 for `g`, built in `dir`. A failure comes with the record of the builds
 /// that showed it.
 fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, String)> {
     let program = checked("program", &g.program).map_err(|f| (f, String::new()))?;
@@ -423,7 +424,7 @@ const PANIC: &str = "sisu: panic at ";
 
 /// `run`'s stderr, with the `<file>:<line>:<col>: ` of a panic's line taken out: only from the
 /// last line, and only when the run exited 101, so any other line compares as written.
-fn unlocated(run: &Run) -> Vec<u8> {
+fn unlocated(run: &Run) -> Cow<'_, [u8]> {
     let stderr = &run.stderr;
     let body = stderr.strip_suffix(b"\n").unwrap_or(stderr);
     let last = body
@@ -437,9 +438,9 @@ fn unlocated(run: &Run) -> Vec<u8> {
         .flatten();
     match location {
         Some(end) if run.exit == Exit::Code(101) => {
-            [&stderr[..after], &stderr[after + end + 2..]].concat()
+            Cow::Owned([&stderr[..after], &stderr[after + end + 2..]].concat())
         }
-        _ => stderr.clone(),
+        _ => Cow::Borrowed(stderr),
     }
 }
 
@@ -472,7 +473,7 @@ fn judge_known(run: &Run, known: &[Known]) -> Result<(), Failure> {
                         "the panic site {marker} should panic, or one before it"
                     ));
                 }
-                let reached = stdout.lines().last() == Some(format!("@{marker} panics").as_str());
+                let reached = stdout.lines().last() == Some(generate::panic_line(marker).as_str());
                 let panicked = stderr.lines().last().is_some_and(|last| {
                     last.starts_with(PANIC) && last.ends_with(&format!(": {message}"))
                 });
@@ -960,12 +961,24 @@ mod tests {
         seed_passes(3, true);
     }
 
-    /// `program` end to end, all six builds: it passes and leaves no directory behind. The
-    /// empty input's program, the smallest, as the seed tests cover the seeds.
+    /// `program` end to end, all six builds and properties 1 to 5: it passes and leaves no
+    /// directory behind. Seed 44 is the smallest seed with rewrites, a value site and a panic
+    /// site, so the panic marker `judge_known` reads must be the one `item.rs` writes.
     #[test]
     fn program_passes_and_cleans_up() {
         let tmp = Scratch::new();
-        on_stack(|| program_in(&[], &runtime(), &tmp.0));
+        let data = seed(44);
+        let g = generate(&data);
+        let panics = g
+            .known
+            .iter()
+            .filter(|known| matches!(known.answer, Answer::Panic(_)))
+            .count();
+        assert!(
+            g.rewritten != g.program && panics == 1 && g.known.len() > panics,
+            "seed 44 should have rewrites, a value site and a panic site"
+        );
+        on_stack(|| program_in(&data, &runtime(), &tmp.0));
         let left = fs::read_dir(&tmp.0)
             .expect("the test's directory should be readable")
             .count();

@@ -1850,9 +1850,15 @@ fn a_generated_panic_is_rare() {
     // A panic ends the run, so a block ends in one only now and then where another jump can,
     // and seldom where none can; and an `if` expression's branch after the first, seldom. The
     // `return` of each function's depth guard is not a choice, so it is not counted.
-    let (mut jumps, mut panics, mut ifs, mut panicking) = (0, 0, 0, 0);
+    // A known panic site ends the run too, so it is kept in one seed in eight at most.
+    let (mut jumps, mut panics, mut ifs, mut panicking, mut sites) = (0, 0, 0, 0, 0);
     for data in seeds() {
         let g = generate(&data);
+        sites += g
+            .known
+            .iter()
+            .filter(|known| matches!(known.answer, Answer::Panic(_)))
+            .count();
         let mut guard = false;
         for line in g.program.lines().map(str::trim) {
             if line.starts_with("panic(") || line.starts_with("todo") {
@@ -1877,6 +1883,10 @@ fn a_generated_panic_is_rare() {
     assert!(
         panicking * 32 <= ifs,
         "{panicking} `if` branches panic in {ifs} `if`s"
+    );
+    assert!(
+        sites * 8 <= seeds().count(),
+        "{sites} known panic sites in {SEEDS} seeds"
     );
 }
 
@@ -3936,6 +3946,8 @@ fn refused(rewrite: Rewrite, site: &Site) {
 #[test]
 fn let_binding_skips_a_mutated_name() {
     // `print({ n = 2; n })`: a `let` before the statement would read `n` before it is 2.
+    // `allowed` sees only an impure site; that the generator marks a `mut` local impure is
+    // `every_rewrite_meets_its_condition`'s to check.
     refused(Rewrite::Let, &Site { pure: false, ..ANY });
 }
 
@@ -3954,6 +3966,8 @@ fn let_binding_skips_a_short_circuit() {
 #[test]
 fn let_binding_skips_a_field_read() {
     // `print({ p.x = 2; p.x })`: a field is a read of what may be assigned, as a `mut` local is.
+    // `allowed` sees only an impure site; that the generator marks a field read impure is
+    // `every_rewrite_meets_its_condition`'s to check.
     refused(Rewrite::Let, &Site { pure: false, ..ANY });
 }
 

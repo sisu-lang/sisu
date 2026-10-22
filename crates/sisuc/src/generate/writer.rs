@@ -43,11 +43,14 @@ pub(crate) struct Site {
     pub(crate) unconditional: bool,
     /// `check/constant.rs` folds it, with no step that overflows or divides by zero.
     pub(crate) folds: bool,
-    /// It is in a `const`'s initializer.
+    /// It is in a `const`'s initializer. False in the generator: a `const`'s initializer is
+    /// written by `const_expr`, which never calls `Gen::expr`.
     pub(crate) in_const: bool,
-    /// It is a place that is assigned to.
+    /// It is a place that is assigned to. False in the generator: `stmt.rs` writes every
+    /// assignment's target as text, never through `Gen::expr`.
     pub(crate) place: bool,
-    /// The point is after a block's last expression.
+    /// The point is after a block's last expression. False in the generator: `Writer::end`
+    /// puts an `if false` copy before its statement, and a block's last expression is none.
     pub(crate) last: bool,
 }
 
@@ -165,6 +168,13 @@ impl Writer {
         format!("{prefix}{}", self.names)
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unused_self,
+            reason = "only the tests record the rewrites made, in `self.made`"
+        )
+    )]
     fn made(&mut self, rewrite: Rewrite) {
         #[cfg(test)]
         self.made.push(rewrite);
