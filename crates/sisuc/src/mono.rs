@@ -697,7 +697,9 @@ mod tests {
     /// optional field's payload is named too (`Wrap4<i64>.W`), and `R<i64, Q<i64>>.Y`'s
     /// `Two<B>`, of a declaration off `R`'s cycle, is never boxed. `M<i64>.F` and `N2<i64>.K`
     /// name each other, not themselves, yet `Wrap3<N2<i64>>.W` stays inline as `Wrap3<H<i64>>.W`
-    /// does. Every member of a component with a box is on that cycle and counted.
+    /// does. `U<i64>.Q` names `S<T>` too, yet `S<i64>.P`, which names its own declaration,
+    /// breaks every cycle through it alone, directly or, in `S2<i64>.P`, through an optional.
+    /// Every member of a component with a box is on that cycle and counted.
     #[test]
     fn box_goes_on_the_declaring_enum() {
         let program = instantiated(
@@ -714,9 +716,11 @@ mod tests {
              enum Wrap4<T> {\n    W(P2<T, Wrap4<i64>>?)\n    N\n}\n\
              enum R<A, B> {\n    Y(Two<B>)\n}\nenum Q<T> {\n    X(R<T, Q<i64>>)\n    N\n}\n\
              enum M<T> {\n    F(Wrap3<N2<T>>)\n    Z\n}\nenum N2<T> {\n    K(M<T>)\n    Y(T)\n}\n\
+             enum S<T> {\n    P(P2<S<T>, U<T>>)\n    Z\n}\nenum U<T> {\n    Q(S<T>)\n    Z\n}\n\
+             enum S2<T> {\n    P(P2<S2<T>, U2<T>>?)\n    Z\n}\nenum U2<T> {\n    Q(S2<T>)\n    Z\n}\n\
              fn main() {\n    let t: Tree<i64> = Tree.Leaf\n    let b: B<i64> = B.Z\n    let c: C<i64> = C.Z\n    let g: G<i64> = G.L(1)\n    let h: H<i64> = H.L(1)\n    let k: K<i64> = K.L(1)\n    \
              let w: Wrap4<i64> = Wrap4.N\n    let q: Q<i64> = Q.N\n    \
-             let m: M<i64> = M.Z\n}",
+             let m: M<i64> = M.Z\n    let s: S<i64> = S.Z\n    let s2: S2<i64> = S2.Z\n}",
         );
         let printed = program.to_string();
         for part in [
@@ -746,6 +750,10 @@ mod tests {
             "(enum M<i64> (F (box Wrap3<N2<i64>>)) Z)",
             "(enum N2<i64> (K (box M<i64>)) (Y i64))",
             "(enum Wrap3<N2<i64>> (W P2<N2<i64>, Wrap3<i64>>) N)",
+            "(enum S<i64> (P (box P2<S<i64>, U<i64>>)) Z)",
+            "(enum U<i64> (Q S<i64>) Z)",
+            "(enum S2<i64> (P (box P2<S2<i64>, U2<i64>>?)) Z)",
+            "(enum U2<i64> (Q S2<i64>) Z)",
         ] {
             assert!(printed.contains(part), "`{part}` in\n{printed}");
         }
