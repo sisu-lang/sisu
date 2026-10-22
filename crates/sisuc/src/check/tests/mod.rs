@@ -662,7 +662,7 @@ fn break_in_header() {
         ),
         // The inner loop is the one whose header holds the jump.
         (
-            "fn main() {\n    while true {\n        for x in { continue\n [1] } { }\n    }\n}",
+            "fn main() {\n    loop {\n        for x in { continue\n [1] } { }\n    }\n}",
             (3, 20, "continue"),
             (3, 9, "for"),
         ),
@@ -675,42 +675,54 @@ fn break_in_header() {
 
 #[test]
 fn break_in_loop_inside_header() {
-    clean("fn main() {\n    while { while true { break }\n true } { break }\n}");
+    clean("fn main() {\n    while { loop { break }\n true } { break }\n}");
 }
 
 #[test]
 fn statement_after_break() {
     codes(
-        "fn main() {\n    while true {\n        break\n        print(1)\n    }\n}",
+        "fn main() {\n    loop {\n        break\n        print(1)\n    }\n}",
         &[(Code::UnreachableCode, (4, 9))],
     );
 }
 
 #[test]
 fn while_true_without_break_is_never() {
-    clean("fn f() -> i64 {\n    while true {}\n}\nfn main() {}");
+    codes(
+        "fn f() -> i64 {\n    while true {}\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5))],
+    );
 }
 
 #[test]
 fn parenthesized_true_is_endless() {
-    clean("fn f() -> i64 {\n    while (true) {}\n}\nfn main() {}");
+    codes(
+        "fn f() -> i64 {\n    while (true) {}\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5))],
+    );
 }
 
 #[test]
 fn code_after_endless_loop_is_unreachable() {
     codes(
         "fn main() {\n    while true {}\n    print(1)\n}",
-        &[(Code::UnreachableCode, (3, 5))],
+        &[(Code::WhileTrue, (2, 5)), (Code::UnreachableCode, (3, 5))],
     );
 }
 
 #[test]
 fn return_from_endless_loop() {
-    for src in [
-        "fn first_zero(xs: [i64]) -> i64 {\n    let mut i = 0\n    while true {\n        if xs[i] == 0 {\n            return i\n        }\n        i += 1\n    }\n}\nfn main() {}",
-        "fn f() -> i64 {\n    while true { panic(\"x\") }\n}\nfn main() {}",
+    for (src, line) in [
+        (
+            "fn first_zero(xs: [i64]) -> i64 {\n    let mut i = 0\n    while true {\n        if xs[i] == 0 {\n            return i\n        }\n        i += 1\n    }\n}\nfn main() {}",
+            3,
+        ),
+        (
+            "fn f() -> i64 {\n    while true { panic(\"x\") }\n}\nfn main() {}",
+            2,
+        ),
     ] {
-        clean(src);
+        codes(src, &[(Code::WhileTrue, (line, 5))]);
     }
 }
 
@@ -718,19 +730,22 @@ fn return_from_endless_loop() {
 fn todo_in_endless_loop() {
     codes(
         "fn f() -> i64 {\n    while true { todo }\n}\nfn main() {}",
-        &[(Code::TodoLeft, (2, 18))],
+        &[(Code::WhileTrue, (2, 5)), (Code::TodoLeft, (2, 18))],
     );
 }
 
 #[test]
 fn continue_in_endless_loop() {
-    clean("fn f() -> i64 {\n    while true { continue }\n}\nfn main() {}");
+    codes(
+        "fn f() -> i64 {\n    while true { continue }\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5))],
+    );
 }
 
 #[test]
 fn inner_break_leaves_only_the_inner_loop() {
     clean(
-        "fn f(c: bool, xs: [i64], o: i64?) -> i64 {\n    while true {\n        while c { break }\n        while let y = o { break }\n        for x in xs { break }\n    }\n}\nfn main() {}",
+        "fn f(c: bool, xs: [i64], o: i64?) -> i64 {\n    loop {\n        while c { break }\n        while let y = o { break }\n        for x in xs { break }\n    }\n}\nfn main() {}",
     );
 }
 
@@ -739,7 +754,7 @@ fn inner_break_leaves_only_the_inner_loop() {
 fn break_makes_endless_loop_unit() {
     codes(
         "fn f(c: bool) -> i64 {\n    while true {\n        if c { break }\n    }\n}\nfn main() {}",
-        &[(Code::BodyHasNoValue, (5, 1))],
+        &[(Code::WhileTrue, (2, 5)), (Code::BodyHasNoValue, (5, 1))],
     );
 }
 
@@ -748,7 +763,7 @@ fn break_makes_endless_loop_unit() {
 fn break_in_a_value_makes_endless_loop_unit() {
     codes(
         "fn f(c: bool) -> i64 {\n    while true {\n        let x = if c { break } else { 1 }\n    }\n}\nfn main() {}",
-        &[(Code::BodyHasNoValue, (5, 1))],
+        &[(Code::WhileTrue, (2, 5)), (Code::BodyHasNoValue, (5, 1))],
     );
 }
 
@@ -756,7 +771,7 @@ fn break_in_a_value_makes_endless_loop_unit() {
 #[test]
 fn unreachable_break_still_counts() {
     codes(
-        "fn f() -> i64 {\n    while true {\n        return 1\n        break\n    }\n}\nfn main() {}",
+        "fn f() -> i64 {\n    loop {\n        return 1\n        break\n    }\n}\nfn main() {}",
         &[
             (Code::UnreachableCode, (4, 9)),
             (Code::BodyHasNoValue, (6, 1)),
@@ -777,10 +792,10 @@ fn only_the_literal_is_endless() {
 }
 
 #[test]
-fn failed_endless_body_reports_only_its_error() {
+fn failed_endless_body_reports_no_missing_value() {
     codes(
         "fn f() -> i64 {\n    while true { missing }\n}\nfn main() {}",
-        &[(Code::BindingNotFound, (2, 18))],
+        &[(Code::WhileTrue, (2, 5)), (Code::BindingNotFound, (2, 18))],
     );
 }
 
@@ -788,7 +803,7 @@ fn failed_endless_body_reports_only_its_error() {
 #[test]
 fn failed_body_with_break_stays_unit() {
     codes(
-        "fn f() -> i64 {\n    while true {\n        missing\n        break\n    }\n}\nfn main() {}",
+        "fn f() -> i64 {\n    loop {\n        missing\n        break\n    }\n}\nfn main() {}",
         &[
             (Code::BindingNotFound, (3, 9)),
             (Code::BodyHasNoValue, (6, 1)),
@@ -799,7 +814,7 @@ fn failed_body_with_break_stays_unit() {
 #[test]
 fn break_in_inner_header_does_not_count() {
     codes(
-        "fn f() -> i64 {\n    while true {\n        while { break\n true } {}\n    }\n}\nfn main() {}",
+        "fn f() -> i64 {\n    loop {\n        while { break\n true } {}\n    }\n}\nfn main() {}",
         &[(Code::JumpInLoopHeader, (3, 17))],
     );
 }
@@ -976,13 +991,19 @@ fn break_name_is_a_label_only_near_one() {
 
 /// A labeled jump out of a header leaves the endless loop it is in untyped, not `never`, so the
 /// header reports neither a missing value nor unreachable code; `E0082-through-loop` covers a
-/// `loop`.
+/// `loop`. The failed `while true` still warns, with no fix: writing `loop` could remove the
+/// error rather than fix it.
 #[test]
 fn failed_labeled_jump_leaves_no_never_loop() {
+    let src = "fn main() {\n    outer: for r in [1] {\n        while { while true { break outer }; true } { }\n    }\n}";
     codes(
-        "fn main() {\n    outer: for r in [1] {\n        while { while true { break outer }; true } { }\n    }\n}",
-        &[(Code::JumpInLoopHeader, (3, 30))],
+        src,
+        &[
+            (Code::WhileTrue, (3, 17)),
+            (Code::JumpInLoopHeader, (3, 30)),
+        ],
     );
+    assert_eq!(diags(src)[0].fixes(), []);
 }
 
 /// A `break` in a header would leave the loop around the header, so that loop has no type and
@@ -2208,7 +2229,7 @@ fn spills_constructor_argument() {
 fn spills_field_assignment_base() {
     assert_eq!(
         printed_g(
-            "fn g(c: bool, p: P) {\n    while true {\n        p.b = if c { break } else { make() }\n    }\n}"
+            "fn g(c: bool, p: P) {\n    loop {\n        p.b = if c { break } else { make() }\n    }\n}"
         ),
         "(fn g ((c#0 bool) (p#1 P)) unit (block (loop (block (block (let #2 p#1) (let #3 (if c#0 (block (break)) (block (call make)))) (= (. #2 b) #3))))))"
     );
@@ -2233,7 +2254,7 @@ fn no_spill_without_earlier_reference() {
 #[test]
 fn nested_loop_break_still_spills() {
     assert_eq!(
-        printed_g("fn g() {\n    f(make(), if true { while true { break }\n 1 } else { 1 })\n}"),
+        printed_g("fn g() {\n    f(make(), if true { loop { break }\n 1 } else { 1 })\n}"),
         "(fn g () unit (block (block (let #0 (call make)) (let #1 (if true (block (loop (block (break))) 1) (block 1))) (call f #0 #1))))"
     );
 }
@@ -2254,7 +2275,7 @@ fn spills_method_receiver() {
 fn spills_compound_field_assignment_base() {
     assert_eq!(
         printed_g(
-            "class Q {\n    mut k: i64\n}\nfn g(c: bool, q: Q) {\n    while true {\n        q.k += if c { break } else { 1 }\n    }\n}"
+            "class Q {\n    mut k: i64\n}\nfn g(c: bool, q: Q) {\n    loop {\n        q.k += if c { break } else { 1 }\n    }\n}"
         ),
         "(fn g ((c#0 bool) (q#1 Q)) unit (block (loop (block (block (block (let #2 q#1) (let #3 (+ (. q#1 k) (if c#0 (block (break)) (block 1)))) (= (. #2 k) #3)))))))"
     );

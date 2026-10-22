@@ -2095,7 +2095,7 @@ fn run_into_a_closed_pipe_dies_of_sigpipe() {
 
     let tmp = scratch_path::empty_dir("run_into_a_closed_pipe");
     let mut child = sisu_run(&tmp)
-        .args(["-e", "fn main() { while true { print(1) } }"])
+        .args(["-e", "fn main() { loop { print(1) } }"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

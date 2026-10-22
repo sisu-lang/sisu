@@ -40,7 +40,7 @@ fn release_after_a_move_on_one_path_stays_conditional() {
 #[test]
 fn each_exit_edge_is_elaborated_on_its_own() {
     let printed = built(&format!(
-        "{KEEP}fn f(xs: [i64], c: bool) {{\n    while true {{\n        if c {{\n            keep(xs)\n            return\n        }}\n        break\n    }}\n}}"
+        "{KEEP}fn f(xs: [i64], c: bool) {{\n    loop {{\n        if c {{\n            keep(xs)\n            return\n        }}\n        break\n    }}\n}}"
     ));
     let f = function(&printed, "f");
     // The `return` edge follows the move and releases nothing; the `break` edge owns `xs`.

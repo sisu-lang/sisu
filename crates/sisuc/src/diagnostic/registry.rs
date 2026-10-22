@@ -200,6 +200,7 @@ codes! {
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
     UnusedLabel = "W0008",
+    WhileTrue = "W0009",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -867,6 +868,9 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         remove: Span,
     },
+    /// The `while` at `at`, from the keyword through its condition `true`, parentheses included;
+    /// `fix` is `loop` in its place, unless a failed jump may have meant the loop.
+    WhileTrue { at: Span, fix: bool },
     /// The comparison at `at`, `!=` when `negated`, one side of which is `f64.nan`, which no
     /// number equals; `fix` is its `is_nan` test, when the other side is an `f64`.
     NanComparison {
@@ -2999,6 +3003,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("loop label `{name}` is never used"))
                     .with_help("delete the loop label, or name it in a `break` or `continue`")
                     .with_fix(safe_fix("delete the loop label", remove, ""))
+            }
+            DiagnosticKind::WhileTrue { at, fix } => {
+                let d = Diagnostic::coded(code, at, "this `while` has the condition `true`")
+                    .with_label("only `break`, `return` or a panic ends it")
+                    .with_help("write an endless loop as `loop`");
+                if fix {
+                    d.with_fix(safe_fix("write `loop`", at, "loop"))
+                } else {
+                    d
+                }
             }
             DiagnosticKind::NanComparison { at, negated, fix } => {
                 let always = if negated { "true" } else { "false" };

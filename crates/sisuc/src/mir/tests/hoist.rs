@@ -95,7 +95,7 @@ const CASES: &[(&str, &str, &[&[&str]])] = &[
     ),
     (
         "write_after_return",
-        "fn f(a: [i64]) -> i64 {\n    let mut b = a\n    let c = b\n    while true {\n        return c.len()\n        b[0] = 1\n    }\n    return 0\n}",
+        "fn f(a: [i64]) -> i64 {\n    let mut b = a\n    let c = b\n    loop {\n        return c.len()\n        b[0] = 1\n    }\n    return 0\n}",
         &[&[]],
     ),
     (
@@ -258,7 +258,7 @@ fn row(name: &str) -> &'static str {
 #[test]
 fn endless_loop_hoists_into_its_pre_header() {
     let (pre_header, in_loop) = pre_header_and_loop(
-        "fn f(xs: [i64]) -> i64 {\n    let mut b = xs\n    let mut i = 0\n    let mut s = 0\n    while true {\n        if i == b.len() {\n            return s\n        }\n        b[i] = i\n        s += b[i]\n        i += 1\n    }\n}",
+        "fn f(xs: [i64]) -> i64 {\n    let mut b = xs\n    let mut i = 0\n    let mut s = 0\n    loop {\n        if i == b.len() {\n            return s\n        }\n        b[i] = i\n        s += b[i]\n        i += 1\n    }\n}",
     );
     assert!(pre_header.contains("make_unique b#"), "{pre_header}");
     assert_eq!(in_loop.matches("make_unique").count(), 0, "{in_loop}");

@@ -157,6 +157,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [W0006](W0006.md) | warning | unreachable arm |
 | [W0007](W0007.md) | warning | unnecessary `;` |
 | [W0008](W0008.md) | warning | loop label that is never used |
+| [W0009](W0009.md) | warning | `while` with the condition `true` |
 
 ## Explanations
 

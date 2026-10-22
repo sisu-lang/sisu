@@ -8,7 +8,7 @@ fn main() {
     }
     print(odd)
     let mut n = 0
-    while true {
+    loop {
         n += 1
         if n * n > 50 { break }
     }
@@ -17,7 +17,7 @@ fn main() {
     let mut a = 0
     while a < 4 {
         let mut b = 0
-        while true {
+        loop {
             if b == a { break }
             pairs += 1
             b += 1

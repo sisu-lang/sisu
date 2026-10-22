@@ -33,7 +33,7 @@ fn main() {
     let mut s = State.Idle
     let mut moves = 0
 
-    while true {
+    loop {
         if let Done(steps) = s {
             print("done after {steps} counts and {moves} moves")  // done after 3 counts and 5 moves
             break

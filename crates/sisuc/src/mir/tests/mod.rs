@@ -52,7 +52,7 @@ pub(super) const EVERY_KIND: &str = "class O {\n    mut n: i64\n    mut s: strin
 /// Code after a `return`, an endless loop, a function that always panics, an `if` whose
 /// branches both return and a `match` whose last arm is `_`.
 pub(super) const UNREACHABLE_CODE: &str = "fn f() -> i64 { panic(\"x\") }\n\
-     fn g() {\n    while true {\n    }\n}\n\
+     fn g() {\n    loop {\n    }\n}\n\
      fn h(c: bool) -> i64 { if c { return 1 } else { return 2 } }\n\
      fn r() -> i64 {\n    return 1\n    print(2)\n    3\n}\n\
      fn m(c: bool) -> i64 {\n    match c {\n        true => 1\n        _ => 0\n    }\n}";

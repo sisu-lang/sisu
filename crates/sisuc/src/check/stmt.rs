@@ -310,6 +310,14 @@ impl Checker<'_> {
                 let frame = LoopFrame::new(LoopKind::While, *keyword, label.clone(), None);
                 let (checked, frame) = self.loop_body(frame, |c| c.block(body, None));
                 let broken = frame.broken;
+                if endless {
+                    // Writing `loop` over a failed loop could remove its error rather than fix it,
+                    // and a safe fix may remove only its own diagnostic.
+                    self.report(DiagnosticKind::WhileTrue {
+                        at: keyword.to(cond_ast.span),
+                        fix: !frame.failed,
+                    });
+                }
                 if let Ok(checked) = &checked {
                     self.discard_tail(body, checked);
                 }

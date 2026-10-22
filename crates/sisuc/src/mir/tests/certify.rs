@@ -1006,7 +1006,7 @@ fn committed_binding_released_on_every_exit() {
     rejects(walk, exit, c, Rule::Return);
 }
 
-/// Hand-built, since a `while true` always has a `break` edge.
+/// Hand-built, since a `loop` always has a `break` edge.
 #[test]
 fn leak_on_the_back_edge_of_an_endless_loop() {
     let mut b = Builder::new("f");
