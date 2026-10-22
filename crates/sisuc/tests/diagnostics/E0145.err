@@ -1,5 +1,5 @@
 error[E0145]: only a loop can take a loop label
- --> E0145-if.sisu:3:5
+ --> E0145.sisu:3:5
   |
 3 |     outer: if c {
   |     ^^^^^^ -- this is not `loop`, `while` or `for`

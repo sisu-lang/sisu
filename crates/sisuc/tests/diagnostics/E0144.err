@@ -1,5 +1,5 @@
 error[E0144]: no loop label `outr` around this `break`
- --> E0144-break.sisu:5:23
+ --> E0144.sisu:5:23
   |
 5 |                 break outr
   |                       ^^^^

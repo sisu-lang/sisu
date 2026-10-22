@@ -1,5 +1,5 @@
 error[E0142]: loop label `n` has the same name as the binding `n`
- --> E0142-binding.sisu:4:15
+ --> E0142.sisu:4:15
   |
 2 |     let n = 3
   |         - the binding is declared here
