@@ -115,7 +115,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 14] = [
+const REACH: [&str; 16] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -128,6 +128,8 @@ const REACH: [&str; 14] = [
     "reach: an index is meant to panic",
     "reach: an index reads a local",
     "reach: an index reads an immutable local",
+    "reach: an index reads an array literal in bounds",
+    "reach: a plain `=` to a local that is not an array",
     "reach: `==` or `!=` compares with `None`",
     "reach: a `+=` adds chars to a string local",
 ];
@@ -356,6 +358,8 @@ struct Walk {
     some_values: FxHashSet<usize>,
     /// Where a `+=` on a name starts.
     adds: FxHashSet<usize>,
+    /// Where the value of a plain `=` to a name starts.
+    assigns: FxHashSet<usize>,
     /// Whether the walk is in the target of an assignment, which writes an element, not reads it.
     writing: bool,
 }
@@ -375,6 +379,7 @@ impl Walk {
         self.later.clear();
         self.some_values.clear();
         self.adds.clear();
+        self.assigns.clear();
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -607,6 +612,50 @@ impl Walk {
         }
     }
 
+    fn ast_for(&mut self, source: &ast::ForSource, body: &ast::Block) {
+        self.mark("ast::StmtKind::For");
+        match source {
+            ast::ForSource::Array(array) => {
+                self.mark("ast::ForSource::Array");
+                match array_len(array) {
+                    Some(runs) if runs <= i128::from(MAX_BOUND) => {
+                        if runs > 0 {
+                            self.mark("reach: a `for` over an array runs its body");
+                        }
+                    }
+                    _ => self
+                        .unbounded
+                        .push(format!("a `for` at byte {}", array.span.start())),
+                }
+                self.ast_expr(array);
+            }
+            ast::ForSource::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                self.mark("ast::ForSource::Range");
+                let runs = int(start)
+                    .zip(int(end))
+                    .map(|(start, end)| end - start + i128::from(*inclusive));
+                match runs {
+                    Some(runs) if runs <= i128::from(MAX_BOUND) => {
+                        if runs > 0 {
+                            self.mark("reach: a loop runs its body");
+                        }
+                    }
+                    _ => self
+                        .unbounded
+                        .push(format!("a `for` at byte {}", start.span.start())),
+                }
+                self.mark(&format!("ast::ForSource::Range.inclusive = {inclusive}"));
+                self.ast_expr(start);
+                self.ast_expr(end);
+            }
+        }
+        self.ast_block(body);
+    }
+
     fn ast_let(&mut self, mutable: bool, name: &str, ty: Option<&ast::TypeExpr>, init: &ast::Expr) {
         self.mark("ast::StmtKind::Let");
         if mutable {
@@ -646,49 +695,7 @@ impl Walk {
                 self.ast_expr(value);
                 self.ast_block(body);
             }
-            ast::StmtKind::For { source, body, .. } => {
-                self.mark("ast::StmtKind::For");
-                match source {
-                    ast::ForSource::Array(array) => {
-                        self.mark("ast::ForSource::Array");
-                        match array_len(array) {
-                            Some(runs) if runs <= i128::from(MAX_BOUND) => {
-                                if runs > 0 {
-                                    self.mark("reach: a `for` over an array runs its body");
-                                }
-                            }
-                            _ => self
-                                .unbounded
-                                .push(format!("a `for` at byte {}", array.span.start())),
-                        }
-                        self.ast_expr(array);
-                    }
-                    ast::ForSource::Range {
-                        start,
-                        end,
-                        inclusive,
-                    } => {
-                        self.mark("ast::ForSource::Range");
-                        let runs = int(start)
-                            .zip(int(end))
-                            .map(|(start, end)| end - start + i128::from(*inclusive));
-                        match runs {
-                            Some(runs) if runs <= i128::from(MAX_BOUND) => {
-                                if runs > 0 {
-                                    self.mark("reach: a loop runs its body");
-                                }
-                            }
-                            _ => self
-                                .unbounded
-                                .push(format!("a `for` at byte {}", start.span.start())),
-                        }
-                        self.mark(&format!("ast::ForSource::Range.inclusive = {inclusive}"));
-                        self.ast_expr(start);
-                        self.ast_expr(end);
-                    }
-                }
-                self.ast_block(body);
-            }
+            ast::StmtKind::For { source, body, .. } => self.ast_for(source, body),
             ast::StmtKind::Return(value) => {
                 self.mark("ast::StmtKind::Return");
                 if let Some(value) = value {
@@ -699,6 +706,9 @@ impl Walk {
             ast::StmtKind::Continue => self.mark("ast::StmtKind::Continue"),
             ast::StmtKind::Assign { target, value } => {
                 self.mark("ast::StmtKind::Assign");
+                if name(target).is_some() {
+                    self.assigns.insert(value.span.start());
+                }
                 self.target(target);
                 self.ast_expr(value);
             }
@@ -888,6 +898,9 @@ impl Walk {
                                 self.mark("reach: an index reads an immutable local");
                             }
                         }
+                        if name(base).is_none() {
+                            self.mark("reach: an index reads an array literal in bounds");
+                        }
                     }
                     (Some(1), Some(1))
                         if name(base).is_none() && self.later.contains(&e.span.start()) =>
@@ -1062,6 +1075,12 @@ impl Walk {
                         && self.adds.contains(&value.span.start())
                     {
                         self.mark("reach: a `+=` adds chars to a string local");
+                    }
+                    if matches!(place, tir::Place::Local(_))
+                        && !matches!(value.ty.kind(), TypeKind::Array(_))
+                        && self.assigns.contains(&value.span.start())
+                    {
+                        self.mark("reach: a plain `=` to a local that is not an array");
                     }
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
