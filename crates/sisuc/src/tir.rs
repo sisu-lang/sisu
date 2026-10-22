@@ -2015,4 +2015,229 @@ mod tests {
         assert!(!if_stmt.exits());
         assert!(!block_expr(vec![Stmt::Expr(if_stmt)], Some(int(1))).exits());
     }
+
+    /// `each_child_mut` reaches each expression directly inside every kind, in order: through
+    /// its blocks, statements and places, and no further.
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one row per node kind, so the table reads in one place"
+    )]
+    fn each_child_mut_reaches_every_direct_child() {
+        let n = |k| Box::new(int(k));
+        let ints = |ks: [i64; 2]| ks.map(int).into();
+        let valued = |k| Block {
+            stmts: Vec::new(),
+            value: Some(n(k)),
+            ty: Type::I64,
+        };
+        let arm = |guard, k| Arm {
+            pattern: Pattern {
+                kind: PatternKind::Wild,
+                span: Span::new(0, 0),
+            },
+            bindings: Vec::new(),
+            guard,
+            body: valued(k),
+        };
+        let place = Place::Index {
+            base: Box::new(Place::Field {
+                base: int(3),
+                index: 0,
+            }),
+            index: int(4),
+        };
+        let body = Block {
+            stmts: vec![
+                Stmt::Let {
+                    local: LocalId(0),
+                    init: int(1),
+                },
+                Stmt::Expr(int(2)),
+                Stmt::Assign {
+                    place,
+                    value: int(5),
+                },
+                Stmt::Append {
+                    place: Place::Local(LocalId(0)),
+                    value: int(6),
+                },
+            ],
+            value: Some(n(7)),
+            ty: Type::I64,
+        };
+        let cases = [
+            (ExprKind::Return(None), 0),
+            (
+                ExprKind::Call {
+                    func: FuncId(0),
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
+            (
+                ExprKind::New {
+                    class: ClassId(0),
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
+            (
+                ExprKind::Variant {
+                    id: EnumId(0),
+                    variant: 0,
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
+            (
+                ExprKind::Compare {
+                    operands: ints([1, 2]),
+                    ops: vec![CompareOp::Lt],
+                },
+                2,
+            ),
+            (
+                ExprKind::Math {
+                    op: MathOp::Abs,
+                    operands: ints([1, 2]),
+                },
+                2,
+            ),
+            (ExprKind::ArrayLit(ints([1, 2])), 2),
+            (
+                ExprKind::Interpolate {
+                    parts: ints([1, 2]),
+                    formats: Vec::new(),
+                },
+                2,
+            ),
+            (
+                ExprKind::Field {
+                    base: n(1),
+                    index: 0,
+                },
+                1,
+            ),
+            (ExprKind::Len(n(1)), 1),
+            (ExprKind::Chars(n(1)), 1),
+            (ExprKind::Bytes(n(1)), 1),
+            (ExprKind::Words(n(1)), 1),
+            (ExprKind::FromChars(n(1)), 1),
+            (ExprKind::Sum(n(1)), 1),
+            (ExprKind::Wrap(n(1)), 1),
+            (ExprKind::Convert(n(1)), 1),
+            (
+                ExprKind::Print {
+                    stream: Stream::Stdout,
+                    operand: n(1),
+                },
+                1,
+            ),
+            (ExprKind::Panic(n(1)), 1),
+            (
+                ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    operand: n(1),
+                },
+                1,
+            ),
+            (
+                ExprKind::Break {
+                    depth: 0,
+                    value: Some(n(1)),
+                },
+                1,
+            ),
+            (ExprKind::Return(Some(n(1))), 1),
+            (
+                ExprKind::Binary {
+                    op: BinaryOp::Add,
+                    lhs: n(1),
+                    rhs: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Concat {
+                    lhs: n(1),
+                    rhs: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Equal {
+                    negated: false,
+                    lhs: n(1),
+                    rhs: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Is {
+                    lhs: n(1),
+                    rhs: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::ArrayFill {
+                    value: n(1),
+                    len: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Index {
+                    base: n(1),
+                    index: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Contains {
+                    base: n(1),
+                    value: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::If {
+                    cond: n(1),
+                    then_block: valued(2),
+                    else_block: Some(valued(3)),
+                },
+                3,
+            ),
+            (
+                ExprKind::IfSome {
+                    bind: LocalId(0),
+                    scrutinee: n(1),
+                    then_block: valued(2),
+                    else_block: Some(valued(3)),
+                },
+                3,
+            ),
+            (
+                ExprKind::Match {
+                    scrutinee: n(1),
+                    temp: LocalId(0),
+                    arms: vec![arm(Some(int(2)), 3), arm(None, 4)],
+                },
+                4,
+            ),
+            (ExprKind::Loop(body), 7),
+            (ExprKind::Block(valued(1)), 1),
+        ];
+        for (kind, children) in cases {
+            let mut e = expr(kind, Type::I64);
+            let mut seen = Vec::new();
+            e.each_child_mut(&mut |child| {
+                if let ExprKind::Int(k) = child.kind {
+                    seen.push(k);
+                }
+            });
+            assert_eq!(seen, (1..=children).collect::<Vec<_>>(), "{:?}", e.kind);
+        }
+    }
 }

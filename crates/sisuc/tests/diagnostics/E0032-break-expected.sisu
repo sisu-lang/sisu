@@ -1,0 +1,6 @@
+fn main() {
+    let x: i64 = loop {
+        break "s"
+    }
+    print(x)
+}
