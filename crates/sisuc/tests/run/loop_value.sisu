@@ -1,8 +1,9 @@
 // `loop` gives a value through `break v`. A counted string and a class instance, each made in
 // the loop's body, leave it by `break`; a `break` in a `match` arm gives an array; a store's
 // index runs before its value, here a `loop` that moves the index; an expected type checks
-// every `break`; and a `loop` with no `break` can be a whole function body that leaves by
-// `return`.
+// every `break`, and a `None` after a `5` and a `6` makes the loop optional and wraps both,
+// the `6` given from an inner loop; and a `loop` with no `break` can be a whole function body
+// that leaves by `return`.
 class Item {
     name: string
     weight: i64
@@ -44,6 +45,18 @@ fn pick(c: bool) -> i64? {
     x
 }
 
+fn widen(n: i64) -> i64? {
+    let x: i64? = outer: loop {
+        if n == 1 { break 5 }
+        loop {
+            if n == 2 { break outer 6 }
+            break
+        }
+        break None
+    }
+    x
+}
+
 fn count_to(n: i64) -> i64 {
     let mut i = 0
     loop {
@@ -72,5 +85,8 @@ fn main() {
     print(i)                            // 1
     print(pick(true) ?? -1)             // -1
     print(pick(false) ?? -1)            // 5
+    print(widen(1) ?? -1)               // 5
+    print(widen(2) ?? -1)               // 6
+    print(widen(3) ?? -1)               // -1
     print(count_to(3))                  // 30
 }

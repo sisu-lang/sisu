@@ -3,12 +3,12 @@
 use rustc_hash::FxHashMap;
 
 use super::array::optional_array;
-use super::expr::local;
+use super::expr::{fits, local};
 use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, tail, type_of,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, tail, type_of, wrap,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ClashForm, ClashKind, DiagnosticKind, MismatchSource, Unwrap, closest};
@@ -974,9 +974,12 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Checked {
         let frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
-        let (checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
-        if let Ok(checked) = &checked {
+        let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
+        if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
+            if let (true, Some((ty, _))) = (frame.widened, frame.first) {
+                checked.each_expr_mut(&mut |e| wrap_breaks(e, 0, ty));
+            }
         }
         if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
             self.report(DiagnosticKind::BareBreak { at, valued });
@@ -1035,13 +1038,11 @@ impl Checker<'_> {
             }
             return Err(Poisoned::typed(Type::NEVER));
         }
-        let want = |frame: &LoopFrame| {
-            frame
-                .expected
-                .map(|ty| (ty, None))
-                .or(frame.first.map(|(ty, at)| (ty, Some(at))))
-        };
-        let hint = want(self.frame(target));
+        let frame = self.frame(target);
+        let hint = frame
+            .expected
+            .map(|ty| (ty, None))
+            .or(frame.first.map(|(ty, at)| (ty, Some(at))));
         let from = hint
             .and_then(|(_, first)| first)
             .map(|first| (v.span, first));
@@ -1055,8 +1056,6 @@ impl Checker<'_> {
             self.frame(target).failed = true;
             return checked;
         }
-        // Checking `v` can set the first type, through a `break` of this loop inside it.
-        let want = want(self.frame(target));
         let checked = match type_of(&checked) {
             Some(Type::UNIT) => {
                 self.report(DiagnosticKind::NoValue {
@@ -1067,15 +1066,28 @@ impl Checker<'_> {
             }
             Some(Type::NEVER) | None => checked,
             Some(got) => {
-                self.frame(target).valued.get_or_insert(span);
-                match want {
-                    Some((ty, _)) if ty == UNKNOWN => checked,
-                    Some((ty, first)) => {
-                        self.against(v, checked, Some(ty), first.map(MismatchSource::Break))
+                // Checking `v` can set the first type, through a `break` of this loop inside it.
+                let frame = self.frame(target);
+                frame.valued.get_or_insert(span);
+                match (frame.expected, frame.first) {
+                    (Some(ty), _) if ty == UNKNOWN => checked,
+                    // A value that fits the expected type keeps its own, as a block's value does,
+                    // and joins the others as `if` branches do: a `T` and a `T?` make a `T?`.
+                    (Some(ty), Some((first, _))) if fits(ty, got) && fits(first, got) => {
+                        self.against(v, checked, Some(first), None).0
+                    }
+                    (Some(ty), first) if fits(ty, got) => {
+                        frame.widened = first.is_some();
+                        frame.first = Some((got, span));
+                        checked
+                    }
+                    (Some(ty), _) => self.against(v, checked, Some(ty), None).0,
+                    (None, Some((first, at))) => {
+                        self.against(v, checked, Some(first), Some(MismatchSource::Break(at)))
                             .0
                     }
-                    None => {
-                        self.frame(target).first = Some((got, span));
+                    (None, None) => {
+                        frame.first = Some((got, span));
                         checked
                     }
                 }
@@ -1279,6 +1291,28 @@ struct ForHeader {
     limit: tir::LocalId,
     go: Option<tir::LocalId>,
     item: tir::Expr,
+}
+
+/// Wraps into `ty` each value of another type that a `break` in `e` gives the loop `depth` loops
+/// out from `e`: the `T` values of a loop that a `T?` value widened.
+fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type) {
+    let inner = depth + usize::from(matches!(e.kind, ExprKind::Loop(_)));
+    e.each_child_mut(&mut |child| wrap_breaks(child, inner, ty));
+    if let ExprKind::Break {
+        depth: target,
+        value: Some(value),
+    } = &mut e.kind
+        && *target == depth
+        && value.ty != ty
+    {
+        let placeholder = tir::Expr {
+            kind: ExprKind::None,
+            ty,
+            span: value.span,
+        };
+        let payload = std::mem::replace(&mut **value, placeholder);
+        **value = wrap(payload, ty);
+    }
 }
 
 /// The type a statement gives its block when it comes last.

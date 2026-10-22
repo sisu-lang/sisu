@@ -167,6 +167,10 @@ impl LoopKind {
 }
 
 /// A loop whose body is being checked, and what the `break`s that target it have given.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact, set by a different jump or value"
+)]
 struct LoopFrame {
     kind: LoopKind,
     keyword: Span,
@@ -175,11 +179,14 @@ struct LoopFrame {
     label_used: bool,
     /// Whether a `break` has targeted it.
     broken: bool,
-    /// The type the position around a `loop` expects; `UNKNOWN` for an `Error` one.
+    /// The type the position around a `loop` expects, each value's hint; `UNKNOWN` for an
+    /// `Error` one.
     expected: Option<Type>,
-    /// The type of the first value whose type is neither `never` nor `Error`, with no expected
-    /// type, and its `break`'s span.
+    /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
+    /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
     first: Option<(Type, Span)>,
+    /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
+    widened: bool,
     /// The first bare `break`.
     bare: Option<Span>,
     /// The first `break` whose value's type is not `never`.
@@ -207,6 +214,7 @@ impl LoopFrame {
             bare: None,
             valued: None,
             failed: false,
+            widened: false,
         }
     }
 
@@ -223,9 +231,8 @@ impl LoopFrame {
                 Type::NEVER
             });
         }
-        self.expected
-            .or(self.first.map(|(ty, _)| ty))
-            .filter(|&ty| ty != UNKNOWN)
+        // Under an `Error` expectation no value sets `first`.
+        self.first.map(|(ty, _)| ty)
     }
 }
 

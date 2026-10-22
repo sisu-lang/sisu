@@ -864,6 +864,43 @@ fn expected_type_checks_every_break() {
     );
 }
 
+/// A `T?` expected after a `T` value widens the loop, as an `if`'s branches join.
+#[test]
+fn optional_value_after_payload_widens_the_loop() {
+    let src = "fn f(c: bool) -> i64? {\n    loop {\n        if c { break 5 }\n        break None\n    }\n}\nfn main() {}";
+    assert_eq!(loop_type(src), Type::optional(Type::I64));
+}
+
+/// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
+#[test]
+fn loop_after_coalesce_is_its_values_type() {
+    clean(
+        "fn opt() -> i64? { None }\nfn main() {\n    let x: i64 = opt() ?? loop { break 7 }\n    print(x)\n}",
+    );
+}
+
+/// A later branch expects the first's type made optional, which a loop does not take on.
+#[test]
+fn loop_in_a_later_branch_is_its_values_type() {
+    clean(
+        "fn main() {\n    let c = true\n    let q = if c { loop { break 1 } } else { loop { break 2 } }\n    print(q + 1)\n}",
+    );
+}
+
+#[test]
+fn string_loop_in_a_later_branch_is_not_optional() {
+    clean(
+        "fn main() {\n    let c = true\n    let s = if c { \"a\" } else { loop { break \"b\" } }\n    print(s.len())\n}",
+    );
+}
+
+#[test]
+fn loop_in_a_later_match_arm_is_its_values_type() {
+    clean(
+        "fn main() {\n    let c = true\n    let m = match c {\n        true => loop { break 3 }\n        false => loop { break 4 }\n    }\n    print(m + 1)\n}",
+    );
+}
+
 /// The loop is `never`, so the `1` after it is unreachable.
 #[test]
 fn never_values_make_loop_never() {

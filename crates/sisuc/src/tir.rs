@@ -551,6 +551,128 @@ impl Expr {
     }
 }
 
+impl Expr {
+    /// Calls `f` on each expression directly inside this one, through its blocks and places.
+    pub(crate) fn each_child_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
+        match &mut self.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::None
+            | ExprKind::ReadLine
+            | ExprKind::Local(_)
+            | ExprKind::Continue { .. }
+            | ExprKind::Break { value: None, .. }
+            | ExprKind::Return(None) => {}
+            ExprKind::Call { args, .. }
+            | ExprKind::New { args, .. }
+            | ExprKind::Variant { args, .. }
+            | ExprKind::Compare { operands: args, .. }
+            | ExprKind::Math { operands: args, .. }
+            | ExprKind::ArrayLit(args)
+            | ExprKind::Interpolate { parts: args, .. } => args.iter_mut().for_each(f),
+            ExprKind::Field { base: operand, .. }
+            | ExprKind::Len(operand)
+            | ExprKind::Chars(operand)
+            | ExprKind::Bytes(operand)
+            | ExprKind::Words(operand)
+            | ExprKind::FromChars(operand)
+            | ExprKind::Sum(operand)
+            | ExprKind::Wrap(operand)
+            | ExprKind::Convert(operand)
+            | ExprKind::Print { operand, .. }
+            | ExprKind::Panic(operand)
+            | ExprKind::Unary { operand, .. }
+            | ExprKind::Break {
+                value: Some(operand),
+                ..
+            }
+            | ExprKind::Return(Some(operand)) => f(operand),
+            ExprKind::Binary { lhs, rhs, .. }
+            | ExprKind::Concat { lhs, rhs }
+            | ExprKind::Equal { lhs, rhs, .. }
+            | ExprKind::Is { lhs, rhs }
+            | ExprKind::ArrayFill {
+                value: lhs,
+                len: rhs,
+            }
+            | ExprKind::Index {
+                base: lhs,
+                index: rhs,
+            }
+            | ExprKind::Contains {
+                base: lhs,
+                value: rhs,
+            } => {
+                f(lhs);
+                f(rhs);
+            }
+            ExprKind::If {
+                cond: scrutinee,
+                then_block,
+                else_block,
+            }
+            | ExprKind::IfSome {
+                scrutinee,
+                then_block,
+                else_block,
+                ..
+            } => {
+                f(scrutinee);
+                then_block.each_expr_mut(f);
+                if let Some(block) = else_block {
+                    block.each_expr_mut(f);
+                }
+            }
+            ExprKind::Match {
+                scrutinee, arms, ..
+            } => {
+                f(scrutinee);
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        f(guard);
+                    }
+                    arm.body.each_expr_mut(f);
+                }
+            }
+            ExprKind::Loop(block) | ExprKind::Block(block) => block.each_expr_mut(f),
+        }
+    }
+}
+
+impl Block {
+    /// Calls `f` on each expression directly in the block's statements, places and value.
+    pub(crate) fn each_expr_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
+        for stmt in &mut self.stmts {
+            match stmt {
+                Stmt::Let { init: e, .. } | Stmt::Expr(e) => f(e),
+                Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+                    place.each_expr_mut(f);
+                    f(value);
+                }
+            }
+        }
+        if let Some(value) = &mut self.value {
+            f(value);
+        }
+    }
+}
+
+impl Place {
+    fn each_expr_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
+        match self {
+            Place::Local(_) => {}
+            Place::Field { base, .. } => f(base),
+            Place::Index { base, index } => {
+                base.each_expr_mut(f);
+                f(index);
+            }
+        }
+    }
+}
+
 impl Block {
     fn exits(&self) -> bool {
         self.stmts.iter().any(Stmt::exits) || self.value.as_ref().is_some_and(|v| v.exits())
