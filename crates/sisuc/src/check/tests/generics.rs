@@ -214,6 +214,15 @@ fn a_failed_list_with_a_comma_hides_the_count() {
             "fn f(b: i64) -> bool { h(U.A < b, b > (1)) }\nenum U { A }",
             vec![(Code::TypeArguments, (1, 26))],
         ),
+        // A string's method and a number's are compared, as an array's is.
+        (
+            "fn f(s: string, b: i64) -> bool { h(s.len < b, b > (1)) }",
+            vec![(Code::TypeArguments, (1, 37))],
+        ),
+        (
+            "fn f(x: f64, b: f64) -> bool { h(x.sqrt < b, b > (1.0)) }",
+            vec![(Code::TypeArguments, (1, 34))],
+        ),
         // A built-in's member that is no method is reported unknown, whatever follows it.
         (
             "fn f(a: [i64], b: i64) -> bool { h(a.nope < b, b > (1)) }",
