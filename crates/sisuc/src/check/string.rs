@@ -17,6 +17,9 @@ use crate::diagnostic::{
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
+/// The methods of a `string`, none of which takes an argument.
+pub(super) const METHODS: [&str; 4] = ["len", "chars", "bytes", "words"];
+
 impl Checker<'_> {
     /// `l + r` over two `string`s, which `mismatched` says were reported against.
     pub(super) fn concat(
@@ -285,12 +288,7 @@ impl Checker<'_> {
             "words" => (Type::array(Type::STRING), tir::ExprKind::Words),
             _ => {
                 let owner = self.type_name(Type::STRING);
-                let d = no_member(
-                    Definition::Method,
-                    owner,
-                    method,
-                    ["len", "chars", "bytes", "words"],
-                );
+                let d = no_member(Definition::Method, owner, method, METHODS);
                 return self.rejected(d, args);
             }
         };

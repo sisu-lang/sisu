@@ -7,6 +7,9 @@ use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
+/// The methods of an array, with their parameter counts.
+pub(super) const METHODS: [(&str, usize); 3] = [("len", 0), ("sum", 0), ("contains", 1)];
+
 impl Checker<'_> {
     /// `[a, b, ...]`. With an expected `[E]` or `[E]?`, each element is checked against `E`.
     /// Without one, the elements join (see `joined`). A `[]` takes its type from `expected`.
@@ -223,7 +226,7 @@ impl Checker<'_> {
     }
 
     /// `receiver.method(args)` on `receiver`, an array of type `ty`, written at `at`. The
-    /// methods: `len()`, `sum()` on an `[i64]` or an `[f64]`, and `contains(x)`, whose argument
+    /// `METHODS`: `len()`, `sum()` on an `[i64]` or an `[f64]`, and `contains(x)`, whose argument
     /// is checked as an element, which has `==` unless its type names a type parameter.
     pub(super) fn array_method(
         &mut self,
@@ -237,18 +240,10 @@ impl Checker<'_> {
             unreachable!("`method_call` should pass an array type to `array_method`");
         };
         let name = method.name.as_str();
-        let arity = match name {
-            "len" | "sum" => 0,
-            "contains" => 1,
-            _ => {
-                let d = no_member(
-                    Definition::Method,
-                    self.type_name(ty),
-                    method,
-                    ["len", "sum", "contains"],
-                );
-                return self.rejected(d, args);
-            }
+        let Some(&(_, arity)) = METHODS.iter().find(|(m, _)| *m == name) else {
+            let names = METHODS.iter().map(|&(m, _)| m);
+            let d = no_member(Definition::Method, self.type_name(ty), method, names);
+            return self.rejected(d, args);
         };
         if args.len() != arity {
             let d = DiagnosticKind::ArgumentCount {

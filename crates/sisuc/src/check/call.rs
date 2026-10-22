@@ -5,11 +5,11 @@ use std::fmt;
 
 use super::expr::{no_member, postfix};
 use super::generic::{GenericSig, Site, could_be_value, mark, mismatched};
-use super::number;
 use super::prelude::PRELUDE;
 use super::{
     Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, built_in_type, own_args, type_of,
 };
+use super::{array, number, string};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, Suggestion, alias, suggestion,
@@ -232,8 +232,11 @@ impl Checker<'_> {
                         )
                     });
                     // A built-in's method takes no type arguments, so two that could be values
-                    // were comparisons.
-                    if deferred && types.len() > 1 && could_be_value(first) {
+                    // were comparisons. An unknown one is reported as unknown.
+                    let known = type_of(&checked)
+                        .and_then(|ty| built_in_arity(ty, method.name.as_str()))
+                        .is_some();
+                    if known && types.len() > 1 && could_be_value(first) {
                         deferred = false;
                         c.stray(args);
                         let at = receiver.span.to(method.span);
@@ -583,5 +586,17 @@ fn misplaced(
             label,
             fields.iter().map(|field| field.as_str()),
         ))
+    }
+}
+
+/// The parameter count of the built-in method `name` of `ty`, if `ty` has one.
+fn built_in_arity(ty: Type, name: &str) -> Option<usize> {
+    match ty.kind() {
+        TypeKind::Array(_) => (array::METHODS.iter())
+            .find(|(method, _)| *method == name)
+            .map(|&(_, params)| params),
+        TypeKind::String => string::METHODS.contains(&name).then_some(0),
+        TypeKind::I64 | TypeKind::F64 => number::method(ty, name).map(|(_, params)| params),
+        _ => None,
     }
 }

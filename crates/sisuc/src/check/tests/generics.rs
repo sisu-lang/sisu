@@ -169,38 +169,15 @@ fn a_class_qualifier_fits_no_enum() {
     );
 }
 
-/// Comparisons misread as a call take the commas of the argument list they sit in, which then
-/// has its count of arguments not reported: a function's, a variant's, a method's or a class's,
-/// and wherever operators put the comparison in its argument. A list around that one, or around
-/// a block that holds the comparison, still has its count reported.
+/// The declarations the misread-comparison tests call.
+const MISREAD_DECLS: &str = "enum E { A(bool, bool) }\nclass K {\n    fn m(self, x: bool, y: bool) {}\n}\nclass C {\n    x: bool\n    y: bool\n}\nfn g(x: i64) -> i64 { x }\nfn h(x: bool, y: bool) -> bool { x }\nfn p(x: bool, y: bool) {}\nfn main() {}";
+
+/// Any `a<b, c>(d)` that does not check hides the count, whatever `a` is: a member of a type
+/// that is a value, and a built-in's method, are compared, and an unknown name is reported
+/// alone. One that checks, or a list without a comma, does not.
 #[test]
-fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
-    let decls = "enum E { A(bool, bool) }\nclass K {\n    fn m(self, x: bool, y: bool) {}\n}\nclass C {\n    x: bool\n    y: bool\n}\nfn g(x: i64) -> i64 { x }\nfn h(x: bool, y: bool) -> bool { x }\nfn p(x: bool, y: bool) {}\nfn main() {}";
-    let misread = |col| (Code::TypeArguments, (1, col));
-    let count = (Code::ArgumentCount, (1, 40));
-    for (line, expected) in [
-        (
-            "fn f(a: i64, b: i64, c: i64, d: i64) -> E { E.A(a < b, c > (d)) }",
-            vec![misread(49)],
-        ),
-        (
-            "fn f(k: K, a: i64, b: i64, c: i64, d: i64) { k.m(a < b, c > (d)) }",
-            vec![misread(50)],
-        ),
-        (
-            "fn f(a: i64, b: i64, c: i64, d: i64) { g(1, { h(a < b, c > (d))\n 2 }) }",
-            vec![count, misread(49)],
-        ),
-        (
-            "fn f(a: i64, b: i64, c: i64, d: i64) { g(1, 2, h(a < b, c > (d))) }",
-            vec![count, misread(50)],
-        ),
-    ] {
-        codes(&format!("{line}\n{decls}"), &expected);
-    }
-    // Any `a<b, c>(d)` that does not check hides the count, whatever `a` is: a member of a type
-    // that is a value, and a built-in's method, are compared, and an unknown name is reported
-    // alone. One that checks, or a list without a comma, does not.
+fn a_failed_list_with_a_comma_hides_the_count() {
+    let decls = MISREAD_DECLS;
     for (line, expected) in [
         (
             "fn f(x: f64) -> bool { h(f64.pi < x, x > (1.0)) }",
@@ -209,6 +186,15 @@ fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
         (
             "fn f(b: i64) -> bool { h(U.A < b, b > (1)) }\nenum U { A }",
             vec![(Code::TypeArguments, (1, 26))],
+        ),
+        // A built-in's member that is no method is reported unknown, whatever follows it.
+        (
+            "fn f(a: [i64], b: i64) -> bool { h(a.nope < b, b > (1)) }",
+            vec![(Code::NoMember, (1, 38))],
+        ),
+        (
+            "fn f(s: string, b: i64) -> bool { h(s.nope < b, b > (1)) }",
+            vec![(Code::NoMember, (1, 39))],
         ),
         // A list without a comma after a built-in's method, or one after another receiver's
         // method, takes no type arguments.
@@ -238,6 +224,37 @@ fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
         (
             "fn f() -> bool { h(two<i64, bool>(1, true)) }\nfn two<T, U>(t: T, u: U) -> bool { true }",
             vec![(Code::ArgumentCount, (1, 18))],
+        ),
+    ] {
+        codes(&format!("{line}\n{decls}"), &expected);
+    }
+}
+
+/// Comparisons misread as a call take the commas of the argument list they sit in, which then
+/// has its count of arguments not reported: a function's, a variant's, a method's or a class's,
+/// and wherever operators put the comparison in its argument. A list around that one, or around
+/// a block that holds the comparison, still has its count reported.
+#[test]
+fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
+    let decls = MISREAD_DECLS;
+    let misread = |col| (Code::TypeArguments, (1, col));
+    let count = (Code::ArgumentCount, (1, 40));
+    for (line, expected) in [
+        (
+            "fn f(a: i64, b: i64, c: i64, d: i64) -> E { E.A(a < b, c > (d)) }",
+            vec![misread(49)],
+        ),
+        (
+            "fn f(k: K, a: i64, b: i64, c: i64, d: i64) { k.m(a < b, c > (d)) }",
+            vec![misread(50)],
+        ),
+        (
+            "fn f(a: i64, b: i64, c: i64, d: i64) { g(1, { h(a < b, c > (d))\n 2 }) }",
+            vec![count, misread(49)],
+        ),
+        (
+            "fn f(a: i64, b: i64, c: i64, d: i64) { g(1, 2, h(a < b, c > (d))) }",
+            vec![count, misread(50)],
         ),
     ] {
         codes(&format!("{line}\n{decls}"), &expected);
