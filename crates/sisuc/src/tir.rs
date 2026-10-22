@@ -2158,6 +2158,21 @@ mod tests {
                 },
                 2,
             ),
+            // `2` is a grandchild, under the `-`, which `f` would have to reach itself.
+            (
+                ExprKind::Binary {
+                    op: BinaryOp::Add,
+                    lhs: n(1),
+                    rhs: Box::new(expr(
+                        ExprKind::Unary {
+                            op: UnaryOp::Neg,
+                            operand: n(2),
+                        },
+                        Type::I64,
+                    )),
+                },
+                1,
+            ),
             (
                 ExprKind::Concat {
                     lhs: n(1),
