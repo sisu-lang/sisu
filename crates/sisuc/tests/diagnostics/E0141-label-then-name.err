@@ -1,0 +1,13 @@
+error[E0141]: `break` with a value in a `for`
+ --> E0141-label-then-name.sisu:4:25
+  |
+2 |     outer: for x in [1, 2] {
+  |            --- this `for` has no value
+3 |         for y in [3, 4] {
+4 |             break outer outr
+  |                         ^^^^
+  |
+  = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0141

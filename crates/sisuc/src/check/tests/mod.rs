@@ -930,19 +930,6 @@ fn continue_to_missing_label_in_header_is_missing_label() {
     );
 }
 
-/// A loop label named by a jump is E0142 when a constant or a class of its name is in scope.
-#[test]
-fn loop_label_clashes_with_items() {
-    codes(
-        "const n = 1\nfn main() {\n    n: loop { break n }\n}",
-        &[(Code::LabelClash, (3, 21))],
-    );
-    codes(
-        "class Box {}\nfn main() {\n    Box: loop { break Box }\n}",
-        &[(Code::LabelClash, (3, 23))],
-    );
-}
-
 /// `continue name` outside every loop is the jump outside a loop, not a missing loop label.
 #[test]
 fn labeled_continue_outside_loop() {
@@ -973,13 +960,17 @@ fn loop_label_reuse_and_unused() {
     );
 }
 
-/// `break name` in a `for` is a misspelled loop label only when `name` is close to one; any
-/// other name is the value the `for` cannot take.
+/// `break name` in a `for` is a misspelled loop label only when `name` is close to an open loop
+/// label and names nothing in scope; otherwise it is the value the `for` cannot take.
 #[test]
 fn break_name_is_a_label_only_near_one() {
     codes(
-        "fn f() {\n    for x in [1] {\n        break nope\n    }\n}\nfn main() {}",
+        "fn f() {\n    outer: for x in [1] {\n        break nope\n    }\n}\nfn main() {}",
         &[(Code::BreakValueNotLoop, (3, 15))],
+    );
+    codes(
+        "fn f() {\n    let outr = 1\n    outer: for x in [1] {\n        break outr\n    }\n}\nfn main() {}",
+        &[(Code::BreakValueNotLoop, (4, 15))],
     );
 }
 

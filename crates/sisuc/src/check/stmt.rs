@@ -15,6 +15,7 @@ use crate::diagnostic::{ClashForm, ClashKind, DiagnosticKind, MismatchSource, Un
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
+use std::slice::SliceIndex;
 
 /// The most values of one statement that share one fix.
 // shortcut: past the cap the warnings offer no fix; store one fix per statement and share it if
@@ -678,12 +679,21 @@ impl Checker<'_> {
     /// error, and is reported when no jump names it.
     fn loop_body<T>(&mut self, frame: LoopFrame, f: impl FnOnce(&mut Self) -> T) -> (T, LoopFrame) {
         let outer = frame.label.as_ref().and_then(|label| {
-            let outer = self.open_labels().rev().find(|l| l.name == label.name);
-            outer.map(|l| l.span)
+            let at = self.label_index(label.name.as_str())?;
+            Some((
+                at,
+                self.open_labels_at(at)
+                    .expect("the loop label found there should be open")
+                    .span,
+            ))
         });
-        if let (Some(label), Some(outer)) = (&frame.label, outer) {
-            // Deleting either loop label would fix the error, so neither warns as unused.
+        let mut frame = frame;
+        if let (Some(label), Some((at, outer))) = (&frame.label, outer) {
+            // Deleting either loop label would fix the error, so neither warns as unused, and
+            // neither loop gets a type: their jumps may have meant the other one.
             self.body.failed_labels.extend([outer, label.span]);
+            self.fail_loops(at..=at);
+            frame.failed = true;
             self.report(DiagnosticKind::LabelReused {
                 name: label.name.to_string(),
                 at: label.span,
@@ -710,10 +720,33 @@ impl Checker<'_> {
 
     /// The loop labels open around the code being checked, innermost last.
     pub(super) fn open_labels(&self) -> impl DoubleEndedIterator<Item = &ast::Ident> {
-        self.body.loops.iter().filter_map(|context| match context {
+        (0..self.body.loops.len()).filter_map(|at| self.open_labels_at(at))
+    }
+
+    /// The loop label of the loop context at `at` in `body.loops`, if it has one.
+    fn open_labels_at(&self, at: usize) -> Option<&ast::Ident> {
+        match &self.body.loops[at] {
             LoopContext::Body(frame) => frame.label.as_ref(),
             LoopContext::Header { label, .. } => label.as_ref(),
+        }
+    }
+
+    /// Where in `body.loops` the innermost open loop label `name` is.
+    fn label_index(&self, name: &str) -> Option<usize> {
+        (0..self.body.loops.len()).rev().find(|&at| {
+            self.open_labels_at(at)
+                .is_some_and(|l| l.name.as_str() == name)
         })
+    }
+
+    /// Fails the loop bodies in `range` of `body.loops`: they get no type, so the code after
+    /// them reports nothing more.
+    fn fail_loops(&mut self, range: impl SliceIndex<[LoopContext], Output = [LoopContext]>) {
+        for context in &mut self.body.loops[range] {
+            if let LoopContext::Body(frame) = context {
+                frame.failed = true;
+            }
+        }
     }
 
     /// Records that a failed jump named the innermost open loop label `name`, so that it is not
@@ -723,7 +756,15 @@ impl Checker<'_> {
         let span = label
             .expect("a failed jump should name an open loop label")
             .span;
-        self.body.failed_labels.push(span);
+        self.body.failed_labels.insert(span);
+    }
+
+    /// Skips a `break` value that is not checked: a jump in it may name any open loop, so every
+    /// open loop gets no type and no open loop label is reported unused.
+    fn skip_value(&mut self) {
+        let labels: Vec<Span> = self.open_labels().map(|l| l.span).collect();
+        self.body.failed_labels.extend(labels);
+        self.fail_loops(..);
     }
 
     /// "no loop label `name`" for `name` after `keyword`, offering the closest open loop label,
@@ -736,6 +777,14 @@ impl Checker<'_> {
         .map(str::to_string);
         if let Some(label) = &suggestion {
             self.named_by_failed_jump(label);
+            if keyword == "break" {
+                // The `break` was meant to leave that loop, so it and the loops inside it get
+                // no type.
+                let at = self
+                    .label_index(label)
+                    .expect("a suggested loop label should be open");
+                self.fail_loops(at..);
+            }
         }
         self.report(DiagnosticKind::MissingLabel {
             name: name.name.to_string(),
@@ -800,9 +849,29 @@ impl Checker<'_> {
                 declared: at.expect("a jump's loop label should be its target's"),
                 form: ClashForm::Name { kind, declared },
             });
+            // The loop label may have meant the name, so the loop gets no type, and the value
+            // is not checked.
+            self.frame(target).failed = true;
+            if value.is_some() {
+                self.skip_value();
+            }
+            return Err(Poisoned::error());
         }
+        // Only a bare name right after an unlabeled `break` may be a misspelled loop label; a
+        // parenthesized name spans its parentheses.
+        let typo = value.and_then(|v| match v.kind {
+            ast::ExprKind::Name(name)
+                if label.is_none() && v.span.range().len() == name.as_str().len() =>
+            {
+                Some(ast::Ident { name, span: v.span })
+            }
+            _ => None,
+        });
         let value = value
-            .map(|v| self.break_value(span, target, v).map(Box::new))
+            .map(|v| {
+                self.break_value(span, target, v, typo.as_ref())
+                    .map(Box::new)
+            })
             .transpose()?;
         let frame = self.frame(target);
         if value.is_none() && keyword == "break" && frame.kind == LoopKind::Loop {
@@ -865,11 +934,7 @@ impl Checker<'_> {
             Some(loop_at) if found.is_some() || label.is_none() => {
                 // The loops the jump would leave, its target included, get no type, so neither
                 // the header nor the code after the target reports more.
-                for context in &mut self.body.loops[found.unwrap_or(0)..] {
-                    if let LoopContext::Body(frame) = context {
-                        frame.failed = true;
-                    }
-                }
+                self.fail_loops(found.unwrap_or(0)..);
                 if let Some(label) = label {
                     self.named_by_failed_jump(label.name.as_str());
                 }
@@ -933,20 +998,31 @@ impl Checker<'_> {
     }
 
     /// `v`, the value of the `break` at `span` whose target is the loop body at `target`, checked
-    /// by the loop's type rule. A failed value fails the loop.
-    fn break_value(&mut self, span: Span, target: usize, v: &ast::Expr) -> Checked {
+    /// by the loop's type rule. A failed value fails the loop. `typo` is `v` when it is a bare
+    /// name right after an unlabeled `break`, which may be a misspelled loop label.
+    fn break_value(
+        &mut self,
+        span: Span,
+        target: usize,
+        v: &ast::Expr,
+        typo: Option<&ast::Ident>,
+    ) -> Checked {
         let frame = self.frame(target);
         if frame.kind != LoopKind::Loop {
             frame.failed = true;
             let (keyword, loop_at) = (frame.kind.keyword(), frame.keyword);
             // `break outr`, a misspelled loop label, rather than a value.
-            if let ast::ExprKind::Name(name) = v.kind
-                && self.in_scope(name).is_none()
-                && closest(name.as_str(), self.open_labels().map(|l| l.name.as_str())).is_some()
+            if let Some(name) = typo
+                && self.in_scope(name.name).is_none()
+                && closest(
+                    name.name.as_str(),
+                    self.open_labels().map(|l| l.name.as_str()),
+                )
+                .is_some()
             {
-                let name = ast::Ident { name, span: v.span };
-                self.missing_label(&name, "break");
+                self.missing_label(name, "break");
             } else {
+                self.skip_value();
                 self.report(DiagnosticKind::BreakValueNotLoop {
                     keyword,
                     at: v.span,
@@ -966,7 +1042,9 @@ impl Checker<'_> {
             .and_then(|(_, first)| first)
             .map(|first| (v.span, first));
         let outer = std::mem::replace(&mut self.body.break_hint, from);
+        self.body.label_typo = typo.map(|name| name.span);
         let checked = self.expr(v, hint.map(|(ty, _)| ty));
+        self.body.label_typo = None;
         self.body.break_hint = outer;
         // A failed value fails the loop, and gives it no type and no second report.
         if checked.is_err() {

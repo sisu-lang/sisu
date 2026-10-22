@@ -1,0 +1,7 @@
+class Box {}
+
+fn main() {
+    Box: loop {
+        break Box
+    }
+}

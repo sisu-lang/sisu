@@ -1,0 +1,11 @@
+fn pick(c: bool) {
+    outer: for x in [1, 2] {
+        for y in [3, 4] {
+            break if c { 1 } else { continue outer }
+        }
+    }
+}
+
+fn main() {
+    pick(true)
+}

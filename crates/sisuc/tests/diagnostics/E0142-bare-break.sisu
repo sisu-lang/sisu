@@ -1,0 +1,14 @@
+fn pick(c: bool) {
+    let n = 1
+    let x = n: loop {
+        if c {
+            break
+        }
+        break n 2
+    }
+    print(x)
+}
+
+fn main() {
+    pick(true)
+}

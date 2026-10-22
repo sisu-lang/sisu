@@ -1,0 +1,15 @@
+error[E0142]: loop label `limit` has the same name as the constant `limit`
+ --> E0142-constant.sisu:5:15
+  |
+1 | const limit = 3
+  |       ----- the constant is declared here
+...
+4 |     limit: loop {
+  |     ----- loop label declared here
+5 |         break limit
+  |               ^^^^^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

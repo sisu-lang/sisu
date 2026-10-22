@@ -1,0 +1,7 @@
+fn main() {
+    outer: for x in [1, 2] {
+        for y in [3, 4] {
+            break (outr)
+        }
+    }
+}

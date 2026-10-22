@@ -1,0 +1,12 @@
+error[E0143]: loop label `outer` is already used by an enclosing loop
+ --> E0143-loop-value-used.sisu:3:9
+  |
+2 |     let x = outer: loop {
+  |             ----- the enclosing loop's label
+3 |         outer: for y in [1, 2] {
+  |         ^^^^^
+  |
+  = help: rename one of the loop labels
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0143

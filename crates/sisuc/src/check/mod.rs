@@ -290,7 +290,10 @@ struct Body {
     invalid_jump: bool,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which
     /// is not reported unused: its own error is.
-    failed_labels: Vec<Span>,
+    failed_labels: FxHashSet<Span>,
+    /// The bare name right after an unlabeled `break`, which may be a misspelled loop label:
+    /// only there does E0033 offer the open loop labels.
+    label_typo: Option<Span>,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
@@ -901,9 +904,9 @@ impl Checker<'_> {
         })
     }
 
-    /// "cannot find binding `name`", offering the closest binding of any open scope or open loop
-    /// label. A type's name, built in or a class's or an enum's, is in scope, but as a type:
-    /// that is reported instead.
+    /// "cannot find binding `name`", offering the closest binding of any open scope, and of any
+    /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
+    /// an enum's, is in scope, but as a type: that is reported instead.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
         if built_in_type(name.as_str()).is_some()
             || self.class_ids.contains_key(&name)
@@ -923,6 +926,7 @@ impl Checker<'_> {
             .map(|binding| (binding.as_str(), Definition::Binding));
         let labels = self
             .open_labels()
+            .filter(|_| self.body.label_typo == Some(span))
             .map(|label| (label.name.as_str(), Definition::LoopLabel));
         let suggestion = suggestion(name.as_str(), bindings.chain(labels));
         if let Some(found) = &suggestion

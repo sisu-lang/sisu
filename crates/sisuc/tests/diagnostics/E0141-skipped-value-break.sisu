@@ -1,0 +1,8 @@
+fn main() {
+    let r = outer: loop {
+        for x in [1] {
+            break loop { break outer -1 }
+        }
+    }
+    print(r)
+}

@@ -3249,6 +3249,11 @@ mod tests {
             parse_err("fn main() {\n    _: loop { }\n}"),
             (Code::LabelNotOnLoop, 2, 5)
         );
+        // Fewer than three tokens after the `=`: no loop label, and the missing value is the error.
+        assert_eq!(
+            parse_err("fn main() {\n    let x =\n}"),
+            (Code::Expected, 3, 1)
+        );
     }
 
     /// After `break`, a name is the loop label only while a loop with that label is open around
