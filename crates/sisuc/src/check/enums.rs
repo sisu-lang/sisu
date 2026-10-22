@@ -1,7 +1,7 @@
 //! Enum declarations: their variants and payloads, the names they cannot take, which enums no
 //! value can be built of, the boxes that break a cycle, and which enums are counted.
 
-use std::{fmt, mem};
+use std::{fmt, iter, mem};
 
 use rustc_hash::FxHashMap;
 
@@ -42,6 +42,19 @@ pub(super) fn reserved_name(name: &str) -> Option<BuiltIn> {
         "Option" | "Result" => Some(BuiltIn::Type),
         "Some" | "Ok" | "Err" => Some(BuiltIn::Constructor),
         _ => None,
+    }
+}
+
+/// The enum declarations `ty` names where a value of it holds them inline: `ty` itself, or its
+/// optional's payload, and the type arguments of each enum it names, through optionals.
+fn inline_enums(ty: Type) -> Vec<usize> {
+    match ty.kind() {
+        TypeKind::Optional(payload) => inline_enums(payload),
+        TypeKind::Enum(id, args) => {
+            let args = args.get().iter().flat_map(|&arg| inline_enums(arg));
+            iter::once(id.0).chain(args).collect()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -391,14 +404,28 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Lowers every enum, with each payload field's `generic` and `param` from its declared
+    /// Lowers every enum, with each payload field's `generic` and `late` from its declared
     /// type, and lays them out (`tir::layout_enums`). Reports the enums no value can be built
     /// of; `cyclic` marks the classes on a cycle of fields, which `never_constructed` reports.
     /// Returns the enums, and which declarations have an error of that kind, as `never_built`
     /// does.
     pub(super) fn lower_enums(&mut self, cyclic: &[bool]) -> (Vec<tir::Enum>, Vec<bool>) {
-        let mut lowered: Vec<tir::Enum> = (self.enums.iter())
-            .map(|info| tir::Enum {
+        // The declarations each enum's `generic` fields name, inline (see `Payload::late`); a
+        // program without a generic enum has no such field and skips the graph.
+        let declared = if self.enums.iter().any(|info| !info.type_params.is_empty()) {
+            let named: Vec<Vec<usize>> = (self.enums.iter())
+                .map(|info| {
+                    let fields = info.variants.iter().flat_map(|v| v.fields.iter().flatten());
+                    let generic = fields.filter(|ty| ty.has_param());
+                    generic.flat_map(|&ty| inline_enums(ty)).collect()
+                })
+                .collect();
+            components(&named)
+        } else {
+            Vec::new()
+        };
+        let mut lowered: Vec<tir::Enum> = (self.enums.iter().enumerate())
+            .map(|(e, info)| tir::Enum {
                 name: info.name.name.to_string(),
                 type_params: info.type_params.iter().map(Symbol::to_string).collect(),
                 variants: (info.variants.iter())
@@ -408,15 +435,13 @@ impl Checker<'_> {
                             .map(|&ty| {
                                 // An `Error` field's error stops the program before codegen.
                                 let ty = ty.unwrap_or(Type::NEVER);
-                                let bare = match ty.kind() {
-                                    TypeKind::Optional(payload) => payload,
-                                    _ => ty,
-                                };
+                                let late = ty.has_param()
+                                    && inline_enums(ty).iter().any(|&n| declared[n] == declared[e]);
                                 tir::Payload {
                                     ty,
                                     boxed: false,
                                     generic: ty.has_param(),
-                                    param: matches!(bare.kind(), TypeKind::Param(..)),
+                                    late,
                                 }
                             })
                             .collect(),

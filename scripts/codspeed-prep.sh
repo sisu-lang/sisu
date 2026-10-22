@@ -123,7 +123,8 @@ fn step$i(x: i64) -> i64 {
     let p = Pair$i(a: pick$i([K$i], 0), b: pick$i(["g"], ""))
     let t = Tree$i.Node(Tree$i.Leaf, p.first(), Tree$i.Leaf)
     let u = Tree$i.Node(Tree$i.Leaf, p.b, Tree$i.Node(Tree$i.Leaf, "h", Tree$i.Leaf))
-    let generic = t.size() + u.size() - 3 + p.first() - K$i
+    let q = Pair$i(a: p.b, b: p.first())
+    let generic = t.size() + u.size() - 3 + q.b - K$i
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU

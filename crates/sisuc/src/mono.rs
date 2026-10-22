@@ -690,8 +690,9 @@ mod tests {
     /// generic type: a field whose declared type is a parameter, or an optional of one, is never
     /// boxed, and a field whose declared type names a parameter only when a cycle remains
     /// without it, as `B<i64>.Y`'s does through `A<B<i64>>.X`, a parameter field, and `C<i64>.Y`'s
-    /// through `D<C<i64>>.X`, an optional of one. Every member
-    /// of a component with a box is on that cycle and counted.
+    /// through `D<C<i64>>.X`, an optional of one. `G<i64>.P` closes its cycle through
+    /// `Wrap2<G<i64>>.W`, whose `Two<T>` names a parameter too, yet only `G<i64>.P` names its
+    /// own declaration. Every member of a component with a box is on that cycle and counted.
     #[test]
     fn box_goes_on_the_declaring_enum() {
         let program = instantiated(
@@ -701,7 +702,8 @@ mod tests {
              enum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}\n\
              enum A<T> {\n    X(T)\n}\nenum B<T> {\n    Y(A<B<T>>)\n    Z\n}\n\
              enum D<T> {\n    X(T?)\n}\nenum C<T> {\n    Y(D<C<T>>)\n    Z\n}\n\
-             fn main() {\n    let t: Tree<i64> = Tree.Leaf\n    let b: B<i64> = B.Z\n    let c: C<i64> = C.Z\n}",
+             enum G<T> {\n    L(T)\n    P(Wrap2<G<T>>)\n}\n\
+             fn main() {\n    let t: Tree<i64> = Tree.Leaf\n    let b: B<i64> = B.Z\n    let c: C<i64> = C.Z\n    let g: G<i64> = G.L(1)\n}",
         );
         let printed = program.to_string();
         for part in [
@@ -717,6 +719,9 @@ mod tests {
             "(enum A<B<i64>> (X B<i64>))",
             "(enum C<i64> (Y (box D<C<i64>>)) Z)",
             "(enum D<C<i64>> (X C<i64>?))",
+            "(enum G<i64> (L i64) (P (box Wrap2<G<i64>>)))",
+            "(enum Wrap2<G<i64>> (W Two<G<i64>>))",
+            "(enum Two<G<i64>> (Both G<i64> G<i64>))",
         ] {
             assert!(printed.contains(part), "`{part}` in\n{printed}");
         }

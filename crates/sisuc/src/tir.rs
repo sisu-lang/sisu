@@ -145,9 +145,11 @@ pub(crate) struct Payload {
     pub(crate) boxed: bool,
     /// Whether its declared type names a type parameter (`T`, `Tree<T>`); kept through `mono`.
     pub(crate) generic: bool,
-    /// Whether its declared type is a type parameter or an optional of one (`T`, `T?`); kept
-    /// through `mono`.
-    pub(crate) param: bool,
+    /// Whether `layout_enums` may box it after the fields that are not `generic`: its declared
+    /// type names a type parameter and, inline (`check::enums::inline_enums`), an enum
+    /// declaration on a cycle of such names with its own: `Tree<T>` in `Tree`, `Wrap2<G<T>>`
+    /// in `G`, but not `Two<T>` in `Wrap2`, nor `T`. Kept through `mono`.
+    pub(crate) late: bool,
 }
 
 #[derive(Debug)]
@@ -496,11 +498,14 @@ impl Type {
 
 /// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
 /// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
-/// the declaring enum's own field, never on one inside a generic type: within a component, the
-/// fields whose declared type names no parameter are boxed first, and a `generic` field only
-/// when a cycle remains without it (`Tree<T>`'s self-edge). A `param` field is never boxed: a
-/// cycle made only of such fields would be an infinite type. Every member of a component with
-/// a box is on that cycle, and counted, though a member may hold its links inline.
+/// the declaring enum's own field, never on one inside a generic type: the fields whose
+/// declared type names no parameter are boxed first, on any cycle through them, and then the
+/// `late` ones on a cycle that remains (`Tree<T>`'s self-edge, or `G<i64>.P` in
+/// `enum G<T> { P(Wrap2<G<T>>) }`). A cycle that remains holds a `late` field, since each of
+/// its enums' declarations is named by a generic field of another on it, so the names close a
+/// cycle of declarations. No other field is boxed: not `Wrap2<G<i64>>.W`, nor a `T`. Every
+/// member of a component with a box is on that cycle, and counted, though a member may hold its
+/// links inline.
 pub(crate) fn layout_enums(enums: &mut [Enum]) {
     // The holds-inline graph over the fields `keep` picks.
     let held = |enums: &[Enum], keep: fn(&Payload) -> bool| -> Vec<Vec<usize>> {
@@ -523,20 +528,19 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
                     .is_some_and(|f| component[f.0] == component[e]);
         }
     }
-    // A field the second pass may box; a program without one skips that pass's graph.
-    let late = |p: &Payload| p.generic && !p.param;
+    // A program without a `late` field skips the second pass's graph.
     let mut fields = enums
         .iter()
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields);
-    if fields.any(late) {
+    if fields.any(|p| p.late) {
         let remaining = components(&held(enums, |p| !p.boxed));
         for (e, info) in enums.iter_mut().enumerate() {
             for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
                 let on_cycle =
                     p.ty.inline_enum()
                         .is_some_and(|f| remaining[f.0] == remaining[e]);
-                p.boxed |= late(p) && on_cycle;
+                p.boxed |= p.late && on_cycle;
             }
         }
     }
@@ -1672,7 +1676,7 @@ mod tests {
                             ty: Type::I64,
                             boxed: false,
                             generic: false,
-                            param: false,
+                            late: false,
                         }],
                     },
                 ],
