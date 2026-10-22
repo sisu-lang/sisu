@@ -53,7 +53,7 @@ pub(crate) fn run(
 /// and the executable. Reports why it cannot, and then leaves nothing behind.
 fn build(reporter: &mut Report, source: &Source, backend: &Backend) -> Option<(PathBuf, PathBuf)> {
     // Found here, not by `ld` after a whole compile.
-    let runtime = link::runtime_library()
+    let runtime = link::runtime_library(backend.allocator.unwrap_or_default())
         .inspect_err(|message| reporter.tool_error(message))
         .ok()?;
     let (name, text) = read_source(reporter, source)?;

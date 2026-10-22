@@ -16,7 +16,7 @@ out=target/bench
 benchmarks=("$@")
 [[ ${#benchmarks[@]} -gt 0 ]] || benchmarks=(hello fib sieve binary_trees quicksort nbody mandelbrot fannkuch_redux)
 
-cargo build --release --quiet -p sisuc -p sisu-runtime
+cargo build --release --quiet -p sisuc -p sisu-runtime-mimalloc
 
 have() { command -v "$1" >/dev/null; }
 

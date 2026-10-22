@@ -22,14 +22,19 @@ const MIN: &str = "    let min = -9_223_372_036_854_775_807 - 1";
 const MAX: &str = "    let big = 9_223_372_036_854_775_807";
 
 /// Compiles `<dir>/<name>.sisu`, run from `dir`, into `<CARGO_TARGET_TMPDIR>/<name>`, or
-/// `<name>-O2` with `o2`.
-fn compile_to_tmp(dir: &Path, name: &str, o2: bool) -> PathBuf {
+/// `<name>-O2` with `o2`, passing `flags` to `sisu` too.
+fn compile_to_tmp(dir: &Path, name: &str, o2: bool, flags: &[&str]) -> PathBuf {
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join(if o2 {
         format!("{name}-O2")
     } else {
         name.to_string()
     });
-    support::compile(dir, name, &exe, if o2 { &["-O2"] } else { &[] });
+    let flags: Vec<&str> = o2
+        .then_some("-O2")
+        .into_iter()
+        .chain(flags.iter().copied())
+        .collect();
+    support::compile(dir, name, &exe, &flags);
     exe
 }
 
@@ -123,9 +128,16 @@ fn extra_allocs(name: &str, o2: bool) -> (String, String, i64) {
         |k: &str| format!("fn iterations() -> i64 {{ (read_line() ?? \"\").len() + {k} }}\n{rest}");
 
     // Own file names, so these builds never share an executable with the test of `<name>.out`.
-    let (stdout, allocs) = heap_allocs(&compile_tmp(&format!("{name}_k1000"), &build("1000"), o2));
-    let (base_stdout, base_allocs) =
-        heap_allocs(&compile_tmp(&format!("{name}_k0"), &build("0"), o2));
+    let (stdout, allocs) = heap_allocs(&compile_tmp_for_valgrind(
+        &format!("{name}_k1000"),
+        &build("1000"),
+        o2,
+    ));
+    let (base_stdout, base_allocs) = heap_allocs(&compile_tmp_for_valgrind(
+        &format!("{name}_k0"),
+        &build("0"),
+        o2,
+    ));
     let extra = i64::try_from(allocs).expect("a count fits i64")
         - i64::try_from(base_allocs).expect("a count fits i64");
     (stdout, base_stdout, extra)
@@ -218,7 +230,7 @@ fn run_in_small_stack(name: &str) -> Output {
 
 /// `run_in_small_stack` with `-O2` if `o2`.
 fn run_in_small_stack_at(name: &str, o2: bool) -> Output {
-    let exe = compile_to_tmp(Path::new(PROGRAMS), name, o2);
+    let exe = compile_to_tmp(Path::new(PROGRAMS), name, o2, &[]);
     Command::new("sh")
         .args(["-c", r#"ulimit -c 0 && ulimit -s 256 && exec "$0""#])
         .arg(exe)
@@ -339,7 +351,15 @@ fn tail_calls_overflow_the_same_stack_without_optimization() {
 fn compile_tmp(name: &str, source: &str, o2: bool) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join(format!("{name}.sisu")), source).expect("writes");
-    compile_to_tmp(dir, name, o2)
+    compile_to_tmp(dir, name, o2, &[])
+}
+
+/// `compile_tmp` with `support::VALGRIND_FLAGS`, for a build that `support::Invocation::run`
+/// runs under Valgrind.
+fn compile_tmp_for_valgrind(name: &str, source: &str, o2: bool) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    fs::write(dir.join(format!("{name}.sisu")), source).expect("writes");
+    compile_to_tmp(dir, name, o2, support::VALGRIND_FLAGS)
 }
 
 /// One test per row, `panic_cases::<name>`: `name => (source, position and message)`. The program
@@ -488,6 +508,43 @@ fn largest_array_reaches_the_allocator() {
             stderr.lines().next(),
             Some("memory allocation of 9223372036854775800 bytes failed"),
             "{stderr}"
+        );
+    }
+}
+
+/// `sisu build` links the runtime `--allocator` names: mimalloc by default, which writes
+/// `mimalloc:` lines to stderr under `MIMALLOC_VERBOSE=1`, and with `system` a runtime that
+/// holds no mimalloc.
+#[test]
+fn allocator_flag_picks_the_archive() {
+    let source = "fn main() {\n    print(1)\n}\n";
+    let default = compile_tmp("allocator_default", source, false);
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let system = dir.join("allocator_system");
+    support::compile(
+        dir,
+        "allocator_default",
+        &system,
+        &["--allocator", "system"],
+    );
+    for (exe, mimalloc) in [(default, true), (system, false)] {
+        let out = Command::new(&exe)
+            .env("MIMALLOC_VERBOSE", "1")
+            .output()
+            .expect("the program starts");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{}: {stderr}", exe.display());
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "1\n",
+            "{}",
+            exe.display()
+        );
+        assert_eq!(
+            stderr.contains("mimalloc:"),
+            mimalloc,
+            "{}: {stderr}",
+            exe.display()
         );
     }
 }
@@ -758,7 +815,7 @@ fn invalid_utf8_is_repaired_byte_for_byte() {
         let out = support::Invocation::new(b"a\xFFb\n".to_vec(), Vec::new()).run(&exe, false);
         assert_eq!(out.status.code(), Some(0), "{:?}", out.status);
         assert_eq!(out.stdout, b"a\xEF\xBF\xBDb\n");
-        let exe = compile_tmp("echo_args_repair", ECHO_ARGS, o2);
+        let exe = compile_tmp_for_valgrind("echo_args_repair", ECHO_ARGS, o2);
         let arg = OsStr::from_bytes(b"x\xFFy").to_os_string();
         let out = support::Invocation::new(Vec::new(), vec![arg]).run(&exe, true);
         assert_eq!(out.status.code(), Some(0), "{:?}", out.status);
@@ -789,7 +846,7 @@ fn read_line_refills_its_buffer() {
     input.extend(generated_lines(40_000 - input.len()));
     assert_eq!(&input[8191..8194], "€".as_bytes());
     for o2 in [false, true] {
-        let exe = compile_tmp("echo_refill", ECHO, o2);
+        let exe = compile_tmp_for_valgrind("echo_refill", ECHO, o2);
         let out = support::Invocation::new(input.clone(), Vec::new()).run(&exe, true);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(0), "{stderr}");
@@ -920,8 +977,16 @@ fn print_allocates_one_buffer() {
             "fn main() {{\n    let mut i = 0\n    while i < {limit} {{\n        print(i)\n        i += 1\n    }}\n}}\n"
         )
     };
-    let (_, one) = heap_allocs(&compile_tmp("one_buffer_k1", &program(1), false));
-    let (_, many) = heap_allocs(&compile_tmp("one_buffer_k20000", &program(20_000), false));
+    let (_, one) = heap_allocs(&compile_tmp_for_valgrind(
+        "one_buffer_k1",
+        &program(1),
+        false,
+    ));
+    let (_, many) = heap_allocs(&compile_tmp_for_valgrind(
+        "one_buffer_k20000",
+        &program(20_000),
+        false,
+    ));
     assert_eq!(many, one);
 }
 
@@ -964,7 +1029,7 @@ const LEAKS_A_CYCLE: &str = "class Node {\n    mut next: Node?\n}\n\nfn leak() {
     ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
 )]
 fn valgrind_reports_a_cycle() {
-    let exe = compile_tmp("cycle", LEAKS_A_CYCLE, false);
+    let exe = compile_tmp_for_valgrind("cycle", LEAKS_A_CYCLE, false);
     let out = Command::new(&exe).output().expect("the program starts");
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n");
@@ -976,6 +1041,44 @@ fn valgrind_reports_a_cycle() {
         stderr.contains("are definitely lost") || stderr.contains("are indirectly lost"),
         "{stderr}"
     );
+}
+
+/// The Valgrind runs refuse a build that links mimalloc, whose blocks Valgrind cannot see, and a
+/// stripped build, whose allocator they cannot tell. The guard reads symbols, not bytes: the
+/// program prints the name of the symbol it looks for, and its system build is accepted.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "the guard runs with Valgrind, and Valgrind runs only on Linux"
+)]
+fn valgrind_runs_refuse_a_mimalloc_build() {
+    const PROGRAM: &str = "fn main() {\n    print(\"mi_malloc_aligned\")\n}\n";
+    // Every build before any `panic_message`, so a failed compile is not taken for the guard.
+    let default = compile_tmp("refuse_default", PROGRAM, false);
+    let system = compile_tmp_for_valgrind("refuse_system", PROGRAM, false);
+    let stripped = Path::new(env!("CARGO_TARGET_TMPDIR")).join("refuse_stripped");
+    fs::copy(&system, &stripped).expect("copies the system build");
+    let status = Command::new("strip")
+        .arg(&stripped)
+        .status()
+        .expect("strip starts");
+    assert!(status.success(), "strip: {status:?}");
+    let message = panic_message(|| {
+        support::Invocation::default().run(&default, true);
+    });
+    assert!(message.contains("--allocator system"), "{message}");
+    let message = panic_message(|| {
+        support::Invocation::default().run(&stripped, true);
+    });
+    assert!(message.contains("sisu_alloc"), "{message}");
+    let out = support::Invocation::default().run(&system, true);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "mi_malloc_aligned\n");
 }
 
 /// Writes `source` to `<CARGO_TARGET_TMPDIR>/<name>.sisu`, builds it with `--rc-checks`, at
