@@ -76,7 +76,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 17] = [
+const REACH: [&str; 20] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -94,6 +94,9 @@ const REACH: [&str; 17] = [
     "reach: a plain `=` to a local that is not an array",
     "reach: `==` or `!=` compares with `None`",
     "reach: a `+=` adds chars to a string local",
+    "reach: a compound assignment targets a field",
+    "reach: a variant is built with labeled fields",
+    "reach: a variant is built with positional fields",
 ];
 
 /// Whether a program's text holds a form.
@@ -783,6 +786,9 @@ impl Walk {
                 if *op == ast::BinaryOp::Add && name(target).is_some() {
                     self.adds.insert(stmt.span.start());
                 }
+                if matches!(target.kind, ast::ExprKind::Field { .. }) {
+                    self.mark("reach: a compound assignment targets a field");
+                }
                 self.binary_op(*op);
                 self.target(target);
                 self.ast_expr(value);
@@ -887,12 +893,23 @@ impl Walk {
             }
             ast::ExprKind::MethodCall {
                 receiver,
+                method,
                 args,
                 safe,
                 ..
             } => {
                 self.mark("ast::ExprKind::MethodCall");
                 self.mark(&format!("ast::ExprKind::MethodCall.safe = {safe}"));
+                let built = name(receiver)
+                    .and_then(|receiver| self.variants.get(receiver))
+                    .is_some_and(|variants| variants.iter().any(|v| v == method.name.as_str()));
+                if built && !args.is_empty() {
+                    self.mark(if args.iter().all(|arg| arg.label.is_some()) {
+                        "reach: a variant is built with labeled fields"
+                    } else {
+                        "reach: a variant is built with positional fields"
+                    });
+                }
                 self.ast_expr(receiver);
                 self.ast_args(args);
             }
@@ -2616,9 +2633,9 @@ fn first_init(text: &str) -> ast::Expr {
     init
 }
 
-/// The size of a value of `K0`s, `E0`s, strings, arrays and scalars written as literals: a
-/// slot per element and per node, each string's chars, and each `K0`'s 9, which its fields may
-/// grow to; none for anything else.
+/// The size of a value of `K0`s, `E0`s, strings and scalars written as literals: a slot per
+/// node, each string's chars, and each `K0`'s 9, which its fields may grow to; none for anything
+/// else.
 fn held(e: &ast::Expr) -> Option<u64> {
     let all = |es: &mut dyn Iterator<Item = &ast::Expr>| es.map(held).sum::<Option<u64>>();
     match &e.kind {
@@ -2626,11 +2643,7 @@ fn held(e: &ast::Expr) -> Option<u64> {
         | ast::ExprKind::Float(_)
         | ast::ExprKind::Bool(_)
         | ast::ExprKind::Char(_) => Some(0),
-        ast::ExprKind::Unary { operand, .. } => held(operand),
         ast::ExprKind::Str(text) => u64::try_from(text.chars().count()).ok(),
-        ast::ExprKind::ArrayLit(elements) => {
-            Some(u64::try_from(elements.len()).ok()? + all(&mut elements.iter())?)
-        }
         ast::ExprKind::Call { callee, .. } if callee.name.as_str() == "K0" => Some(9),
         ast::ExprKind::Field { base, .. } if name(base) == Some("E0") => Some(1),
         ast::ExprKind::MethodCall { receiver, args, .. } if name(receiver) == Some("E0") => {
@@ -2840,8 +2853,9 @@ fn every_match_checks_without_an_unreachable_arm() {
         .iter()
         .filter_map(|arm| arm.trim().split(" => ").next()?.split(" if ").next())
         .collect();
-    let kinds: [(&str, Is); 9] = [
+    let kinds: [(&str, Is); 10] = [
         ("a letter", |p| p.contains('\'')),
+        ("a lone number", |p| p.parse::<i64>().is_ok()),
         ("a negative number", |p| p.starts_with('-')),
         ("an inclusive range", |p| p.contains("..=")),
         ("a lone `bool`", |p| p == "true" || p == "false"),
@@ -2881,8 +2895,94 @@ fn depth(pattern: &str) -> usize {
 }
 
 #[test]
+fn an_element_takes_an_assignment_only_where_it_holds_no_class() {
+    // Decision 4: `ks[i] = e` would store a `K0` in the heap, and `es[i] = e` an `E0`, which
+    // may hold one; `ss[i] = e` stores a `string`.
+    let mut assigned = FxHashSet::default();
+    for mut state in 0..4_096 {
+        let data: Vec<u8> = (0..2)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        declare(&mut g);
+        for (name, element, base) in [
+            ("ks", Ty::Class { id: 0, size: 9 }, 9),
+            ("es", E0, 10),
+            ("ss", Ty::String, 8),
+        ] {
+            let ty = Ty::Array(Box::new(element));
+            let mut var = Var::new(name.to_string(), ty, true, base, 0, 0);
+            (var.len, var.elem, var.size) = (2, base, 2 + 2 * base);
+            g.scope.vars.push(var);
+        }
+        g.stmt();
+        for line in g.w.out.program.lines() {
+            let line = line.trim_start();
+            for name in ["ks", "es", "ss"] {
+                if line.starts_with(&format!("{name}[")) && line.contains("] = ") {
+                    assigned.insert(name);
+                }
+            }
+        }
+    }
+    assert!(
+        assigned.contains("ss"),
+        "no `string` element takes an assignment"
+    );
+    assert!(
+        !assigned.contains("ks") && !assigned.contains("es"),
+        "an element that holds a class takes an assignment: {assigned:?}"
+    );
+}
+
+#[test]
+fn a_declared_type_leaves_arrays_among_the_types() {
+    // With `K0` and `E0` declared, they share one choice with the values, and arrays still
+    // come, of them as well.
+    let (mut arrays, mut of_declared) = (0, 0);
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = splitmix64(&mut state).to_le_bytes().to_vec();
+        let mut g = Gen::new(&data);
+        declare(&mut g);
+        if let Ty::Array(element) = g.any_type() {
+            arrays += 1;
+            of_declared += usize::from(matches!(*element, Ty::Class { .. } | Ty::Enum { .. }));
+        }
+    }
+    assert!(arrays > 0, "no array with `K0` and `E0` declared");
+    assert!(of_declared > 0, "no array of `K0` or `E0`");
+}
+
+#[test]
+fn each_count_reaches_its_most_and_stays_within_it() {
+    // 3 fields of a class or a variant, 2 methods, 2 to 4 variants.
+    let (mut fields, mut methods, mut variants, mut payload) = (0, 0, (usize::MAX, 0), 0);
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..8)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        g.class();
+        g.enumeration();
+        let program = &g.w.out.program;
+        fields = fields.max(g.scope.classes[0].fields.len());
+        methods = methods.max(program.lines().filter(|l| l.starts_with("    fn ")).count());
+        let count = g.scope.enums[0].variants.len();
+        variants = (variants.0.min(count), variants.1.max(count));
+        let most = g.scope.enums[0]
+            .variants
+            .iter()
+            .map(|v| v.fields.len())
+            .max();
+        payload = payload.max(most.unwrap_or(0));
+    }
+    assert_eq!((fields, methods, variants, payload), (3, 2, (2, 4), 3));
+}
+
+#[test]
 fn a_cap_holds_the_least_value_of_its_field() {
-    // A `K0` of 50, or a `K0` optional, takes its 50 and more; a number takes none.
+    // A `K0` of 50, or a `K0` optional, takes its 50 and more; a number, or a number optional,
+    // takes none.
     let class = Ty::Class { id: 0, size: 50 };
     for byte in 0..3 {
         let data = [byte];
@@ -2892,6 +2992,8 @@ fn a_cap_holds_the_least_value_of_its_field() {
         assert!(g.size_for(&Ty::Optional(Box::new(class.clone())), &[0, 8, 32]) >= 50);
         let mut g = Gen::new(&data);
         assert_eq!(g.size_for(&Ty::I64, &[0, 8, 32]), 0);
+        let mut g = Gen::new(&data);
+        assert_eq!(g.size_for(&Ty::Optional(Box::new(Ty::I64)), &[0, 8, 32]), 0);
     }
 }
 

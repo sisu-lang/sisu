@@ -174,8 +174,8 @@ impl Gen<'_> {
     pub(crate) fn size_for(&mut self, ty: &Ty, sizes: &[u64]) -> u64 {
         let floor = match ty {
             Ty::Class { size, .. } => return *size,
-            Ty::Optional(payload) => payload.floor(),
             _ if !ty.sized() => return 0,
+            Ty::Optional(payload) => payload.floor(),
             _ => ty.floor(),
         };
         (floor + sizes[self.pick(sizes.len())]).min(MAX_SIZE)
@@ -264,7 +264,7 @@ impl Gen<'_> {
     /// `enum E { V ... }`: variants with no payload, with fields, or with labeled fields. The
     /// first holds only types declared before; a later one may hold the enum itself, which a
     /// value built finite ends in the first.
-    fn enumeration(&mut self) {
+    pub(crate) fn enumeration(&mut self) {
         let id = self.scope.enums.len();
         self.w.text(&format!("enum E{id} "));
         self.w.open();

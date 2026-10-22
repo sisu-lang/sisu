@@ -28,7 +28,7 @@ enum Rule {
     Assign,
     /// `v[i] = e`.
     Element,
-    /// `v.g = e`.
+    /// `v.g = e`, or `v.g op= e` of a number.
     SetField,
     Compound,
     If,
@@ -59,7 +59,7 @@ impl Gen<'_> {
         }
     }
 
-    fn stmt(&mut self) {
+    pub(crate) fn stmt(&mut self) {
         let mut rules = vec![Rule::Print, Rule::Let, Rule::Discard, Rule::Inexact];
         if self.scope.vars.iter().any(assignable) {
             rules.push(Rule::Assign);
@@ -68,7 +68,8 @@ impl Gen<'_> {
             rules.push(Rule::Element);
         }
         if !self.field_targets().is_empty() {
-            rules.push(Rule::SetField);
+            // Twice: a `mut` field is rare in scope, and it takes both `=` and `op=`.
+            rules.extend([Rule::SetField, Rule::SetField]);
         }
         if !self.compound_targets().is_empty() {
             rules.push(Rule::Compound);
@@ -140,15 +141,7 @@ impl Gen<'_> {
                 self.w.text(&format!("{name}[{at}] = "));
                 self.expr(&element, base);
             }
-            Rule::SetField => {
-                let targets = self.field_targets();
-                let (v, class, f) = targets[self.pick(targets.len())];
-                let field = &self.scope.classes[class].fields[f];
-                let (ty, cap) = (field.ty.clone(), field.cap);
-                self.w
-                    .text(&format!("{}.{} = ", self.scope.vars[v].name, field.name));
-                self.expr(&ty, cap);
-            }
+            Rule::SetField => self.set_field(),
             Rule::Compound => self.compound(),
             Rule::If => self.if_stmt(false),
             Rule::While => self.while_stmt(),
@@ -239,7 +232,25 @@ impl Gen<'_> {
             && matches!(&var.ty, Ty::Array(element) if !self.scope.contains_class(element))
     }
 
-    /// The fields a plain assignment may target, each as its local, class and index there: a
+    /// `v.g = e`, or `v.g op= e` of a number: a `string` takes only `=`, as its cap leaves it no
+    /// room to grow.
+    fn set_field(&mut self) {
+        let targets = self.field_targets();
+        let (v, class, f) = targets[self.pick(targets.len())];
+        let field = &self.scope.classes[class].fields[f];
+        let (ty, cap) = (field.ty.clone(), field.cap);
+        self.w
+            .text(&format!("{}.{}", self.scope.vars[v].name, field.name));
+        if matches!(ty, Ty::I64 | Ty::U8 | Ty::F64) && self.pick(3) != 0 {
+            self.one_of(&OPS);
+            self.expr(&ty, 0);
+        } else {
+            self.w.text(" = ");
+            self.expr(&ty, cap);
+        }
+    }
+
+    /// The fields an assignment may target, each as its local, class and index there: a
     /// `mut` field of a type that holds no class object (decision 4).
     fn field_targets(&self) -> Vec<(usize, usize, usize)> {
         let mut targets = Vec::new();
@@ -275,7 +286,6 @@ impl Gen<'_> {
     /// `v op= e` on a number, or `v += e` on a `string`, whose room is what each run of it,
     /// in every loop since `v`'s declaration, takes; or the same on an element of an array.
     pub(crate) fn compound(&mut self) {
-        const OPS: [&str; 5] = [" += ", " -= ", " *= ", " /= ", " %= "];
         let targets = self.compound_targets();
         let (v, element) = targets[self.pick(targets.len())];
         let (mut name, mut ty, loops, len) = {
@@ -667,6 +677,9 @@ impl Gen<'_> {
         }
     }
 }
+
+/// The compound assignments of a number.
+const OPS: [&str; 5] = [" += ", " -= ", " *= ", " /= ", " %= "];
 
 /// The sizes a mutable `string` or optional may have, and the room of a `string`.
 const SIZES: [u64; 4] = [0, 16, 64, MAX_SIZE / 2];
