@@ -430,25 +430,32 @@ mod tests {
         }
     }
 
-    /// A type nested deeper than the stack allows recursing into is walked with a stack of its
-    /// own, as an argument and as a field's type.
+    /// A type nested deeper than a 64 KiB stack allows recursing into is walked with a stack
+    /// of its own, as an argument and as a field's type.
     #[test]
     fn deep_types_are_walked_without_recursion() {
-        let levels = 100_000;
-        let mut ty = param(0);
-        for _ in 0..levels {
-            ty = Type::intern(TypeKind::Array(ty));
-        }
-        let mut g = graph(1);
-        g.args(0, &[ty], 0, Span::new(0, 1), Instance::Type(ty));
-        assert_eq!(g.typed.len(), levels);
-        let mut ty = param(0);
-        for _ in 0..levels {
-            ty = pair(ty, param(0));
-        }
-        let mut g = graph(1);
-        g.types(0, ty, Span::new(0, 1));
-        assert_eq!(g.walked.len(), levels + 1);
+        let levels = 10_000;
+        std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(move || {
+                let mut ty = param(0);
+                for _ in 0..levels {
+                    ty = Type::intern(TypeKind::Array(ty));
+                }
+                let mut g = graph(1);
+                g.args(0, &[ty], 0, Span::new(0, 1), Instance::Type(ty));
+                assert_eq!(g.typed.len(), levels);
+                let mut ty = param(0);
+                for _ in 0..levels {
+                    ty = pair(ty, param(0));
+                }
+                let mut g = graph(1);
+                g.types(0, ty, Span::new(0, 1));
+                assert_eq!(g.walked.len(), levels + 1);
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the walk should not overflow the stack");
     }
 
     /// A parameter has no parts: its node is its own, never one made of parts.
