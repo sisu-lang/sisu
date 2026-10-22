@@ -1085,9 +1085,16 @@ impl<'a> Lowering<'a> {
             .pop()
             .expect("the loop's frame should still be there")
             .exit;
+        // A labeled `break` in the body makes an outer loop's exit, which lies outside this loop.
+        let outer_exits: Vec<BlockId> = self
+            .frames
+            .iter()
+            .filter_map(|frame| frame.exit)
+            .filter(|block| block.0 >= header.0)
+            .collect();
         self.loops[index].blocks = (header.0..self.blocks.len())
             .map(BlockId)
-            .filter(|&block| Some(block) != exit)
+            .filter(|block| Some(*block) != exit && !outer_exits.contains(block))
             .collect();
         self.current = exit;
         exit.map(|_| dest)

@@ -886,6 +886,51 @@ fn unknown_return_type_checks_no_break() {
     );
 }
 
+/// A labeled jump names its target by the loops between them: one, the inner `for`.
+#[test]
+fn labeled_break_targets_outer_loop() {
+    contains(
+        "fn f(xs: [i64]) {\n    outer: for x in xs {\n        for y in xs { break outer }\n    }\n}\nfn main() {}",
+        &["(break ^1)"],
+    );
+}
+
+#[test]
+fn labeled_continue_depth() {
+    contains(
+        "fn f(xs: [i64]) {\n    outer: for x in xs {\n        for y in xs { continue outer }\n    }\n}\nfn main() {}",
+        &["(continue ^1)"],
+    );
+}
+
+/// The value of a labeled `break` from an inner loop gives the outer `loop` its type.
+#[test]
+fn labeled_break_value_from_inner_loop() {
+    let src = "fn f(xs: [i64]) {\n    let v = rows: loop {\n        for x in xs {\n            if x > 0 { break rows x }\n        }\n    }\n    let w: i64 = v\n}\nfn main() {}";
+    clean(src);
+    contains(src, &["(break ^1 x#"]);
+}
+
+/// `break outer` from the inner loop makes the outer loop finish, so it is `unit`, not `never`.
+#[test]
+fn labeled_break_counts_for_outer_never() {
+    codes(
+        "fn f(xs: [i64]) -> i64 {\n    outer: loop {\n        for x in xs { break outer }\n    }\n}\nfn main() {}",
+        &[(Code::BodyHasNoValue, (5, 1))],
+    );
+}
+
+/// A labeled jump out of a header leaves the endless loop it is in untyped, not `never`, so the
+/// header reports neither a missing value nor unreachable code; `E0082-through-loop` covers a
+/// `loop`.
+#[test]
+fn failed_labeled_jump_leaves_no_never_loop() {
+    codes(
+        "fn main() {\n    outer: for r in [1] {\n        while { while true { break outer }; true } { }\n    }\n}",
+        &[(Code::JumpInLoopHeader, (3, 30))],
+    );
+}
+
 #[test]
 fn shadowing_makes_two_locals() {
     assert_eq!(

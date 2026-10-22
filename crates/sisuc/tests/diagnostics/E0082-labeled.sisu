@@ -1,0 +1,9 @@
+fn f(ready: bool) -> bool {
+    ready
+}
+
+fn main() {
+    outer: for x in [1, 2] {
+        while f({ break outer; true }) {}
+    }
+}

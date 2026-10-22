@@ -139,10 +139,6 @@ enum LoopContext {
     /// A `while` condition or a `for` source, which is not part of the body.
     Header {
         keyword: Span,
-        #[expect(
-            dead_code,
-            reason = "no jump names a loop label until loop labels parse"
-        )]
         label: Option<Symbol>,
     },
 }
@@ -172,15 +168,8 @@ impl LoopKind {
 struct LoopFrame {
     kind: LoopKind,
     keyword: Span,
-    #[expect(
-        dead_code,
-        reason = "no jump names a loop label until loop labels parse"
-    )]
     label: Option<ast::Ident>,
-    #[expect(
-        dead_code,
-        reason = "no jump names a loop label until loop labels parse"
-    )]
+    /// Whether a jump has named `label`.
     label_used: bool,
     /// Whether a `break` has targeted it.
     broken: bool,
@@ -193,7 +182,8 @@ struct LoopFrame {
     bare: Option<Span>,
     /// The first `break` whose value's type is not `never`.
     valued: Option<Span>,
-    /// Whether a `break` value failed, or a value was given to a loop that has none.
+    /// Whether a `break` value failed, a value was given to a loop that has none, or a jump
+    /// inside a loop header would leave this loop.
     failed: bool,
 }
 

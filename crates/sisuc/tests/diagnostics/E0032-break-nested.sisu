@@ -1,0 +1,10 @@
+fn main() {
+    let c = true
+    let x = rows: loop {
+        break loop {
+            if c { break rows "s" }
+            break 2
+        }
+    }
+    print(x)
+}

@@ -1,0 +1,6 @@
+fn main() {
+    let rows = [1, 2]
+    outer: for r in rows {
+        while loop { break outer } { }
+    }
+}

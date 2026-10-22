@@ -632,3 +632,28 @@ fn roots_stop_at_different_ancestors_of_a_tree() {
     // Each `make_unique` has left the loops.
     assert_eq!(level_0_uniques(&f).iter().sum::<usize>(), 7);
 }
+
+/// The `break outer` in the inner loop makes the outer loop's exit, which holds the write after
+/// the outer loop. `tests/run/labels.sisu` runs this `f`: were that exit one of the inner
+/// loop's blocks, the inner loop would hoist the write's `make_unique` too, and the write would
+/// reach `keep`, which shares `a` from the outer body.
+const LABELED_BREAK: &str = "fn f(xs: [i64]) -> i64 {\n    let mut a = xs\n    let mut keep = [0]\n    outer: for i in 0..2 {\n        for j in 0..2 {\n            a[j] = i + 1\n            if j == 5 { break outer }\n        }\n        keep = a\n    }\n    a[0] = 9\n    if keep[1] > 0 {\n        return keep[0]\n    }\n    0\n}";
+
+#[test]
+fn labeled_break_keeps_outer_exit_out_of_inner_loop() {
+    let f = placed_f(LABELED_BREAK);
+    let [outer, inner] = f.loops.as_slice() else {
+        panic!("the case should have two loops: {:?}", f.loops.len());
+    };
+    let outside: Vec<_> = inner
+        .blocks
+        .iter()
+        .filter(|block| !outer.blocks.contains(block))
+        .collect();
+    assert_eq!(outside, Vec::<&BlockId>::new());
+    // The inner loop still hoists `a`, so the case reaches the miscompile it guards.
+    assert_eq!(
+        loops(LABELED_BREAK),
+        [Vec::<String>::new(), vec!["a".to_owned()]]
+    );
+}

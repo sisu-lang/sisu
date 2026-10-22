@@ -916,7 +916,16 @@ fn check_line_start(
                     // Only a header takes the `{`: joining it to another statement almost never
                     // gives a valid one (`print(1) {`, `let x = 1 {`, `} {`). Inside `(` or `[`
                     // the moved `{` would still sit in the unclosed bracket.
-                    let statement = last_statement(tokens);
+                    let statement = match last_statement(tokens) {
+                        // A loop label: the header starts after it.
+                        [label, colon, header @ ..]
+                            if matches!(label.kind, TokenKind::Ident(_))
+                                && colon.kind == TokenKind::Colon =>
+                        {
+                            header
+                        }
+                        statement => statement,
+                    };
                     let join = (in_block
                         && statement.first().is_some_and(is_header)
                         && header_awaits_brace(statement))

@@ -1,0 +1,10 @@
+fn main() {
+    let n = 1
+    let mut x = 0
+    outer: while x < 3 {
+        x += 1
+        match n {
+            1 => break outer, _ => x = 2
+        }
+    }
+}

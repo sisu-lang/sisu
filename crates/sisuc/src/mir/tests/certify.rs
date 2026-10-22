@@ -471,6 +471,61 @@ fn break_inside_a_guard() {
     }));
 }
 
+/// `break outer` from a `loop` in a guard ends the guard's bindings, which the outer loop's frame
+/// holds no part of: the `loop`'s own frame starts inside the guard, so ending only what that
+/// frame holds would leave `x` and `y` borrowed past the edge.
+#[test]
+fn labeled_break_from_guard_ends_its_borrows() {
+    let program = certifies(
+        "enum P {\n    Two(string, string)\n    Zero\n}\n\
+         fn g(ps: [P], c: bool) -> i64 {\n    outer: for q in ps {\n        for p in ps {\n            match p {\n                Two(x, y) if (loop { if c { break outer }; break true }) => print(x)\n                _ => print(0)\n            }\n        }\n    }\n    0\n}",
+    );
+    let g = &program.functions[0];
+    let (x, y) = (named(g, "x"), named(g, "y"));
+    // The `break outer` edge ends both bindings and leaves both loops.
+    assert!(g.blocks.iter().any(|block| {
+        matches!(block.stmts.as_slice(),
+            [Statement::End(first), Statement::End(second), ..] if (*first, *second) == (x, y))
+            && matches!(block.term, Terminator::Goto(to) if !g.loops[0].blocks.contains(&to))
+    }));
+}
+
+/// `break outer` in an argument releases the arguments already evaluated: the first `make()`.
+#[test]
+fn jump_out_of_half_built_call() {
+    let program = certifies(
+        "fn make() -> string { \"m\" }\n\
+         fn g(a: string, b: string) {}\n\
+         fn f(c: bool, xs: [i64]) {\n    outer: for x in xs {\n        for y in xs {\n            g(make(), { if c { break outer }; make() })\n        }\n    }\n}",
+    );
+    let f = &program.functions[2];
+    assert_eq!(f.name, "f");
+    // The block that holds the first `make()` branches on `c`; its `then` releases that result
+    // and leaves both loops.
+    let (first, then) = f
+        .blocks
+        .iter()
+        .find_map(|block| match (block.stmts.last(), &block.term) {
+            (
+                Some(Statement::Assign {
+                    dest: Some(dest),
+                    value: Rvalue::Call { .. },
+                }),
+                Terminator::Branch { then, .. },
+            ) => Some((*dest, *then)),
+            _ => None,
+        })
+        .expect("the first argument's call should end the block that branches on `c`");
+    let then = &f.blocks[then.0];
+    assert!(
+        then.stmts
+            .iter()
+            .any(|stmt| matches!(stmt, Statement::Release(l) if *l == first)),
+        "{then:?}"
+    );
+    assert!(matches!(then.term, Terminator::Goto(to) if !f.loops[0].blocks.contains(&to)));
+}
+
 /// The second alternative assigns `a` again, from the other field, while the first's borrow is
 /// still in place: a retry keeps the binding borrowed.
 #[test]
