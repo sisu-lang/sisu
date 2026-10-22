@@ -1,0 +1,7 @@
+fn main() {
+    outer: {
+        inner: loop {
+            break outer
+        }
+    }
+}
