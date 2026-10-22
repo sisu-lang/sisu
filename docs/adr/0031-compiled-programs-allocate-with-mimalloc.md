@@ -96,14 +96,24 @@ they touch memory the machine cannot back.
 - **A request the machine cannot back may exit 137.** With glibc, a request
   larger than RAM plus swap is refused at once: the program exits with 134 and
   prints "memory allocation of N bytes failed". mimalloc maps memory with
-  `MAP_NORESERVE`, so such a request succeeds, and on Linux the out-of-memory
-  killer ends the program with 137 once it touches the memory. An 800 GB array
+  `MAP_NORESERVE` in some cases, so such a request can succeed, and on Linux
+  the out-of-memory killer may then end the program with 137 once it touches
+  the memory. A request far beyond RAM plus swap can still be refused at once
+  with 134: a 2^50-byte request (1125899906842640 bytes) prints "memory
+  allocation of 1125899906842640 bytes failed" under mimalloc. An 800 GB array
   at `-O0` on a 62 GB host exits 134 under glibc and 137 under mimalloc. The
   largest array the size checks allow (about 2^63 bytes) still exits 134 with
   Rust's message.
 - **Startup and size cost more.** `hello` takes 297k instructions to start
-  against 188k, and a stripped binary grows from 362 to 552 KB. No CodSpeed
-  benchmark runs a plain `hello`, so it does not show there.
+  against 188k, and a stripped binary grows from 362 to 552 KB. The 297k is
+  for an empty environment: at startup mimalloc scans `environ` once per
+  option, about 3.8k instructions per environment variable against about 640
+  for glibc (callgrind on `-O2` hello under `env -i` plus N variables: N=0
+  288,534 against 188,613; N=100 665,464 against 252,343; N=200 1,043,164
+  against 316,843). `hello`'s peak RSS grows from 1.46 MB to 6.15 MB
+  (`/usr/bin/time -f %M`: 6152 KB in a default build, 1456 KB in a system
+  build). No CodSpeed benchmark runs a plain `hello`, so it does not show
+  there.
 - **The user's `MIMALLOC_*` variables apply.** mimalloc reads them from the
   environment, as in any Rust program that uses it, and the runtime sets none.
   `MIMALLOC_VERBOSE=1` makes a program write to stderr outside the runtime,

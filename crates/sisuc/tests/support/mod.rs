@@ -434,6 +434,8 @@ const O2: Build = ("O2", &["-O2"]);
 const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
 /// `O0` and `O2` for `run`, whose plain builds also run under Valgrind.
 const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
+// Repeats `VALGRIND_FLAGS`' values after `-O2`, and must stay in step with them: a const cannot
+// concatenate slices.
 const VALGRIND_O2: Build = (
     "O2",
     if cfg!(target_os = "linux") {

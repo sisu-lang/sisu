@@ -8,7 +8,7 @@ system C compiler `cc`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="architecture/sisu-pipeline-dark.svg">
-  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker, mir and codegen to LLVM, and the link step combines the object file with sisu-runtime into an executable." src="architecture/sisu-pipeline-light.svg">
+  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker, mir and codegen to LLVM, and the link step combines the object file with one of the two runtime archives into an executable." src="architecture/sisu-pipeline-light.svg">
 </picture>
 
 This page stays at the level of stages and the data between them. The code
@@ -156,7 +156,7 @@ fails when an export has no row, or a row's types differ from its signature.
 `sisu_alloc` and `sisu_free` carry LLVM's allocator attributes as a pair. At
 `-O2` LLVM may delete an allocation and its free, including when it can compute
 every value the program reads without the heap block, such as an array's length
-or an element of a fill. An allocation larger than the size checks allow
+or an element of a fill. The largest allocation the size checks allow
 (about 2^63 bytes) aborts with exit code 134 when its allocator call remains;
 at `-O0` every such allocation aborts. On Linux, a smaller request that the
 machine cannot back can succeed in a default build, because mimalloc maps
