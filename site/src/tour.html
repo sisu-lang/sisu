@@ -54,7 +54,7 @@ A tour of the Sisu language as it works today, one small program at a time.
       <!-- source: docs/roadmap.md ("What works today": functions and recursion, if as an expression), crates/sisuc/tests/run/fib.sisu -->
 
       <h2 id="loops">Loops</h2>
-      <p><code>for</code> walks a range or an array. <code>0..3</code> leaves out its end and <code>0..=3</code> includes it. <code>while</code> loops on a condition, and <code>break</code> and <code>continue</code> work in both.</p>
+      <p><code>for</code> walks a range or an array. <code>0..3</code> leaves out its end and <code>0..=3</code> includes it. <code>while</code> loops on a condition, and <code>break</code> and <code>continue</code> work in both. A <code>while true</code> with no <code>break</code> never ends, so a function can return from inside it with nothing after it.</p>
       <figure class="code"><figcaption class="cap">loops.sisu</figcaption><pre data-lang="sisu">
 {{text programs/run/loops.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">

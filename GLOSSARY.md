@@ -44,8 +44,8 @@ The type of an expression that produces no value.
 _Avoid_: void
 
 **`never`**:
-The type of an expression that does not finish, such as `return`; it matches
-any type.
+The type of an expression that does not finish, such as `return` or a
+`while true` with no `break`; it matches any type.
 
 **Conversion**:
 A call written with a type's name, `T(x)`, that turns a value into an
