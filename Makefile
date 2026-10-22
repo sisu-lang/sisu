@@ -54,8 +54,8 @@ mutants: ## Mutation-test the changes since BASE
 verify: ## Coverage, then mutants, since BASE; the last line is the verdict; LOG=<file> writes it there
 	scripts/verify.sh "$(BASE)" $(if $(LOG),"$(LOG)")
 
-fuzz: ## Fuzz the front end for SECS seconds (1800 by default)
-	scripts/fuzz.sh "$(SECS)"
+fuzz: ## Fuzz TARGET (front_end by default, or program) for SECS seconds (1800 by default)
+	scripts/fuzz.sh --target "$(or $(TARGET),front_end)" "$(SECS)"
 
 fuzz-coverage: ## Line coverage per compiler stage of the fuzz corpus and seeds
 	scripts/fuzz.sh --coverage

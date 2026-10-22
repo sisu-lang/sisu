@@ -11,7 +11,7 @@ cargo-fuzz = true
 [dependencies]
 libc = "0.2.190"
 libfuzzer-sys = "0.4.13"
-sisuc = { path = "../crates/sisuc" }
+sisuc = { path = "../crates/sisuc", features = ["fuzz"] }
 
 # Its own workspace: the root workspace's build, tests, lints and `cargo deny`
 # never see this crate. libfuzzer-sys carries the NCSA license, which deny.toml
@@ -21,6 +21,13 @@ sisuc = { path = "../crates/sisuc" }
 [[bin]]
 name = "front_end"
 path = "fuzz_targets/front_end.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "program"
+path = "fuzz_targets/program.rs"
 test = false
 doc = false
 bench = false
