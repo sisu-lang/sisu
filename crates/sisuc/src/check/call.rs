@@ -232,15 +232,23 @@ impl Checker<'_> {
                         )
                     });
                     // A built-in's method takes no type arguments, so two that could be values
-                    // were comparisons. An unknown one is reported as unknown.
-                    let known = type_of(&checked)
-                        .and_then(|ty| built_in_arity(ty, method.name.as_str()))
-                        .is_some();
-                    if known && types.len() > 1 && could_be_value(first) {
+                    // were comparisons, of the method's result: the help calls one that takes
+                    // no arguments. An unknown one is reported as unknown.
+                    let arity =
+                        type_of(&checked).and_then(|ty| built_in_arity(ty, method.name.as_str()));
+                    if let Some(arity) = arity
+                        && types.len() > 1
+                        && could_be_value(first)
+                    {
                         deferred = false;
                         c.stray(args);
                         let at = receiver.span.to(method.span);
-                        return Err(c.misread(at, Some(first)));
+                        let text = c.source.text;
+                        let compare = (arity == 0).then(|| {
+                            let rest = &text[at.end()..first.span.end()];
+                            format!("{}(){rest}", &text[at.start()..at.end()])
+                        });
+                        return Err(c.misread_as(at, compare));
                     }
                 }
                 c.method_call(span, checked, receiver, site, args)

@@ -1,0 +1,9 @@
+fn both(x: bool, y: bool) -> bool {
+    x && y
+}
+
+fn main() {
+    let a = [1, 2]
+    let b = 1
+    print(both(a.len < b, b > (1)))
+}

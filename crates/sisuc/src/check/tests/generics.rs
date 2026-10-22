@@ -151,6 +151,18 @@ fn type_arguments_on_a_value() {
         let d = diagnostic(&with_decls(line), Code::TypeArguments, at, &[]);
         assert!(d.help().is_none(), "{line}");
     }
+    // A built-in's method is compared as its result: the help calls one that takes no
+    // arguments, and the call it writes checks. One that takes arguments has no help.
+    let both = "fn both(x: bool, y: bool) -> bool { x && y }\nfn main() {}";
+    let src = format!("fn g(a: [i64], b: i64) -> bool {{ both(a.len < b, b > (1)) }}\n{both}");
+    let d = diagnostic(&src, Code::TypeArguments, (1, 39, "a.len"), &[]);
+    assert!(d.help().is_some());
+    clean(&format!(
+        "fn g(a: [i64], b: i64) -> bool {{ both((a.len() < b), b > (1)) }}\n{both}"
+    ));
+    let src = format!("fn g(a: [i64], b: i64) -> bool {{ both(a.contains < b, b > (1)) }}\n{both}");
+    let d = diagnostic(&src, Code::TypeArguments, (1, 39, "a.contains"), &[]);
+    assert!(d.help().is_none());
     // A local that takes the name `math` is a value, whose field is compared.
     codes(
         &with_decls(

@@ -846,15 +846,18 @@ impl Checker<'_> {
     /// type argument, which the help puts in parentheses with `name`, when a `(` follows the list
     /// and `first` could be a value: a name that is not a built-in type, with no `?`.
     pub(super) fn misread(&mut self, name: Span, first: Option<&ast::TypeExpr>) -> Poisoned {
-        self.body.misread.insert(name.start());
         let first = first.filter(|first| could_be_value(first));
-        let text = self.source.text;
+        let compare = first.map(|first| self.source.text[name.start()..first.span.end()].into());
+        self.misread_as(name, compare)
+    }
+
+    /// `misread` with the comparison `compare` its help writes, if any.
+    pub(super) fn misread_as(&mut self, name: Span, compare: Option<String>) -> Poisoned {
+        self.body.misread.insert(name.start());
         self.report(DiagnosticKind::TypeArguments {
-            name: text[name.start()..name.end()].to_string(),
+            name: self.source.text[name.start()..name.end()].to_string(),
             at: name,
-            form: ArgumentsForm::Value {
-                compare: first.map(|first| text[name.start()..first.span.end()].to_string()),
-            },
+            form: ArgumentsForm::Value { compare },
         });
         Poisoned::error()
     }
