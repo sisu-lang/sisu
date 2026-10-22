@@ -37,7 +37,9 @@ front_end)
     dict=fuzz/front_end.dict
     ;;
 program)
-    limits=(-max_len=4096 -timeout=300)
+    # -len_control=0 tries full-length inputs at once: a short input runs out of bytes, and the
+    # generator then takes the smallest choice, so libFuzzer's slow length growth kept programs small.
+    limits=(-max_len=4096 -timeout=300 -len_control=0)
     replay_seconds=330
     dict=
     ;;
