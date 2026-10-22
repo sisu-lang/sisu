@@ -1,0 +1,18 @@
+error[E0011]: expected `:`, found `i64`
+ --> E0142-broken-function.sisu:1:13
+  |
+1 | fn search(n i64) {
+  |             ^^^
+
+error[E0142]: loop label `search` has the same name as the function `search`
+ --> E0142-broken-function.sisu:6:15
+  |
+5 |     search: loop {
+  |     ------ loop label declared here
+6 |         break search
+  |               ^^^^^^
+  |
+  = help: rename the loop label
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0011, E0142

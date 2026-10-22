@@ -720,9 +720,10 @@ impl Checker<'_> {
     /// reported unused.
     pub(super) fn named_by_failed_jump(&mut self, name: &str) {
         let label = self.open_labels().rev().find(|l| l.name.as_str() == name);
-        if let Some(span) = label.map(|l| l.span) {
-            self.body.failed_labels.push(span);
-        }
+        let span = label
+            .expect("a failed jump should name an open loop label")
+            .span;
+        self.body.failed_labels.push(span);
     }
 
     /// "no loop label `name`" for `name` after `keyword`, offering the closest open loop label,

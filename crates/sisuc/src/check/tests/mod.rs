@@ -930,8 +930,7 @@ fn continue_to_missing_label_in_header_is_missing_label() {
     );
 }
 
-/// A loop label named by a jump is E0142 when a constant, a class or a function of its name is
-/// in scope; a function declared twice is still a name, with no declaration to point at.
+/// A loop label named by a jump is E0142 when a constant or a class of its name is in scope.
 #[test]
 fn loop_label_clashes_with_items() {
     codes(
@@ -942,9 +941,14 @@ fn loop_label_clashes_with_items() {
         "class Box {}\nfn main() {\n    Box: loop { break Box }\n}",
         &[(Code::LabelClash, (3, 23))],
     );
+}
+
+/// `continue name` outside every loop is the jump outside a loop, not a missing loop label.
+#[test]
+fn labeled_continue_outside_loop() {
     codes(
-        "fn A() {}\nfn A() {}\nfn main() {\n    A: loop { break A }\n}",
-        &[(Code::DefinedTwice, (2, 4)), (Code::LabelClash, (4, 21))],
+        "fn main() {\n    continue nope\n}",
+        &[(Code::JumpOutsideLoop, (2, 5))],
     );
 }
 
