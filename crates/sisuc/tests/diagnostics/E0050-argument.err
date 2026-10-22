@@ -1,0 +1,10 @@
+error[E0050]: cannot infer `T` for `count`
+ --> E0050-argument.sisu:6:18
+  |
+6 |     let n: i64 = count([])
+  |                  ^^^^^
+  |
+  = help: write the type: `count<...>(...)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

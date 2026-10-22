@@ -20,6 +20,19 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
 
+/// Whether `ty` names the type parameter at `i`.
+fn names_param(ty: Type, i: usize) -> bool {
+    ty.has_param()
+        && match ty.kind() {
+            TypeKind::Param(_, j) => j as usize == i,
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => names_param(inner, i),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                args.get().iter().any(|&arg| names_param(arg, i))
+            }
+            _ => false,
+        }
+}
+
 /// Whether the type argument `arg` could be a value: a name that is not a built-in type, with
 /// no `?`.
 pub(super) fn could_be_value(arg: &ast::TypeExpr) -> bool {
@@ -336,7 +349,7 @@ impl Checker<'_> {
                     || sig.params.contains(&None)
                     || sig.ret.is_none();
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
-                    self.cannot_infer(sig, sig.declared[i]);
+                    self.cannot_infer(sig, i);
                 }
                 return None;
             }
@@ -416,8 +429,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports the call of `sig` that binds nothing to its parameter `param`.
-    fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: Symbol) {
+    /// Reports the call of `sig` that binds nothing to its parameter at `param`.
+    fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
         let name = sig.name;
         let dots = vec!["..."; sig.declared.len() - sig.owner.len()].join(", ");
         let (callee, example, at) = match sig.variant {
@@ -436,10 +449,11 @@ impl Checker<'_> {
             ),
         };
         self.report(DiagnosticKind::CannotInferParam {
-            param: param.to_string(),
+            param: sig.declared[param].to_string(),
             callee,
             example,
             at,
+            in_result: sig.ret.is_some_and(|ret| names_param(ret, param)),
         });
     }
 

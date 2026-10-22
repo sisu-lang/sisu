@@ -449,6 +449,9 @@ pub(crate) enum DiagnosticKind {
         callee: String,
         example: String,
         at: Span,
+        /// Whether the callee's result type names `param`, which annotating the result then
+        /// fixes.
+        in_result: bool,
     },
     /// The value at `at`, of type `found`, that `keyword` unwraps, and which is not optional.
     UnwrapNeedsOptional {
@@ -2021,8 +2024,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 callee,
                 example,
                 at,
-            } => Diagnostic::coded(code, at, format!("cannot infer `{param}` for `{callee}`"))
-                .with_help(format!("annotate the result, or write the type: `{example}`")),
+                in_result,
+            } => {
+                let annotate = if in_result {
+                    "annotate the result, or "
+                } else {
+                    ""
+                };
+                Diagnostic::coded(code, at, format!("cannot infer `{param}` for `{callee}`"))
+                    .with_help(format!("{annotate}write the type: `{example}`"))
+            }
             DiagnosticKind::UnwrapNeedsOptional {
                 keyword,
                 found,
