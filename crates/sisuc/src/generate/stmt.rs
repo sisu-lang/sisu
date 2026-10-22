@@ -44,11 +44,13 @@ impl Gen<'_> {
     /// jump, which ends the block so no code after it is unreachable (W0001).
     pub(crate) fn stmts(&mut self, jump: bool) {
         let mut count = 0;
-        while count < MAX_STATEMENTS && self.pick(4) != 0 && self.spend(1) {
+        while count < MAX_STATEMENTS && self.pick(8) != 0 && self.spend(1) {
             self.stmt();
             count += 1;
         }
-        if jump && self.pick(4) == 3 && self.spend(1) {
+        // Where only a panic can jump, as in a value block, a block ends in one only now and then.
+        let other = self.jumps.ret || self.jumps.in_loop;
+        if jump && self.pick(4) == 3 && (other || self.pick(32) == 31) && self.spend(1) {
             self.w.line();
             if self.blocks < MAX_BLOCKS && self.pick(2) == 1 {
                 self.cost.statement();
@@ -56,6 +58,44 @@ impl Gen<'_> {
             } else {
                 self.jump();
             }
+        }
+    }
+
+    /// `main`'s statements. Each takes a share of the fuel left, so the first cannot spend it
+    /// all, and half of them call a function or a method.
+    pub(crate) fn main_stmts(&mut self) {
+        for count in 0..MAX_STATEMENTS {
+            if self.pick(32) == 0 || !self.spend(1) {
+                break;
+            }
+            let share = self.fuel / (MAX_STATEMENTS - count) as u64;
+            let rest = self.fuel - share;
+            self.fuel = share;
+            if !self.callees_any().is_empty() && self.pick(2) == 1 {
+                self.w.line();
+                self.cost.statement();
+                self.call_stmt();
+            } else {
+                self.stmt();
+            }
+            self.fuel += rest;
+        }
+    }
+
+    /// A call of a function or a method as a statement, printing what it returns where it can.
+    fn call_stmt(&mut self) {
+        let callees = self.callees_any();
+        let callee = callees[self.pick(callees.len())];
+        let ret = self.scope.funcs[callee].ret.clone();
+        let print = Ty::VALUES.contains(&ret);
+        if print {
+            self.w.text("print(");
+        } else if ret != Ty::Unit {
+            self.w.text("let _ = ");
+        }
+        self.invoke(callee, false);
+        if print {
+            self.w.text(")");
         }
     }
 
@@ -84,7 +124,7 @@ impl Gen<'_> {
                 }
             }
         }
-        if !self.callees(&Ty::Unit, 0).is_empty() {
+        if !self.callees_any().is_empty() {
             rules.push(Rule::Call);
         }
         self.w.line();
@@ -148,9 +188,7 @@ impl Gen<'_> {
             Rule::WhileLet => self.while_let(),
             Rule::For => self.for_stmt(),
             Rule::ForArray => self.for_array(),
-            Rule::Call => {
-                self.call(&Ty::Unit, 0);
-            }
+            Rule::Call => self.call_stmt(),
         }
     }
 
@@ -242,8 +280,7 @@ impl Gen<'_> {
         self.w
             .text(&format!("{}.{}", self.scope.vars[v].name, field.name));
         if matches!(ty, Ty::I64 | Ty::U8 | Ty::F64) && self.pick(3) != 0 {
-            self.one_of(&OPS);
-            self.expr(&ty, 0);
+            self.compound_by(&ty);
         } else {
             self.w.text(" = ");
             self.expr(&ty, cap);
@@ -310,9 +347,18 @@ impl Gen<'_> {
             var.append(added.size, times);
         } else {
             self.w.text(&name);
-            self.one_of(&OPS);
-            self.expr(&ty, 0);
+            self.compound_by(&ty);
         }
+    }
+
+    /// ` op= e` of a number of type `ty`. A `*=` in a loop soon overflows, so it comes 1 in 8.
+    fn compound_by(&mut self, ty: &Ty) {
+        if self.pick(8) == 7 {
+            self.w.text(" *= ");
+        } else {
+            self.one_of(&OPS);
+        }
+        self.right_operand(ty);
     }
 
     /// `if c { ... } [else if d { ... }] [else { ... }]`. Every branch but an `else` may end in
@@ -364,7 +410,8 @@ impl Gen<'_> {
         let var = Var::new(counter.clone(), Ty::I64, false, 0, 0, self.cost.depth());
         self.scope.vars.push(var);
         self.conditionally(|g| {
-            if g.pick(2) == 1 {
+            // Now and then, as another condition may end the loop before its body runs.
+            if g.pick(4) == 3 {
                 g.w.text(" && ");
                 g.cost.enter_condition(bound);
                 g.expr(&Ty::Bool, 0);
@@ -644,14 +691,20 @@ impl Gen<'_> {
     /// `continue`.
     fn jump(&mut self) {
         self.cost.statement();
-        let mut jumps = vec!["panic", "todo"];
+        let mut jumps = Vec::new();
         if self.jumps.ret {
             jumps.push("return");
         }
         if self.jumps.in_loop {
             jumps.extend(["break", "continue"]);
         }
-        match jumps[self.pick(jumps.len())] {
+        // A panic ends the run, so it comes about once in 32 where another jump can.
+        let jump = if jumps.is_empty() || self.pick(32) == 31 {
+            ["panic", "todo"][self.pick(2)]
+        } else {
+            jumps[self.pick(jumps.len())]
+        };
+        match jump {
             "panic" => {
                 let message = self.message();
                 self.w.text(&format!("panic({message})"));
@@ -678,8 +731,8 @@ impl Gen<'_> {
     }
 }
 
-/// The compound assignments of a number.
-const OPS: [&str; 5] = [" += ", " -= ", " *= ", " /= ", " %= "];
+/// The compound assignments of a number but `*=`.
+const OPS: [&str; 4] = [" += ", " -= ", " /= ", " %= "];
 
 /// The sizes a mutable `string` or optional may have, and the room of a `string`.
 const SIZES: [u64; 4] = [0, 16, 64, MAX_SIZE / 2];

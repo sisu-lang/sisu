@@ -1687,6 +1687,65 @@ fn every_variant_is_generated() {
 }
 
 #[test]
+fn main_holds_several_statements() {
+    // Each top-level statement of `main` takes a share of its fuel, so the first cannot spend
+    // it all, and `main` seldom stops before its first.
+    let mut counts: Vec<usize> = seeds()
+        .map(|data| {
+            let (program, _) = checked(&generate(&data));
+            program
+                .items
+                .into_iter()
+                .find_map(|item| match item {
+                    ast::Item::Function(f) if f.name.name.as_str() == "main" => {
+                        Some(f.body.stmts.len())
+                    }
+                    ast::Item::Function(_)
+                    | ast::Item::Class(_)
+                    | ast::Item::Enum(_)
+                    | ast::Item::Const(_) => None,
+                })
+                .expect("a program should have `main`")
+        })
+        .collect();
+    counts.sort_unstable();
+    let empty = counts.iter().filter(|&&n| n == 0).count();
+    assert!(empty <= 2, "{empty} empty mains: {counts:?}");
+    assert!(counts[counts.len() / 2] >= 4, "{counts:?}");
+}
+
+#[test]
+fn a_generated_panic_is_rare() {
+    // A panic ends the run, so a block ends in one only now and then where another jump can,
+    // and seldom where none can; and an `if` expression's branch after the first, seldom.
+    let (mut jumps, mut panics, mut ifs, mut panicking) = (0, 0, 0, 0);
+    for data in seeds() {
+        let g = generate(&data);
+        for line in g.program.lines().map(str::trim) {
+            if line.starts_with("panic(") || line.starts_with("todo") {
+                panics += 1;
+            } else if line.starts_with("return") || line == "break" || line == "continue" {
+                jumps += 1;
+            }
+        }
+        ifs += g.program.matches("(if ").count();
+        panicking += g.program.matches("{ panic(").count() + g.program.matches("{ todo").count();
+    }
+    assert!(
+        jumps > 0 && ifs > 0,
+        "the seeds should hold jumps and `if`s"
+    );
+    assert!(
+        panics * 16 <= jumps,
+        "{panics} panics and {jumps} other jumps end blocks"
+    );
+    assert!(
+        panicking * 32 <= ifs,
+        "{panicking} `if` branches panic in {ifs} `if`s"
+    );
+}
+
+#[test]
 fn generation_is_deterministic() {
     for data in seeds() {
         let (first, second) = (generate(&data), generate(&data));
@@ -1964,7 +2023,7 @@ fn rare_constant_forms_check_clean() {
     for (data, form) in [
         // `-(e)` of the smallest `i64`, which has no negation: `e` alone.
         (
-            &[0, 1, 0, 0, 0, 1, 0, 7, 1][..],
+            &[0, 1, 0, 0, 0, 1, 0, 63][..],
             "const c1 = (-9223372036854775808)\n",
         ),
         // `(a && b)` and `(a || b)` of `bool`s.

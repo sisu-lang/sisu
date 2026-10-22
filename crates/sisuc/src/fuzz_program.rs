@@ -748,14 +748,15 @@ mod tests {
         assert_eq!(left, 0, "`program` should remove its directory");
     }
 
-    /// The seed whose generated cost is highest runs at O0 well within the limit. No assertion
-    /// on time: a run past `LIMIT` is `TimedOut`.
+    /// Loops nested as deep as decision 5 lets them, each run to its bound, finish at O0 within
+    /// the limit, so a bound written past what the cost counts shows as `TimedOut`. No
+    /// assertion on time.
     #[test]
     fn a_budget_program_is_fast() {
-        let seed = coverage::seeds()
-            .max_by_key(|seed| generate(seed).cost)
-            .expect("the coverage test should have seeds");
-        let g = generate(&seed);
+        // Byte by byte: no types, no items, a statement of `main`, a `while` of bound 8, twice
+        // more inside it, and in the innermost a `print` of a literal; then every choice is the
+        // first.
+        let g = generate(&[0, 0, 1, 7, 8, 0, 1, 7, 8, 0, 1, 7, 8, 0, 1, 0, 0, 0, 0]);
         on_stack(|| {
             let scratch = Scratch::new();
             let program = checked("program", &g.program).expect("a seed should check clean");
@@ -770,8 +771,66 @@ mod tests {
                 &runtime(),
                 &exe,
             );
-            let exit = run(&exe, &stdin, &scratch.0, LIMIT).exit;
-            assert!(matches!(exit, Exit::Code(0 | 101)), "{exit:?}");
+            let Run { exit, stdout, .. } = run(&exe, &stdin, &scratch.0, LIMIT);
+            assert_eq!(exit, Exit::Code(0), "{}", g.program);
+            // One line from each pass of the innermost loop: every loop ran to its bound.
+            assert_eq!(String::from_utf8_lossy(&stdout).lines().count(), 8 * 8 * 8);
+        });
+    }
+
+    /// Not a check: prints, for each seed of the coverage test, its cost, `main`'s top-level
+    /// statements, and how its O0 build ran. `cargo nextest run -p sisuc --lib --run-ignored only
+    /// fuzz_program::tests::probe_seeds --no-capture`.
+    #[test]
+    #[ignore = "a probe that builds and runs 64 programs, for a person to read"]
+    fn probe_seeds() {
+        on_stack(|| {
+            let scratch = Scratch::new();
+            for (n, data) in coverage::seeds().enumerate() {
+                let g = generate(&data);
+                let program = checked("program", &g.program).expect("a seed should check clean");
+                let main = crate::parser::parse_ok(&g.program)
+                    .items
+                    .into_iter()
+                    .find_map(|item| match item {
+                        crate::ast::Item::Function(f) if f.name.name.as_str() == "main" => {
+                            Some(f.body.stmts.len())
+                        }
+                        crate::ast::Item::Function(_)
+                        | crate::ast::Item::Class(_)
+                        | crate::ast::Item::Enum(_)
+                        | crate::ast::Item::Const(_) => None,
+                    })
+                    .expect("a program should have `main`");
+                let stdin = scratch.0.join("stdin.txt");
+                fs::write(&stdin, &g.stdin).expect("the probe should write the stdin");
+                let exe = scratch.0.join("program");
+                build(
+                    "program",
+                    &g.program,
+                    &program,
+                    &BUILDS[0].1,
+                    &runtime(),
+                    &exe,
+                );
+                let start = std::time::Instant::now();
+                let ran = run(&exe, &stdin, &scratch.0, LIMIT);
+                let time = start.elapsed();
+                let stderr = String::from_utf8_lossy(&ran.stderr);
+                let last = stderr
+                    .lines()
+                    .last()
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect::<String>();
+                println!(
+                    "{n}\tcost={}\tmain={main}\texit={:?}\tout={}B\tt={time:?}\t{last}",
+                    g.cost,
+                    ran.exit,
+                    ran.stdout.len()
+                );
+            }
         });
     }
 
@@ -822,7 +881,7 @@ mod tests {
         if env::var_os(CHILD).is_some() {
             on_stack(|| {
                 FORCE.set(Some(Force::Stdout));
-                program(&seed(0), &runtime());
+                program(&[], &runtime());
             });
             return;
         }
@@ -830,11 +889,12 @@ mod tests {
         let out = child("a_failure_prints_the_program", &scratch.0);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{stderr}");
-        let g = generate(&seed(0));
+        let g = generate(&[]);
         assert_record(&stderr, "property 3: ", &g, &scratch.0);
         let builds = [
             stderr.find("==> stdin\n"),
-            // Output without a final line break gets one; seed 0 prints nothing, which gets none.
+            // Output without a final line break gets one; the empty input's program, an empty
+            // `main`, prints nothing, which gets none.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
             stderr.find("==> program --rc-checks stdout\n==> program --rc-checks stderr\n"),
             stderr.find("program fuzzer: property 3 failed"),

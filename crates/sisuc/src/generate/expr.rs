@@ -856,37 +856,49 @@ impl Gen<'_> {
     /// An `i64` literal in one of its written forms, a negative one in parentheses, and its
     /// value.
     pub(crate) fn int_literal(&mut self) -> (String, i64) {
-        match self.pick(8) {
-            0 => {
-                let n = self.int(0, 9);
-                (n.to_string(), n)
-            }
-            1 => {
-                let n = self.int(0, 1_000);
-                (n.to_string(), n)
-            }
-            2 => {
-                let n = self.int(1_000, i64::MAX);
+        // Arithmetic over a value near either end of `i64` overflows, so those come 4 in 64.
+        let form = self.pick(64);
+        match form {
+            60 => {
+                let n = self.int(100_000, i64::MAX);
                 (separated(n), n)
             }
-            3 => {
+            61 => {
                 let n = self.int(0, i64::MAX);
                 (format!("{n:#x}"), n)
             }
-            4 => {
-                let n = self.int(0, 255);
-                (format!("{n:#b}"), n)
-            }
-            5 => {
-                let n = self.int(0, 4_095);
-                (format!("{n:#o}"), n)
-            }
-            6 => {
-                let n = self.int(1, 1_000);
-                (format!("(-{n})"), -n)
-            }
-            _ if self.pick(2) == 0 => ("9223372036854775807".to_string(), i64::MAX),
-            _ => ("(-9223372036854775808)".to_string(), i64::MIN),
+            62 => ("9223372036854775807".to_string(), i64::MAX),
+            63 => ("(-9223372036854775808)".to_string(), i64::MIN),
+            _ => match form % 7 {
+                0 => {
+                    let n = self.int(0, 9);
+                    (n.to_string(), n)
+                }
+                1 => {
+                    let n = self.int(0, 1_000);
+                    (n.to_string(), n)
+                }
+                2 => {
+                    let n = self.int(1_000, 99_999);
+                    (separated(n), n)
+                }
+                3 => {
+                    let n = self.int(0, 4_095);
+                    (format!("{n:#x}"), n)
+                }
+                4 => {
+                    let n = self.int(0, 255);
+                    (format!("{n:#b}"), n)
+                }
+                5 => {
+                    let n = self.int(0, 4_095);
+                    (format!("{n:#o}"), n)
+                }
+                _ => {
+                    let n = self.int(1, 1_000);
+                    (format!("(-{n})"), -n)
+                }
+            },
         }
     }
 
@@ -959,12 +971,36 @@ impl Gen<'_> {
     fn arithmetic(&mut self, ty: &Ty, synth: bool) -> Info {
         const OPS: [&str; 5] = [" + ", " - ", " * ", " / ", " % "];
         self.w.text("(");
-        self.synth = synth;
-        let lhs = self.expr(ty, 0);
+        // `a op b` of `a` in `10..=28` and `b` in `1..=9` fits a `u8` and divides by no zero.
+        let lhs = if matches!(ty, Ty::I64 | Ty::U8) && self.pick(16) != 0 {
+            let n = self.int(10, 28);
+            // With no expected type, a `u8` must be one by its own type (`Gen::expr`).
+            if synth && *ty == Ty::U8 {
+                self.w.text(&format!("(u8({n}) ?? {n})"));
+            } else {
+                self.w.text(&n.to_string());
+            }
+            Info::leaf(0)
+        } else {
+            self.synth = synth;
+            self.expr(ty, 0)
+        };
         self.one_of(&OPS);
-        let rhs = self.expr(ty, 0);
+        let rhs = self.right_operand(ty);
         self.w.text(")");
         Info::of(&[lhs, rhs], 0, *ty == Ty::F64)
+    }
+
+    /// The right operand of arithmetic of `ty`: for an `i64`, mostly, and for a `u8`, always,
+    /// a literal in `1..=9`, so the arithmetic rarely overflows or divides by zero; else any
+    /// expression. Any other `u8` is as likely as not to overflow.
+    pub(crate) fn right_operand(&mut self, ty: &Ty) -> Info {
+        if *ty == Ty::U8 || *ty == Ty::I64 && self.pick(16) != 0 {
+            let n = self.int(1, 9);
+            self.w.text(&n.to_string());
+            return Info::leaf(0);
+        }
+        self.expr(ty, 0)
     }
 
     /// A chain `a < b <= c` or `a > b >= c` of two or three operands of one ordered type.
@@ -1145,6 +1181,15 @@ impl Gen<'_> {
             .collect()
     }
 
+    /// The functions and methods a call statement may name, of any type.
+    pub(crate) fn callees_any(&self) -> Vec<usize> {
+        let last = self.scope.func.map_or(self.scope.funcs.len(), |f| f + 1);
+        if self.scope.func.is_none() && self.cost.times() > self.budget {
+            return Vec::new();
+        }
+        (0..last).collect()
+    }
+
     /// A call of a function or a method that returns `ty`, `unit` for a statement.
     pub(crate) fn call(&mut self, ty: &Ty, max: u64) -> Info {
         let callees = self.callees(ty, max);
@@ -1154,7 +1199,7 @@ impl Gen<'_> {
 
     /// `f(depth, args)`, or of a method `((e).m(depth, args))`, or `((o)?.m(depth, args))` if
     /// `safe`, whose arguments may not run.
-    fn invoke(&mut self, callee: usize, safe: bool) -> Info {
+    pub(crate) fn invoke(&mut self, callee: usize, safe: bool) -> Info {
         // The depth first: the budget it takes is gone before the receiver's calls take theirs.
         let depth = if self.scope.func.is_some() {
             self.cost.call(callee, None);
@@ -1266,19 +1311,18 @@ impl Gen<'_> {
     /// A branch of an `if` after the first: a value, or now and then a panic: a call of
     /// `panic` or `todo`, or an index past the end of an array.
     fn branch(&mut self, ty: &Ty, max: u64) -> Info {
-        match self.pick(8) {
-            6 if self.pick(2) == 1 => {
-                // `[e][1]`: index 1 out of bounds for length 1.
-                self.w.text("([");
-                self.synth = true;
-                self.expr(ty, MAX_SIZE - 1);
-                self.w.text("][1])");
-            }
-            6 => {
+        // A panic ends the run, and a run takes hundreds of these branches, so it comes once
+        // in 64.
+        if self.pick(64) != 63 {
+            return self.expr(ty, max);
+        }
+        // The index takes half: it is the one panic that reads a value first.
+        match self.pick(4) {
+            0 => {
                 let message = self.message();
                 self.w.text(&format!("panic({message})"));
             }
-            7 => {
+            1 => {
                 let todo = if self.pick(2) == 0 {
                     "todo".to_string()
                 } else {
@@ -1286,7 +1330,13 @@ impl Gen<'_> {
                 };
                 self.w.text(&todo);
             }
-            _ => return self.expr(ty, max),
+            _ => {
+                // `[e][1]`: index 1 out of bounds for length 1.
+                self.w.text("([");
+                self.synth = true;
+                self.expr(ty, MAX_SIZE - 1);
+                self.w.text("][1])");
+            }
         }
         Info::of(&[], 0, false)
     }

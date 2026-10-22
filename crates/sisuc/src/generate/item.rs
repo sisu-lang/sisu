@@ -67,7 +67,7 @@ impl Gen<'_> {
         self.fuel += reserve;
         self.w.text("fn main() ");
         self.open_body();
-        self.stmts(false);
+        self.main_stmts();
         self.w.close();
         self.w.line();
         // The stdin comes last, so the first bytes choose the program's shape.
