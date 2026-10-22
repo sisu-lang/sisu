@@ -45,6 +45,8 @@ pub(crate) fn array_size(len: u64, element: u64) -> u64 {
 enum Rule {
     Literal,
     Name,
+    /// `(v[i])` of an array local, in bounds.
+    Element,
     Negate,
     Not,
     Arithmetic,
@@ -167,12 +169,15 @@ impl Gen<'_> {
     /// type `None` or `[]` at all. Such a value is at least `ty.least()`, which `max` holds.
     pub(crate) fn expr(&mut self, ty: &Ty, max: u64) -> Info {
         let synth = std::mem::take(&mut self.synth) && ty.inferred();
-        debug_assert!(!synth || ty.least() <= max, "no {} fits {max}", ty.name());
+        debug_assert!(!synth || ty.least() <= max, "no {ty} fits {max}");
         let u8 = synth && *ty == Ty::U8;
         // `(u8(e) ?? d)` is the smallest `u8` of its own type.
         let mut rules = vec![if u8 { Rule::Fallible } else { Rule::Literal }];
         if self.has_name(ty, max) {
             rules.push(Rule::Name);
+        }
+        if self.scope.vars.iter().any(|var| indexable(var, ty, max)) {
+            rules.push(Rule::Element);
         }
         if self.nesting < MAX_NESTING && self.spend(1) {
             self.compound_rules(ty, max, synth, &mut rules);
@@ -230,6 +235,10 @@ impl Gen<'_> {
                 rules.push(Rule::Fill);
                 // `words` gives at most one more than its chars.
                 if matches!(**element, Ty::Char | Ty::U8) || **element == Ty::String && max > 0 {
+                    rules.push(Rule::Split);
+                }
+                // `bytes` is the one way to a `[u8]` but literals and fills, so it comes more.
+                if **element == Ty::U8 {
                     rules.push(Rule::Split);
                 }
                 &[]
@@ -356,6 +365,7 @@ impl Gen<'_> {
                 Info::of(&[chars], chars.size, true)
             }
             Rule::Index => self.index(ty, max),
+            Rule::Element => self.element(ty, max),
         }
     }
 
@@ -461,7 +471,7 @@ impl Gen<'_> {
         } else {
             Ty::I64
         };
-        self.w.text(&format!("{}(", payload.name()));
+        self.w.text(&format!("{payload}("));
         let operand = self.expr(&source, 0);
         self.w.text(")");
         Info::of(&[operand], 0, true)
@@ -506,19 +516,22 @@ impl Gen<'_> {
         Info::of(&[receiver], size, true)
     }
 
-    /// `(v[i])` of an array local, or `([a, b, ...][i])` of a literal, with `i` in bounds.
-    fn index(&mut self, ty: &Ty, max: u64) -> Info {
+    /// `(v[i])` of an array local whose elements are `ty`s of at most `max`, with `i` below
+    /// its length.
+    fn element(&mut self, ty: &Ty, max: u64) -> Info {
         let vars: Vec<usize> = (0..self.scope.vars.len())
             .filter(|&v| indexable(&self.scope.vars[v], ty, max))
             .collect();
-        if !vars.is_empty() && self.pick(2) == 1 {
-            let pick = self.pick(vars.len());
-            let var = &self.scope.vars[vars[pick]];
-            let (name, len, elem) = (var.name.clone(), var.len, var.elem);
-            let at = self.upto(len - 1);
-            self.w.text(&format!("({name}[{at}])"));
-            return Info::of(&[], elem, false);
-        }
+        let pick = self.pick(vars.len());
+        let var = &self.scope.vars[vars[pick]];
+        let (name, len, elem) = (var.name.clone(), var.len, var.elem);
+        let at = self.upto(len - 1);
+        self.w.text(&format!("({name}[{at}])"));
+        Info::of(&[], elem, false)
+    }
+
+    /// `([a, b, ...][i])` of a literal, with `i` in bounds.
+    fn index(&mut self, ty: &Ty, max: u64) -> Info {
         // Its elements, of one at least, hold `max` between them at most if they have a size.
         let most = if ty.sized() {
             MAX_SIZE.min(max + 1)
@@ -557,7 +570,7 @@ impl Gen<'_> {
             return Ty::VALUES[choice].clone();
         }
         // Arrays of strings, whose elements `+=` may grow, come more often.
-        let inner = if choice == values && self.pick(4) == 0 {
+        let inner = if choice == values && self.pick(2) == 0 {
             Ty::String
         } else {
             self.type_within(nesting - 1)
@@ -779,7 +792,7 @@ impl Gen<'_> {
     /// `(u8(e) ?? d)`, `(char(e) ?? d)` or `(i64(e) ?? d)`.
     fn fallible(&mut self, ty: &Ty) -> Info {
         let source = if *ty == Ty::I64 { Ty::F64 } else { Ty::I64 };
-        self.w.text(&format!("({}(", ty.name()));
+        self.w.text(&format!("({ty}("));
         let operand = self.expr(&source, 0);
         self.w.text(") ?? ");
         let default = self.conditionally(|g| g.expr(ty, 0));

@@ -157,7 +157,7 @@ impl Gen<'_> {
         self.w.text(&format!("{keyword} {name}"));
         // A value of a type the checker infers needs one where it is not written.
         if ty.inferred() || self.pick(2) == 1 {
-            self.w.text(&format!(": {}", ty.name()));
+            self.w.text(&format!(": {ty}"));
         }
         self.w.text(" = ");
         if mutable && let Ty::Array(element) = &ty {
@@ -174,6 +174,10 @@ impl Gen<'_> {
         let base = if mutable { base } else { init.size };
         let mut var = Var::new(name, ty, mutable, base, room, self.cost.depth());
         var.len = init.len;
+        if let Ty::Array(_) = var.ty {
+            // An element holds at most what the array does but for its slots.
+            var.elem = init.size - init.len;
+        }
         debug_assert!(var.size <= MAX_SIZE, "a value may reach {}", var.size);
         self.scope.vars.push(var);
     }

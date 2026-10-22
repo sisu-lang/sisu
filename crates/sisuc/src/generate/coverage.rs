@@ -115,7 +115,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 10] = [
+const REACH: [&str; 14] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -126,6 +126,10 @@ const REACH: [&str; 10] = [
     "reach: a `while let` takes its `Some` branch",
     "reach: an index is in bounds",
     "reach: an index is meant to panic",
+    "reach: an index reads a local",
+    "reach: an index reads an immutable local",
+    "reach: `==` or `!=` compares with `None`",
+    "reach: a `+=` adds chars to a string local",
 ];
 
 /// Whether a program's text holds a form.
@@ -344,6 +348,16 @@ struct Walk {
     source: String,
     /// The length of each array local whose `let` writes it as a literal or a fill.
     lens: FxHashMap<String, i128>,
+    /// The locals a `let` without `mut` declares.
+    immutable: FxHashSet<String>,
+    /// Where an index sits alone in an `if` branch after the first, as the one meant to panic.
+    later: FxHashSet<usize>,
+    /// Where the value of a `while let` that runs its body starts.
+    some_values: FxHashSet<usize>,
+    /// Where a `+=` on a name starts.
+    adds: FxHashSet<usize>,
+    /// Whether the walk is in the target of an assignment, which writes an element, not reads it.
+    writing: bool,
 }
 
 impl Walk {
@@ -357,6 +371,10 @@ impl Walk {
         let (ast, tir) = checked(g);
         self.source.clone_from(&g.program);
         self.lens.clear();
+        self.immutable.clear();
+        self.later.clear();
+        self.some_values.clear();
+        self.adds.clear();
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -462,6 +480,43 @@ impl Walk {
         }
     }
 
+    /// Walks the target of an assignment.
+    fn target(&mut self, target: &ast::Expr) {
+        self.writing = true;
+        self.ast_expr(target);
+        self.writing = false;
+    }
+
+    /// Notes an index alone in the branch an `else` starts: the `else` block, or the first
+    /// branch of the `if` an `else if` folds into it, which that `if` does not see as later.
+    fn later_branch(&mut self, else_block: &ast::Block) {
+        let block = match alone(else_block).map(|e| &e.kind) {
+            Some(
+                ast::ExprKind::If { then_block, .. } | ast::ExprKind::IfLet { then_block, .. },
+            ) => then_block,
+            Some(_) | None => else_block,
+        };
+        if let Some(e) = alone(block)
+            && matches!(e.kind, ast::ExprKind::Index { .. })
+        {
+            self.later.insert(e.span.start());
+        }
+    }
+
+    /// Marks the `Some` reach of a `while let` whose value `(if c { e } else { None })` the
+    /// checker gives as a wrapped `e`: a `T`, so its first run is a `Some`.
+    fn some_value(&mut self, scrutinee: &tir::Expr) {
+        if self.some_values.contains(&scrutinee.span.start())
+            && let tir::ExprKind::If { then_block, .. } = &scrutinee.kind
+            && then_block
+                .value
+                .as_ref()
+                .is_some_and(|value| matches!(value.kind, tir::ExprKind::Wrap(_)))
+        {
+            self.mark("reach: a `while let` takes its `Some` branch");
+        }
+    }
+
     /// Checks that a `while let` counts down as a `while` does, its value `(if cond { e } else
     /// { None })`; the first run of `e` gives a `Some`, so a positive bound runs the body.
     fn while_let_bound(
@@ -478,8 +533,9 @@ impl Walk {
             && let [none] = &other.stmts[..]
             && matches!(&none.kind, ast::StmtKind::Expr(e) if matches!(e.kind, ast::ExprKind::NoneLit))
         {
+            // The TIR walk marks the reach once the checker wraps the first branch.
             if self.while_bound(before, cond, body) > 0 {
-                self.mark("reach: a `while let` takes its `Some` branch");
+                self.some_values.insert(value.span.start());
             }
         } else {
             self.unbounded
@@ -551,18 +607,30 @@ impl Walk {
         }
     }
 
+    fn ast_let(&mut self, mutable: bool, name: &str, ty: Option<&ast::TypeExpr>, init: &ast::Expr) {
+        self.mark("ast::StmtKind::Let");
+        if mutable {
+            self.immutable.remove(name);
+        } else {
+            self.immutable.insert(name.to_string());
+        }
+        if let Some(len) = array_len(init) {
+            self.lens.insert(name.to_string(), len);
+        }
+        if let Some(ty) = ty {
+            self.type_expr(ty);
+        }
+        self.ast_expr(init);
+    }
+
     fn ast_stmt(&mut self, stmt: &ast::Stmt) {
         match &stmt.kind {
-            ast::StmtKind::Let { ty, init, name, .. } => {
-                self.mark("ast::StmtKind::Let");
-                if let Some(len) = array_len(init) {
-                    self.lens.insert(name.name.as_str().to_string(), len);
-                }
-                if let Some(ty) = ty {
-                    self.type_expr(ty);
-                }
-                self.ast_expr(init);
-            }
+            ast::StmtKind::Let {
+                ty,
+                init,
+                name,
+                mutable,
+            } => self.ast_let(mutable.is_some(), name.name.as_str(), ty.as_ref(), init),
             ast::StmtKind::While { cond, body } => {
                 self.mark("ast::StmtKind::While");
                 self.ast_expr(cond);
@@ -631,15 +699,18 @@ impl Walk {
             ast::StmtKind::Continue => self.mark("ast::StmtKind::Continue"),
             ast::StmtKind::Assign { target, value } => {
                 self.mark("ast::StmtKind::Assign");
-                self.ast_expr(target);
+                self.target(target);
                 self.ast_expr(value);
             }
             ast::StmtKind::CompoundAssign {
                 op, target, value, ..
             } => {
                 self.mark("ast::StmtKind::CompoundAssign");
+                if *op == ast::BinaryOp::Add && name(target).is_some() {
+                    self.adds.insert(stmt.span.start());
+                }
                 self.binary_op(*op);
-                self.ast_expr(target);
+                self.target(target);
                 self.ast_expr(value);
             }
             ast::StmtKind::Expr(e) => {
@@ -762,6 +833,13 @@ impl Walk {
             ast::ExprKind::Binary { op, lhs, rhs, .. } => {
                 self.mark("ast::ExprKind::Binary");
                 self.binary_op(*op);
+                if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Ne)
+                    && [lhs, rhs]
+                        .iter()
+                        .any(|e| matches!(e.kind, ast::ExprKind::NoneLit))
+                {
+                    self.mark("reach: `==` or `!=` compares with `None`");
+                }
                 self.ast_expr(lhs);
                 self.ast_expr(rhs);
             }
@@ -802,8 +880,18 @@ impl Walk {
                 match (len, int(index)) {
                     (Some(len), Some(at)) if (0..len).contains(&at) => {
                         self.mark("reach: an index is in bounds");
+                        if let Some(local) = name(base)
+                            && !self.writing
+                        {
+                            self.mark("reach: an index reads a local");
+                            if self.immutable.contains(local) {
+                                self.mark("reach: an index reads an immutable local");
+                            }
+                        }
                     }
-                    (Some(1), Some(1)) if name(base).is_none() => {
+                    (Some(1), Some(1))
+                        if name(base).is_none() && self.later.contains(&e.span.start()) =>
+                    {
                         self.mark("reach: an index is meant to panic");
                     }
                     _ => self
@@ -824,6 +912,9 @@ impl Walk {
                 else_block,
             } => {
                 self.mark("ast::ExprKind::If");
+                if let Some(block) = else_block {
+                    self.later_branch(block);
+                }
                 self.ast_expr(cond);
                 self.ast_block(then_block);
                 if let Some(block) = else_block {
@@ -837,6 +928,9 @@ impl Walk {
                 else_block,
             } => {
                 self.mark("ast::ExprKind::IfLet");
+                if let Some(block) = else_block {
+                    self.later_branch(block);
+                }
                 self.ast_pattern(pattern);
                 self.ast_expr(value);
                 self.ast_block(then_block);
@@ -961,6 +1055,14 @@ impl Walk {
                 }
                 tir::Stmt::Assign { place, value } => {
                     self.mark("tir::Stmt::Assign");
+                    // A non-empty literal adds chars for certain.
+                    if matches!(place, tir::Place::Local(_))
+                        && let tir::ExprKind::Concat { rhs, .. } = &value.kind
+                        && matches!(&rhs.kind, tir::ExprKind::Str(text) if !text.is_empty())
+                        && self.adds.contains(&value.span.start())
+                    {
+                        self.mark("reach: a `+=` adds chars to a string local");
+                    }
                     self.place(place);
                     self.tir_expr(value, Parent::Other);
                 }
@@ -1152,6 +1254,7 @@ impl Walk {
                 ..
             } => {
                 self.mark("tir::ExprKind::IfSome");
+                self.some_value(scrutinee);
                 self.tir_expr(scrutinee, Parent::Other);
                 self.tir_block(then_block);
                 if let Some(block) = else_block {
@@ -1162,6 +1265,7 @@ impl Walk {
                 scrutinee, arms, ..
             } => {
                 self.mark("tir::ExprKind::Match");
+                self.some_value(scrutinee);
                 self.tir_expr(scrutinee, Parent::Other);
                 for arm in arms {
                     self.tir_pattern(&arm.pattern);
@@ -1280,6 +1384,23 @@ fn array_len(e: &ast::Expr) -> Option<i128> {
         i128::try_from(elements.len()).ok()
     } else if let ast::ExprKind::ArrayFill { len, .. } = &e.kind {
         int(len)
+    } else if let ast::ExprKind::Block(block) = &e.kind {
+        // A block's value is its last statement.
+        array_len(tail(block)?)
+    } else {
+        None
+    }
+}
+
+/// The expression `block` holds, if it holds only that.
+fn alone(block: &ast::Block) -> Option<&ast::Expr> {
+    tail(block).filter(|_| block.stmts.len() == 1)
+}
+
+/// The expression `block` ends with, if it ends with one.
+fn tail(block: &ast::Block) -> Option<&ast::Expr> {
+    if let ast::StmtKind::Expr(e) = &block.stmts.last()?.kind {
+        Some(e)
     } else {
         None
     }
@@ -1748,13 +1869,20 @@ fn every_index_is_in_bounds_or_meant_to_panic() {
 
 #[test]
 fn the_walker_reports_unbounded_loops_and_stray_indexes() {
-    // Two indexes past the end that are not `[e][1]`, and a `while`, a `while let` and a `for`
-    // of 9 runs or no bound at all: the walker lists each.
+    // Indexes past the end, `[e][1]` among them where it is not a later branch of an `if`, and
+    // a `while`, a `while let` and a `for` of 9 runs or no bound at all: the walker lists each.
+    // `b[1]` is in bounds through the block, and `[1][1]` in a later branch is meant to panic.
     let program = "fn main() {
     let a = [1, 2]
     let _ = a[2]
     let _ = [1, 2][2]
     let _ = [1][1]
+    let b: [i64] = ({
+        [1, 2]
+    })
+    let _ = b[1]
+    let _ = (if true { [1][1] } else { [1][1] })
+    let _ = (if true { 0 } else if false { [1][1] } else { [1][1] })
     let mut c = 9
     while c > 0 {
         c -= 1
@@ -1775,8 +1903,22 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
         known: Vec::new(),
         cost: 0,
     });
-    assert_eq!(walk.out_of_bounds.len(), 2, "{:?}", walk.out_of_bounds);
+    let listed: Vec<&str> = walk
+        .out_of_bounds
+        .iter()
+        .filter_map(|index| {
+            let at: usize = index.rsplit_once(' ')?.1.parse().ok()?;
+            Some(program[at..].split_once('\n')?.0)
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        ["a[2]", "[1, 2][2]", "[1][1]", "[1][1] } else { [1][1] })"],
+        "{:?}",
+        walk.out_of_bounds
+    );
     assert!(walk.seen.contains("reach: an index is meant to panic"));
+    assert!(walk.seen.contains("reach: an index reads a local"));
     let unbounded: Vec<&str> = walk
         .unbounded
         .iter()
@@ -1974,7 +2116,7 @@ fn an_expression_stays_within_its_most() {
                     g.synth = synth;
                     let size = g.expr(ty, max).size;
                     let text = &g.w.out.program;
-                    assert!(size <= max, "{} within {max}: {size} for {text}", ty.name());
+                    assert!(size <= max, "{ty} within {max}: {size} for {text}");
                 }
             }
         }
@@ -2060,4 +2202,56 @@ fn an_index_of_a_local_stays_below_its_length() {
         }
     }
     assert_eq!(seen, [true; 3]);
+}
+
+#[test]
+fn a_type_nests_at_most_twice() {
+    // Inputs of one repeated byte pick an array or an optional at every level they can.
+    fn depth(ty: &Ty) -> u32 {
+        match ty {
+            Ty::Array(inner) | Ty::Optional(inner) => 1 + depth(inner),
+            Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => 0,
+        }
+    }
+    let mut deepest = 0;
+    let repeated = (0..=u8::MAX).map(|byte| vec![byte; 64]);
+    let mixed = (0..2_048).map(|mut state| {
+        (0..2)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect()
+    });
+    for data in repeated.chain(mixed) {
+        let ty = Gen::new(&data).any_type();
+        assert!(depth(&ty) <= 2, "{ty}");
+        deepest = deepest.max(depth(&ty));
+    }
+    assert_eq!(deepest, 2);
+}
+
+#[test]
+fn a_panicking_index_builds_its_array_within_the_cap() {
+    // `([e][1])` builds `[e]` before it panics, a slot and `e`: a `string` local of 1,000 chars
+    // does not fit, though one of 999 does.
+    let mut panics = [0, 0];
+    for (i, size) in [MAX_SIZE, MAX_SIZE - 1].into_iter().enumerate() {
+        for mut state in 0..4_096 {
+            let data: Vec<u8> = (0..8)
+                .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+                .collect();
+            let mut g = Gen::new(&data);
+            g.scope
+                .vars
+                .push(Var::new("s0".to_string(), Ty::String, false, size, 0, 0));
+            g.expr(&Ty::String, 0);
+            panics[i] += g.w.out.program.matches("([s0][1])").count();
+        }
+    }
+    assert_eq!(
+        panics[0], 0,
+        "a string of 1,000 chars should not be put in an array"
+    );
+    assert!(
+        panics[1] > 0,
+        "some input should put the string of 999 in one"
+    );
 }

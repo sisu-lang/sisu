@@ -18,24 +18,26 @@ pub(crate) enum Ty {
     Optional(Box<Ty>),
 }
 
+/// The type as Sisu writes it.
+impl std::fmt::Display for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ty::I64 => f.write_str("i64"),
+            Ty::U8 => f.write_str("u8"),
+            Ty::F64 => f.write_str("f64"),
+            Ty::Bool => f.write_str("bool"),
+            Ty::Char => f.write_str("char"),
+            Ty::String => f.write_str("string"),
+            Ty::Unit => f.write_str("unit"),
+            Ty::Array(element) => write!(f, "[{element}]"),
+            Ty::Optional(payload) => write!(f, "{payload}?"),
+        }
+    }
+}
+
 impl Ty {
     /// The types that have values: every type but `unit`.
     pub(crate) const VALUES: [Ty; 6] = [Ty::I64, Ty::U8, Ty::F64, Ty::Bool, Ty::Char, Ty::String];
-
-    /// The type as Sisu writes it.
-    pub(crate) fn name(&self) -> String {
-        match self {
-            Ty::I64 => "i64".to_string(),
-            Ty::U8 => "u8".to_string(),
-            Ty::F64 => "f64".to_string(),
-            Ty::Bool => "bool".to_string(),
-            Ty::Char => "char".to_string(),
-            Ty::String => "string".to_string(),
-            Ty::Unit => "unit".to_string(),
-            Ty::Array(element) => format!("[{}]", element.name()),
-            Ty::Optional(payload) => format!("{}?", payload.name()),
-        }
-    }
 
     /// Whether a value of it written with no expected type may take another type: an integer
     /// literal is an `i64`, and `None` and `[]` cannot be inferred.

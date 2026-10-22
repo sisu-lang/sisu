@@ -89,11 +89,11 @@ impl Gen<'_> {
         };
         self.w.text(&format!("fn {name}(depth: i64"));
         for (param, ty, _) in &params {
-            self.w.text(&format!(", {param}: {}", ty.name()));
+            self.w.text(&format!(", {param}: {ty}"));
         }
         self.w.text(")");
         if ret != Ty::Unit {
-            self.w.text(&format!(" -> {}", ret.name()));
+            self.w.text(&format!(" -> {ret}"));
         }
         self.w.text(" ");
         self.scope.funcs.push(Func {
@@ -156,7 +156,7 @@ impl Gen<'_> {
         let name = self.scope.fresh("c");
         self.w.text(&format!("const {name}"));
         if ty == Ty::U8 || self.pick(2) == 1 {
-            self.w.text(&format!(": {}", ty.name()));
+            self.w.text(&format!(": {ty}"));
         }
         self.w.text(" = ");
         let folded = self.const_expr(&ty, MAX_SIZE);
