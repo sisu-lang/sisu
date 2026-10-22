@@ -618,10 +618,11 @@ impl Checker<'_> {
     ) -> (bool, bool) {
         let mut ty = self.receiver_ahead(receiver);
         if safe {
-            // `?.` calls the method on the payload.
-            ty = ty.and_then(|ty| match ty.kind() {
-                TypeKind::Optional(payload) => Some(payload),
-                _ => None,
+            // `?.` calls the method on the payload; on a value that is not optional, which is
+            // reported, on the value.
+            ty = ty.map(|ty| match ty.kind() {
+                TypeKind::Optional(payload) => payload,
+                _ => ty,
             });
         }
         let (methods, owner) = match ty.map(Type::kind) {

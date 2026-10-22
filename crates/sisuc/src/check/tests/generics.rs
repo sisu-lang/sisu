@@ -908,6 +908,12 @@ fn generic_methods_wait_for_context() {
             &["[i64]", "Wrap<[i64]>"],
         ),
     ]);
+    // `?.` on a value that is not optional is reported once, and the method still waits.
+    let src = "fn g(b: Box<i64>) {\n    let xs: [i64]? = opt(b?.make())\n}";
+    codes(
+        &with_generics(src),
+        &[(Code::SafeAccessNotOptional, (2, 26))],
+    );
 }
 
 /// Each binding is checked once, and a failed one undoes only what it bound, so inference's
