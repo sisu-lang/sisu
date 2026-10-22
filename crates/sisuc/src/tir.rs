@@ -523,19 +523,20 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
                     .is_some_and(|f| component[f.0] == component[e]);
         }
     }
-    // Only a `generic` field is boxed here, so a program without one skips the second graph.
-    let fields = enums
+    // A field the second pass may box; a program without one skips that pass's graph.
+    let late = |p: &Payload| p.generic && !p.param;
+    let mut fields = enums
         .iter()
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields);
-    if fields.clone().any(|p| p.generic && !p.param) {
+    if fields.any(late) {
         let remaining = components(&held(enums, |p| !p.boxed));
         for (e, info) in enums.iter_mut().enumerate() {
             for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
                 let on_cycle =
                     p.ty.inline_enum()
                         .is_some_and(|f| remaining[f.0] == remaining[e]);
-                p.boxed |= p.generic && !p.param && on_cycle;
+                p.boxed |= late(p) && on_cycle;
             }
         }
     }
