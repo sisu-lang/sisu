@@ -869,7 +869,8 @@ pub(crate) enum DiagnosticKind {
         remove: Span,
     },
     /// The `while` at `at`, from the keyword through its condition `true`, parentheses included;
-    /// `fix` is `loop` in its place, unless a failed jump may have meant the loop.
+    /// `fix` is `loop` in its place, unless a jump or loop label in the loop failed (a `break`
+    /// with a value, E0141, for one), as the rewrite could remove that error.
     WhileTrue { at: Span, fix: bool },
     /// The comparison at `at`, `!=` when `negated`, one side of which is `f64.nan`, which no
     /// number equals; `fix` is its `is_nan` test, when the other side is an `f64`.
@@ -3006,7 +3007,7 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::WhileTrue { at, fix } => {
                 let d = Diagnostic::coded(code, at, "this `while` has the condition `true`")
-                    .with_label("only `break`, `return` or a panic ends it")
+                    .with_label("the condition never ends the loop")
                     .with_help("write an endless loop as `loop`");
                 if fix {
                     d.with_fix(safe_fix("write `loop`", at, "loop"))

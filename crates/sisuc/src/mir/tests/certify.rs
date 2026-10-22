@@ -1006,7 +1006,8 @@ fn committed_binding_released_on_every_exit() {
     rejects(walk, exit, c, Rule::Return);
 }
 
-/// Hand-built, since a `loop` always has a `break` edge.
+/// Hand-built: the lowering releases a fresh value before the back edge, so no source program
+/// leaks on it.
 #[test]
 fn leak_on_the_back_edge_of_an_endless_loop() {
     let mut b = Builder::new("f");

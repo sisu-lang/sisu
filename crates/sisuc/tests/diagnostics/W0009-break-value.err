@@ -2,7 +2,7 @@ warning[W0009]: this `while` has the condition `true`
  --> W0009-break-value.sisu:2:5
   |
 2 |     while true {
-  |     ^^^^^^^^^^ only `break`, `return` or a panic ends it
+  |     ^^^^^^^^^^ the condition never ends the loop
   |
   = help: write an endless loop as `loop`
 

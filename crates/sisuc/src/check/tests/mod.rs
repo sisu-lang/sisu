@@ -744,8 +744,9 @@ fn continue_in_endless_loop() {
 
 #[test]
 fn inner_break_leaves_only_the_inner_loop() {
-    clean(
-        "fn f(c: bool, xs: [i64], o: i64?) -> i64 {\n    loop {\n        while c { break }\n        while let y = o { break }\n        for x in xs { break }\n    }\n}\nfn main() {}",
+    codes(
+        "fn f(c: bool, xs: [i64], o: i64?) -> i64 {\n    while true {\n        while c { break }\n        while let y = o { break }\n        for x in xs { break }\n    }\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5))],
     );
 }
 
@@ -771,8 +772,9 @@ fn break_in_a_value_makes_endless_loop_unit() {
 #[test]
 fn unreachable_break_still_counts() {
     codes(
-        "fn f() -> i64 {\n    loop {\n        return 1\n        break\n    }\n}\nfn main() {}",
+        "fn f() -> i64 {\n    while true {\n        return 1\n        break\n    }\n}\nfn main() {}",
         &[
+            (Code::WhileTrue, (2, 5)),
             (Code::UnreachableCode, (4, 9)),
             (Code::BodyHasNoValue, (6, 1)),
         ],
@@ -803,8 +805,9 @@ fn failed_endless_body_reports_no_missing_value() {
 #[test]
 fn failed_body_with_break_stays_unit() {
     codes(
-        "fn f() -> i64 {\n    loop {\n        missing\n        break\n    }\n}\nfn main() {}",
+        "fn f() -> i64 {\n    while true {\n        missing\n        break\n    }\n}\nfn main() {}",
         &[
+            (Code::WhileTrue, (2, 5)),
             (Code::BindingNotFound, (3, 9)),
             (Code::BodyHasNoValue, (6, 1)),
         ],
@@ -814,8 +817,8 @@ fn failed_body_with_break_stays_unit() {
 #[test]
 fn break_in_inner_header_does_not_count() {
     codes(
-        "fn f() -> i64 {\n    loop {\n        while { break\n true } {}\n    }\n}\nfn main() {}",
-        &[(Code::JumpInLoopHeader, (3, 17))],
+        "fn f() -> i64 {\n    while true {\n        while { break\n true } {}\n    }\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5)), (Code::JumpInLoopHeader, (3, 17))],
     );
 }
 
