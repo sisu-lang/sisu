@@ -465,20 +465,24 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
           <path data-edge-from="link" data-edge-to="binary" data-edge-label="links" data-edge-key="7" data-edge-id="link-to-binary" data-composition-points="800,410;690,410" data-composition-crossover="halo" data-composition-independent="true" d="M 800 410 L 690 410" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:8">
-          <path data-graph-role="automatic-crossover-underlay" d="M 865 540 L 865 440" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="runtime" data-edge-to="link" data-edge-label="linked in" data-edge-key="8" data-edge-id="runtime-to-link" data-composition-points="865,540;865,440" data-composition-crossover="halo" data-composition-independent="true" d="M 865 540 L 865 440" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 750 540 L 750 498 Q 750 490 758 490 L 850 490 Q 858 490 858 482 L 858 440" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="runtime" data-edge-to="link" data-edge-label="linked in" data-edge-key="8" data-edge-id="runtime-to-link" data-composition-points="750,540;750,490;858,490;858,440" data-composition-crossover="halo" data-composition-independent="true" d="M 750 540 L 750 498 Q 750 490 758 490 L 850 490 Q 858 490 858 482 L 858 440" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:9">
-          <path data-graph-role="automatic-crossover-underlay" d="M 345 200 L 345 184 Q 345 176 353 176 L 438 176 Q 446 176 446 168 L 446 78 Q 446 70 454 70 L 470 70" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="lexer" data-edge-to="diagnostics" data-edge-label="errors" data-edge-key="9" data-edge-id="lexer-errors" data-composition-points="345,200;345,176;446,176;446,70;470,70" data-composition-crossover="halo" data-composition-independent="true" d="M 345 200 L 345 184 Q 345 176 353 176 L 438 176 Q 446 176 446 168 L 446 78 Q 446 70 454 70 L 470 70" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 980 540 L 980 498 Q 980 490 972 490 L 880 490 Q 872 490 872 482 L 872 440" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="runtime-system" data-edge-to="link" data-edge-label="or linked in" data-edge-key="9" data-edge-id="runtime-system-to-link" data-composition-points="980,540;980,490;872,490;872,440" data-composition-crossover="halo" data-composition-independent="true" d="M 980 540 L 980 498 Q 980 490 972 490 L 880 490 Q 872 490 872 482 L 872 440" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:10">
-          <path data-graph-role="automatic-crossover-underlay" d="M 535 200 L 535 100" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="parser" data-edge-to="diagnostics" data-edge-label="errors" data-edge-key="10" data-edge-id="parser-errors" data-composition-points="535,200;535,100" data-composition-crossover="halo" data-composition-independent="true" d="M 535 200 L 535 100" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+          <path data-graph-role="automatic-crossover-underlay" d="M 345 200 L 345 184 Q 345 176 353 176 L 438 176 Q 446 176 446 168 L 446 78 Q 446 70 454 70 L 470 70" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="lexer" data-edge-to="diagnostics" data-edge-label="errors" data-edge-key="10" data-edge-id="lexer-errors" data-composition-points="345,200;345,176;446,176;446,70;470,70" data-composition-crossover="halo" data-composition-independent="true" d="M 345 200 L 345 184 Q 345 176 353 176 L 438 176 Q 446 176 446 168 L 446 78 Q 446 70 454 70 L 470 70" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         </g>
         <g data-graph-role="automatic-crossover" style="--step:11">
+          <path data-graph-role="automatic-crossover-underlay" d="M 535 200 L 535 100" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
+          <path data-edge-from="parser" data-edge-to="diagnostics" data-edge-label="errors" data-edge-key="11" data-edge-id="parser-errors" data-composition-points="535,200;535,100" data-composition-crossover="halo" data-composition-independent="true" d="M 535 200 L 535 100" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        </g>
+        <g data-graph-role="automatic-crossover" style="--step:12">
           <path data-graph-role="automatic-crossover-underlay" d="M 725 200 L 725 184 Q 725 176 717 176 L 632 176 Q 624 176 624 168 L 624 78 Q 624 70 616 70 L 600 70" fill="none" stroke="var(--mask)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>
-          <path data-edge-from="checker" data-edge-to="diagnostics" data-edge-label="every error" data-edge-key="11" data-edge-id="checker-errors" data-composition-points="725,200;725,176;624,176;624,70;600,70" data-composition-crossover="halo" data-composition-independent="true" d="M 725 200 L 725 184 Q 725 176 717 176 L 632 176 Q 624 176 624 168 L 624 78 Q 624 70 616 70 L 600 70" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+          <path data-edge-from="checker" data-edge-to="diagnostics" data-edge-label="every error" data-edge-key="12" data-edge-id="checker-errors" data-composition-points="725,200;725,176;624,176;624,70;600,70" data-composition-crossover="halo" data-composition-independent="true" d="M 725 200 L 725 184 Q 725 176 717 176 L 632 176 Q 624 176 624 168 L 624 78 Q 624 70 616 70 L 600 70" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         </g>
 
         <!-- Components -->
@@ -585,16 +589,28 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <text x="865" y="424" class="t-muted" font-size="9" text-anchor="middle">linker, run by link.rs</text>
         </g>
 
-        <g id="node-runtime" data-node-id="runtime" data-node-label="sisu-runtime" tabindex="0" role="button" aria-label="Focus sisu-runtime, libsisu_runtime.a, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="libsisu_runtime.a" data-node-context="Architecture component">
-          <title>sisu-runtime · libsisu_runtime.a · Architecture component</title>
-          <rect x="800" y="540" width="130" height="60" rx="6" class="c-mask"/>
-          <rect x="800" y="540" width="130" height="60" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(806 546) scale(0.6875)">
+        <g id="node-runtime" data-node-id="runtime" data-node-label="sisu-runtime-mimalloc" tabindex="0" role="button" aria-label="Focus sisu-runtime-mimalloc, libsisu_runtime_mimalloc.a, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="libsisu_runtime_mimalloc.a" data-node-context="Architecture component">
+          <title>sisu-runtime-mimalloc · libsisu_runtime_mimalloc.a · Architecture component</title>
+          <rect x="650" y="540" width="200" height="60" rx="6" class="c-mask"/>
+          <rect x="650" y="540" width="200" height="60" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(656 546) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" x="865" y="568" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">sisu-runtime</text>
-        <text x="865" y="584" class="t-muted" font-size="9" text-anchor="middle">libsisu_runtime.a</text>
+          <text data-node-label="" x="750" y="568" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">sisu-runtime-mimalloc</text>
+        <text x="750" y="584" class="t-muted" font-size="9" text-anchor="middle">libsisu_runtime_mimalloc.a</text>
+        </g>
+
+        <g id="node-runtime-system" data-node-id="runtime-system" data-node-label="sisu-runtime-system" tabindex="0" role="button" aria-label="Focus sisu-runtime-system, libsisu_runtime_system.a, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="libsisu_runtime_system.a" data-node-context="Architecture component">
+          <title>sisu-runtime-system · libsisu_runtime_system.a · Architecture component</title>
+          <rect x="880" y="540" width="200" height="60" rx="6" class="c-mask"/>
+          <rect x="880" y="540" width="200" height="60" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(886 546) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="980" y="568" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">sisu-runtime-system</text>
+        <text x="980" y="584" class="t-muted" font-size="9" text-anchor="middle">libsisu_runtime_system.a</text>
         </g>
 
         <g id="node-binary" data-node-id="binary" data-node-label="Executable" tabindex="0" role="button" aria-label="Focus Executable, Linux or ARM64 macOS, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="Linux or ARM64 macOS" data-node-context="Architecture component">
@@ -643,18 +659,22 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
           <text x="745" y="400" class="t-edge-emphasis" font-size="8" text-anchor="middle">links</text>
         </g>
         <g data-edge-from="runtime" data-edge-to="link" data-edge-label="linked in" data-edge-key="8" data-edge-id="runtime-to-link">
-          <rect x="838.4" y="520" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
-          <text x="865" y="530" class="t-edge-default" font-size="8" text-anchor="middle">linked in</text>
+          <rect x="777.4" y="470" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="804" y="480" class="t-edge-default" font-size="8" text-anchor="middle">linked in</text>
         </g>
-        <g data-edge-from="lexer" data-edge-to="diagnostics" data-edge-label="errors" data-edge-key="9" data-edge-id="lexer-errors">
+        <g data-edge-from="runtime-system" data-edge-to="link" data-edge-label="or linked in" data-edge-key="9" data-edge-id="runtime-system-to-link">
+          <rect x="892.2" y="470" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="926" y="480" class="t-edge-default" font-size="8" text-anchor="middle">or linked in</text>
+        </g>
+        <g data-edge-from="lexer" data-edge-to="diagnostics" data-edge-label="errors" data-edge-key="10" data-edge-id="lexer-errors">
           <rect x="376.1" y="156" width="38.8" height="14" rx="3" class="c-mask"/>
           <text x="395.5" y="166" class="t-edge-dashed" font-size="8" text-anchor="middle">errors</text>
         </g>
-        <g data-edge-from="parser" data-edge-to="diagnostics" data-edge-label="errors" data-edge-key="10" data-edge-id="parser-errors">
+        <g data-edge-from="parser" data-edge-to="diagnostics" data-edge-label="errors" data-edge-key="11" data-edge-id="parser-errors">
           <rect x="515.6" y="180" width="38.8" height="14" rx="3" class="c-mask"/>
           <text x="535" y="190" class="t-edge-dashed" font-size="8" text-anchor="middle">errors</text>
         </g>
-        <g data-edge-from="checker" data-edge-to="diagnostics" data-edge-label="every error" data-edge-key="11" data-edge-id="checker-errors">
+        <g data-edge-from="checker" data-edge-to="diagnostics" data-edge-label="every error" data-edge-key="12" data-edge-id="checker-errors">
           <rect x="643.1" y="156" width="62.8" height="14" rx="3" class="c-mask"/>
           <text x="674.5" y="166" class="t-edge-dashed" font-size="8" text-anchor="middle">every error</text>
         </g>

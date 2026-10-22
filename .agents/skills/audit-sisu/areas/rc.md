@@ -16,10 +16,10 @@ first two, and only for the paths that ran.
 Every probe runs under all of these:
 
 1. **Values.** Before the run, write the output the program must print, worked out from the value semantics in ADR 0007 and the README. Each probe prints what it reads back: after `let b = a` and `b[0] = 9`, print `a[0]` too. A mismatch is `wrong`, however clean memory is.
-2. **Memory.** Valgrind on the plain and the `-O2` build, ASan on the plain build and with `asan,default<O2>`, and the layout shim (toolbox, "Memory").
+2. **Memory.** Valgrind on the plain and the `-O2` build, each built with `--allocator system` (without it Valgrind sees no Sisu allocation and fails on mimalloc's startup read), ASan on the plain build and with `asan,default<O2>`, and the layout shim (toolbox, "Memory").
 3. **Counts.** `--rc-checks` plain and `-O2`; exit 102 is a finding.
-4. **Allocations.** Work out how many blocks the program must allocate, and compare with Valgrind's `total heap usage: N allocs` (the runtime and libc add a few; measure an empty `main` for the baseline). More blocks than needed is `slow`; fewer is a lead for a `wrong` sharing probe.
-5. **Lifetime.** A leak that frees at exit passes the four above. Free in a loop: build and drop the same structure 10 000 times, and compare Valgrind's peak with 10 iterations' (`valgrind --tool=massif`, or the allocation count with a counter in the program). Growth with the iteration count is `leak`.
+4. **Allocations.** Work out how many blocks the program must allocate, and compare with Valgrind's `total heap usage: N allocs` on the `--allocator system` build (the runtime and libc add a few; measure an empty `main` for the baseline). More blocks than needed is `slow`; fewer is a lead for a `wrong` sharing probe.
+5. **Lifetime.** A leak that frees at exit passes the four above. Free in a loop: build and drop the same structure 10 000 times, and compare Valgrind's peak with 10 iterations' (`valgrind --tool=massif` on the `--allocator system` build, or the allocation count with a counter in the program). Growth with the iteration count is `leak`.
 
 Give each path its own program, with the branch chosen by a constant, so
 one path's extra release cannot cancel another path's missing one.

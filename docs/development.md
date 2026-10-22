@@ -21,8 +21,8 @@ are skipped, and `make coverage`, `make mutants`, `make verify`, `make fuzz`,
   [typos](https://github.com/crate-ci/typos) and `shellcheck`, which two of
   the hooks run.
 - [cargo-nextest](https://nexte.st). Run the tests with it, not
-  `cargo test`: its setup script builds the runtime library that the
-  end-to-end tests link against.
+  `cargo test`: its setup script builds the two runtime archives that
+  the end-to-end tests link against.
 - [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) and
   [cargo-mutants](https://mutants.rs) for the commands below.
 - [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) for
@@ -56,7 +56,7 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-mutants, carg
 
 ```console
 $ make help    # every target
-$ make build   # sisu and the runtime library
+$ make build   # sisu and the two runtime archives
 $ make test    # unit tests and end-to-end cases
 $ make lint    # fmt, clippy, expect messages, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
@@ -124,10 +124,20 @@ runs' stderr holds Valgrind's own log, so they check only stdout and the exit
 code. To add the file to a case, `touch` it like any expected file.
 
 The runs go in order: plain and `-O2` without Valgrind, then, on Linux, both
-under Valgrind, then `--rc-checks`, and the first failure ends the case. A double
-free usually aborts in the plain run, so Valgrind never reports it there. To
-show what Valgrind says about a broken build, run its binary under
-`valgrind --error-exitcode=1` yourself.
+under Valgrind, then `--rc-checks`, and the first failure ends the case. On
+Linux the Valgrind runs build with `--allocator system`, because Valgrind sees
+no block that mimalloc hands out; the plain runs there are system builds too.
+A double free usually aborts in the plain run on Linux, so Valgrind never
+reports it there; on macOS the plain runs use mimalloc, which does not check.
+To show what Valgrind says about a broken build, build the program with
+`--allocator system` and run its binary under `valgrind --error-exitcode=1`
+yourself. A program built without the flag fails under Valgrind on mimalloc's
+startup read and shows none of its Sisu allocations
+([ADR 0031](adr/0031-compiled-programs-allocate-with-mimalloc.md)).
+
+mimalloc reads the `MIMALLOC_*` variables of the environment. An option such as
+`MIMALLOC_VERBOSE=1` can write to stderr and fail the tests that check a
+default build's stderr, so unset every `MIMALLOC_*` variable before `make test`.
 
 A `run/` case whose output depends on a value crossing a real call says so
 with a marker line, `// o2-calls: <caller> <callee> <count>`. The test then
@@ -197,8 +207,9 @@ a comment, so later runs skip it. A region you explain
 rather than cover still fails it, so read the reasons, not only the word. A
 diff that changes no `.rs` file passes at once, with nothing run.
 
-Programs that the tests compile link an uninstrumented runtime, built in
-`target/llvm-cov-runtime` and copied next to the instrumented `sisu`. Runtime
+Programs that the tests compile link an uninstrumented runtime, whose two
+archives are built in `target/llvm-cov-runtime` and copied next to the
+instrumented `sisu`. Runtime
 coverage therefore comes from the runtime's own unit tests. One of them,
 `print_panics_when_standard_output_cannot_be_duplicated`, is excluded under
 coverage: it exhausts file descriptors, and the profiler's error breaks its
@@ -388,9 +399,10 @@ commit, the host and the LLVM version, which a bug report needs because Sisu
 has no releases. A wrong command line exits with 2, so it differs from a
 program that does not compile (1). `sisu help` and `sisu` alone print the usage.
 
-`sisu` links every program with `libsisu_runtime.a`, which it looks for
-next to its own executable. `cargo build --workspace` puts both files there;
-`cargo build -p sisuc` does not build the runtime.
+`sisu` links every program with `libsisu_runtime_mimalloc.a`, or with
+`libsisu_runtime_system.a` for `--allocator system`, which it looks for next to
+its own executable. `cargo build --workspace` puts both archives and `sisu`
+there; `cargo build -p sisuc` does not build the runtime.
 
 When a program breaks a rule, `sisu` prints a diagnostic to stderr and exits
 with code 1. Take this `bad.sisu`:
@@ -490,6 +502,12 @@ On macOS, Apple's clang has no `bfd`, and for `lld` it runs `ld64.lld`, which
 `.llvm/23` does not have, so the tests that link with `--linker` run only on
 Linux.
 
+`sisu build --allocator system file.sisu` links the runtime on the System
+allocator, where a program otherwise allocates with mimalloc. Valgrind and ASan
+track `malloc` and see no block that mimalloc hands out, so a program you run
+under either by hand needs this build. `--allocator` works only when building
+an executable, and `sisu run` takes it too.
+
 `sisu build --rc-checks file.sisu` builds an executable that checks its
 reference counts. Before each retain or release, it checks that the count is
 at least 1. Before each read of a string, class or array local, it checks that
@@ -542,7 +560,8 @@ must accept any syntax those programs use.
 | `crates/sisuc` | The compiler: lexer, parser, checker, codegen and linking. |
 | `crates/sisuc/tests/run`, `run-fail`, `diagnostics` | End-to-end cases, each with the output it must print. |
 | `crates/sisuc/tests/programs` | The programs the small-stack tests run. |
-| `crates/runtime` | `sisu-runtime`, a static library with a C ABI linked into every compiled program. |
+| `crates/runtime` | `sisu-runtime`, the runtime's code: a Rust library with a C ABI. |
+| `crates/runtime-mimalloc`, `crates/runtime-system` | `sisu-runtime-mimalloc` and `sisu-runtime-system`, the static archives that link it, on mimalloc and on the System allocator. Every compiled program links one. |
 | `bench` | The benchmark programs, and under `features/` the Sisu-only ones for CodSpeed. |
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The front-end fuzz target, its own Cargo workspace, run by `scripts/fuzz.sh`. |

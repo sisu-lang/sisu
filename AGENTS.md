@@ -1,9 +1,10 @@
 # Sisu
 
-Sisu is a small, statically typed language compiled to native x86-64 and ARM64 Linux and ARM64 macOS code through LLVM 23. This Cargo workspace holds two crates:
+Sisu is a small, statically typed language compiled to native x86-64 and ARM64 Linux and ARM64 macOS code through LLVM 23. This Cargo workspace holds four crates:
 
 - `crates/sisuc`: the compiler (`sisu`).
-- `crates/runtime`: `sisu-runtime`, a `staticlib` with a C ABI that is linked into every compiled program.
+- `crates/runtime`: `sisu-runtime`, the runtime's code: an `rlib` with a C ABI.
+- `crates/runtime-mimalloc` and `crates/runtime-system`: `sisu-runtime-mimalloc` and `sisu-runtime-system`, the `staticlib`s that link it, on mimalloc and on the System allocator. `sisu build` links one of them into every compiled program (`--allocator`).
 
 ## Commands
 

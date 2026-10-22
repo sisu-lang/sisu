@@ -51,11 +51,20 @@ count of 1 or more. Valgrind and ASan find those.
 
 ## Memory
 
+Valgrind and Massif see only blocks from `malloc`. A default build allocates
+with mimalloc, so Valgrind sees none of its blocks and fails on mimalloc's
+startup read. They run builds of their own, with `--allocator system`:
+
+```console
+$ timeout 20 $S build --allocator system $D/p.sisu -o $D/pv
+$ timeout 20 $S build -O2 --allocator system $D/p.sisu -o $D/pv2
+```
+
 Valgrind, with the flags the `cases` harness uses. The `total heap usage: N
 allocs` line in its summary counts the blocks the program allocated:
 
 ```console
-$ timeout 120 valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect,possible --error-exitcode=1 $D/p
+$ timeout 120 valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect,possible --error-exitcode=1 $D/pv   # or $D/pv2
 ```
 
 AddressSanitizer, with LeakSanitizer. `sisu` has no flag for it, so mark
@@ -65,18 +74,18 @@ each function and instrument the raw IR with `opt`:
 $ timeout 20 $S build --emit ir-raw $D/p.sisu > $D/p.ll
 $ sed -i -E 's/^(define [^{]*\)) \{/\1 sanitize_address {/' $D/p.ll
 $ $L/opt -passes=asan $D/p.ll -S -o $D/p.asan.ll                 # or -passes='asan,default<O2>'
-$ $L/clang -fsanitize=address $D/p.asan.ll <repo>/target/debug/libsisu_runtime.a -o $D/p.asan
+$ $L/clang -fsanitize=address $D/p.asan.ll <repo>/target/debug/libsisu_runtime_system.a -o $D/p.asan
 $ timeout 120 $D/p.asan
 ```
 
 The "Redundant instrumentation detected" warning from `clang` is harmless.
-The runtime itself is not instrumented, and its `sisu_free` frees through
-plain `free()`, so neither ASan nor Valgrind sees a free with the wrong size
+The runtime itself is not instrumented, and in the system archive its
+`sisu_free` frees through plain `free()`, so neither ASan nor Valgrind sees a free with the wrong size
 or alignment. The layout shim does:
 
 ```console
 $ timeout 20 $S build --emit ir-raw $D/p.sisu > $D/p.ll
-$ $L/clang $D/p.ll <repo>/.agents/skills/audit-sisu/layout-shim.c <repo>/target/debug/libsisu_runtime.a -Wl,--wrap=sisu_alloc,--wrap=sisu_free,--wrap=sisu_realloc -o $D/p.shim
+$ $L/clang $D/p.ll <repo>/.agents/skills/audit-sisu/layout-shim.c <repo>/target/debug/libsisu_runtime_system.a -Wl,--wrap=sisu_alloc,--wrap=sisu_free,--wrap=sisu_realloc -o $D/p.shim
 $ timeout 20 $D/p.shim        # aborts with "layout-shim: ..." on a mismatch
 ```
 
