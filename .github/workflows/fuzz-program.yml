@@ -30,7 +30,9 @@ env:
 # Third-party actions are pinned to commit SHAs; Dependabot bumps them.
 # The fuzz step decides the job's result: each later step runs only after it
 # failed, or tolerates failure. Worst case, from the plan: 15 min of build, the
-# fuzzing, 17 of crash replays, 15 of tmin, 10 of cmin and 45 of coverage.
+# fuzzing, 17 of crash replays, 15 of tmin, 10 of cmin and 45 of coverage. Those 102
+# minutes leave little of the 105 that minutes() adds to the fuzzing for setup; the
+# first labeled run measures it.
 jobs:
   plan:
     name: Plan the run
@@ -150,11 +152,18 @@ jobs:
         run: |
           before=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
           status=0
-          timeout -k 10 600 scripts/fuzz.sh --target program --cmin || status=$?
+          timeout -k 10 600 scripts/fuzz.sh --target program --cmin >cmin.txt 2>&1 || status=$?
+          cat cmin.txt
           after=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
+          # cargo-fuzz 0.13.2 exits 0 after a failed merge, having printed this line.
           case $status in
-            0) outcome="finished" ;;
-            124 | 137) outcome="was stopped at its 600 s bound (status ${status})" ;;
+            0) if grep -q "Failed to minimize corpus" cmin.txt; then
+                 outcome="merge failed; see the step's log"
+               else
+                 outcome="finished"
+               fi ;;
+            124) outcome="was stopped at its 600 s bound" ;;
+            137) outcome="was killed (600 s bound or out of memory)" ;;
             *) outcome="failed with exit status ${status}" ;;
           esac
           {

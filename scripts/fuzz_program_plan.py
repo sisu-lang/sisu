@@ -59,6 +59,8 @@ def from_labels(labels: list[str], added: str | None = None) -> int | None:
 
 def minutes(seconds: int, coverage: bool) -> int:
     """The job's time limit: 1800 s without coverage gives fuzz.yml's 90 minutes."""
+    # The non-fuzz steps' worst case, 102 of the 105 minutes (the workflow's header), leaves
+    # little margin for setup; the first labeled run measures it.
     return 60 + math.ceil(seconds / 60) + (COVERAGE_MINUTES if coverage else 0)
 
 
