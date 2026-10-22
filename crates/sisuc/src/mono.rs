@@ -242,7 +242,7 @@ impl Mono {
     /// nothing for none.
     fn written(&mut self, args: &[Type]) -> String {
         let args: Vec<Type> = args.iter().map(|&ty| self.output(ty)).collect();
-        TypeArgs::intern(&args).written(|ty| self.out.type_name(ty))
+        self.out.args_name(&args)
     }
 
     /// The output id of class `id` with `args`, given and put on the worklist when first reached.

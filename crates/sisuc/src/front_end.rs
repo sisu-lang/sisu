@@ -21,11 +21,18 @@ pub(crate) fn decode(bytes: Vec<u8>) -> Result<String, Box<(String, Diagnostic)>
     })
 }
 
-/// Lexes, parses and checks `source`. Returns every diagnostic, sorted by
-/// position, and the program, instantiated by `mono`, unless one is an error. The checker runs
-/// only when every item is named: it checks the intact items, and treats a broken one as
-/// declared.
+/// `checked`, its program instantiated by `mono`.
 pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
+    let (program, diagnostics) = checked(source);
+    (program.map(mono::instantiate), diagnostics)
+}
+
+/// Lexes, parses and checks `source`. Returns every diagnostic, sorted by position, and the
+/// checked program, generic declarations and all, unless one is an error. The checker runs
+/// only when every item is named: it checks the intact items, and treats a broken one as
+/// declared. `sisu check` stops here: `mono` names each instantiation, which costs as much as
+/// its type is long, and check prints none.
+pub(crate) fn checked(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let lexed = match lexer::lex(source) {
         Ok(lexed) => lexed,
         Err(d) => return (None, vec![d]),
@@ -39,10 +46,7 @@ pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>)
     diagnostics.extend(checked);
     diagnostics.sort_by_key(|d| d.span().start());
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
-    (
-        program.filter(|_| !failed).map(mono::instantiate),
-        diagnostics,
-    )
+    (program.filter(|_| !failed), diagnostics)
 }
 
 /// `diagnostics` without each fix of a lexer or parser diagnostic that leaves `source` lexing or
@@ -135,6 +139,19 @@ mod tests {
     use crate::source::line_col;
     use std::fs;
     use std::path::Path;
+
+    /// `checked` stops before `mono`, which `front_end` runs: `sisu check` names no
+    /// instantiation.
+    #[test]
+    fn only_the_front_end_instantiates() {
+        let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(1))\n}";
+        let names = |program: Option<tir::Program>| -> Vec<String> {
+            let program = program.expect("the program should check");
+            program.functions.into_iter().map(|f| f.name).collect()
+        };
+        assert_eq!(names(checked(src).0), ["id", "main"]);
+        assert_eq!(names(front_end(src).0), ["main", "id<i64>"]);
+    }
 
     /// The code and `(line, col)` of every diagnostic `src` reports, in order.
     fn codes(src: &str) -> Vec<(Code, (usize, usize))> {
