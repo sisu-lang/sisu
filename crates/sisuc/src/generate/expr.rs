@@ -1181,13 +1181,12 @@ impl Gen<'_> {
             .collect()
     }
 
-    /// The functions and methods a call statement may name, of any type.
-    pub(crate) fn callees_any(&self) -> Vec<usize> {
-        let last = self.scope.func.map_or(self.scope.funcs.len(), |f| f + 1);
+    /// How many functions and methods, the first ones, a call statement may name, of any type.
+    pub(crate) fn callees_any(&self) -> usize {
         if self.scope.func.is_none() && self.cost.times() > self.budget {
-            return Vec::new();
+            return 0;
         }
-        (0..last).collect()
+        self.scope.func.map_or(self.scope.funcs.len(), |f| f + 1)
     }
 
     /// A call of a function or a method that returns `ty`, `unit` for a statement.

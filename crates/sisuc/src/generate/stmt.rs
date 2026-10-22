@@ -71,7 +71,7 @@ impl Gen<'_> {
             let share = self.fuel / (MAX_STATEMENTS - count) as u64;
             let rest = self.fuel - share;
             self.fuel = share;
-            if !self.callees_any().is_empty() && self.pick(2) == 1 {
+            if self.callees_any() > 0 && self.pick(2) == 1 {
                 self.w.line();
                 self.cost.statement();
                 self.call_stmt();
@@ -84,13 +84,13 @@ impl Gen<'_> {
 
     /// A call of a function or a method as a statement, printing what it returns where it can.
     fn call_stmt(&mut self) {
-        let callees = self.callees_any();
-        let callee = callees[self.pick(callees.len())];
-        let ret = self.scope.funcs[callee].ret.clone();
-        let print = Ty::VALUES.contains(&ret);
+        let callee = self.pick(self.callees_any());
+        let ret = &self.scope.funcs[callee].ret;
+        let print = Ty::VALUES.contains(ret);
+        let discard = !print && *ret != Ty::Unit;
         if print {
             self.w.text("print(");
-        } else if ret != Ty::Unit {
+        } else if discard {
             self.w.text("let _ = ");
         }
         self.invoke(callee, false);
@@ -124,7 +124,7 @@ impl Gen<'_> {
                 }
             }
         }
-        if !self.callees_any().is_empty() {
+        if self.callees_any() > 0 {
             rules.push(Rule::Call);
         }
         self.w.line();

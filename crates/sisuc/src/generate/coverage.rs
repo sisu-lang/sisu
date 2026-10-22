@@ -1717,16 +1717,20 @@ fn main_holds_several_statements() {
 #[test]
 fn a_generated_panic_is_rare() {
     // A panic ends the run, so a block ends in one only now and then where another jump can,
-    // and seldom where none can; and an `if` expression's branch after the first, seldom.
+    // and seldom where none can; and an `if` expression's branch after the first, seldom. The
+    // `return` of each function's depth guard is not a choice, so it is not counted.
     let (mut jumps, mut panics, mut ifs, mut panicking) = (0, 0, 0, 0);
     for data in seeds() {
         let g = generate(&data);
+        let mut guard = false;
         for line in g.program.lines().map(str::trim) {
             if line.starts_with("panic(") || line.starts_with("todo") {
                 panics += 1;
-            } else if line.starts_with("return") || line == "break" || line == "continue" {
+            } else if line.starts_with("return") && !guard || line == "break" || line == "continue"
+            {
                 jumps += 1;
             }
+            guard = line == "if depth <= 0 {";
         }
         ifs += g.program.matches("(if ").count();
         panicking += g.program.matches("{ panic(").count() + g.program.matches("{ todo").count();
@@ -1938,11 +1942,11 @@ fn a_call_statement_names_any_function_the_budget_lets_it() {
     let mut g = with_funcs(&[]);
     g.budget = 8;
     g.cost.enter_loop(8);
-    assert_eq!(g.callees_any(), [0, 1, 2]);
+    assert_eq!(g.callees_any(), 3);
     g.cost.enter_loop(2);
-    assert_eq!(g.callees_any(), [] as [usize; 0]);
+    assert_eq!(g.callees_any(), 0);
     g.scope.func = Some(1);
-    assert_eq!(g.callees_any(), [0, 1]);
+    assert_eq!(g.callees_any(), 2);
 }
 
 #[test]
@@ -2066,6 +2070,37 @@ fn a_part_whose_spec_does_not_fit_is_written_without_it() {
 }
 
 #[test]
+fn an_int_literal_is_worth_what_it_says() {
+    // The folder reads the value, the compiler the text: if they differ, a const the folder
+    // takes for safe can overflow (E0088). Every first byte picks a form; the rest, its value.
+    assert_eq!(
+        Gen::new(&[]).int_literal(),
+        ("0".to_string(), 0),
+        "the smallest choice"
+    );
+    for form in 0..=u8::MAX {
+        for rest in [&[][..], &[1], &[7, 200, 3, 99, 250, 18, 77, 5]] {
+            let data = [&[form][..], rest].concat();
+            let (text, value) = Gen::new(&data).int_literal();
+            let digits = text.trim_matches(['(', ')']).replace('_', "");
+            let (negative, digits) = match digits.strip_prefix('-') {
+                Some(digits) => (true, digits),
+                None => (false, digits.as_str()),
+            };
+            let (radix, digits) = match digits.get(..2) {
+                Some("0x") => (16, &digits[2..]),
+                Some("0b") => (2, &digits[2..]),
+                Some("0o") => (8, &digits[2..]),
+                _ => (10, digits),
+            };
+            let magnitude = i128::from_str_radix(digits, radix).expect("a literal should parse");
+            let said = if negative { -magnitude } else { magnitude };
+            assert_eq!(said, i128::from(value), "{text} on {data:?}");
+        }
+    }
+}
+
+#[test]
 fn rare_constant_forms_check_clean() {
     // Each input chooses, byte by byte, no class or enum, an item, a constant, its type, no
     // annotation, and then its form, ending once the bytes run out, where every choice is the
@@ -2075,6 +2110,12 @@ fn rare_constant_forms_check_clean() {
         (
             &[0, 1, 0, 0, 0, 1, 0, 63][..],
             "const c1 = (-9223372036854775808)\n",
+        ),
+        // `a - b` of the smallest `i64` and a negative literal, which fits where `a + b` would
+        // overflow: the fold must know the literal's sign.
+        (
+            &[0, 1, 0, 0, 0, 3, 0, 63, 0, 6, 0, 0, 0][..],
+            "const c1 = ((-9223372036854775808) - (-1))\n",
         ),
         // `(a && b)` and `(a || b)` of `bool`s.
         (&[0, 1, 0, 3, 0, 3, 1][..], "const c1 = (false && false)\n"),

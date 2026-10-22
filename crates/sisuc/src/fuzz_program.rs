@@ -734,14 +734,12 @@ mod tests {
         seed_passes(3, true);
     }
 
-    /// The cheapest of the four seeds to build.
-    const SMOKE_SEED: usize = 1;
-
-    /// `program` end to end, all six builds: it passes and leaves no directory behind.
+    /// `program` end to end, all six builds: it passes and leaves no directory behind. The
+    /// empty input's program, the smallest, as the seed tests cover the seeds.
     #[test]
     fn program_passes_and_cleans_up() {
         let tmp = Scratch::new();
-        on_stack(|| program_in(&seed(SMOKE_SEED), &runtime(), &tmp.0));
+        on_stack(|| program_in(&[], &runtime(), &tmp.0));
         let left = fs::read_dir(&tmp.0)
             .expect("the test's directory should be readable")
             .count();
