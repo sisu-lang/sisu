@@ -35,6 +35,7 @@ const BUILDS: [(&str, Backend); 3] = [
             level: OptLevel::O0,
             rc_checks: false,
             linker: None,
+            allocator: None,
         },
     ),
     (
@@ -43,6 +44,7 @@ const BUILDS: [(&str, Backend); 3] = [
             level: OptLevel::O2,
             rc_checks: false,
             linker: None,
+            allocator: None,
         },
     ),
     (
@@ -51,6 +53,7 @@ const BUILDS: [(&str, Backend); 3] = [
             level: OptLevel::O0,
             rc_checks: true,
             linker: None,
+            allocator: None,
         },
     ),
 ];
@@ -548,14 +551,14 @@ mod tests {
         }
     }
 
-    /// `target/debug/libsisu_runtime.a`, which nextest's setup script builds: the test binary is
-    /// `target/debug/deps/<name>` (decision 7).
+    /// `target/debug/libsisu_runtime_mimalloc.a`, the default allocator's runtime, which
+    /// nextest's setup script builds: the test binary is `target/debug/deps/<name>` (decision 7).
     fn runtime() -> PathBuf {
         let exe = env::current_exe().expect("the test binary should know its path");
         exe.parent()
             .and_then(Path::parent)
             .expect("the test binary should be two levels inside the target directory")
-            .join("libsisu_runtime.a")
+            .join("libsisu_runtime_mimalloc.a")
     }
 
     /// `f` on a thread with a `STACK_SIZE` stack, as `program`'s contract asks.
