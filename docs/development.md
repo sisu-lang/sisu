@@ -379,7 +379,8 @@ must pass five properties, cheapest first:
    with `--rc-checks`.
 3. Its O0, `-O2` and `--rc-checks` builds each run and exit 0 or 101, never by
    a signal or past 10 s, and agree on stdout, stderr and exit code. The
-   `--rc-checks` build reports no count fault and no leak.
+   `--rc-checks` build reports no count fault, and no leak when it exits 0:
+   a panic exits at once, before the leak check.
 4. The rewritten copy runs as the program does. Panic locations are left out
    of the comparison.
 5. The program prints the integer answers the generator worked out itself, or
@@ -404,14 +405,14 @@ full-length inputs at once, since a short input runs out of bytes and gets a
 small program. After a run, the script replays up to 3 new `crash-` inputs
 for up to 340 s each.
 
-Expect about 2 programs a second per core when the machine is busy, and 5 on
-an idle one. One input costs about 0.2 s on one thread: six builds, the
-program's three and its copy's three, and nine tenths of that is `cc` linking.
-Fork mode runs one job per core, so a 32-core machine fuzzed 113,843 inputs in
-30 minutes, and a runner with fewer cores gets proportionally fewer. Those
-numbers predate `-len_control=0`: with full-length inputs from the start, the
-programs are larger, and a run on the same machine reached about 1 a second
-per core once all its jobs were running.
+Expect about 1 program a second per core when the machine is busy. Each input
+is built six times, the program's three builds and its copy's three, and
+most of that time is `cc` linking. Fork mode runs one job per core, so the
+rate scales with the cores: a runner with few cores fuzzes far fewer programs
+than a 32-core machine. Before `-len_control=0`, when the programs were
+smaller, the rate was about 2 a second per core when busy and 5 on an idle
+core, where one input took about 0.2 s on one thread, nine tenths of it
+linking.
 
 A replay prints the failure to stderr: the failed property as
 `property <n>: <what disagreed>`, or `compiler panic`, then the program, the
@@ -439,6 +440,13 @@ waits for the other. On a failure it uploads `fuzz/artifacts/` as
 the minimized inputs as `fuzz-program-minimized`. Nothing files an issue or
 blocks a merge: watch the runs and act on a red one.
 
+Program inputs are slow, so watch the corpus as well. The job summary gives
+the corpus size before and after cmin and whether cmin finished within its
+600 s. A cmin that runs out leaves the corpus whole, and it grows from night
+to night. Fork mode first merges the restored corpus, and the summary's
+executions count only the fuzzing after that merge: few executions, or
+`unknown`, mean the run spent its time replaying its corpus.
+
 A first job, `scripts/fuzz_program_plan.py`, decides how long to fuzz and
 whether to measure coverage, and sets the job's time limit from that. A run
 by hand with `workflow_dispatch` takes the seconds to fuzz, 60 to 14,400, and
@@ -448,14 +456,16 @@ whether to run `--coverage`. GitHub offers that only for a workflow already on
 To fuzz a branch, open a pull request and add one label `fuzz-program`
 (2 hours), `fuzz-program <n>m` or `fuzz-program <n>h`, such as
 `fuzz-program 45m`. The run starts when the label is added and again on each
-push, which cancels the run in progress; remove the label to stop. Any
+push, which cancels the run in progress. Removing the label stops later
+pushes from starting runs; cancel a run in progress from the Actions tab. Any
 `<n>m` or `<n>h` from 1 minute to 4 hours works, which leaves the job inside
 GitHub's 6-hour limit, and each label must first exist in the repository. A
 pull request with two such labels fails the plan, and adding any other label
 starts nothing. A labeled run always ends with `--coverage` and puts its
 stage lines in the job summary. It restores the newest corpus of its own
 earlier runs or of `main`, and the corpus it saves stays with the pull
-request.
+request. GitHub runs no workflow for a pull request with a merge conflict, so
+resolve it first.
 
 ### Fix a program fuzz failure
 

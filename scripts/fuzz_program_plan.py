@@ -25,6 +25,7 @@ LEAST = 60
 # GitHub-hosted jobs stop after 6 hours. 4 hours of fuzzing leaves 60 minutes for the build,
 # crash replays, tmin and cmin, and 45 for --coverage: 345 of 360.
 MOST = 4 * 3600
+# The Coverage step's timeout-minutes in fuzz-program.yml; keep the two equal.
 COVERAGE_MINUTES = 45
 
 
@@ -40,7 +41,7 @@ def label_seconds(name: str) -> int | None:
 
 def in_range(seconds: int) -> int:
     if not LEAST <= seconds <= MOST:
-        raise ValueError(f'a fuzz time of {seconds} s is outside 60 s to 4 h')
+        raise ValueError(f'a fuzz time of {seconds} s is outside {LEAST} s to {MOST // 3600} h')
     return seconds
 
 

@@ -34,6 +34,9 @@ env:
 jobs:
   plan:
     name: Plan the run
+    # Skips the pull requests with no label containing fuzz-program before any runner starts;
+    # the script still decides from the exact labels. An expression, not shell, so no injection.
+    if: github.event_name != 'pull_request' || contains(join(github.event.pull_request.labels.*.name, ','), 'fuzz-program')
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
@@ -128,6 +131,8 @@ jobs:
           name: fuzz-program-minimized
           path: fuzz/artifacts/program/minimized-from-*
           if-no-files-found: ignore
+      # The summary's executions count only fork-mode jobs, not the start-up merge of the
+      # restored corpus, so a run that only replayed its corpus shows few or "unknown".
       - name: Summary
         if: always() && steps.fuzz.outcome != 'skipped'
         continue-on-error: true
@@ -137,11 +142,28 @@ jobs:
           else
             echo "The fuzzer failed before writing a summary; see the log of the fuzz step." >>"$GITHUB_STEP_SUMMARY"
           fi
-      # cmin runs last and bounded. A killed or failed cmin leaves the corpus as it was.
+      # cmin runs last and bounded. A killed or failed cmin leaves the corpus as it was, and the
+      # corpus then grows from night to night: the summary's sizes and outcome show it.
       - name: Minimize the corpus
         if: always() && steps.fuzz.outcome != 'skipped'
         continue-on-error: true
-        run: timeout -k 10 600 scripts/fuzz.sh --target program --cmin
+        run: |
+          before=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
+          status=0
+          timeout -k 10 600 scripts/fuzz.sh --target program --cmin || status=$?
+          after=$(find fuzz/corpus/program -type f 2>/dev/null | wc -l)
+          case $status in
+            0) outcome="finished" ;;
+            124 | 137) outcome="was stopped at its 600 s bound (status ${status})" ;;
+            *) outcome="failed with exit status ${status}" ;;
+          esac
+          {
+            echo
+            echo "## Corpus"
+            echo
+            echo "- ${before} inputs before cmin and ${after} after: cmin ${outcome}."
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
       - if: always() && steps.fuzz.outcome != 'skipped'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -151,6 +173,7 @@ jobs:
       - name: Coverage
         if: always() && steps.fuzz.outcome != 'skipped' && needs.plan.outputs.coverage == 'true'
         continue-on-error: true
+        # COVERAGE_MINUTES in scripts/fuzz_program_plan.py; keep the two equal.
         timeout-minutes: 45
         run: |
           status=0

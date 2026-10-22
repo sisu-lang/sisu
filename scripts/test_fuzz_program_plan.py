@@ -22,6 +22,9 @@ class Labels(unittest.TestCase):
     def test_minutes_and_hours(self):
         self.assertEqual(self.plan(['fuzz-program 45m']), (2700, True))
         self.assertEqual(self.plan(['bug', 'fuzz-program 2h']), (7200, True))
+        # The bounds themselves are allowed.
+        self.assertEqual(self.plan(['fuzz-program 1m']), (60, True))
+        self.assertEqual(self.plan(['fuzz-program 4h']), (14400, True))
 
     def test_a_bare_label_fuzzes_two_hours(self):
         self.assertEqual(self.plan(['fuzz-program']), (7200, True))
@@ -62,18 +65,27 @@ class Events(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'outside'):
             fp.plan('workflow_dispatch', {}, {'FUZZ_SECONDS': '30', 'FUZZ_COVERAGE': 'false'})
 
-    def test_main_writes_the_outputs(self):
+    def main(self, labels):
+        """Runs main() on a pull_request event with `labels`; returns its status and output."""
         with tempfile.TemporaryDirectory() as tmp:
             event = os.path.join(tmp, 'event.json')
             output = os.path.join(tmp, 'output')
             with open(event, 'w', encoding='utf-8') as f:
-                json.dump(pull_request(['fuzz-program 45m']), f)
+                json.dump(pull_request(labels), f)
+            open(output, 'w', encoding='utf-8').close()
             env = {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_EVENT_PATH': event,
                    'GITHUB_OUTPUT': output}
             with mock.patch.dict(os.environ, env), mock.patch('sys.stdout'):
-                self.assertEqual(fp.main(), 0)
+                status = fp.main()
             with open(output, encoding='utf-8') as f:
-                self.assertEqual(f.read(), 'seconds=2700\ncoverage=true\nminutes=150\n')
+                return status, f.read()
+
+    def test_main_writes_the_outputs(self):
+        self.assertEqual(self.main(['fuzz-program 45m']),
+                         (0, 'seconds=2700\ncoverage=true\nminutes=150\n'))
+
+    def test_main_plans_no_run_for_an_unlabeled_pull_request(self):
+        self.assertEqual(self.main(['bug']), (0, ''))
 
 
 if __name__ == '__main__':

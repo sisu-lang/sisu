@@ -480,9 +480,9 @@ The compiler is fuzzed in two stages:
    nightly; [development.md](development.md#fuzz-the-front-end) covers it.
 2. Wrong-code oracles. Done. A second target generates well-typed programs
    from the input bytes, builds each at O0, at `-O2` and with `--rc-checks`,
-   runs them, and fails when the builds disagree, a build leaks or dies by a
-   signal, a rewritten copy prints something else, or an integer answer the
-   generator worked out is wrong. CI runs it nightly;
+   runs them, and fails when the builds disagree, a build dies by a signal or
+   leaks on a normal exit, a rewritten copy prints something else, or an
+   integer answer the generator worked out is wrong. CI runs it nightly;
    [development.md](development.md#fuzz-generated-programs) covers it. Two
    oracles are deferred: a reference interpreter, until the pairs and known
    answers stop finding bugs, and runs under Valgrind, which `--rc-checks`
