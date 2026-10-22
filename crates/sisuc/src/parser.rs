@@ -2992,7 +2992,9 @@ mod tests {
             (Code::FieldComma, 1, 33)
         );
         // Anything else starts a value, and a value that does not parse is the error.
-        assert_eq!(expr_err("break * 1"), (Code::Expected, 1, 19));
+        assert_eq!(expr_err("break 1 +"), (Code::Expected, 1, 23));
+        // No `)` or `]` rows: one right after `break` would close a bracket opened outside the
+        // enclosing `{`, which the lexer rejects before parsing.
     }
 
     #[test]

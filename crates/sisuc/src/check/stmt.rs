@@ -783,8 +783,18 @@ impl Checker<'_> {
                 .map(|ty| (ty, None))
                 .or(frame.first.map(|(ty, at)| (ty, Some(at))))
         };
-        let hint = want(self.frame(target)).map(|(ty, _)| ty);
-        let checked = self.expr(v, hint);
+        let hint = want(self.frame(target));
+        let from = hint
+            .and_then(|(_, first)| first)
+            .map(|first| (v.span, first));
+        let outer = std::mem::replace(&mut self.body.break_hint, from);
+        let checked = self.expr(v, hint.map(|(ty, _)| ty));
+        self.body.break_hint = outer;
+        // A failed value fails the loop, and gives it no type and no second report.
+        if checked.is_err() {
+            self.frame(target).failed = true;
+            return checked;
+        }
         // Checking `v` can set the first type, through a `break` of this loop inside it.
         let want = want(self.frame(target));
         let checked = match type_of(&checked) {

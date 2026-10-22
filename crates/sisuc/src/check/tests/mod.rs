@@ -811,8 +811,13 @@ fn loop_without_break_is_never() {
 
 #[test]
 fn loop_with_bare_break_is_unit() {
-    let (program, ds) =
-        checked("fn f(c: bool) {\n    loop {\n        if c { break }\n    }\n}\nfn main() {}");
+    let src = "fn f(c: bool) {\n    loop {\n        if c { break }\n    }\n}\nfn main() {}";
+    assert_eq!(loop_type(src), Type::UNIT);
+}
+
+/// The type of the `loop` that is the value of `f`'s body in `src`, which checks clean.
+fn loop_type(src: &str) -> Type {
+    let (program, ds) = checked(src);
     assert!(ds.is_empty(), "{ds:?}");
     let program = program.expect("no errors");
     let f = program
@@ -826,7 +831,7 @@ fn loop_with_bare_break_is_unit() {
         .as_ref()
         .expect("the `loop` should be the body's value");
     assert!(matches!(lp.kind, tir::ExprKind::Loop(_)), "{program}");
-    assert_eq!(lp.ty, Type::UNIT);
+    lp.ty
 }
 
 #[test]
@@ -860,9 +865,8 @@ fn break_never_value_is_allowed() {
 
 #[test]
 fn never_value_beside_bare_break_is_unit() {
-    clean(
-        "fn f(c: bool) {\n    loop {\n        if c { break }\n        break panic(\"x\")\n    }\n}\nfn main() {}",
-    );
+    let src = "fn f(c: bool) {\n    loop {\n        if c { break }\n        break panic(\"x\")\n    }\n}\nfn main() {}";
+    assert_eq!(loop_type(src), Type::UNIT);
 }
 
 #[test]

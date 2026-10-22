@@ -291,6 +291,9 @@ struct Body {
     self_type: Option<Type>,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
+    /// The value of the `break` being checked, and the earlier `break` whose value gave the
+    /// loop the type that value expects.
+    break_hint: Option<(Span, Span)>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
@@ -948,6 +951,15 @@ impl Checker<'_> {
         got: Type,
     ) -> Diagnostic {
         self.mismatch_from(span, source, want, got, None)
+    }
+
+    /// Where the type that the value at `span` expects came from: an earlier `break`, when it
+    /// is a `break` value checked against the loop's type.
+    fn expected_from(&self, span: Span) -> Option<MismatchSource> {
+        self.body
+            .break_hint
+            .filter(|&(at, _)| at == span)
+            .map(|(_, first)| MismatchSource::Break(first))
     }
 
     /// `mismatch`, where `want` came from `from`.

@@ -31,7 +31,7 @@ impl Checker<'_> {
                         want: vec![self.type_name(ty)],
                         got: "[]".to_string(),
                         at: span,
-                        source: None,
+                        source: self.expected_from(span),
                         fix: None,
                         conversion: false,
                     },

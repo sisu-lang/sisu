@@ -3328,10 +3328,10 @@ mod tests {
 
     #[test]
     fn dump_format() {
-        let src = "fn main() {}\n";
+        let src = "fn main() { loop {} }\n";
         assert_eq!(
             dump(src, &tokens(src)),
-            "1:1 Fn fn\n1:4 Ident main\n1:8 LParen (\n1:9 RParen )\n1:11 LBrace {\n1:12 RBrace }\n1:13 Newline\n1:13 Eof\n"
+            "1:1 Fn fn\n1:4 Ident main\n1:8 LParen (\n1:9 RParen )\n1:11 LBrace {\n1:13 Loop loop\n1:18 LBrace {\n1:19 RBrace }\n1:21 RBrace }\n1:22 Newline\n1:22 Eof\n"
         );
     }
 
