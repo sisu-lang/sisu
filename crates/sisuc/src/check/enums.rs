@@ -134,14 +134,12 @@ impl Checker<'_> {
             for label in payload.iter().filter_map(|field| field.label.as_ref()) {
                 self.first_definition(&mut labels, Definition::Field, Some(owner), label);
             }
-            self.body
-                .type_params
-                .clone_from(&self.enums[id.0].type_params);
+            self.body.set_type_params(&self.enums[id.0].type_params);
             let fields = payload
                 .iter()
                 .map(|field| self.resolve(&field.ty))
                 .collect();
-            self.body.type_params.clear();
+            self.body.set_type_params(&[]);
             if self.first_definition(&mut first, Definition::Variant, Some(owner), name) {
                 let info = &mut self.enums[id.0];
                 info.index.insert(name.name, info.variants.len());

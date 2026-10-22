@@ -1023,6 +1023,26 @@ fn reported_type_parameters_are_found_in_one_pass() {
     assert_eq!(scanned(500, &vec!["true"; 500].join(", ")), 0);
 }
 
+/// A type parameter is found in one step, however many a body declares: indexing them is one
+/// step each, and each lookup, by a type or by a type argument that may be a value, is one more.
+#[test]
+fn type_parameters_are_found_in_one_step() {
+    let steps = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let src = format!(
+            "fn f<{}>(a: i64, x: T{}) {{\n{}}}\nfn main() {{}}",
+            types.join(", "),
+            n - 1,
+            "a<Missing>(1)\n".repeat(n),
+        );
+        PARAM_STEPS.set(0);
+        checked(&src);
+        PARAM_STEPS.get()
+    };
+    assert_eq!(steps(500), 1502);
+    assert_eq!(steps(1000), 3002);
+}
+
 /// Work kept ahead of a call is found by its span in one step, so finding it grows with the
 /// call's arguments, not with their square: one step per receiver and per block.
 #[test]

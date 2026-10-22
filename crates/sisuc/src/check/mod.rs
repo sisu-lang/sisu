@@ -262,6 +262,8 @@ thread_local! {
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many type parameter names have been indexed or looked up on this thread.
+    pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -294,6 +296,8 @@ struct Checker<'src> {
 struct Body {
     /// The type parameters in scope, which `resolve` finds before any other type.
     type_params: Vec<Symbol>,
+    /// Where in `type_params` each name first is, so a lookup does not scan them.
+    type_param_at: FxHashMap<Symbol, usize>,
     /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
     /// misread as a call change the count of the arguments of the call they are an argument of,
     /// which is then not reported.
@@ -334,6 +338,28 @@ struct Body {
     ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
     /// Where in `ahead` the last work kept for each span and kind is.
     ahead_at: FxHashMap<(Span, bool), usize>,
+}
+
+impl Body {
+    /// Puts `params` in scope, in place of the type parameters there.
+    fn set_type_params(&mut self, params: &[Symbol]) {
+        self.type_params.clear();
+        self.type_params.extend_from_slice(params);
+        self.type_param_at.clear();
+        // Backwards, so a repeated name keeps its first place, as the scan it replaces did.
+        for (i, &name) in params.iter().enumerate().rev() {
+            #[cfg(test)]
+            PARAM_STEPS.set(PARAM_STEPS.get() + 1);
+            self.type_param_at.insert(name, i);
+        }
+    }
+
+    /// Where the type parameter `name` is in `type_params`, if it is one.
+    fn type_param(&self, name: Symbol) -> Option<usize> {
+        #[cfg(test)]
+        PARAM_STEPS.set(PARAM_STEPS.get() + 1);
+        self.type_param_at.get(&name).copied()
+    }
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error.
@@ -650,9 +676,9 @@ impl Checker<'_> {
             for member in &class.members {
                 match member {
                     ast::Member::Field(field) => {
-                        self.body.type_params.clone_from(&owner);
+                        self.body.set_type_params(&owner);
                         let ty = self.resolve(&field.ty);
-                        self.body.type_params.clear();
+                        self.body.set_type_params(&[]);
                         if self.first_definition(
                             &mut first,
                             Definition::Field,
@@ -698,13 +724,13 @@ impl Checker<'_> {
     /// or enum.
     fn signature(&mut self, f: &ast::Function, name: String, owner: &[ast::Ident]) {
         let type_params = self.type_params(owner, &f.type_params);
-        self.body.type_params.clone_from(&type_params);
+        self.body.set_type_params(&type_params);
         let params = f.params.iter().map(|p| self.resolve(&p.ty)).collect();
         let ret = f
             .ret
             .as_ref()
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
-        self.body.type_params.clear();
+        self.body.set_type_params(&[]);
         self.signatures.push(Signature {
             name,
             type_params,
@@ -846,7 +872,7 @@ impl Checker<'_> {
             }
             c.type_args(&ident(), &[], args, angles).map(|_| ty)
         };
-        if let Some(i) = self.body.type_params.iter().position(|&p| p == name) {
+        if let Some(i) = self.body.type_param(name) {
             let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
             return plain(self, Type::intern(TypeKind::Param(name, i)));
         }
@@ -913,12 +939,12 @@ impl Checker<'_> {
             Some(TypeKind::Enum(e, _)) => self.enums[e.0].type_params.len(),
             _ => 0,
         };
-        let fresh = Body {
-            type_params: sig.type_params.clone(),
+        let mut fresh = Body {
             ret,
             self_type: owner,
             ..Body::default()
         };
+        fresh.set_type_params(&sig.type_params);
         let ((params, body), state) = self.with_body(fresh, |c| {
             c.body.scopes.push(FxHashMap::default());
             // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.

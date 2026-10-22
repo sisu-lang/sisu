@@ -791,7 +791,7 @@ impl Checker<'_> {
     fn type_argument(&mut self, arg: &ast::TypeExpr) -> Option<Type> {
         if let ast::TypeKind::Name(name) = arg.kind
             && matches!(name.as_str(), "unit" | "never")
-            && !self.body.type_params.contains(&name)
+            && self.body.type_param(name).is_none()
             && !self.class_ids.contains_key(&name)
             && !self.enum_ids.contains_key(&name)
         {
@@ -865,7 +865,7 @@ impl Checker<'_> {
                 || built_in_type(n.as_str()).is_none()
                     && !self.class_ids.contains_key(&n)
                     && !self.enum_ids.contains_key(&n)
-                    && !self.body.type_params.contains(&n))
+                    && self.body.type_param(n).is_none())
     }
 
     /// `misread` with the comparison `compare` its help writes, if any.
