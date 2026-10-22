@@ -1,10 +1,12 @@
 //! The parser: tokens to the syntax tree.
 
+use std::cell::OnceCell;
+use std::mem;
 use std::ops::Range;
 
 use crate::ast::{
-    Align, Arg, Arm, BinaryOp, Block, Bound, Broken, BrokenKind, Class, CompareOp, Const, Enum,
-    Expr, ExprKind, FieldDecl, ForSource, FormatSpec, Function, Ident, Item, Literal, Member,
+    Align, Applied, Arg, Arm, BinaryOp, Block, Bound, Broken, BrokenKind, Class, CompareOp, Const,
+    Enum, Expr, ExprKind, FieldDecl, ForSource, FormatSpec, Function, Ident, Item, Literal, Member,
     Param, Part, Pattern, PatternKind, PayloadField, Program, Stmt, StmtKind, TypeExpr, TypeKind,
     UnaryOp, Variant,
 };
@@ -45,25 +47,11 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         diagnostics.is_sorted_by_key(|d| d.span().start()),
         "`lexer_in` searches the lexer's diagnostics by where they start"
     );
-    // The `=` that remains of each `>=` once a type-argument list takes its `>`, by token index.
-    let halves: Vec<(usize, Token)> = tokens
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| matches!(t.kind, TokenKind::Ge))
-        .map(|(i, t)| {
-            let span = Span::new(t.span.start() + 1, t.span.end());
-            (
-                i,
-                Token {
-                    kind: TokenKind::Eq,
-                    span,
-                },
-            )
-        })
-        .collect();
+    let halves = OnceCell::new();
     Parser {
         source,
         tokens: &tokens,
+        window: &tokens,
         halves: &halves,
         pos: 0,
         depth: 0,
@@ -73,7 +61,6 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         specs: Vec::new(),
         warnings,
         labels: Vec::new(),
-        split: None,
     }
     .program()
 }
@@ -303,50 +290,77 @@ struct Parser<'a> {
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
     labels: Vec<Ident>,
-    /// The position of a `>=` token whose `>` closed a type-argument list: `peek` reads it as the
-    /// `=` that is left, from `halves`, until the parser moves past it.
-    split: Option<usize>,
-    /// What `split` makes of a `>=` token: the `=`, by the token's index.
-    halves: &'a [(usize, Token)],
+    /// `tokens`, or once a type-argument list takes the `>` of a `>=` (a split), the tokens before
+    /// it. `peek` reads it with the bounds check it needs anyway, so only a split pays for one.
+    window: &'a [Token],
+    /// The `=` left of each `>=`, built at the first split.
+    halves: &'a OnceCell<Vec<Token>>,
 }
 
 impl<'a> Parser<'a> {
-    // Inlined: the parser peeks at every token, and a split `>=` is rare.
-    #[inline]
     fn peek(&self) -> &'a Token {
-        if self.split == Some(self.pos) {
-            return self.half();
+        match self.window.get(self.pos) {
+            Some(token) => token,
+            None => self.past_window(),
         }
-        // `Eof` is last and never consumed, so `pos` stays in range.
-        &self.tokens[self.pos]
     }
 
-    /// The `=` left of the split `>=` at `pos`.
+    /// The token at `pos`, which is past `window`: the `=` left of the split `>=` there, or, once
+    /// the parser has moved past that, the token itself. `Eof` is last and never consumed, so
+    /// `pos` stays in range.
     #[cold]
-    fn half(&self) -> &'a Token {
-        let half = self
-            .halves
-            .binary_search_by_key(&self.pos, |(i, _)| *i)
+    fn past_window(&self) -> &'a Token {
+        if !self.split() {
+            return &self.tokens[self.pos];
+        }
+        let halves = self.halves.get_or_init(|| {
+            let ge = self.tokens.iter().filter(|t| t.kind == TokenKind::Ge);
+            ge.map(|t| Token {
+                kind: TokenKind::Eq,
+                span: Span::new(t.span.start() + 1, t.span.end()),
+            })
+            .collect()
+        });
+        let start = self.tokens[self.pos].span.start() + 1;
+        let half = halves
+            .binary_search_by_key(&start, |t| t.span.start())
             .expect("a split token should be a `>=`, which `halves` holds");
-        &self.halves[half].1
+        &halves[half]
     }
 
-    #[inline]
+    /// Whether `pos` is at a split `>=`.
+    fn split(&self) -> bool {
+        self.pos == self.window.len()
+    }
+
     fn bump(&mut self) -> &'a Token {
-        let token = self.peek();
+        let Some(token) = self.window.get(self.pos) else {
+            return self.bump_past_window();
+        };
         if token.kind != TokenKind::Eof {
             self.pos += 1;
         }
         token
     }
 
-    #[inline]
+    /// `bump` past `window`, which then covers every token again.
+    #[cold]
+    fn bump_past_window(&mut self) -> &'a Token {
+        let token = self.past_window();
+        self.window = self.tokens;
+        if token.kind != TokenKind::Eof {
+            self.pos += 1;
+        }
+        token
+    }
+
     fn at(&self, kind: &TokenKind) -> bool {
-        self.peek().kind == *kind
+        // Most tokens asked about are of another kind, which the discriminant settles inline.
+        let next = &self.peek().kind;
+        mem::discriminant(next) == mem::discriminant(kind) && next == kind
     }
 
     /// Consumes the next token if it is `kind`.
-    #[inline]
     fn eat(&mut self, kind: &TokenKind) -> Option<&'a Token> {
         self.at(kind).then(|| self.bump())
     }
@@ -436,6 +450,8 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.expected(&kind.describe()))
     }
 
+    // Inlined, as the many callers that name a token kept it before they grew.
+    #[inline]
     fn ident(&mut self, what: &str) -> Result<Ident, Diagnostic> {
         match self.peek().kind {
             TokenKind::Ident(name) => Ok(Ident {
@@ -482,11 +498,11 @@ impl<'a> Parser<'a> {
             if self.at(&TokenKind::Lt) {
                 let (args, angles) = self.type_args()?;
                 (
-                    TypeKind::Applied {
+                    TypeKind::Applied(Box::new(Applied {
                         name: ident.name,
                         args,
                         angles,
-                    },
+                    })),
                     Span::new(ident.span.start(), self.closing_angle()),
                 )
             } else {
@@ -547,7 +563,7 @@ impl<'a> Parser<'a> {
             return Ok(());
         }
         if self.at(&TokenKind::Ge) {
-            self.split = Some(self.pos);
+            self.window = &self.tokens[..self.pos];
             return Ok(());
         }
         Err(self.expected("`,` or `>`"))
@@ -555,7 +571,7 @@ impl<'a> Parser<'a> {
 
     /// Where the `>` that `close_angle` just took ends.
     fn closing_angle(&self) -> usize {
-        if self.split == Some(self.pos) {
+        if self.split() {
             // What is left of the `>=` starts where the `>` ends.
             self.peek().span.start()
         } else {
@@ -1192,7 +1208,7 @@ impl<'a> Parser<'a> {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
-            split: None,
+            window: self.tokens,
             halves: self.halves,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
@@ -1242,7 +1258,7 @@ impl<'a> Parser<'a> {
         let open = self.peek().span;
         let type_params = self.type_params()?;
         let angles = if type_params.is_empty() {
-            Span::new(name.span.end(), name.span.end())
+            name.span.end_point()
         } else {
             open.to(self.last_span())
         };
@@ -2614,15 +2630,21 @@ impl<'a> Parser<'a> {
             let name = self.ident("a field or method name")?;
             // The type arguments and the value arguments are siblings of the receiver: each
             // starts at the receiver's own level and only the deepest counts.
-            let mut types = Vec::new();
-            let mut angles = Span::new(name.span.end(), name.span.end());
-            let mut types_reach = wrapped;
-            if self.at(&TokenKind::Lt) && self.type_args_follow() {
+            let written = if self.at(&TokenKind::Lt) && self.type_args_follow() {
                 self.depth = base + 1;
-                (types, angles) = self.type_args()?;
-                types_reach = self.depth.max(wrapped);
-            }
-            expr = if self.at(&TokenKind::LParen) {
+                let (types, angles) = self.type_args()?;
+                if !self.at(&TokenKind::LParen) {
+                    // A field takes no type arguments, so `a.b<i64>.c` has nowhere to put them.
+                    return Err(self.expected("`(`"));
+                }
+                Some((types, angles, self.depth.max(wrapped)))
+            } else {
+                None
+            };
+            // Without type arguments a field access holds no list to drop.
+            expr = if written.is_some() || self.at(&TokenKind::LParen) {
+                let (types, angles, types_reach) =
+                    written.unwrap_or_else(|| (Vec::new(), name.span.end_point(), wrapped));
                 self.depth = base + 1;
                 let open = self.peek().span;
                 let (args, close) = self.args()?;
@@ -2639,9 +2661,6 @@ impl<'a> Parser<'a> {
                         safe,
                     },
                 }
-            } else if !types.is_empty() {
-                // A field takes no type arguments, so `a.b<i64>.c` has nowhere to put them.
-                return Err(self.expected("`(`"));
             } else {
                 Expr {
                     span: expr.span.to(name.span),
@@ -2754,10 +2773,10 @@ impl<'a> Parser<'a> {
                 // The type arguments and the value arguments are siblings: each starts at the
                 // callee's level and only the deepest counts.
                 let base = self.depth;
-                let (types, angles) = if self.at(&TokenKind::Lt) && self.type_args_follow() {
-                    self.type_args()?
+                let written = if self.at(&TokenKind::Lt) && self.type_args_follow() {
+                    Some(self.type_args()?)
                 } else {
-                    (Vec::new(), Span::new(token.span.end(), token.span.end()))
+                    None
                 };
                 let types_reach = self.depth;
                 let callee = Ident {
@@ -2765,6 +2784,8 @@ impl<'a> Parser<'a> {
                     span: token.span,
                 };
                 if self.at(&TokenKind::LParen) {
+                    let (types, angles) =
+                        written.unwrap_or_else(|| (Vec::new(), token.span.end_point()));
                     self.depth = base;
                     let (args, close) = self.args()?;
                     self.depth = self.depth.max(types_reach);
@@ -2778,7 +2799,8 @@ impl<'a> Parser<'a> {
                         },
                     });
                 }
-                if !types.is_empty() {
+                // A plain name holds no list to drop.
+                if let Some((types, angles)) = written {
                     return Ok(Expr {
                         span: token.span.to(self.last_span()),
                         kind: ExprKind::Applied {
@@ -4520,8 +4542,8 @@ mod tests {
             breaks: &lexed.breaks,
             specs: Vec::new(),
             warnings: Vec::new(),
-            split: None,
-            halves: &[],
+            window: &lexed.tokens,
+            halves: &OnceCell::new(),
         }
         .type_args_follow()
     }

@@ -114,8 +114,8 @@ impl Checker<'_> {
         Ok(tir::Block { stmts, value, ty })
     }
 
-    /// Checks the statements of `block` from `so_far.done` up to `end`, in its scope;
-    /// `expected` is for its value.
+    /// Checks the statements of `block` from `so_far.done` up to `end`, at most its length, in
+    /// its scope; `expected` is for its value.
     pub(super) fn block_statements(
         &mut self,
         block: &ast::Block,
@@ -123,7 +123,8 @@ impl Checker<'_> {
         so_far: &mut BlockSoFar,
         end: usize,
     ) {
-        for (i, stmt) in block.stmts.iter().enumerate().take(end).skip(so_far.done) {
+        let done = so_far.done;
+        for (i, stmt) in (done..).zip(&block.stmts[done..end]) {
             if so_far.ty == Some(Type::NEVER) && !so_far.warned {
                 self.report(DiagnosticKind::UnreachableCode { at: stmt.span });
                 so_far.warned = true;
@@ -162,8 +163,8 @@ impl Checker<'_> {
             if so_far.ty != Some(Type::NEVER) {
                 so_far.ty = stmt_ty;
             }
-            so_far.done = i + 1;
         }
+        so_far.done = end;
     }
 
     /// Warns "unused value" at `source`, whose checked form is `checked`, unless its type is

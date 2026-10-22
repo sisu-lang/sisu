@@ -52,6 +52,14 @@ impl Span {
         self.start()..self.end()
     }
 
+    /// The empty span where `self` ends.
+    pub(crate) fn end_point(self) -> Span {
+        Span {
+            start: self.end,
+            end: self.end,
+        }
+    }
+
     /// The span from the start of `self` to the end of `other`.
     pub(crate) fn to(self, other: Span) -> Span {
         Span::new(self.start(), other.end())

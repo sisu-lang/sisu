@@ -476,11 +476,11 @@ impl Checker<'_> {
         fix.run();
         let classes = self.classes.len();
         let nodes = fix.slots.len();
-        let unbuilt = |fix: &Buildable, n: usize| !fix.built[fix.root(n)];
+        let unbuilt = |fix: &Buildable, n: usize| !fix.built[n];
         let needs: Vec<Vec<usize>> = (0..nodes)
             .map(|n| {
                 if unbuilt(&fix, n) {
-                    fix.needs(fix.root(n))
+                    fix.needs(n)
                 } else {
                     Vec::new()
                 }
@@ -541,7 +541,7 @@ impl Checker<'_> {
         let mut chain = Vec::new();
         let mut on_chain = vec![false; fix.keys.len()];
         let (mut at, mut args) = (start, own_args(params));
-        let mut key = fix.root(start);
+        let mut key = start;
         while !mem::replace(&mut on_chain[key], true) {
             let with = args.get();
             let held = |ty: &Option<Type>| ty.map(|ty| ty.subst(with));
@@ -577,19 +577,20 @@ impl Checker<'_> {
 struct Buildable {
     classes: usize,
     /// By node, its slots, each of which builds it when all its field types can be built: a
-    /// class's fields, or each variant's payload. A class on a cycle of fields, and an enum with
-    /// no variant, have one empty slot.
+    /// class's fields, or each variant's payload, less the fields `may_wait` says are always
+    /// built. A node built at once has none: a class on a cycle of fields, an enum with no
+    /// variant, and a node with a slot that keeps no field.
     slots: Vec<Vec<Vec<Option<Type>>>>,
-    /// By node, how many type parameters it has.
-    params: Vec<usize>,
     /// The most keys there can be: for each declaration, 2 to the power of its parameters.
     bound: usize,
+    /// The keys other than the roots, by declaration and flags. A root is a declaration with
+    /// every flag set, and `new` adds them first, so a node's root key is the node.
     ids: FxHashMap<(usize, Vec<bool>), usize>,
     keys: Vec<(usize, Vec<bool>)>,
     built: Vec<bool>,
     /// By key, for each of its node's slots, how many of its fields are not yet known to be
     /// buildable, and for each field the number of the scan whose waits are live: 0 when none
-    /// is, as the field is buildable or queued.
+    /// is, as the field is buildable or queued. Empty for a key built when it was added.
     pending: Vec<Vec<(usize, Vec<usize>)>>,
     /// By key, the fields of other keys that wait for it to be built: the key, its slot, the
     /// field's index, and the number of the scan that registered the wait.
@@ -606,20 +607,30 @@ impl Buildable {
         let mut params = Vec::new();
         for (c, class) in checker.classes.iter().enumerate() {
             let fields = class.fields.iter().map(|f| f.ty);
-            slots.push(vec![if cyclic[c] {
+            let fields: Vec<_> = fields.filter(|&ty| may_wait(ty)).collect();
+            slots.push(if cyclic[c] || fields.is_empty() {
                 Vec::new()
             } else {
-                fields.collect()
-            }]);
+                vec![fields]
+            });
             params.push(class.type_params.len());
         }
         for info in &checker.enums {
-            let variants = info.variants.iter().map(|v| v.fields.clone());
-            slots.push(if info.variants.is_empty() {
-                vec![Vec::new()]
-            } else {
-                variants.collect()
-            });
+            let waits = |v: &VariantInfo| v.fields.iter().any(|&ty| may_wait(ty));
+            slots.push(
+                if !info.variants.is_empty() && info.variants.iter().all(waits) {
+                    let fields = |v: &VariantInfo| {
+                        v.fields
+                            .iter()
+                            .copied()
+                            .filter(|&ty| may_wait(ty))
+                            .collect()
+                    };
+                    info.variants.iter().map(fields).collect()
+                } else {
+                    Vec::new()
+                },
+            );
             params.push(info.type_params.len());
         }
         let bound = params
@@ -634,7 +645,6 @@ impl Buildable {
         let mut fix = Buildable {
             classes: checker.classes.len(),
             slots,
-            params: params.clone(),
             bound,
             ids: FxHashMap::default(),
             keys: Vec::new(),
@@ -645,50 +655,62 @@ impl Buildable {
             queue: Vec::new(),
         };
         for (n, &p) in params.iter().enumerate() {
-            fix.key(n, vec![true; p]);
+            fix.push(n, vec![true; p]);
         }
         fix
     }
 
     /// The key of `node` with `flags`, interned, its slots queued, when it is new.
     fn key(&mut self, node: usize, flags: Vec<bool>) -> usize {
+        if flags.iter().all(|&f| f) {
+            return node;
+        }
         let id = (node, flags);
         if let Some(&key) = self.ids.get(&id) {
             return key;
         }
         let (node, flags) = id;
+        let key = self.push(node, flags.clone());
+        self.ids.insert((node, flags), key);
+        key
+    }
+
+    /// Adds the key of `node` with `flags`, and queues its slots unless one is empty.
+    fn push(&mut self, node: usize, flags: Vec<bool>) -> usize {
         assert!(
             self.keys.len() < self.bound,
             "the can-be-built keys should be a declaration and its parameters' flags"
         );
         let key = self.keys.len();
-        self.ids.insert((node, flags.clone()), key);
         self.keys.push((node, flags));
         let slots = &self.slots[node];
-        // A slot with no fields builds the key at once.
-        self.built.push(slots.iter().any(Vec::is_empty));
+        // Nothing waits for a key built at once.
+        let built = slots.is_empty();
+        self.built.push(built);
+        self.waiting.push(Vec::new());
+        if built {
+            self.pending.push(Vec::new());
+            return key;
+        }
         self.pending.push(
             slots
                 .iter()
                 .map(|fields| (fields.len(), vec![0; fields.len()]))
                 .collect(),
         );
-        self.waiting.push(Vec::new());
         for (s, fields) in slots.iter().enumerate() {
             self.queue.extend((0..fields.len()).map(|f| (key, s, f)));
         }
         key
     }
 
-    /// The key of `node` with every parameter's argument buildable, which `new` interned.
-    fn root(&self, node: usize) -> usize {
-        self.ids[&(node, vec![true; self.params[node]])]
-    }
-
     /// The key `node` has when given `args`, which `run` interned if a field holds it. A
     /// type parameter in `args` is a chain's start's, whose arguments are all buildable.
     fn key_of(&self, node: usize, args: TypeArgs) -> usize {
-        let flags = args.get().iter().map(|&arg| self.reached(arg)).collect();
+        let flags: Vec<bool> = args.get().iter().map(|&arg| self.reached(arg)).collect();
+        if flags.iter().all(|&f| f) {
+            return node;
+        }
         self.ids[&(node, flags)]
     }
 
@@ -709,7 +731,7 @@ impl Buildable {
         let deps = self.deps(key);
         deps.into_iter()
             .map(|k| self.keys[k].0)
-            .filter(|&node| !self.built[self.root(node)])
+            .filter(|&node| !self.built[node])
             .collect()
     }
 
@@ -792,6 +814,17 @@ impl Buildable {
             }
         }
     }
+}
+
+/// Whether a field of type `ty` can wait to be built: only a class, an enum or a type parameter
+/// can. `Buildable::buildable` finds any other type, and an error type, always buildable.
+fn may_wait(ty: Option<Type>) -> bool {
+    ty.is_some_and(|ty| {
+        matches!(
+            ty.kind(),
+            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Param(..)
+        )
+    })
 }
 
 #[cfg(test)]

@@ -672,6 +672,7 @@ impl Statements {
     /// header's type parameters before its `(` (`fn f<T>`), or an inner list of a type that
     /// goes on (`b: Pair<Box<i64>`), and the line goes on. This is the one place that decides
     /// it: every later reader sees a `Newline` or none.
+    #[inline(never)]
     fn annotates_type(&mut self, tokens: &[Token]) -> bool {
         self.read(tokens, tokens.len()).annotation == Some(0)
     }
@@ -988,7 +989,7 @@ fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
     let last = before_semicolons(tokens, trailing);
     brackets.open.last().is_none_or(|&(c, _)| c == '{')
         && (can_end_statement(last)
-            || last.is_some_and(|t| t.kind == TokenKind::Gt)
+            || last.is_some_and(|t| matches!(t.kind, TokenKind::Gt))
                 && brackets
                     .statements
                     .annotates_type(&tokens[..tokens.len() - trailing]))

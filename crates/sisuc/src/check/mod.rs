@@ -814,8 +814,8 @@ impl Checker<'_> {
     fn resolve(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
         let named = match &ty.kind {
             ast::TypeKind::Array(element) => Type::array(self.resolve(element)?),
-            ast::TypeKind::Applied { name, args, angles } => {
-                self.named_type(ty, *name, args, *angles)?
+            ast::TypeKind::Applied(applied) => {
+                self.named_type(ty, applied.name, &applied.args, applied.angles)?
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
         };

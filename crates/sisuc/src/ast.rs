@@ -140,14 +140,18 @@ pub(crate) struct TypeExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TypeKind {
     Name(Symbol),
-    /// `Name<A, B>`; at least one argument. `angles` is `<` through `>`.
-    Applied {
-        name: Symbol,
-        args: Vec<TypeExpr>,
-        angles: Span,
-    },
+    /// `Name<A, B>`, boxed as rare, so a plain name's `TypeExpr` stays small.
+    Applied(Box<Applied>),
     /// `[T]`; the element type may itself be optional or an array.
     Array(Box<TypeExpr>),
+}
+
+/// `Name<A, B>`; at least one argument. `angles` is `<` through `>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Applied {
+    pub(crate) name: Symbol,
+    pub(crate) args: Vec<TypeExpr>,
+    pub(crate) angles: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -573,7 +577,7 @@ impl fmt::Display for TypeExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             TypeKind::Name(name) => f.write_str(name.as_str())?,
-            TypeKind::Applied { name, args, .. } => write!(f, "{name}{}", angled(args))?,
+            TypeKind::Applied(applied) => write!(f, "{}{}", applied.name, angled(&applied.args))?,
             TypeKind::Array(element) => write!(f, "[{element}]")?,
         }
         if self.optional {

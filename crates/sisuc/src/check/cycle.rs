@@ -126,6 +126,9 @@ impl Graph {
     /// The edges of each generic class and enum in `ty`, written at `site` inside `holder`; a
     /// type shared inside `ty` is walked once.
     fn types(&mut self, holder: usize, ty: Type, site: Span) {
+        if !ty.has_param() {
+            return;
+        }
         let mut stack = vec![ty];
         while let Some(ty) = stack.pop() {
             if !ty.has_param() || !self.walked.insert((site, ty)) {
