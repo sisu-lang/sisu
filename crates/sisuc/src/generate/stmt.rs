@@ -3,6 +3,7 @@
 
 use super::expr::{Info, array_size};
 use super::scope::{Ty, Var};
+use super::writer::{Rewrite, Site, allowed};
 use super::{Gen, MAX_BOUND, MAX_LOOPS, MAX_SIZE};
 
 /// The most statements in a block, before its jump.
@@ -74,7 +75,7 @@ impl Gen<'_> {
             if self.callees_any() > 0 && self.pick(2) == 1 {
                 self.w.line();
                 self.cost.statement();
-                self.call_stmt();
+                self.statement(Self::call_stmt);
             } else {
                 self.stmt();
             }
@@ -129,7 +130,29 @@ impl Gen<'_> {
         }
         self.w.line();
         self.cost.statement();
-        match rules[self.pick(rules.len())] {
+        self.statement(|g| {
+            let rule = rules[g.pick(rules.len())];
+            g.stmt_rule(rule);
+        });
+    }
+
+    /// Writes a statement by `write`. Before it, the rewritten copy then holds the `let`s its
+    /// expressions moved there, and now and then an `if false` with a copy of it (decision 2).
+    /// Its expressions run unconditionally and after no effect, as far as the statement goes.
+    fn statement(&mut self, write: impl FnOnce(&mut Self)) {
+        let conditional = std::mem::take(&mut self.scope.conditional);
+        let effect = std::mem::take(&mut self.effect);
+        let start = self.w.begin();
+        write(self);
+        // A statement is never after a block's last expression.
+        let dead = allowed(Rewrite::DeadIf, &Site::default()) && self.rewrite_pick(8) == 7;
+        self.w.end(start, dead);
+        self.scope.conditional = conditional;
+        self.effect = effect;
+    }
+
+    fn stmt_rule(&mut self, rule: Rule) {
+        match rule {
             Rule::Print => {
                 self.one_of(&["print(", "eprint("]);
                 let ty = self.value_type();
@@ -373,28 +396,38 @@ impl Gen<'_> {
             }
         };
         self.w.text("if ");
+        let cond_start = self.w.at();
         let (_, binding) = self.condition();
+        let cond = cond_start..self.w.at();
+        let mut arms = Vec::new();
         self.conditionally(|g| {
             g.w.text(" ");
             let vars = g.scope.vars.len();
             g.scope.vars.extend(binding);
+            let arm = g.w.at();
             branch(g);
+            arms.push(arm..g.w.at());
             g.scope.vars.truncate(vars);
             while g.pick(3) == 2 && g.spend(1) {
                 g.w.text(" else if ");
                 g.expr(&Ty::Bool, 0);
                 g.w.text(" ");
                 branch(g);
+                // Only an `if` with one `else` and no `else if` swaps.
+                arms.clear();
             }
             if last || g.pick(2) == 1 {
                 g.w.text(" else ");
+                let arm = g.w.at();
                 if last {
                     g.jumping_block();
                 } else {
                     g.statement_block(false);
                 }
+                arms.push(arm..g.w.at());
             }
         });
+        self.swap(cond, &arms);
     }
 
     /// `let mut c = n` and `while c > 0 [&& cond] { c -= 1 ... }`: at most `MAX_BOUND` runs of
@@ -407,7 +440,7 @@ impl Gen<'_> {
         self.w.line();
         self.cost.statement();
         self.w.text(&format!("while {counter} > 0"));
-        let var = Var::new(counter.clone(), Ty::I64, false, 0, 0, self.cost.depth());
+        let var = counter_var(counter.clone(), Ty::I64, 0, self.cost.depth());
         self.scope.vars.push(var);
         self.conditionally(|g| {
             // Now and then, as another condition may end the loop before its body runs.
@@ -451,7 +484,7 @@ impl Gen<'_> {
         let pattern = name.as_deref().unwrap_or("_");
         self.w
             .text(&format!("while let {pattern} = (if {counter} > 0 {{ "));
-        let var = Var::new(counter.clone(), Ty::I64, false, 0, 0, self.cost.depth());
+        let var = counter_var(counter.clone(), Ty::I64, 0, self.cost.depth());
         self.scope.vars.push(var);
         self.conditionally(|g| {
             g.cost.enter_condition(bound);
@@ -531,7 +564,7 @@ impl Gen<'_> {
             "while let {qualifier}{name}({}) = {chain} ",
             parts.join(", ")
         ));
-        let var = Var::new(chain.clone(), ty, false, size, 0, self.cost.depth());
+        let var = counter_var(chain.clone(), ty, size, self.cost.depth());
         self.scope.vars.push(var);
         self.conditionally(|g| {
             g.cost.enter_loop(nodes);
@@ -669,8 +702,11 @@ impl Gen<'_> {
         let info = self.expr(ty, max);
         self.close_block();
         self.jumps = jumps;
+        // A block in a constant does not fold (E0086).
         Info {
             pure: false,
+            folds: false,
+            value: None,
             ..info
         }
     }
@@ -678,11 +714,13 @@ impl Gen<'_> {
     fn open_block(&mut self) {
         self.blocks += 1;
         self.w.open();
+        self.w.open_block();
         self.scope.open();
     }
 
     fn close_block(&mut self) {
         self.scope.close();
+        self.w.close_block();
         self.w.close();
         self.blocks -= 1;
     }
@@ -719,6 +757,8 @@ impl Gen<'_> {
             }
             "return" => {
                 self.w.text("return");
+                // A known panic site after it would not be reached (decision 3).
+                self.returns |= self.scope.func.is_none();
                 let func = self.scope.func.map(|f| &self.scope.funcs[f]);
                 if let Some(func) = func.filter(|func| func.ret != Ty::Unit) {
                     let (ty, max) = (func.ret.clone(), func.ret_size);
@@ -753,5 +793,13 @@ fn compoundable(ty: &Ty) -> bool {
     match ty {
         Ty::Array(element) => matches!(**element, Ty::I64 | Ty::U8 | Ty::F64 | Ty::String),
         _ => matches!(ty, Ty::I64 | Ty::U8 | Ty::F64 | Ty::String),
+    }
+}
+
+/// A `let mut` a loop counts with, which the body never assigns.
+fn counter_var(name: String, ty: Ty, size: u64, loops: usize) -> Var {
+    Var {
+        mutable: true,
+        ..Var::new(name, ty, false, size, 0, loops)
     }
 }

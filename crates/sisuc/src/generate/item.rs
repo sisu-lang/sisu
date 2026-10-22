@@ -1,10 +1,12 @@
 //! The program and its items: `const`s, functions, and `main`.
 
-use super::expr::CHARS;
+use std::fmt::Write as _;
+
+use super::expr::{CHARS, OPS, arithmetic_value};
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::stmt::Jumps;
 use super::writer::Piece;
-use super::{Cost, DEPTHS, Gen, MAX_NESTING, MAX_SIZE};
+use super::{Answer, Cost, DEPTHS, Gen, Known, MAX_NESTING, MAX_SIZE};
 
 /// The most items before `main`.
 const MAX_ITEMS: usize = 8;
@@ -28,6 +30,20 @@ const CAPS: [u64; 3] = [0, 8, 32];
 /// an array.
 pub(crate) const MOST: u64 = 100;
 
+/// The most known sites of a program, and the most `let`s of a known function (decision 3).
+const MAX_KNOWN: usize = 3;
+const MAX_STEPS: usize = 3;
+
+/// A known site (decision 3): a function `k<n>` of straight-line `i64` or `u8` arithmetic
+/// over its two parameters, a call of it on literals, and what the call gives, worked out
+/// here.
+struct KnownSite {
+    marker: String,
+    function: String,
+    call: String,
+    answer: Result<i64, &'static str>,
+}
+
 /// What a constant expression is known to be: an integer's or a `char`'s value, and a
 /// `string`'s length.
 #[derive(Clone, Copy)]
@@ -37,8 +53,8 @@ pub(crate) struct Folded {
 }
 
 impl Gen<'_> {
-    /// Writes the program, and returns its cost (decision 5).
-    pub(crate) fn program(&mut self) -> u64 {
+    /// Writes the program, and returns its cost (decision 5) and its known sites (decision 3).
+    pub(crate) fn program(&mut self) -> (u64, Vec<Known>) {
         // Half the fuel is `main`'s, which the items before it would otherwise often spend.
         let reserve = self.fuel / 2;
         self.fuel -= reserve;
@@ -67,9 +83,38 @@ impl Gen<'_> {
         self.fuel += reserve;
         self.w.text("fn main() ");
         self.open_body();
+        let sites: Vec<KnownSite> = (0..self.rewrite_pick(MAX_KNOWN + 1))
+            .map(|n| self.known_site(n))
+            .collect();
+        let (values, panics): (Vec<KnownSite>, Vec<KnownSite>) =
+            sites.into_iter().partition(|site| site.answer.is_ok());
+        // Every value site comes first, so nothing panics before it.
+        for site in &values {
+            self.known_text(|g| {
+                g.w.line();
+                g.w.text(&format!("print(\"@{} {{{}}}\")", site.marker, site.call));
+            });
+        }
         self.main_stmts();
+        // One panic site at most, the last statement, which a `return` would skip.
+        let panic = panics.into_iter().next().filter(|_| !self.returns);
+        if let Some(site) = &panic {
+            self.known_text(|g| {
+                g.w.line();
+                g.w.text(&format!("print(\"@{} panics\")", site.marker));
+                g.w.line();
+                g.w.text(&format!("print({})", site.call));
+            });
+        }
         self.w.close();
         self.w.line();
+        let sites: Vec<KnownSite> = values.into_iter().chain(panic).collect();
+        for site in &sites {
+            self.known_text(|g| {
+                g.w.text(&site.function);
+                g.w.line();
+            });
+        }
         // The stdin comes last, so the first bytes choose the program's shape.
         for _ in 0..self.pick(MAX_LINES + 1) {
             let line = self.stdin_line();
@@ -77,7 +122,87 @@ impl Gen<'_> {
             self.stdin.push('\n');
         }
         let costs: Vec<[u64; DEPTHS]> = self.scope.funcs.iter().map(|f| f.cost).collect();
-        self.cost.of_main(&costs)
+        let known = sites
+            .into_iter()
+            .map(|site| Known {
+                marker: site.marker,
+                answer: match site.answer {
+                    Ok(value) => Answer::Value(value.to_string()),
+                    Err(message) => Answer::Panic(message),
+                },
+            })
+            .collect();
+        (self.cost.of_main(&costs), known)
+    }
+
+    /// Writes a known site's text by `write`, which the coverage test leaves out.
+    fn known_text(&mut self, write: impl FnOnce(&mut Self)) {
+        #[cfg(test)]
+        let start = self.w.out.program.len();
+        write(self);
+        #[cfg(test)]
+        self.known_text.push(start..self.w.out.program.len());
+    }
+
+    /// The known site `k<n>`: its function, of `let`s each an operator over two of the
+    /// parameters and the `let`s before, a call of it, and its result.
+    fn known_site(&mut self, n: usize) -> KnownSite {
+        let ty = if self.rewrite_pick(2) == 0 {
+            Ty::I64
+        } else {
+            Ty::U8
+        };
+        let (first, second) = (self.known_arg(&ty), self.known_arg(&ty));
+        let marker = format!("k{n}");
+        let mut function = format!("fn {marker}(a: {ty}, b: {ty}) -> {ty} {{");
+        let mut names = vec!["a".to_string(), "b".to_string()];
+        let mut values = vec![Ok(first.1), Ok(second.1)];
+        for _ in 0..=self.rewrite_pick(MAX_STEPS) {
+            let (left, right) = (
+                self.rewrite_pick(names.len()),
+                self.rewrite_pick(names.len()),
+            );
+            let op = self.rewrite_pick(OPS.len());
+            let name = format!("t{}", names.len() - 1);
+            let (l, r) = (&names[left], &names[right]);
+            write!(function, "\n    let {name} = ({l}{}{r})", OPS[op])
+                .expect("writing to a `String` should succeed");
+            // A step after one that panicked never runs.
+            let value = values[left]
+                .and_then(|l| values[right].and_then(|r| arithmetic_value(&ty, op, l, r)));
+            names.push(name);
+            values.push(value);
+        }
+        let last = names.last().expect("a known function should have a `let`");
+        write!(function, "\n    {last}\n}}").expect("writing to a `String` should succeed");
+        let answer = values[2..]
+            .iter()
+            .find(|value| value.is_err())
+            .unwrap_or(&values[values.len() - 1]);
+        KnownSite {
+            call: format!("{marker}({}, {})", first.0, second.0),
+            marker,
+            function,
+            answer: *answer,
+        }
+    }
+
+    /// An argument of a known site: a literal of `ty`, `i64` or `u8`, often at an end of its
+    /// range, and its value.
+    fn known_arg(&mut self, ty: &Ty) -> (String, i64) {
+        let n = if *ty == Ty::U8 {
+            let any = self.ru.int_in_range(0..=255).unwrap_or(0);
+            [0, 1, 2, 255, any][self.rewrite_pick(5)]
+        } else {
+            let any = self.ru.int_in_range(-1_000..=1_000).unwrap_or(0);
+            [0, 1, -1, 7, i64::MAX, i64::MIN, any][self.rewrite_pick(7)]
+        };
+        let text = if n < 0 {
+            format!("(-{})", n.unsigned_abs())
+        } else {
+            n.to_string()
+        };
+        (text, n)
     }
 
     /// Opens the body of a function or `main`, which counts its own cost.

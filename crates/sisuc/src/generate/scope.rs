@@ -135,6 +135,9 @@ pub(crate) struct Var {
     pub(crate) ty: Ty,
     /// A `let mut` that no loop counts with: the body may assign to it.
     pub(crate) assignable: bool,
+    /// A `let mut`, whose value a statement between a read of it and a `let` that read moved
+    /// to may change (decision 2).
+    pub(crate) mutable: bool,
     /// For a `string`: the most chars its first value or a plain assignment may hold. For a
     /// mutable array: the most size each element may take that way.
     pub(crate) base: u64,
@@ -166,6 +169,7 @@ impl Var {
             name,
             ty,
             assignable,
+            mutable: assignable,
             base,
             size: base + room,
             room,

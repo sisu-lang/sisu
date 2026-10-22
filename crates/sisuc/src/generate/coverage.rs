@@ -11,8 +11,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::item::MOST;
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
+use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{
-    BUDGET, Cost, DEPTHS, FUEL, Gen, Generated, MAX_BOUND, MAX_NESTING, MAX_SIZE, Shape, generate,
+    Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, Shape, generate,
 };
 use crate::diagnostic::Severity;
 use crate::front_end::front_end;
@@ -154,13 +155,13 @@ fn splitmix64(state: &mut u64) -> u64 {
 }
 
 /// The program's syntax tree and typed tree, after asserting it checks without an error.
-fn checked(g: &Generated) -> (ast::Program, tir::Program) {
-    let (program, diagnostics) = front_end(&g.program);
+fn checked(source: &str) -> (ast::Program, tir::Program) {
+    let (program, diagnostics) = front_end(source);
     let errors: Vec<String> = diagnostics
         .iter()
         .filter(|d| d.severity() == Severity::Error)
         .map(|d| {
-            let before = &g.program[..d.span().start()];
+            let before = &source[..d.span().start()];
             let line = 1 + before.matches('\n').count();
             let column = 1 + before.len() - before.rfind('\n').map_or(0, |at| at + 1);
             format!("{} at {line}:{column}", d.code().as_str())
@@ -168,13 +169,13 @@ fn checked(g: &Generated) -> (ast::Program, tir::Program) {
         .collect();
     let program = program.filter(|_| errors.is_empty()).unwrap_or_else(|| {
         let mut numbered = String::new();
-        for (i, line) in g.program.lines().enumerate() {
+        for (i, line) in source.lines().enumerate() {
             writeln!(numbered, "{:>4} {line}", i + 1)
                 .expect("writing to a `String` should succeed");
         }
         panic!("a generated program fails to check: {errors:?}\n{numbered}")
     });
-    let lexed = lexer::lex(&g.program).expect("a program that checks should lex");
+    let lexed = lexer::lex(source).expect("a program that checks should lex");
     (parser::parse(lexed).program, program)
 }
 
@@ -346,6 +347,11 @@ struct Walk {
     in_const: bool,
     /// How many right operands of `f64` arithmetic and `op=` are literals, and how many are not.
     f64_rights: [usize; 2],
+    /// Blocks in a constant's value or as the place of an assignment, and blocks that end in an
+    /// `if false` copy of their last expression: what decision 2's rewrites must not write.
+    misplaced: Vec<String>,
+    /// The literal messages of `panic` and `todo`.
+    messages: Vec<String>,
 }
 
 impl Walk {
@@ -355,9 +361,9 @@ impl Walk {
         }
     }
 
-    fn program(&mut self, g: &Generated) {
-        let (ast, tir) = checked(g);
-        self.source.clone_from(&g.program);
+    fn program(&mut self, source: &str) {
+        let (ast, tir) = checked(source);
+        source.clone_into(&mut self.source);
         self.lens.clear();
         self.immutable.clear();
         self.later.clear();
@@ -370,7 +376,7 @@ impl Walk {
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
-            if holds(&g.program) {
+            if holds(source) {
                 self.mark(feature);
             }
         }
@@ -476,6 +482,21 @@ impl Walk {
     }
 
     fn ast_block(&mut self, block: &ast::Block) {
+        if let [.., last, dead] = &block.stmts[..]
+            && let ast::StmtKind::Expr(e) = &dead.kind
+            && let ast::ExprKind::If {
+                cond,
+                then_block,
+                else_block: None,
+            } = &e.kind
+            && matches!(cond.kind, ast::ExprKind::Bool(false))
+            && let [copy] = &then_block.stmts[..]
+            && copy.to_string() == last.to_string()
+        {
+            self.misplaced.push(format!(
+                "an `if false` after a block's last statement: {dead}"
+            ));
+        }
         for (i, stmt) in block.stmts.iter().enumerate() {
             let before = i.checked_sub(1).map(|at| &block.stmts[at]);
             if let ast::StmtKind::While { cond, body } = &stmt.kind {
@@ -495,6 +516,9 @@ impl Walk {
 
     /// Walks the target of an assignment.
     fn target(&mut self, target: &ast::Expr) {
+        if matches!(target.kind, ast::ExprKind::Block(_)) {
+            self.misplaced.push(format!("a block as a place: {target}"));
+        }
         self.writing = true;
         self.ast_expr(target);
         self.writing = false;
@@ -837,6 +861,15 @@ impl Walk {
         });
     }
 
+    /// Records a `panic` or `todo` message written as a literal.
+    fn message(&mut self, args: &[ast::Arg]) {
+        if let [arg] = args
+            && let ast::ExprKind::Str(text) = &arg.value.kind
+        {
+            self.messages.push(text.clone());
+        }
+    }
+
     fn ast_args(&mut self, args: &[ast::Arg]) {
         for arg in args {
             self.ast_expr(&arg.value);
@@ -882,6 +915,9 @@ impl Walk {
                 self.mark("ast::ExprKind::Call");
                 let callee = callee.name.as_str();
                 self.mark(&format!("prelude {callee}"));
+                if callee == "panic" {
+                    self.message(args);
+                }
                 if self.funcs.contains(callee) {
                     if callee == self.func {
                         self.mark("reach: a function calls itself");
@@ -895,6 +931,7 @@ impl Walk {
             }
             ast::ExprKind::Todo { args, .. } => {
                 self.mark("ast::ExprKind::Todo");
+                self.message(args);
                 self.ast_args(args);
             }
             ast::ExprKind::SelfValue => self.mark("ast::ExprKind::SelfValue"),
@@ -1075,6 +1112,10 @@ impl Walk {
             }
             ast::ExprKind::Block(block) => {
                 self.mark("ast::ExprKind::Block");
+                if self.in_const {
+                    self.misplaced
+                        .push(format!("a block in a constant: {block}"));
+                }
                 self.ast_block(block);
             }
         }
@@ -1712,7 +1753,7 @@ fn inexact(e: &tir::Expr) -> bool {
 fn walk() -> Walk {
     let mut walk = Walk::default();
     for data in seeds() {
-        walk.program(&generate(&data));
+        walk.program(&generate(&data).plain);
     }
     walk
 }
@@ -1720,15 +1761,15 @@ fn walk() -> Walk {
 #[test]
 fn every_generated_program_checks_clean() {
     for data in seeds() {
-        checked(&generate(&data));
+        checked(&generate(&data).program);
     }
 }
 
 #[test]
 fn every_short_input_checks_clean() {
-    checked(&generate(&[]));
+    checked(&generate(&[]).program);
     for b in 0..=u8::MAX {
-        checked(&generate(&[b]));
+        checked(&generate(&[b]).program);
     }
 }
 
@@ -1741,7 +1782,11 @@ fn read_line_past_the_input_checks_clean() {
         let calls = g.program.matches("read_line()").count();
         calls > g.stdin.lines().count() && calls > g.program.matches("read_line() ??").count()
     });
-    checked(&past.expect("some seed's program should read past its stdin"));
+    checked(
+        &past
+            .expect("some seed's program should read past its stdin")
+            .program,
+    );
 }
 
 #[test]
@@ -1774,7 +1819,8 @@ fn main_holds_several_statements() {
     // it all, and `main` seldom stops before its first.
     let mut counts: Vec<usize> = seeds()
         .map(|data| {
-            let (program, _) = checked(&generate(&data));
+            // The known sites (decision 3) are statements the generator adds at fixed places.
+            let (program, _) = checked(&generate(&data).plain);
             program
                 .items
                 .into_iter()
@@ -2208,7 +2254,7 @@ fn rare_constant_forms_check_clean() {
     ] {
         let g = generate(data);
         assert!(g.program.starts_with(form), "{}", g.program);
-        checked(&g);
+        checked(&g.program);
     }
 }
 
@@ -2263,13 +2309,7 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
 }
 ";
     let mut walk = Walk::default();
-    walk.program(&Generated {
-        program: program.to_string(),
-        rewritten: program.to_string(),
-        stdin: String::new(),
-        known: Vec::new(),
-        cost: 0,
-    });
+    walk.program(program);
     let listed: Vec<&str> = walk
         .out_of_bounds
         .iter()
@@ -2765,13 +2805,7 @@ fn main() {
 }
 ";
     let mut walk = Walk::default();
-    walk.program(&Generated {
-        program: program.to_string(),
-        rewritten: program.to_string(),
-        stdin: String::new(),
-        known: Vec::new(),
-        cost: 0,
-    });
+    walk.program(program);
     let chain = program.find("a {").expect("the program should walk `a`");
     assert_eq!(walk.chains.iter().copied().collect::<Vec<_>>(), [chain]);
     assert!(
@@ -2816,13 +2850,7 @@ fn main() {
 }
 ";
     let mut walk = Walk::default();
-    walk.program(&Generated {
-        program: program.to_string(),
-        rewritten: program.to_string(),
-        stdin: String::new(),
-        known: Vec::new(),
-        cost: 0,
-    });
+    walk.program(program);
     let stored: Vec<&str> = walk
         .heap_classes
         .iter()
@@ -3425,4 +3453,660 @@ fn an_f64_right_operand_is_any_expression() {
         other * 2 > literal,
         "{literal} right operands of `f64` arithmetic or `op=` are literals and {other} are not"
     );
+}
+
+#[test]
+fn every_rewritten_copy_checks_clean() {
+    for data in seeds() {
+        checked(&generate(&data).rewritten);
+    }
+}
+
+#[test]
+fn no_message_breaks_a_line() {
+    // A panic's record is the last stderr line, which `judge_pair` reads as one line.
+    let mut messages = Vec::new();
+    for data in seeds() {
+        // The rewritten copy writes the same messages.
+        let source = generate(&data).program;
+        let (ast, _) = checked(&source);
+        let mut walk = Walk {
+            source,
+            ..Walk::default()
+        };
+        walk.ast(&ast);
+        messages.extend(walk.messages);
+    }
+    assert!(!messages.is_empty(), "no seed writes a message");
+    let broken: Vec<&String> = messages
+        .iter()
+        .filter(|m| m.contains(['\n', '\r']))
+        .collect();
+    assert!(broken.is_empty(), "messages that break a line: {broken:?}");
+}
+
+#[test]
+fn rewrites_happen() {
+    let mut made = FxHashMap::default();
+    for data in seeds() {
+        for rewrite in generate(&data).made {
+            *made.entry(format!("{rewrite:?}")).or_insert(0) += 1;
+        }
+    }
+    let missing: Vec<&str> = ["Block", "DeadIf", "Swap", "Let", "Const"]
+        .into_iter()
+        .filter(|rewrite| !made.contains_key(*rewrite))
+        .collect();
+    assert!(missing.is_empty(), "no seed's copy holds: {missing:?}");
+}
+
+/// Whether `name` is a local the Let rewrite declares: `r` and a number.
+fn bound(name: Option<&str>) -> bool {
+    name.and_then(|name| name.strip_prefix('r'))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The `let r<n>` statements of a function of a rewritten copy, each checked against the Let
+/// rewrite's condition (decision 2) from the typed tree alone.
+struct Lets<'f> {
+    locals: &'f [tir::Local],
+    /// The values of the `r<n>` whose value is a known integer.
+    values: FxHashMap<usize, i64>,
+    /// While the use of an `r<n>` is sought: the local.
+    sought: Option<tir::LocalId>,
+    /// Where it was found: under a condition, after an effect.
+    found: Option<(bool, bool)>,
+    /// How many conditions the walk is under, and whether an effect ran before this point.
+    conditional: usize,
+    effect: bool,
+    /// How many `let`s were checked, and what broke the condition.
+    checked: usize,
+    broken: Vec<String>,
+}
+
+impl<'f> Lets<'f> {
+    fn new(locals: &'f [tir::Local]) -> Self {
+        Lets {
+            locals,
+            values: FxHashMap::default(),
+            sought: None,
+            found: None,
+            conditional: 0,
+            effect: false,
+            checked: 0,
+            broken: Vec::new(),
+        }
+    }
+
+    fn name(&self, local: tir::LocalId) -> Option<&str> {
+        self.locals[local.0].name.as_deref()
+    }
+
+    fn block(&mut self, block: &tir::Block) {
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            if self.sought.is_none() {
+                self.check(&block.stmts[i..], block.value.as_deref());
+            }
+            self.stmt(stmt);
+        }
+        if let Some(value) = &block.value {
+            self.expr(value);
+        }
+    }
+
+    /// Checks the `let` that starts `stmts`, if the Let rewrite wrote it: its value is pure,
+    /// and its statement, which the other such `let`s after it may hold, uses it first where it
+    /// runs unconditionally and after no effect. A block's last statement is its `value`.
+    fn check(&mut self, stmts: &[tir::Stmt], value: Option<&tir::Expr>) {
+        let [tir::Stmt::Let { local, init }, rest @ ..] = stmts else {
+            return;
+        };
+        if !bound(self.name(*local)) {
+            return;
+        }
+        self.checked += 1;
+        let name = self.name(*local).unwrap_or_default().to_string();
+        if !self.pure(init, false) {
+            self.broken.push(format!("`{name}` holds what is not pure"));
+        }
+        if let Some(value) = self.value(init) {
+            self.values.insert(local.0, value);
+        }
+        let outer = (self.conditional, self.effect);
+        self.sought = Some(*local);
+        for host in rest {
+            (self.conditional, self.effect) = (0, false);
+            self.stmt(host);
+            let next = matches!(host, tir::Stmt::Let { local, .. } if bound(self.name(*local)));
+            if self.found.is_some() || !next {
+                break;
+            }
+        }
+        if let Some(value) = value
+            && self.found.is_none()
+            && rest.iter().all(
+                |stmt| matches!(stmt, tir::Stmt::Let { local, .. } if bound(self.name(*local))),
+            )
+        {
+            (self.conditional, self.effect) = (0, false);
+            self.expr(value);
+        }
+        match self.found.take() {
+            None => self
+                .broken
+                .push(format!("`{name}`'s statement does not use it")),
+            Some((true, _)) => self
+                .broken
+                .push(format!("`{name}` is used under a condition")),
+            Some((false, true)) => self
+                .broken
+                .push(format!("`{name}` is used after an effect")),
+            Some((false, false)) => {}
+        }
+        self.sought = None;
+        (self.conditional, self.effect) = outer;
+    }
+
+    fn stmt(&mut self, stmt: &tir::Stmt) {
+        match stmt {
+            tir::Stmt::Let { init, .. } | tir::Stmt::Expr(init) => self.expr(init),
+            tir::Stmt::Assign { place, value } | tir::Stmt::Append { place, value } => {
+                self.place(place);
+                self.expr(value);
+            }
+        }
+    }
+
+    fn place(&mut self, place: &tir::Place) {
+        match place {
+            tir::Place::Local(_) => {}
+            tir::Place::Field { base, .. } => self.expr(base),
+            tir::Place::Index { base, index } => {
+                self.place(base);
+                self.expr(index);
+            }
+        }
+    }
+
+    fn conditionally(&mut self, walk: impl FnOnce(&mut Self)) {
+        self.conditional += 1;
+        walk(self);
+        self.conditional -= 1;
+    }
+
+    /// Walks `e` in the order it runs.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of expression, with no `_` arm to miss a new one"
+    )]
+    fn expr(&mut self, e: &tir::Expr) {
+        match &e.kind {
+            tir::ExprKind::Int(_)
+            | tir::ExprKind::Float(_)
+            | tir::ExprKind::Bool(_)
+            | tir::ExprKind::Char(_)
+            | tir::ExprKind::Str(_)
+            | tir::ExprKind::None
+            | tir::ExprKind::ReadLine
+            | tir::ExprKind::Break
+            | tir::ExprKind::Continue => {}
+            tir::ExprKind::Local(local) => {
+                if self.sought == Some(*local) && self.found.is_none() {
+                    self.found = Some((self.conditional > 0, self.effect));
+                }
+            }
+            tir::ExprKind::Call { args, .. }
+            | tir::ExprKind::New { args, .. }
+            | tir::ExprKind::Variant { args, .. }
+            | tir::ExprKind::ArrayLit(args)
+            | tir::ExprKind::Math { operands: args, .. }
+            | tir::ExprKind::Interpolate { parts: args, .. } => {
+                for arg in args {
+                    self.expr(arg);
+                }
+            }
+            tir::ExprKind::Field { base: x, .. }
+            | tir::ExprKind::Wrap(x)
+            | tir::ExprKind::Convert(x)
+            | tir::ExprKind::Print { operand: x, .. }
+            | tir::ExprKind::Panic(x)
+            | tir::ExprKind::Len(x)
+            | tir::ExprKind::Chars(x)
+            | tir::ExprKind::Bytes(x)
+            | tir::ExprKind::Words(x)
+            | tir::ExprKind::FromChars(x)
+            | tir::ExprKind::Sum(x)
+            | tir::ExprKind::Unary { operand: x, .. } => self.expr(x),
+            tir::ExprKind::ArrayFill { value: a, len: b }
+            | tir::ExprKind::Index { base: a, index: b }
+            | tir::ExprKind::Contains { base: a, value: b }
+            | tir::ExprKind::Concat { lhs: a, rhs: b }
+            | tir::ExprKind::Equal { lhs: a, rhs: b, .. }
+            | tir::ExprKind::Is { lhs: a, rhs: b } => {
+                self.expr(a);
+                self.expr(b);
+            }
+            tir::ExprKind::Binary { op, lhs, rhs } => {
+                self.expr(lhs);
+                if matches!(op, tir::BinaryOp::And | tir::BinaryOp::Or) {
+                    self.conditionally(|walk| walk.expr(rhs));
+                } else {
+                    self.expr(rhs);
+                }
+            }
+            // A chain stops at its first false comparison.
+            tir::ExprKind::Compare { operands, .. } => {
+                for (i, operand) in operands.iter().enumerate() {
+                    if i < 2 {
+                        self.expr(operand);
+                    } else {
+                        self.conditionally(|walk| walk.expr(operand));
+                    }
+                }
+            }
+            tir::ExprKind::If {
+                cond: scrutinee,
+                then_block,
+                else_block,
+            }
+            | tir::ExprKind::IfSome {
+                scrutinee,
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.expr(scrutinee);
+                self.conditionally(|walk| {
+                    walk.block(then_block);
+                    if let Some(block) = else_block {
+                        walk.block(block);
+                    }
+                });
+            }
+            tir::ExprKind::Match {
+                scrutinee, arms, ..
+            } => {
+                self.expr(scrutinee);
+                self.conditionally(|walk| {
+                    for arm in arms {
+                        if let Some(guard) = &arm.guard {
+                            walk.expr(guard);
+                        }
+                        walk.block(&arm.body);
+                    }
+                });
+            }
+            tir::ExprKind::Loop(block) => self.conditionally(|walk| walk.block(block)),
+            tir::ExprKind::Return(value) => {
+                if let Some(value) = value {
+                    self.expr(value);
+                }
+            }
+            tir::ExprKind::Block(block) => self.block(block),
+        }
+        if !self.pure(e, true) {
+            self.effect = true;
+        }
+    }
+
+    /// Whether `e` has no effect and cannot panic; and, unless `reads`, reads no field and no
+    /// mutable local either.
+    fn pure(&self, e: &tir::Expr, reads: bool) -> bool {
+        let int = matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8);
+        let all = |parts: &[tir::Expr]| parts.iter().all(|part| self.pure(part, reads));
+        match &e.kind {
+            tir::ExprKind::Int(_)
+            | tir::ExprKind::Float(_)
+            | tir::ExprKind::Bool(_)
+            | tir::ExprKind::Char(_)
+            | tir::ExprKind::Str(_)
+            | tir::ExprKind::None => true,
+            tir::ExprKind::Local(local) => reads || !self.locals[local.0].mutable,
+            tir::ExprKind::Field { base, .. } => reads && self.pure(base, reads),
+            tir::ExprKind::Call { .. }
+            | tir::ExprKind::Print { .. }
+            | tir::ExprKind::Panic(_)
+            | tir::ExprKind::ReadLine
+            | tir::ExprKind::Index { .. }
+            | tir::ExprKind::Loop(_)
+            | tir::ExprKind::Break
+            | tir::ExprKind::Continue
+            | tir::ExprKind::Return(_) => false,
+            // An `i64` sum may overflow, and so may an `i64` negation or arithmetic whose value
+            // is not known.
+            tir::ExprKind::Sum(x) => !int && self.pure(x, reads),
+            tir::ExprKind::Unary { op, operand } => {
+                (!int || *op == tir::UnaryOp::Not || self.value(e).is_some())
+                    && self.pure(operand, reads)
+            }
+            tir::ExprKind::Binary { lhs, rhs, .. } => {
+                (!int || self.value(e).is_some()) && self.pure(lhs, reads) && self.pure(rhs, reads)
+            }
+            tir::ExprKind::Math { op, operands } => {
+                !(int && *op == tir::MathOp::Abs) && all(operands)
+            }
+            tir::ExprKind::ArrayFill { value, len } => {
+                self.value(len).is_some_and(|n| n >= 0) && self.pure(value, reads)
+            }
+            tir::ExprKind::New { args, .. }
+            | tir::ExprKind::Variant { args, .. }
+            | tir::ExprKind::ArrayLit(args)
+            | tir::ExprKind::Interpolate { parts: args, .. }
+            | tir::ExprKind::Compare { operands: args, .. } => all(args),
+            tir::ExprKind::Wrap(x)
+            | tir::ExprKind::Convert(x)
+            | tir::ExprKind::Len(x)
+            | tir::ExprKind::Chars(x)
+            | tir::ExprKind::Bytes(x)
+            | tir::ExprKind::Words(x)
+            | tir::ExprKind::FromChars(x) => self.pure(x, reads),
+            tir::ExprKind::Contains { base: a, value: b }
+            | tir::ExprKind::Concat { lhs: a, rhs: b }
+            | tir::ExprKind::Equal { lhs: a, rhs: b, .. }
+            | tir::ExprKind::Is { lhs: a, rhs: b } => self.pure(a, reads) && self.pure(b, reads),
+            tir::ExprKind::If {
+                cond: scrutinee,
+                then_block,
+                else_block,
+            }
+            | tir::ExprKind::IfSome {
+                scrutinee,
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.pure(scrutinee, reads)
+                    && self.pure_block(then_block, reads)
+                    && else_block
+                        .as_ref()
+                        .is_none_or(|block| self.pure_block(block, reads))
+            }
+            tir::ExprKind::Match {
+                scrutinee, arms, ..
+            } => {
+                self.pure(scrutinee, reads)
+                    && arms.iter().all(|arm| {
+                        arm.guard.as_ref().is_none_or(|g| self.pure(g, reads))
+                            && self.pure_block(&arm.body, reads)
+                    })
+            }
+            tir::ExprKind::Block(block) => self.pure_block(block, reads),
+        }
+    }
+
+    /// Whether `block` is pure: no statement but the `let`s the checker writes, of a chain's
+    /// operands for one, and a pure value.
+    fn pure_block(&self, block: &tir::Block, reads: bool) -> bool {
+        block
+            .stmts
+            .iter()
+            .all(|stmt| matches!(stmt, tir::Stmt::Let { init, .. } if self.pure(init, reads)))
+            && block
+                .value
+                .as_deref()
+                .is_none_or(|value| self.pure(value, reads))
+    }
+
+    /// The value of an integer `e` of literals, negations, arithmetic and the `r<n>` whose
+    /// value is known, if no step overflows or divides by zero.
+    fn value(&self, e: &tir::Expr) -> Option<i64> {
+        let value = if let tir::ExprKind::Int(n) = &e.kind {
+            Some(*n)
+        } else if let tir::ExprKind::Local(local) = &e.kind {
+            self.values.get(&local.0).copied()
+        } else if let tir::ExprKind::Unary {
+            op: tir::UnaryOp::Neg,
+            operand,
+        } = &e.kind
+        {
+            self.value(operand)?.checked_neg()
+        } else if let tir::ExprKind::Binary { op, lhs, rhs } = &e.kind {
+            let (l, r) = (self.value(lhs)?, self.value(rhs)?);
+            match op {
+                tir::BinaryOp::Add | tir::BinaryOp::AddUnchecked => l.checked_add(r),
+                tir::BinaryOp::Sub => l.checked_sub(r),
+                tir::BinaryOp::Mul => l.checked_mul(r),
+                tir::BinaryOp::Div => l.checked_div(r),
+                tir::BinaryOp::Rem => l.checked_rem(r),
+                tir::BinaryOp::And | tir::BinaryOp::Or => None,
+            }
+        } else if let tir::ExprKind::Block(block) = &e.kind
+            && block.stmts.is_empty()
+        {
+            self.value(block.value.as_deref()?)
+        } else {
+            None
+        };
+        value.filter(|n| e.ty != Type::U8 || (0..=255).contains(n))
+    }
+}
+
+#[test]
+fn every_rewrite_meets_its_condition() {
+    // Each condition is checked on the rewritten copy itself, apart from the flags the
+    // generator chose it by. A `C<n>` that does not fold, or folds through an overflowing step,
+    // fails to check (E0086, E0088), so checking clean covers the Const rewrite.
+    let (mut lets_seen, mut broken, mut misplaced) = (0, Vec::new(), Vec::new());
+    for data in seeds() {
+        let g = generate(&data);
+        let (ast, program) = checked(&g.rewritten);
+        let mut walk = Walk {
+            source: g.rewritten,
+            ..Walk::default()
+        };
+        walk.ast(&ast);
+        misplaced.extend(walk.misplaced);
+        for f in &program.functions {
+            let mut lets = Lets::new(&f.locals);
+            lets.block(&f.body);
+            lets_seen += lets.checked;
+            broken.extend(lets.broken.into_iter().map(|b| format!("{}: {b}", f.name)));
+        }
+    }
+    assert!(lets_seen > 0, "no copy holds a `let r<n>`");
+    assert!(broken.is_empty(), "{broken:#?}");
+    assert!(misplaced.is_empty(), "{misplaced:#?}");
+}
+
+/// A site where every rewrite keeps the meaning: each test below breaks one condition.
+const ANY: Site = Site {
+    pure: true,
+    unconditional: true,
+    folds: true,
+    in_const: false,
+    place: false,
+    last: false,
+};
+
+/// Asserts that `rewrite` is allowed at `ANY` but not at `site`.
+fn refused(rewrite: Rewrite, site: &Site) {
+    assert!(
+        allowed(rewrite, &ANY),
+        "{rewrite:?} should be allowed where it keeps the meaning"
+    );
+    assert!(
+        !allowed(rewrite, site),
+        "{rewrite:?} should not be allowed here"
+    );
+}
+
+#[test]
+fn let_binding_skips_a_mutated_name() {
+    // `print({ n = 2; n })`: a `let` before the statement would read `n` before it is 2.
+    refused(Rewrite::Let, &Site { pure: false, ..ANY });
+}
+
+#[test]
+fn let_binding_skips_a_short_circuit() {
+    // `false && (1 / 0 == 0)`: a `let` before the statement would divide by zero.
+    refused(
+        Rewrite::Let,
+        &Site {
+            unconditional: false,
+            ..ANY
+        },
+    );
+}
+
+#[test]
+fn let_binding_skips_a_field_read() {
+    // `print({ p.x = 2; p.x })`: a field is a read of what may be assigned, as a `mut` local is.
+    refused(Rewrite::Let, &Site { pure: false, ..ANY });
+}
+
+#[test]
+fn no_block_in_a_const() {
+    refused(
+        Rewrite::Block,
+        &Site {
+            in_const: true,
+            ..ANY
+        },
+    );
+}
+
+#[test]
+fn no_block_as_a_place() {
+    refused(Rewrite::Block, &Site { place: true, ..ANY });
+}
+
+#[test]
+fn dead_branch_never_ends_a_block() {
+    // `fn f() -> i64 { 4 }`: an `if false` after the `4` would end the block in a unit.
+    refused(Rewrite::DeadIf, &Site { last: true, ..ANY });
+}
+
+#[test]
+fn no_const_with_an_overflowing_step() {
+    refused(
+        Rewrite::Const,
+        &Site {
+            folds: false,
+            ..ANY
+        },
+    );
+}
+
+#[test]
+fn let_binding_keeps_the_type() {
+    // `255` where a `u8` is expected: unannotated, `let r = 255` would be an `i64`.
+    let mut w = Writer::default();
+    w.text("fn main() {");
+    w.line();
+    let statement = w.begin();
+    w.text("let v1: u8 = ");
+    let value = w.mark();
+    w.text("255");
+    w.bind(value, &Ty::U8);
+    w.end(statement, false);
+    w.line();
+    w.text("print(v1)\n}\n");
+    assert_eq!(
+        w.out.rewritten,
+        "fn main() {\nlet r1: u8 = 255\nlet v1: u8 = r1\nprint(v1)\n}\n"
+    );
+    checked(&w.out.rewritten);
+}
+
+#[test]
+fn known_answers_happen() {
+    // Over the seeds, a known site of each type gives a value, and one panics (decision 3).
+    let mut kinds = FxHashSet::default();
+    for data in seeds() {
+        let g = generate(&data);
+        for known in &g.known {
+            let head = format!("fn {}(a: ", known.marker);
+            let at = g
+                .program
+                .find(&head)
+                .expect("a known site should have its function");
+            let ty = &g.program[at + head.len()..]
+                .split(',')
+                .next()
+                .unwrap_or_default();
+            let panics = matches!(known.answer, Answer::Panic(_));
+            kinds.insert((ty.to_string(), panics));
+        }
+    }
+    for kind in [("i64", false), ("i64", true), ("u8", false), ("u8", true)] {
+        assert!(
+            kinds.contains(&(kind.0.to_string(), kind.1)),
+            "no seed has a known site of `{}` that {}",
+            kind.0,
+            if kind.1 { "panics" } else { "gives a value" }
+        );
+    }
+}
+
+#[test]
+fn known_answers_are_integer() {
+    // Decision 11: a known answer depends on no inexact value. A known function's parameters,
+    // locals and result are integers, and each call of it takes integer literals.
+    let mut calls = 0;
+    for data in seeds() {
+        let g = generate(&data);
+        let (_, program) = checked(&g.program);
+        let known: Vec<usize> = g
+            .known
+            .iter()
+            .map(|k| {
+                program
+                    .functions
+                    .iter()
+                    .position(|f| f.name == k.marker)
+                    .expect("a known site should have its function")
+            })
+            .collect();
+        for &f in &known {
+            let f = &program.functions[f];
+            let types = f.locals.iter().map(|local| local.ty).chain([f.ret]);
+            for ty in types {
+                assert!(
+                    matches!(ty.kind(), TypeKind::I64 | TypeKind::U8),
+                    "`{}` holds a {ty:?}",
+                    f.name
+                );
+            }
+        }
+        // Each site prints its call in a statement of `main`: `print("@k<n> {k<n>(x, y)}")`
+        // or `print(k<n>(x, y))`.
+        let main = program
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("a program should have `main`");
+        let lets = Lets::new(&main.locals);
+        let printed = main.body.stmts.iter().filter_map(|stmt| match stmt {
+            tir::Stmt::Expr(e) => Some(e),
+            tir::Stmt::Let { .. } | tir::Stmt::Assign { .. } | tir::Stmt::Append { .. } => None,
+        });
+        let mut sites = 0;
+        for e in printed.chain(main.body.value.as_deref()) {
+            let tir::ExprKind::Print { operand, .. } = &e.kind else {
+                continue;
+            };
+            let parts = if let tir::ExprKind::Interpolate { parts, .. } = &operand.kind {
+                &parts[..]
+            } else {
+                std::slice::from_ref(&**operand)
+            };
+            for part in parts {
+                if let tir::ExprKind::Call { func, args } = &part.kind
+                    && known.contains(&func.0)
+                {
+                    sites += 1;
+                    for arg in args {
+                        assert!(lets.value(arg).is_some(), "a known call takes {arg:?}");
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            sites,
+            g.known.len(),
+            "each known site should call its function once"
+        );
+        calls += sites;
+    }
+    assert!(calls > 0, "no seed calls a known function");
 }

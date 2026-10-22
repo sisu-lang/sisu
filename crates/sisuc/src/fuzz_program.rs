@@ -2,7 +2,8 @@
 //! builds it and its rewritten copy at O0, at `-O2` and with `--rc-checks`, runs each build and
 //! panics on a breach of a property (ADR 0031). Properties 1 and 2 are that the program checks
 //! clean and compiles to a module LLVM verifies; property 3 is that every build exits 0 or 101,
-//! and all three the same way.
+//! and all three the same way; property 4 is that the rewritten copy runs as the program does;
+//! property 5 is that the program prints the known integer answers.
 
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -17,7 +18,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::codegen::OptLevel;
-use crate::generate::{self, Generated};
+use crate::generate::{self, Answer, Generated, Known};
 use crate::report::{Format, Reporter};
 use crate::tir::Program;
 use crate::{Backend, compile, fresh_names, front_end, fuzz, run};
@@ -229,11 +230,15 @@ fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, Stri
     let rewritten = checked("rewritten", &g.rewritten).map_err(|f| (f, String::new()))?;
     let stdin = dir.join("stdin.txt");
     fs::write(&stdin, &g.stdin).expect("the fuzzer should write the stdin to its own directory");
-    judge_source("program", &g.program, &program, runtime, dir, &stdin)?;
-    judge_source("rewritten", &g.rewritten, &rewritten, runtime, dir, &stdin)
+    let runs = judge_source("program", &g.program, &program, runtime, dir, &stdin)?;
+    let copies = judge_source("rewritten", &g.rewritten, &rewritten, runtime, dir, &stdin)?;
+    judge_pair(&runs[0], &copies[0])
+        .map_err(|f| (f, record("program", &runs) + &record("rewritten", &copies)))?;
+    judge_known(&runs[0], &g.known).map_err(|f| (f, record("program", &runs)))
 }
 
-/// Property 3 for `source`, checked as `program`: its three builds in `dir`, run with `stdin`.
+/// Property 3 for `source`, checked as `program`: its three builds in `dir`, run with `stdin`,
+/// which it gives back.
 fn judge_source(
     name: &str,
     source: &str,
@@ -241,14 +246,17 @@ fn judge_source(
     runtime: &Path,
     dir: &Path,
     stdin: &Path,
-) -> Result<(), (Failure, String)> {
+) -> Result<[Run; 3], (Failure, String)> {
     #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
     let mut runs = builds(name, source, program, runtime, dir, stdin, LIMIT);
     #[cfg(test)]
     if FORCE.get() == Some(Force::Stdout) {
         runs[1].stdout = b"forced".to_vec();
     }
-    judge_builds(&runs).map_err(|f| (f, record(name, &runs)))
+    match judge_builds(&runs) {
+        Ok(()) => Ok(runs),
+        Err(f) => Err((f, record(name, &runs))),
+    }
 }
 
 /// Properties 1 and 2: `source` checks with no error, and its MIR certifies and its module
@@ -393,6 +401,92 @@ fn judge_builds(runs: &[Run; 3]) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Property 4: the program and its rewritten copy, each run the same way, exit the same way and
+/// print the same, but for where a panic happened.
+fn judge_pair(program: &Run, rewritten: &Run) -> Result<(), Failure> {
+    let differs = [
+        ("exit", program.exit != rewritten.exit),
+        ("stdout", program.stdout != rewritten.stdout),
+        ("stderr", unlocated(program) != unlocated(rewritten)),
+    ];
+    match differs.iter().find(|(_, differs)| *differs) {
+        Some((what, _)) => Err(Failure {
+            property: 4,
+            detail: format!("the program and its rewritten copy differ in {what}"),
+        }),
+        None => Ok(()),
+    }
+}
+
+/// The prefix of the runtime's panic line, before its `<file>:<line>:<col>: <message>`.
+const PANIC: &str = "sisu: panic at ";
+
+/// `run`'s stderr, with the `<file>:<line>:<col>: ` of a panic's line taken out: only from the
+/// last line, and only when the run exited 101, so any other line compares as written.
+fn unlocated(run: &Run) -> Vec<u8> {
+    let stderr = &run.stderr;
+    let body = stderr.strip_suffix(b"\n").unwrap_or(stderr);
+    let last = body
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(0, |at| at + 1);
+    let after = last + PANIC.len();
+    let location = body[last..]
+        .starts_with(PANIC.as_bytes())
+        .then(|| body[after..].windows(2).position(|pair| pair == b": "))
+        .flatten();
+    match location {
+        Some(end) if run.exit == Exit::Code(101) => {
+            [&stderr[..after], &stderr[after + end + 2..]].concat()
+        }
+        _ => stderr.clone(),
+    }
+}
+
+/// Property 5: `run`, the program's O0 run, prints each known value site's line as the first
+/// lines of its stdout, in order; and a panic site, when its `@k<n> panics` line is the last,
+/// panics with the expected message, while a run that does not reach it panics before it.
+/// Only those exact lines are read, so another line that starts with `@` changes nothing.
+fn judge_known(run: &Run, known: &[Known]) -> Result<(), Failure> {
+    let fail = |detail: String| {
+        Err(Failure {
+            property: 5,
+            detail,
+        })
+    };
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    let mut lines = stdout.lines();
+    for site in known {
+        let marker = &site.marker;
+        match &site.answer {
+            Answer::Value(value) => {
+                let line = format!("@{marker} {value}");
+                if lines.next() != Some(line.as_str()) {
+                    return fail(format!("stdout should print `{line}` here"));
+                }
+            }
+            Answer::Panic(message) => {
+                if run.exit != Exit::Code(101) {
+                    return fail(format!(
+                        "the panic site {marker} should panic, or one before it"
+                    ));
+                }
+                let reached = stdout.lines().last() == Some(format!("@{marker} panics").as_str());
+                let panicked = stderr.lines().last().is_some_and(|last| {
+                    last.starts_with(PANIC) && last.ends_with(&format!(": {message}"))
+                });
+                if reached && !panicked {
+                    return fail(format!(
+                        "the panic site {marker} should panic with `{message}`"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The builds of `name` in `runs`, each as its exit, stdout and stderr under `==>` lines.
 fn record(name: &str, runs: &[Run; 3]) -> String {
     let mut out = String::new();
@@ -429,8 +523,8 @@ mod tests {
     use std::{env, fs, thread};
 
     use super::{
-        BUILDS, Exit, FORCE, Force, LIMIT, Run, build, builds, checked, judge, judge_builds,
-        judge_source, program, program_in, run,
+        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Run, build, builds, checked, judge,
+        judge_builds, judge_known, judge_pair, judge_source, program, program_in, run,
     };
     use crate::fresh_names;
     use crate::generate::{Generated, coverage, generate};
@@ -647,6 +741,8 @@ mod tests {
                 stdin: String::new(),
                 known: Vec::new(),
                 cost: 0,
+                plain: String::new(),
+                made: Vec::new(),
             };
             let scratch = Scratch::new();
             let (failure, builds) =
@@ -665,6 +761,135 @@ mod tests {
         let stdin = scratch.0.join("stdin.txt");
         fs::write(&stdin, "").expect("the test should write the stdin");
         assert_eq!(run(&exe, &stdin, &scratch.0, LIMIT).exit, Exit::Signal(11));
+    }
+
+    /// A run that exits with `code` and prints `stdout` and `stderr`.
+    fn ran(code: i32, stdout: &str, stderr: &str) -> Run {
+        Run {
+            exit: Exit::Code(code),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    /// The property `judge_pair` finds broken, 0 for none.
+    fn pair(program: &Run, rewritten: &Run) -> u8 {
+        judge_pair(program, rewritten).map_or_else(|f| f.property, |()| 0)
+    }
+
+    /// Review Focus 3: the copies' panics are at different places, with the same message.
+    #[test]
+    fn pair_ignores_panic_locations() {
+        let program = ran(
+            101,
+            "1\n",
+            "sisu: panic at input.sisu:3:5: integer overflow\n",
+        );
+        let rewritten = ran(
+            101,
+            "1\n",
+            "sisu: panic at input.sisu:7:9: integer overflow\n",
+        );
+        assert_eq!(pair(&program, &rewritten), 0);
+    }
+
+    #[test]
+    fn pair_rejects_a_different_panic_message() {
+        let program = ran(101, "", "sisu: panic at input.sisu:3:5: integer overflow\n");
+        let rewritten = ran(101, "", "sisu: panic at input.sisu:3:5: division by zero\n");
+        assert_eq!(pair(&program, &rewritten), 4);
+    }
+
+    /// Only a panic's own line loses its location: an `eprint` of the same text, or a line
+    /// before the last, compares as written.
+    #[test]
+    fn pair_compares_ordinary_stderr_exactly() {
+        let at = |place: &str| format!("sisu: panic at input.sisu:{place}: hello\n");
+        let printed = (ran(0, "", &at("3:5")), ran(0, "", &at("7:9")));
+        assert_eq!(pair(&printed.0, &printed.1), 4);
+        let panic = "sisu: panic at input.sisu:9:1: integer overflow\n";
+        let earlier = (
+            ran(101, "", &(at("3:5") + panic)),
+            ran(101, "", &(at("7:9") + panic)),
+        );
+        assert_eq!(pair(&earlier.0, &earlier.1), 4);
+    }
+
+    #[test]
+    fn pair_rejects_different_stdout() {
+        assert_eq!(pair(&ran(0, "1\n", ""), &ran(0, "2\n", "")), 4);
+    }
+
+    #[test]
+    fn pair_rejects_a_different_exit() {
+        let panic = "sisu: panic at input.sisu:3:5: integer overflow\n";
+        assert_eq!(pair(&ran(0, "", panic), &ran(101, "", panic)), 4);
+    }
+
+    fn value(marker: &str, value: &str) -> Known {
+        Known {
+            marker: marker.to_string(),
+            answer: Answer::Value(value.to_string()),
+        }
+    }
+
+    fn panics(marker: &str, message: &'static str) -> Known {
+        Known {
+            marker: marker.to_string(),
+            answer: Answer::Panic(message),
+        }
+    }
+
+    /// The property `judge_known` finds broken, 0 for none.
+    fn known(run: &Run, known: &[Known]) -> u8 {
+        judge_known(run, known).map_or_else(|f| f.property, |()| 0)
+    }
+
+    #[test]
+    fn known_value_matches() {
+        let site = [value("k0", "42")];
+        assert_eq!(known(&ran(0, "@k0 42\n", ""), &site), 0);
+        assert_eq!(known(&ran(0, "@k0 41\n", ""), &site), 5);
+    }
+
+    const OVERFLOW: &str = "sisu: panic at input.sisu:9:5: integer overflow\n";
+
+    #[test]
+    fn known_panic_is_the_last_line() {
+        let site = [panics("k0", "integer overflow")];
+        let stderr = format!("x\n{OVERFLOW}");
+        assert_eq!(known(&ran(101, "@k0 panics\n", &stderr), &site), 0);
+        let divided = "sisu: panic at input.sisu:9:5: division by zero\n";
+        assert_eq!(known(&ran(101, "@k0 panics\n", divided), &site), 5);
+        assert_eq!(known(&ran(0, "@k0 panics\n", ""), &site), 5);
+    }
+
+    /// A panic before a value site's line cannot hide a wrong or missing value.
+    #[test]
+    fn missing_known_value_fails() {
+        let site = [value("k0", "42")];
+        assert_eq!(known(&ran(0, "", ""), &site), 5);
+        assert_eq!(known(&ran(101, "", OVERFLOW), &site), 5);
+    }
+
+    /// A panic site not reached was cut off by an earlier panic.
+    #[test]
+    fn unreached_panic_site_needs_a_panic() {
+        let site = [panics("k0", "integer overflow")];
+        assert_eq!(known(&ran(101, "1\n", OVERFLOW), &site), 0);
+        assert_eq!(known(&ran(0, "1\n", ""), &site), 5);
+        assert_eq!(known(&ran(101, "@k0 panics\n", OVERFLOW), &site), 0);
+        assert_eq!(known(&ran(0, "@k0 panics\n", ""), &site), 5);
+    }
+
+    /// The program's own output may print `@` (`char(64)`): a value site's line is found by
+    /// its place, the first lines, and its exact text, so no other line is read as one.
+    #[test]
+    fn other_at_lines_are_ignored() {
+        let sites = [value("k0", "42"), value("k1", "7")];
+        let stdout = "@k0 42\n@k1 7\n@\n@k0 41\n@k1\n";
+        assert_eq!(known(&ran(0, stdout, ""), &sites), 0);
+        assert_eq!(known(&ran(0, "@\n@k0 42\n@k1 7\n", ""), &sites), 5);
     }
 
     /// The `n`th seed of the coverage test.

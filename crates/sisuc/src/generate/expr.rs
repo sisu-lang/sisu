@@ -1,8 +1,11 @@
 //! The expression rules: each writes one construct of the wanted type. Every expression but a
 //! literal, a name and a call is written in parentheses, so it is an operand wherever it goes.
 
+use std::ops::Range;
+
 use super::scope::{Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
+use super::writer::{Mark, Rewrite, Site, allowed};
 use super::{Gen, LINE, MAX_BOUND, MAX_NESTING, MAX_SIZE};
 
 /// What a rule wrote.
@@ -10,10 +13,15 @@ use super::{Gen, LINE, MAX_BOUND, MAX_NESTING, MAX_SIZE};
 pub(crate) struct Info {
     /// The most size the value reaches (decision 5): for a `string`, its chars.
     pub(crate) size: u64,
-    /// Whether it has no effect and cannot panic (decision 2).
+    /// Whether it has no effect and cannot panic, and reads no field, element or mutable
+    /// local (decision 2).
     pub(crate) pure: bool,
     /// For an array: how many elements it holds at least.
     pub(crate) len: u64,
+    /// Whether `check/constant.rs` folds it, with no step that overflows or divides by zero.
+    pub(crate) folds: bool,
+    /// The value of an `i64` or a `u8` the generator knows.
+    pub(crate) value: Option<i64>,
 }
 
 impl Info {
@@ -22,18 +30,62 @@ impl Info {
             size,
             pure: true,
             len: 0,
+            folds: false,
+            value: None,
+        }
+    }
+
+    /// A literal, or a constant's name, of the value `value` if an integer.
+    fn literal(size: u64, value: Option<i64>) -> Info {
+        Info {
+            folds: true,
+            value,
+            ..Info::leaf(size)
         }
     }
 
     /// The value of a rule built from `parts`, which has an effect or may panic unless `pure`.
     fn of(parts: &[Info], size: u64, pure: bool) -> Info {
         Info {
-            size,
             pure: pure && parts.iter().all(|part| part.pure),
-            len: 0,
+            ..Info::leaf(size)
+        }
+    }
+
+    /// The value of an operator or a conversion over `parts`, which folds when they all do and
+    /// it is pure.
+    fn folding(parts: &[Info], size: u64, pure: bool) -> Info {
+        let info = Info::of(parts, size, pure);
+        Info {
+            folds: info.pure && parts.iter().all(|part| part.folds),
+            ..info
         }
     }
 }
+
+/// The arithmetic operators, as written.
+pub(crate) const OPS: [&str; 5] = [" + ", " - ", " * ", " / ", " % "];
+
+/// `l OPS[op] r` on a `ty`, an `i64` or a `u8`, as the run time has it: the value, or the
+/// message it panics with.
+pub(crate) fn arithmetic_value(ty: &Ty, op: usize, l: i64, r: i64) -> Result<i64, &'static str> {
+    if op >= 3 && r == 0 {
+        return Err("division by zero");
+    }
+    let value = match op {
+        0 => l.checked_add(r),
+        1 => l.checked_sub(r),
+        2 => l.checked_mul(r),
+        3 => l.checked_div(r),
+        _ => l.checked_rem(r),
+    };
+    value
+        .filter(|n| *ty != Ty::U8 || (0..=255).contains(n))
+        .ok_or("integer overflow")
+}
+
+/// The types a `const` can have.
+const CONSTANT: [Ty; 6] = Ty::VALUES;
 
 /// The size of an array of `len` elements of at most `element` each (decision 5).
 pub(crate) fn array_size(len: u64, element: u64) -> u64 {
@@ -211,6 +263,7 @@ impl Gen<'_> {
             rules.insert(0, Rule::Fallible);
         }
         let rule = rules[self.pick(rules.len())];
+        let start = self.w.mark();
         self.nesting += 1;
         let mut info = self.rule(rule, ty, max, synth);
         self.nesting -= 1;
@@ -223,7 +276,36 @@ impl Gen<'_> {
             "{rule:?} wrote {} chars over {max}",
             info.size
         );
+        self.rewrite(start, ty, &info);
+        // A later operand runs after this one's effect.
+        self.effect |= !info.pure;
         info
+    }
+
+    /// Now and then rewrites the expression of type `ty` from `start` on in the rewritten
+    /// copy, by a rewrite whose condition its site meets (decision 2).
+    fn rewrite(&mut self, start: Mark, ty: &Ty, info: &Info) {
+        let site = Site {
+            pure: info.pure,
+            unconditional: self.scope.conditional == 0 && !self.effect,
+            folds: info.folds && CONSTANT.contains(ty),
+            ..Site::default()
+        };
+        let mut rewrites = vec![Rewrite::Block, Rewrite::Let, Rewrite::Const];
+        // A `let` needs a statement to go before, and a value to hold.
+        if !self.w.can_bind() || *ty == Ty::Unit {
+            rewrites.retain(|&rewrite| rewrite != Rewrite::Let);
+        }
+        rewrites.retain(|&rewrite| allowed(rewrite, &site));
+        if rewrites.is_empty() || self.rewrite_pick(8) != 7 {
+            return;
+        }
+        match rewrites[self.rewrite_pick(rewrites.len())] {
+            Rewrite::Block => self.w.block(start),
+            Rewrite::Let => self.w.bind(start, ty),
+            Rewrite::Const => self.w.constant(start, ty),
+            Rewrite::DeadIf | Rewrite::Swap => unreachable!("only a statement or an `if` takes it"),
+        }
     }
 
     fn compound_rules(&mut self, ty: &Ty, max: u64, synth: bool, rules: &mut Vec<Rule>) {
@@ -333,7 +415,12 @@ impl Gen<'_> {
                 self.w.text(if *ty == Ty::Bool { "(!(" } else { "(-(" });
                 let operand = self.expr(ty, max);
                 self.w.text("))");
-                Info::of(&[operand], 0, *ty != Ty::I64)
+                // Only the negation of the smallest `i64` overflows.
+                let value = operand.value.and_then(i64::checked_neg);
+                Info {
+                    value,
+                    ..Info::folding(&[operand], 0, *ty != Ty::I64 || value.is_some())
+                }
             }
             Rule::Arithmetic => self.arithmetic(ty, synth),
             Rule::Logic => {
@@ -342,7 +429,7 @@ impl Gen<'_> {
                 self.one_of(&[" && ", " || "]);
                 let rhs = self.conditionally(|g| g.expr(&Ty::Bool, 0));
                 self.w.text(")");
-                Info::of(&[lhs, rhs], 0, true)
+                Info::folding(&[lhs, rhs], 0, true)
             }
             Rule::Equal => {
                 let operand = self.any_type();
@@ -352,7 +439,7 @@ impl Gen<'_> {
                 self.one_of(&[" == ", " != "]);
                 let rhs = self.expr(&operand, MAX_SIZE);
                 self.w.text(")");
-                Info::of(&[lhs, rhs], 0, true)
+                Info::folding(&[lhs, rhs], 0, true)
             }
             Rule::Order => self.order(),
             Rule::Convert => self.convert(ty),
@@ -371,7 +458,7 @@ impl Gen<'_> {
                 self.w.text(" + ");
                 let rhs = self.expr(&Ty::String, max - lhs.size);
                 self.w.text(")");
-                Info::of(&[lhs, rhs], lhs.size + rhs.size, true)
+                Info::folding(&[lhs, rhs], lhs.size + rhs.size, true)
             }
             Rule::Interpolate => self.interpolate(max),
             Rule::ReadLine => {
@@ -388,12 +475,7 @@ impl Gen<'_> {
                 self.w.text(")");
                 info
             }
-            Rule::Wrap => {
-                let Ty::Optional(payload) = ty else {
-                    unreachable!("only an optional wraps")
-                };
-                self.expr(payload, max)
-            }
+            Rule::Wrap => self.wrap(ty, max),
             Rule::Raw => self.raw(ty),
             Rule::Coalesce => self.coalesce(ty, max),
             Rule::Fill => self.fill(ty, max, synth),
@@ -433,7 +515,9 @@ impl Gen<'_> {
         let receiver = self.receiver(class, safe);
         self.w
             .text(&format!("){}{name})", if safe { "?." } else { "." }));
-        Info::of(&[receiver], cap, true)
+        // A field may be `mut`, and an assignment between here and a `let` moved before this
+        // statement would change it (decision 2).
+        Info::of(&[receiver], cap, false)
     }
 
     /// `((o)?.m(depth, args))` of a method that returns the payload of `ty`, an optional.
@@ -805,45 +889,45 @@ impl Gen<'_> {
 
     fn name(&mut self, ty: &Ty, max: u64) -> Info {
         let pick = self.pick(names(&self.scope, ty, max).count());
-        let (name, size) = names(&self.scope, ty, max)
+        let (name, info) = names(&self.scope, ty, max)
             .nth(pick)
             .expect("the rule should be chosen only when a name fits");
         self.w.text(name);
-        Info::leaf(size)
+        info
     }
 
     pub(crate) fn literal(&mut self, ty: &Ty, max: u64) -> Info {
         match ty {
             Ty::I64 => {
-                let (text, _) = self.int_literal();
+                let (text, value) = self.int_literal();
                 self.w.text(&text);
-                Info::leaf(0)
+                Info::literal(0, Some(value))
             }
             Ty::U8 => {
-                let (text, _) = self.u8_literal();
+                let (text, value) = self.u8_literal();
                 self.w.text(&text);
-                Info::leaf(0)
+                Info::literal(0, Some(value))
             }
             Ty::F64 => {
                 let text = self.float_literal();
                 self.w.text(&text);
-                Info::leaf(0)
+                Info::literal(0, None)
             }
             Ty::Bool => {
                 let text = if self.pick(2) == 0 { "false" } else { "true" };
                 self.w.text(text);
-                Info::leaf(0)
+                Info::literal(0, None)
             }
             Ty::Char => {
                 let (text, _) = CHARS[self.pick(CHARS.len())];
                 self.w.text(text);
-                Info::leaf(0)
+                Info::literal(0, None)
             }
             Ty::String => {
                 let len = self.upto(max.min(8));
                 let text = self.string_text(len, STRING_CHARS.len());
                 self.w.text(&format!("\"{text}\""));
-                Info::leaf(len)
+                Info::literal(len, None)
             }
             Ty::Class { .. } => self.object(ty),
             Ty::Enum { .. } => self.variant(ty, max, None),
@@ -969,7 +1053,6 @@ impl Gen<'_> {
     }
 
     fn arithmetic(&mut self, ty: &Ty, synth: bool) -> Info {
-        const OPS: [&str; 5] = [" + ", " - ", " * ", " / ", " % "];
         self.w.text("(");
         // `a op b` of `a` in `10..=28` and `b` in `1..=9` fits a `u8` and divides by no zero.
         let lhs = if matches!(ty, Ty::I64 | Ty::U8) && self.pick(8) != 0 {
@@ -977,18 +1060,29 @@ impl Gen<'_> {
             // With no expected type, a `u8` must be one by its own type (`Gen::expr`).
             if synth && *ty == Ty::U8 {
                 self.w.text(&format!("(u8({n}) ?? {n})"));
+                Info::leaf(0)
             } else {
                 self.w.text(&n.to_string());
+                Info::literal(0, Some(n))
             }
-            Info::leaf(0)
         } else {
             self.synth = synth;
             self.expr(ty, 0)
         };
-        self.one_of(&OPS);
+        let op = self.pick(OPS.len());
+        self.w.text(OPS[op]);
         let rhs = self.right_operand(ty);
         self.w.text(")");
-        Info::of(&[lhs, rhs], 0, *ty == Ty::F64)
+        // Integer arithmetic is pure where the generator knows it neither overflows nor divides
+        // by zero (decision 2).
+        let value = lhs
+            .value
+            .zip(rhs.value)
+            .and_then(|(l, r)| arithmetic_value(ty, op, l, r).ok());
+        Info {
+            value,
+            ..Info::folding(&[lhs, rhs], 0, *ty == Ty::F64 || value.is_some())
+        }
     }
 
     /// The right operand of arithmetic of `ty`: for an `i64`, mostly, and for a `u8`, always,
@@ -998,7 +1092,7 @@ impl Gen<'_> {
         if *ty == Ty::U8 || *ty == Ty::I64 && self.pick(8) != 0 {
             let n = self.int(1, 9);
             self.w.text(&n.to_string());
-            return Info::leaf(0);
+            return Info::literal(0, Some(n));
         }
         self.expr(ty, 0)
     }
@@ -1015,12 +1109,19 @@ impl Gen<'_> {
         self.w.text("(");
         self.synth = true;
         let mut parts = vec![self.expr(&operand, MAX_SIZE)];
-        for _ in 0..=self.pick(2) {
+        for i in 0..=self.pick(2) {
             self.one_of(&ops);
-            parts.push(self.expr(&operand, MAX_SIZE));
+            // A chain stops at its first false comparison, so an operand after the second may
+            // not run.
+            let part = if i == 0 {
+                self.expr(&operand, MAX_SIZE)
+            } else {
+                self.conditionally(|g| g.expr(&operand, MAX_SIZE))
+            };
+            parts.push(part);
         }
         self.w.text(")");
-        Info::of(&parts, 0, true)
+        Info::folding(&parts, 0, true)
     }
 
     fn convert(&mut self, ty: &Ty) -> Info {
@@ -1040,7 +1141,7 @@ impl Gen<'_> {
             }
         };
         self.w.text(")");
-        Info::of(&[operand], 0, true)
+        Info::folding(&[operand], 0, true)
     }
 
     /// `(u8(e) ?? d)`, `(char(e) ?? d)` or `(i64(e) ?? d)`.
@@ -1223,6 +1324,8 @@ impl Gen<'_> {
         }
         let name = self.scope.funcs[callee].name.clone();
         self.w.text(&format!("{name}({depth}"));
+        // `depth - 1` is arithmetic the generator does not know the value of (decision 2).
+        self.effect |= self.scope.func.is_some();
         let params = self.scope.funcs[callee].params.clone();
         let args = |g: &mut Self| -> Vec<Info> {
             params
@@ -1249,12 +1352,16 @@ impl Gen<'_> {
     /// panic instead, while the first keeps the `if` a value (E0043).
     fn if_expr(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
         self.w.text("(if ");
+        let cond_start = self.w.at();
         let (cond, mut binding) = self.condition();
+        let cond_text = cond_start..self.w.at();
         let mut parts = vec![cond];
+        let mut arms = Vec::new();
         let mut size = 0;
         self.conditionally(|g| {
             loop {
                 g.w.text(" { ");
+                let arm = g.w.at();
                 let branch = if parts.len() == 1 {
                     let vars = g.scope.vars.len();
                     g.scope.vars.extend(binding.take());
@@ -1267,6 +1374,7 @@ impl Gen<'_> {
                 };
                 size = size.max(branch.size);
                 parts.push(branch);
+                arms.push(arm..g.w.at());
                 g.w.text(" } else");
                 if g.pick(3) < 2 || !g.spend(1) {
                     break;
@@ -1275,12 +1383,43 @@ impl Gen<'_> {
                 parts.push(g.expr(&Ty::Bool, 0));
             }
             g.w.text(" { ");
+            let arm = g.w.at();
             let branch = g.branch(ty, max);
             size = size.max(branch.size);
             parts.push(branch);
+            arms.push(arm..g.w.at());
             g.w.text(" })");
         });
+        // With no expected type, the first branch types the `if`, so a `[]`, `None` or `7`
+        // there would not be the `ty` it should.
+        if !(synth && ty.inferred()) {
+            self.swap(cond_text, &arms);
+        }
         Info::of(&parts, size, true)
+    }
+
+    /// A `T` where a `T?` is expected.
+    fn wrap(&mut self, ty: &Ty, max: u64) -> Info {
+        let Ty::Optional(payload) = ty else {
+            unreachable!("only an optional wraps")
+        };
+        // A constant of an optional type does not fold.
+        Info {
+            folds: false,
+            value: None,
+            ..self.expr(payload, max)
+        }
+    }
+
+    /// Now and then swaps the arms of an `if` with the condition `cond` and the arms `arms`, if
+    /// it has two, and negates the condition, in the rewritten copy (decision 2). A `let`
+    /// condition has no negation.
+    pub(crate) fn swap(&mut self, cond: Range<usize>, arms: &[Range<usize>]) {
+        let [a, b] = arms else { return };
+        let plain = !self.w.out.rewritten[cond.clone()].starts_with("let ");
+        if plain && allowed(Rewrite::Swap, &Site::default()) && self.rewrite_pick(8) == 7 {
+            self.w.swap_arms(cond, a.clone(), b.clone());
+        }
     }
 
     /// The head of an `if`: a condition, or `let p = e` of an optional `e`, and what the first
@@ -1630,18 +1769,28 @@ impl Gen<'_> {
     }
 }
 
-/// The locals, then the constants, of type `ty` that hold at most `max` chars, and their sizes.
-fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'s str, u64)> {
+/// The locals, then the constants, of type `ty` that hold at most `max` chars, and what a read
+/// of each is.
+fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'s str, Info)> {
     let vars = scope
         .vars
         .iter()
         .filter(move |var| var.ty == *ty && var.size <= max)
-        .map(|var| (var.name.as_str(), var.size));
+        .map(|var| {
+            let info = Info {
+                pure: !var.mutable,
+                ..Info::leaf(var.size)
+            };
+            (var.name.as_str(), info)
+        });
     let consts = scope
         .consts
         .iter()
         .filter(move |c| c.ty == *ty && c.size <= max)
-        .map(|c| (c.name.as_str(), c.size));
+        .map(|c| {
+            let value = matches!(c.ty, Ty::I64 | Ty::U8).then_some(c.value);
+            (c.name.as_str(), Info::literal(c.size, value))
+        });
     vars.chain(consts)
 }
 

@@ -20,25 +20,28 @@ use writer::Writer;
 
 pub(crate) struct Generated {
     pub(crate) program: String,
-    /// Equal to `program` until Task 6 adds rewrites.
+    /// `program` with the rewrites of decision 2, which must print the same.
     pub(crate) rewritten: String,
     pub(crate) stdin: String,
-    /// Empty until Task 6.
-    #[expect(dead_code, reason = "Task 6's known answers fill and read it")]
+    /// The known sites `main` prints, in the order it prints them (decision 3).
     pub(crate) known: Vec<Known>,
     /// The program's cost, as decision 5 counts it.
     #[cfg(test)]
     pub(crate) cost: u64,
+    /// `program` without its known sites, which the coverage test walks so they hide nothing.
+    #[cfg(test)]
+    pub(crate) plain: String,
+    /// The rewrites `rewritten` holds.
+    #[cfg(test)]
+    pub(crate) made: Vec<writer::Rewrite>,
 }
 
-#[expect(dead_code, reason = "Task 6 writes the known answers")]
 pub(crate) struct Known {
     /// `k<n>`; `main` prints its result as `@k<n> <value>`.
     pub(crate) marker: String,
     pub(crate) answer: Answer,
 }
 
-#[expect(dead_code, reason = "Task 6 writes the known answers")]
 pub(crate) enum Answer {
     Value(String),
     /// The runtime's message: `integer overflow` or `division by zero`.
@@ -67,22 +70,43 @@ const STATEMENT_MOST: u64 = (MAX_BOUND + 1) * (MAX_BOUND + 1) * (MAX_BOUND + 1);
 
 /// Accepts every byte string. When `data` runs out, every choice is the smallest valid one.
 pub(crate) fn generate(data: &[u8]) -> Generated {
+    // The rewrites and the known sites read the bytes from the end, the program from the start.
+    let reversed: Vec<u8> = data.iter().rev().copied().collect();
     let mut g = Gen::new(data);
-    let cost = g.program();
+    g.ru = Unstructured::new(&reversed);
+    let (cost, known) = g.program();
     // Only the tests read the cost.
     #[cfg(not(test))]
     let _ = cost;
+    #[cfg(test)]
+    let plain = g
+        .known_text
+        .iter()
+        .rev()
+        .fold(g.w.out.program.clone(), |mut text, at| {
+            text.replace_range(at.clone(), "");
+            text
+        });
+    g.w.out.rewritten += &g.w.consts;
     Generated {
         program: g.w.out.program,
         rewritten: g.w.out.rewritten,
         stdin: g.stdin,
-        known: Vec::new(),
+        known,
         #[cfg(test)]
         cost,
+        #[cfg(test)]
+        plain,
+        #[cfg(test)]
+        made: g.w.made,
     }
 }
 
 /// The generator's state while it writes one program.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact about the point being written"
+)]
 struct Gen<'a> {
     u: Unstructured<'a>,
     w: Writer,
@@ -107,6 +131,17 @@ struct Gen<'a> {
     /// Whether the next expression is in a position with no expected type, where a `u8` must
     /// be one by its own type (`Gen::expr`).
     synth: bool,
+    /// What chooses the rewrites and the known sites, apart from `u`, so the program is the
+    /// same whatever they are.
+    ru: Unstructured<'a>,
+    /// Whether an expression of the statement being written so far has an effect or may
+    /// panic, so one after it may not move before the statement (decision 2).
+    effect: bool,
+    /// Whether `main` holds a `return`.
+    returns: bool,
+    /// Where `program` holds the known sites' text, in order.
+    #[cfg(test)]
+    known_text: Vec<std::ops::Range<usize>>,
 }
 
 impl<'a> Gen<'a> {
@@ -124,7 +159,17 @@ impl<'a> Gen<'a> {
             jumps: stmt::Jumps::default(),
             blocks: 0,
             synth: false,
+            ru: Unstructured::new(&[]),
+            effect: false,
+            returns: false,
+            #[cfg(test)]
+            known_text: Vec::new(),
         }
+    }
+
+    /// One of `0..n`, `n > 0`, for a rewrite or a known site.
+    fn rewrite_pick(&mut self, n: usize) -> usize {
+        self.ru.choose_index(n).unwrap_or(0)
     }
 
     /// One of `0..n`, `n > 0`.
