@@ -678,15 +678,7 @@ impl Checker<'_> {
     /// loop label opens for the body even when an enclosing loop has it already, which is an
     /// error, and is reported when no jump names it.
     fn loop_body<T>(&mut self, frame: LoopFrame, f: impl FnOnce(&mut Self) -> T) -> (T, LoopFrame) {
-        let outer = frame.label.as_ref().and_then(|label| {
-            let at = self.label_index(label.name.as_str())?;
-            Some((
-                at,
-                self.open_labels_at(at)
-                    .expect("the loop label found there should be open")
-                    .span,
-            ))
-        });
+        let outer = frame.label.as_ref().and_then(|l| self.open_label(l.name));
         let mut frame = frame;
         if let (Some(label), Some((at, outer))) = (&frame.label, outer) {
             // Deleting either loop label would fix the error, so neither warns as unused, and
@@ -731,11 +723,11 @@ impl Checker<'_> {
         }
     }
 
-    /// Where in `body.loops` the innermost open loop label `name` is.
-    fn label_index(&self, name: &str) -> Option<usize> {
-        (0..self.body.loops.len()).rev().find(|&at| {
-            self.open_labels_at(at)
-                .is_some_and(|l| l.name.as_str() == name)
+    /// Where in `body.loops` the innermost open loop label `name` is, and its span.
+    fn open_label(&self, name: Symbol) -> Option<(usize, Span)> {
+        (0..self.body.loops.len()).rev().find_map(|at| {
+            let label = self.open_labels_at(at)?;
+            (label.name == name).then_some((at, label.span))
         })
     }
 
@@ -750,13 +742,21 @@ impl Checker<'_> {
     }
 
     /// Records that a failed jump named the innermost open loop label `name`, so that it is not
-    /// reported unused.
-    pub(super) fn named_by_failed_jump(&mut self, name: &str) {
-        let label = self.open_labels().rev().find(|l| l.name.as_str() == name);
-        let span = label
-            .expect("a failed jump should name an open loop label")
-            .span;
+    /// reported unused, and where in `body.loops` that loop label is.
+    fn named_by_failed_jump(&mut self, name: Symbol) -> usize {
+        let (at, span) = self
+            .open_label(name)
+            .expect("a failed jump should name an open loop label");
         self.body.failed_labels.insert(span);
+        at
+    }
+
+    /// Records that the `break` with the misspelled loop label `name` meant the open loop label
+    /// `suggested`: that loop and the loops inside it get no type, and `suggested` is not
+    /// reported unused.
+    pub(super) fn break_meant(&mut self, suggested: &str) {
+        let at = self.named_by_failed_jump(Symbol::intern(suggested));
+        self.fail_loops(at..);
     }
 
     /// Skips a `break` value that is not checked: a jump in it may name any open loop, so every
@@ -776,14 +776,10 @@ impl Checker<'_> {
         )
         .map(str::to_string);
         if let Some(label) = &suggestion {
-            self.named_by_failed_jump(label);
             if keyword == "break" {
-                // The `break` was meant to leave that loop, so it and the loops inside it get
-                // no type.
-                let at = self
-                    .label_index(label)
-                    .expect("a suggested loop label should be open");
-                self.fail_loops(at..);
+                self.break_meant(label);
+            } else {
+                self.named_by_failed_jump(Symbol::intern(label));
             }
         }
         self.report(DiagnosticKind::MissingLabel {
@@ -936,7 +932,7 @@ impl Checker<'_> {
                 // the header nor the code after the target reports more.
                 self.fail_loops(found.unwrap_or(0)..);
                 if let Some(label) = label {
-                    self.named_by_failed_jump(label.name.as_str());
+                    self.named_by_failed_jump(label.name);
                 }
                 self.report(DiagnosticKind::JumpInLoopHeader {
                     keyword,

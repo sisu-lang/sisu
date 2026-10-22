@@ -1,0 +1,13 @@
+error[E0033]: cannot find binding `outr`
+ --> E0033-label-not-never.sisu:4:19
+  |
+4 |             break outr
+  |                   ^^^^
+  |
+help: a loop label with a similar name exists: `outer`
+  |
+4 |             break outer
+  |                      +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0033

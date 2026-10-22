@@ -932,9 +932,9 @@ impl Checker<'_> {
         if let Some(found) = &suggestion
             && found.kind == Definition::LoopLabel
         {
-            // A misspelled loop label is one mistake, which the loop label's own warning would
-            // report twice.
-            self.named_by_failed_jump(&found.name);
+            // Only a bare name after `break` offers a loop label: a misspelled loop label is one
+            // mistake, which neither the loop label's warning nor its loop's type reports again.
+            self.break_meant(&found.name);
         }
         DiagnosticKind::BindingNotFound {
             name: name.to_string(),
