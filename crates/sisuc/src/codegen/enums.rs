@@ -10,7 +10,10 @@
 //! `walk.<F>` releases the value's counted parts; a box whose count reaches zero is pushed onto
 //! its enum's list, linked through its count word, which is dead by then. `drain` then pops
 //! boxes until every list is empty: it walks each box's value, which may push more, and frees
-//! the box. So the stack stays the same for any depth and shape of value.
+//! the box. A field held inline whose enum is in the same component, such as `Two<Expr>.Both`'s
+//! `Expr` in `enum Expr { Pair(Two<Expr>) }`, is walked in place with the same lists, so its
+//! depth is bounded by the inline nesting inside one box. So the stack stays the same for any
+//! depth and shape of value.
 
 use std::num::NonZeroU32;
 
@@ -74,8 +77,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Builds every enum's layout: each enum's type and its payload structs, named first so
     /// that a payload can name any enum, then each payload's body, then each enum's body. An
     /// enum's body needs its payloads' sizes, so an enum held inline gets its body before its
-    /// holder: post-order over the inline fields, with an explicit stack. The checker boxes
-    /// every field that closes a cycle, so the inline fields form no cycle and the walk ends.
+    /// holder: post-order over the inline fields, with an explicit stack. `tir::layout_enums`
+    /// boxes a field on every cycle, so the inline fields form no cycle and the walk ends.
     pub(super) fn lay_out_enums(&mut self) {
         let program = self.program;
         let context = self.context;
@@ -428,6 +431,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         )
     }
 
+    /// The enum of payload field `payload` of the enum `id`, whose component has boxes, when the
+    /// field is an inline link: not boxed, and of an enum in that component, or its optional.
+    fn inline_link(&self, id: EnumId, payload: &Payload) -> Option<EnumId> {
+        let enums = &self.program.enums;
+        (payload.ty.inline_enum())
+            .filter(|g| !payload.boxed && enums[g.0].cycle == enums[id.0].cycle)
+    }
+
     /// The body of `@sisu_rc.<kind>.<E>`.
     pub(super) fn define_enum_helper(
         &self,
@@ -533,9 +544,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// releases each counted field of its variant. A boxed field that is not `null` loses 1
     /// from its box's count, and at zero the box becomes the head of its enum's list in
     /// `heads`, linked to the old head through its count word, the word `load_count` reads.
-    /// Nothing else reaches a listed box, so no RC check reads that word. Every other counted
-    /// field goes through `release_at`, which may drain another component's lists in a frame of
-    /// its own.
+    /// Nothing else reaches a listed box, so no RC check reads that word. An inline link, when
+    /// present, is walked in place with the same `heads`. Every other counted field goes through
+    /// `release_at`, which may drain another component's lists in a frame of its own.
     fn define_walk(&self, id: EnumId, function: FunctionValue<'ctx>) {
         let (value, done) = self.enum_entry(function);
         let heads = function
@@ -548,11 +559,31 @@ impl<'ctx> Codegen<'ctx, '_> {
         let heads_type = self.heads_type(members.len());
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         self.for_each_counted_field(id, value, done, |variant, field, payload| {
+            let block = |name| self.context.append_basic_block(function, name);
             if !payload.boxed {
-                self.release_at(self.payload_place(value, id, variant, field), payload.ty);
+                let place = self.payload_place(value, id, variant, field);
+                let Some(inner) = self.inline_link(id, payload) else {
+                    self.release_at(place, payload.ty);
+                    return;
+                };
+                let walk = self.helper(
+                    Helper::Walk,
+                    Type::intern(TypeKind::Enum(inner, TypeArgs::NONE)),
+                );
+                if !matches!(payload.ty.kind(), TypeKind::Optional(_)) {
+                    self.call(walk, &[place.into(), heads.into()]);
+                    return;
+                }
+                let (some, next) = (block("link"), block("link.next"));
+                let link = self.load_link(payload.ty, place);
+                self.branch_on(self.has_value(payload.ty, link, "flag"), some, next);
+                self.builder.position_at_end(some);
+                let inner_value = self.enum_slot(self.optional_value(payload.ty, link, "link"));
+                self.call(walk, &[inner_value.into(), heads.into()]);
+                self.branch_to(next);
+                self.builder.position_at_end(next);
                 return;
             }
-            let block = |name| self.context.append_basic_block(function, name);
             let (live, last, next) = (block("box"), block("box.last"), block("box.next"));
             let boxed = self.load_box(value, id, variant, field);
             let null = self.builder.build_is_null(boxed, "null").expect(POSITIONED);
@@ -874,6 +905,66 @@ impl<'ctx> Codegen<'ctx, '_> {
             .into_int_value()
     }
 
+    /// The value of the inline link of type `ty`, `G` or `G?`, at `place`.
+    fn load_link(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
+        let llvm_ty = self
+            .llvm_type(ty)
+            .expect("an inline link should be of an enum type or its optional");
+        self.builder
+            .build_load(llvm_ty, place, "link")
+            .expect(POSITIONED)
+    }
+
+    /// The enum and the two values' addresses of link `field` of variant `variant`, a box or an
+    /// inline link, in the values of the enum `id` at `a` and `b`. Branches to `same` when the
+    /// pair is equal at once, and to `unequal` when only one is present, and leaves the builder
+    /// where both values are present: two boxes go through `boxes_differ`, and two inline `G?`s
+    /// are compared by presence first, so an absent one's payload is never read.
+    fn link_pair(
+        &self,
+        (id, variant, field): (EnumId, usize, usize),
+        a: PointerValue<'ctx>,
+        b: PointerValue<'ctx>,
+        same: BasicBlock<'ctx>,
+        unequal: BasicBlock<'ctx>,
+    ) -> (EnumId, PointerValue<'ctx>, PointerValue<'ctx>) {
+        let payload = &self.program.enums[id.0].variants[variant].fields[field];
+        let ty = payload.ty;
+        let inner = (ty.inline_enum()).expect("a link should be of an enum type or its optional");
+        if payload.boxed {
+            let box_a = self.load_box(a, id, variant, field);
+            let box_b = self.load_box(b, id, variant, field);
+            self.boxes_differ(ty, box_a, box_b, same, unequal);
+            return (
+                inner,
+                self.box_value(inner, box_a),
+                self.box_value(inner, box_b),
+            );
+        }
+        let (place_a, place_b) = (
+            self.payload_place(a, id, variant, field),
+            self.payload_place(b, id, variant, field),
+        );
+        if !matches!(ty.kind(), TypeKind::Optional(_)) {
+            return (inner, place_a, place_b);
+        }
+        let (link_a, link_b) = (self.load_link(ty, place_a), self.load_link(ty, place_b));
+        let (fa, fb) = (
+            self.has_value(ty, link_a, "flag"),
+            self.has_value(ty, link_b, "flag"),
+        );
+        let function = self.current_function();
+        let block = |name| self.context.append_basic_block(function, name);
+        let (flags, both) = (block("link.flags"), block("link.both"));
+        let flags_equal = self.int_compare(IntPredicate::EQ, fa, fb);
+        self.branch_on(flags_equal, flags, unequal);
+        self.builder.position_at_end(flags);
+        self.branch_on(fa, both, same);
+        self.builder.position_at_end(both);
+        let value = |link| self.enum_slot(self.optional_value(ty, link, "link"));
+        (inner, value(link_a), value(link_b))
+    }
+
     /// `compare_at_once` on the boxes `a` and `b` of a boxed field of type `ty`, `F` or `F?`,
     /// which branches to `same` or `unequal`; only an `F?` box is `null`, for `None`.
     fn boxes_differ(
@@ -897,12 +988,13 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `@sisu_rc.eq_component.<F0>(kind, a, b) -> i1`: `==` on the values at `a` and `b` of
     /// member `kind` of the component whose first member is `F0`. It switches on `kind`, then
-    /// compares as `eq` does, with two boxes compared by their values: see `boxes_differ`. It
-    /// neither retains nor releases. Each variant compares its last boxed field last, by
-    /// looping: `kind`, `a` and `b` become that field's enum and its two boxes' values, so a
-    /// right-deep value compares in one frame, also when the field's enum is another member.
-    /// shortcut: other boxed fields recurse, so a left-deep tree can overflow the stack in ==;
-    /// loop on the deeper side when that bites
+    /// compares as `eq` does, with a link, a box or an inline link (`inline_link`), compared by
+    /// the values it holds: see `link_pair`. It neither retains nor releases. Each variant
+    /// compares its last link last, by looping: `kind`, `a` and `b` become that link's enum and
+    /// its two values, so a right-deep value compares in one frame, also when the link's enum
+    /// is another member.
+    /// shortcut: other links recurse, so a left-deep tree can overflow the stack in ==; loop on
+    /// the deeper side when that bites
     fn define_eq_component(&self, first: EnumId, function: FunctionValue<'ctx>) {
         let members = self.component(first).expect(
             "only the first member of a component with boxes should get an `eq_component` helper",
@@ -954,21 +1046,21 @@ impl<'ctx> Codegen<'ctx, '_> {
             for (variant, at) in self.switch_variants(id, tag, equal, |_| true) {
                 self.builder.position_at_end(at);
                 let payloads = &self.program.enums[id.0].variants[variant].fields;
-                let looped = payloads.iter().rposition(|payload| payload.boxed);
+                let link =
+                    |payload: &Payload| payload.boxed || self.inline_link(id, payload).is_some();
+                let looped = payloads.iter().rposition(link);
                 for (field, payload) in payloads.iter().enumerate() {
                     if looped == Some(field) {
                         continue;
                     }
                     let next = block("next");
-                    let pair = if payload.boxed {
-                        let inner = boxed_enum(payload.ty);
-                        let box_a = self.load_box(a, id, variant, field);
-                        let box_b = self.load_box(b, id, variant, field);
-                        self.boxes_differ(payload.ty, box_a, box_b, next, unequal);
+                    let pair = if link(payload) {
+                        let (inner, value_a, value_b) =
+                            self.link_pair((id, variant, field), a, b, next, unequal);
                         let args = [
                             self.member_index(&members, inner).into(),
-                            self.box_value(inner, box_a).into(),
-                            self.box_value(inner, box_b).into(),
+                            value_a.into(),
+                            value_b.into(),
                         ];
                         self.call_component(function, &args)
                     } else {
@@ -985,14 +1077,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                     self.branch_to(equal);
                     continue;
                 };
-                let inner = boxed_enum(payloads[field].ty);
-                let box_a = self.load_box(a, id, variant, field);
-                let box_b = self.load_box(b, id, variant, field);
-                self.boxes_differ(payloads[field].ty, box_a, box_b, equal, unequal);
+                let (inner, value_a, value_b) =
+                    self.link_pair((id, variant, field), a, b, equal, unequal);
                 let step = self.current_block();
                 kind.add_incoming(&[(&self.member_index(&members, inner), step)]);
-                pa.add_incoming(&[(&self.box_value(inner, box_a), step)]);
-                pb.add_incoming(&[(&self.box_value(inner, box_b), step)]);
+                pa.add_incoming(&[(&value_a, step)]);
+                pb.add_incoming(&[(&value_b, step)]);
                 self.branch_to(top);
             }
         }

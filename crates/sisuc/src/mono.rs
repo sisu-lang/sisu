@@ -1,9 +1,10 @@
-//! Monomorphization: the checked program, whose generic functions and classes were each checked
-//! once for all their type arguments, becomes one with no type parameter left. Each list of type
-//! arguments the program reaches gets its own copy of the declaration, named with its arguments
-//! as a program writes them (`first<i64>`, `Stack<[string]>`, `Stack<i64>.push`), so
-//! `mir::build` and codegen see only concrete types, and each copy is an ordinary function to
-//! them.
+//! Monomorphization: the checked program, whose generic functions, classes and enums were each
+//! checked once for all their type arguments, becomes one with no type parameter left. Each list
+//! of type arguments the program reaches gets its own copy of the declaration, named with its
+//! arguments as a program writes them (`first<i64>`, `Stack<[string]>`, `Stack<i64>.push`,
+//! `Tree<i64>`), so `mir::build` and codegen see only concrete types, and each copy is an
+//! ordinary function, class or enum to them. The enums are then laid out again on their
+//! concrete payloads, since an instantiation can close a cycle that no declaration has.
 
 use std::collections::VecDeque;
 use std::mem;
@@ -11,11 +12,12 @@ use std::mem;
 use rustc_hash::FxHashMap;
 
 use crate::tir::{
-    Arm, Block, Class, ClassId, EnumId, Expr, ExprKind, Field, FuncId, Function, Place, Program,
-    Stmt, Type, TypeArgs, TypeKind,
+    Arm, Block, Class, ClassId, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, Place,
+    Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
 };
 
-/// `program` with each generic function and class replaced by the instantiations it reaches.
+/// `program` with each generic function, class and enum replaced by the instantiations it
+/// reaches, and its enums laid out again.
 /// The non-generic declarations come first, in their order; the instantiations follow, in the
 /// order a worklist first reaches them: the non-generic classes' fields and enums' payloads, then
 /// the non-generic functions' bodies, then each instantiation's in turn. A method is reached only
@@ -48,6 +50,11 @@ enum Work {
         decl: ClassId,
         args: TypeArgs,
     },
+    Enum {
+        id: EnumId,
+        decl: EnumId,
+        args: TypeArgs,
+    },
 }
 
 struct Mono {
@@ -60,8 +67,9 @@ struct Mono {
     /// `TypeArgs::NONE`.
     function_ids: FxHashMap<(FuncId, TypeArgs), FuncId>,
     class_ids: FxHashMap<(ClassId, TypeArgs), ClassId>,
-    /// The output's id of each non-generic enum, at its checked id.
-    enum_ids: Vec<Option<EnumId>>,
+    enum_ids: FxHashMap<(EnumId, TypeArgs), EnumId>,
+    /// The checked program's generic enums, at their ids.
+    enum_decls: Vec<Option<Enum>>,
     /// The output's type for each concrete checked type met so far.
     types: FxHashMap<Type, Type>,
     /// The output's functions, each `None` until the worklist instantiates it.
@@ -78,7 +86,8 @@ impl Mono {
             class_decls: Vec::with_capacity(program.classes.len()),
             function_ids: FxHashMap::default(),
             class_ids: FxHashMap::default(),
-            enum_ids: Vec::with_capacity(program.enums.len()),
+            enum_ids: FxHashMap::default(),
+            enum_decls: Vec::with_capacity(program.enums.len()),
             types: FxHashMap::default(),
             functions: Vec::new(),
             out: Program {
@@ -108,12 +117,14 @@ impl Mono {
                 mono.class_decls.push(Some(class));
             }
         }
-        for e in program.enums {
+        for (i, e) in program.enums.into_iter().enumerate() {
             if e.type_params.is_empty() {
-                mono.enum_ids.push(Some(EnumId(mono.out.enums.len())));
+                let id = EnumId(mono.out.enums.len());
+                mono.enum_ids.insert((EnumId(i), TypeArgs::NONE), id);
                 mono.out.enums.push(e);
+                mono.enum_decls.push(None);
             } else {
-                mono.enum_ids.push(None);
+                mono.enum_decls.push(Some(e));
             }
         }
         mono
@@ -176,8 +187,20 @@ impl Mono {
                         .collect();
                     self.out.classes[id.0].fields = fields;
                 }
+                Work::Enum { id, decl, args } => {
+                    let decl = self.enum_decls[decl.0]
+                        .as_ref()
+                        .expect("an instantiated enum should be generic");
+                    let mut variants = decl.variants.clone();
+                    for p in variants.iter_mut().flat_map(|v| &mut v.fields) {
+                        p.ty = self.ty(p.ty, args.get());
+                        p.boxed = false;
+                    }
+                    self.out.enums[id.0].variants = variants;
+                }
             }
         }
+        layout_enums(&mut self.out.enums);
         self.out.functions = self
             .functions
             .into_iter()
@@ -202,10 +225,7 @@ impl Mono {
                 Type::intern(TypeKind::Class(self.class(id, args), TypeArgs::NONE))
             }
             TypeKind::Enum(id, args) => {
-                assert!(args == TypeArgs::NONE, "generic enums land in Task 7");
-                let id =
-                    self.enum_ids[id.0].expect("an enum without arguments should not be generic");
-                Type::intern(TypeKind::Enum(id, TypeArgs::NONE))
+                Type::intern(TypeKind::Enum(self.enum_id(id, args), TypeArgs::NONE))
             }
             TypeKind::Array(element) => Type::array(self.output(element)),
             TypeKind::Optional(payload) => Type::optional(self.output(payload)),
@@ -243,6 +263,33 @@ impl Mono {
         self.out.classes.push(class);
         self.class_ids.insert((id, args), done);
         self.work.push_back(Work::Class {
+            id: done,
+            decl: id,
+            args,
+        });
+        done
+    }
+
+    /// The output id of enum `id` with `args`, given and put on the worklist when first reached.
+    fn enum_id(&mut self, id: EnumId, args: TypeArgs) -> EnumId {
+        if let Some(&done) = self.enum_ids.get(&(id, args)) {
+            return done;
+        }
+        let written = self.written(args.get());
+        let decl = self.enum_decls[id.0]
+            .as_ref()
+            .expect("an enum reached with arguments should be generic");
+        let e = Enum {
+            name: format!("{}{written}", decl.name),
+            type_params: Vec::new(),
+            variants: Vec::new(),
+            counted: false,
+            cycle: None,
+        };
+        let done = EnumId(self.out.enums.len());
+        self.out.enums.push(e);
+        self.enum_ids.insert((id, args), done);
+        self.work.push_back(Work::Enum {
             id: done,
             decl: id,
             args,
@@ -637,6 +684,48 @@ mod tests {
         assert!(unused.classes.is_empty(), "{:?}", class_names(&unused));
         let unused = instantiated("enum Wrap<T> {\n    W(T)\n}\nfn main() {\n    print(1)\n}");
         assert!(unused.enums.is_empty(), "{:?}", unused.enums);
+    }
+
+    /// The box closes a cycle on the declaring enum's own field, never on a field inside the
+    /// generic type: a field whose declared type is a parameter, or an optional of one, is never
+    /// boxed, and a field whose declared type names a parameter only when a cycle remains
+    /// without it, as `B<i64>.Y`'s does through `A<B<i64>>.X`, a parameter field. Every member
+    /// of a component with a box is on that cycle and counted.
+    #[test]
+    fn box_goes_on_the_declaring_enum() {
+        let program = instantiated(
+            "enum Two<T> {\n    Both(T, T)\n}\nenum Expr {\n    Lit(i64)\n    Pair(Two<Expr>)\n}\n\
+             enum Opt2<T> {\n    S(T?)\n    N\n}\nenum E {\n    L\n    P(Opt2<E>)\n}\n\
+             enum Wrap2<T> {\n    W(Two<T>)\n}\nenum F {\n    L\n    P(Wrap2<F>)\n}\n\
+             enum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}\n\
+             enum A<T> {\n    X(T)\n}\nenum B<T> {\n    Y(A<B<T>>)\n    Z\n}\n\
+             fn main() {\n    let t: Tree<i64> = Tree.Leaf\n    let b: B<i64> = B.Z\n}",
+        );
+        let printed = program.to_string();
+        for part in [
+            "(enum Expr (Lit i64) (Pair (box Two<Expr>)))",
+            "(enum Two<Expr> (Both Expr Expr))",
+            "(enum E L (P (box Opt2<E>)))",
+            "(enum Opt2<E> (S E?) N)",
+            "(enum F L (P (box Wrap2<F>)))",
+            "(enum Wrap2<F> (W Two<F>))",
+            "(enum Two<F> (Both F F))",
+            "(enum Tree<i64> Leaf (Node (box Tree<i64>) i64 (box Tree<i64>)))",
+            "(enum B<i64> (Y (box A<B<i64>>)) Z)",
+            "(enum A<B<i64>> (X B<i64>))",
+        ] {
+            assert!(printed.contains(part), "`{part}` in\n{printed}");
+        }
+        let named = |name: &str| {
+            (program.enums.iter())
+                .find(|e| e.name == name)
+                .unwrap_or_else(|| panic!("no enum {name} in\n{printed}"))
+        };
+        assert!(named("Expr").cycle.is_some());
+        assert_eq!(named("Two<Expr>").cycle, named("Expr").cycle);
+        for name in ["Two<Expr>", "Opt2<E>", "Wrap2<F>", "Two<F>"] {
+            assert!(named(name).counted, "{name}");
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@
 use std::fmt;
 
 use crate::ast::angled;
+use crate::graph::components;
 use crate::source::Span;
 
 pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
@@ -122,25 +123,31 @@ pub(crate) struct Enum {
     /// The names of its type parameters, in order; empty when it is not generic.
     pub(crate) type_params: Vec<String>,
     pub(crate) variants: Vec<Variant>,
-    /// Whether a value has counted parts: a boxed field, or a field of a counted type.
+    /// Whether a value has counted parts: its component has a box, or a field is of a counted
+    /// type.
     pub(crate) counted: bool,
     /// The enum's strongly connected component of the holds-inline graph, when that component
     /// has a boxed field.
     pub(crate) cycle: Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Variant {
     pub(crate) name: String,
     pub(crate) fields: Vec<Payload>,
 }
 
 /// A payload field. A `boxed` one is stored behind a counted pointer, since its enum, or the
-/// enum of its optional, holds the declaring enum inline.
-#[derive(Debug)]
+/// enum of its optional, holds the declaring enum inline (`layout_enums`).
+#[derive(Clone, Debug)]
 pub(crate) struct Payload {
     pub(crate) ty: Type,
     pub(crate) boxed: bool,
+    /// Whether its declared type names a type parameter (`T`, `Tree<T>`); kept through `mono`.
+    pub(crate) generic: bool,
+    /// Whether its declared type is a type parameter or an optional of one (`T`, `T?`); kept
+    /// through `mono`.
+    pub(crate) param: bool,
 }
 
 #[derive(Debug)]
@@ -484,6 +491,73 @@ impl Type {
             TypeKind::Optional(payload) => payload.inline_enum(),
             _ => None,
         }
+    }
+}
+
+/// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
+/// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
+/// the declaring enum's own field, never on one inside a generic type: within a component, the
+/// fields whose declared type names no parameter are boxed first, and a `generic` field only
+/// when a cycle remains without it (`Tree<T>`'s self-edge). A `param` field is never boxed: a
+/// cycle made only of such fields would be an infinite type. Every member of a component with
+/// a box is on that cycle, and counted, though a member may hold its links inline.
+pub(crate) fn layout_enums(enums: &mut [Enum]) {
+    // The holds-inline graph over the fields `keep` picks.
+    let held = |enums: &[Enum], keep: fn(&Payload) -> bool| -> Vec<Vec<usize>> {
+        (enums.iter())
+            .map(|e| {
+                let fields = e.variants.iter().flat_map(|v| &v.fields);
+                (fields.filter(|p| keep(p)))
+                    .filter_map(|p| p.ty.inline_enum())
+                    .map(|id| id.0)
+                    .collect()
+            })
+            .collect()
+    };
+    let component = components(&held(enums, |_| true));
+    for (e, info) in enums.iter_mut().enumerate() {
+        for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
+            p.boxed = !p.generic
+                && p.ty
+                    .inline_enum()
+                    .is_some_and(|f| component[f.0] == component[e]);
+        }
+    }
+    // Only a `generic` field is boxed here, so a program without one skips the second graph.
+    let fields = enums
+        .iter()
+        .flat_map(|e| &e.variants)
+        .flat_map(|v| &v.fields);
+    if fields.clone().any(|p| p.generic && !p.param) {
+        let remaining = components(&held(enums, |p| !p.boxed));
+        for (e, info) in enums.iter_mut().enumerate() {
+            for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
+                let on_cycle =
+                    p.ty.inline_enum()
+                        .is_some_and(|f| remaining[f.0] == remaining[e]);
+                p.boxed |= p.generic && !p.param && on_cycle;
+            }
+        }
+    }
+    let mut has_box = vec![false; enums.len()];
+    for (e, info) in enums.iter().enumerate() {
+        has_box[component[e]] |= info
+            .variants
+            .iter()
+            .flat_map(|v| &v.fields)
+            .any(|p| p.boxed);
+    }
+    // A component is numbered after every component it holds, and holds its own members only
+    // when it has a box, so counting in component order sees each other held enum counted.
+    let mut order: Vec<usize> = (0..enums.len()).collect();
+    order.sort_by_key(|&e| component[e]);
+    for e in order {
+        let boxed = has_box[component[e]];
+        enums[e].cycle = boxed.then_some(component[e]);
+        let counted = boxed
+            || (enums[e].variants.iter().flat_map(|v| &v.fields))
+                .any(|p| p.ty.may_be_counted(enums));
+        enums[e].counted = counted;
     }
 }
 
@@ -1596,6 +1670,8 @@ mod tests {
                         fields: vec![Payload {
                             ty: Type::I64,
                             boxed: false,
+                            generic: false,
+                            param: false,
                         }],
                     },
                 ],

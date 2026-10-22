@@ -391,73 +391,42 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Lowers every enum: boxes each payload field whose enum lies in the declaring enum's
-    /// component of the holds-inline graph, and marks the enums with counted parts. Reports
-    /// the enums no value can be built of; `cyclic` marks the classes on a cycle of fields,
-    /// which `never_constructed` reports. Returns the enums, and which declarations have an
-    /// error of that kind, as `never_built` does.
+    /// Lowers every enum, with each payload field's `generic` and `param` from its declared
+    /// type, and lays them out (`tir::layout_enums`). Reports the enums no value can be built
+    /// of; `cyclic` marks the classes on a cycle of fields, which `never_constructed` reports.
+    /// Returns the enums, and which declarations have an error of that kind, as `never_built`
+    /// does.
     pub(super) fn lower_enums(&mut self, cyclic: &[bool]) -> (Vec<tir::Enum>, Vec<bool>) {
-        let held: Vec<Vec<usize>> = self
-            .enums
-            .iter()
-            .map(|e| {
-                let fields = e.variants.iter().flat_map(|v| v.fields.iter().flatten());
-                fields
-                    .copied()
-                    .filter_map(Type::inline_enum)
-                    .map(|id| id.0)
-                    .collect()
-            })
-            .collect();
-        let component = components(&held);
-        let mut lowered: Vec<tir::Enum> = self
-            .enums
-            .iter()
-            .enumerate()
-            .map(|(e, info)| {
-                let variants: Vec<tir::Variant> = info
-                    .variants
-                    .iter()
+        let mut lowered: Vec<tir::Enum> = (self.enums.iter())
+            .map(|info| tir::Enum {
+                name: info.name.name.to_string(),
+                type_params: info.type_params.iter().map(Symbol::to_string).collect(),
+                variants: (info.variants.iter())
                     .map(|v| tir::Variant {
                         name: v.name.name.to_string(),
-                        fields: v
-                            .fields
-                            .iter()
+                        fields: (v.fields.iter())
                             .map(|&ty| {
                                 // An `Error` field's error stops the program before codegen.
                                 let ty = ty.unwrap_or(Type::NEVER);
-                                let boxed = ty
-                                    .inline_enum()
-                                    .is_some_and(|f| component[f.0] == component[e]);
-                                tir::Payload { ty, boxed }
+                                let bare = match ty.kind() {
+                                    TypeKind::Optional(payload) => payload,
+                                    _ => ty,
+                                };
+                                tir::Payload {
+                                    ty,
+                                    boxed: false,
+                                    generic: ty.has_param(),
+                                    param: matches!(bare.kind(), TypeKind::Param(..)),
+                                }
                             })
                             .collect(),
                     })
-                    .collect();
-                // Every member of a component of more than one enum holds another inline, so
-                // the component has a box exactly when its every member has one.
-                let boxed = variants.iter().flat_map(|v| &v.fields).any(|f| f.boxed);
-                tir::Enum {
-                    name: info.name.name.to_string(),
-                    type_params: info.type_params.iter().map(Symbol::to_string).collect(),
-                    variants,
-                    counted: false,
-                    cycle: boxed.then_some(component[e]),
-                }
+                    .collect(),
+                counted: false,
+                cycle: None,
             })
             .collect();
-        // A component is numbered after every component it holds, and holds its own members
-        // only through boxes, so counting in component order sees each inline enum counted.
-        let mut order: Vec<usize> = (0..lowered.len()).collect();
-        order.sort_by_key(|&e| component[e]);
-        for e in order {
-            let counted = lowered[e]
-                .variants
-                .iter()
-                .flat_map(|v| &v.fields)
-                .any(|f| f.boxed || f.ty.may_be_counted(&lowered));
-            lowered[e].counted = counted;
-        }
+        tir::layout_enums(&mut lowered);
         let unbuilt = self.never_built(cyclic);
         (lowered, unbuilt)
     }

@@ -133,6 +133,22 @@ fn inline_field_takes_no_token() {
     assert!(!function(&printed, "wrap").contains(" into ["), "{printed}");
 }
 
+/// `Expr` holds itself through the generic `Two<Expr>`, whose box is on `Expr.Pair`'s field:
+/// taking a `Pair(Both(a, b))` apart gives one token, from that box, which the new `Pair`
+/// takes. `Both`'s fields are inline, so they move out as bindings and give none.
+#[test]
+fn generic_instantiation_box_gives_a_token() {
+    let printed = built(
+        "enum Two<T> {\n    Both(T, T)\n}\nenum Expr {\n    Lit(i64)\n    Pair(Two<Expr>)\n}\n\
+         fn swap(e: Expr) -> Expr {\n    match e {\n        Expr.Pair(Two.Both(a, b)) => \
+         Expr.Pair(Two.Both(b, a))\n        other => other\n    }\n}\n",
+    );
+    let f = raw(&printed, "swap");
+    assert_eq!(tokens(f).len(), 1, "{f}");
+    has(&printed, "swap", &["variant Expr.Pair(move _) into [_]"]);
+    assert!(!function(&printed, "swap").contains("free"), "{printed}");
+}
+
 /// Each of 40 nested `match`es takes two boxes apart, 80 tokens in all, yet no block is
 /// offered more than `MAX_OPEN`, and the innermost blocks reach it.
 #[test]

@@ -2542,11 +2542,17 @@ fn instantiation_symbols_name_their_arguments() {
         &context,
         "fn first<T>(xs: [T]) -> T? {\n    if xs.len() > 0 { xs[0] } else { None }\n}\n\
          class Stack<T> {\n    mut items: [T]\n    fn push(self, x: T) { self.items = [x] }\n}\n\
-         fn main() {\n    print(first([1]) ?? 0)\n    print(first([2]) ?? 0)\n    let s = Stack(items: [\"a\"])\n    s.push(\"b\")\n}",
+         enum E<T> {\n    A(T)\n    fn map<U>(self, u: U) -> [U] { [u] }\n}\n\
+         fn main() {\n    print(first([1]) ?? 0)\n    print(first([2]) ?? 0)\n    let s = Stack(items: [\"a\"])\n    s.push(\"b\")\n\
+             print(E.A(1).map(\"a\").len())\n}",
     )
     .print_to_string()
     .to_string();
-    for symbol in ["@\"sisu.first<i64>\"(", "@\"sisu.Stack<string>.push\"("] {
+    for symbol in [
+        "@\"sisu.first<i64>\"(",
+        "@\"sisu.Stack<string>.push\"(",
+        "@\"sisu.E<i64>.map<string>\"(",
+    ] {
         let defined = ir
             .lines()
             .filter(|line| line.starts_with("define") && line.contains(symbol))
