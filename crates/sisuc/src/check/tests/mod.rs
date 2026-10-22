@@ -576,7 +576,7 @@ fn continue_outside_loop() {
 #[test]
 fn break_after_loop() {
     codes(
-        "fn main() {\n    while true {}\n    break\n}",
+        "fn f(c: bool) {\n    while c {}\n    break\n}\nfn main() {}",
         &[(Code::JumpOutsideLoop, (3, 5))],
     );
 }
@@ -683,6 +683,124 @@ fn statement_after_break() {
     codes(
         "fn main() {\n    while true {\n        break\n        print(1)\n    }\n}",
         &[(Code::UnreachableCode, (4, 9))],
+    );
+}
+
+#[test]
+fn while_true_without_break_is_never() {
+    clean("fn f() -> i64 {\n    while true {}\n}\nfn main() {}");
+}
+
+#[test]
+fn parenthesized_true_is_endless() {
+    clean("fn f() -> i64 {\n    while (true) {}\n}\nfn main() {}");
+}
+
+#[test]
+fn code_after_endless_loop_is_unreachable() {
+    codes(
+        "fn main() {\n    while true {}\n    print(1)\n}",
+        &[(Code::UnreachableCode, (3, 5))],
+    );
+}
+
+#[test]
+fn return_from_endless_loop() {
+    for src in [
+        "fn first_zero(xs: [i64]) -> i64 {\n    let mut i = 0\n    while true {\n        if xs[i] == 0 {\n            return i\n        }\n        i += 1\n    }\n}\nfn main() {}",
+        "fn f() -> i64 {\n    while true { panic(\"x\") }\n}\nfn main() {}",
+    ] {
+        clean(src);
+    }
+}
+
+#[test]
+fn todo_in_endless_loop() {
+    codes(
+        "fn f() -> i64 {\n    while true { todo }\n}\nfn main() {}",
+        &[(Code::TodoLeft, (2, 18))],
+    );
+}
+
+#[test]
+fn continue_in_endless_loop() {
+    clean("fn f() -> i64 {\n    while true { continue }\n}\nfn main() {}");
+}
+
+#[test]
+fn inner_break_leaves_only_the_inner_loop() {
+    clean(
+        "fn f(c: bool, xs: [i64], o: i64?) -> i64 {\n    while true {\n        while c { break }\n        while let y = o { break }\n        for x in xs { break }\n    }\n}\nfn main() {}",
+    );
+}
+
+/// Pin: a `break` that targets the loop leaves it finishing.
+#[test]
+fn break_makes_endless_loop_unit() {
+    codes(
+        "fn f(c: bool) -> i64 {\n    while true {\n        if c { break }\n    }\n}\nfn main() {}",
+        &[(Code::BodyHasNoValue, (5, 1))],
+    );
+}
+
+/// Pin: a `break` inside a value counts too.
+#[test]
+fn break_in_a_value_makes_endless_loop_unit() {
+    codes(
+        "fn f(c: bool) -> i64 {\n    while true {\n        let x = if c { break } else { 1 }\n    }\n}\nfn main() {}",
+        &[(Code::BodyHasNoValue, (5, 1))],
+    );
+}
+
+/// Pin: a `break` counts even where it can never run.
+#[test]
+fn unreachable_break_still_counts() {
+    codes(
+        "fn f() -> i64 {\n    while true {\n        return 1\n        break\n    }\n}\nfn main() {}",
+        &[
+            (Code::UnreachableCode, (4, 9)),
+            (Code::BodyHasNoValue, (6, 1)),
+        ],
+    );
+}
+
+/// Pin: only the literal `true` is endless.
+#[test]
+fn only_the_literal_is_endless() {
+    for src in [
+        "fn f() -> i64 {\n    while 1 == 1 { return 1 }\n}\nfn main() {}",
+        "const T = true\nfn f() -> i64 {\n    while T { return 1 }\n}\nfn main() {}",
+    ] {
+        let line = src.lines().count() - 1;
+        codes(src, &[(Code::BodyHasNoValue, (line, 1))]);
+    }
+}
+
+#[test]
+fn failed_endless_body_reports_only_its_error() {
+    codes(
+        "fn f() -> i64 {\n    while true { missing }\n}\nfn main() {}",
+        &[(Code::BindingNotFound, (2, 18))],
+    );
+}
+
+/// Pin: a failed body with a `break` stays `unit`.
+#[test]
+fn failed_body_with_break_stays_unit() {
+    codes(
+        "fn f() -> i64 {\n    while true {\n        missing\n        break\n    }\n}\nfn main() {}",
+        &[
+            (Code::BindingNotFound, (3, 9)),
+            (Code::BodyHasNoValue, (6, 1)),
+        ],
+    );
+}
+
+#[test]
+fn break_in_inner_header_does_not_count() {
+    codes(
+        "fn f() -> i64 {\n    while true {\n        while { break\n true } {}\n    }\n}\nfn main() {}",
+        &[(Code::JumpInLoopHeader, (3, 17))],
     );
 }
 
@@ -1901,7 +2019,7 @@ fn spills_field_assignment_base() {
         printed_g(
             "fn g(c: bool, p: P) {\n    while true {\n        p.b = if c { break } else { make() }\n    }\n}"
         ),
-        "(fn g ((c#0 bool) (p#1 P)) unit (block (loop (block (if true (block (block (let #2 p#1) (let #3 (if c#0 (block (break)) (block (call make)))) (= (. #2 b) #3))) (block (break)))))))"
+        "(fn g ((c#0 bool) (p#1 P)) unit (block (loop (block (block (let #2 p#1) (let #3 (if c#0 (block (break)) (block (call make)))) (= (. #2 b) #3))))))"
     );
 }
 
@@ -1925,7 +2043,7 @@ fn no_spill_without_earlier_reference() {
 fn nested_loop_break_still_spills() {
     assert_eq!(
         printed_g("fn g() {\n    f(make(), if true { while true { break }\n 1 } else { 1 })\n}"),
-        "(fn g () unit (block (block (let #0 (call make)) (let #1 (if true (block (loop (block (if true (block (break)) (block (break))))) 1) (block 1))) (call f #0 #1))))"
+        "(fn g () unit (block (block (let #0 (call make)) (let #1 (if true (block (loop (block (break))) 1) (block 1))) (call f #0 #1))))"
     );
 }
 
@@ -1947,7 +2065,7 @@ fn spills_compound_field_assignment_base() {
         printed_g(
             "class Q {\n    mut k: i64\n}\nfn g(c: bool, q: Q) {\n    while true {\n        q.k += if c { break } else { 1 }\n    }\n}"
         ),
-        "(fn g ((c#0 bool) (q#1 Q)) unit (block (loop (block (if true (block (block (block (let #2 q#1) (let #3 (+ (. q#1 k) (if c#0 (block (break)) (block 1)))) (= (. #2 k) #3)))) (block (break)))))))"
+        "(fn g ((c#0 bool) (q#1 Q)) unit (block (loop (block (block (block (let #2 q#1) (let #3 (+ (. q#1 k) (if c#0 (block (break)) (block 1)))) (= (. #2 k) #3)))))))"
     );
 }
 

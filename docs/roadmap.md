@@ -29,7 +29,9 @@ enums with `match`.
 - functions and recursion
 - statements, fields, variants and arms that end at a line break, or at a `;`
   before the next one on the same line; an unnecessary `;` warns (`W0007`)
-- `if` as an expression, `while`, `break`, `continue` and `return`
+- `if` as an expression, `while`, `break`, `continue` and `return`; a
+  `while true` with no `break` has type `never`
+  ([ADR 0032](adr/0032-while-true-without-break-is-never.md))
 - comparison chains such as `0 <= i < n`, and short-circuit `&&` and `||`
 - integer arithmetic that panics on overflow and division by zero instead of
   wrapping

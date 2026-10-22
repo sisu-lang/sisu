@@ -135,8 +135,9 @@ struct Binding {
 /// Which part of a loop the code being checked is in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LoopContext {
-    /// The body, where `break` and `continue` act on the loop.
-    Body,
+    /// The body, where `break` and `continue` act on the loop. `broken` is whether a `break`
+    /// has targeted it.
+    Body { broken: bool },
     /// A `while` condition or a `for` source, which is not part of the body. The span is the
     /// loop's keyword.
     Header(Span),

@@ -1,0 +1,11 @@
+// `while true` with no `break` panics on its third pass.
+fn main() {
+    let mut i = 0
+    while true {
+        i += 1
+        if i == 3 {
+            panic("stop at {i}")
+        }
+        print(i)
+    }
+}

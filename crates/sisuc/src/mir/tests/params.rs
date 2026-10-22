@@ -121,6 +121,16 @@ fn tail_call_with_a_fresh_argument_makes_the_parameter_owned() {
     signature(&printed, "walk2", "fn walk2(s#0: borrow string");
 }
 
+/// A `while true {}` beside a tail call lowers to one self-looping block with no exit; the
+/// tail rule must still see through it.
+#[test]
+fn tail_call_beside_a_closed_loop_keeps_the_tail_rule() {
+    let printed = built(
+        "fn walk(s: string, n: i64) -> i64 {\n    if n < 0 {\n        while true {}\n    }\n    if n == 0 {\n        s.len()\n    } else {\n        walk(\"x{n}\", n - 1)\n    }\n}",
+    );
+    signature(&printed, "walk", "fn walk(s#0: string");
+}
+
 /// The tail rule for a borrowed binding: `leftmost` passes `a`, which borrows from `e`, to its
 /// own borrowed parameter in tail position, so `e` stays borrowed.
 #[test]

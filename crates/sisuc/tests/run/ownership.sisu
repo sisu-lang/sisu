@@ -54,7 +54,6 @@ fn return_in_loop() -> i64 {
         if i == 3 { return a.count + b.count + i }
         let c = E()
     }
-    0
 }
 
 fn break_in_loop() {

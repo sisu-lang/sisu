@@ -283,16 +283,34 @@ impl Checker<'_> {
                     init: init.map_err(|_| unit())?,
                 })
             }
-            StmtKind::While { cond, body } => {
-                let header = LoopContext::Header(keyword_span(stmt.span, "while"));
-                let cond = self.in_loop(header, |c| c.expect(cond, Some(Type::BOOL)));
-                let checked = self.in_loop(LoopContext::Body, |c| c.block(body, None));
+            StmtKind::While {
+                cond: cond_ast,
+                body,
+            } => {
+                // Only the literal: the AST has no parenthesis node, so `(true)` is it too.
+                let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
+                let header = keyword_span(stmt.span, "while");
+                let cond = self.in_header(header, |c| c.expect(cond_ast, Some(Type::BOOL)));
+                let (checked, broken) = self.loop_body(|c| c.block(body, None));
                 if let Ok(checked) = &checked {
                     self.discard_tail(body, checked);
                 }
                 let (Ok(cond), Ok(body)) = (cond, checked) else {
-                    return Err(unit());
+                    return Err(if endless && !broken {
+                        Poisoned::typed(Type::NEVER)
+                    } else {
+                        unit()
+                    });
                 };
+                if endless {
+                    // A bare `Loop`: `else Break` would give MIR an exit the checker denies.
+                    let ty = if broken { Type::UNIT } else { Type::NEVER };
+                    return Ok(tir::Stmt::Expr(tir::Expr {
+                        kind: ExprKind::Loop(body),
+                        ty,
+                        span: stmt.span,
+                    }));
+                }
                 Ok(tir::Stmt::Expr(lower_loop(
                     body,
                     stmt.span,
@@ -308,12 +326,11 @@ impl Checker<'_> {
                 value,
                 body,
             } => {
-                let header = LoopContext::Header(keyword_span(stmt.span, "while"));
+                let header = keyword_span(stmt.span, "while");
                 let (scrutinee, form, _) =
-                    self.in_loop(header, |c| c.let_value(Unwrap::WhileLet, pattern, value));
-                let (bound, checked) = self.in_loop(LoopContext::Body, |c| {
-                    c.let_block(Unwrap::WhileLet, form, pattern, body, None)
-                });
+                    self.in_header(header, |c| c.let_value(Unwrap::WhileLet, pattern, value));
+                let ((bound, checked), _) =
+                    self.loop_body(|c| c.let_block(Unwrap::WhileLet, form, pattern, body, None));
                 if let Ok(checked) = &checked {
                     self.discard_tail(body, checked);
                 }
@@ -373,8 +390,7 @@ impl Checker<'_> {
         body: &ast::Block,
     ) -> Result<tir::Stmt, Poisoned> {
         let expr = |kind, ty| tir::Expr { kind, ty, span };
-        let context = LoopContext::Header(keyword_span(span, "for"));
-        let (header, bound) = self.in_loop(context, |c| match source {
+        let (header, bound) = self.in_header(keyword_span(span, "for"), |c| match source {
             ast::ForSource::Array(e) => c.for_array(span, e),
             ast::ForSource::Range {
                 start,
@@ -382,9 +398,8 @@ impl Checker<'_> {
                 inclusive,
             } => c.for_range(span, start, end, *inclusive),
         });
-        let (x, checked) = self.in_loop(LoopContext::Body, |c| {
-            c.unwrapping_block("for", name, bound, body, None)
-        });
+        let ((x, checked), _) =
+            self.loop_body(|c| c.unwrapping_block("for", name, bound, body, None));
         if let Ok(checked) = &checked {
             self.discard_tail(body, checked);
         }
@@ -610,12 +625,23 @@ impl Checker<'_> {
         }))
     }
 
-    /// `f`, inside a loop's `context`.
-    fn in_loop<T>(&mut self, context: LoopContext, f: impl FnOnce(&mut Self) -> T) -> T {
-        self.body.loops.push(context);
+    /// `f`, inside the header of the loop whose keyword is `keyword`.
+    fn in_header<T>(&mut self, keyword: Span, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.body.loops.push(LoopContext::Header(keyword));
         let checked = f(self);
         self.body.loops.pop();
         checked
+    }
+
+    /// `f`, inside a loop's body, and whether a `break` targeted that loop.
+    fn loop_body<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> (T, bool) {
+        self.body.loops.push(LoopContext::Body { broken: false });
+        let checked = f(self);
+        let broken = matches!(
+            self.body.loops.pop(),
+            Some(LoopContext::Body { broken: true })
+        );
+        (checked, broken)
     }
 
     /// `break` or `continue`, of type `never` even outside a loop. In a loop header it is
@@ -626,9 +652,9 @@ impl Checker<'_> {
         keyword: &'static str,
         kind: ExprKind,
     ) -> Result<tir::Stmt, Poisoned> {
-        match self.body.loops.last() {
-            Some(LoopContext::Body) => {}
-            Some(&LoopContext::Header(loop_at)) => {
+        match self.body.loops.last_mut() {
+            Some(LoopContext::Body { broken }) => *broken |= keyword == "break",
+            Some(&mut LoopContext::Header(loop_at)) => {
                 self.report(DiagnosticKind::JumpInLoopHeader {
                     keyword,
                     at: span,
