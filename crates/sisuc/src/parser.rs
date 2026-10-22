@@ -56,6 +56,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         specs: Vec::new(),
         warnings,
         labels: Vec::new(),
+        operand_block: None,
     }
     .program()
 }
@@ -279,6 +280,8 @@ struct Parser<'a> {
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
     labels: Vec<Ident>,
+    /// Where in `tokens` the `{` of the last block read as an operand, `let p = { ... }`, is.
+    operand_block: Option<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -989,6 +992,7 @@ impl<'a> Parser<'a> {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            operand_block: None,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -1283,14 +1287,22 @@ impl<'a> Parser<'a> {
             return None;
         }
         let at = first.span.to(colon.span);
+        // `let p = { a: { b: 1 } }` is an object literal to its writer, so `a:` keeps E0011.
+        let key = next.kind == TokenKind::LBrace
+            && self.operand_block.is_some_and(|open| {
+                let before = &self.tokens[..self.pos];
+                before.iter().rposition(|t| t.kind != TokenKind::Newline) == Some(open)
+            });
         match (&first.kind, &next.kind) {
-            (TokenKind::Ident(_), TokenKind::If | TokenKind::Match | TokenKind::LBrace) => Some(
-                DiagnosticKind::LabelNotOnLoop {
-                    at,
-                    next: next.span,
-                }
-                .into(),
-            ),
+            (TokenKind::Ident(_), TokenKind::If | TokenKind::Match | TokenKind::LBrace) if !key => {
+                Some(
+                    DiagnosticKind::LabelNotOnLoop {
+                        at,
+                        next: next.span,
+                    }
+                    .into(),
+                )
+            }
             (TokenKind::Underscore, TokenKind::Loop | TokenKind::While | TokenKind::For) => Some(
                 DiagnosticKind::UnnamedLabel {
                     at,
@@ -2541,6 +2553,7 @@ impl<'a> Parser<'a> {
             TokenKind::Loop => return self.loop_expr(None),
             TokenKind::Match => return self.match_expr(),
             TokenKind::LBrace => {
+                self.operand_block = Some(self.pos);
                 let block = self.block()?;
                 return Ok(Expr {
                     span: block.span,
