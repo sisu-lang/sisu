@@ -446,6 +446,7 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
     if separators.is_empty() {
         return warnings;
     }
+    let mut statements = Statements::default();
     let mut indices = 0..tokens.len();
     while let Some(i) = indices.next() {
         let start = tokens[i].span.start();
@@ -458,7 +459,8 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
             .take_while(|t| t.kind == TokenKind::Semicolon)
             .count();
         // Every `;` after the first is redundant: it leaves the first its neighbours.
-        let redundant = match judge(source, tokens, i..end, separators[found].between_items) {
+        let between_items = separators[found].between_items;
+        let redundant = match judge(source, tokens, i..end, between_items, &mut statements) {
             Judgement::Separator => {
                 tokens[i].kind = TokenKind::Newline;
                 i + 1
@@ -485,12 +487,19 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
 
 /// What becomes of the first `;` of `run`, a run of `;`s among `tokens`, in statement context.
 /// `between_items` is true when the run stands between top-level items, after a `fn`, `class` or
-/// `enum`.
+/// `enum`. `statements` reads `tokens` forward, to tell whether a `>` before the run closes a type
+/// annotation, which ends a statement as at a line's end.
 /// The rules, in order: a `.` after the run is a continuation unless the `;` is needed to end the
 /// statement; a `;` that joins two lines into a different statement stays; a `;` next to a line
 /// break, a `{`, a `}`, an `else` or an item that needs no separator is redundant.
-fn judge(source: &str, tokens: &[Token], run: Range<usize>, between_items: bool) -> Judgement {
-    use TokenKind::{Class, Const, Dot, Else, Enum, Fn, LBrace, Newline, QuestionDot, RBrace};
+fn judge(
+    source: &str,
+    tokens: &[Token],
+    run: Range<usize>,
+    between_items: bool,
+    statements: &mut Statements,
+) -> Judgement {
+    use TokenKind::{Class, Const, Dot, Else, Enum, Fn, Gt, LBrace, Newline, QuestionDot, RBrace};
     let (i, end) = (run.start, run.end);
     let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
     let first = tokens[i].span;
@@ -501,16 +510,17 @@ fn judge(source: &str, tokens: &[Token], run: Range<usize>, between_items: bool)
     let break_after = next
         .is_none_or(|n| n.kind == Newline || source[first.start()..n.span.start()].contains('\n'));
     let next = next.map(|n| &n.kind);
+    // A `>` that closes a type annotation ends a statement, as at a line's end.
+    let ends = can_end_statement(prev)
+        || prev.is_some_and(|p| p.kind == Gt) && statements.annotates_type(&tokens[..i]);
     if matches!(next, Some(Dot | QuestionDot)) {
         // Without the `;`, the line break before the `.` would continue the line.
-        if can_end_statement(prev) && !break_before {
+        if ends && !break_before {
             Judgement::Separator
         } else {
             Judgement::Kept
         }
-    } else if prev.is_some_and(|p| !can_end_statement(prev) && !matches!(p.kind, LBrace | Newline))
-        && !break_before
-    {
+    } else if prev.is_some_and(|p| !ends && !matches!(p.kind, LBrace | Newline)) && !break_before {
         // Without the `;`, the lines would join into a different statement.
         Judgement::Kept
     } else if next == Some(&Else)

@@ -5433,9 +5433,21 @@ mod tests {
         for src in [
             "fn main() { let x = 1; let y = 2 }",
             "class A {\n    x: i64; y: i64\n}",
+            // A `>` that closes a field's type arguments ends the field, as `i64` does.
+            "class D { c: Box<i64>; n: i64 }",
+            "class D { c: Box<Box<i64>>; n: i64 }",
+            "fn main() { let b: Box<i64> = x; let n = 1 }",
         ] {
             parse_ok(src);
         }
+        // At a line's end the `;` is redundant there, as after `i64`.
+        let src = "class D {\n    c: Box<i64>;\n    n: i64\n}";
+        let codes: Vec<_> = parsed(src)
+            .diagnostics
+            .iter()
+            .map(Diagnostic::code)
+            .collect();
+        assert_eq!(codes, [Code::RedundantSemicolon], "{src}");
     }
 
     #[test]
@@ -5611,6 +5623,9 @@ mod tests {
             ("fn main() { let x = ; }", 21),
             ("fn main() { [1; 2; 3] }", 18),
             ("fn main() { f(1; 2) }", 16),
+            // A `>` that compares does not end a statement, nor one that closes a header's list.
+            ("fn main() { let x = a >; }", 24),
+            ("fn f<T>; (x: T) {}", 8),
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::Expected, "{src}");
