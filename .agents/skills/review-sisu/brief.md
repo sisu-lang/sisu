@@ -127,7 +127,11 @@ vague or generic error, or with none.
 - A defect the diff adds blocks. A defect the old code had too is a nit.
 - Check cheap claims yourself: build, run the tests, write a probe
   program. To build a commit, export it as "Export a commit to build it"
-  in `CODING_STANDARDS.md` says.
+  in `CODING_STANDARDS.md` says. Keep two export directories in your
+  scratch directory, `base` and `head`; for another commit, empty one and
+  export into it again. Build both with one
+  `CARGO_TARGET_DIR=<scratch directory>/target`. Each new directory costs
+  a full build, about 7 GB.
 - To compare diagnostics before and after a change, build the base and
   the head, write probe programs into one directory, and run
   `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU DIR`. It prints

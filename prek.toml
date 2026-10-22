@@ -90,6 +90,15 @@ entry = "python3 -m unittest discover -s scripts -p 'test_*.py'"
 files = '^scripts/.*\.py$'
 pass_filenames = false
 
+# A new diagnostic code needs a category, or the site build fails long after the commit.
+[[repos.hooks]]
+id = "diagnostic-categories"
+name = "each diagnostic code is in one site category"
+language = "system"
+entry = "uv run --locked --script site/build.py --categories"
+files = '^(docs/diagnostics/.*\.md|site/data/categories\.toml)$'
+pass_filenames = false
+
 # Reads the report of the last local nextest run and warns about tests over their time budget;
 # it never fails a commit. With no report, as in CI's lint job, it prints nothing. It lists only
 # the slow tests the change mentions; CI, on its own runner, lists them all.
