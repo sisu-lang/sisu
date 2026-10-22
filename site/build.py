@@ -4,7 +4,7 @@
 # ///
 """Builds the site into site/_site and checks it.
 
-Usage: uv run --locked --script site/build.py [--out DIR] [--forbid-tk] [--test]
+Usage: uv run --locked --script site/build.py [--out DIR] [--forbid-tk] [--test] [--categories]
 
 Each site/src/<page>.html gives <page>.html: line 1 is its title, line 2 its meta description,
 the rest its body, filled in between _head.html and _foot.html. Each docs/diagnostics/<code>.md
@@ -735,6 +735,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument('--out', type=Path, default=SITE / '_site', help='where to build (default: site/_site)')
     parser.add_argument('--forbid-tk', action='store_true', help='also fail on any [TK marker')
     parser.add_argument('--test', action='store_true', help='run build_test.py instead')
+    parser.add_argument('--categories', action='store_true', help='only check data/categories.toml against docs/diagnostics')
     args = parser.parse_args(argv)
     if args.test:
         sys.path.insert(0, str(SITE))
@@ -742,11 +743,14 @@ def main(argv: list[str]) -> int:
         suite = unittest.defaultTestLoader.loadTestsFromName('build_test')
         return 0 if unittest.TextTestRunner().run(suite).wasSuccessful() else 1
     try:
-        build(args.out)
+        if args.categories:
+            found = [f'data/categories.toml: {p}' for p in category_problems()]
+        else:
+            build(args.out)
+            found = check_site(args.out, forbid_tk=args.forbid_tk)
     except BuildError as e:
         print(e)
         return 1
-    found = check_site(args.out, forbid_tk=args.forbid_tk)
     for problem in found:
         print(problem)
     return 1 if found else 0
