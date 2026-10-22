@@ -2286,6 +2286,42 @@ fn a_program_spends_no_more_than_its_fuel() {
 }
 
 #[test]
+fn an_array_of_class_objects_is_never_a_fill() {
+    // `[k; n]` would share one object among the elements (E0067); a `string` fill is fine.
+    let mut fills = FxHashSet::default();
+    let class = Ty::Class { id: 0, size: 9 };
+    let elements = [
+        ("K0", class.clone()),
+        ("K0?", Ty::Optional(Box::new(class))),
+        ("string", Ty::String),
+    ];
+    for mut state in 0..512 {
+        let data: Vec<u8> = (0..8)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        for (name, element) in &elements {
+            let mut g = Gen::new(&data);
+            declare(&mut g);
+            let ty = Ty::Array(Box::new(element.clone()));
+            g.array_let("v0".to_string(), ty, element);
+            let program = &g.w.out.program;
+            let fill = program.trim_end().strip_suffix(']').and_then(|p| {
+                let (_, len) = p.rsplit_once("; ")?;
+                len.parse::<u64>().ok()
+            });
+            if fill.is_some() {
+                fills.insert(*name);
+            }
+        }
+    }
+    assert!(fills.contains("string"), "no `string` array is a fill");
+    assert!(
+        !fills.contains("K0") && !fills.contains("K0?"),
+        "an array of class objects is a fill: {fills:?}"
+    );
+}
+
+#[test]
 fn a_mutable_array_counts_its_slots_bases_and_room() {
     // Each `let mut` array's most size covers a slot and a base per element and the room left
     // for `+=` on them, within `MAX_SIZE`: 8 strings of 64 chars, 520 in all, leave room for at
