@@ -483,6 +483,13 @@ The compiler is fuzzed in two stages:
    would catch a program that compiles but computes the wrong answer, which
    crash fuzzing cannot see.
 
+`loop`, `break` with a value, and loop labels. Open. A project of its own,
+after the program fuzzer and before milestone 8 part 2, like the `while true`
+fix: `loop { ... break x }` gives a value, `outer: for ...` with `break outer`
+and `continue outer` leaves or restarts an outer loop, and `while true` warns
+and points at `loop`
+([ADR 0034](adr/0034-loop-and-loop-labels.md)).
+
 ## Proposed milestones 8 to 12
 
 | # | Milestone | Done when |
