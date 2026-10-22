@@ -207,6 +207,12 @@ a comment, so later runs skip it. A region you explain
 rather than cover still fails it, so read the reasons, not only the word. A
 diff that changes no `.rs` file passes at once, with nothing run.
 
+One `make verify` runs at a time in a worktree; a second one prints
+`verify: FAIL: another make verify is running in this worktree` and stops.
+`LOG=<file>` writes the whole output to that file, opened only once the run
+holds the lock. Use it instead of a shell redirect, which would empty a running
+verify's log before the second run could refuse.
+
 Programs that the tests compile link an uninstrumented runtime, whose two
 archives are built in `target/llvm-cov-runtime` and copied next to the
 instrumented `sisu`. Runtime

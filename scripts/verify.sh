@@ -6,15 +6,25 @@
 # A region you explain instead of covering still fails the verdict, so the
 # mutants run anyway: one job reports both. A failing test run stops it early.
 # A diff that changes no .rs file passes without running either.
-#   scripts/verify.sh [base]
+# With a log, all output goes there, opened only once this run holds the worktree's lock:
+# a shell redirect would truncate a running verify's log before a second one could refuse.
+#   scripts/verify.sh [base] [log]
 set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+mkdir -p target
+exec {lock}>target/verify.lock
+if ! flock -n "$lock"; then
+	echo "verify: FAIL: another make verify is running in this worktree; wait for its completion notification"
+	exit 1
+fi
+[[ -z ${2:-} ]] || exec >"$2" 2>&1
 
 verdict=
 report=
 # Any early exit, from set -e included, still prints a verdict line.
 trap 'rm -f "$report"; [[ -n $verdict ]] || echo "verify: FAIL: stopped early (see the error above) (HEAD ${head:-unknown})"' EXIT
 
-cd "$(git rev-parse --show-toplevel)"
 # The verdict names the commit it measured, so a log is checked by its last line alone.
 head=$(git rev-parse HEAD)
 git diff --quiet HEAD -- '*.rs' || head+=' with uncommitted changes'
