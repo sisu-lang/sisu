@@ -311,7 +311,10 @@ impl Checker<'_> {
                     self.discard_tail(body, checked);
                 }
                 let (Ok(cond), Ok(body)) = (cond, checked) else {
-                    return Err(if endless && !broken && !frame.failed {
+                    // A loop a failed jump would leave has no type, so nothing after it reports.
+                    return Err(if frame.failed {
+                        Poisoned::error()
+                    } else if endless && !broken {
                         Poisoned::typed(Type::NEVER)
                     } else {
                         unit()
@@ -750,9 +753,9 @@ impl Checker<'_> {
         match header {
             // Without a loop label, a header with no loop body around it is the target's too.
             Some(loop_at) if found.is_some() || label.is_none() => {
-                // The loops inside the header that the jump would leave get no type, so the
-                // header around them reports nothing more.
-                for context in &mut self.body.loops[found.map_or(0, |at| at + 1)..] {
+                // The loops the jump would leave, its target included, get no type, so neither
+                // the header nor the code after the target reports more.
+                for context in &mut self.body.loops[found.unwrap_or(0)..] {
                     if let LoopContext::Body(frame) = context {
                         frame.failed = true;
                     }

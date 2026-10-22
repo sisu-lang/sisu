@@ -1,0 +1,6 @@
+fn main() {
+    outer: loop {
+        while loop { break outer } { }
+    }
+    print(1)
+}

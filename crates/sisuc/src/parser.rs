@@ -3142,6 +3142,11 @@ mod tests {
             ),
             "(block (loop :outer (block (break :outer))) (loop :outer (block (break :outer))) (loop (block (break outer))))"
         );
+        // A `while` or `for` label, which a statement opens, closes after its body too.
+        assert_eq!(
+            body("fn main() {\n    outer: for x in xs { }\n    loop { break outer -1 }\n}"),
+            "(block (for :outer x xs (block)) (loop (block (break (- outer 1)))))"
+        );
     }
 
     #[test]

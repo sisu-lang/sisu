@@ -942,6 +942,16 @@ fn failed_labeled_jump_leaves_no_never_loop() {
     );
 }
 
+/// A `break` in a header would leave the loop around the header, so that loop has no type and
+/// the code after it is not unreachable; `E0082-leaves-target` covers a labeled `break`.
+#[test]
+fn header_jump_leaves_target_untyped() {
+    codes(
+        "fn main() {\n    loop {\n        while { break; true } { }\n    }\n    print(1)\n}",
+        &[(Code::JumpInLoopHeader, (3, 17))],
+    );
+}
+
 #[test]
 fn shadowing_makes_two_locals() {
     assert_eq!(
