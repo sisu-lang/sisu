@@ -873,6 +873,15 @@ fn failed_value_reports_once() {
     );
 }
 
+/// An unknown return type reports once: no `break` value is checked against it.
+#[test]
+fn unknown_return_type_checks_no_break() {
+    codes(
+        "fn f(c: bool) -> Missing {\n    loop {\n        if c { break 1 }\n        break \"x\"\n    }\n}\nfn main() {}",
+        &[(Code::UnknownType, (1, 18))],
+    );
+}
+
 #[test]
 fn shadowing_makes_two_locals() {
     assert_eq!(

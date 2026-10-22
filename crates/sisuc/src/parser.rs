@@ -2991,6 +2991,8 @@ mod tests {
             expr_err("match o { 1 => break, _ => x }"),
             (Code::FieldComma, 1, 33)
         );
+        // Anything else starts a value, and a value that does not parse is the error.
+        assert_eq!(expr_err("break * 1"), (Code::Expected, 1, 19));
     }
 
     #[test]

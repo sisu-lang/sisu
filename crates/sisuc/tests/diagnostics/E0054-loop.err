@@ -1,0 +1,14 @@
+error[E0054]: this value is already `i64`
+ --> E0054-loop.sisu:2:15
+  |
+2 |     print(i64(loop { break 1 }) + 1)
+  |               ^^^^^^^^^^^^^^^^
+  |
+help: remove the conversion
+  |
+2 -     print(i64(loop { break 1 }) + 1)
+2 +     print((loop { break 1 }) + 1)
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0054

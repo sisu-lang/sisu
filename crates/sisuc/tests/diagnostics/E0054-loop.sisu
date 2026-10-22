@@ -1,0 +1,3 @@
+fn main() {
+    print(i64(loop { break 1 }) + 1)
+}
