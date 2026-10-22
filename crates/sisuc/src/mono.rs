@@ -666,6 +666,96 @@ mod tests {
         assert_concrete(&program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     }
 
+    /// A type parameter left only in a nested block's type is caught: in either branch of an
+    /// `if`, an `if let`'s, a `match` arm's, a loop's or a block's.
+    #[test]
+    fn a_block_type_left_generic_is_caught() {
+        use crate::source::Span;
+        use crate::tir::{LocalId, Pattern, PatternKind};
+        let span = Span::new(0, 0);
+        let param = Type::intern(TypeKind::Param(crate::symbol::Symbol::intern("T"), 0));
+        let int = || Expr {
+            kind: ExprKind::Int(1),
+            ty: Type::I64,
+            span,
+        };
+        let block = |ty| Block {
+            stmts: Vec::new(),
+            value: Some(Box::new(int())),
+            ty,
+        };
+        let cond = || {
+            Box::new(Expr {
+                kind: ExprKind::Bool(true),
+                ty: Type::BOOL,
+                span,
+            })
+        };
+        let if_some = |then_block| ExprKind::IfSome {
+            bind: LocalId(0),
+            scrutinee: Box::new(Expr {
+                kind: ExprKind::None,
+                ty: Type::optional(Type::I64),
+                span,
+            }),
+            then_block,
+            else_block: Some(block(Type::I64)),
+        };
+        let arm = Arm {
+            pattern: Pattern {
+                kind: PatternKind::Wild,
+                span,
+            },
+            bindings: Vec::new(),
+            guard: None,
+            body: block(param),
+        };
+        for (case, kind) in [
+            (
+                "then",
+                ExprKind::If {
+                    cond: cond(),
+                    then_block: block(param),
+                    else_block: Some(block(Type::I64)),
+                },
+            ),
+            (
+                "else",
+                ExprKind::If {
+                    cond: cond(),
+                    then_block: block(Type::I64),
+                    else_block: Some(block(param)),
+                },
+            ),
+            ("if let", if_some(block(param))),
+            (
+                "match",
+                ExprKind::Match {
+                    scrutinee: Box::new(int()),
+                    temp: LocalId(0),
+                    arms: vec![arm],
+                },
+            ),
+            ("loop", ExprKind::Loop(block(param))),
+            ("block", ExprKind::Block(block(param))),
+        ] {
+            let mut program = instantiated("fn main() {}");
+            let expr = Expr {
+                kind,
+                ty: Type::I64,
+                span,
+            };
+            program.functions[0].body.stmts.push(Stmt::Expr(expr));
+            let caught = std::panic::catch_unwind(|| assert_concrete(&program));
+            let message = caught.expect_err(case);
+            let message = message.downcast_ref::<String>().map_or("", String::as_str);
+            assert!(
+                message.contains("no generic type in main"),
+                "{case}: {message}"
+            );
+        }
+    }
+
     #[test]
     fn program_without_generics_is_unchanged() {
         let src = "class P {\n    x: i64\n    fn get(self) -> i64 { self.x }\n}\n\

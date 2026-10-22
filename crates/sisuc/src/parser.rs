@@ -450,7 +450,7 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.expected(&kind.describe()))
     }
 
-    // Inlined, as the many callers that name a token kept it before they grew.
+    // Inlined: it runs on every name token, and LLVM stopped inlining it once its callers grew.
     #[inline]
     fn ident(&mut self, what: &str) -> Result<Ident, Diagnostic> {
         match self.peek().kind {

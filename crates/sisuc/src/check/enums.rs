@@ -655,7 +655,11 @@ impl Buildable {
             queue: Vec::new(),
         };
         for (n, &p) in params.iter().enumerate() {
-            fix.push(n, vec![true; p]);
+            let key = fix.push(n, vec![true; p]);
+            debug_assert_eq!(
+                key, n,
+                "a node's root key should be the node, as roots come first"
+            );
         }
         fix
     }
