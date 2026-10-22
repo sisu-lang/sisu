@@ -105,7 +105,7 @@ const REACH: [&str; 23] = [
 type Holds = fn(&str) -> bool;
 
 /// The forms only a program's text shows, each with how to find it.
-const TEXT: [(&str, Holds); 7] = [
+const TEXT: [(&str, Holds); 8] = [
     ("text: `_` between digits", |text| {
         text.as_bytes()
             .windows(3)
@@ -115,6 +115,11 @@ const TEXT: [(&str, Holds); 7] = [
         text.contains("-9223372036854775808")
     }),
     ("text: `0x`", |text| text.contains("0x")),
+    ("text: a `0x` of more than three digits", |text| {
+        text.split("0x")
+            .skip(1)
+            .any(|rest| rest.bytes().take_while(u8::is_ascii_hexdigit).count() > 3)
+    }),
     ("text: `0b`", |text| text.contains("0b")),
     ("text: `0o`", |text| text.contains("0o")),
     ("text: `\\u{...}`", |text| text.contains("\\u{")),
@@ -2035,6 +2040,20 @@ fn with_funcs(data: &[u8]) -> Gen<'_> {
 }
 
 #[test]
+fn a_return_gives_a_value_where_its_function_returns_one() {
+    // Byte by byte: no statement, then the block's jump, a jump not an `if`, and of the jumps
+    // a function's block has, `return`: in `f1`, of an `i64`, with a value; in `f2`, of
+    // `unit`, without.
+    for (func, text) in [(0, "\nreturn 0"), (1, "\nreturn")] {
+        let mut g = with_funcs(&[0, 3, 0, 0]);
+        g.scope.func = Some(func);
+        g.jumps.ret = true;
+        g.stmts(true);
+        assert_eq!(g.w.out.program, text);
+    }
+}
+
+#[test]
 fn main_prints_or_discards_what_a_call_returns() {
     // Byte by byte: one statement in `main`, a call, of the function the third byte names, at
     // depth 0 once the bytes run out. A value is printed, an array discarded, and a `unit`
@@ -3090,36 +3109,8 @@ fn a_chain_ends_in_a_variant_within_its_room() {
 #[test]
 fn every_match_checks_without_an_unreachable_arm() {
     // Matches of each tested type, `E0` among them, with guards, alternatives and nested
-    // patterns: no arm overlaps one above it, and `_` or a name comes only where the arms leave
-    // a value unmatched (W0006 otherwise, and E0130 where it does not come but should).
-    let mut program = format!("{DECLARED}\nfn main() {{\n");
-    for mut state in 0..4_096 {
-        let data: Vec<u8> = (0..8)
-            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
-            .collect();
-        let mut g = Gen::new(&data);
-        declare(&mut g);
-        // Literals leave the input to the arms.
-        g.nesting = MAX_NESTING;
-        g.blocks = 1;
-        g.match_expr(&Ty::I64, 0, false);
-        // Its arms are a block, which it leaves.
-        assert_eq!(g.blocks, 1);
-        writeln!(program, "    let _ = {}", g.w.out.program)
-            .expect("writing to a `String` should succeed");
-    }
-    program.push_str("}\n");
-    let (_, diagnostics) = front_end(&program);
-    let wrong: Vec<String> = diagnostics
-        .iter()
-        .filter(|d| d.severity() == Severity::Error || d.code().as_str() == "W0006")
-        .map(|d| {
-            let line = program[..d.span().start()].matches('\n').count();
-            let text = program.lines().nth(line).unwrap_or_default();
-            format!("{} at line {}: {text}", d.code().as_str(), line + 1)
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{wrong:#?}");
+    // patterns.
+    let program = matches_check_clean(DECLARED, declare);
     // And each kind of pattern comes: a letter, a negative number, an inclusive range, a lone
     // `bool`, a word alone and with another, a variant named with its enum, and a variant
     // within a variant within a variant, but no deeper; and a guard.
@@ -3154,6 +3145,81 @@ fn every_match_checks_without_an_unreachable_arm() {
     }
     let deepest = patterns.iter().map(|p| depth(p)).max();
     assert_eq!(deepest, Some(3), "a variant pattern nests too deep");
+}
+
+/// `main` of 4096 matches after `header`, whose types `declare` gives the generator, asserted
+/// to check clean: no arm overlaps one above it, and `_` or a name comes only where the arms
+/// leave a value unmatched (W0006 otherwise, and E0130 where it does not come but should).
+fn matches_check_clean(header: &str, declare: fn(&mut Gen)) -> String {
+    let mut program = format!("{header}\nfn main() {{\n");
+    for mut state in 0..4_096 {
+        let data: Vec<u8> = (0..8)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        declare(&mut g);
+        // Literals leave the input to the arms.
+        g.nesting = MAX_NESTING;
+        g.blocks = 1;
+        g.match_expr(&Ty::I64, 0, false);
+        // Its arms are a block, which it leaves.
+        assert_eq!(g.blocks, 1);
+        writeln!(program, "    let _ = {}", g.w.out.program)
+            .expect("writing to a `String` should succeed");
+    }
+    program.push_str("}\n");
+    let (_, diagnostics) = front_end(&program);
+    let wrong: Vec<String> = diagnostics
+        .iter()
+        .filter(|d| d.severity() == Severity::Error || d.code().as_str() == "W0006")
+        .map(|d| {
+            let line = program[..d.span().start()].matches('\n').count();
+            let text = program.lines().nth(line).unwrap_or_default();
+            format!("{} at line {}: {text}", d.code().as_str(), line + 1)
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    program
+}
+
+#[test]
+fn an_enum_match_ends_in_a_catch_all_only_where_its_arms_leave_a_value() {
+    // Of an enum small enough that its arms often cover it, alone or two together, with or
+    // without a guard: some matches end in a variant's arm and others in `_` or a name.
+    const SMALL: &str = "enum E0 {\n    V0\n    V1(bool)\n    V2\n}\n";
+    let program = matches_check_clean(SMALL, |g| {
+        let variant = |name: &str, fields| Variant {
+            name: name.to_string(),
+            fields,
+            labels: Vec::new(),
+        };
+        g.scope.enums.push(Enum {
+            variants: vec![
+                variant("V0", Vec::new()),
+                variant("V1", vec![Ty::Bool]),
+                variant("V2", Vec::new()),
+            ],
+            least: 1,
+            has_class: false,
+        });
+        g.scope.types.push(E0);
+    });
+    let variant = |p: &str| p.starts_with('V') || p.starts_with("E0.");
+    let (mut covered, mut open) = (0, 0);
+    for one in program.split("let _ = (match ").skip(1) {
+        let patterns: Vec<&str> = one
+            .lines()
+            .filter_map(|line| Some(line.trim().split_once(" => ")?.0))
+            .collect();
+        if patterns.first().is_some_and(|p| variant(p)) {
+            if patterns.last().is_some_and(|p| variant(p)) {
+                covered += 1;
+            } else {
+                open += 1;
+            }
+        }
+    }
+    assert!(covered > 0 && open > 0, "{covered} covered, {open} open");
 }
 
 /// Whether a pattern's text is of some kind.
