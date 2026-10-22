@@ -693,8 +693,10 @@ mod tests {
     /// through `D<C<i64>>.X`, an optional of one. `G<i64>.P` closes its cycle through
     /// `Wrap2<G<i64>>.W`, whose `Two<T>` names a parameter too, yet only `G<i64>.P` names its
     /// own declaration. `H<i64>.P` does too, though `Wrap3<H<i64>>.W` names `Wrap3<i64>`, which
-    /// closes its own cycle and is boxed after. Every member of a component with a box is on
-    /// that cycle and counted.
+    /// closes its own cycle and is boxed after; so does `K<i64>.P`, through an optional. An
+    /// optional field's payload is named too (`Wrap4<i64>.W`), and `R<i64, Q<i64>>.Y`'s
+    /// `Two<B>`, of a declaration off `R`'s cycle, is never boxed. Every member of a component
+    /// with a box is on that cycle and counted.
     #[test]
     fn box_goes_on_the_declaring_enum() {
         let program = instantiated(
@@ -707,7 +709,11 @@ mod tests {
              enum G<T> {\n    L(T)\n    P(Wrap2<G<T>>)\n}\n\
              enum P2<A, B> {\n    P(A, B)\n}\nenum Wrap3<T> {\n    W(P2<T, Wrap3<i64>>)\n    N\n}\n\
              enum H<T> {\n    L(T)\n    P(Wrap3<H<T>>)\n}\n\
-             fn main() {\n    let t: Tree<i64> = Tree.Leaf\n    let b: B<i64> = B.Z\n    let c: C<i64> = C.Z\n    let g: G<i64> = G.L(1)\n    let h: H<i64> = H.L(1)\n}",
+             enum K<T> {\n    L(T)\n    P(Wrap3<K<T>>?)\n}\n\
+             enum Wrap4<T> {\n    W(P2<T, Wrap4<i64>>?)\n    N\n}\n\
+             enum R<A, B> {\n    Y(Two<B>)\n}\nenum Q<T> {\n    X(R<T, Q<i64>>)\n    N\n}\n\
+             fn main() {\n    let t: Tree<i64> = Tree.Leaf\n    let b: B<i64> = B.Z\n    let c: C<i64> = C.Z\n    let g: G<i64> = G.L(1)\n    let h: H<i64> = H.L(1)\n    let k: K<i64> = K.L(1)\n    \
+             let w: Wrap4<i64> = Wrap4.N\n    let q: Q<i64> = Q.N\n}",
         );
         let printed = program.to_string();
         for part in [
@@ -729,6 +735,11 @@ mod tests {
             "(enum H<i64> (L i64) (P (box Wrap3<H<i64>>)))",
             "(enum Wrap3<H<i64>> (W P2<H<i64>, Wrap3<i64>>) N)",
             "(enum Wrap3<i64> (W (box P2<i64, Wrap3<i64>>)) N)",
+            "(enum K<i64> (L i64) (P (box Wrap3<K<i64>>?)))",
+            "(enum Wrap3<K<i64>> (W P2<K<i64>, Wrap3<i64>>) N)",
+            "(enum Wrap4<i64> (W (box P2<i64, Wrap4<i64>>?)) N)",
+            "(enum Q<i64> (X (box R<i64, Q<i64>>)) N)",
+            "(enum R<i64, Q<i64>> (Y Two<Q<i64>>))",
         ] {
             assert!(printed.contains(part), "`{part}` in\n{printed}");
         }
