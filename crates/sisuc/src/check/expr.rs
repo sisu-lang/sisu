@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use super::{Binding, Checked, Checker, Poisoned, UNKNOWN, payload, type_of, wrap};
+use super::{Binding, Checked, Checker, Poisoned, UNKNOWN, payload, tail, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
     Definition, Diagnostic, DiagnosticKind, Literal, MismatchSource, suggestion,
@@ -23,6 +23,31 @@ impl Checker<'_> {
             e.kind,
             ExprKind::Field { .. } | ExprKind::MethodCall { .. } | ExprKind::Index { .. }
         );
+        // A value expecting a loop's type passes it on to where its own value comes from.
+        if let Some((_, spans)) = &mut self.body.break_hint
+            && spans.contains(&e.span)
+        {
+            match &e.kind {
+                ExprKind::Block(b) => spans.extend(tail(b).map(|t| t.span)),
+                ExprKind::If {
+                    then_block,
+                    else_block,
+                    ..
+                }
+                | ExprKind::IfLet {
+                    then_block,
+                    else_block,
+                    ..
+                } => spans.extend(
+                    std::iter::once(then_block)
+                        .chain(else_block)
+                        .filter_map(tail)
+                        .map(|t| t.span),
+                ),
+                ExprKind::Match { arms, .. } => spans.extend(arms.iter().map(|a| a.body.span)),
+                _ => {}
+            }
+        }
         let checked = self.expr_kind(e, expected);
         self.body.in_target = outer;
         checked

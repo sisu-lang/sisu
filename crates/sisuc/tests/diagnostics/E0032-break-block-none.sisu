@@ -1,0 +1,19 @@
+fn main() {
+    let c = true
+    let x = loop {
+        if c { break 1 }
+        break { None }
+    }
+    let y = loop {
+        if c { break 1 }
+        break if c { [] } else { 2 }
+    }
+    let z = loop {
+        if c { break 1 }
+        break match c {
+            true => 3
+            false => loop { break None }
+        }
+    }
+    print(x + y + z)
+}

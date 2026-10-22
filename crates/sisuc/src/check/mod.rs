@@ -186,6 +186,8 @@ struct LoopFrame {
     broken: bool,
     /// The type the position around a `loop` expects; `UNKNOWN` for an `Error` one.
     expected: Option<Type>,
+    /// The `break` of an outer loop that gave it `expected`, when it is that `break`'s value.
+    expected_from: Option<Span>,
     /// The type of the first value whose type is neither `never` nor `Error`, with no expected
     /// type, and its `break`'s span.
     first: Option<(Type, Span)>,
@@ -211,6 +213,7 @@ impl LoopFrame {
             label_used: false,
             broken: false,
             expected,
+            expected_from: None,
             first: None,
             bare: None,
             valued: None,
@@ -291,9 +294,10 @@ struct Body {
     self_type: Option<Type>,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
-    /// The value of the `break` being checked, and the earlier `break` whose value gave the
-    /// loop the type that value expects.
-    break_hint: Option<(Span, Span)>,
+    /// The earlier `break` whose value gave a loop the type that the `break` value being
+    /// checked expects, and the spans that expect it: the value, and where its own value comes
+    /// from (`expr` adds a block's last expression, each branch's and each arm's).
+    break_hint: Option<(Span, Vec<Span>)>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
@@ -956,10 +960,13 @@ impl Checker<'_> {
     /// Where the type that the value at `span` expects came from: an earlier `break`, when it
     /// is a `break` value checked against the loop's type.
     fn expected_from(&self, span: Span) -> Option<MismatchSource> {
-        self.body
-            .break_hint
-            .filter(|&(at, _)| at == span)
-            .map(|(_, first)| MismatchSource::Break(first))
+        self.break_source(span).map(MismatchSource::Break)
+    }
+
+    /// The `break` behind `expected_from(span)`.
+    fn break_source(&self, span: Span) -> Option<Span> {
+        let (first, spans) = self.body.break_hint.as_ref()?;
+        spans.contains(&span).then_some(*first)
     }
 
     /// `mismatch`, where `want` came from `from`.
