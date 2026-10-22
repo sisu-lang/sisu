@@ -492,10 +492,24 @@ pub(crate) fn case_dir(source: &Path) -> PathBuf {
 /// calls it, with arguments known at run time.
 const O2_CALLS: &str = "// o2-calls:";
 
+/// How LLVM's text names the function `name`: `@sisu.name`, or `@"sisu.name"` when the name holds
+/// a character outside an identifier's, as an instantiation's `<` and `,` are.
+fn symbol(name: &str) -> String {
+    let symbol = format!("sisu.{name}");
+    if symbol
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-$._".contains(c))
+    {
+        format!("@{symbol}")
+    } else {
+        format!("@\"{symbol}\"")
+    }
+}
+
 /// The text of the function `name` in `ir`, from its header line to its closing brace, if `ir`
 /// defines it.
 fn function_text<'a>(ir: &'a str, name: &str) -> Option<&'a str> {
-    let header = format!("@sisu.{name}(");
+    let header = format!("{}(", symbol(name));
     ir.split("\ndefine ")
         .skip(1)
         .find(|function| function.lines().next().is_some_and(|l| l.contains(&header)))
@@ -584,7 +598,7 @@ fn o2_calls(path: &Path) {
             .and_then(|text| text.lines().next())
             .expect("the caller is in the IR");
         assert!(
-            header.contains(&format!("@sisu.{outer}()"))
+            header.contains(&format!("{}()", symbol(outer)))
                 || (outer == "main" && header.contains("@sisu.main(ptr")),
             "{}: o2-calls caller `{outer}` takes parameters; its call sites can decide the \
              call, so mark a caller without parameters",
@@ -592,7 +606,7 @@ fn o2_calls(path: &Path) {
         );
         let body = function_text(optimized, outer)
             .unwrap_or_else(|| panic!("{}: no `{outer}` in the -O2 IR", path.display()));
-        let target = format!("@sisu.{callee}(");
+        let target = format!("{}(", symbol(callee));
         let kept = body
             .lines()
             .filter(|line| line.contains("call ") && line.contains(&target))

@@ -15,6 +15,7 @@ mod graph;
 mod lexer;
 mod link;
 mod mir;
+mod mono;
 mod parser;
 mod report;
 mod run;

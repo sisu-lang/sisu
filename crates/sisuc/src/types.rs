@@ -116,7 +116,8 @@ impl TypeArgs {
         args().lists[self.0 as usize].1
     }
 
-    fn subst(self, with: &[Type]) -> TypeArgs {
+    /// The list with `Type::subst` applied to each element.
+    pub(crate) fn subst(self, with: &[Type]) -> TypeArgs {
         let list: Vec<Type> = self.get().iter().map(|ty| ty.subst(with)).collect();
         TypeArgs::intern(&list)
     }

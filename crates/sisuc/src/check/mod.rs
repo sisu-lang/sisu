@@ -833,12 +833,19 @@ impl Checker<'_> {
         args: &[ast::TypeExpr],
         angles: Span,
     ) -> Option<Type> {
-        let ident = ast::Ident {
+        // Built only for `type_args`, which reads it when `args` do not fit: most names have
+        // none, and their declarations take none.
+        let ident = || ast::Ident {
             name,
             span: Span::new(ty.span.start(), ty.span.start() + name.as_str().len()),
         };
         // A type parameter or a built-in type is not generic.
-        let plain = |c: &mut Self, ty| c.type_args(&ident, &[], args, angles).map(|_| ty);
+        let plain = |c: &mut Self, ty| {
+            if args.is_empty() {
+                return Some(ty);
+            }
+            c.type_args(&ident(), &[], args, angles).map(|_| ty)
+        };
         if let Some(i) = self.body.type_params.iter().position(|&p| p == name) {
             let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
             return plain(self, Type::intern(TypeKind::Param(name, i)));
@@ -856,13 +863,21 @@ impl Checker<'_> {
         }
         match declared {
             (Some(Declared::Known(id)), _) => {
-                let declared = self.classes[id.0].type_params.clone();
-                let args = self.type_args(&ident, &declared, args, angles)?;
+                let args = if args.is_empty() && self.classes[id.0].type_params.is_empty() {
+                    TypeArgs::NONE
+                } else {
+                    let declared = self.classes[id.0].type_params.clone();
+                    self.type_args(&ident(), &declared, args, angles)?
+                };
                 Some(Type::intern(TypeKind::Class(id, args)))
             }
             (_, Some(Declared::Known(id))) => {
-                let declared = self.enums[id.0].type_params.clone();
-                let args = self.type_args(&ident, &declared, args, angles)?;
+                let args = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
+                    TypeArgs::NONE
+                } else {
+                    let declared = self.enums[id.0].type_params.clone();
+                    self.type_args(&ident(), &declared, args, angles)?
+                };
                 Some(Type::intern(TypeKind::Enum(id, args)))
             }
             _ => {
@@ -873,7 +888,7 @@ impl Checker<'_> {
                 let candidates = types.into_iter().chain(classes).chain(enums);
                 self.report(DiagnosticKind::UnknownType {
                     name: name.to_string(),
-                    at: ident.span,
+                    at: ident().span,
                     suggestion: suggestion(name.as_str(), candidates),
                 });
                 None

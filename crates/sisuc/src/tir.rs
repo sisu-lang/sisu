@@ -150,7 +150,7 @@ pub(crate) struct Field {
     pub(crate) mutable: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Function {
     pub(crate) name: String,
     /// The names of the type parameters in scope: a method's owner's, then its own.
@@ -163,7 +163,7 @@ pub(crate) struct Function {
     pub(crate) body: Block,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Local {
     /// `None` for a local the checker made up.
     pub(crate) name: Option<String>,
@@ -172,7 +172,7 @@ pub(crate) struct Local {
 }
 
 /// `value` is the last statement when it was an expression statement in `ast`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Block {
     pub(crate) stmts: Vec<Stmt>,
     pub(crate) value: Option<Box<Expr>>,
@@ -180,7 +180,7 @@ pub(crate) struct Block {
 }
 
 /// `Append` is `place += value` on a `string` field or element: its place is never a `Local`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Stmt {
     Let { local: LocalId, init: Expr },
     Assign { place: Place, value: Expr },
@@ -188,7 +188,7 @@ pub(crate) enum Stmt {
     Expr(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Place {
     Local(LocalId),
     /// Field `index` of the class `base` has.
@@ -203,7 +203,7 @@ pub(crate) enum Place {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Expr {
     pub(crate) kind: ExprKind,
     pub(crate) ty: Type,
@@ -272,7 +272,7 @@ impl fmt::Display for Format {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum ExprKind {
     Int(i64),
     Float(f64),
@@ -423,7 +423,7 @@ pub(crate) enum ExprKind {
 
 /// One arm of a `Match`. `bindings` holds each local its pattern binds, once, which every
 /// alternative of an `Or` binds alike. `guard`, a `bool`, runs after the pattern matched.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Arm {
     pub(crate) pattern: Pattern,
     pub(crate) bindings: Vec<LocalId>,
@@ -431,13 +431,13 @@ pub(crate) struct Arm {
     pub(crate) body: Block,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Pattern {
     pub(crate) kind: PatternKind,
     pub(crate) span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum PatternKind {
     /// `_`.
     Wild,

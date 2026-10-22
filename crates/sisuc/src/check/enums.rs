@@ -1,7 +1,7 @@
 //! Enum declarations: their variants and payloads, the names they cannot take, which enums no
 //! value can be built of, the boxes that break a cycle, and which enums are counted.
 
-use std::fmt;
+use std::{fmt, mem};
 
 use rustc_hash::FxHashMap;
 
@@ -542,7 +542,7 @@ impl Checker<'_> {
         let mut on_chain = vec![false; fix.keys.len()];
         let (mut at, mut args) = (start, own_args(params));
         let mut key = fix.root(start);
-        while !std::mem::replace(&mut on_chain[key], true) {
+        while !mem::replace(&mut on_chain[key], true) {
             let with = args.get();
             let held = |ty: &Option<Type>| ty.map(|ty| ty.subst(with));
             let (holder, field) = if at < classes {
@@ -652,9 +652,11 @@ impl Buildable {
 
     /// The key of `node` with `flags`, interned, its slots queued, when it is new.
     fn key(&mut self, node: usize, flags: Vec<bool>) -> usize {
-        if let Some(&key) = self.ids.get(&(node, flags.clone())) {
+        let id = (node, flags);
+        if let Some(&key) = self.ids.get(&id) {
             return key;
         }
+        let (node, flags) = id;
         assert!(
             self.keys.len() < self.bound,
             "the can-be-built keys should be a declaration and its parameters' flags"
@@ -759,9 +761,12 @@ impl Buildable {
             self.scans += 1;
             #[cfg(test)]
             SCANS.set(SCANS.get() + 1);
-            let (node, flags) = self.keys[key].clone();
+            // Taken, not cloned, for the scan: `buildable` reads no key's flags.
+            let (node, flags) = (self.keys[key].0, mem::take(&mut self.keys[key].1));
             let mut consulted = Vec::new();
-            if self.buildable(self.slots[node][s][f], &flags, &mut consulted) {
+            let buildable = self.buildable(self.slots[node][s][f], &flags, &mut consulted);
+            self.keys[key].1 = flags;
+            if buildable {
                 let remaining = &mut self.pending[key][s].0;
                 *remaining -= 1;
                 if *remaining == 0 {
@@ -779,7 +784,7 @@ impl Buildable {
     /// Marks `key` built, and queues each field waiting for it whose wait is live.
     fn build(&mut self, key: usize) {
         self.built[key] = true;
-        for (k, s, f, scan) in std::mem::take(&mut self.waiting[key]) {
+        for (k, s, f, scan) in mem::take(&mut self.waiting[key]) {
             let live = &mut self.pending[k][s].1[f];
             if *live == scan {
                 *live = 0;

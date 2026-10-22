@@ -1201,6 +1201,18 @@ fn what_inference_reports() {
     assert!(d.help().is_some());
 }
 
+/// A type parameter and a built-in type take no type arguments.
+#[test]
+fn parameters_and_built_ins_take_no_type_arguments() {
+    codes(
+        "fn g<T>(x: T<i64>, y: i64<bool>) {}\nfn main() {}",
+        &[
+            (Code::TypeArguments, (1, 13)),
+            (Code::TypeArguments, (1, 26)),
+        ],
+    );
+}
+
 /// A generic call's arguments in each form reach the report of a non-generic one, and an
 /// argument whose type cannot fit its parameter's leaves the parameter to the others.
 #[test]

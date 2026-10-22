@@ -49,7 +49,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
     let halves: Vec<(usize, Token)> = tokens
         .iter()
         .enumerate()
-        .filter(|(_, t)| t.kind == TokenKind::Ge)
+        .filter(|(_, t)| matches!(t.kind, TokenKind::Ge))
         .map(|(i, t)| {
             let span = Span::new(t.span.start() + 1, t.span.end());
             (
@@ -311,18 +311,27 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+    // Inlined: the parser peeks at every token, and a split `>=` is rare.
+    #[inline]
     fn peek(&self) -> &'a Token {
         if self.split == Some(self.pos) {
-            let half = self
-                .halves
-                .binary_search_by_key(&self.pos, |(i, _)| *i)
-                .expect("a split token should be a `>=`, which `halves` holds");
-            return &self.halves[half].1;
+            return self.half();
         }
         // `Eof` is last and never consumed, so `pos` stays in range.
         &self.tokens[self.pos]
     }
 
+    /// The `=` left of the split `>=` at `pos`.
+    #[cold]
+    fn half(&self) -> &'a Token {
+        let half = self
+            .halves
+            .binary_search_by_key(&self.pos, |(i, _)| *i)
+            .expect("a split token should be a `>=`, which `halves` holds");
+        &self.halves[half].1
+    }
+
+    #[inline]
     fn bump(&mut self) -> &'a Token {
         let token = self.peek();
         if token.kind != TokenKind::Eof {
@@ -331,11 +340,13 @@ impl<'a> Parser<'a> {
         token
     }
 
+    #[inline]
     fn at(&self, kind: &TokenKind) -> bool {
         self.peek().kind == *kind
     }
 
     /// Consumes the next token if it is `kind`.
+    #[inline]
     fn eat(&mut self, kind: &TokenKind) -> Option<&'a Token> {
         self.at(kind).then(|| self.bump())
     }

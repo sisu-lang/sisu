@@ -590,3 +590,20 @@ fn seed_bookkeeping_is_linear() {
     assert_eq!((deduped, counters), (2 * n, n));
     assert_eq!(reuses, vec![true]);
 }
+
+/// Each instantiation is a mir function of its own, so inference gives each its own flags: a
+/// `string` that `peek` only reads is borrowed, and one that `keep` stores is owned.
+#[test]
+fn instantiations_infer_their_own_modes() {
+    let printed = built(
+        "fn peek<T>(x: T) -> i64 { 0 }\nfn keep<T>(x: T) -> [T] { [x] }\n\
+         fn main() {\n    print(peek(\"s\"))\n    print(peek(1))\n    print(keep(\"s\").len())\n    print(keep(1).len())\n}",
+    );
+    signature(
+        &printed,
+        "peek<string>",
+        "fn peek<string>(x#0: borrow string)",
+    );
+    signature(&printed, "peek<i64>", "fn peek<i64>(x#0: i64)");
+    signature(&printed, "keep<string>", "fn keep<string>(x#0: string)");
+}

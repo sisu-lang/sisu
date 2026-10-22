@@ -96,7 +96,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             TypeKind::Enum(id, _) => Some(self.enum_layout(id).ty.into()),
             TypeKind::Param(..) => {
-                panic!("type parameters reach codegen until mono lands in Task 6")
+                panic!("mono should replace every type parameter before codegen")
             }
             TypeKind::Optional(payload) => match self
                 .llvm_type(payload)
