@@ -4,7 +4,7 @@
 use std::fmt;
 
 use super::expr::{no_member, postfix};
-use super::generic::{GenericSig, Site, mark, mismatched};
+use super::generic::{GenericSig, Site, could_be_value, mark, mismatched};
 use super::number;
 use super::prelude::PRELUDE;
 use super::{
@@ -169,6 +169,22 @@ impl Checker<'_> {
             })
     }
 
+    /// Whether `member` of `base`, a path, is a value, whose `<` and `>` were comparisons when
+    /// type arguments follow it: a variant without a payload of an enum `base` names without
+    /// type arguments, or a constant of `f64`, or another language's name for one.
+    fn type_member_value(&self, base: &ast::Expr, member: &ast::Ident) -> bool {
+        let ExprKind::Name(name) = base.kind else {
+            return false;
+        };
+        if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
+            let info = &self.enums[id.0];
+            return (info.index.get(&member.name))
+                .is_some_and(|&variant| info.variants[variant].fields.is_empty());
+        }
+        built_in_type(name.as_str()) == Some(Type::F64)
+            && number::constant_named(member.name.as_str()).is_some()
+    }
+
     /// `receiver.method<types>(args)` as written, the type arguments in `angles`, `(args)` at
     /// `parens`, which `safe` makes `receiver?.method(args)`. A type or `math` before the `.`
     /// may make it an idiom. Type arguments on a member the receiver has not are not reported:
@@ -191,6 +207,10 @@ impl Checker<'_> {
             self.stray(args);
             return Err(Poisoned::error());
         }
+        if path && self.type_member_value(receiver, method) {
+            self.stray(args);
+            return Err(self.misread(receiver.span.to(method.span), types.first()));
+        }
         // Whether the list is reported only once the member is found: a path's, or a built-in's.
         let mut deferred = path;
         let checked = if !safe
@@ -211,6 +231,14 @@ impl Checker<'_> {
                             TypeKind::Array(_) | TypeKind::String | TypeKind::I64 | TypeKind::F64
                         )
                     });
+                    // A built-in's method takes no type arguments, so two that could be values
+                    // were comparisons.
+                    if deferred && types.len() > 1 && could_be_value(first) {
+                        deferred = false;
+                        c.stray(args);
+                        let at = receiver.span.to(method.span);
+                        return Err(c.misread(at, Some(first)));
+                    }
                 }
                 c.method_call(span, checked, receiver, site, args)
             })

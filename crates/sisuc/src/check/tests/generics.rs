@@ -198,6 +198,40 @@ fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
     ] {
         codes(&format!("{line}\n{decls}"), &expected);
     }
+    // Any `a<b, c>(d)` that does not check hides the count, whatever `a` is: a member of a type
+    // that is a value, and a built-in's method, are compared, and an unknown name is reported
+    // alone. One that checks, or a list without a comma, does not.
+    for (line, expected) in [
+        (
+            "fn f(x: f64) -> bool { h(f64.pi < x, x > (1.0)) }",
+            vec![(Code::TypeArguments, (1, 26))],
+        ),
+        (
+            "fn f(b: i64) -> bool { h(U.A < b, b > (1)) }\nenum U { A }",
+            vec![(Code::TypeArguments, (1, 26))],
+        ),
+        (
+            "fn f(b: i64) -> bool { h(undefined < b, b > (1)) }",
+            vec![(Code::FunctionNotFound, (1, 26))],
+        ),
+        (
+            "fn f(a: [i64], b: i64) -> bool { h(a.len < b, b > (1)) }",
+            vec![(Code::TypeArguments, (1, 36))],
+        ),
+        (
+            "fn f() -> bool { h(undefined<i64>(1)) }",
+            vec![
+                (Code::ArgumentCount, (1, 18)),
+                (Code::FunctionNotFound, (1, 20)),
+            ],
+        ),
+        (
+            "fn f() -> bool { h(two<i64, bool>(1, true)) }\nfn two<T, U>(t: T, u: U) -> bool { true }",
+            vec![(Code::ArgumentCount, (1, 18))],
+        ),
+    ] {
+        codes(&format!("{line}\n{decls}"), &expected);
+    }
     // Each row and the row its help corrects, which checks clean.
     let head = "fn f(a: i64, b: i64, c: i64, d: i64, x: bool?) -> C {\n    ";
     let body = |call: &str| {

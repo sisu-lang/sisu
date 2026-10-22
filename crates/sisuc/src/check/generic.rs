@@ -20,6 +20,13 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
 
+/// Whether the type argument `arg` could be a value: a name that is not a built-in type, with
+/// no `?`.
+pub(super) fn could_be_value(arg: &ast::TypeExpr) -> bool {
+    !arg.optional
+        && matches!(arg.kind, ast::TypeKind::Name(n) if built_in_type(n.as_str()).is_none())
+}
+
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
 /// the receiver, an argument or the expected type fixes it.
 pub(super) struct Bindings {
@@ -826,10 +833,7 @@ impl Checker<'_> {
     /// and `first` could be a value: a name that is not a built-in type, with no `?`.
     pub(super) fn misread(&mut self, name: Span, first: Option<&ast::TypeExpr>) -> Poisoned {
         self.body.misread.insert(name.start());
-        let first = first.filter(|first| {
-            !first.optional
-                && matches!(first.kind, ast::TypeKind::Name(n) if built_in_type(n.as_str()).is_none())
-        });
+        let first = first.filter(|first| could_be_value(first));
         let text = self.source.text;
         self.report(DiagnosticKind::TypeArguments {
             name: text[name.start()..name.end()].to_string(),
@@ -839,6 +843,20 @@ impl Checker<'_> {
             },
         });
         Poisoned::error()
+    }
+
+    /// Marks `span`, an `a<b, c>(d)` whose type arguments `types` took a comma, as misread when
+    /// it does not check: the comma may be its argument list's, whose count is then not
+    /// reported (see `misread_in`).
+    pub(super) fn misread_unless_checked(
+        &mut self,
+        span: Span,
+        types: &[ast::TypeExpr],
+        checked: &Checked,
+    ) {
+        if types.len() > 1 && checked.is_err() {
+            self.body.misread.insert(span.start());
+        }
     }
 
     /// The type arguments `types`, in `angles`, written after `name` in an expression, which

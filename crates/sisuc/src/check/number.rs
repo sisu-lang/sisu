@@ -87,7 +87,7 @@ pub(super) fn method(ty: Type, name: &str) -> Option<(MathOp, usize)> {
 
 /// The constant that another language's name means: `PI`, `Infinity` and `inf` are `pi` and
 /// `infinity`.
-fn constant_named(name: &str) -> Option<&'static str> {
+pub(super) fn constant_named(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     let lower = if lower == "inf" { "infinity" } else { &lower };
     CONSTANTS

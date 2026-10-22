@@ -116,7 +116,9 @@ impl Checker<'_> {
                     angles: *angles,
                     expected,
                 };
-                self.call(e.span, site, args)
+                let checked = self.call(e.span, site, args);
+                self.misread_unless_checked(e.span, types, &checked);
+                checked
             }
             ExprKind::Applied {
                 name,
@@ -158,7 +160,9 @@ impl Checker<'_> {
                     angles: *angles,
                     expected,
                 };
-                self.method_expr(e.span, *safe, receiver, site, args, *parens)
+                let checked = self.method_expr(e.span, *safe, receiver, site, args, *parens);
+                self.misread_unless_checked(e.span, types, &checked);
+                checked
             }
             ExprKind::Coalesce { lhs, rhs } => self.coalesce(e.span, lhs, rhs),
             ExprKind::Is { lhs, rhs } => self.is(e.span, lhs, rhs),
