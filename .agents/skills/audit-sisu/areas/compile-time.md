@@ -12,12 +12,13 @@ of its own so that `target/release` stays as it is. From the repository
 root:
 
 ```console
-$ CARGO_PROFILE_RELEASE_DEBUG=line-tables-only CARGO_PROFILE_RELEASE_STRIP=none cargo build --release --locked -p sisuc -p sisu-runtime --target-dir <RUN>/compile-time/target
+$ CARGO_PROFILE_RELEASE_DEBUG=line-tables-only CARGO_PROFILE_RELEASE_STRIP=none cargo build --release --locked -p sisuc -p sisu-runtime-mimalloc --target-dir <RUN>/compile-time/target
 ```
 
 In this area, `P=<RUN>/compile-time/target/release/sisu` takes the place of
 `S`, in probes and in Repro blocks. `sisu` finds the runtime next to
-itself, which is why the build names `sisu-runtime` too.
+itself, and links `libsisu_runtime_mimalloc.a` by default, which is why the build
+names `sisu-runtime-mimalloc` too.
 
 Generate the inputs. `large_input` in `scripts/codspeed-prep.sh` is the
 program CodSpeed's `check_large` and `build_large` benchmarks compile: copy

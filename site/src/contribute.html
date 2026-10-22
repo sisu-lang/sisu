@@ -4,7 +4,7 @@ How to help with Sisu, a one-person learning project at an early stage.
   <section class="ph"><div class="w">
     <h1>Contribute to Sisu</h1>
     <p class="lede">One person builds Sisu, in the open. It is a learning project at an early stage, so there is no team to hand work to yet. This page says what help fits, how to build the compiler, and which checks a change must pass.</p>
-    <p class="meta">Checked against the repository at commit ade4c3b.</p>
+    <p class="meta">Checked against the repository at commit 7d4d6d0.</p>
   </div></section>
   <!-- source: CONTRIBUTING.md ("Sisu is a solo learning project"), README.md ("a passion project at an early stage") -->
 
@@ -62,11 +62,11 @@ How to help with Sisu, a one-person learning project at an early stage.
 $ git clone https://github.com/sisu-lang/sisu
 $ cd sisu
 $ make setup     # once per clone: LLVM 23 into .llvm/23, the pre-commit hook
-$ make build     # cargo build --workspace: sisu and the runtime library
+$ make build     # cargo build --workspace: sisu and the two runtime archives
 $ target/debug/sisu build crates/sisuc/tests/run/fib.sisu
 $ ./fib
 {{text ../crates/sisuc/tests/run/fib.out}}</pre></figure>
-      <p>Build the whole workspace, not only <code>sisu</code>. Every program links with the runtime library, which <code>sisu</code> looks for next to its own executable; <code>cargo build -p sisuc</code> does not build it. <code>make help</code> lists every target.</p>
+      <p>Build the whole workspace, not only <code>sisu</code>. Every program links with a runtime archive, <code>libsisu_runtime_mimalloc.a</code> or, with <code>--allocator system</code>, <code>libsisu_runtime_system.a</code>, which <code>sisu</code> looks for next to its own executable; <code>cargo build -p sisuc</code> does not build it. <code>make help</code> lists every target.</p>
       <p><a href="https://github.com/sisu-lang/sisu/blob/main/docs/development.md">Developing Sisu</a> has the full list of prerequisites and commands.</p>
       <!-- source: docs/development.md ("Prerequisites", "Set up a clone", "Compile and run a program"), rust-toolchain.toml (channel 1.99.0), Makefile (setup, build), README.md (x86-64 and ARM64 Linux, ARM64 macOS); fib output from crates/sisuc/tests/run/fib.out, which the end-to-end tests check -->
 
@@ -79,7 +79,7 @@ $ make miri      # only when you change crates/runtime
 $ make verify    # coverage, then mutants, on your diff
 </pre></figure>
       <ul>
-        <li><code>make test</code> runs the tests with nextest, not <code>cargo test</code>. Its setup script builds the runtime that the end-to-end tests link against. On Linux, the end-to-end tests run each program under Valgrind.</li>
+        <li><code>make test</code> runs the tests with nextest, not <code>cargo test</code>. Its setup script builds the two runtime archives that the end-to-end tests link against. On Linux, the end-to-end tests run each program under Valgrind.</li>
         <li>Clippy and the compiler run with <code>-D warnings</code>, so one warning fails CI. Silence a single site with <code>#[expect(lint, reason = "...")]</code>, never a bare <code>#[allow]</code>.</li>
         <li><code>make miri</code> runs the runtime's unit tests under Miri on nightly, which stops at undefined behaviour. CI runs it too.</li>
         <li><code>make verify</code> ends with one line, <code>verify: PASS</code> or <code>verify: FAIL</code>. Cover or explain each uncovered region, and kill or explain each surviving mutant.</li>

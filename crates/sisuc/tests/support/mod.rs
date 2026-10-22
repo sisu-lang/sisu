@@ -7,14 +7,16 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 
-/// `sisu build <flags> <input> -o <output>`, run from `dir`, after asserting the runtime archive
-/// exists.
+/// `sisu build <flags> <input> -o <output>`, run from `dir`, after asserting both runtime archives
+/// exist.
 pub(crate) fn sisu(dir: &Path, input: &str, output: &Path, flags: &[&str]) -> Command {
     let sisu = Path::new(env!("CARGO_BIN_EXE_sisu"));
     assert!(
-        sisu.with_file_name("libsisu_runtime.a").exists(),
-        "libsisu_runtime.a is missing: run the tests with `cargo nextest run`, whose setup \
-         script builds it, or run `cargo build -p sisu-runtime`"
+        ["libsisu_runtime_mimalloc.a", "libsisu_runtime_system.a"]
+            .iter()
+            .all(|archive| sisu.with_file_name(archive).exists()),
+        "libsisu_runtime_mimalloc.a or libsisu_runtime_system.a is missing: run the tests with \
+         `cargo nextest run`, whose setup script builds both, or run `cargo build --workspace`"
     );
     let mut command = Command::new(sisu);
     command
@@ -86,9 +88,11 @@ impl Invocation {
 
     /// Runs `exe` with this standard input and these arguments; with `valgrind` on Linux, under
     /// Valgrind, where any leak or memory error makes it exit 1. Elsewhere Valgrind does not
-    /// run, so `exe` runs natively and the Linux jobs alone check for leaks.
+    /// run, so `exe` runs natively and the Linux jobs alone check for leaks. On Linux it refuses
+    /// a build that links mimalloc, before Valgrind starts (see `refuse_mimalloc`).
     pub(crate) fn run(&self, exe: &Path, valgrind: bool) -> Output {
         let mut command = if valgrind && cfg!(target_os = "linux") {
+            refuse_mimalloc(exe);
             let mut command = Command::new("valgrind");
             command
                 .args([
@@ -104,6 +108,48 @@ impl Invocation {
         command.args(&self.args);
         output_with_stdin(&mut command, &self.stdin)
     }
+}
+
+/// `sisu`'s flags for a build that runs under Valgrind: on Linux, the runtime on the System
+/// allocator, since Valgrind sees no block that mimalloc hands out. Valgrind runs nowhere else.
+pub(crate) const VALGRIND_FLAGS: &[&str] = if cfg!(target_os = "linux") {
+    &["--allocator", "system"]
+} else {
+    &[]
+};
+
+/// Panics unless `nm --defined-only` lists `exe`'s symbols, `sisu_alloc` among them, and no
+/// `mi_malloc_aligned`, the function mimalloc's global allocator calls. It reads symbols, not
+/// bytes, so a program whose text holds that name passes; a stripped build, or a failed `nm`,
+/// stops the run rather than passing it.
+fn refuse_mimalloc(exe: &Path) {
+    let out = Command::new("nm")
+        .arg("--defined-only")
+        .arg(exe)
+        .output()
+        .expect("nm starts");
+    assert!(
+        out.status.success(),
+        "`nm --defined-only {}` failed: {:?}\n{}",
+        exe.display(),
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let listing = String::from_utf8_lossy(&out.stdout);
+    let names: Vec<&str> = listing
+        .lines()
+        .filter_map(|line| line.split_whitespace().last())
+        .collect();
+    assert!(
+        names.contains(&"sisu_alloc"),
+        "{}: `nm` lists no `sisu_alloc`, so the allocator it links is unknown",
+        exe.display()
+    );
+    assert!(
+        !names.contains(&"mi_malloc_aligned"),
+        "{} links mimalloc, whose blocks Valgrind cannot see: build it with `--allocator system`",
+        exe.display()
+    );
 }
 
 /// Runs `command` with `stdin` written to its standard input, and collects its output. A
@@ -150,7 +196,7 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
 /// With `bless`, rewrites `<name>.out`, and `<name>.err` when it exists, instead, after every
 /// other check passed.
 pub(crate) fn run(path: &Path, bless: bool) {
-    let [o0, o2, rc] = build(path, [O0, O2, RC_CHECKS]);
+    let [o0, o2, rc] = build(path, [VALGRIND_O0, VALGRIND_O2, RC_CHECKS]);
     assert!(
         fs::read(&o0).expect("reads the plain build")
             != fs::read(&o2).expect("reads the -O2 build"),
@@ -386,6 +432,18 @@ type Build = (&'static str, &'static [&'static str]);
 const O0: Build = ("O0", &[]);
 const O2: Build = ("O2", &["-O2"]);
 const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
+/// `O0` and `O2` for `run`, whose plain builds also run under Valgrind.
+const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
+// Repeats `VALGRIND_FLAGS`' values after `-O2`, and must stay in step with them: a const cannot
+// concatenate slices.
+const VALGRIND_O2: Build = (
+    "O2",
+    if cfg!(target_os = "linux") {
+        &["-O2", "--allocator", "system"]
+    } else {
+        &["-O2"]
+    },
+);
 
 /// Compiles `path` once for each of `builds` into its `case_dir`, and returns the executables.
 fn build<const N: usize>(path: &Path, builds: [Build; N]) -> [PathBuf; N] {

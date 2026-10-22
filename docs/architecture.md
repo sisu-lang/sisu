@@ -8,7 +8,7 @@ system C compiler `cc`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="architecture/sisu-pipeline-dark.svg">
-  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker, mir and codegen to LLVM, and the link step combines the object file with sisu-runtime into an executable." src="architecture/sisu-pipeline-light.svg">
+  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker, mir and codegen to LLVM, and the link step combines the object file with one of the two runtime archives into an executable." src="architecture/sisu-pipeline-light.svg">
 </picture>
 
 This page stays at the level of stages and the data between them. The code
@@ -156,9 +156,15 @@ fails when an export has no row, or a row's types differ from its signature.
 `sisu_alloc` and `sisu_free` carry LLVM's allocator attributes as a pair. At
 `-O2` LLVM may delete an allocation and its free, including when it can compute
 every value the program reads without the heap block, such as an array's length
-or an element of a fill. An allocation too large for the machine aborts with
-exit code 134 when its allocator call remains; at `-O0` every such allocation
-aborts.
+or an element of a fill. The largest allocation the size checks allow
+(about 2^63 bytes) aborts with exit code 134 when its allocator call remains;
+at `-O0` every such allocation aborts. On Linux, a smaller request that the
+machine cannot back can succeed in a default build, because mimalloc maps
+memory without reserving it and the kernel overcommits; the program may then
+end with 137, from the out-of-memory killer, once it touches memory the
+machine cannot back. An allocation can still fail at once with 134, when the
+kernel refuses a request far beyond RAM plus swap
+([ADR 0031](adr/0031-compiled-programs-allocate-with-mimalloc.md)).
 
 `codegen/layout.rs` holds how a value sits in memory: the LLVM type of each
 Sisu type, the layouts of an object, an array block and a string block, the
@@ -230,16 +236,18 @@ or with `-O2` or `-O3` the `default<O2>` or `default<O3>` pipeline. Then it
 emits object code for the machine `sisu` runs on, x86-64 or ARM64.
 
 **Link step** (`link.rs`). Before it compiles, the driver checks that
-`libsisu_runtime.a` and the output's directory exist, so a missing one fails
-at once. The link step writes the object code to a fresh temporary file
-and runs `cc` on it together with `libsisu_runtime.a`. `cc` adds the C
-startup code and libc and writes the executable, through its default linker
-or the one `--linker` names. The temporary file is removed whether or not the
-link succeeds.
+the runtime archive and the output's directory exist, so a missing one fails
+at once. `--allocator` picks the archive: `libsisu_runtime_mimalloc.a` by
+default, `libsisu_runtime_system.a` for `--allocator system`. The link step
+writes the object code to a fresh temporary file and runs `cc` on it together
+with that archive. `cc` adds the C startup code and libc and writes the
+executable, through its default linker or the one `--linker` names. The
+temporary file is removed whether or not the link succeeds.
 
-**Runtime** (`crates/runtime`). A Rust static library with a C ABI, linked
-into every program. Generated code calls it to print values, to read lines,
-to panic and to allocate and free objects, arrays and strings:
+**Runtime** (`crates/runtime`). A Rust library with a C ABI. The two static
+archives `sisu-runtime-mimalloc` and `sisu-runtime-system` link it, and every
+program links one of them. Generated code calls it to print values, to read
+lines, to panic and to allocate and free objects, arrays and strings:
 `sisu_print_int`, `sisu_print_f64`, `sisu_print_bool`, `sisu_eprint_int`,
 `sisu_eprint_f64`, `sisu_eprint_bool`,
 `sisu_flush_stdout`, `sisu_panic`, `sisu_panic_message`, `sisu_panic_bounds`,

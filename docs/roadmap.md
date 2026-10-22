@@ -1129,9 +1129,10 @@ These do not make code nicer to write, so they wait:
   bitcode and link it into the program's module, so LLVM can inline runtime
   calls such as `sisu_alloc` and `sisu_free`. The reference-count helpers
   (`@sisu_rc.*`) are already generated into each program, so LLVM inlines
-  them today. On the binary_trees benchmark, a direct call to `malloc` ran
-  no faster than `sisu_alloc` ([Benchmarks](benchmarks.md)), so wait for a benchmark
-  that shows runtime calls matter.
+  them today. On the binary_trees benchmark with glibc, a direct call to
+  `malloc` ran no faster than `sisu_alloc`. With mimalloc, `sisu_alloc` and
+  `sisu_free` take 20% of the program's instructions, and no direct call has
+  been timed ([Benchmarks](benchmarks.md)), so time one before building this.
 
   Bitcode ties two LLVM versions together. LLVM reads bitcode written by
   older releases, not newer ones, so `sisu`'s LLVM must read what the pinned
@@ -1264,13 +1265,14 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
   feeds generated programs to the parser, checker and codegen to find
   crashes or wrong code.
 - **Distributing `sisu`.** Nothing installs Sisu outside a clone. `sisu`
-  finds `libsisu_runtime.a` only next to its own executable in a Cargo target
-  directory (`link.rs`), and it links with `cc`, so users need a C toolchain.
+  finds `libsisu_runtime_mimalloc.a` and `libsisu_runtime_system.a` only next
+  to its own executable in a Cargo target directory (`link.rs`), and it links
+  with `cc`, so users need a C toolchain.
   The release binary links LLVM statically but needs glibc, libstdc++,
   libgcc_s, libm, zlib and zstd. A compiled program needs glibc and
-  libgcc_s. A first release ships the runtime beside `sisu` and finds it
-  there, and is built on an old glibc with libstdc++, zlib and zstd linked
-  statically, then tested on a clean machine. A fully static `sisu` built
+  libgcc_s. A first release ships the two runtime archives beside `sisu` and
+  finds them there, and is built on an old glibc with libstdc++, zlib and zstd
+  linked statically, then tested on a clean machine. A fully static `sisu` built
   against musl needs LLVM built from source against musl. Static compiled
   programs need the runtime built for `x86_64-unknown-linux-musl` and a link
   against musl's C library.

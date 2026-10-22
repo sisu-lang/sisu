@@ -14,7 +14,7 @@ out=target/codspeed
 large_sections=200
 small_sections=20
 
-cargo build --release --locked -p sisuc -p sisu-runtime
+cargo build --release --locked -p sisuc -p sisu-runtime-mimalloc
 rm -rf "$out"
 mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite}
 

@@ -9,7 +9,7 @@ use clap::{ArgGroup, Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
 use crate::codegen::OptLevel;
 use crate::report::Format;
-use crate::{Backend, Mode, Source, Stage};
+use crate::{Allocator, Backend, Mode, Source, Stage};
 
 /// The Sisu compiler.
 #[derive(Parser)]
@@ -105,6 +105,13 @@ struct BuildFlags {
     /// Link with `ld.<linker>` in place of `cc`'s default linker
     #[arg(long, value_parser = ["bfd", "gold", "lld", "mold"])]
     linker: Option<String>,
+    /// Allocate with mimalloc, or with the system's allocator for Valgrind and ASan
+    #[expect(
+        clippy::doc_markdown,
+        reason = "this doc comment is `--help` text, where backticks around ASan would print"
+    )]
+    #[arg(long, value_enum)]
+    allocator: Option<Allocator>,
     /// How to print diagnostics: as text, or as JSON Lines.
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
@@ -117,6 +124,7 @@ impl BuildFlags {
             level: self.level.unwrap_or(OptLevel::O0),
             rc_checks: self.rc_checks,
             linker: self.linker,
+            allocator: self.allocator,
         };
         (self.format, backend)
     }
@@ -237,6 +245,11 @@ fn build_mode(
     if backend.linker.is_some() {
         return Err(build_error(
             "`--linker` works only when building an executable",
+        ));
+    }
+    if backend.allocator.is_some() {
+        return Err(build_error(
+            "`--allocator` works only when building an executable",
         ));
     }
     Ok(Mode::Emit {

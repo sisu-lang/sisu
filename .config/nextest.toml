@@ -130,7 +130,7 @@ valgrind = { max-threads = 4 }
 # The `bless_`, `same_name_in_two_modes` and `run_err_lifecycle` fixtures call `support::run`,
 # which runs Valgrind.
 [[profile.default.overrides]]
-filter = "binary(programs) & (test(allocation_counts) | test(valgrind_reports_a_cycle) | test(read_line_refills_its_buffer) | test(/^bless_/) | test(same_name_in_two_modes) | test(run_err_lifecycle))"
+filter = "binary(programs) & (test(allocation_counts) | test(valgrind_reports_a_cycle) | test(valgrind_runs_refuse_a_mimalloc_build) | test(read_line_refills_its_buffer) | test(/^bless_/) | test(same_name_in_two_modes) | test(run_err_lifecycle))"
 test-group = "valgrind"
 
 # Each case compiles twice and runs under Valgrind; a hang is killed after three minutes. The

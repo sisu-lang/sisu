@@ -1053,6 +1053,38 @@ fn o3_and_linker_combinations_are_usage_errors() {
     );
 }
 
+/// `--allocator` names one of the two runtimes, and goes with a build only, once: neither
+/// runtime changes the emitted IR, so even the default, `mimalloc`, is refused with `--emit`.
+#[test]
+fn allocator_goes_with_a_build_only() {
+    let stderr = assert_usage_errors(&[&["build", "--allocator", "glibc", "f.sisu", "-o", "out"]]);
+    assert!(
+        stderr.contains("mimalloc") && stderr.contains("system"),
+        "{stderr}"
+    );
+    assert_usage_errors(&[
+        &["check", "--allocator", "system", "f.sisu"],
+        &[
+            "build",
+            "--allocator",
+            "system",
+            "--allocator",
+            "system",
+            "f.sisu",
+            "-o",
+            "out",
+        ],
+    ]);
+    for allocator in ["mimalloc", "system"] {
+        let stderr =
+            assert_usage_errors(&[&["build", "--allocator", allocator, "--emit", "ir", "f.sisu"]]);
+        assert!(
+            stderr.starts_with("error: `--allocator` works only when building an executable\n"),
+            "{allocator}: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn emit_ir_raw_parses_back() {
     let out = run_on(
@@ -1518,6 +1550,8 @@ fn missing_runtime_is_found_before_the_compile() {
     for args in [
         &["build", "one.sisu", "-o", "one"][..],
         &["run", "one.sisu"],
+        &["build", "--allocator", "system", "one.sisu", "-o", "one"],
+        &["run", "--allocator", "system", "one.sisu"],
     ] {
         let out = Command::new(&sisu)
             .current_dir(&dir)
@@ -1531,6 +1565,12 @@ fn missing_runtime_is_found_before_the_compile() {
             stderr.starts_with("sisu: runtime library not found at "),
             "{args:?}: {stderr}"
         );
+        let archive = if args.contains(&"system") {
+            "/libsisu_runtime_system.a;"
+        } else {
+            "/libsisu_runtime_mimalloc.a;"
+        };
+        assert!(stderr.contains(archive), "{args:?}: {stderr}");
     }
 }
 
@@ -1962,6 +2002,31 @@ fn run_takes_build_flags() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "0\n");
+    assert_empty(&tmp);
+}
+
+/// `sisu run` links the runtime `--allocator` names: mimalloc by default, which writes
+/// `mimalloc:` lines to stderr under `MIMALLOC_VERBOSE=1`, and with `system` a runtime that
+/// holds no mimalloc.
+#[test]
+fn run_takes_the_allocator_flag() {
+    let tmp = scratch_path::empty_dir("run_takes_the_allocator_flag");
+    for (flags, mimalloc) in [(&[][..], true), (&["--allocator", "system"], false)] {
+        let out = sisu_run(&tmp)
+            .env("MIMALLOC_VERBOSE", "1")
+            .args(flags)
+            .args(["-e", "fn main() {\n    print(1)\n}\n"])
+            .output()
+            .expect("sisu starts");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{flags:?}: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "1\n", "{flags:?}");
+        assert_eq!(
+            stderr.contains("mimalloc:"),
+            mimalloc,
+            "{flags:?}: {stderr}"
+        );
+    }
     assert_empty(&tmp);
 }
 

@@ -1,14 +1,11 @@
 [package]
 name = "sisu-runtime"
-description = "Runtime library linked into every compiled Sisu program"
+description = "The Sisu runtime, which the archives libsisu_runtime_mimalloc.a and libsisu_runtime_system.a link"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
-
-[lib]
-crate-type = ["staticlib"]
 
 [lints]
 workspace = true

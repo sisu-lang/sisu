@@ -1,8 +1,10 @@
 /* Checks that every sisu_free and sisu_realloc gets the size and alignment
- * its block was allocated with. Neither ASan nor Valgrind can: the runtime
- * frees through Rust's System allocator, which calls plain free(). Link it
- * with -Wl,--wrap=sisu_alloc,--wrap=sisu_free,--wrap=sisu_realloc (see
- * toolbox.md, "Memory"). */
+ * its block was allocated with. Neither ASan nor Valgrind can: the system
+ * archive, libsisu_runtime_system.a, frees through Rust's System allocator,
+ * which calls plain free(). mimalloc does not check sizes either, so the
+ * shim's own table is still needed. Link it with
+ * -Wl,--wrap=sisu_alloc,--wrap=sisu_free,--wrap=sisu_realloc (see toolbox.md,
+ * "Memory"). */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

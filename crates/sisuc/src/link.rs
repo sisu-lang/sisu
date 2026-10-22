@@ -4,6 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::Allocator;
+
 /// What a link needs besides the object file.
 pub(crate) struct Linking<'a> {
     /// The runtime library, found before the compile.
@@ -63,11 +65,15 @@ fn on_path(program: &str) -> bool {
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
-/// Cargo builds `libsisu_runtime.a` into the same directory as `sisu`.
+/// The runtime archive on `allocator`, which Cargo builds into the same directory as `sisu`:
+/// `libsisu_runtime_mimalloc.a` or `libsisu_runtime_system.a`.
 // shortcut: Cargo target directories only; add a search path once sisu installs elsewhere.
-pub(crate) fn runtime_library() -> Result<PathBuf, String> {
+pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot locate sisu: {e}"))?;
-    let path = exe.with_file_name("libsisu_runtime.a");
+    let path = exe.with_file_name(match allocator {
+        Allocator::Mimalloc => "libsisu_runtime_mimalloc.a",
+        Allocator::System => "libsisu_runtime_system.a",
+    });
     if path.is_file() {
         Ok(path)
     } else {

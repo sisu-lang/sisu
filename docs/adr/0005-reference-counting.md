@@ -5,8 +5,10 @@ adds 1 when a reference is copied and subtracts 1 when one is dropped, and
 the object is freed when the count reaches 0. We chose this so memory is
 managed for you (ADR 0004) with no runtime beyond an allocator: every count
 change is ordinary IR that `--emit ir` shows, objects are freed at a known
-point, and Valgrind can prove a program frees everything. Swift works the same
-way. See the milestone 2 spec, "Reference counting".
+point, and Valgrind can prove a program frees everything (when it is built with
+`--allocator system`; see
+[ADR 0031](0031-compiled-programs-allocate-with-mimalloc.md)). Swift works the
+same way. See the milestone 2 spec, "Reference counting".
 
 ## Considered options
 

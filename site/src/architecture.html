@@ -15,13 +15,13 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisu</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit b4167d6 · x86-64 and ARM64 Linux, ARM64 macOS</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit 7d4d6d0 · x86-64 and ARM64 Linux, ARM64 macOS</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 and ARM64 Linux, ARM64 macOS) -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
-      <li><a href="#crates">The two crates</a></li>
+      <li><a href="#crates">The four crates</a></li>
       <li><a href="#pipeline">The pipeline</a></li>
       <li><a href="#memory">Memory</a></li>
       <li><a href="#runtime">The runtime</a></li>
@@ -31,13 +31,15 @@ How the Sisu compiler turns source text into a native executable, one stage at a
     </ol></nav>
 
     <article class="prose">
-      <h2 id="crates">The two crates</h2>
-      <p>The repository is one Cargo workspace with two crates. Both are written in Rust.</p>
+      <h2 id="crates">The four crates</h2>
+      <p>The repository is one Cargo workspace with four crates. All are written in Rust.</p>
       <div class="tbl-wrap"><table class="tbl">
         <thead><tr><th>Crate</th><th>What it is</th></tr></thead>
         <tbody>
           <tr><td><code>sisuc</code></td><td>In <code>crates/sisuc</code>. The compiler. A library that holds every stage, and a small binary that runs it.</td></tr>
-          <tr><td><code style="white-space:nowrap">sisu-runtime</code></td><td>In <code>crates/runtime</code>. A static library with a C ABI, linked into every compiled program.</td></tr>
+          <tr><td><code style="white-space:nowrap">sisu-runtime</code></td><td>In <code>crates/runtime</code>. The runtime's code: a library with a C ABI.</td></tr>
+          <tr><td><code style="white-space:nowrap">sisu-runtime-mimalloc</code></td><td>In <code>crates/runtime-mimalloc</code>. A static library that links <code>sisu-runtime</code> and allocates with mimalloc. Compiled programs link it by default.</td></tr>
+          <tr><td><code style="white-space:nowrap">sisu-runtime-system</code></td><td>In <code>crates/runtime-system</code>. The same, on the System allocator, for Valgrind and ASan.</td></tr>
         </tbody>
       </table></div>
       <p>The driver, <code>crates/sisuc/src/lib.rs</code>, reads the command line, runs the stages in order and prints diagnostics. <code>args.rs</code> parses the command line with clap into a mode, and <code>run.rs</code> links a program into a private temporary directory, runs it and removes the directory. The <code>sisu</code> binary, <code>main.rs</code>, runs the driver on a thread with a 64 MiB stack. The compiler reads at most 1 GiB of source, so every position in the file fits in 32 bits.</p>
@@ -92,7 +94,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
       <h3>Link</h3>
       <p class="files"><code>crates/sisuc/src/link.rs</code></p>
-      <p>Before it compiles, the driver checks that <code>libsisu_runtime.a</code> and the output's directory exist, so a missing one fails at once. The link step then writes the object code to a fresh temporary file and runs <code>cc</code> on it with <code>libsisu_runtime.a</code>. <code>cc</code> adds the C startup code and libc and writes the executable, through its default linker or the one <code>--linker</code> names. The temporary file is removed whether or not the link succeeds.</p>
+      <p>Before it compiles, the driver checks that the runtime archive and the output's directory exist, so a missing one fails at once. <code>--allocator</code> picks the archive: <code>libsisu_runtime_mimalloc.a</code> by default, <code>libsisu_runtime_system.a</code> for <code>--allocator system</code>. The link step then writes the object code to a fresh temporary file and runs <code>cc</code> on it with that archive. <code>cc</code> adds the C startup code and libc and writes the executable, through its default linker or the one <code>--linker</code> names. The temporary file is removed whether or not the link succeeds.</p>
       <!-- source: docs/architecture.md (The stages), docs/roadmap.md (mid-level IR, mir), src/index.html (flow), docs/development.md (Look inside the compiler), sisu --help -->
 
       <h2 id="memory">Memory</h2>
@@ -105,12 +107,12 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <p>A function cannot change its caller's array. A function that changes an array returns the new one, and the caller writes <code>xs = f(xs)</code>.</p>
 
       <h3>What last use buys</h3>
-      <p>When a local is read for the last time, its reference moves instead of being shared. So in <code>xs = f(xs)</code>, when nothing else holds the array, <code>f</code> holds the only reference and its writes happen in place. This is a language rule, not an optimizer pass, and it never causes an error. The quicksort benchmark shows it: Sisu holds 77.6 MiB, as C does for its one array of 10 000 000 integers.</p>
+      <p>When a local is read for the last time, its reference moves instead of being shared. So in <code>xs = f(xs)</code>, when nothing else holds the array, <code>f</code> holds the only reference and its writes happen in place. This is a language rule, not an optimizer pass, and it never causes an error. The quicksort benchmark shows it: Sisu holds 83.6 MiB, against C's 77.6 MiB for its one array of 10 000 000 integers; the extra 6 MiB is mimalloc's own.</p>
       <p>A loop goes one step further. When it writes a local array that nothing in the loop shares, the compiler makes the array unique once, before the first iteration. The writes inside the loop then skip the count check.</p>
       <!-- source: docs/adr/0005-reference-counting.md, docs/adr/0007-arrays-are-values.md, docs/adr/0008-weak-references.md (status planned per site.js AREAS / roadmap), docs/adr/0021-a-loop-makes-its-written-arrays-unique-before-it-starts.md, docs/benchmarks.md (quicksort on an array value), GLOSSARY.md (Last use, Copy-on-write) -->
 
       <h2 id="runtime">The runtime</h2>
-      <p><code>sisu-runtime</code> is a Rust static library with a C ABI. Generated code calls it for many things, among them these three:</p>
+      <p><code>sisu-runtime</code> is a Rust library with a C ABI, which the two static archives <code>sisu-runtime-mimalloc</code> and <code>sisu-runtime-system</code> link; every program links one. Generated code calls it for many things, among them these three:</p>
       <ul>
         <li><strong>Input and output.</strong> Sisu code reaches the operating system only through the runtime. Standard output goes through a buffer the runtime owns, and <code>main</code> flushes it before it returns. Text crosses the boundary as a pointer and a length. The runtime never builds or reads a Sisu object, so an object's layout lives in one place: codegen.</li>
         <li><strong>Memory.</strong> <code>sisu_alloc</code>, <code>sisu_realloc</code> and <code>sisu_free</code> allocate and free objects, arrays and strings.</li>

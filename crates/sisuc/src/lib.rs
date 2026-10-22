@@ -79,12 +79,23 @@ enum Source {
     Inline(OsString),
 }
 
-/// How an executable is built: the optimization level, the count checks, and the linker.
+/// How an executable is built: the optimization level, the count checks, the linker, and the
+/// allocator.
 struct Backend {
     level: OptLevel,
     rc_checks: bool,
     /// The `-fuse-ld` name `cc` links with; `cc`'s default without one.
     linker: Option<String>,
+    /// The allocator of the runtime the executable links; `None` is mimalloc.
+    allocator: Option<Allocator>,
+}
+
+/// The allocator a compiled program allocates with: the runtime archive it links.
+#[derive(Clone, Copy, Default, clap::ValueEnum)]
+enum Allocator {
+    #[default]
+    Mimalloc,
+    System,
 }
 
 /// The stage `--emit` prints.
@@ -450,7 +461,8 @@ fn build(reporter: &mut Report, input: &Source, output: &Path, backend: &Backend
         return ExitCode::FAILURE;
     }
     // Found here, not by `ld` after a whole compile.
-    let runtime = match link::runtime_library().and_then(|runtime| {
+    let allocator = backend.allocator.unwrap_or_default();
+    let runtime = match link::runtime_library(allocator).and_then(|runtime| {
         check_output(output)?;
         Ok(runtime)
     }) {
@@ -532,6 +544,7 @@ fn compile(
         level,
         rc_checks,
         ref linker,
+        allocator: _,
     } = *backend;
     let mir = mir::build(program);
     let context = Context::create();
