@@ -920,6 +920,17 @@ fn labeled_break_counts_for_outer_never() {
     );
 }
 
+/// `continue nope` in a header, where no loop label `nope` is open, leaves no loop header, so it
+/// is not E0082; until Task 3 reports the missing label, it is E0038, and the header, typed
+/// `never` by it, adds E0043 (the shortcut in `target`).
+#[test]
+fn continue_to_missing_label_in_header_is_not_e0082() {
+    codes(
+        "fn main() {\n    while { continue nope; true } { }\n}",
+        &[(Code::NoValue, (2, 11)), (Code::JumpOutsideLoop, (2, 13))],
+    );
+}
+
 /// A labeled jump out of a header leaves the endless loop it is in untyped, not `never`, so the
 /// header reports neither a missing value nor unreachable code; `E0082-through-loop` covers a
 /// `loop`.

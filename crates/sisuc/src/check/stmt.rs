@@ -730,7 +730,7 @@ impl Checker<'_> {
                 } => {
                     header.get_or_insert(*loop_at);
                     // Only a loop label reaches the loop whose header holds the jump.
-                    if label.is_some() && named(*own) {
+                    if label.is_some_and(|label| *own == Some(label.name)) {
                         found = Some(at);
                         break;
                     }

@@ -3098,6 +3098,12 @@ mod tests {
             body("fn main() {\n    outer:\n    for x in xs { }\n}"),
             "(block (for :outer x xs (block)))"
         );
+        // Before anything but `loop`, `while` or `for`, `name:` is no label, and the `:` is the
+        // error it was before labels.
+        assert_eq!(
+            parse_err("fn main() {\n    x: i64 = 1\n}"),
+            (Code::Expected, 2, 6)
+        );
     }
 
     /// After `break`, a name is the loop label only while a loop with that label is open around
@@ -3489,6 +3495,8 @@ mod tests {
                 "const C = if true { 1 } else { 2 }",
                 "(const C (if true (block 1) (block 2)))",
             ),
+            // A name as the last token is no loop label: no `:` and loop keyword follow it.
+            ("const D = C", "(const D C)"),
         ] {
             assert_eq!(program(src), want, "{src}");
         }
