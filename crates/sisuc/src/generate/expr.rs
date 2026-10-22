@@ -972,7 +972,7 @@ impl Gen<'_> {
         const OPS: [&str; 5] = [" + ", " - ", " * ", " / ", " % "];
         self.w.text("(");
         // `a op b` of `a` in `10..=28` and `b` in `1..=9` fits a `u8` and divides by no zero.
-        let lhs = if matches!(ty, Ty::I64 | Ty::U8) && self.pick(16) != 0 {
+        let lhs = if matches!(ty, Ty::I64 | Ty::U8) && self.pick(8) != 0 {
             let n = self.int(10, 28);
             // With no expected type, a `u8` must be one by its own type (`Gen::expr`).
             if synth && *ty == Ty::U8 {
@@ -995,7 +995,7 @@ impl Gen<'_> {
     /// a literal in `1..=9`, so the arithmetic rarely overflows or divides by zero; else any
     /// expression. Any other `u8` is as likely as not to overflow.
     pub(crate) fn right_operand(&mut self, ty: &Ty) -> Info {
-        if *ty == Ty::U8 || *ty == Ty::I64 && self.pick(16) != 0 {
+        if *ty == Ty::U8 || *ty == Ty::I64 && self.pick(8) != 0 {
             let n = self.int(1, 9);
             self.w.text(&n.to_string());
             return Info::leaf(0);

@@ -76,7 +76,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 20] = [
+const REACH: [&str; 23] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -97,6 +97,9 @@ const REACH: [&str; 20] = [
     "reach: a compound assignment targets a field",
     "reach: a variant is built with labeled fields",
     "reach: a variant is built with positional fields",
+    "reach: `f64` arithmetic or `op=` takes a right operand that is not a literal",
+    "reach: `i64` arithmetic or `op=` takes a right operand that is not a literal",
+    "reach: `i64` or `u8` arithmetic takes a left operand that is not a literal",
 ];
 
 /// Whether a program's text holds a form.
@@ -335,6 +338,14 @@ struct Walk {
     assigns: FxHashSet<usize>,
     /// Whether the walk is in the target of an assignment, which writes an element, not reads it.
     writing: bool,
+    /// Where an arithmetic `+ - * / %` expression outside a constant starts.
+    arithmetic: FxHashSet<usize>,
+    /// Where a compound assignment starts.
+    compounds: FxHashSet<usize>,
+    /// Whether the walk is in a constant's value.
+    in_const: bool,
+    /// How many right operands of `f64` arithmetic and `op=` are literals, and how many are not.
+    f64_rights: [usize; 2],
 }
 
 impl Walk {
@@ -354,6 +365,8 @@ impl Walk {
         self.chains.clear();
         self.adds.clear();
         self.assigns.clear();
+        self.arithmetic.clear();
+        self.compounds.clear();
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -430,7 +443,9 @@ impl Walk {
                     if let Some(ty) = &c.ty {
                         self.type_expr(ty);
                     }
+                    self.in_const = true;
                     self.ast_expr(&c.value);
+                    self.in_const = false;
                 }
             }
         }
@@ -783,6 +798,7 @@ impl Walk {
                 op, target, value, ..
             } => {
                 self.mark("ast::StmtKind::CompoundAssign");
+                self.compounds.insert(stmt.span.start());
                 if *op == ast::BinaryOp::Add && name(target).is_some() {
                     self.adds.insert(stmt.span.start());
                 }
@@ -924,6 +940,18 @@ impl Walk {
             ast::ExprKind::Binary { op, lhs, rhs, .. } => {
                 self.mark("ast::ExprKind::Binary");
                 self.binary_op(*op);
+                if !self.in_const
+                    && matches!(
+                        op,
+                        ast::BinaryOp::Add
+                            | ast::BinaryOp::Sub
+                            | ast::BinaryOp::Mul
+                            | ast::BinaryOp::Div
+                            | ast::BinaryOp::Rem
+                    )
+                {
+                    self.arithmetic.insert(e.span.start());
+                }
                 if matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::Ne)
                     && [lhs, rhs]
                         .iter()
@@ -1237,6 +1265,45 @@ impl Walk {
         }
     }
 
+    /// Marks the operands of `e`, a binary `lhs op rhs`, that are not literals: on the right, of
+    /// arithmetic or a compound assignment of `f64`s or `i64`s; on the left, of arithmetic of
+    /// `i64`s or `u8`s. A loop's own step, a constant's arithmetic, and the `depth - 1` of a
+    /// call in a function, none of them a choice of `arithmetic`, are left out.
+    fn operands(&mut self, e: &tir::Expr, lhs: &tir::Expr, rhs: &tir::Expr) {
+        let text = |operand: &tir::Expr| &self.source[operand.span.start()..operand.span.end()];
+        let written = self.arithmetic.contains(&e.span.start()) && text(e) != "depth - 1";
+        let (left, right) = (!literal(text(lhs)), !literal(text(rhs)));
+        if written || self.compounds.contains(&e.span.start()) {
+            match e.ty.kind() {
+                TypeKind::F64 => {
+                    self.f64_rights[usize::from(right)] += 1;
+                    if right {
+                        self.mark(
+                            "reach: `f64` arithmetic or `op=` takes a right operand that is not a literal",
+                        );
+                    }
+                }
+                TypeKind::I64 if right => self.mark(
+                    "reach: `i64` arithmetic or `op=` takes a right operand that is not a literal",
+                ),
+                TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+                | TypeKind::Unit
+                | TypeKind::Never
+                | TypeKind::Array(_)
+                | TypeKind::Optional(_)
+                | TypeKind::Class(_)
+                | TypeKind::Enum(_) => {}
+            }
+        }
+        if written && left && matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8) {
+            self.mark("reach: `i64` or `u8` arithmetic takes a left operand that is not a literal");
+        }
+    }
+
     fn tir_exprs(&mut self, exprs: &[tir::Expr]) {
         for e in exprs {
             self.tir_expr(e, Parent::Other);
@@ -1349,6 +1416,7 @@ impl Walk {
                     tir::BinaryOp::And => "tir::BinaryOp::And",
                     tir::BinaryOp::Or => "tir::BinaryOp::Or",
                 });
+                self.operands(e, lhs, rhs);
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
             }
@@ -1590,6 +1658,20 @@ enum Parent {
     /// The operand of `is_nan`, `is_finite` or `is_infinite`.
     Classify,
     Other,
+}
+
+/// Whether `text`, an operand's source, is a literal: a number, negative or not, in parentheses
+/// or not, or a `u8` written `(u8(n) ?? n)`.
+fn literal(text: &str) -> bool {
+    let number =
+        |t: &str| t.starts_with(|c: char| c.is_ascii_digit()) && !t.contains([' ', '(', ')']);
+    let text = text.trim_start_matches('(').trim_end_matches(')');
+    let text = text.strip_prefix('-').unwrap_or(text);
+    number(text)
+        || text
+            .strip_prefix("u8(")
+            .and_then(|t| t.split_once(") ?? "))
+            .is_some_and(|(a, b)| number(a) && number(b))
 }
 
 /// What a method's operands are to it.
@@ -3329,5 +3411,18 @@ fn a_mutable_array_of_large_elements_holds_fewer_of_them() {
     assert!(
         fewer > 0,
         "no array should fail to fill all the elements that fit"
+    );
+}
+
+#[test]
+fn an_f64_right_operand_is_any_expression() {
+    // `right_operand` writes its small literal only for an integer type. Float arithmetic, where
+    // optimizers miscompile, takes any `f64` expression on its right, a literal about as often as
+    // not. Were the small literal taken for an `f64` too, literals would outnumber the rest many
+    // times over.
+    let [literal, other] = walk().f64_rights;
+    assert!(
+        other * 2 > literal,
+        "{literal} right operands of `f64` arithmetic or `op=` are literals and {other} are not"
     );
 }
