@@ -209,46 +209,6 @@ impl<'a> Gen<'a> {
     }
 }
 
-/// What a value is made of, for its size (decision 5).
-#[derive(Clone)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "only the size tests use it so far")
-)]
-pub(crate) enum Shape {
-    /// A number, a `bool` or a `char`, held inline.
-    Scalar,
-    /// A `string` of so many chars.
-    Str(u64),
-    /// An array of `len` elements, each at most `element`.
-    Array { len: u64, element: Box<Shape> },
-    /// A class object or an enum variant, and its fields.
-    Node(Vec<Shape>),
-}
-
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "only the size tests use it so far")
-)]
-impl Shape {
-    /// Its elements and nodes, and the chars of its strings, all counted.
-    pub(crate) fn size(&self) -> u64 {
-        match self {
-            Shape::Scalar => 0,
-            Shape::Str(chars) => *chars,
-            Shape::Array { len, element } => len.saturating_add(len.saturating_mul(element.size())),
-            Shape::Node(fields) => fields
-                .iter()
-                .fold(1, |sum: u64, field| sum.saturating_add(field.size())),
-        }
-    }
-
-    /// Whether the generator may build it.
-    pub(crate) fn fits(&self) -> bool {
-        self.size() <= MAX_SIZE
-    }
-}
-
 /// The work of a function body, or of `main`, as decision 5 counts it: a statement costs 1, a
 /// loop its bound times its body, and a call its callee's cost at the depth it passes.
 #[derive(Default)]

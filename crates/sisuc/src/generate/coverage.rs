@@ -12,9 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::item::{MAX_KNOWN, MOST};
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::writer::{Rewrite, Site, Writer, allowed};
-use super::{
-    Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, Shape, generate,
-};
+use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
 use crate::diagnostic::Severity;
 use crate::front_end::front_end;
 use crate::types::{Type, TypeKind};
@@ -1954,31 +1952,6 @@ fn cost_counts_call_fanout() {
     let mut main = Cost::default();
     main.call(0, Some(4));
     assert_eq!(main.of_main(&[f]), 46);
-}
-
-#[test]
-fn sizes_are_counted_and_capped() {
-    // 20 strings of 49 chars: 20 elements and 980 chars.
-    let strings = |chars| Shape::Array {
-        len: 20,
-        element: Box::new(Shape::Str(chars)),
-    };
-    assert_eq!(strings(49).size(), 1_000);
-    assert!(strings(49).fits());
-    assert!(!strings(50).fits());
-    // A chain of enum nodes, each holding the next.
-    let chain = |nodes| (1..nodes).fold(Shape::Node(vec![]), |next, _| Shape::Node(vec![next]));
-    assert!(chain(1_000).fits());
-    assert!(!chain(1_001).fits());
-    // A class object holding an array of numbers.
-    let class = |len| {
-        Shape::Node(vec![Shape::Array {
-            len,
-            element: Box::new(Shape::Scalar),
-        }])
-    };
-    assert!(class(999).fits());
-    assert!(!class(1_000).fits());
 }
 
 #[test]
