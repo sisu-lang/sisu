@@ -20,23 +20,25 @@
     { "id": "lexer", "type": "backend", "label": "Lexer", "sublabel": "lexer/", "pos": [280, 200], "size": [130, 60] },
     { "id": "parser", "type": "backend", "label": "Parser", "sublabel": "parser.rs", "pos": [470, 200], "size": [130, 60] },
     { "id": "checker", "type": "backend", "label": "Checker", "sublabel": "check/", "pos": [660, 200], "size": [130, 60] },
-    { "id": "mir", "type": "backend", "label": "mir", "sublabel": "mir/", "pos": [850, 200], "size": [130, 60] },
-    { "id": "codegen", "type": "backend", "label": "Codegen", "sublabel": "codegen/, inkwell", "pos": [1040, 200], "size": [130, 60] },
+    { "id": "mono", "type": "backend", "label": "mono", "sublabel": "mono.rs", "pos": [850, 200], "size": [130, 60] },
+    { "id": "mir", "type": "backend", "label": "mir", "sublabel": "mir/", "pos": [1040, 200], "size": [130, 60] },
+    { "id": "codegen", "type": "backend", "label": "Codegen", "sublabel": "codegen/, inkwell", "pos": [1230, 200], "size": [130, 60] },
     { "id": "diagnostics", "type": "frontend", "label": "Diagnostics", "sublabel": "text or JSON on stderr", "pos": [470, 40], "size": [130, 60] },
-    { "id": "llvm", "type": "cloud", "label": "LLVM 23", "sublabel": "passes, machine code", "pos": [1040, 380], "size": [130, 60] },
-    { "id": "link", "type": "cloud", "label": "cc", "sublabel": "linker, run by link.rs", "pos": [800, 380], "size": [130, 60] },
-    { "id": "runtime", "type": "database", "label": "sisu-runtime-mimalloc", "sublabel": "libsisu_runtime_mimalloc.a", "pos": [650, 540], "size": [200, 60] },
-    { "id": "runtime-system", "type": "database", "label": "sisu-runtime-system", "sublabel": "libsisu_runtime_system.a", "pos": [880, 540], "size": [200, 60] },
-    { "id": "binary", "type": "external", "label": "Executable", "sublabel": "Linux or ARM64 macOS", "pos": [560, 380], "size": [130, 60] }
+    { "id": "llvm", "type": "cloud", "label": "LLVM 23", "sublabel": "passes, machine code", "pos": [1230, 380], "size": [130, 60] },
+    { "id": "link", "type": "cloud", "label": "cc", "sublabel": "linker, run by link.rs", "pos": [990, 380], "size": [130, 60] },
+    { "id": "runtime", "type": "database", "label": "sisu-runtime-mimalloc", "sublabel": "libsisu_runtime_mimalloc.a", "pos": [840, 540], "size": [200, 60] },
+    { "id": "runtime-system", "type": "database", "label": "sisu-runtime-system", "sublabel": "libsisu_runtime_system.a", "pos": [1070, 540], "size": [200, 60] },
+    { "id": "binary", "type": "external", "label": "Executable", "sublabel": "Linux or ARM64 macOS", "pos": [750, 380], "size": [130, 60] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "sisu (Rust)", "wraps": ["lexer", "parser", "checker", "mir", "codegen", "diagnostics"] }
+    { "kind": "region", "label": "sisu (Rust)", "wraps": ["lexer", "parser", "checker", "mono", "mir", "codegen", "diagnostics"] }
   ],
   "connections": [
     { "id": "source-to-lexer", "from": "source", "to": "lexer", "label": "source text", "variant": "emphasis" },
     { "id": "lexer-to-parser", "from": "lexer", "to": "parser", "label": "tokens", "variant": "emphasis" },
     { "id": "parser-to-checker", "from": "parser", "to": "checker", "label": "AST", "variant": "emphasis" },
-    { "id": "checker-to-mir", "from": "checker", "to": "mir", "label": "tir", "variant": "emphasis" },
+    { "id": "checker-to-mono", "from": "checker", "to": "mono", "label": "tir", "variant": "emphasis" },
+    { "id": "mono-to-mir", "from": "mono", "to": "mir", "label": "tir", "variant": "emphasis" },
     { "id": "mir-to-codegen", "from": "mir", "to": "codegen", "label": "mir", "variant": "emphasis" },
     { "id": "codegen-to-llvm", "from": "codegen", "to": "llvm", "label": "LLVM IR", "variant": "emphasis" },
     { "id": "llvm-to-link", "from": "llvm", "to": "link", "label": "object file", "variant": "emphasis" },
