@@ -10,7 +10,9 @@ the innermost one.
 
 - `loop` is a keyword. Its type is `never` with no `break` that targets it,
   `unit` with only bare `break`s, and `T` when every `break` carries a `T`.
-  A bare `break` beside a `break` with a value is an error.
+  A bare `break` beside a `break` with a value whose type is not `never` is an
+  error. With only `never` values beside bare `break`s the loop is `unit`, and
+  when every value is `never` the loop is `never`.
 - `break v` is allowed only when the loop it targets is a `loop`. In a
   `while`, `while let` or `for` it is an error whose help says to use `loop`.
   `continue` never takes a value.
@@ -75,7 +77,7 @@ label-or-value rule.
 - **The checker resolves labels.** The parser always reads `break <expr>`, and
   the checker turns a bare name into a loop label. `break outer -1` then
   parses as `outer - 1` before anyone knows `outer` is a loop label, so the
-  checker has to rewrite it. Rejected: that is the ambiguity the user ruled
+  checker has to rewrite it. Rejected: that is the ambiguity this design rules
   out.
 - **Desugar loop labels into flags.** A flag per labeled loop and a chain of
   plain `break`s, with no change to the typed tree or mir. Rejected: it costs
