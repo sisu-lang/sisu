@@ -12,7 +12,7 @@ use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
 use crate::graph::components;
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{self, EnumId, Type, TypeArgs, TypeKind};
+use crate::tir::{self, EnumId, Rank, Type, TypeArgs, TypeKind};
 
 pub(super) struct EnumInfo {
     pub(super) name: ast::Ident,
@@ -55,6 +55,21 @@ fn inline_enums(ty: Type) -> Vec<usize> {
             iter::once(id.0).chain(args).collect()
         }
         _ => Vec::new(),
+    }
+}
+
+/// Whether `ty` names, where `inline_enums` looks, the enum `e` applied to its own `count`
+/// parameters in order: `Tree<T>` in `Tree`, or `G<T>` in `G`'s `Wrap2<G<T>>`.
+fn names_itself(ty: Type, e: usize, count: usize) -> bool {
+    match ty.kind() {
+        TypeKind::Optional(payload) => names_itself(payload, e, count),
+        TypeKind::Enum(id, args) => {
+            let args = args.get();
+            let own = |(i, arg): (usize, &Type)| matches!(arg.kind(), TypeKind::Param(_, j) if j as usize == i);
+            (id.0 == e && args.len() == count && args.iter().enumerate().all(own))
+                || args.iter().any(|&arg| names_itself(arg, e, count))
+        }
+        _ => false,
     }
 }
 
@@ -404,13 +419,12 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Lowers every enum, with each payload field's `generic` and `late` from its declared
-    /// type, and lays them out (`tir::layout_enums`). Reports the enums no value can be built
-    /// of; `cyclic` marks the classes on a cycle of fields, which `never_constructed` reports.
-    /// Returns the enums, and which declarations have an error of that kind, as `never_built`
-    /// does.
+    /// Lowers every enum, with each payload field's `Rank` from its declared type, and lays them
+    /// out (`tir::layout_enums`). Reports the enums no value can be built of; `cyclic` marks the
+    /// classes on a cycle of fields, which `never_constructed` reports. Returns the enums, and
+    /// which declarations have an error of that kind, as `never_built` does.
     pub(super) fn lower_enums(&mut self, cyclic: &[bool]) -> (Vec<tir::Enum>, Vec<bool>) {
-        // The declarations each enum's `generic` fields name, inline (see `Payload::late`); a
+        // The declarations each enum's generic fields name, inline (see `Rank::Late`); a
         // program without a generic enum has no such field and skips the graph.
         let declared = if self.enums.iter().any(|info| !info.type_params.is_empty()) {
             let named: Vec<Vec<usize>> = (self.enums.iter())
@@ -435,13 +449,22 @@ impl Checker<'_> {
                             .map(|&ty| {
                                 // An `Error` field's error stops the program before codegen.
                                 let ty = ty.unwrap_or(Type::NEVER);
-                                let late = ty.has_param()
-                                    && inline_enums(ty).iter().any(|&n| declared[n] == declared[e]);
+                                let rank = if !ty.has_param() {
+                                    Rank::Plain
+                                } else if names_itself(ty, e, info.type_params.len()) {
+                                    Rank::Own
+                                } else if inline_enums(ty)
+                                    .iter()
+                                    .any(|&n| declared[n] == declared[e])
+                                {
+                                    Rank::Late
+                                } else {
+                                    Rank::Never
+                                };
                                 tir::Payload {
                                     ty,
                                     boxed: false,
-                                    generic: ty.has_param(),
-                                    late,
+                                    rank,
                                 }
                             })
                             .collect(),

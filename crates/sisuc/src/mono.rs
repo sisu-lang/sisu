@@ -692,7 +692,9 @@ mod tests {
     /// without it, as `B<i64>.Y`'s does through `A<B<i64>>.X`, a parameter field, and `C<i64>.Y`'s
     /// through `D<C<i64>>.X`, an optional of one. `G<i64>.P` closes its cycle through
     /// `Wrap2<G<i64>>.W`, whose `Two<T>` names a parameter too, yet only `G<i64>.P` names its
-    /// own declaration. Every member of a component with a box is on that cycle and counted.
+    /// own declaration. `H<i64>.P` does too, though `Wrap3<H<i64>>.W` names `Wrap3<i64>`, which
+    /// closes its own cycle and is boxed after. Every member of a component with a box is on
+    /// that cycle and counted.
     #[test]
     fn box_goes_on_the_declaring_enum() {
         let program = instantiated(
@@ -703,7 +705,9 @@ mod tests {
              enum A<T> {\n    X(T)\n}\nenum B<T> {\n    Y(A<B<T>>)\n    Z\n}\n\
              enum D<T> {\n    X(T?)\n}\nenum C<T> {\n    Y(D<C<T>>)\n    Z\n}\n\
              enum G<T> {\n    L(T)\n    P(Wrap2<G<T>>)\n}\n\
-             fn main() {\n    let t: Tree<i64> = Tree.Leaf\n    let b: B<i64> = B.Z\n    let c: C<i64> = C.Z\n    let g: G<i64> = G.L(1)\n}",
+             enum P2<A, B> {\n    P(A, B)\n}\nenum Wrap3<T> {\n    W(P2<T, Wrap3<i64>>)\n    N\n}\n\
+             enum H<T> {\n    L(T)\n    P(Wrap3<H<T>>)\n}\n\
+             fn main() {\n    let t: Tree<i64> = Tree.Leaf\n    let b: B<i64> = B.Z\n    let c: C<i64> = C.Z\n    let g: G<i64> = G.L(1)\n    let h: H<i64> = H.L(1)\n}",
         );
         let printed = program.to_string();
         for part in [
@@ -722,6 +726,9 @@ mod tests {
             "(enum G<i64> (L i64) (P (box Wrap2<G<i64>>)))",
             "(enum Wrap2<G<i64>> (W Two<G<i64>>))",
             "(enum Two<G<i64>> (Both G<i64> G<i64>))",
+            "(enum H<i64> (L i64) (P (box Wrap3<H<i64>>)))",
+            "(enum Wrap3<H<i64>> (W P2<H<i64>, Wrap3<i64>>) N)",
+            "(enum Wrap3<i64> (W (box P2<i64, Wrap3<i64>>)) N)",
         ] {
             assert!(printed.contains(part), "`{part}` in\n{printed}");
         }

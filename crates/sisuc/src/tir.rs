@@ -143,13 +143,24 @@ pub(crate) struct Variant {
 pub(crate) struct Payload {
     pub(crate) ty: Type,
     pub(crate) boxed: bool,
-    /// Whether its declared type names a type parameter (`T`, `Tree<T>`); kept through `mono`.
-    pub(crate) generic: bool,
-    /// Whether `layout_enums` may box it after the fields that are not `generic`: its declared
-    /// type names a type parameter and, inline (`check::enums::inline_enums`), an enum
-    /// declaration on a cycle of such names with its own: `Tree<T>` in `Tree`, `Wrap2<G<T>>`
-    /// in `G`, but not `Two<T>` in `Wrap2`, nor `T`. Kept through `mono`.
-    pub(crate) late: bool,
+    pub(crate) rank: Rank,
+}
+
+/// Which pass of `layout_enums` may box a payload field, from its declared type; kept through
+/// `mono`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Rank {
+    /// It names no type parameter: `Two<Expr>` in `Expr`.
+    Plain,
+    /// It names a type parameter, and its own enum applied to its own parameters where
+    /// `check::enums::inline_enums` looks (`check::enums::names_itself`): `Tree<T>` in `Tree`,
+    /// `Wrap2<G<T>>` in `G`.
+    Own,
+    /// It names a type parameter, and otherwise an enum declaration on a cycle of such names
+    /// with its own, where `inline_enums` looks: `P2<T, Wrap2<i64>>` in `Wrap2`.
+    Late,
+    /// Any other field that names a type parameter, never boxed: `Two<T>` in `Wrap2`, or `T`.
+    Never,
 }
 
 #[derive(Debug)]
@@ -498,14 +509,16 @@ impl Type {
 
 /// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
 /// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
-/// the declaring enum's own field, never on one inside a generic type: the fields whose
-/// declared type names no parameter are boxed first, on any cycle through them, and then the
-/// `late` ones on a cycle that remains (`Tree<T>`'s self-edge, or `G<i64>.P` in
-/// `enum G<T> { P(Wrap2<G<T>>) }`). A cycle that remains holds a `late` field, since each of
-/// its enums' declarations is named by a generic field of another on it, so the names close a
-/// cycle of declarations. No other field is boxed: not `Wrap2<G<i64>>.W`, nor a `T`. Every
-/// member of a component with a box is on that cycle, and counted, though a member may hold its
-/// links inline.
+/// the declaring enum's own field rather than one inside a generic type, by a pass per `Rank`,
+/// `Plain`, `Own`, then `Late`, each boxing its fields that are on a cycle of what the passes
+/// before it left unboxed. A cycle that `Plain` leaves holds an `Own` or a `Late` field, since
+/// each of its enums' declarations is named by a generic field of another on it, so the names
+/// close a cycle of declarations. A `Never` field is never boxed. The ranks read names only, so
+/// a type argument an enum never stores still counts: with `enum Two<T, U> { Both(T, T) }`,
+/// `Wrap2<T>.W: Two<T, Wrap2<T>>` is `Own`, and `G<i64>` in `enum G<T> { P(Wrap2<G<T>>) }`
+/// boxes `Wrap2<G<i64>>.W` beside `G<i64>.P`, which alone would break the cycle. Every member
+/// of a component with a box is on that cycle, and counted, though a member may hold its links
+/// inline.
 pub(crate) fn layout_enums(enums: &mut [Enum]) {
     // The holds-inline graph over the fields `keep` picks.
     let held = |enums: &[Enum], keep: fn(&Payload) -> bool| -> Vec<Vec<usize>> {
@@ -522,25 +535,27 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
     let component = components(&held(enums, |_| true));
     for (e, info) in enums.iter_mut().enumerate() {
         for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
-            p.boxed = !p.generic
+            p.boxed = p.rank == Rank::Plain
                 && p.ty
                     .inline_enum()
                     .is_some_and(|f| component[f.0] == component[e]);
         }
     }
-    // A program without a `late` field skips the second pass's graph.
+    // A program without an `Own` or a `Late` field skips the later passes' graphs.
     let mut fields = enums
         .iter()
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields);
-    if fields.any(|p| p.late) {
-        let remaining = components(&held(enums, |p| !p.boxed));
-        for (e, info) in enums.iter_mut().enumerate() {
-            for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
-                let on_cycle =
-                    p.ty.inline_enum()
-                        .is_some_and(|f| remaining[f.0] == remaining[e]);
-                p.boxed |= p.late && on_cycle;
+    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Late)) {
+        for rank in [Rank::Own, Rank::Late] {
+            let remaining = components(&held(enums, |p| !p.boxed));
+            for (e, info) in enums.iter_mut().enumerate() {
+                for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
+                    let on_cycle =
+                        p.ty.inline_enum()
+                            .is_some_and(|f| remaining[f.0] == remaining[e]);
+                    p.boxed |= p.rank == rank && on_cycle;
+                }
             }
         }
     }
@@ -1675,8 +1690,7 @@ mod tests {
                         fields: vec![Payload {
                             ty: Type::I64,
                             boxed: false,
-                            generic: false,
-                            late: false,
+                            rank: Rank::Plain,
                         }],
                     },
                 ],
