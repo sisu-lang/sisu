@@ -706,7 +706,6 @@ impl Gen<'_> {
         Info {
             pure: false,
             folds: false,
-            value: None,
             ..info
         }
     }

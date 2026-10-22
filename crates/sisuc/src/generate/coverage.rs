@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::item::MOST;
+use super::item::{MAX_KNOWN, MOST};
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{
@@ -138,12 +138,15 @@ const TEXT: [(&str, Holds); 7] = [
 
 /// Fixed byte strings from a seeded splitmix64.
 pub(crate) fn seeds() -> impl Iterator<Item = Vec<u8>> {
-    (0..SEEDS).map(|seed| {
-        let mut state = seed;
-        (0..SEED_LEN / 8)
-            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
-            .collect()
-    })
+    (0..SEEDS).map(seed)
+}
+
+/// The data of seed `n`.
+fn seed(n: u64) -> Vec<u8> {
+    let mut state = n;
+    (0..SEED_LEN / 8)
+        .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+        .collect()
 }
 
 fn splitmix64(state: &mut u64) -> u64 {
@@ -4036,6 +4039,80 @@ fn known_answers_happen() {
             if kind.1 { "panics" } else { "gives a value" }
         );
     }
+}
+
+#[test]
+fn known_sites_take_every_count_and_negative_arguments() {
+    // Up to `MAX_KNOWN` sites, whose `i64` arguments include `-1`, the least `i64` and drawn
+    // negatives, written `(-n)`.
+    let (mut most, mut negatives) = (0, FxHashSet::default());
+    for data in seeds() {
+        let g = generate(&data);
+        most = most.max(g.known.len());
+        let main = g.program.split("\nfn k").next().unwrap_or_default();
+        let calls = main
+            .lines()
+            .filter(|line| line.contains("print(\"@k") || line.contains("print(k"));
+        for call in calls {
+            for arg in call.split("(-").skip(1) {
+                let digits = arg.split(')').next().unwrap_or_default();
+                negatives.extend(digits.parse::<i128>().map(|n| -n));
+            }
+        }
+    }
+    assert_eq!(most, MAX_KNOWN, "no seed has {MAX_KNOWN} known sites");
+    assert!(
+        negatives.contains(&-1),
+        "no known call takes `(-1)`: {negatives:?}"
+    );
+    assert!(
+        negatives.contains(&i128::from(i64::MIN)),
+        "no known call takes the least `i64`: {negatives:?}"
+    );
+    assert!(
+        negatives.iter().any(|n| (-1_000..-1).contains(n)),
+        "no known call takes a drawn negative: {negatives:?}"
+    );
+}
+
+#[test]
+fn no_panic_site_follows_a_return() {
+    // A `return` in `main` may end the run before the site's call, with no panic to show that
+    // it was never reached (decision 3). Only about one seed in 50 both returns from `main` and
+    // draws a panic site, so this takes 256.
+    let mut returning = 0;
+    for n in 0..256 {
+        let g = generate(&seed(n));
+        let main = g.program.split("fn main() ").nth(1).unwrap_or_default();
+        let main = main.split("\nfn k").next().unwrap_or_default();
+        if main.contains("return") {
+            returning += 1;
+            let panics = g.known.iter().any(|k| matches!(k.answer, Answer::Panic(_)));
+            assert!(!panics, "a panic site follows a `return`:\n{}", g.program);
+        }
+    }
+    assert!(returning > 0, "no seed's `main` returns");
+}
+
+#[test]
+fn rewrites_are_rare() {
+    // Each expression and statement is rewritten about one time in 8 (decision 2), so the copy
+    // costs its builds not much more than the program: about 1.6 times its size, against over
+    // 2 when every one is.
+    let (mut program, mut rewritten, mut swaps, mut ifs) = (0, 0, 0, 0);
+    for data in seeds() {
+        let g = generate(&data);
+        program += g.program.len();
+        rewritten += g.rewritten.len();
+        swaps += g.made.iter().filter(|&&made| made == Rewrite::Swap).count();
+        ifs += g.program.matches("} else {").count();
+    }
+    assert!(
+        rewritten < 2 * program,
+        "{rewritten} bytes rewritten of {program}"
+    );
+    // About 80 of 4,000 `else`s swap, against over 500 when each `if` that may swap does.
+    assert!(swaps * 16 < ifs, "{swaps} swaps of {ifs} `else`s");
 }
 
 #[test]

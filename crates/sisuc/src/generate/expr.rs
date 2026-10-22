@@ -1406,7 +1406,6 @@ impl Gen<'_> {
         // A constant of an optional type does not fold.
         Info {
             folds: false,
-            value: None,
             ..self.expr(payload, max)
         }
     }
@@ -1810,4 +1809,109 @@ fn separated(n: i64) -> String {
         text.push(digit);
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use arbitrary::Unstructured;
+
+    use super::{Gen, MAX_SIZE, Rule, Ty, arithmetic_value};
+    use crate::generate::writer::Rewrite;
+
+    #[test]
+    fn arithmetic_values_are_the_run_time_s() {
+        // Each as `sisu build` runs it, checked 2026-10-22: division truncates, and a `u8`
+        // that leaves `0..=255` overflows.
+        let (i64, u8) = (&Ty::I64, &Ty::U8);
+        let overflow = Err("integer overflow");
+        let cases = [
+            (i64, " + ", 2, 3, Ok(5)),
+            (i64, " - ", 2, 3, Ok(-1)),
+            (i64, " * ", 2, 3, Ok(6)),
+            (i64, " / ", -7, 2, Ok(-3)),
+            (i64, " % ", -7, 2, Ok(-1)),
+            (i64, " % ", 7, -2, Ok(1)),
+            (i64, " + ", i64::MAX, 1, overflow),
+            (i64, " / ", i64::MIN, -1, overflow),
+            (i64, " % ", i64::MIN, -1, overflow),
+            (i64, " / ", 0, 0, Err("division by zero")),
+            (i64, " % ", 5, 0, Err("division by zero")),
+            (u8, " - ", 0, 1, overflow),
+            (u8, " + ", 255, 1, overflow),
+            (u8, " * ", 16, 16, overflow),
+            (u8, " / ", 7, 2, Ok(3)),
+            (u8, " + ", 254, 1, Ok(255)),
+        ];
+        for (ty, op, l, r, value) in cases {
+            let at = super::OPS.iter().position(|o| *o == op);
+            let at = at.expect("each case should name an operator");
+            assert_eq!(
+                arithmetic_value(ty, at, l, r),
+                value,
+                "{l}{op}{r} on a {ty}"
+            );
+        }
+    }
+
+    #[test]
+    fn arithmetic_of_literals_is_known_and_folds() {
+        let mut g = Gen::new(&[1, 5, 3, 2, 9, 4]);
+        let info = g.rule(Rule::Arithmetic, &Ty::I64, MAX_SIZE, false);
+        assert_eq!(g.w.out.program, "(15 / 1)");
+        assert_eq!((info.value, info.pure, info.folds), (Some(15), true, true));
+    }
+
+    #[test]
+    fn a_negated_literal_is_known_and_folds() {
+        let mut g = Gen::new(&[]);
+        let info = g.rule(Rule::Negate, &Ty::I64, MAX_SIZE, false);
+        assert_eq!(g.w.out.program, "(-(0))");
+        assert_eq!((info.value, info.pure, info.folds), (Some(0), true, true));
+    }
+
+    #[test]
+    fn float_negation_and_arithmetic_are_pure() {
+        // Neither panics on an `f64`, whose value the generator does not track.
+        for rule in [Rule::Negate, Rule::Arithmetic] {
+            let mut g = Gen::new(&[]);
+            let info = g.rule(rule, &Ty::F64, MAX_SIZE, false);
+            assert!(info.pure && info.folds, "{rule:?}: {}", g.w.out.program);
+        }
+    }
+
+    #[test]
+    fn a_wrapped_literal_does_not_fold() {
+        // `0` where an `i64?` is expected: a constant of an optional type does not fold.
+        let mut g = Gen::new(&[]);
+        let info = g.rule(
+            Rule::Wrap,
+            &Ty::Optional(Box::new(Ty::I64)),
+            MAX_SIZE,
+            false,
+        );
+        assert_eq!(g.w.out.program, "0");
+        assert!(!info.folds);
+    }
+
+    #[test]
+    fn an_if_typed_by_its_first_arm_is_not_swapped() {
+        // With no expected type, `(if false { (u8(0) ?? 0) } else { 0 })` is a `u8` by its first
+        // arm; swapped, the bare `0` would make it an `i64`. Where the arms' type is not
+        // inferred, or an expected type gives it, the arms swap.
+        for (ty, synth, swaps) in [
+            (Ty::U8, true, false),
+            (Ty::I64, true, true),
+            (Ty::U8, false, true),
+        ] {
+            let mut g = Gen::new(&[]);
+            g.ru = Unstructured::new(&[7; 64]);
+            g.rule(Rule::If, &ty, MAX_SIZE, synth);
+            let swapped = g.w.made.contains(&Rewrite::Swap);
+            assert_eq!(
+                swapped, swaps,
+                "{ty} with synth {synth}: {}",
+                g.w.out.rewritten
+            );
+        }
+    }
 }

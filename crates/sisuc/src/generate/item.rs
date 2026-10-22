@@ -31,7 +31,7 @@ const CAPS: [u64; 3] = [0, 8, 32];
 pub(crate) const MOST: u64 = 100;
 
 /// The most known sites of a program, and the most `let`s of a known function (decision 3).
-const MAX_KNOWN: usize = 3;
+pub(crate) const MAX_KNOWN: usize = 3;
 const MAX_STEPS: usize = 3;
 
 /// A known site (decision 3): a function `k<n>` of straight-line `i64` or `u8` arithmetic

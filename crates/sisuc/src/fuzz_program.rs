@@ -777,18 +777,19 @@ mod tests {
         judge_pair(program, rewritten).map_or_else(|f| f.property, |()| 0)
     }
 
-    /// Review Focus 3: the copies' panics are at different places, with the same message.
+    /// Review Focus 3: the copies' panics are at different places, with the same message,
+    /// after a line the program printed to stderr.
     #[test]
     fn pair_ignores_panic_locations() {
         let program = ran(
             101,
             "1\n",
-            "sisu: panic at input.sisu:3:5: integer overflow\n",
+            "e\nsisu: panic at input.sisu:3:5: integer overflow\n",
         );
         let rewritten = ran(
             101,
             "1\n",
-            "sisu: panic at input.sisu:7:9: integer overflow\n",
+            "e\nsisu: panic at input.sisu:17:19: integer overflow\n",
         );
         assert_eq!(pair(&program, &rewritten), 0);
     }
