@@ -33,10 +33,12 @@ fi
 case $target in
 front_end)
     limits=(-max_len=16384 -timeout=60 -rss_limit_mb=2048)
+    replay_seconds=120
     dict=fuzz/front_end.dict
     ;;
 program)
     limits=(-max_len=4096 -timeout=300)
+    replay_seconds=330
     dict=
     ;;
 *)
@@ -56,9 +58,9 @@ if [[ $target == program ]]; then
     cargo build --release -p sisu-runtime-mimalloc
     export SISU_RUNTIME=$PWD/target/release/libsisu_runtime_mimalloc.a
 fi
-# Seconds for the replay of one crash, past libFuzzer's own -timeout, and how many crashes
-# are replayed: a regression can leave one crash- per corpus input, and the job has a limit.
-replay_seconds=120
+# How many crashes are replayed, each for at most replay_seconds (set per target above, past
+# libFuzzer's own -timeout, for the program's start-up): a regression can leave one crash- per
+# corpus input, and the job has a limit.
 replay_limit=3
 corpus=fuzz/corpus/$target
 found=fuzz/artifacts/$target
@@ -110,7 +112,7 @@ coverage() {
         for f in "$corpus"/*; do
             [[ -f $f ]] && inputs=$((inputs + 1))
         done
-        reached=$inputs
+        echo "inputs reaching codegen: all ${inputs} (a failing input is a crash, never a corpus entry)"
     else
         cargo build --quiet -p sisuc
         for f in "$corpus"/* "$seeds"/*; do
@@ -118,8 +120,8 @@ coverage() {
             inputs=$((inputs + 1))
             if target/debug/sisu check "$f" >/dev/null 2>&1; then reached=$((reached + 1)); fi
         done
+        echo "inputs reaching codegen: ${reached} of ${inputs}"
     fi
-    echo "inputs reaching codegen: ${reached} of ${inputs}"
 }
 
 # These exec cargo, so the trap below would never run: they come before the seeds exist.
@@ -218,7 +220,7 @@ done
 not_replayed=0
 if ((crashes > replay_limit)); then
     not_replayed=$((crashes - replay_limit))
-    echo "==> scripts/fuzz.sh: ${not_replayed} more crashes not replayed; scripts/fuzz.sh --replay <path> replays any of them" >>"$log" || log_complete=false
+    echo "==> scripts/fuzz.sh: ${not_replayed} more crashes not replayed; scripts/fuzz.sh --target ${target} --replay <path> replays any of them" >>"$log" || log_complete=false
 fi
 
 # Fork mode interleaves the children's output, whose lines start `#<n>\t`; the parent's
@@ -248,7 +250,7 @@ executions=$(awk '/^#[0-9]+: cov:/ { n = substr($1, 2, length($1) - 2) } END { p
     for failure in "${failures[@]}"; do
         class=${failure%% *}
         path=${failure#* }
-        echo "- **${class}**: \`${path}\`. Replay: \`scripts/fuzz.sh --replay ${path}\`."
+        echo "- **${class}**: \`${path}\`. Replay: \`scripts/fuzz.sh --target ${target} --replay ${path}\`."
         if [[ $class == crash ]]; then
             echo "  Its replay is at the end of \`fuzz.log\`. A crash whose replay shows no panic message is a stack overflow or another fatal signal."
         else
@@ -257,7 +259,7 @@ executions=$(awk '/^#[0-9]+: cov:/ { n = substr($1, 2, length($1) - 2) } END { p
     done
     if ((not_replayed > 0)); then
         echo
-        echo "${not_replayed} more crashes were not replayed. \`scripts/fuzz.sh --replay <path>\` replays any of them."
+        echo "${not_replayed} more crashes were not replayed. \`scripts/fuzz.sh --target ${target} --replay <path>\` replays any of them."
     fi
 } >fuzz/artifacts/summary.md
 
