@@ -678,7 +678,11 @@ mod tests {
             .expect("the test should make the script executable");
         let stdin = scratch.0.join("stdin.txt");
         fs::write(&stdin, "").expect("the test should write the stdin");
-        let hung = run(&exe, &stdin, &scratch.0, Duration::from_millis(200));
+        let mut hung = run(&exe, &stdin, &scratch.0, Duration::from_millis(200));
+        if hung.stdout.is_empty() {
+            // A loaded machine can take longer than 200 ms to start `sh`: one more, longer try.
+            hung = run(&exe, &stdin, &scratch.0, Duration::from_secs(2));
+        }
         assert_eq!(hung.exit, Exit::TimedOut);
         let pid = String::from_utf8_lossy(&hung.stdout).trim().to_string();
         assert!(
@@ -986,6 +990,35 @@ mod tests {
             .expect("the test's directory should be readable")
             .count();
         assert_eq!(left, 0, "`program` should remove its directory");
+        // `judge_known` takes a run without the marker line for an earlier panic; the O0 run
+        // ends with it, so property 5 judged this panic site.
+        let marker = g
+            .known
+            .iter()
+            .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
+            .expect("seed 44 should have a panic site");
+        on_stack(|| {
+            let program = checked("program", &g.program).expect("a seed should check clean");
+            let stdin = tmp.0.join("stdin.txt");
+            fs::write(&stdin, &g.stdin).expect("the test should write the stdin");
+            let exe = tmp.0.join("program");
+            build(
+                "program",
+                &g.program,
+                &program,
+                &BUILDS[0].1,
+                &runtime(),
+                &exe,
+            );
+            let Run { exit, stdout, .. } = run(&exe, &stdin, &tmp.0, LIMIT);
+            assert_eq!(exit, Exit::Code(101), "{}", g.program);
+            assert_eq!(
+                String::from_utf8_lossy(&stdout).lines().last(),
+                Some(format!("@{marker} panics").as_str()),
+                "{}",
+                g.program
+            );
+        });
     }
 
     /// Loops nested as deep as decision 5 lets them, each run to its bound, finish at O0 within
