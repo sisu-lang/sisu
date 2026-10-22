@@ -4,7 +4,7 @@ A tour of the Sisu language as it works today, one small program at a time.
   <section class="ph"><div class="w">
     <h1>A tour of Sisu</h1>
     <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
-    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 317f0d9.</p>
+    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 2c22efd.</p>
   </div></section>
 
   <div class="w doc">
@@ -54,12 +54,17 @@ A tour of the Sisu language as it works today, one small program at a time.
       <!-- source: docs/roadmap.md ("What works today": functions and recursion, if as an expression), crates/sisuc/tests/run/fib.sisu -->
 
       <h2 id="loops">Loops</h2>
-      <p><code>for</code> walks a range or an array. <code>0..3</code> leaves out its end and <code>0..=3</code> includes it. <code>while</code> loops on a condition, and <code>break</code> and <code>continue</code> work in both. A <code>while true</code> with no <code>break</code> never ends, so a function can return from inside it with nothing after it.</p>
+      <p><code>for</code> walks a range or an array. <code>0..3</code> leaves out its end and <code>0..=3</code> includes it. <code>while</code> loops on a condition, and <code>break</code> and <code>continue</code> work in both. <code>loop</code> runs until a <code>break</code>. A <code>loop</code> with no <code>break</code> never ends, so a function can return from inside it with nothing after it. <code>while true</code> works the same, but warns and points at <code>loop</code>.</p>
       <figure class="code"><figcaption class="cap">loops.sisu</figcaption><pre data-lang="sisu">
 {{text programs/run/loops.sisu}}</pre></figure>
       <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 {{text programs/run/loops.out}}</pre></figure>
-      <!-- source: docs/roadmap.md ("What works today": while, break, continue, for x in xs, for i in 0..n, ..=), crates/sisuc/tests/run/loops.sisu, crates/sisuc/tests/run/for_inclusive.sisu -->
+      <p><code>break</code> in a <code>loop</code> can carry a value, which is the value of the <code>loop</code>. A name before a loop is a loop label: <code>break outer</code> and <code>continue outer</code> leave or restart that loop instead of the innermost one.</p>
+      <figure class="code"><figcaption class="cap">search.sisu</figcaption><pre data-lang="sisu">
+{{text programs/run/search.sisu}}</pre></figure>
+      <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
+{{text programs/run/search.out}}</pre></figure>
+      <!-- source: docs/roadmap.md ("What works today": while, break, continue, for x in xs, for i in 0..n, ..=), crates/sisuc/tests/run/loops.sisu, crates/sisuc/tests/run/for_inclusive.sisu, docs/adr/0034-loop-and-loop-labels.md, crates/sisuc/tests/run/loop_value.sisu, crates/sisuc/tests/run/labels.sisu -->
 
       <h2 id="optionals">Optionals instead of null</h2>
       <p>Sisu has no null. A value that may be missing has an optional type, such as <code>i64?</code>, and is either a value or <code>None</code>. An <code>i64?</code> is not an <code>i64</code>: <code>x + 1</code> on one does not compile, so you deal with <code>None</code> before you use the value.</p>

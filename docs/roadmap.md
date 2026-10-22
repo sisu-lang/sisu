@@ -32,6 +32,11 @@ enums with `match`.
 - `if` as an expression, `while`, `break`, `continue` and `return`; a
   `while true` with no `break` has type `never`
   ([ADR 0032](adr/0032-while-true-without-break-is-never.md))
+- `loop`, which runs until a `break`, and gives the value of `break v`; a
+  loop label before a `loop`, `while`, `while let` or `for`
+  (`outer: for ...`) lets `break outer` and `continue outer` reach that loop;
+  `while true` warns (`W0009`) and points at `loop`
+  ([ADR 0034](adr/0034-loop-and-loop-labels.md))
 - comparison chains such as `0 <= i < n`, and short-circuit `&&` and `||`
 - integer arithmetic that panics on overflow and division by zero instead of
   wrapping
@@ -482,13 +487,6 @@ The compiler is fuzzed in two stages:
    differentially (a build without `-O2` against one with it, for example),
    would catch a program that compiles but computes the wrong answer, which
    crash fuzzing cannot see.
-
-`loop`, `break` with a value, and loop labels. Open. A project of its own,
-after the program fuzzer and before milestone 8 part 2, like the `while true`
-fix: `loop { ... break x }` gives a value, `outer: for ...` with `break outer`
-and `continue outer` leaves or restarts an outer loop, and `while true` warns
-and points at `loop`
-([ADR 0034](adr/0034-loop-and-loop-labels.md)).
 
 ## Proposed milestones 8 to 12
 
