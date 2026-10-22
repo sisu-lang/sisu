@@ -822,9 +822,14 @@ impl Checker<'_> {
 
     /// Reports `name<...>`, a value with type arguments in `angles`: the `<` and `>` were
     /// comparisons. `name` is the value as written, a name or a field, and `first` the first
-    /// type argument, which the help puts in parentheses with `name`, when a `(` follows the list.
+    /// type argument, which the help puts in parentheses with `name`, when a `(` follows the list
+    /// and `first` could be a value: a name that is not a built-in type, with no `?`.
     pub(super) fn misread(&mut self, name: Span, first: Option<&ast::TypeExpr>) -> Poisoned {
         self.body.misread.insert(name.start());
+        let first = first.filter(|first| {
+            !first.optional
+                && matches!(first.kind, ast::TypeKind::Name(n) if built_in_type(n.as_str()).is_none())
+        });
         let text = self.source.text;
         self.report(DiagnosticKind::TypeArguments {
             name: text[name.start()..name.end()].to_string(),

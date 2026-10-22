@@ -141,6 +141,16 @@ fn type_arguments_on_a_value() {
         let d = diagnostic(&with_decls(line), Code::TypeArguments, at, &[]);
         assert!(d.help().is_none(), "{line}");
     }
+    // Nor when the first argument is a type that cannot be a value.
+    for (line, at) in [
+        ("fn g(p: Point) { p.x<i64>(1) }", (1, 18, "p.x")),
+        ("fn g(a: i64) { a<[i64]>(1) }", (1, 16, "a")),
+        ("fn g(a: i64) { a<i64?>(1) }", (1, 16, "a")),
+        ("fn g(a: i64) { a<Point<i64>>(1) }", (1, 16, "a")),
+    ] {
+        let d = diagnostic(&with_decls(line), Code::TypeArguments, at, &[]);
+        assert!(d.help().is_none(), "{line}");
+    }
     // A local that takes the name `math` is a value, whose field is compared.
     codes(
         &with_decls(
