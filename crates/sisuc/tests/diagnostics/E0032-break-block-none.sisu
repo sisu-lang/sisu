@@ -15,5 +15,10 @@ fn main() {
             false => loop { break None }
         }
     }
-    print(x + y + z)
+    let o: i64? = None
+    let w = loop {
+        if c { break 1 }
+        break if let v = o { None } else { 2 }
+    }
+    print(x + y + z + w)
 }
