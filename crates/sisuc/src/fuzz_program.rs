@@ -1,0 +1,813 @@
+//! The entry point of the program fuzz target: generates a Sisu program from the input bytes,
+//! builds it and its rewritten copy at O0, at `-O2` and with `--rc-checks`, runs each build and
+//! panics on a breach of a property (ADR 0031). Properties 1 and 2 are that the program checks
+//! clean and compiles to a module LLVM verifies; property 3 is that every build exits 0 or 101,
+//! and all three the same way.
+
+use std::cell::RefCell;
+use std::fmt::Write as _;
+use std::fs::{self, File};
+use std::io::{self, Write as _};
+use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus};
+use std::sync::Once;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use crate::codegen::OptLevel;
+use crate::generate::{self, Generated};
+use crate::report::{Format, Reporter};
+use crate::tir::Program;
+use crate::{Backend, compile, fresh_names, front_end, fuzz, run};
+
+/// How long a run may take (decision 5): a program within budget takes milliseconds.
+const LIMIT: Duration = Duration::from_secs(10);
+
+/// The three builds of a program, by the flags that make them.
+const BUILDS: [(&str, Backend); 3] = [
+    (
+        "O0",
+        Backend {
+            level: OptLevel::O0,
+            rc_checks: false,
+            linker: None,
+        },
+    ),
+    (
+        "-O2",
+        Backend {
+            level: OptLevel::O2,
+            rc_checks: false,
+            linker: None,
+        },
+    ),
+    (
+        "--rc-checks",
+        Backend {
+            level: OptLevel::O0,
+            rc_checks: true,
+            linker: None,
+        },
+    ),
+];
+
+/// How a run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exit {
+    Code(i32),
+    Signal(i32),
+    TimedOut,
+}
+
+/// What a run of one build did.
+#[derive(Debug)]
+struct Run {
+    exit: Exit,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+/// A breach of property `property`.
+#[derive(Debug)]
+struct Failure {
+    property: u8,
+    detail: String,
+}
+
+/// The input `program` is judging on this thread, for the panic hook.
+struct Current {
+    generated: Generated,
+    /// The input's temporary directory.
+    dir: PathBuf,
+    /// Set by a property failure before its panic: the property line and the failed builds.
+    failure: Option<(String, String)>,
+}
+
+thread_local! {
+    static CURRENT: RefCell<Option<Current>> = const { RefCell::new(None) };
+}
+
+/// Generates a program from `data`, builds it and its rewritten copy at O0, -O2 and with
+/// --rc-checks against `runtime`, runs each build and panics on a breach of a property.
+/// The caller runs it on a `STACK_SIZE` thread, as for `fuzz_front_end`.
+#[cfg_attr(
+    not(feature = "fuzz"),
+    expect(
+        unreachable_pub,
+        reason = "`lib.rs` re-exports it under the fuzz feature"
+    )
+)]
+pub fn program(data: &[u8], runtime: &Path) {
+    program_in(data, runtime, &std::env::temp_dir());
+}
+
+/// `program`, with the input's temporary directory made in `tmp`.
+fn program_in(data: &[u8], runtime: &Path, tmp: &Path) {
+    install_hook();
+    let generated = generate::generate(data);
+    let dir = run::private_dir(tmp, fresh_names(""))
+        .unwrap_or_else(|e| panic!("the fuzzer should make its temporary directory: {e}"));
+    let _clear = Clear(dir.clone());
+    CURRENT.set(Some(Current {
+        generated,
+        dir,
+        failure: None,
+    }));
+    let judged = CURRENT.with_borrow(|current| {
+        let current = current
+            .as_ref()
+            .expect("`program` should have set the input");
+        judge(&current.generated, runtime, &current.dir)
+    });
+    if let Err((failure, builds)) = judged {
+        let property = failure.property;
+        CURRENT.with_borrow_mut(|current| {
+            current
+                .as_mut()
+                .expect("`program` should have set the input")
+                .failure = Some((format!("property {property}: {}", failure.detail), builds));
+        });
+        panic!("program fuzzer: property {property} failed");
+    }
+}
+
+/// Clears this thread's input and removes its directory when `program` returns or unwinds.
+struct Clear(PathBuf);
+
+impl Drop for Clear {
+    fn drop(&mut self) {
+        CURRENT.set(None);
+        // The panic hook may have removed it already, and a leftover temporary directory must
+        // not turn a pass into a panic, or a panic into an abort.
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Installs, once, a panic hook in front of the one already set (libFuzzer's aborts, so code
+/// after a compiler panic never runs): on a thread inside `program`, it prints the record of
+/// decision 9, writes it to `SISU_FUZZ_DUMP` when that is set, removes the input's directory,
+/// then calls the earlier hook.
+fn install_hook() {
+    static HOOK: Once = Once::new();
+    HOOK.call_once(|| {
+        let earlier = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            // `try_with`: the thread may be tearing down its locals.
+            let _ = CURRENT.try_with(|current| {
+                if let Ok(current) = current.try_borrow()
+                    && let Some(current) = current.as_ref()
+                {
+                    leave_record(current);
+                }
+            });
+            earlier(info);
+        }));
+    });
+}
+
+/// Prints the failed property, or `compiler panic`, then the input and the failed builds; writes
+/// the same to `SISU_FUZZ_DUMP` when it names a directory; and removes the input's directory.
+fn leave_record(current: &Current) {
+    let Generated {
+        program,
+        rewritten,
+        stdin,
+        ..
+    } = &current.generated;
+    let (first, builds) = match &current.failure {
+        Some((first, builds)) => (first.as_str(), builds.as_str()),
+        None => ("compiler panic", ""),
+    };
+    let mut record = format!("{first}\n");
+    section(&mut record, "program", program.as_bytes());
+    section(&mut record, "rewritten", rewritten.as_bytes());
+    section(&mut record, "stdin", stdin.as_bytes());
+    record.push_str(builds);
+    // A hook must not panic, so a failed write is only reported.
+    let _ = io::stderr().write_all(record.as_bytes());
+    if let Some(dump) = std::env::var_os("SISU_FUZZ_DUMP") {
+        let dump = Path::new(&dump);
+        let failure = format!("{first}\n{builds}");
+        let written = fs::create_dir_all(dump).and_then(|()| {
+            [
+                ("program.sisu", program.as_str()),
+                ("rewritten.sisu", rewritten.as_str()),
+                ("stdin.txt", stdin.as_str()),
+                ("failure.txt", failure.as_str()),
+            ]
+            .into_iter()
+            .try_for_each(|(name, text)| fs::write(dump.join(name), text))
+        });
+        if let Err(e) = written {
+            let _ = writeln!(io::stderr(), "cannot write {}: {e}", dump.display());
+        }
+    }
+    let _ = fs::remove_dir_all(&current.dir);
+}
+
+/// Appends `text` to `out` under the line `==> <name>`, ending in a line break.
+fn section(out: &mut String, name: &str, text: &[u8]) {
+    out.push_str("==> ");
+    out.push_str(name);
+    out.push('\n');
+    out.push_str(&String::from_utf8_lossy(text));
+    if !text.is_empty() && !text.ends_with(b"\n") {
+        out.push('\n');
+    }
+}
+
+/// Properties 1 to 3 for `g`, built in `dir`. A failure comes with the record of the builds
+/// that showed it.
+fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, String)> {
+    let program = checked("program", &g.program).map_err(|f| (f, String::new()))?;
+    let rewritten = checked("rewritten", &g.rewritten).map_err(|f| (f, String::new()))?;
+    let stdin = dir.join("stdin.txt");
+    fs::write(&stdin, &g.stdin).expect("the fuzzer should write the stdin to its own directory");
+    for (name, source, checked) in [
+        ("program", &g.program, &program),
+        ("rewritten", &g.rewritten, &rewritten),
+    ] {
+        #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
+        let mut runs = builds(name, source, checked, runtime, dir, &stdin, LIMIT);
+        #[cfg(test)]
+        if FORCE.get() == Some(Force::Stdout) {
+            runs[1].stdout = b"forced".to_vec();
+        }
+        judge_builds(&runs).map_err(|f| (f, record(name, &runs)))?;
+    }
+    Ok(())
+}
+
+/// Properties 1 and 2: `source` checks with no error, and its MIR certifies and its module
+/// verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
+fn checked(name: &str, source: &str) -> Result<Program, Failure> {
+    let (program, diagnostics) = front_end::front_end(source);
+    let Some(program) = program else {
+        let mut out = Vec::new();
+        let mut reporter = Reporter::new(&mut out, Format::Text, false);
+        reporter.diagnostics(&format!("{name}.sisu"), source, &diagnostics);
+        reporter.finish();
+        return Err(Failure {
+            property: 1,
+            detail: format!(
+                "the checker rejects the {name}\n{}",
+                String::from_utf8_lossy(&out)
+            ),
+        });
+    };
+    fuzz::assert_compiles(&program, source);
+    Ok(program)
+}
+
+/// Builds `program`, checked from `source`, three ways into `dir`, and runs each build with
+/// `stdin` for at most `limit`.
+fn builds(
+    name: &str,
+    source: &str,
+    program: &Program,
+    runtime: &Path,
+    dir: &Path,
+    stdin: &Path,
+    limit: Duration,
+) -> [Run; 3] {
+    std::array::from_fn(|i| {
+        let exe = dir.join(format!("{name}-{i}"));
+        build(name, source, program, &BUILDS[i].1, runtime, &exe);
+        run(&exe, stdin, dir, limit)
+    })
+}
+
+/// Builds `program`, checked from `source`, with `backend` into the executable `exe`, going
+/// through an object file in `exe`'s directory.
+fn build(
+    name: &str,
+    source: &str,
+    program: &Program,
+    backend: &Backend,
+    runtime: &Path,
+    exe: &Path,
+) {
+    #[cfg(test)]
+    assert!(
+        FORCE.get() != Some(Force::CompilerPanic),
+        "a compiler panic forced by a test"
+    );
+    let dir = exe
+        .parent()
+        .expect("an executable should be in a directory");
+    compile(
+        program,
+        &format!("{name}.sisu"),
+        source,
+        runtime,
+        exe,
+        dir,
+        backend,
+    )
+    .unwrap_or_else(|e| panic!("the fuzzer should build the {name}: {e}"));
+}
+
+/// Runs `exe` with `stdin` as its stdin, its stdout and stderr in files in `dir`, and kills it
+/// once it has run for `limit`.
+fn run(exe: &Path, stdin: &Path, dir: &Path, limit: Duration) -> Run {
+    let (out, err) = (dir.join("stdout"), dir.join("stderr"));
+    let open = |path: &Path| File::open(path).expect("the stdin file should be readable");
+    let create =
+        |path: &Path| File::create(path).expect("the fuzzer should create files in its directory");
+    let mut child = Command::new(exe)
+        .stdin(open(stdin))
+        .stdout(create(&out))
+        .stderr(create(&err))
+        .spawn()
+        .unwrap_or_else(|e| panic!("{} should start: {e}", exe.display()));
+    let start = Instant::now();
+    let exit = loop {
+        if let Some(status) = child
+            .try_wait()
+            .expect("the fuzzer should wait for its child")
+        {
+            break exit(status);
+        }
+        if start.elapsed() >= limit {
+            child.kill().expect("the fuzzer should kill its child");
+            child.wait().expect("the fuzzer should reap its child");
+            break Exit::TimedOut;
+        }
+        thread::sleep(Duration::from_millis(1));
+    };
+    let read = |path: &Path| fs::read(path).expect("the run's output should be readable");
+    Run {
+        exit,
+        stdout: read(&out),
+        stderr: read(&err),
+    }
+}
+
+/// How `status` ended a run that did not time out.
+fn exit(status: ExitStatus) -> Exit {
+    match (status.code(), status.signal()) {
+        (Some(code), _) => Exit::Code(code),
+        (None, Some(signal)) => Exit::Signal(signal),
+        (None, None) => unreachable!("a Unix process should end with a code or by a signal"),
+    }
+}
+
+/// Property 3: each build exits 0 or with a Sisu panic, 101, so the `--rc-checks` build reports
+/// no count fault or leak (102); and the three agree on exit, stdout and stderr exactly.
+fn judge_builds(runs: &[Run; 3]) -> Result<(), Failure> {
+    let fail = |detail: String| {
+        Err(Failure {
+            property: 3,
+            detail,
+        })
+    };
+    for ((build, _), run) in BUILDS.iter().zip(runs) {
+        if !matches!(run.exit, Exit::Code(0 | 101)) {
+            return fail(format!("the {build} build exits with {:?}", run.exit));
+        }
+    }
+    let first = &runs[0];
+    for ((build, _), run) in BUILDS.iter().zip(runs).skip(1) {
+        let differs = [
+            ("exit", first.exit != run.exit),
+            ("stdout", first.stdout != run.stdout),
+            ("stderr", first.stderr != run.stderr),
+        ];
+        if let Some((what, _)) = differs.iter().find(|(_, differs)| *differs) {
+            return fail(format!("the O0 and {build} builds differ in {what}"));
+        }
+    }
+    Ok(())
+}
+
+/// The builds of `name` in `runs`, each as its exit, stdout and stderr under `==>` lines.
+fn record(name: &str, runs: &[Run; 3]) -> String {
+    let mut out = String::new();
+    for ((build, _), run) in BUILDS.iter().zip(runs) {
+        let _ = writeln!(out, "==> {name} {build}: {:?}", run.exit);
+        section(&mut out, &format!("{name} {build} stdout"), &run.stdout);
+        section(&mut out, &format!("{name} {build} stderr"), &run.stderr);
+    }
+    out
+}
+
+/// A failure a test forces on `program`.
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Force {
+    /// The program's -O2 run prints something else.
+    Stdout,
+    /// The build step panics, as a compiler bug would.
+    CompilerPanic,
+}
+
+#[cfg(test)]
+thread_local! {
+    static FORCE: std::cell::Cell<Option<Force>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::ExitStatusExt;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Output};
+    use std::time::Duration;
+    use std::{env, fs, thread};
+
+    use super::{
+        BUILDS, Exit, FORCE, Force, LIMIT, Run, build, builds, checked, judge, judge_builds,
+        program, program_in, run,
+    };
+    use crate::fresh_names;
+    use crate::generate::{Generated, coverage, generate};
+
+    /// A directory of the test's own, removed when dropped.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Scratch {
+            Scratch(
+                run::private_dir(&env::temp_dir(), fresh_names("-test"))
+                    .expect("the test should make its directory"),
+            )
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// `target/debug/libsisu_runtime.a`, which nextest's setup script builds: the test binary is
+    /// `target/debug/deps/<name>` (decision 7).
+    fn runtime() -> PathBuf {
+        let exe = env::current_exe().expect("the test binary should know its path");
+        exe.parent()
+            .and_then(Path::parent)
+            .expect("the test binary should be two levels inside the target directory")
+            .join("libsisu_runtime.a")
+    }
+
+    /// `f` on a thread with a `STACK_SIZE` stack, as `program`'s contract asks.
+    fn on_stack(f: impl FnOnce() + Send) {
+        thread::scope(|scope| {
+            thread::Builder::new()
+                .stack_size(crate::STACK_SIZE)
+                .spawn_scoped(scope, f)
+                .expect("the OS should start a thread with a 64 MiB stack")
+                .join()
+                .expect("the test's thread should not panic");
+        });
+    }
+
+    /// The three builds of `source`, each run with `stdin` for at most `limit`.
+    fn runs_of(source: &str, stdin: &str, limit: Duration) -> [Run; 3] {
+        let scratch = Scratch::new();
+        let program = checked("program", source).expect("the test's program should check clean");
+        let stdin_path = scratch.0.join("stdin.txt");
+        fs::write(&stdin_path, stdin).expect("the test should write the stdin");
+        builds(
+            "program",
+            source,
+            &program,
+            &runtime(),
+            &scratch.0,
+            &stdin_path,
+            limit,
+        )
+    }
+
+    fn exits(runs: &[Run; 3]) -> [Exit; 3] {
+        runs.each_ref().map(|run| run.exit)
+    }
+
+    #[test]
+    fn a_clean_program_passes() {
+        let runs = runs_of("fn main() {\n    print(\"hi\")\n}\n", "", LIMIT);
+        assert_eq!(exits(&runs), [Exit::Code(0); 3]);
+        for run in &runs {
+            assert_eq!(run.stdout, b"hi\n");
+            assert_eq!(run.stderr, b"");
+        }
+        judge_builds(&runs).expect("a clean program should pass property 3");
+    }
+
+    #[test]
+    fn a_panic_passes_when_every_build_agrees() {
+        let runs = runs_of("fn main() {\n    panic(\"x\")\n}\n", "", LIMIT);
+        assert_eq!(exits(&runs), [Exit::Code(101); 3]);
+        judge_builds(&runs).expect("a panic in every build should pass property 3");
+    }
+
+    /// Review Focus 2: the overflow's value is never used, and `-O2` must keep its panic.
+    #[test]
+    fn unused_overflow_panics_in_every_build() {
+        let source =
+            "fn f(a: i64) -> i64 {\n    a * a\n}\n\nfn main() {\n    let _ = f(4_000_000_000)\n}\n";
+        let runs = runs_of(source, "", LIMIT);
+        assert_eq!(exits(&runs), [Exit::Code(101); 3]);
+        judge_builds(&runs).expect("every build should panic the same way");
+    }
+
+    /// Review Focus 4: `read_line` past the end of the stdin is `None` in every build.
+    #[test]
+    fn stdin_past_its_end_agrees() {
+        let line = "    print(read_line() ?? \"none\")\n";
+        let source = format!("fn main() {{\n{}}}\n", line.repeat(3));
+        let runs = runs_of(&source, "a\n", LIMIT);
+        assert_eq!(exits(&runs), [Exit::Code(0); 3]);
+        for run in &runs {
+            assert_eq!(run.stdout, b"a\nnone\nnone\n");
+        }
+        judge_builds(&runs).expect("every build should read the same");
+    }
+
+    /// Review Focus 5: no pipe fills up, and a difference in the last byte still counts.
+    #[test]
+    fn large_output_is_compared_exactly() {
+        let source = "fn main() {\n    let mut i = 0\n    while i < 100_000 {\n        print(i)\n        i += 1\n    }\n}\n";
+        let mut runs = runs_of(source, "", LIMIT);
+        assert_eq!(exits(&runs), [Exit::Code(0); 3]);
+        for run in &runs {
+            let text = String::from_utf8_lossy(&run.stdout);
+            assert_eq!(text.lines().count(), 100_000);
+            assert_eq!(text.lines().last(), Some("99999"));
+        }
+        judge_builds(&runs).expect("every build should print the same");
+        let last = runs[2].stdout.len() - 2;
+        runs[2].stdout[last] = b'8';
+        let failure = judge_builds(&runs).expect_err("the last digit differs");
+        assert_eq!(failure.property, 3);
+    }
+
+    #[test]
+    fn a_hang_fails_property_3() {
+        let source = "fn main() {\n    while true {\n    }\n}\n";
+        let runs = runs_of(source, "", Duration::from_millis(200));
+        assert_eq!(exits(&runs), [Exit::TimedOut; 3]);
+        let failure = judge_builds(&runs).expect_err("a hang should fail property 3");
+        assert_eq!(failure.property, 3);
+    }
+
+    /// A run that exits 0 and prints `1`.
+    fn clean() -> Run {
+        Run {
+            exit: Exit::Code(0),
+            stdout: b"1\n".to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    /// A change to three runs.
+    type Change = fn(&mut [Run; 3]);
+
+    #[test]
+    fn judge_builds_rejects_any_difference() {
+        judge_builds(&[clean(), clean(), clean()]).expect("equal clean runs should pass");
+        // Each case differs from three clean runs in one thing: one field of one run, or the exit
+        // of all three, so only the exit rule can catch it.
+        let cases: [(&str, Change); 5] = [
+            ("exit", |runs| runs[1].exit = Exit::Code(101)),
+            ("stdout", |runs| runs[2].stdout = b"2\n".to_vec()),
+            ("stderr", |runs| runs[1].stderr = b"x\n".to_vec()),
+            ("count fault", |runs| {
+                for run in runs {
+                    run.exit = Exit::Code(102);
+                }
+            }),
+            ("segfault", |runs| {
+                for run in runs {
+                    run.exit = Exit::Signal(11);
+                }
+            }),
+        ];
+        for (case, change) in cases {
+            let mut runs = [clean(), clean(), clean()];
+            change(&mut runs);
+            let failure = judge_builds(&runs).expect_err(case);
+            assert_eq!(failure.property, 3, "{case}");
+        }
+    }
+
+    /// Either copy failing to check fails property 1, before anything is built.
+    #[test]
+    fn a_rejected_program_fails_property_1() {
+        let clean = "fn main() {\n    print(1)\n}\n";
+        let rejected = "fn main() {\n    print(x)\n}\n";
+        for (program, rewritten) in [(rejected, clean), (clean, rejected)] {
+            let g = Generated {
+                program: program.to_string(),
+                rewritten: rewritten.to_string(),
+                stdin: String::new(),
+                known: Vec::new(),
+                cost: 0,
+            };
+            let scratch = Scratch::new();
+            let (failure, builds) =
+                judge(&g, &runtime(), &scratch.0).expect_err("an unknown name should fail");
+            assert_eq!((failure.property, builds.as_str()), (1, ""), "{rewritten}");
+        }
+    }
+
+    #[test]
+    fn a_signal_is_its_number() {
+        let scratch = Scratch::new();
+        let exe = scratch.0.join("segfault.sh");
+        fs::write(&exe, "#!/bin/sh\nkill -SEGV $$\n").expect("the test should write the script");
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o700))
+            .expect("the test should make the script executable");
+        let stdin = scratch.0.join("stdin.txt");
+        fs::write(&stdin, "").expect("the test should write the stdin");
+        assert_eq!(run(&exe, &stdin, &scratch.0, LIMIT).exit, Exit::Signal(11));
+    }
+
+    /// The `n`th seed of the coverage test.
+    fn seed(n: usize) -> Vec<u8> {
+        coverage::seeds()
+            .nth(n)
+            .expect("the coverage test should have at least four seeds")
+    }
+
+    /// `program` on the `n`th seed, which must pass and leave no directory behind.
+    fn seed_passes(n: usize) {
+        let tmp = Scratch::new();
+        on_stack(|| program_in(&seed(n), &runtime(), &tmp.0));
+        let left = fs::read_dir(&tmp.0)
+            .expect("the test's directory should be readable")
+            .count();
+        assert_eq!(left, 0, "`program` should remove its directory");
+    }
+
+    #[test]
+    fn seed_0_passes() {
+        seed_passes(0);
+    }
+
+    #[test]
+    fn seed_1_passes() {
+        seed_passes(1);
+    }
+
+    #[test]
+    fn seed_2_passes() {
+        seed_passes(2);
+    }
+
+    #[test]
+    fn seed_3_passes() {
+        seed_passes(3);
+    }
+
+    /// The seed whose generated cost is highest runs at O0 well within the limit. No assertion
+    /// on time: a run past `LIMIT` is `TimedOut`.
+    #[test]
+    fn a_budget_program_is_fast() {
+        let seed = coverage::seeds()
+            .max_by_key(|seed| generate(seed).cost)
+            .expect("the coverage test should have seeds");
+        let g = generate(&seed);
+        on_stack(|| {
+            let scratch = Scratch::new();
+            let program = checked("program", &g.program).expect("a seed should check clean");
+            let stdin = scratch.0.join("stdin.txt");
+            fs::write(&stdin, &g.stdin).expect("the test should write the stdin");
+            let exe = scratch.0.join("program");
+            build(
+                "program",
+                &g.program,
+                &program,
+                &BUILDS[0].1,
+                &runtime(),
+                &exe,
+            );
+            let exit = run(&exe, &stdin, &scratch.0, LIMIT).exit;
+            assert!(matches!(exit, Exit::Code(0 | 101)), "{exit:?}");
+        });
+    }
+
+    /// Set in a child process that one of the tests below starts from this binary.
+    const CHILD: &str = "SISU_FUZZ_PROGRAM_CHILD";
+
+    /// Runs this binary's test `name` alone as a child process, with `TMPDIR` the empty
+    /// `scratch/tmp` and `SISU_FUZZ_DUMP` `scratch/dump`.
+    fn child(name: &str, scratch: &Path) -> Output {
+        let tmp = scratch.join("tmp");
+        fs::create_dir(&tmp).expect("the test should make the child's temporary directory");
+        Command::new(env::current_exe().expect("the test binary should know its path"))
+            .args([
+                "--exact",
+                &format!("fuzz_program::tests::{name}"),
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("TMPDIR", tmp)
+            .env("SISU_FUZZ_DUMP", scratch.join("dump"))
+            .output()
+            .expect("the test binary should run again")
+    }
+
+    /// Asserts that `stderr` holds `first`, then each of `g`'s sources under its `==>` line, and
+    /// that the child left nothing in its temporary directory.
+    fn assert_record(stderr: &str, first: &str, g: &Generated, scratch: &Path) {
+        let at = |text: &str| {
+            stderr
+                .find(text)
+                .unwrap_or_else(|| panic!("stderr should hold {text:?}:\n{stderr}"))
+        };
+        let sections = [
+            at(first),
+            at(&format!("==> program\n{}", g.program)),
+            at(&format!("==> rewritten\n{}", g.rewritten)),
+            at(&format!("==> stdin\n{}", g.stdin)),
+        ];
+        assert!(sections.is_sorted(), "{sections:?}:\n{stderr}");
+        let left = fs::read_dir(scratch.join("tmp"))
+            .expect("the child's temporary directory should be readable")
+            .count();
+        assert_eq!(left, 0, "the child should remove its directory");
+    }
+
+    #[test]
+    fn a_failure_prints_the_program() {
+        if env::var_os(CHILD).is_some() {
+            on_stack(|| {
+                FORCE.set(Some(Force::Stdout));
+                program(&seed(0), &runtime());
+            });
+            return;
+        }
+        let scratch = Scratch::new();
+        let out = child("a_failure_prints_the_program", &scratch.0);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{stderr}");
+        let g = generate(&seed(0));
+        assert_record(&stderr, "property 3: ", &g, &scratch.0);
+        let builds = [
+            stderr.find("==> stdin\n"),
+            // Output without a final line break gets one; seed 0 prints nothing, which gets none.
+            stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
+            stderr.find("==> program --rc-checks stdout\n==> program --rc-checks stderr\n"),
+            stderr.find("program fuzzer: property 3 failed"),
+        ];
+        assert!(
+            builds.iter().all(Option::is_some) && builds.is_sorted(),
+            "{builds:?}:\n{stderr}"
+        );
+        let failure = fs::read_to_string(scratch.0.join("dump/failure.txt"))
+            .expect("the dump should hold failure.txt");
+        assert!(failure.starts_with("property 3: "), "{failure}");
+    }
+
+    /// libFuzzer's panic hook aborts, so the record must be written before the earlier hook runs.
+    #[test]
+    fn a_compiler_panic_leaves_the_dump() {
+        if env::var_os(CHILD).is_some() {
+            std::panic::set_hook(Box::new(|_| std::process::abort()));
+            on_stack(|| {
+                FORCE.set(Some(Force::CompilerPanic));
+                program(&seed(0), &runtime());
+            });
+            return;
+        }
+        let scratch = Scratch::new();
+        let out = child("a_compiler_panic_leaves_the_dump", &scratch.0);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // SIGABRT is 6 on Linux and macOS.
+        assert_eq!(out.status.signal(), Some(6), "{stderr}");
+        let g = generate(&seed(0));
+        assert_record(&stderr, "compiler panic\n==> program\n", &g, &scratch.0);
+        let dump = scratch.0.join("dump");
+        let read = |name: &str| {
+            fs::read_to_string(dump.join(name))
+                .unwrap_or_else(|e| panic!("the dump should hold {name}: {e}"))
+        };
+        assert_eq!(read("program.sisu"), g.program);
+        assert_eq!(read("rewritten.sisu"), g.rewritten);
+        assert_eq!(read("stdin.txt"), g.stdin);
+        assert_eq!(read("failure.txt"), "compiler panic\n");
+    }
+
+    /// A dump that cannot be written is reported, and the record still reaches stderr.
+    #[test]
+    fn a_dump_it_cannot_write_is_reported() {
+        if env::var_os(CHILD).is_some() {
+            on_stack(|| {
+                FORCE.set(Some(Force::CompilerPanic));
+                program(&seed(0), &runtime());
+            });
+            return;
+        }
+        let scratch = Scratch::new();
+        // A file where the dump's directory should be.
+        fs::write(scratch.0.join("dump"), "").expect("the test should write the file");
+        let out = child("a_dump_it_cannot_write_is_reported", &scratch.0);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{stderr}");
+        let g = generate(&seed(0));
+        assert_record(&stderr, "compiler panic\n==> program\n", &g, &scratch.0);
+        assert!(stderr.contains("cannot write "), "{stderr}");
+    }
+}

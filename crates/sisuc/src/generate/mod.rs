@@ -11,7 +11,7 @@ mod stmt;
 mod writer;
 
 #[cfg(test)]
-mod coverage;
+pub(crate) mod coverage;
 
 use arbitrary::Unstructured;
 
@@ -24,24 +24,21 @@ pub(crate) struct Generated {
     pub(crate) rewritten: String,
     pub(crate) stdin: String,
     /// Empty until Task 6.
-    #[cfg_attr(
-        test,
-        expect(dead_code, reason = "Task 6's known answers fill and read it")
-    )]
+    #[expect(dead_code, reason = "Task 6's known answers fill and read it")]
     pub(crate) known: Vec<Known>,
     /// The program's cost, as decision 5 counts it.
     #[cfg(test)]
     pub(crate) cost: u64,
 }
 
-#[cfg_attr(test, expect(dead_code, reason = "Task 6 writes the known answers"))]
+#[expect(dead_code, reason = "Task 6 writes the known answers")]
 pub(crate) struct Known {
     /// `k<n>`; `main` prints its result as `@k<n> <value>`.
     pub(crate) marker: String,
     pub(crate) answer: Answer,
 }
 
-#[cfg_attr(test, expect(dead_code, reason = "Task 6 writes the known answers"))]
+#[expect(dead_code, reason = "Task 6 writes the known answers")]
 pub(crate) enum Answer {
     Value(String),
     /// The runtime's message: `integer overflow` or `division by zero`.
@@ -163,6 +160,10 @@ impl<'a> Gen<'a> {
 
 /// What a value is made of, for its size (decision 5).
 #[derive(Clone)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "only the size tests use it so far")
+)]
 pub(crate) enum Shape {
     /// A number, a `bool` or a `char`, held inline.
     Scalar,
@@ -174,6 +175,10 @@ pub(crate) enum Shape {
     Node(Vec<Shape>),
 }
 
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "only the size tests use it so far")
+)]
 impl Shape {
     /// Its elements and nodes, and the chars of its strings, all counted.
     pub(crate) fn size(&self) -> u64 {

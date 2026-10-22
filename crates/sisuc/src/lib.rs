@@ -8,10 +8,8 @@ mod diagnostic;
 mod front_end;
 mod fuzz;
 #[cfg(any(test, feature = "fuzz"))]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "Task 5's program fuzz target calls `generate`")
-)]
+mod fuzz_program;
+#[cfg(any(test, feature = "fuzz"))]
 mod generate;
 mod graph;
 mod lexer;
@@ -40,6 +38,8 @@ use report::{Format, Reporter};
 use tir::Program;
 
 pub use fuzz::front_end as fuzz_front_end;
+#[cfg(feature = "fuzz")]
+pub use fuzz_program::program as fuzz_program;
 
 /// The reporter `cli` writes stderr through.
 type Report = Reporter<Stderr>;

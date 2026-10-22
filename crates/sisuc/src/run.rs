@@ -80,7 +80,10 @@ fn build(reporter: &mut Report, source: &Source, backend: &Backend) -> Option<(P
 /// Creates a directory in `parent` that only its owner can read or write, under the first of
 /// `names` that is free, and returns its path. `cc` creates the executable with the umask, so
 /// the directory is what keeps others from reading or replacing it.
-fn private_dir(parent: &Path, names: impl IntoIterator<Item = String>) -> Result<PathBuf, String> {
+pub(crate) fn private_dir(
+    parent: &Path,
+    names: impl IntoIterator<Item = String>,
+) -> Result<PathBuf, String> {
     let mut builder = DirBuilder::new();
     builder.mode(0o700);
     for name in names {

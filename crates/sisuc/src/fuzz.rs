@@ -40,7 +40,7 @@ pub fn front_end(data: &[u8]) -> String {
 /// Prints `program` as a typed tree and as MIR, then compiles it, without and with `--rc-checks`,
 /// and asserts that LLVM verifies each module. No pass runs and nothing links: `-O2` changes only
 /// the pipeline, not the module codegen makes.
-fn assert_compiles(program: &Program, source: &str) {
+pub(crate) fn assert_compiles(program: &Program, source: &str) {
     // The printer's only check is that it does not panic.
     drop(program.to_string());
     let machine = codegen::target_machine(codegen::OptLevel::O0)
