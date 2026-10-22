@@ -1,0 +1,167 @@
+name: Fuzz programs
+
+on:
+  schedule:
+    - cron: "53 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds to fuzz, from 60 to 14400
+        type: number
+        default: 1800
+      coverage:
+        description: Also measure line coverage per compiler stage
+        type: boolean
+        default: false
+  # A pull request that carries one label `fuzz-program`, `fuzz-program <n>m` or
+  # `fuzz-program <n>h` runs it when the label is added and on each push
+  # (scripts/fuzz_program_plan.py). This also runs it before the file reaches main, where
+  # workflow_dispatch needs it.
+  pull_request:
+    types: [labeled, synchronize]
+
+# A pull request's run gets these too, and no secrets, and runs only the repository's scripts.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Third-party actions are pinned to commit SHAs; Dependabot bumps them.
+# The fuzz step decides the job's result: each later step runs only after it
+# failed, or tolerates failure. Worst case, from the plan: 15 min of build, the
+# fuzzing, 17 of crash replays, 15 of tmin, 10 of cmin and 45 of coverage.
+jobs:
+  plan:
+    name: Plan the run
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      seconds: ${{ steps.plan.outputs.seconds }}
+      coverage: ${{ steps.plan.outputs.coverage }}
+      minutes: ${{ steps.plan.outputs.minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Inputs reach the script through env; label text only through the event payload file.
+      - id: plan
+        env:
+          FUZZ_SECONDS: ${{ inputs.seconds }}
+          FUZZ_COVERAGE: ${{ inputs.coverage }}
+        run: python3 scripts/fuzz_program_plan.py
+
+  fuzz:
+    needs: plan
+    if: needs.plan.outputs.seconds != ''
+    name: Fuzz generated programs
+    runs-on: ubuntu-26.04
+    timeout-minutes: ${{ fromJSON(needs.plan.outputs.minutes) }}
+    # One run per ref at a time, so a pull request's run and the nightly never wait on each
+    # other or on the front-end fuzzer. A push cancels its pull request's run in progress; the
+    # nightly never cancels. A skipped job joins another group, so that adding an unrelated
+    # label cancels nothing.
+    concurrency:
+      group: fuzz-program-${{ github.ref }}${{ needs.plan.outputs.seconds == '' && '-skipped' || '' }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - uses: ./.github/actions/install-llvm
+      - run: cargo install --locked cargo-fuzz@0.13.2
+      # Each run saves under its own key, and the prefix restores the newest one. A pull
+      # request's run can restore main's corpus, but what it saves is scoped to its merge ref, so
+      # it never reaches main's runs.
+      - id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/program
+          key: fuzz-program-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fuzz-program-corpus-
+      - id: fuzz
+        env:
+          SECONDS_TO_FUZZ: ${{ needs.plan.outputs.seconds }}
+        run: scripts/fuzz.sh --target program "$SECONDS_TO_FUZZ"
+      # First, so the raw input, the dump directories of its replays, the log, run record and
+      # summary survive anything later.
+      - if: always() && steps.fuzz.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-program-failure
+          path: fuzz/artifacts/
+          if-no-files-found: warn
+      - name: Minimize the failing input
+        if: always() && steps.fuzz.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          input=
+          for class in crash timeout oom; do
+            for f in fuzz/artifacts/program/"$class"-*; do
+              if [ -f "$f" ]; then
+                input=$f
+                break 2
+              fi
+            done
+          done
+          if [ -z "$input" ]; then
+            echo "No failing input to minimize."
+            exit 0
+          fi
+          status=0
+          timeout -k 10 900 scripts/fuzz.sh --target program --tmin "$input" || status=$?
+          # Each successful tmin step writes a new minimized-from-<hash> file; the newest is the last step's.
+          m=
+          for f in fuzz/artifacts/program/minimized-from-*; do
+            if [ -f "$f" ] && { [ -z "$m" ] || [ "$f" -nt "$m" ]; }; then
+              m=$f
+            fi
+          done
+          if [ -n "$m" ]; then
+            printf -- "- Minimized: \`%s\`. Replay: \`scripts/fuzz.sh --target program --replay %s\`.\n" "$m" "$m" >>fuzz/artifacts/summary.md
+          fi
+          exit "$status"
+      - if: always() && steps.fuzz.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-program-minimized
+          path: fuzz/artifacts/program/minimized-from-*
+          if-no-files-found: ignore
+      - name: Summary
+        if: always() && steps.fuzz.outcome != 'skipped'
+        continue-on-error: true
+        run: |
+          if [ -f fuzz/artifacts/summary.md ]; then
+            cat fuzz/artifacts/summary.md >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "The fuzzer failed before writing a summary; see the log of the fuzz step." >>"$GITHUB_STEP_SUMMARY"
+          fi
+      # cmin runs last and bounded. A killed or failed cmin leaves the corpus as it was.
+      - name: Minimize the corpus
+        if: always() && steps.fuzz.outcome != 'skipped'
+        continue-on-error: true
+        run: timeout -k 10 600 scripts/fuzz.sh --target program --cmin
+      - if: always() && steps.fuzz.outcome != 'skipped'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/program
+          key: fuzz-program-corpus-${{ github.run_id }}-${{ github.run_attempt }}
+      # Last, after the corpus is saved, and bounded, so a slow measurement loses nothing.
+      - name: Coverage
+        if: always() && steps.fuzz.outcome != 'skipped' && needs.plan.outputs.coverage == 'true'
+        continue-on-error: true
+        timeout-minutes: 45
+        run: |
+          status=0
+          scripts/fuzz.sh --target program --coverage >coverage.txt 2>&1 || status=$?
+          cat coverage.txt
+          {
+            echo "## Coverage of the corpus"
+            echo
+            echo '```'
+            grep -E '^(lexer|parser|check|mir|codegen) |^inputs reaching codegen' coverage.txt ||
+              echo "No coverage lines: the coverage run exited ${status}; see the step's log."
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"

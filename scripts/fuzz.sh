@@ -2,7 +2,7 @@
 # Fuzzes the compiler with cargo-fuzz. front_end (fuzz/fuzz_targets/front_end.rs) runs the front
 # end on every input, and codegen on each input that checks clean. program
 # (fuzz/fuzz_targets/program.rs) turns each input into a well-typed program, builds and runs it
-# three ways with its rewritten copy, and judges the runs (ADR 0031).
+# three ways with its rewritten copy, and judges the runs (ADR 0033).
 # Every libFuzzer flag lives here, so CI never repeats one.
 #   scripts/fuzz.sh [--target <target>] [seconds]   fuzz for <seconds>, 1800 by default
 #   scripts/fuzz.sh [--target <target>] --replay <input>   run one input

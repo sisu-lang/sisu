@@ -1,6 +1,6 @@
 //! The entry point of the program fuzz target: generates a Sisu program from the input bytes,
 //! builds it and its rewritten copy at O0, at `-O2` and with `--rc-checks`, runs each build and
-//! panics on a breach of a property (ADR 0031). Properties 1 and 2 are that the program checks
+//! panics on a breach of a property (ADR 0033). Properties 1 and 2 are that the program checks
 //! clean and compiles to a module LLVM verifies; property 3 is that every build exits 0 or 101,
 //! and all three the same way; property 4 is that the rewritten copy runs as the program does;
 //! property 5 is that the program prints the known integer answers.

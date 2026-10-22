@@ -149,7 +149,7 @@ text = "Files, environment and exit codes"
 state = "planned"
 notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0009", "docs/adr/0009-runtime-owns-io.md"]]
 
-# source: docs/architecture.md; docs/roadmap.md ("Early tooling" (-O2, -O3, --linker, ARM64, macOS), "What panics", "Fuzzing", "mir", "Later and stretch goals" (DWARF, Windows, --target, C FFI), "The growing proof program"); docs/development.md "Fuzz the front end"; docs/adr/0003, 0005
+# source: docs/architecture.md; docs/roadmap.md ("Early tooling" (-O2, -O3, --linker, ARM64, macOS), "What panics", "Fuzzing", "mir", "Later and stretch goals" (DWARF, Windows, --target, C FFI), "The growing proof program"); docs/development.md "Fuzz the front end", "Fuzz generated programs"; docs/adr/0003, 0005
 [[area]]
 id = "compiler"
 name = "Compiler"
@@ -212,9 +212,9 @@ state = "planned"
 notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]
 
 [[area.feature]]
-text = "Fuzzing for wrong answers"
-state = "planned"
-notes = [["Roadmap: fuzzing", "docs/roadmap.md#fuzzing"]]
+text = "Generated programs fuzzed nightly for wrong answers"
+state = "works"
+notes = [["Roadmap: fuzzing", "docs/roadmap.md#fuzzing"], ["Developing Sisu", "docs/development.md#fuzz-generated-programs"]]
 
 [[area.feature]]
 text = "Lexer and parser in Sisu"

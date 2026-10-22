@@ -1,6 +1,6 @@
 //! The program fuzzer's generator: it turns bytes, read through `arbitrary::Unstructured`, into a
 //! Sisu program that is well typed by construction, the stdin it reads, and a rewritten copy that
-//! must print the same (ADR 0031). Each rule writes one construct of a wanted type, and the bytes
+//! must print the same (ADR 0033). Each rule writes one construct of a wanted type, and the bytes
 //! choose among the rules that can make that type in the current scope. Choice 0 is always the
 //! smallest valid one, which is what every choice is once the bytes run out.
 

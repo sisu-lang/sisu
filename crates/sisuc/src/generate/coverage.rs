@@ -1,4 +1,4 @@
-//! The coverage test of ADR 0031: programs generated from fixed seeds check clean, and between
+//! The coverage test of ADR 0033: programs generated from fixed seeds check clean, and between
 //! them hold every variant of the syntax tree's, the typed tree's and the types' enums, every
 //! built-in method on each receiver, every prelude function and `f64` constant, each value of
 //! the syntax tree's `bool` fields, and the literal forms only the text shows. Each enum is read
