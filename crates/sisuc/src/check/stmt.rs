@@ -1296,9 +1296,9 @@ struct ForHeader {
     item: tir::Expr,
 }
 
-/// Wraps into `ty` each value of another type that a `break` in `e` gives the loop `depth` loops
-/// out from `e`: the `T` values of a loop that a `T?` value widened. It enters nested loops only
-/// when `crossed`: when a `break` in one targets that loop.
+/// Wraps into `ty` each value of another type, `never` aside, that a `break` in `e` gives the
+/// loop `depth` loops out from `e`: the `T` values of a loop that a `T?` value widened. It enters
+/// nested loops only when `crossed`: when a `break` in one targets that loop.
 fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
     let nested = matches!(e.kind, ExprKind::Loop(_));
     if nested && !crossed {
@@ -1316,6 +1316,7 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
     } = &mut e.kind
         && *target == depth
         && value.ty != ty
+        && value.ty != Type::NEVER
     {
         let placeholder = tir::Expr {
             kind: ExprKind::None,

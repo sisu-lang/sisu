@@ -871,6 +871,15 @@ fn optional_value_after_payload_widens_the_loop() {
     assert_eq!(loop_type(src), Type::optional(Type::I64));
 }
 
+/// A widened loop wraps its `T` values but not a `never` one, which has no value to wrap.
+#[test]
+fn widening_leaves_a_never_value_unwrapped() {
+    let src = "fn f(c: bool) -> i64? {\n    loop {\n        if c { break panic(\"x\") }\n        if c { break 5 }\n        break None\n    }\n}\nfn main() {}";
+    let printed = lowered(src);
+    assert!(printed.contains("(wrap 5)"), "{printed}");
+    assert!(!printed.contains("(wrap (panic"), "{printed}");
+}
+
 /// The walk that wraps a widened loop's values enters a nested loop only when a `break` in
 /// one targets the widened loop: `break loop { ... }` at every level stays linear.
 #[test]
