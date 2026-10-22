@@ -3,7 +3,7 @@
 
 use std::{fmt, iter};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
 use super::expr::int_literal;
@@ -148,6 +148,9 @@ impl Bindings {
 thread_local! {
     /// How many bindings inference has checked or undone on this thread.
     pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many type parameter names the search for reported ones has looked at on this
+    /// thread.
+    pub(super) static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of `body.ahead` lookups have inspected on this thread.
     pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -328,14 +331,21 @@ impl Checker<'_> {
             call.slots[i] = Some(Err(Poisoned::error()));
         }
         // A parameter whose name `type_params` reported, a second `T` or a built-in name, may
-        // be one no type names: it poisons the call rather than go uninferred.
+        // be one no type names: it poisons the call rather than go uninferred. One pass over
+        // the names finds them, and only a call that leaves one unbound makes it.
         let mut broken = false;
-        for (i, &name) in sig.declared.iter().enumerate() {
-            if call.bindings.found[i].is_none()
-                && (sig.declared[..i].contains(&name) || built_in_type(name.as_str()).is_some())
-            {
-                call.bindings.found[i] = Some(UNKNOWN);
-                broken = true;
+        if call.bindings.found.contains(&None) {
+            let mut seen = FxHashSet::default();
+            for (i, &name) in sig.declared.iter().enumerate() {
+                #[cfg(test)]
+                SCANNED.set(SCANNED.get() + 1);
+                let repeated = !seen.insert(name);
+                if call.bindings.found[i].is_none()
+                    && (repeated || built_in_type(name.as_str()).is_some())
+                {
+                    call.bindings.found[i] = Some(UNKNOWN);
+                    broken = true;
+                }
             }
         }
         let list = match call.bindings.finish() {

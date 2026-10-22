@@ -976,6 +976,29 @@ fn inference_checks_each_binding_once() {
     assert_eq!(visits(128), 128);
 }
 
+/// A call that leaves type parameters unbound looks at each declared name once to find the
+/// reported ones, so its work grows with them, not with their square; a call that binds them
+/// all looks at none.
+#[test]
+fn reported_type_parameters_are_found_in_one_pass() {
+    let scanned = |n: usize, args: &str| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let params: Vec<_> = (0..n).map(|i| format!("x{i}: T{i}")).collect();
+        let src = format!(
+            "fn f<{}>({}) {{}}\nfn main() {{ f({args}) }}",
+            types.join(", "),
+            params.join(", "),
+        );
+        generic::SCANNED.set(0);
+        checked(&src);
+        generic::SCANNED.get()
+    };
+    let none = |n: usize| vec!["[]"; n].join(", ");
+    assert_eq!(scanned(500, &none(500)), 500);
+    assert_eq!(scanned(1000, &none(1000)), 1000);
+    assert_eq!(scanned(500, &vec!["true"; 500].join(", ")), 0);
+}
+
 /// Work kept ahead of a call is found by its span in one step, so finding it grows with the
 /// call's arguments, not with their square: one step per receiver and per block.
 #[test]
