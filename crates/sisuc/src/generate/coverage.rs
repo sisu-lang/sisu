@@ -1895,6 +1895,56 @@ fn main_calls_fit_the_budget_left() {
     assert_eq!(g.w.out.program, "f1(2)f1(0)");
 }
 
+/// A `Gen` over `data` in `main`, knowing `f1`, `f2` and `f3`: of an `i64`, of `unit` and of
+/// an `[i64]`, each a call of cost 1 at every depth.
+fn with_funcs(data: &[u8]) -> Gen<'_> {
+    let mut g = Gen::new(data);
+    for (name, ret) in [
+        ("f1", Ty::I64),
+        ("f2", Ty::Unit),
+        ("f3", Ty::Array(Box::new(Ty::I64))),
+    ] {
+        g.scope.funcs.push(Func {
+            name: name.to_string(),
+            owner: None,
+            params: Vec::new(),
+            ret,
+            ret_size: 0,
+            cost: [1; DEPTHS],
+        });
+    }
+    g
+}
+
+#[test]
+fn main_prints_or_discards_what_a_call_returns() {
+    // Byte by byte: one statement in `main`, a call, of the function the third byte names, at
+    // depth 0 once the bytes run out. A value is printed, an array discarded, and a `unit`
+    // call stands alone; the statement gives back the fuel it did not spend.
+    for (callee, line) in [(0, "print(f1(0))"), (1, "f2(0)"), (2, "let _ = f3(0)")] {
+        let data = [1, 1, callee];
+        let mut g = with_funcs(&data);
+        g.main_stmts();
+        assert_eq!(g.w.out.program, format!("\n{line}"));
+        assert_eq!(g.fuel, FUEL - 1);
+    }
+}
+
+#[test]
+fn a_call_statement_names_any_function_the_budget_lets_it() {
+    // In `main`, every function, of any type, while the loops around the call run no more
+    // times than the budget left, so that a call at depth 0 fits; in a function, itself and
+    // the earlier ones, whatever the loops.
+    let mut g = with_funcs(&[]);
+    g.budget = 8;
+    g.cost.enter_loop(8);
+    assert_eq!(g.callees_any(), [0, 1, 2]);
+    g.cost.enter_loop(2);
+    assert_eq!(g.callees_any(), [] as [usize; 0]);
+    g.scope.func = Some(1);
+    assert_eq!(g.callees_any(), [0, 1]);
+}
+
 #[test]
 fn fuel_runs_out() {
     let mut g = Gen::new(&[]);

@@ -778,62 +778,6 @@ mod tests {
         });
     }
 
-    /// Not a check: prints, for each seed of the coverage test, its cost, `main`'s top-level
-    /// statements, and how its O0 build ran. `cargo nextest run -p sisuc --lib --run-ignored only
-    /// fuzz_program::tests::probe_seeds --no-capture`.
-    #[test]
-    #[ignore = "a probe that builds and runs 64 programs, for a person to read"]
-    fn probe_seeds() {
-        on_stack(|| {
-            let scratch = Scratch::new();
-            for (n, data) in coverage::seeds().enumerate() {
-                let g = generate(&data);
-                let program = checked("program", &g.program).expect("a seed should check clean");
-                let main = crate::parser::parse_ok(&g.program)
-                    .items
-                    .into_iter()
-                    .find_map(|item| match item {
-                        crate::ast::Item::Function(f) if f.name.name.as_str() == "main" => {
-                            Some(f.body.stmts.len())
-                        }
-                        crate::ast::Item::Function(_)
-                        | crate::ast::Item::Class(_)
-                        | crate::ast::Item::Enum(_)
-                        | crate::ast::Item::Const(_) => None,
-                    })
-                    .expect("a program should have `main`");
-                let stdin = scratch.0.join("stdin.txt");
-                fs::write(&stdin, &g.stdin).expect("the probe should write the stdin");
-                let exe = scratch.0.join("program");
-                build(
-                    "program",
-                    &g.program,
-                    &program,
-                    &BUILDS[0].1,
-                    &runtime(),
-                    &exe,
-                );
-                let start = std::time::Instant::now();
-                let ran = run(&exe, &stdin, &scratch.0, LIMIT);
-                let time = start.elapsed();
-                let stderr = String::from_utf8_lossy(&ran.stderr);
-                let last = stderr
-                    .lines()
-                    .last()
-                    .unwrap_or("")
-                    .chars()
-                    .take(60)
-                    .collect::<String>();
-                println!(
-                    "{n}\tcost={}\tmain={main}\texit={:?}\tout={}B\tt={time:?}\t{last}",
-                    g.cost,
-                    ran.exit,
-                    ran.stdout.len()
-                );
-            }
-        });
-    }
-
     /// Set in a child process that one of the tests below starts from this binary.
     const CHILD: &str = "SISU_FUZZ_PROGRAM_CHILD";
 
