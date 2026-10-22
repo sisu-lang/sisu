@@ -1136,9 +1136,11 @@ impl<'a> Parser<'a> {
             TokenKind::Let => self.let_stmt()?,
             TokenKind::Const => return Err(self.local_const()),
             TokenKind::While => {
-                self.bump();
+                let keyword = self.bump().span;
                 if let Some((pattern, value)) = self.child(base, &mut reach, Self::let_binding)? {
                     StmtKind::WhileLet {
+                        label: None,
+                        keyword,
                         pattern,
                         value,
                         body: self.child(base, &mut reach, Self::block)?,
@@ -1146,13 +1148,15 @@ impl<'a> Parser<'a> {
                 } else {
                     let cond = self.child(base, &mut reach, Self::expr)?;
                     StmtKind::While {
+                        label: None,
+                        keyword,
                         cond,
                         body: self.child(base, &mut reach, Self::block)?,
                     }
                 }
             }
             TokenKind::For => {
-                self.bump();
+                let keyword = self.bump().span;
                 let name = self.binding()?;
                 self.expect(&TokenKind::In)?;
                 // A range is only valid here, so the header reads its two sides itself, counted
@@ -1176,6 +1180,8 @@ impl<'a> Parser<'a> {
                     },
                 };
                 StmtKind::For {
+                    label: None,
+                    keyword,
                     name,
                     source,
                     body: self.child(base, &mut reach, Self::block)?,
@@ -1191,11 +1197,16 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Break => {
                 self.bump();
-                StmtKind::Break
+                let value = if self.jump_ends() {
+                    None
+                } else {
+                    Some(self.child(base, &mut reach, Self::expr)?)
+                };
+                StmtKind::Break { label: None, value }
             }
             TokenKind::Continue => {
                 self.bump();
-                StmtKind::Continue
+                StmtKind::Continue { label: None }
             }
             TokenKind::LBrace => return Err(DiagnosticKind::BlockAsStatement { at: start }.into()),
             _ => self.expr_or_assign()?,
@@ -1206,6 +1217,22 @@ impl<'a> Parser<'a> {
             kind,
             span: start.to(self.last_span()),
         })
+    }
+
+    /// Whether the next token ends a `break` or `continue`, which then takes no value: only a
+    /// token that can start an expression continues one.
+    fn jump_ends(&self) -> bool {
+        matches!(
+            self.peek().kind,
+            TokenKind::Newline
+                | TokenKind::Semicolon
+                | TokenKind::RBrace
+                | TokenKind::Comma
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::FatArrow
+                | TokenKind::Eof
+        )
     }
 
     /// The `else` that starts a line, after `previous`, the statement before it. The `else` can
@@ -2335,6 +2362,7 @@ impl<'a> Parser<'a> {
                 return self.array(token.span);
             }
             TokenKind::If => return self.if_expr(),
+            TokenKind::Loop => return self.loop_expr(None),
             TokenKind::Match => return self.match_expr(),
             TokenKind::LBrace => {
                 let block = self.block()?;
@@ -2548,6 +2576,24 @@ impl<'a> Parser<'a> {
         Ok(Expr {
             span: start.to(end),
             kind,
+        })
+    }
+
+    /// `loop { body }`, after its loop label when it has one.
+    fn loop_expr(&mut self, label: Option<Ident>) -> Result<Expr, Diagnostic> {
+        let keyword = self.expect(&TokenKind::Loop)?.span;
+        let base = self.depth;
+        let mut reach = base;
+        let body = self.child(base, &mut reach, Self::block)?;
+        self.depth = reach;
+        let start = label.as_ref().map_or(keyword, |l| l.span);
+        Ok(Expr {
+            span: start.to(body.span),
+            kind: ExprKind::Loop {
+                label,
+                keyword,
+                body,
+            },
         })
     }
 }
@@ -2919,6 +2965,37 @@ mod tests {
             body("fn main() {\n    while c {\n        break\n        continue\n    }\n}"),
             "(block (while c (block (break) (continue))))"
         );
+    }
+
+    #[test]
+    fn loop_is_an_expression() {
+        assert_eq!(expr("loop { }"), "(loop (block))");
+        assert_eq!(expr("let x = loop { }"), "(let x (loop (block)))");
+    }
+
+    /// `break` takes a value only when the next token can start one.
+    #[test]
+    fn break_value_ends_where_a_jump_ends() {
+        for (src, printed) in [
+            ("break 1", "(break 1)"),
+            ("break -1", "(break (- 1))"),
+            ("break\n f()", "(break)"),
+            ("break; f()", "(break)"),
+            ("break", "(break)"),
+        ] {
+            assert_eq!(expr(src), printed, "{src}");
+        }
+        // `,` ends the jump too, so the arm list, not a value, reports it; `E0011-break-arrow`
+        // pins `=>`.
+        assert_eq!(
+            expr_err("match o { 1 => break, _ => x }"),
+            (Code::FieldComma, 1, 33)
+        );
+    }
+
+    #[test]
+    fn continue_takes_no_value() {
+        assert_eq!(expr_err("continue 1"), (Code::Expected, 1, 22));
     }
 
     #[test]

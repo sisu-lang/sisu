@@ -147,6 +147,13 @@ fn nested_for(n: usize) -> Generated {
     blocks("for i in 0..1", n)
 }
 
+/// `loop {` nested `n` times around `print(1)`, each level ended by a `break`.
+fn nested_loop(n: usize) -> Generated {
+    let open = "loop {\n";
+    let line = format!("{}print(1)\n{}", open.repeat(n), "break\n}\n".repeat(n));
+    in_main(&line, open.len() * n + 6)
+}
+
 /// An `else if` chain; the `==` of the last condition.
 fn else_if(n: usize) -> Generated {
     let first = "    let x = 1\n    if x == 0 {\n";
@@ -279,6 +286,7 @@ construct!(if_lets, nested_if_let, 126);
 construct!(else_if_chain, else_if, 252);
 construct!(whiles, nested_while, 253);
 construct!(fors, nested_for, 253);
+construct!(loops, nested_loop, 126);
 construct!(array_types, array_type, 254);
 construct!(match_bodies, match_body, 254);
 construct!(match_patterns, match_pattern, 253);

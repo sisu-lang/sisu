@@ -1,0 +1,3 @@
+fn main() {
+    let loop = 1
+}

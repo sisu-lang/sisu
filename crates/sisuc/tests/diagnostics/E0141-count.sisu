@@ -1,0 +1,7 @@
+fn main() {
+    let mut count = 0
+    for x in [1, 2] {
+        count += x
+        break count
+    }
+}

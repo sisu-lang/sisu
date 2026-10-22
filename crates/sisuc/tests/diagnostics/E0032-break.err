@@ -1,0 +1,15 @@
+error[E0032]: expected `i64`, found `u8`
+ --> E0032-break.sisu:6:15
+  |
+5 |         if c { break 1 }
+  |                ------- this `break` gave the loop the type `i64`
+6 |         break small
+  |               ^^^^^
+  |
+help: if the types are right, convert it with `i64(...)`
+  |
+6 |         break i64(small)
+  |               ++++     +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

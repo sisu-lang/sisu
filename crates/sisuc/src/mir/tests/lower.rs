@@ -672,6 +672,62 @@ fn loop_exits_release_the_body_locals() {
     );
 }
 
+/// A value `loop`'s `break`s each write the one local that its exit block returns.
+#[test]
+fn value_loop_writes_one_destination() {
+    let printed = lowered(
+        "fn f(c: bool, s: string) -> string {\n    loop {\n        if c { break s }\n        break \"x\"\n    }\n}",
+    );
+    let start = printed.find("fn f(").expect("the source should define `f`");
+    let f = &printed[start..];
+    let f = &f[..f.find("\n}").map_or(f.len(), |end| end + 2)];
+    let returns: Vec<_> = f.match_indices("return move ").map(|(at, _)| at).collect();
+    assert_eq!(returns.len(), 1, "{f}");
+    let returned = f[returns[0]..]
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("return move "))
+        .expect("the return should move a local");
+    let writes: Vec<_> = f
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix(&format!("{returned} = ")))
+        .collect();
+    assert_eq!(writes, ["use s#1", "copy \"x\""], "{f}");
+    // Both `break`s go to the block that returns.
+    let exit = f[..returns[0]]
+        .rfind("  bb")
+        .map(|at| &f[at + 2..])
+        .and_then(|rest| rest.split(':').next())
+        .expect("the return should sit in a block");
+    assert_eq!(f.matches(&format!("goto {exit}\n")).count(), 2, "{f}");
+}
+
+/// A `break` whose value never completes makes no exit: these loops leave only by a panic, an
+/// endless inner loop or a `return`, so the function returns at most where `return` stands, and
+/// every block is reachable.
+#[test]
+fn break_without_a_value_edge_makes_no_exit() {
+    for (name, body, returns) in [
+        ("break_panic", "loop { break panic(\"x\") }", 0),
+        ("break_endless_loop", "loop { break loop {} }", 0),
+        ("break_after_return", "loop { return 1; break 2 }", 1),
+    ] {
+        let program = lowered_program(&format!("fn f() -> i64 {{\n    {body}\n}}"));
+        let f = program
+            .functions
+            .iter()
+            .find(|f| f.name == "f")
+            .expect("the source should define `f`");
+        let found = f
+            .blocks
+            .iter()
+            .filter(|b| matches!(b.term, Terminator::Return(_)))
+            .count();
+        assert_eq!(found, returns, "{name}");
+        assert_eq!(unreachable_blocks(f), [], "{name}");
+    }
+}
+
 /// Each part of an interpolation prints with its own format, in part order.
 #[test]
 fn interpolation_prints_each_format_with_its_part() {

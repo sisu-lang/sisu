@@ -17,7 +17,7 @@
 
   // Highlighting. Write code as plain escaped text in <pre data-lang="sisu|sh|out">.
   const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const KW = 'fn|let|mut|var|const|if|else|while|for|in|return|break|continue|class|enum|match|is|self|true|false|None|todo';
+  const KW = 'fn|let|mut|var|const|if|else|while|for|loop|in|return|break|continue|class|enum|match|is|self|true|false|None|todo';
   const sisu = new RegExp(`(\\/\\/.*$)|("(?:[^"\\\\]|\\\\.)*")|\\b(${KW})\\b|\\b([A-Z]\\w*|string|f64|i64|bool|char|u8)\\b|\\b(\\d[\\d_]*(?:\\.\\d+)?)\\b`, 'g');
   const hl = line => esc(line).replace(sisu, (m, c, s, k, t, n) =>
     c ? `<span class="cm">${c}</span>` : s ? `<span class="st">${s}</span>` : k ? `<span class="kw">${k}</span>` : t ? `<span class="ty">${t}</span>` : `<span class="nu">${n}</span>`);

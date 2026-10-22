@@ -1,0 +1,9 @@
+fn main() {
+    let c = true
+    let small: u8 = 1
+    let x = loop {
+        if c { break 1 }
+        break small
+    }
+    print(x)
+}

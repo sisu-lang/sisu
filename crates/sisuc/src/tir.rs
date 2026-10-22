@@ -396,8 +396,15 @@ pub(crate) enum ExprKind {
         arms: Vec<Arm>,
     },
     Loop(Block),
-    Break,
-    Continue,
+    /// Leaves the loop `depth` loops out from the innermost one around it, giving it `value`.
+    Break {
+        depth: usize,
+        value: Option<Box<Expr>>,
+    },
+    /// Starts the next pass of the loop `depth` loops out from the innermost one.
+    Continue {
+        depth: usize,
+    },
     Return(Option<Box<Expr>>),
     Block(Block),
 }
@@ -475,7 +482,7 @@ impl Expr {
             | ExprKind::None
             | ExprKind::ReadLine
             | ExprKind::Local(_) => false,
-            ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => true,
+            ExprKind::Break { .. } | ExprKind::Continue { .. } | ExprKind::Return(_) => true,
             ExprKind::Call { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. } => args.iter().any(Expr::exits),
@@ -765,8 +772,20 @@ impl Printer<'_> {
                 self.block(f, body)?;
                 f.write_str(")")
             }
-            ExprKind::Break => f.write_str("(break)"),
-            ExprKind::Continue => f.write_str("(continue)"),
+            ExprKind::Break { depth, value } => {
+                f.write_str("(break")?;
+                jump_depth(f, *depth)?;
+                if let Some(value) = value {
+                    f.write_str(" ")?;
+                    self.expr(f, value)?;
+                }
+                f.write_str(")")
+            }
+            ExprKind::Continue { depth } => {
+                f.write_str("(continue")?;
+                jump_depth(f, *depth)?;
+                f.write_str(")")
+            }
             ExprKind::Return(None) => f.write_str("(return)"),
             ExprKind::Return(Some(value)) => self.unary(f, "return", value),
             ExprKind::Block(block) => self.block(f, block),
@@ -1028,6 +1047,14 @@ impl fmt::Display for Program {
     }
 }
 
+/// ` ^depth` for a jump to an outer loop; nothing for the innermost one.
+fn jump_depth(f: &mut fmt::Formatter<'_>, depth: usize) -> fmt::Result {
+    if depth > 0 {
+        write!(f, " ^{depth}")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1067,6 +1094,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn jumps_print_their_depth_and_value() {
+        let jump = |kind| Stmt::Expr(expr(kind, Type::NEVER));
+        let inner = block(vec![
+            jump(ExprKind::Break {
+                depth: 1,
+                value: Some(Box::new(int(1))),
+            }),
+            jump(ExprKind::Continue { depth: 1 }),
+        ]);
+        let outer = block(vec![
+            Stmt::Expr(expr(ExprKind::Loop(inner), Type::NEVER)),
+            jump(ExprKind::Break {
+                depth: 0,
+                value: Some(Box::new(int(2))),
+            }),
+        ]);
+        let program = Program {
+            classes: vec![],
+            enums: vec![],
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                body: Block {
+                    stmts: vec![],
+                    value: Some(Box::new(expr(ExprKind::Loop(outer), Type::I64))),
+                    ty: Type::I64,
+                },
+            }],
+        };
+        assert_eq!(
+            program.to_string(),
+            "(fn f () i64 (block (loop (block (loop (block (break ^1 1) (continue ^1))) (break 2)))))"
+        );
+    }
+
     /// `(if (!= x#1 2) (block (print (< 1 n#0 <= 9))))` and
     /// `(loop (block (if true (block (break)) (block))))`.
     fn if_and_loop() -> (Expr, Expr) {
@@ -1094,7 +1159,13 @@ mod tests {
             },
             Type::UNIT,
         );
-        let brk = expr(ExprKind::Break, Type::NEVER);
+        let brk = expr(
+            ExprKind::Break {
+                depth: 0,
+                value: None,
+            },
+            Type::NEVER,
+        );
         let inner_if = expr(
             ExprKind::If {
                 cond: Box::new(expr(ExprKind::Bool(true), Type::BOOL)),
@@ -1785,7 +1856,7 @@ mod tests {
         let (_, looped) = if_and_loop();
         assert!(block_expr(vec![], Some(looped)).exits());
         // A `continue` in a `let` initializer, and a `return` in an argument of a call.
-        let cont = expr(ExprKind::Continue, Type::NEVER);
+        let cont = expr(ExprKind::Continue { depth: 0 }, Type::NEVER);
         let let_cont = Stmt::Let {
             local: LocalId(0),
             init: block_expr(vec![Stmt::Expr(cont)], None),

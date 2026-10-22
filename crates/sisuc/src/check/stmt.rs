@@ -6,10 +6,11 @@ use super::array::optional_array;
 use super::expr::local;
 use super::pattern::LetPattern;
 use super::{
-    Binding, BindingKind, CheckedBlock, Checker, LoopContext, Poisoned, block_expr, tail, type_of,
+    Binding, BindingKind, Checked, CheckedBlock, Checker, LoopContext, LoopFrame, LoopKind,
+    Poisoned, UNKNOWN, block_expr, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{DiagnosticKind, Unwrap};
+use crate::diagnostic::{DiagnosticKind, MismatchSource, Unwrap};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -113,8 +114,7 @@ impl Checker<'_> {
         self.report_unused(unused);
     }
 
-    /// The `(type, span, arm)` of each value under `source` that `discard` warns about, pushed to
-    /// `unused` in source order, where `arm` is whether `source` is a `match` arm's whole body.
+    /// Each value under `source` that `discard` warns about, pushed to `unused` in source order.
     /// Only the roots, `discard` and `discard_tail`, report, so an inner `if` joins its statement's
     /// fix.
     fn collect(
@@ -122,7 +122,7 @@ impl Checker<'_> {
         source: &ast::Expr,
         checked: &tir::Expr,
         arm: bool,
-        unused: &mut Vec<(String, Span, bool)>,
+        unused: &mut Vec<Unused>,
     ) {
         // An optional join wraps a whole branch value, an inner `if` too.
         let checked = match &checked.kind {
@@ -186,6 +186,18 @@ impl Checker<'_> {
             (ast::ExprKind::Block(source), ExprKind::Block(checked)) => {
                 self.collect_tail(source, checked, unused);
             }
+            // Its value comes from `break`s anywhere in its body, so the warning points at the
+            // loop, from its loop label through `loop`.
+            (ast::ExprKind::Loop { label, keyword, .. }, _) => {
+                if !matches!(checked.ty, Type::UNIT | Type::NEVER) {
+                    unused.push(Unused {
+                        ty: self.type_name(checked.ty),
+                        at: label.as_ref().map_or(*keyword, |l| l.span).to(*keyword),
+                        site: source.span,
+                        arm,
+                    });
+                }
+            }
             _ => {
                 debug_assert!(
                     !matches!(
@@ -197,8 +209,12 @@ impl Checker<'_> {
                     "the checker should lower an `if` to `If`, an `if let` to `IfSome` or `Match`, and a `match` to `Match`"
                 );
                 if !matches!(checked.ty, Type::UNIT | Type::NEVER) {
-                    let ty = self.type_name(checked.ty);
-                    unused.push((ty, source.span, arm));
+                    unused.push(Unused {
+                        ty: self.type_name(checked.ty),
+                        at: source.span,
+                        site: source.span,
+                        arm,
+                    });
                 }
             }
         }
@@ -212,12 +228,7 @@ impl Checker<'_> {
     }
 
     /// `collect` of the value of `block`, whose checked form is `checked`, if it has one.
-    fn collect_tail(
-        &mut self,
-        block: &ast::Block,
-        checked: &tir::Block,
-        unused: &mut Vec<(String, Span, bool)>,
-    ) {
+    fn collect_tail(&mut self, block: &ast::Block, checked: &tir::Block, unused: &mut Vec<Unused>) {
         if let (Some(source), Some(value)) = (tail(block), &checked.value) {
             self.collect(source, value, false, unused);
         }
@@ -226,13 +237,13 @@ impl Checker<'_> {
     /// Reports each of `unused`, one statement's values, with the fix that drops them all, unless
     /// there are more than `SHARED_FIX_SITES`: each fix lists every value, so N values cost N^2
     /// edits.
-    fn report_unused(&mut self, unused: Vec<(String, Span, bool)>) {
+    fn report_unused(&mut self, unused: Vec<Unused>) {
         let sites: Vec<_> = if unused.len() <= SHARED_FIX_SITES {
-            unused.iter().map(|&(_, at, arm)| (at, arm)).collect()
+            unused.iter().map(|u| (u.site, u.arm)).collect()
         } else {
             Vec::new()
         };
-        for (ty, at, arm) in unused {
+        for Unused { ty, at, arm, .. } in unused {
             self.report(DiagnosticKind::UnusedValue {
                 ty,
                 at,
@@ -284,14 +295,18 @@ impl Checker<'_> {
                 })
             }
             StmtKind::While {
+                label,
+                keyword,
                 cond: cond_ast,
                 body,
             } => {
                 // Only the literal: the AST has no parenthesis node, so `(true)` is it too.
                 let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
-                let header = keyword_span(stmt.span, "while");
-                let cond = self.in_header(header, |c| c.expect(cond_ast, Some(Type::BOOL)));
-                let (checked, broken) = self.loop_body(|c| c.block(body, None));
+                let name = label.as_ref().map(|l| l.name);
+                let cond = self.in_header(*keyword, name, |c| c.expect(cond_ast, Some(Type::BOOL)));
+                let frame = LoopFrame::new(LoopKind::While, *keyword, label.clone(), None);
+                let (checked, frame) = self.loop_body(frame, |c| c.block(body, None));
+                let broken = frame.broken;
                 if let Ok(checked) = &checked {
                     self.discard_tail(body, checked);
                 }
@@ -322,15 +337,20 @@ impl Checker<'_> {
                 )))
             }
             StmtKind::WhileLet {
+                label,
+                keyword,
                 pattern,
                 value,
                 body,
             } => {
-                let header = keyword_span(stmt.span, "while");
-                let (scrutinee, form, _) =
-                    self.in_header(header, |c| c.let_value(Unwrap::WhileLet, pattern, value));
-                let ((bound, checked), _) =
-                    self.loop_body(|c| c.let_block(Unwrap::WhileLet, form, pattern, body, None));
+                let name = label.as_ref().map(|l| l.name);
+                let (scrutinee, form, _) = self.in_header(*keyword, name, |c| {
+                    c.let_value(Unwrap::WhileLet, pattern, value)
+                });
+                let frame = LoopFrame::new(LoopKind::WhileLet, *keyword, label.clone(), None);
+                let ((bound, checked), _) = self.loop_body(frame, |c| {
+                    c.let_block(Unwrap::WhileLet, form, pattern, body, None)
+                });
                 if let Ok(checked) = &checked {
                     self.discard_tail(body, checked);
                 }
@@ -363,10 +383,18 @@ impl Checker<'_> {
                     },
                 )))
             }
-            StmtKind::For { name, source, body } => self.for_loop(stmt.span, name, source, body),
+            StmtKind::For {
+                label,
+                keyword,
+                name,
+                source,
+                body,
+            } => self.for_loop(stmt.span, (*keyword, label.as_ref()), name, source, body),
             StmtKind::Return(value) => self.return_stmt(stmt.span, value.as_ref()),
-            StmtKind::Break => self.jump(stmt.span, "break", ExprKind::Break),
-            StmtKind::Continue => self.jump(stmt.span, "continue", ExprKind::Continue),
+            StmtKind::Break { label, value } => {
+                self.jump(stmt.span, "break", label.as_ref(), value.as_ref())
+            }
+            StmtKind::Continue { label } => self.jump(stmt.span, "continue", label.as_ref(), None),
             StmtKind::Assign { target, value } => self.assign(stmt.span, target, value),
             StmtKind::CompoundAssign {
                 op,
@@ -385,12 +413,13 @@ impl Checker<'_> {
     fn for_loop(
         &mut self,
         span: Span,
+        (keyword, label): (Span, Option<&ast::Ident>),
         name: &ast::Ident,
         source: &ast::ForSource,
         body: &ast::Block,
     ) -> Result<tir::Stmt, Poisoned> {
         let expr = |kind, ty| tir::Expr { kind, ty, span };
-        let (header, bound) = self.in_header(keyword_span(span, "for"), |c| match source {
+        let (header, bound) = self.in_header(keyword, label.map(|l| l.name), |c| match source {
             ast::ForSource::Array(e) => c.for_array(span, e),
             ast::ForSource::Range {
                 start,
@@ -398,8 +427,10 @@ impl Checker<'_> {
                 inclusive,
             } => c.for_range(span, start, end, *inclusive),
         });
-        let ((x, checked), _) =
-            self.loop_body(|c| c.unwrapping_block("for", name, bound, body, None));
+        let frame = LoopFrame::new(LoopKind::For, keyword, label.cloned(), None);
+        let ((x, checked), _) = self.loop_body(frame, |c| {
+            c.unwrapping_block("for", name, bound, body, None)
+        });
         if let Ok(checked) = &checked {
             self.discard_tail(body, checked);
         }
@@ -625,36 +656,44 @@ impl Checker<'_> {
         }))
     }
 
-    /// `f`, inside the header of the loop whose keyword is `keyword`.
-    fn in_header<T>(&mut self, keyword: Span, f: impl FnOnce(&mut Self) -> T) -> T {
-        self.body.loops.push(LoopContext::Header(keyword));
+    /// `f`, inside the header of the loop whose keyword is `keyword` and loop label `label`.
+    fn in_header<T>(
+        &mut self,
+        keyword: Span,
+        label: Option<Symbol>,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        self.body.loops.push(LoopContext::Header { keyword, label });
         let checked = f(self);
         self.body.loops.pop();
         checked
     }
 
-    /// `f`, inside a loop's body, and whether a `break` targeted that loop.
-    fn loop_body<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> (T, bool) {
-        self.body.loops.push(LoopContext::Body { broken: false });
+    /// `f`, inside the body of `frame`'s loop, and the frame as the `break`s left it.
+    fn loop_body<T>(&mut self, frame: LoopFrame, f: impl FnOnce(&mut Self) -> T) -> (T, LoopFrame) {
+        self.body.loops.push(LoopContext::Body(frame));
         let checked = f(self);
-        let broken = matches!(
-            self.body.loops.pop(),
-            Some(LoopContext::Body { broken: true })
-        );
-        (checked, broken)
+        let Some(LoopContext::Body(frame)) = self.body.loops.pop() else {
+            unreachable!("a loop's body should pop the frame it pushed");
+        };
+        (checked, frame)
     }
 
-    /// `break` or `continue`, of type `never` even outside a loop. In a loop header it is
-    /// `Error`, so the condition or source around it reports nothing more.
+    /// `break` or `continue`, of type `never` even outside a loop, and `break`'s `value`. In a
+    /// loop header it is `Error`, so the condition or source around it reports nothing more.
     fn jump(
         &mut self,
         span: Span,
         keyword: &'static str,
-        kind: ExprKind,
+        _label: Option<&ast::Ident>,
+        value: Option<&ast::Expr>,
     ) -> Result<tir::Stmt, Poisoned> {
-        match self.body.loops.last_mut() {
-            Some(LoopContext::Body { broken }) => *broken |= keyword == "break",
-            Some(&mut LoopContext::Header(loop_at)) => {
+        let target = self.body.loops.len().checked_sub(1);
+        match target.map(|at| &mut self.body.loops[at]) {
+            Some(LoopContext::Body(frame)) => frame.broken |= keyword == "break",
+            Some(&mut LoopContext::Header {
+                keyword: loop_at, ..
+            }) => {
                 self.report(DiagnosticKind::JumpInLoopHeader {
                     keyword,
                     at: span,
@@ -668,11 +707,114 @@ impl Checker<'_> {
                 return Err(Poisoned::typed(Type::NEVER));
             }
         }
+        let target = target.expect("a loop body should be open");
+        let value = value
+            .map(|v| self.break_value(span, target, v).map(Box::new))
+            .transpose()?;
+        let frame = self.frame(target);
+        if value.is_none() && keyword == "break" && frame.kind == LoopKind::Loop {
+            frame.bare.get_or_insert(span);
+        }
+        let kind = if keyword == "break" {
+            ExprKind::Break { depth: 0, value }
+        } else {
+            ExprKind::Continue { depth: 0 }
+        };
         Ok(tir::Stmt::Expr(tir::Expr {
             kind,
             ty: Type::NEVER,
             span,
         }))
+    }
+
+    /// `loop { body }` at `span`, of the type its `break`s give it.
+    pub(super) fn loop_expr(
+        &mut self,
+        span: Span,
+        (keyword, label): (Span, Option<&ast::Ident>),
+        body: &ast::Block,
+        expected: Option<Type>,
+    ) -> Checked {
+        let frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
+        let (checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
+        if let Ok(checked) = &checked {
+            self.discard_tail(body, checked);
+        }
+        if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
+            self.report(DiagnosticKind::BareBreak { at, valued });
+            frame.failed = true;
+        }
+        let ty = frame.loop_type();
+        match (checked, ty) {
+            (Ok(body), Some(ty)) => Ok(tir::Expr {
+                kind: ExprKind::Loop(body),
+                ty,
+                span,
+            }),
+            (_, ty) => Err(Poisoned::of(ty)),
+        }
+    }
+
+    /// The loop body open at `at` in `self.body.loops`.
+    fn frame(&mut self, at: usize) -> &mut LoopFrame {
+        match &mut self.body.loops[at] {
+            LoopContext::Body(frame) => frame,
+            LoopContext::Header { .. } => unreachable!("a jump's target should be a loop body"),
+        }
+    }
+
+    /// `v`, the value of the `break` at `span` whose target is the loop body at `target`, checked
+    /// by the loop's type rule. A failed value fails the loop.
+    fn break_value(&mut self, span: Span, target: usize, v: &ast::Expr) -> Checked {
+        let frame = self.frame(target);
+        if frame.kind != LoopKind::Loop {
+            frame.failed = true;
+            let (keyword, loop_at) = (frame.kind.keyword(), frame.keyword);
+            self.report(DiagnosticKind::BreakValueNotLoop {
+                keyword,
+                at: v.span,
+                loop_at,
+            });
+            return Err(Poisoned::typed(Type::NEVER));
+        }
+        let want = |frame: &LoopFrame| {
+            frame
+                .expected
+                .map(|ty| (ty, None))
+                .or(frame.first.map(|(ty, at)| (ty, Some(at))))
+        };
+        let hint = want(self.frame(target)).map(|(ty, _)| ty);
+        let checked = self.expr(v, hint);
+        // Checking `v` can set the first type, through a `break` of this loop inside it.
+        let want = want(self.frame(target));
+        let checked = match type_of(&checked) {
+            Some(Type::UNIT) => {
+                self.report(DiagnosticKind::NoValue {
+                    at: v.span,
+                    never: false,
+                });
+                Err(Poisoned::error())
+            }
+            Some(Type::NEVER) | None => checked,
+            Some(got) => {
+                self.frame(target).valued.get_or_insert(span);
+                match want {
+                    Some((ty, _)) if ty == UNKNOWN => checked,
+                    Some((ty, first)) => {
+                        self.against(v, checked, Some(ty), first.map(MismatchSource::Break))
+                            .0
+                    }
+                    None => {
+                        self.frame(target).first = Some((got, span));
+                        checked
+                    }
+                }
+            }
+        };
+        if checked.is_err() {
+            self.frame(target).failed = true;
+        }
+        checked
     }
 
     /// `block`, its scope holding `name` bound to a `ty`, as `keyword` (`if let`, `while let` or
@@ -886,7 +1028,13 @@ fn lower_loop(
 ) -> tir::Expr {
     let expr = |kind, ty| tir::Expr { kind, ty, span };
     let exit = tir::Block {
-        stmts: vec![tir::Stmt::Expr(expr(ExprKind::Break, Type::NEVER))],
+        stmts: vec![tir::Stmt::Expr(expr(
+            ExprKind::Break {
+                depth: 0,
+                value: None,
+            },
+            Type::NEVER,
+        ))],
         value: None,
         ty: Type::NEVER,
     };
@@ -901,7 +1049,11 @@ fn lower_loop(
     expr(ExprKind::Loop(looped), Type::UNIT)
 }
 
-/// The `keyword` that starts a loop statement at `span`.
-fn keyword_span(span: Span, keyword: &str) -> Span {
-    Span::new(span.start(), span.start() + keyword.len())
+/// A value that `discard` warns about: its type, the span the warning points at, the span its
+/// fix drops, and whether that is a `match` arm's whole body.
+struct Unused {
+    ty: String,
+    at: Span,
+    site: Span,
+    arm: bool,
 }

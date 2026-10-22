@@ -805,6 +805,75 @@ fn break_in_inner_header_does_not_count() {
 }
 
 #[test]
+fn loop_without_break_is_never() {
+    clean("fn f() -> i64 {\n    loop {}\n}\nfn main() {}");
+}
+
+#[test]
+fn loop_with_bare_break_is_unit() {
+    let (program, ds) =
+        checked("fn f(c: bool) {\n    loop {\n        if c { break }\n    }\n}\nfn main() {}");
+    assert!(ds.is_empty(), "{ds:?}");
+    let program = program.expect("no errors");
+    let f = program
+        .functions
+        .iter()
+        .find(|f| f.name == "f")
+        .expect("the source should define `f`");
+    let lp = f
+        .body
+        .value
+        .as_ref()
+        .expect("the `loop` should be the body's value");
+    assert!(matches!(lp.kind, tir::ExprKind::Loop(_)), "{program}");
+    assert_eq!(lp.ty, Type::UNIT);
+}
+
+#[test]
+fn loop_value_is_its_breaks_type() {
+    clean("fn f(c: bool) -> i64 {\n    loop {\n        if c { break 1 }\n    }\n}\nfn main() {}");
+}
+
+#[test]
+fn expected_type_checks_every_break() {
+    clean(
+        "fn f(c: bool) -> i64? {\n    loop {\n        if c { break None }\n        break 5\n    }\n}\nfn main() {}",
+    );
+}
+
+/// The loop is `never`, so the `1` after it is unreachable.
+#[test]
+fn never_values_make_loop_never() {
+    codes(
+        "fn f() -> i64 {\n    loop { break panic(\"x\") }\n    1\n}\nfn main() {}",
+        &[(Code::UnreachableCode, (3, 5))],
+    );
+}
+
+/// A `never` value is no `NoValue`.
+#[test]
+fn break_never_value_is_allowed() {
+    clean(
+        "fn f(c: bool) -> i64 {\n    loop {\n        if c { break panic(\"x\") }\n        break 1\n    }\n}\nfn main() {}",
+    );
+}
+
+#[test]
+fn never_value_beside_bare_break_is_unit() {
+    clean(
+        "fn f(c: bool) {\n    loop {\n        if c { break }\n        break panic(\"x\")\n    }\n}\nfn main() {}",
+    );
+}
+
+#[test]
+fn failed_value_reports_once() {
+    codes(
+        "fn f() -> i64 {\n    loop { break missing }\n}\nfn main() {}",
+        &[(Code::BindingNotFound, (2, 18))],
+    );
+}
+
+#[test]
 fn shadowing_makes_two_locals() {
     assert_eq!(
         lowered(

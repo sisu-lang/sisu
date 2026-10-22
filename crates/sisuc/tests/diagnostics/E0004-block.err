@@ -1,4 +1,4 @@
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while` or `for`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while`, `for` or `loop`
  --> E0004-block.sisu:6:5
   |
 6 |     {

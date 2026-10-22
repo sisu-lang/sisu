@@ -1,0 +1,6 @@
+fn main() {
+    let o = 1
+    loop {
+        match o { 1 => break => 2 }
+    }
+}

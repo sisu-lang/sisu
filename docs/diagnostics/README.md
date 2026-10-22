@@ -144,6 +144,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0134](E0134.md) | error | interpolation in a string pattern |
 | [E0135](E0135.md) | error | a range pattern that cannot match |
 | [E0136](E0136.md) | error | alternatives bind different names |
+| [E0141](E0141.md) | error | `break` with a value in a loop that has none |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

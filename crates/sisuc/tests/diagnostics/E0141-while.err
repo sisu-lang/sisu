@@ -1,0 +1,13 @@
+error[E0141]: `break` with a value in a `while`
+ --> E0141-while.sisu:5:15
+  |
+3 |     while i < 3 {
+  |     ----- this `while` has no value
+4 |         i += 1
+5 |         break i
+  |               ^
+  |
+  = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0141

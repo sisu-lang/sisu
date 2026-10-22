@@ -97,7 +97,7 @@ codes! {
     IntegerDoesNotFit = "E0040",
     SelfOutsideMethod = "E0041",
     NegatedU8 = "E0042",
-    NoValue = "E0043",
+    NoValue | BareBreak = "E0043",
     NeverNone = "E0044",
     IsTestsNone = "E0045",
     IsNeedsObjects = "E0046",
@@ -191,6 +191,7 @@ codes! {
     InterpolatedPattern = "E0134",
     BadRange = "E0135",
     AlternativeBindings = "E0136",
+    BreakValueNotLoop = "E0141",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -400,6 +401,9 @@ pub(crate) enum DiagnosticKind {
     /// An expression at `at` that has no value: it is `unit`, or, with `never`, it never
     /// finishes.
     NoValue { at: Span, never: bool },
+    /// The first bare `break` at `at` of a `loop` whose first `break` with a value whose type is
+    /// not `never` is at `valued`.
+    BareBreak { at: Span, valued: Span },
     /// A comparison at `at` of a value that is not optional with `None`. `value` is that value's
     /// path as written, when it has one.
     NeverNone { value: Option<String>, at: Span },
@@ -821,6 +825,13 @@ pub(crate) enum DiagnosticKind {
     /// The alternative at `at`, which does not bind `name`, though another alternative of the
     /// same `|` does.
     AlternativeBindings { name: String, at: Span },
+    /// The value at `at` of a `break` whose target, a loop of keyword `keyword` (`for`, `while`
+    /// or `while let`) at `loop_at`, has no value.
+    BreakValueNotLoop {
+        keyword: &'static str,
+        at: Span,
+        loop_at: Span,
+    },
     /// The comparison at `at`, `!=` when `negated`, one side of which is `f64.nan`, which no
     /// number equals; `fix` is its `is_nan` test, when the other side is an `f64`.
     NanComparison {
@@ -998,6 +1009,8 @@ pub(crate) enum MismatchSource {
     Concat(Span),
     /// The earlier alternative's binding of `name`, at `at`, which gave it the type wanted.
     Binding { name: String, at: Span },
+    /// The `break` at the span, the first of its `loop` whose value set the loop's type.
+    Break(Span),
 }
 
 /// A rewrite that would give a mismatched value the type expected.
@@ -1259,7 +1272,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    "`{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while` or `for`",
+                    "`{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while`, `for` or `loop`",
                 );
                 match join {
                     Some(join) => d.with_fix(join_fix(
@@ -1581,6 +1594,9 @@ impl From<DiagnosticKind> for Diagnostic {
                     Some(MismatchSource::Binding { name, at }) => {
                         d = d.with_secondary(at, format!("`{name}` is {want} here"));
                     }
+                    Some(MismatchSource::Break(at)) => {
+                        d = d.with_secondary(at, format!("this `break` gave the loop the type {want}"));
+                    }
                     None => {}
                 }
                 if conversion {
@@ -1764,6 +1780,13 @@ impl From<DiagnosticKind> for Diagnostic {
                     d
                 }
             }
+            DiagnosticKind::BareBreak { at, valued } => Diagnostic::coded(
+                code,
+                at,
+                "`break` has no value, but this `loop` gives one",
+            )
+            .with_secondary(valued, "this `break` gives the loop a value")
+            .with_help("give every `break` of this `loop` a value, or none"),
             DiagnosticKind::NeverNone { value, at } => Diagnostic::coded(
                 code,
                 at,
@@ -2800,6 +2823,15 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("`{name}` is bound in one alternative but not the other"),
             ),
+            DiagnosticKind::BreakValueNotLoop {
+                keyword,
+                at,
+                loop_at,
+            } => Diagnostic::coded(code, at, format!("`break` with a value in a `{keyword}`"))
+                .with_secondary(loop_at, format!("this `{keyword}` has no value"))
+                .with_help(
+                    "only `loop` gives a value through `break`; assign to a variable declared before the loop instead",
+                ),
             DiagnosticKind::NanComparison { at, negated, fix } => {
                 let always = if negated { "true" } else { "false" };
                 let d = Diagnostic::coded(

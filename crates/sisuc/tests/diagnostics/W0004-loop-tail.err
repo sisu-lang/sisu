@@ -1,0 +1,14 @@
+warning[W0004]: unused value of type `i64`
+ --> W0004-loop-tail.sisu:2:5
+  |
+2 |     loop { break 1 }
+  |     ^^^^
+  |
+  = help: use it, or write `let _ =` to drop it on purpose
+help: drop it on purpose
+  |
+2 |     let _ = loop { break 1 }
+  |     +++++++
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0004

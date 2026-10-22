@@ -1,0 +1,8 @@
+error[E0043]: expression has no value
+ --> E0043-break-unit.sisu:3:15
+  |
+3 |         break print(1)
+  |               ^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0043

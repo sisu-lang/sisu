@@ -21,8 +21,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MismatchFix, Severity,
-    Unbuilt, suggestion,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MismatchFix,
+    MismatchSource, Severity, Unbuilt, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -133,14 +133,108 @@ struct Binding {
 }
 
 /// Which part of a loop the code being checked is in.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum LoopContext {
-    /// The body, where `break` and `continue` act on the loop. `broken` is whether a `break`
-    /// has targeted it.
-    Body { broken: bool },
-    /// A `while` condition or a `for` source, which is not part of the body. The span is the
-    /// loop's keyword.
-    Header(Span),
+    /// The body, where `break` and `continue` act on the loop.
+    Body(LoopFrame),
+    /// A `while` condition or a `for` source, which is not part of the body.
+    Header {
+        keyword: Span,
+        #[expect(
+            dead_code,
+            reason = "no jump names a loop label until loop labels parse"
+        )]
+        label: Option<Symbol>,
+    },
+}
+
+/// The kind of a loop: only a `loop` gives a value through `break`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoopKind {
+    Loop,
+    While,
+    WhileLet,
+    For,
+}
+
+impl LoopKind {
+    /// The keyword that starts the loop, as a diagnostic names it.
+    fn keyword(self) -> &'static str {
+        match self {
+            LoopKind::Loop => "loop",
+            LoopKind::While => "while",
+            LoopKind::WhileLet => "while let",
+            LoopKind::For => "for",
+        }
+    }
+}
+
+/// A loop whose body is being checked, and what the `break`s that target it have given.
+struct LoopFrame {
+    kind: LoopKind,
+    keyword: Span,
+    #[expect(
+        dead_code,
+        reason = "no jump names a loop label until loop labels parse"
+    )]
+    label: Option<ast::Ident>,
+    #[expect(
+        dead_code,
+        reason = "no jump names a loop label until loop labels parse"
+    )]
+    label_used: bool,
+    /// Whether a `break` has targeted it.
+    broken: bool,
+    /// The type the position around a `loop` expects; `UNKNOWN` for an `Error` one.
+    expected: Option<Type>,
+    /// The type of the first value whose type is neither `never` nor `Error`, with no expected
+    /// type, and its `break`'s span.
+    first: Option<(Type, Span)>,
+    /// The first bare `break`.
+    bare: Option<Span>,
+    /// The first `break` whose value's type is not `never`.
+    valued: Option<Span>,
+    /// Whether a `break` value failed, or a value was given to a loop that has none.
+    failed: bool,
+}
+
+impl LoopFrame {
+    fn new(
+        kind: LoopKind,
+        keyword: Span,
+        label: Option<ast::Ident>,
+        expected: Option<Type>,
+    ) -> Self {
+        Self {
+            kind,
+            keyword,
+            label,
+            label_used: false,
+            broken: false,
+            expected,
+            first: None,
+            bare: None,
+            valued: None,
+            failed: false,
+        }
+    }
+
+    /// The type of a `loop` whose body has been checked: `never` with no `break`, or with only
+    /// `never` values; `unit` with bare ones; else its values'. `None` is `Error`.
+    fn loop_type(&self) -> Option<Type> {
+        if self.failed {
+            return None;
+        }
+        if self.valued.is_none() {
+            return Some(if self.bare.is_some() {
+                Type::UNIT
+            } else {
+                Type::NEVER
+            });
+        }
+        self.expected
+            .or(self.first.map(|(ty, _)| ty))
+            .filter(|&ty| ty != UNKNOWN)
+    }
 }
 
 /// The program's text and the positions the lexer and parser found in it; never changes.
@@ -853,6 +947,18 @@ impl Checker<'_> {
         want: Type,
         got: Type,
     ) -> Diagnostic {
+        self.mismatch_from(span, source, want, got, None)
+    }
+
+    /// `mismatch`, where `want` came from `from`.
+    fn mismatch_from(
+        &self,
+        span: Span,
+        source: Option<&ast::Expr>,
+        want: Type,
+        got: Type,
+        from: Option<MismatchSource>,
+    ) -> Diagnostic {
         let optional = matches!(want.kind(), TypeKind::Optional(_));
         // `u8` and `char` convert into each other through `i64`, and into `f64` through it.
         let (to, through) = match (payload(want), got) {
@@ -871,7 +977,7 @@ impl Checker<'_> {
             want: vec![self.type_name(want)],
             got: self.type_name(got),
             at: span,
-            source: None,
+            source: from,
             fix: to
                 .zip(source.filter(|e| {
                     !matches!(

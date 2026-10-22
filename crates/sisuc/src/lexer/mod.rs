@@ -47,6 +47,7 @@ pub(crate) enum TokenKind {
     Else,
     While,
     For,
+    Loop,
     In,
     Return,
     Break,
@@ -137,6 +138,7 @@ impl TokenKind {
             TokenKind::Else => "Else",
             TokenKind::While => "While",
             TokenKind::For => "For",
+            TokenKind::Loop => "Loop",
             TokenKind::In => "In",
             TokenKind::Return => "Return",
             TokenKind::Break => "Break",
@@ -215,6 +217,7 @@ impl TokenKind {
             TokenKind::Else => "else",
             TokenKind::While => "while",
             TokenKind::For => "for",
+            TokenKind::Loop => "loop",
             TokenKind::In => "in",
             TokenKind::Return => "return",
             TokenKind::Break => "break",
@@ -906,7 +909,10 @@ fn check_line_start(
             let in_block = open.last().is_none_or(|&(c, _)| c == '{');
             let code = last_code(tokens, in_block);
             match code {
-                Some(code) if can_end_statement(Some(code)) || code.kind == TokenKind::Else => {
+                Some(code)
+                    if can_end_statement(Some(code))
+                        || matches!(code.kind, TokenKind::Else | TokenKind::Loop) =>
+                {
                     // Only a header takes the `{`: joining it to another statement almost never
                     // gives a valid one (`print(1) {`, `let x = 1 {`, `} {`). Inside `(` or `[`
                     // the moved `{` would still sit in the unclosed bracket.
@@ -996,6 +1002,7 @@ fn is_header(t: &Token) -> bool {
             | TokenKind::Else
             | TokenKind::While
             | TokenKind::For
+            | TokenKind::Loop
     )
 }
 
@@ -1102,6 +1109,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "else" => TokenKind::Else,
         "while" => TokenKind::While,
         "for" => TokenKind::For,
+        "loop" => TokenKind::Loop,
         "in" => TokenKind::In,
         "return" => TokenKind::Return,
         "break" => TokenKind::Break,
