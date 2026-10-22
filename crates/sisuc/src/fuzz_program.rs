@@ -9,6 +9,7 @@ use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, Write as _};
 use std::os::unix::process::ExitStatusExt;
+use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::sync::Once;
@@ -158,7 +159,7 @@ fn install_hook() {
                 if let Ok(current) = current.try_borrow()
                     && let Some(current) = current.as_ref()
                 {
-                    leave_record(current);
+                    leave_record(current, info);
                 }
             });
             earlier(info);
@@ -166,18 +167,22 @@ fn install_hook() {
     });
 }
 
-/// Prints the failed property, or `compiler panic`, then the input and the failed builds; writes
-/// the same to `SISU_FUZZ_DUMP` when it names a directory; and removes the input's directory.
-fn leave_record(current: &Current) {
+/// Prints the failed property, or `compiler panic`, then the input, then the failed builds or the
+/// compiler's panic `info`; writes the same to `SISU_FUZZ_DUMP` when it names a directory; and
+/// removes the input's directory.
+fn leave_record(current: &Current, info: &PanicHookInfo<'_>) {
     let Generated {
         program,
         rewritten,
         stdin,
         ..
     } = &current.generated;
-    let (first, builds) = match &current.failure {
-        Some((first, builds)) => (first.as_str(), builds.as_str()),
-        None => ("compiler panic", ""),
+    let panic;
+    let (first, builds) = if let Some((first, builds)) = &current.failure {
+        (first.as_str(), builds.as_str())
+    } else {
+        panic = format!("{info}\n");
+        ("compiler panic", panic.as_str())
     };
     let mut record = format!("{first}\n");
     section(&mut record, "program", program.as_bytes());
@@ -224,19 +229,26 @@ fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, Stri
     let rewritten = checked("rewritten", &g.rewritten).map_err(|f| (f, String::new()))?;
     let stdin = dir.join("stdin.txt");
     fs::write(&stdin, &g.stdin).expect("the fuzzer should write the stdin to its own directory");
-    for (name, source, checked) in [
-        ("program", &g.program, &program),
-        ("rewritten", &g.rewritten, &rewritten),
-    ] {
-        #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
-        let mut runs = builds(name, source, checked, runtime, dir, &stdin, LIMIT);
-        #[cfg(test)]
-        if FORCE.get() == Some(Force::Stdout) {
-            runs[1].stdout = b"forced".to_vec();
-        }
-        judge_builds(&runs).map_err(|f| (f, record(name, &runs)))?;
+    judge_source("program", &g.program, &program, runtime, dir, &stdin)?;
+    judge_source("rewritten", &g.rewritten, &rewritten, runtime, dir, &stdin)
+}
+
+/// Property 3 for `source`, checked as `program`: its three builds in `dir`, run with `stdin`.
+fn judge_source(
+    name: &str,
+    source: &str,
+    program: &Program,
+    runtime: &Path,
+    dir: &Path,
+    stdin: &Path,
+) -> Result<(), (Failure, String)> {
+    #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
+    let mut runs = builds(name, source, program, runtime, dir, stdin, LIMIT);
+    #[cfg(test)]
+    if FORCE.get() == Some(Force::Stdout) {
+        runs[1].stdout = b"forced".to_vec();
     }
-    Ok(())
+    judge_builds(&runs).map_err(|f| (f, record(name, &runs)))
 }
 
 /// Properties 1 and 2: `source` checks with no error, and its MIR certifies and its module
@@ -418,7 +430,7 @@ mod tests {
 
     use super::{
         BUILDS, Exit, FORCE, Force, LIMIT, Run, build, builds, checked, judge, judge_builds,
-        program, program_in, run,
+        judge_source, program, program_in, run,
     };
     use crate::fresh_names;
     use crate::generate::{Generated, coverage, generate};
@@ -546,10 +558,41 @@ mod tests {
     #[test]
     fn a_hang_fails_property_3() {
         let source = "fn main() {\n    while true {\n    }\n}\n";
-        let runs = runs_of(source, "", Duration::from_millis(200));
-        assert_eq!(exits(&runs), [Exit::TimedOut; 3]);
-        let failure = judge_builds(&runs).expect_err("a hang should fail property 3");
+        let scratch = Scratch::new();
+        let program = checked("program", source).expect("the test's program should check clean");
+        let exe = scratch.0.join("program");
+        build("program", source, &program, &BUILDS[0].1, &runtime(), &exe);
+        let stdin = scratch.0.join("stdin.txt");
+        fs::write(&stdin, "").expect("the test should write the stdin");
+        let hung = run(&exe, &stdin, &scratch.0, Duration::from_millis(200));
+        assert_eq!(hung.exit, Exit::TimedOut);
+        let failure = judge_builds(&[hung, clean(), clean()]).expect_err("a hang should fail");
         assert_eq!(failure.property, 3);
+    }
+
+    /// A run past its limit is killed and reaped: no zombie is left behind.
+    #[test]
+    fn a_timed_out_child_is_reaped() {
+        let scratch = Scratch::new();
+        let exe = scratch.0.join("hang.sh");
+        fs::write(&exe, "#!/bin/sh\necho $$\nexec sleep 10\n").expect("the test should write it");
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o700))
+            .expect("the test should make the script executable");
+        let stdin = scratch.0.join("stdin.txt");
+        fs::write(&stdin, "").expect("the test should write the stdin");
+        let hung = run(&exe, &stdin, &scratch.0, Duration::from_millis(200));
+        assert_eq!(hung.exit, Exit::TimedOut);
+        let pid = String::from_utf8_lossy(&hung.stdout).trim().to_string();
+        assert!(
+            !pid.is_empty(),
+            "the script should print its PID before it is killed"
+        );
+        // `kill -0` succeeds on a zombie, so it fails only once the child is reaped.
+        let alive = Command::new("sh")
+            .args(["-c", &format!("kill -0 {pid} 2>/dev/null")])
+            .status()
+            .expect("sh should run");
+        assert!(!alive.success(), "process {pid} should be gone");
     }
 
     /// A run that exits 0 and prints `1`.
@@ -631,34 +674,78 @@ mod tests {
             .expect("the coverage test should have at least four seeds")
     }
 
-    /// `program` on the `n`th seed, which must pass and leave no directory behind.
-    fn seed_passes(n: usize) {
+    /// The `n`th seed's program, or its rewritten copy, passes properties 1 to 3 through the
+    /// path `judge` takes. One test per source keeps each to three builds.
+    fn seed_passes(n: usize, rewritten: bool) {
+        let g = generate(&seed(n));
+        let (name, source) = if rewritten {
+            ("rewritten", &g.rewritten)
+        } else {
+            ("program", &g.program)
+        };
+        on_stack(|| {
+            let scratch = Scratch::new();
+            let program = checked(name, source)
+                .unwrap_or_else(|f| panic!("property {}: {}", f.property, f.detail));
+            let stdin = scratch.0.join("stdin.txt");
+            fs::write(&stdin, &g.stdin).expect("the test should write the stdin");
+            judge_source(name, source, &program, &runtime(), &scratch.0, &stdin)
+                .unwrap_or_else(|(f, record)| panic!("property 3: {}\n{record}", f.detail));
+        });
+    }
+
+    #[test]
+    fn seed_0_program_passes() {
+        seed_passes(0, false);
+    }
+
+    #[test]
+    fn seed_0_rewritten_passes() {
+        seed_passes(0, true);
+    }
+
+    #[test]
+    fn seed_1_program_passes() {
+        seed_passes(1, false);
+    }
+
+    #[test]
+    fn seed_1_rewritten_passes() {
+        seed_passes(1, true);
+    }
+
+    #[test]
+    fn seed_2_program_passes() {
+        seed_passes(2, false);
+    }
+
+    #[test]
+    fn seed_2_rewritten_passes() {
+        seed_passes(2, true);
+    }
+
+    #[test]
+    fn seed_3_program_passes() {
+        seed_passes(3, false);
+    }
+
+    #[test]
+    fn seed_3_rewritten_passes() {
+        seed_passes(3, true);
+    }
+
+    /// The cheapest of the four seeds to build.
+    const SMOKE_SEED: usize = 1;
+
+    /// `program` end to end, all six builds: it passes and leaves no directory behind.
+    #[test]
+    fn program_passes_and_cleans_up() {
         let tmp = Scratch::new();
-        on_stack(|| program_in(&seed(n), &runtime(), &tmp.0));
+        on_stack(|| program_in(&seed(SMOKE_SEED), &runtime(), &tmp.0));
         let left = fs::read_dir(&tmp.0)
             .expect("the test's directory should be readable")
             .count();
         assert_eq!(left, 0, "`program` should remove its directory");
-    }
-
-    #[test]
-    fn seed_0_passes() {
-        seed_passes(0);
-    }
-
-    #[test]
-    fn seed_1_passes() {
-        seed_passes(1);
-    }
-
-    #[test]
-    fn seed_2_passes() {
-        seed_passes(2);
-    }
-
-    #[test]
-    fn seed_3_passes() {
-        seed_passes(3);
     }
 
     /// The seed whose generated cost is highest runs at O0 well within the limit. No assertion
@@ -787,7 +874,13 @@ mod tests {
         assert_eq!(read("program.sisu"), g.program);
         assert_eq!(read("rewritten.sisu"), g.rewritten);
         assert_eq!(read("stdin.txt"), g.stdin);
-        assert_eq!(read("failure.txt"), "compiler panic\n");
+        let failure = read("failure.txt");
+        assert!(failure.starts_with("compiler panic\n"), "{failure}");
+        assert!(
+            failure.contains("a compiler panic forced by a test"),
+            "{failure}"
+        );
+        assert!(failure.contains("fuzz_program.rs:"), "{failure}");
     }
 
     /// A dump that cannot be written is reported, and the record still reaches stderr.
