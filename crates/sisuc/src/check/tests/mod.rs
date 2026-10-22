@@ -706,14 +706,12 @@ fn code_after_endless_loop_is_unreachable() {
 
 #[test]
 fn return_from_endless_loop() {
-    clean(
+    for src in [
         "fn first_zero(xs: [i64]) -> i64 {\n    let mut i = 0\n    while true {\n        if xs[i] == 0 {\n            return i\n        }\n        i += 1\n    }\n}\nfn main() {}",
-    );
-}
-
-#[test]
-fn panic_in_endless_loop() {
-    clean("fn f() -> i64 {\n    while true { panic(\"x\") }\n}\nfn main() {}");
+        "fn f() -> i64 {\n    while true { panic(\"x\") }\n}\nfn main() {}",
+    ] {
+        clean(src);
+    }
 }
 
 #[test]

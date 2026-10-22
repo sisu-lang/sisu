@@ -1,12 +1,12 @@
-// `first_zero` leaves only from inside `while true`, holding a counted string.
+// `first_zero` returns from inside `while true` while `label`, a counted string, is still live.
 fn first_zero(xs: [i64]) -> i64 {
     let label = "of {xs.len()}"
     let mut i = 0
     while true {
         if xs[i] == 0 {
-            print(label) // of 4
             return i
         }
+        print(label) // of 4 (once per pass that goes round)
         i += 1
     }
 }
@@ -26,9 +26,19 @@ fn fill_sum(a: [i64]) -> i64 {
     }
 }
 
+// The only `break` follows a `return`, so this `while true` is `unit` with no MIR exit block.
+fn after_return() -> i64 {
+    while true {
+        return 1
+        break
+    }
+    2
+}
+
 fn main() {
     print(first_zero([3, 1, 0, 2])) // 2
     let a = [7, 7, 7]
     print(fill_sum(a)) // 3
     print("{a[0]} {a[1]} {a[2]}") // 7 7 7
+    print(after_return()) // 1
 }
