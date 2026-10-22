@@ -58,7 +58,7 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-mutants, carg
 $ make help    # every target
 $ make build   # sisu and the two runtime archives
 $ make test    # unit tests and end-to-end cases
-$ make lint    # fmt, clippy, expect messages, typos, file hygiene, shell and workflow lint, as in CI
+$ make lint    # fmt, clippy (also with the fuzz feature), expect messages, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
 $ make miri    # the runtime's unit tests under Miri, which stops at undefined behaviour
 $ make check   # lint, test and deny; CI also runs make miri
@@ -425,9 +425,9 @@ write the same directories.
 `--coverage` works for either target. It runs `cargo fuzz coverage` over the
 target's corpus, and for `front_end` its seeds too, then prints the line
 coverage of each compiler stage (lexer, parser, check, mir, codegen) and how
-many inputs reach codegen. `make fuzz-coverage` runs it for `front_end`. A
-program input that the checker rejects is a crash, never a corpus entry, so
-every program input reaches codegen.
+many inputs reach codegen. `make fuzz-coverage [TARGET=program]` runs it, for
+`front_end` by default. A program input that the checker rejects is a crash,
+never a corpus entry, so every program input reaches codegen.
 
 ### The nightly program job
 

@@ -38,6 +38,15 @@ entry = "cargo clippy --workspace --all-targets --locked -- -D warnings"
 files = '(\.rs|Cargo\.toml|Cargo\.lock|clippy\.toml)$'
 pass_filenames = false
 
+# The fuzz feature's library build: generate/ and fuzz_program.rs outside cfg(test).
+[[repos.hooks]]
+id = "cargo-clippy-fuzz"
+name = "cargo clippy (fuzz feature)"
+language = "system"
+entry = "cargo clippy -p sisuc --features fuzz --lib --locked -- -D warnings"
+files = '(\.rs|Cargo\.toml|Cargo\.lock|clippy\.toml)$'
+pass_filenames = false
+
 [[repos.hooks]]
 id = "expect-messages"
 name = "expect messages say should"
