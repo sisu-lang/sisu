@@ -66,15 +66,15 @@ took binary_trees from 0.74 s to 0.52 s and the phase program from 0.33 s to
 - **Doing nothing**: 26.04 users keep paying about 1.5 times the wall time on
   allocation-heavy programs.
 - **mimalloc v2**: slightly faster and less binary_trees RSS, but v3 is the
-  crate's default and the user chose it.
+  crate's default, and Sisu takes the default.
 - **Choosing at run time with `SISU_ALLOCATOR=system`**: a global allocator
   that read the variable at the first allocation and forwarded each call to
-  mimalloc or to the System allocator. Sol measured it on the reduced
+  mimalloc or to the System allocator. It was measured on the reduced
   binary_trees (135,854 allocations) against plain `MiMalloc`: 12.9% more
   instructions as first written, and 2.99% with the check inlined and the
   decision moved to a cold function. That is 3 instructions (load, compare,
   branch) on every `alloc` and every `free`, the floor for any check made per
-  call, and over the 2% the design allowed. It also needed an allocation-free
+  call, and over the 2% budget for the cost of the choice. It also needed an allocation-free
   panic path and a Valgrind suppression for mimalloc's startup read. The flag
   at build time replaces it.
 - **One runtime on the System allocator plus a mimalloc archive that replaces
@@ -116,8 +116,9 @@ they touch memory the machine cannot back.
   from an ELF constructor before `main`. In libmimalloc-sys 0.1.49 (mimalloc
   v3.3.2), `unix_detect_thp` reads `/sys/kernel/mm/transparent_hugepage/enabled`
   into a `char buf[32]`, gets a short read, and searches all 32 bytes. Memcheck
-  reports "Conditional jump or move depends on uninitialised value(s)". Upstream
-  fixed it on `dev3` (commit b5d94fe8). A system build contains no mimalloc and
+  reports "Conditional jump or move depends on uninitialised value(s)". Upstream's
+  `dev3` branch, as of commit b5d94fe8, reads and searches only the bytes it
+  got; no release after v3.3.2 carries that yet. A system build contains no mimalloc and
   never meets it. A user who runs Valgrind on a default build sees this error
   and no Sisu allocations, and the guides tell them to build with
   `--allocator system`. There is no suppression file.
