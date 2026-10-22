@@ -770,6 +770,12 @@ fn generic_methods_wait_for_context() {
             "E.map",
             &["i64", "[string]", "[[string]]"],
         ),
+        // `?.` calls the method on the payload, which waits as a plain receiver does.
+        (
+            "fn g(b: Box<i64>?) {\n    let xs: [i64]? = opt(b?.make())\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
         // Any receiver is checked ahead of the call, once: a temporary, a call's result, `self`.
         (
             "fn g() {\n    let xs: [i64] = id(Box(v: 1).make())\n}",

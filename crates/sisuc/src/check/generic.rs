@@ -459,10 +459,11 @@ impl Checker<'_> {
                 method,
                 types,
                 args,
-                safe: false,
+                safe,
                 ..
             } if types.is_empty() => {
-                let (generic, shaped) = if let Some(v) = self.generic_variant(receiver, method) {
+                let variant = self.generic_variant(receiver, method).filter(|_| !safe);
+                let (generic, shaped) = if let Some(v) = variant {
                     // Mixed labels are reported at the declaration.
                     let shaped = !v.fields.is_empty()
                         && (v.labels.iter().all(Option::is_some)
@@ -470,7 +471,7 @@ impl Checker<'_> {
                         && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
                     (true, shaped)
                 } else {
-                    self.generic_method(receiver, method, args)
+                    self.generic_method(receiver, method, args, *safe)
                 };
                 (generic, shaped, args)
             }
@@ -573,15 +574,25 @@ impl Checker<'_> {
         (!info.type_params.is_empty()).then(|| &info.variants[variant])
     }
 
-    /// Whether `receiver.method(args)` calls a method with type parameters of its own, and
-    /// whether `args` fit its declaration, whose return type resolved.
+    /// Whether `receiver.method(args)`, or `receiver?.method(args)` with `safe`, calls a method
+    /// with type parameters of its own, and whether `args` fit its declaration, whose return
+    /// type resolved.
     fn generic_method(
         &mut self,
         receiver: &ast::Expr,
         method: &ast::Ident,
         args: &[ast::Arg],
+        safe: bool,
     ) -> (bool, bool) {
-        let (methods, owner) = match self.receiver_ahead(receiver).map(Type::kind) {
+        let mut ty = self.receiver_ahead(receiver);
+        if safe {
+            // `?.` calls the method on the payload.
+            ty = ty.and_then(|ty| match ty.kind() {
+                TypeKind::Optional(payload) => Some(payload),
+                _ => None,
+            });
+        }
+        let (methods, owner) = match ty.map(Type::kind) {
             Some(TypeKind::Class(id, _)) => {
                 let info = &self.classes[id.0];
                 (&info.methods, info.type_params.len())

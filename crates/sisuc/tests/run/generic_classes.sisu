@@ -43,6 +43,15 @@ fn empty<T>() -> Stack<T> {
     Stack(top: None, size: 0)
 }
 
+fn opt<T>(x: T?) -> T? {
+    x
+}
+
+fn found(s: Stack<i64>?, label: string) -> Stack<i64>? {
+    print(label)
+    s
+}
+
 fn main() {
     let ints: Stack<i64> = empty()
     ints.push(1)
@@ -86,4 +95,13 @@ fn main() {
     print(names[0])                        // z
     print(nodes.tag(2.5)[0])               // 2.5
     print(ints.tag(Node(name: "m")).len()) // 0: `ints` is empty
+
+    // `?.` on a generic method whose type comes from the call around it: the receiver is
+    // evaluated once, before the call.
+    let seven: Stack<i64> = empty()
+    seven.push(7)
+    let present: [[i64]]? = opt(found(seven, "present")?.tag([])) // present
+    print((present ?? [[0], [0]]).len())   // 1
+    let absent: [[i64]]? = opt(found(None, "absent")?.tag([])) // absent
+    print(absent == None)                  // true
 }
