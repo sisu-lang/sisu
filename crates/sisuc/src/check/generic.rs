@@ -308,8 +308,19 @@ impl Checker<'_> {
             self.no_value(e.span, ty);
             call.slots[i] = Some(Err(Poisoned::error()));
         }
+        // A parameter whose name `type_params` reported, a second `T` or a built-in name, may
+        // be one no type names: it poisons the call rather than go uninferred.
+        let mut broken = false;
+        for (i, &name) in sig.declared.iter().enumerate() {
+            if call.bindings.found[i].is_none()
+                && (sig.declared[..i].contains(&name) || built_in_type(name.as_str()).is_some())
+            {
+                call.bindings.found[i] = Some(UNKNOWN);
+                broken = true;
+            }
+        }
         let list = match call.bindings.finish() {
-            Ok(list) if !call.failed => list,
+            Ok(list) if !call.failed && !broken => list,
             Ok(_) => return None,
             Err(i) => {
                 // An argument that failed, or a parameter's or the return type that did, may be

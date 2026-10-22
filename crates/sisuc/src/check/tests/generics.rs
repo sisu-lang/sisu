@@ -311,6 +311,32 @@ fn type_parameter_names() {
             "class Holder<T> {\n    value: T\n    fn get<T>(self) -> T { self.value }\n}",
             vec![(Code::DefinedTwice, (3, 12))],
         ),
+        // A reported parameter binds to nothing at a call, and is not reported again there.
+        (
+            "fn f<T, T>(x: T) -> T { x }\nfn g() {\n    print(f(1))\n}",
+            vec![(Code::DefinedTwice, (1, 9))],
+        ),
+        (
+            "fn f<i64, T>(x: T) -> T { x }\nfn g() {\n    print(f(1))\n}",
+            vec![(Code::BuiltInName, (1, 6))],
+        ),
+        (
+            "class Box<T> {\n    v: T\n    fn m<T>(self, x: T) -> T { x }\n}\nfn g(b: Box<i64>) {\n    print(b.m(2))\n}",
+            vec![(Code::DefinedTwice, (3, 10))],
+        ),
+        (
+            "class Box<T, T> {\n    v: T\n}\nfn g() {\n    print(Box(v: 1).v)\n}",
+            vec![(Code::DefinedTwice, (1, 14))],
+        ),
+        (
+            "enum E<T, T> {\n    A(T)\n}\nfn g() {\n    let e = E.A(1)\n}",
+            vec![(Code::DefinedTwice, (1, 11))],
+        ),
+        // One that is not reported still is.
+        (
+            "fn f<i64, T>() -> [T] { [] }\nfn g() {\n    print(f().len())\n}",
+            vec![(Code::BuiltInName, (1, 6)), (Code::CannotInfer, (3, 11))],
+        ),
     ] {
         codes(&format!("{src}\nfn main() {{}}"), &expected);
     }
