@@ -83,6 +83,15 @@ enum Rule {
     /// `string(e)` of a `[char]`.
     FromChars,
     Index,
+    /// `((e).g)` of a class object.
+    Field,
+    /// `((o)?.g)` of an optional class object.
+    SafeField,
+    /// `((o)?.m(...))` of an optional class object.
+    SafeMethod,
+    /// `(a is b)` of two class objects.
+    Is,
+    Match,
 }
 
 /// The `f64` methods with an exact result and no argument.
@@ -156,6 +165,20 @@ pub(crate) const CHARS: [(&str, char); 14] = [
     ("'\\{'", '{'),
     ("'}'", '}'),
 ];
+/// The types a `match` tests by value, besides enums.
+const MATCHED: [Ty; 5] = [Ty::Bool, Ty::I64, Ty::U8, Ty::Char, Ty::String];
+/// The strings a `match` on a `string` tests.
+const WORDS: [&str; 5] = ["\"\"", "\"a\"", "\"b\"", "\"ab\"", "\"é\""];
+/// How deep a variant pattern nests in another.
+const MAX_PATTERN_DEPTH: u32 = 2;
+
+/// An arm of a `match`: its pattern, what the pattern binds, and whether a guard follows.
+struct Arm {
+    pattern: String,
+    binds: Vec<(String, Ty)>,
+    guard: bool,
+}
+
 /// The chars a line of stdin holds: no `@` (decision 3).
 const LINE_CHARS: &[u8] = b"abcxyzABC0189 .,-+";
 
@@ -170,6 +193,7 @@ impl Gen<'_> {
     pub(crate) fn expr(&mut self, ty: &Ty, max: u64) -> Info {
         let synth = std::mem::take(&mut self.synth) && ty.inferred();
         debug_assert!(!synth || ty.least() <= max, "no {ty} fits {max}");
+        debug_assert!(ty.floor() <= max, "no {ty} fits {max}");
         let u8 = synth && *ty == Ty::U8;
         // `(u8(e) ?? d)` is the smallest `u8` of its own type.
         let mut rules = vec![if u8 { Rule::Fallible } else { Rule::Literal }];
@@ -232,20 +256,29 @@ impl Gen<'_> {
             Ty::Char => &[Rule::Fallible],
             Ty::String => &[Rule::Concat, Rule::Interpolate, Rule::FromChars],
             Ty::Array(element) => {
-                rules.push(Rule::Fill);
+                if element.floor() <= max && !element.shared() {
+                    rules.push(Rule::Fill);
+                }
                 // `words` gives at most one more than its chars.
                 if matches!(**element, Ty::Char | Ty::U8) || **element == Ty::String && max > 0 {
                     rules.push(Rule::Split);
                 }
                 // `bytes` is the one way to a `[u8]` but literals and fills, so it comes more.
                 if **element == Ty::U8 {
-                    rules.push(Rule::Split);
+                    rules.extend([Rule::Split, Rule::Split]);
                 }
                 &[]
             }
             Ty::Optional(payload) => {
-                if !synth {
+                if !synth && payload.floor() <= max {
                     rules.push(Rule::Wrap);
+                }
+                if !self.fields(payload, max).is_empty() {
+                    rules.push(Rule::SafeField);
+                }
+                // Twice: a method of the payload's type is rare.
+                if self.callees(payload, max).iter().any(|&f| self.method(f)) {
+                    rules.extend([Rule::SafeMethod, Rule::SafeMethod]);
                 }
                 if matches!(**payload, Ty::U8 | Ty::Char | Ty::I64)
                     || **payload == Ty::String && max >= LINE
@@ -254,9 +287,15 @@ impl Gen<'_> {
                 }
                 &[]
             }
-            Ty::Unit => &[],
+            Ty::Unit | Ty::Class { .. } | Ty::Enum { .. } => &[],
         };
         rules.extend_from_slice(own);
+        if *ty == Ty::Bool && !self.scope.classes.is_empty() {
+            rules.push(Rule::Is);
+        }
+        if !self.fields(ty, max).is_empty() {
+            rules.push(Rule::Field);
+        }
         if *ty == Ty::String && max >= LINE {
             rules.push(Rule::ReadLine);
         }
@@ -270,6 +309,10 @@ impl Gen<'_> {
         rules.push(Rule::If);
         if !self.one_line && self.blocks < MAX_BLOCKS {
             rules.push(Rule::Block);
+            // A `match` near the top only: its arms would otherwise take most of the fuel.
+            if self.nesting < 3 {
+                rules.push(Rule::Match);
+            }
         }
     }
 
@@ -366,7 +409,165 @@ impl Gen<'_> {
             }
             Rule::Index => self.index(ty, max),
             Rule::Element => self.element(ty, max),
+            Rule::Field => self.field(ty, max, false),
+            Rule::SafeField => self.field(ty, max, true),
+            Rule::SafeMethod => self.safe_method(ty, max),
+            Rule::Is => self.identity(),
+            Rule::Match => self.match_expr(ty, max, synth),
         }
+    }
+
+    /// `((o).g)` of a field of type `ty`, or if `safe`, `((o)?.g)` of one of its payload's.
+    fn field(&mut self, ty: &Ty, max: u64, safe: bool) -> Info {
+        let wanted = match ty {
+            Ty::Optional(payload) if safe => payload,
+            _ => ty,
+        };
+        let fields = self.fields(wanted, max);
+        let (class, field) = fields[self.pick(fields.len())];
+        let (name, cap) = {
+            let field = &self.scope.classes[class].fields[field];
+            (field.name.clone(), field.cap)
+        };
+        self.w.text("((");
+        let receiver = self.receiver(class, safe);
+        self.w
+            .text(&format!("){}{name})", if safe { "?." } else { "." }));
+        Info::of(&[receiver], cap, true)
+    }
+
+    /// `((o)?.m(depth, args))` of a method that returns the payload of `ty`, an optional.
+    fn safe_method(&mut self, ty: &Ty, max: u64) -> Info {
+        let Ty::Optional(payload) = ty else {
+            unreachable!("only an optional is a safe call's")
+        };
+        let methods: Vec<usize> = self
+            .callees(payload, max)
+            .into_iter()
+            .filter(|&f| self.method(f))
+            .collect();
+        let method = methods[self.pick(methods.len())];
+        self.invoke(method, true)
+    }
+
+    /// `(a is b)` of two objects of one class.
+    fn identity(&mut self) -> Info {
+        let class = self.pick(self.scope.classes.len());
+        self.w.text("(");
+        let lhs = self.receiver(class, false);
+        self.w.text(" is ");
+        let rhs = self.receiver(class, false);
+        self.w.text(")");
+        Info::of(&[lhs, rhs], 0, true)
+    }
+
+    /// The fields of a type `ty` within `max`: each one's class and its index there.
+    fn fields(&self, ty: &Ty, max: u64) -> Vec<(usize, usize)> {
+        let classes = self.scope.classes.iter().enumerate();
+        classes
+            .flat_map(|(c, class)| {
+                class
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(f, field)| {
+                        (field.ty == *ty && field.cap <= max).then_some((c, f))
+                    })
+            })
+            .collect()
+    }
+
+    /// An object of the class `class`, or an optional one if `safe`: what a `.` or a `?.`
+    /// reads.
+    fn receiver(&mut self, class: usize, safe: bool) -> Info {
+        let size = self.scope.classes[class].size;
+        let ty = Ty::Class { id: class, size };
+        if safe {
+            self.synth = true;
+            self.expr(&Ty::Optional(Box::new(ty)), size)
+        } else {
+            self.expr(&ty, size)
+        }
+    }
+
+    /// Whether the function `f` is a method.
+    fn method(&self, f: usize) -> bool {
+        self.scope.funcs[f].owner.is_some()
+    }
+
+    /// `K(g: a, h: b)`: every field, each within its cap.
+    fn object(&mut self, ty: &Ty) -> Info {
+        let Ty::Class { id, size } = *ty else {
+            unreachable!("only a class has objects")
+        };
+        self.w.text(&format!("{ty}("));
+        let mut parts = Vec::new();
+        for f in 0..self.scope.classes[id].fields.len() {
+            let (name, field, cap) = {
+                let field = &self.scope.classes[id].fields[f];
+                (field.name.clone(), field.ty.clone(), field.cap)
+            };
+            if f > 0 {
+                self.w.text(", ");
+            }
+            self.w.text(&format!("{name}: "));
+            parts.push(self.expr(&field, cap));
+        }
+        self.w.text(")");
+        Info::of(&parts, size, true)
+    }
+
+    /// `E.V`, `E.V(a, b)` or `E.V(l: a, m: b)` within `max`, of any variant but `except`. A
+    /// variant that holds the enum itself comes only while fuel lasts, so a value ends.
+    pub(crate) fn variant(&mut self, ty: &Ty, max: u64, except: Option<usize>) -> Info {
+        let Ty::Enum { id, .. } = *ty else {
+            unreachable!("only an enum has variants")
+        };
+        let fitting = |g: &Self, recursive: bool| -> Vec<usize> {
+            let variants = &g.scope.enums[id].variants;
+            (0..variants.len())
+                .filter(|&v| {
+                    let floor: u64 = variants[v].fields.iter().map(Ty::floor).sum();
+                    let holds = variants[v].fields.iter().any(|field| field == ty);
+                    Some(v) != except && floor < max && holds == recursive
+                })
+                .collect()
+        };
+        let mut variants = fitting(self, false);
+        let recursive = fitting(self, true);
+        if !recursive.is_empty() && self.nesting < MAX_NESTING && self.spend(1) {
+            variants.extend(recursive);
+        }
+        let v = variants[self.pick(variants.len())];
+        let (name, fields, labels) = {
+            let variant = &self.scope.enums[id].variants[v];
+            (
+                variant.name.clone(),
+                variant.fields.clone(),
+                variant.labels.clone(),
+            )
+        };
+        self.w.text(&format!("{ty}.{name}"));
+        if fields.is_empty() {
+            return Info::leaf(1);
+        }
+        self.w.text("(");
+        let mut left = max - 1;
+        let mut parts = Vec::new();
+        for (f, field) in fields.iter().enumerate() {
+            if f > 0 {
+                self.w.text(", ");
+            }
+            if let Some(label) = labels.get(f) {
+                self.w.text(&format!("{label}: "));
+            }
+            let later: u64 = fields[f + 1..].iter().map(Ty::floor).sum();
+            let part = self.expr(field, left - later);
+            left -= part.size;
+            parts.push(part);
+        }
+        self.w.text(")");
+        Info::of(&parts, max - left, true)
     }
 
     /// `((s).len())` of a `string` or `((a).len())` of an array.
@@ -407,7 +608,11 @@ impl Gen<'_> {
 
     /// `[a, b, ...]`, of one element at least if `synth`, each one of its own type then.
     pub(crate) fn array_literal(&mut self, element: &Ty, max: u64, synth: bool) -> Info {
-        let least = if synth { element.least() } else { 0 };
+        let least = if synth {
+            element.least()
+        } else {
+            element.floor()
+        };
         let most = (max / (1 + least)).min(4);
         let len = u64::from(synth) + self.upto(most - u64::from(synth));
         self.w.text("[");
@@ -433,7 +638,11 @@ impl Gen<'_> {
         let Ty::Array(element) = ty else {
             unreachable!("only an array is filled")
         };
-        let least = if synth { element.least() } else { 0 };
+        let least = if synth {
+            element.least()
+        } else {
+            element.floor()
+        };
         let len = self.upto((max / (1 + least)).min(MAX_BOUND));
         self.w.text("[");
         self.synth = synth;
@@ -565,10 +774,17 @@ impl Gen<'_> {
 
     fn type_within(&mut self, nesting: u32) -> Ty {
         let values = Ty::VALUES.len();
-        let choice = self.pick(values + if nesting > 0 { 2 } else { 0 });
+        // The declared types share one choice, so they take no more of the values' as they grow.
+        let declared = usize::from(!self.scope.types.is_empty());
+        let choice = self.pick(values + declared + if nesting > 0 { 2 } else { 0 });
         if choice < values {
             return Ty::VALUES[choice].clone();
         }
+        if choice < values + declared {
+            let pick = self.pick(self.scope.types.len());
+            return self.scope.types[pick].clone();
+        }
+        let choice = choice - declared;
         // Arrays of strings, whose elements `+=` may grow, come more often.
         let inner = if choice == values && self.pick(2) == 0 {
             Ty::String
@@ -629,6 +845,8 @@ impl Gen<'_> {
                 self.w.text(&format!("\"{text}\""));
                 Info::leaf(len)
             }
+            Ty::Class { .. } => self.object(ty),
+            Ty::Enum { .. } => self.variant(ty, max, None),
             Ty::Unit | Ty::Array(_) | Ty::Optional(_) => {
                 unreachable!("`Rule::Literal` writes a literal of a scalar only")
             }
@@ -857,11 +1075,15 @@ impl Gen<'_> {
             self.w.text(&text);
             size += text_len;
             // A `string` always fits.
-            let fitting: Vec<Ty> = Ty::VALUES
+            let mut fitting: Vec<Ty> = Ty::VALUES
                 .iter()
                 .filter(|ty| ty.printed(0, None) <= max - size)
                 .cloned()
                 .collect();
+            // An `f64` comes twice: only it takes every part of a spec.
+            if fitting.contains(&Ty::F64) {
+                fitting.push(Ty::F64);
+            }
             let ty = fitting[self.pick(fitting.len())].clone();
             let room = max - size;
             self.w.text("{");
@@ -908,9 +1130,9 @@ impl Gen<'_> {
         (spec, width, precision)
     }
 
-    /// The functions a call here may name that return `ty` within `max` chars: in `main`, every
-    /// function a call at depth 0 fits the budget for; in a function, itself and the earlier
-    /// ones.
+    /// The functions and methods a call here may name that return `ty` within `max` chars: in
+    /// `main`, every one a call at depth 0 fits the budget for; in a function, itself and the
+    /// earlier ones.
     pub(crate) fn callees(&self, ty: &Ty, max: u64) -> Vec<usize> {
         let last = self.scope.func.map_or(self.scope.funcs.len(), |f| f + 1);
         (0..last)
@@ -923,15 +1145,20 @@ impl Gen<'_> {
             .collect()
     }
 
-    /// A call of a function that returns `ty`, `unit` for a statement.
+    /// A call of a function or a method that returns `ty`, `unit` for a statement.
     pub(crate) fn call(&mut self, ty: &Ty, max: u64) -> Info {
         let callees = self.callees(ty, max);
         let callee = callees[self.pick(callees.len())];
-        let name = self.scope.funcs[callee].name.clone();
-        self.w.text(&format!("{name}("));
-        if self.scope.func.is_some() {
-            self.w.text("depth - 1");
+        self.invoke(callee, false)
+    }
+
+    /// `f(depth, args)`, or of a method `((e).m(depth, args))`, or `((o)?.m(depth, args))` if
+    /// `safe`, whose arguments may not run.
+    fn invoke(&mut self, callee: usize, safe: bool) -> Info {
+        // The depth first: the budget it takes is gone before the receiver's calls take theirs.
+        let depth = if self.scope.func.is_some() {
             self.cost.call(callee, None);
+            "depth - 1".to_string()
         } else {
             let times = self.cost.times();
             let costs = self.scope.funcs[callee].cost;
@@ -940,17 +1167,38 @@ impl Gen<'_> {
                 .count();
             let depth = self.pick(fitting);
             self.budget -= times * costs[depth];
-            self.w.text(&depth.to_string());
             self.cost.call(callee, Some(depth));
+            depth.to_string()
+        };
+        let mut parts = Vec::new();
+        let owner = self.scope.funcs[callee].owner.clone();
+        if let Some(Ty::Class { id, .. }) = owner {
+            self.w.text("((");
+            parts.push(self.receiver(id, safe));
+            self.w.text(if safe { ")?." } else { ")." });
         }
+        let name = self.scope.funcs[callee].name.clone();
+        self.w.text(&format!("{name}({depth}"));
         let params = self.scope.funcs[callee].params.clone();
-        let mut args = Vec::new();
-        for (ty, size) in &params {
-            self.w.text(", ");
-            args.push(self.expr(ty, *size));
-        }
+        let args = |g: &mut Self| -> Vec<Info> {
+            params
+                .iter()
+                .map(|(ty, size)| {
+                    g.w.text(", ");
+                    g.expr(ty, *size)
+                })
+                .collect()
+        };
+        parts.extend(if safe {
+            self.conditionally(args)
+        } else {
+            args(self)
+        });
         self.w.text(")");
-        Info::of(&args, self.scope.funcs[callee].ret_size, false)
+        if owner.is_some() {
+            self.w.text(")");
+        }
+        Info::of(&parts, self.scope.funcs[callee].ret_size, false)
     }
 
     /// `(if c { a } else if d { b } else { e })` on one line; a branch after the first may
@@ -1041,6 +1289,302 @@ impl Gen<'_> {
             _ => return self.expr(ty, max),
         }
         Info::of(&[], 0, false)
+    }
+}
+
+impl Gen<'_> {
+    /// `(match s { p [if g] => e ... })`, an arm a line, of a `bool`, a number, a `char`, a
+    /// `string` or an enum value: arms whose patterns do not overlap, so none is unreachable,
+    /// then `_` or a binding where they leave a value unmatched.
+    fn match_expr(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
+        let enums = self.scope.enums.len();
+        // The enums share one choice with the other types.
+        let choice = self.pick(MATCHED.len() + usize::from(enums > 0));
+        let tested = if choice < MATCHED.len() {
+            MATCHED[choice].clone()
+        } else {
+            let id = self.pick(enums);
+            let least = self.scope.enums[id].least;
+            Ty::Enum { id, least }
+        };
+        self.w.text("(match ");
+        self.synth = true;
+        let scrutinee = self.expr(&tested, MAX_SIZE);
+        self.w.text(" ");
+        self.blocks += 1;
+        self.w.open();
+        let (mut arms, exhaustive) = match tested {
+            Ty::Bool => self.bool_arms(),
+            Ty::String => (self.word_arms(), false),
+            Ty::Enum { .. } => self.variant_arms(&tested),
+            _ => (self.range_arms(&tested), false),
+        };
+        if !exhaustive {
+            let mut binds = Vec::new();
+            let pattern = if self.pick(2) == 0 {
+                "_".to_string()
+            } else {
+                let name = self.scope.fresh("v");
+                binds.push((name.clone(), tested.clone()));
+                name
+            };
+            arms.push(Arm {
+                pattern,
+                binds,
+                guard: false,
+            });
+        }
+        let mut parts = vec![scrutinee];
+        let mut size = 0;
+        for arm in arms {
+            self.w.line();
+            self.w.text(&arm.pattern);
+            self.conditionally(|g| {
+                let vars = g.scope.vars.len();
+                let loops = g.cost.depth();
+                for (name, ty) in arm.binds {
+                    // A part of the value holds at most what it does; a class object, its own.
+                    let size = match ty {
+                        Ty::Class { size, .. } => size,
+                        _ => scrutinee.size,
+                    };
+                    g.scope.vars.push(Var::new(name, ty, false, size, 0, loops));
+                }
+                if arm.guard {
+                    g.w.text(" if ");
+                    parts.push(g.expr(&Ty::Bool, 0));
+                }
+                g.w.text(" => ");
+                g.synth = synth;
+                let body = g.expr(ty, max);
+                size = size.max(body.size);
+                parts.push(body);
+                g.scope.vars.truncate(vars);
+            });
+        }
+        self.w.close();
+        self.blocks -= 1;
+        self.w.text(")");
+        Info::of(&parts, size, true)
+    }
+
+    /// Arms of `true`, `false` or both, each at most once; exhaustive when both come without
+    /// a guard.
+    fn bool_arms(&mut self) -> (Vec<Arm>, bool) {
+        let mut left = vec!["false", "true"];
+        let mut covered = 0;
+        let mut arms = Vec::new();
+        for _ in 0..=self.pick(2) {
+            if left.is_empty() {
+                break;
+            }
+            let guard = self.pick(4) == 0;
+            let pattern = if left.len() == 2 && self.pick(3) == 0 {
+                let both = left.join(" | ");
+                left.clear();
+                covered += if guard { 0 } else { 2 };
+                both
+            } else {
+                covered += usize::from(!guard);
+                left.remove(self.pick(left.len())).to_string()
+            };
+            arms.push(Arm {
+                pattern,
+                binds: Vec::new(),
+                guard,
+            });
+        }
+        (arms, covered == 2)
+    }
+
+    /// Arms of string literals, each at most once, alone or two together.
+    fn word_arms(&mut self) -> Vec<Arm> {
+        let mut left: Vec<&str> = WORDS.to_vec();
+        let mut arms = Vec::new();
+        // Three arms of two words at most take six of the five words: stop when they run out.
+        for _ in 0..=self.pick(2) {
+            if left.is_empty() {
+                break;
+            }
+            let mut pattern = left.remove(self.pick(left.len())).to_string();
+            if !left.is_empty() && self.pick(3) == 0 {
+                pattern += " | ";
+                pattern += left.remove(self.pick(left.len()));
+            }
+            let guard = self.pick(4) == 0;
+            arms.push(Arm {
+                pattern,
+                binds: Vec::new(),
+                guard,
+            });
+        }
+        arms
+    }
+
+    /// Arms of an `i64`, a `u8` or a `char`: literals, ranges and alternatives of literals, each
+    /// past the one before, so no two overlap.
+    fn range_arms(&mut self, ty: &Ty) -> Vec<Arm> {
+        let mut next = match ty {
+            Ty::I64 => self.int(-3, 3),
+            Ty::U8 => self.int(0, 3),
+            _ => i64::from(b'a') + self.int(0, 3),
+        };
+        let mut arms = Vec::new();
+        // Three arms of 6 values at most keep a `char` within the letters.
+        for _ in 0..=self.pick(2) {
+            let lo = next + self.int(0, 2);
+            let (pattern, after) = self.range_pattern(ty, lo, true);
+            next = after;
+            let guard = self.pick(4) == 0;
+            arms.push(Arm {
+                pattern,
+                binds: Vec::new(),
+                guard,
+            });
+        }
+        arms
+    }
+
+    /// A pattern of an `i64`, a `u8` or a `char` that matches `lo` and values above it only:
+    /// a literal, `lo..hi`, `lo..=hi`, or, if `alternatives`, `lo | n`; and the least value
+    /// above every value it matches.
+    fn range_pattern(&mut self, ty: &Ty, lo: i64, alternatives: bool) -> (String, i64) {
+        let text = |n: i64| match ty {
+            Ty::Char => format!(
+                "'{}'",
+                char::from(u8::try_from(n).expect("a tested char should be a letter"))
+            ),
+            _ => n.to_string(),
+        };
+        match self.pick(if alternatives { 4 } else { 3 }) {
+            0 => (text(lo), lo + 1),
+            1 => {
+                let hi = lo + 1 + self.int(0, 3);
+                (format!("{}..{}", text(lo), text(hi)), hi)
+            }
+            2 => {
+                let hi = lo + self.int(0, 3);
+                (format!("{}..={}", text(lo), text(hi)), hi + 1)
+            }
+            _ => {
+                let other = lo + 1 + self.int(0, 2);
+                (format!("{} | {}", text(lo), text(other)), other + 1)
+            }
+        }
+    }
+
+    /// Arms of the variants of the enum `ty`, each in one arm at most, alone or two together,
+    /// which then bind nothing; exhaustive when each variant is in an arm without a guard whose
+    /// pattern matches each of its values.
+    fn variant_arms(&mut self, ty: &Ty) -> (Vec<Arm>, bool) {
+        let Ty::Enum { id, .. } = *ty else {
+            unreachable!("only an enum has variants")
+        };
+        let count = self.scope.enums[id].variants.len();
+        let mut left: Vec<usize> = (0..count).collect();
+        let mut covered = 0;
+        let mut arms = Vec::new();
+        for _ in 0..=self.pick(count) {
+            if left.is_empty() {
+                break;
+            }
+            let guard = self.pick(4) == 0;
+            let first = left.remove(self.pick(left.len()));
+            let mut binds = Vec::new();
+            let pattern = if !left.is_empty() && self.pick(4) == 0 {
+                let second = left.remove(self.pick(left.len()));
+                let (a, a_total) = self.variant_pattern(ty, first, None, 0);
+                let (b, b_total) = self.variant_pattern(ty, second, None, 0);
+                covered += usize::from(a_total && !guard) + usize::from(b_total && !guard);
+                format!("{a} | {b}")
+            } else {
+                let (pattern, total) = self.variant_pattern(ty, first, Some(&mut binds), 0);
+                covered += usize::from(total && !guard);
+                pattern
+            };
+            arms.push(Arm {
+                pattern,
+                binds,
+                guard,
+            });
+        }
+        (arms, covered == count)
+    }
+
+    /// `V`, `E.V`, `V(p, ...)` or `E.V(p, ...)` of the variant `v` of the enum `ty`, binding
+    /// names into `binds` if any; and whether it matches every value of the variant.
+    fn variant_pattern(
+        &mut self,
+        ty: &Ty,
+        v: usize,
+        mut binds: Option<&mut Vec<(String, Ty)>>,
+        depth: u32,
+    ) -> (String, bool) {
+        let Ty::Enum { id, .. } = *ty else {
+            unreachable!("only an enum has variants")
+        };
+        let (name, fields) = {
+            let variant = &self.scope.enums[id].variants[v];
+            (variant.name.clone(), variant.fields.clone())
+        };
+        let mut text = if self.pick(2) == 0 {
+            name
+        } else {
+            format!("{ty}.{name}")
+        };
+        if fields.is_empty() {
+            return (text, true);
+        }
+        let mut total = true;
+        let mut parts = Vec::new();
+        for field in &fields {
+            let choice = self.pick(3);
+            if choice == 1
+                && let Some(binds) = binds.as_deref_mut()
+            {
+                let name = self.scope.fresh("v");
+                binds.push((name.clone(), field.clone()));
+                parts.push(name);
+                continue;
+            }
+            let refutable = if choice == 0 {
+                None
+            } else {
+                self.refutable(field, depth)
+            };
+            total &= refutable.is_none();
+            parts.push(refutable.unwrap_or_else(|| "_".to_string()));
+        }
+        text = format!("{text}({})", parts.join(", "));
+        (text, total)
+    }
+
+    /// A pattern that matches some values of `ty` but not all: a literal, a range or a
+    /// variant; none for a type only names and `_` match.
+    fn refutable(&mut self, ty: &Ty, depth: u32) -> Option<String> {
+        match ty {
+            Ty::I64 | Ty::U8 | Ty::Char => {
+                let lo = match ty {
+                    Ty::I64 => self.int(-3, 9),
+                    Ty::U8 => self.int(0, 9),
+                    _ => i64::from(b'a') + self.int(0, 9),
+                };
+                Some(self.range_pattern(ty, lo, false).0)
+            }
+            Ty::Bool => Some(if self.pick(2) == 0 { "false" } else { "true" }.to_string()),
+            Ty::String => Some(WORDS[self.pick(WORDS.len())].to_string()),
+            // An enum has two variants at least, so one variant's pattern leaves the other.
+            Ty::Enum { id, .. } if depth < MAX_PATTERN_DEPTH => {
+                let v = self.pick(self.scope.enums[*id].variants.len());
+                Some(self.variant_pattern(ty, v, None, depth + 1).0)
+            }
+            Ty::Enum { .. }
+            | Ty::F64
+            | Ty::Unit
+            | Ty::Array(_)
+            | Ty::Optional(_)
+            | Ty::Class { .. } => None,
+        }
     }
 }
 

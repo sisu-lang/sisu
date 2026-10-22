@@ -28,6 +28,8 @@ enum Rule {
     Assign,
     /// `v[i] = e`.
     Element,
+    /// `v.g = e`.
+    SetField,
     Compound,
     If,
     While,
@@ -62,8 +64,11 @@ impl Gen<'_> {
         if self.scope.vars.iter().any(assignable) {
             rules.push(Rule::Assign);
         }
-        if self.scope.vars.iter().any(has_elements) {
+        if self.scope.vars.iter().any(|var| self.settable(var)) {
             rules.push(Rule::Element);
+        }
+        if !self.field_targets().is_empty() {
+            rules.push(Rule::SetField);
         }
         if !self.compound_targets().is_empty() {
             rules.push(Rule::Compound);
@@ -123,7 +128,7 @@ impl Gen<'_> {
             }
             Rule::Element => {
                 let vars: Vec<usize> = (0..self.scope.vars.len())
-                    .filter(|&v| has_elements(&self.scope.vars[v]))
+                    .filter(|&v| self.settable(&self.scope.vars[v]))
                     .collect();
                 let pick = self.pick(vars.len());
                 let var = &self.scope.vars[vars[pick]];
@@ -134,6 +139,15 @@ impl Gen<'_> {
                 let at = self.upto(len - 1);
                 self.w.text(&format!("{name}[{at}] = "));
                 self.expr(&element, base);
+            }
+            Rule::SetField => {
+                let targets = self.field_targets();
+                let (v, class, f) = targets[self.pick(targets.len())];
+                let field = &self.scope.classes[class].fields[f];
+                let (ty, cap) = (field.ty.clone(), field.cap);
+                self.w
+                    .text(&format!("{}.{} = ", self.scope.vars[v].name, field.name));
+                self.expr(&ty, cap);
             }
             Rule::Compound => self.compound(),
             Rule::If => self.if_stmt(false),
@@ -166,7 +180,7 @@ impl Gen<'_> {
         }
         let (base, room) = match (&ty, mutable) {
             (Ty::String, true) => (SIZES[self.pick(SIZES.len())], SIZES[self.pick(SIZES.len())]),
-            (_, true) if ty.sized() => (SIZES[self.pick(SIZES.len())], 0),
+            (_, true) if ty.sized() => (self.size_for(&ty, &SIZES), 0),
             (_, false) if ty.sized() => (MAX_SIZE, 0),
             _ => (0, 0),
         };
@@ -187,12 +201,12 @@ impl Gen<'_> {
     pub(crate) fn array_let(&mut self, name: String, ty: Ty, element: &Ty) {
         const BASES: [u64; 3] = [0, 16, 64];
         let base = if element.sized() {
-            BASES[self.pick(BASES.len())]
+            element.floor() + BASES[self.pick(BASES.len())]
         } else {
             0
         };
-        let fill = self.pick(2) == 1;
-        let len = self.upto(if fill { MAX_BOUND } else { 4 });
+        let fill = self.pick(2) == 1 && !element.shared();
+        let len = self.upto((MAX_SIZE / (1 + base)).min(if fill { MAX_BOUND } else { 4 }));
         let size = array_size(len, base);
         let rooms: Vec<u64> = SIZES
             .into_iter()
@@ -216,6 +230,29 @@ impl Gen<'_> {
         var.size = size + room;
         var.len = len;
         self.scope.vars.push(var);
+    }
+
+    /// Whether an element of `var` may take an assignment: a mutable array with an element,
+    /// of a type that holds no class object (decision 4).
+    fn settable(&self, var: &Var) -> bool {
+        has_elements(var)
+            && matches!(&var.ty, Ty::Array(element) if !self.scope.contains_class(element))
+    }
+
+    /// The fields a plain assignment may target, each as its local, class and index there: a
+    /// `mut` field of a type that holds no class object (decision 4).
+    fn field_targets(&self) -> Vec<(usize, usize, usize)> {
+        let mut targets = Vec::new();
+        for (v, var) in self.scope.vars.iter().enumerate() {
+            if let Ty::Class { id, .. } = var.ty {
+                for (f, field) in self.scope.classes[id].fields.iter().enumerate() {
+                    if field.mutable && !self.scope.contains_class(&field.ty) {
+                        targets.push((v, id, f));
+                    }
+                }
+            }
+        }
+        targets
     }
 
     /// The places a compound assignment may target: a local, `false`, or one of its elements,
@@ -331,9 +368,15 @@ impl Gen<'_> {
     }
 
     /// `let mut c = n` and `while let x = (if c > 0 { e } else { None }) { c -= 1 ... }`:
-    /// `while_stmt`'s bounds, and `x` bound to each `e`.
+    /// `while_stmt`'s bounds, and `x` bound to each `e`; or, half the time an enum holds itself,
+    /// `while_chain`.
     fn while_let(&mut self) {
         self.spend(2);
+        let chains = self.chains();
+        if !chains.is_empty() && self.pick(2) == 1 {
+            let (id, variant) = chains[self.pick(chains.len())];
+            return self.while_chain(id, variant);
+        }
         let bound = self.upto(MAX_BOUND);
         let counter = self.scope.fresh("v");
         self.w.text(&format!("let mut {counter} = {bound}"));
@@ -366,6 +409,116 @@ impl Gen<'_> {
             g.loop_body(&format!("{counter} -= 1"), binding);
             g.cost.exit_loop();
         });
+    }
+
+    /// The variants a `while let` can walk a chain of: each enum's and variant's index, where
+    /// the variant's first field holds the enum itself.
+    fn chains(&self) -> Vec<(usize, usize)> {
+        let mut chains = Vec::new();
+        for (id, e) in self.scope.enums.iter().enumerate() {
+            for (v, variant) in e.variants.iter().enumerate() {
+                if matches!(variant.fields.first(), Some(Ty::Enum { id: own, .. }) if *own == id) {
+                    chains.push((id, v));
+                }
+            }
+        }
+        chains
+    }
+
+    /// `let mut c = E.V(E.V(... end ...), ...)`, a chain of at most `MAX_BOUND` nodes of the
+    /// variant `variant` of the enum `id` that ends in another variant, and
+    /// `while let V(t, ...) = c { c = t ... }`, which takes one node a run, so runs once a node
+    /// (decision 5).
+    fn while_chain(&mut self, id: usize, variant: usize) {
+        let ty = Ty::Enum {
+            id,
+            least: self.scope.enums[id].least,
+        };
+        let nodes = self.upto(MAX_BOUND);
+        let chain = self.scope.fresh("v");
+        self.w.text(&format!("let mut {chain} = "));
+        let size = self.chain(&ty, variant, nodes);
+        self.w.line();
+        self.cost.statement();
+        let (name, fields) = {
+            let variant = &self.scope.enums[id].variants[variant];
+            (variant.name.clone(), variant.fields.clone())
+        };
+        let loops = self.cost.depth() + 1;
+        let rest = self.scope.fresh("v");
+        let mut parts = vec![rest.clone()];
+        let mut vars = vec![Var::new(rest.clone(), ty.clone(), false, size, 0, loops)];
+        for field in &fields[1..] {
+            if self.pick(2) == 0 {
+                parts.push("_".to_string());
+            } else {
+                let bound = self.scope.fresh("v");
+                // A class object holds its own size; any other part, what the chain does.
+                let most = match field {
+                    Ty::Class { size, .. } => *size,
+                    _ => size,
+                };
+                vars.push(Var::new(
+                    bound.clone(),
+                    field.clone(),
+                    false,
+                    most,
+                    0,
+                    loops,
+                ));
+                parts.push(bound);
+            }
+        }
+        let qualifier = if self.pick(2) == 0 {
+            String::new()
+        } else {
+            format!("{ty}.")
+        };
+        self.w.text(&format!(
+            "while let {qualifier}{name}({}) = {chain} ",
+            parts.join(", ")
+        ));
+        let var = Var::new(chain.clone(), ty, false, size, 0, self.cost.depth());
+        self.scope.vars.push(var);
+        self.conditionally(|g| {
+            g.cost.enter_loop(nodes);
+            g.loop_body(&format!("{chain} = {rest}"), vars);
+            g.cost.exit_loop();
+        });
+    }
+
+    /// A chain of `nodes` nodes of the variant `variant` of the enum `ty`, each holding the
+    /// next in its first field, then a value of another variant; each of them within a ninth
+    /// of `MAX_SIZE`. Gives its size.
+    fn chain(&mut self, ty: &Ty, variant: usize, nodes: u64) -> u64 {
+        const ROOM: u64 = MAX_SIZE / (MAX_BOUND + 1);
+        if nodes == 0 {
+            return self.variant(ty, ROOM, Some(variant)).size;
+        }
+        let Ty::Enum { id, .. } = *ty else {
+            unreachable!("only an enum has variants")
+        };
+        let (name, fields, labels) = {
+            let variant = &self.scope.enums[id].variants[variant];
+            (
+                variant.name.clone(),
+                variant.fields.clone(),
+                variant.labels.clone(),
+            )
+        };
+        self.w.text(&format!("{ty}.{name}("));
+        let label = |f: usize| labels.get(f).map(|label| format!("{label}: "));
+        self.w.text(&label(0).unwrap_or_default());
+        let next = self.chain(ty, variant, nodes - 1);
+        let mut left = ROOM - 1;
+        for f in 1..fields.len() {
+            self.w.text(", ");
+            self.w.text(&label(f).unwrap_or_default());
+            let later: u64 = fields[f + 1..].iter().map(Ty::floor).sum();
+            left -= self.expr(&fields[f], left - later).size;
+        }
+        self.w.text(")");
+        next + ROOM - left
     }
 
     /// `for v in a..b` or `for v in a..=b`, with literal ends at most `MAX_BOUND` apart, now
@@ -403,7 +556,7 @@ impl Gen<'_> {
         let name = self.scope.fresh("v");
         self.w.text(&format!("for {name} in "));
         // The source has no expected type.
-        let array = if self.pick(2) == 0 {
+        let array = if self.pick(2) == 0 || element.shared() {
             self.array_literal(&element, MAX_SIZE, true)
         } else {
             self.fill(&Ty::Array(Box::new(element.clone())), MAX_SIZE, true)
@@ -421,7 +574,7 @@ impl Gen<'_> {
 
     /// A loop's body: `first`, if any, then statements, which may `break` and `continue`, with
     /// `var` in scope.
-    fn loop_body(&mut self, first: &str, var: Option<Var>) {
+    fn loop_body(&mut self, first: &str, var: impl IntoIterator<Item = Var>) {
         let jumps = self.jumps;
         self.jumps.in_loop = true;
         self.open_block();

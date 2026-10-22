@@ -10,7 +10,9 @@ use std::fmt::Write as _;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::scope::{Const, Func, Ty, Var};
-use super::{BUDGET, Cost, DEPTHS, FUEL, Gen, Generated, MAX_BOUND, MAX_SIZE, Shape, generate};
+use super::{
+    BUDGET, Cost, DEPTHS, FUEL, Gen, Generated, MAX_BOUND, MAX_NESTING, MAX_SIZE, Shape, generate,
+};
 use crate::diagnostic::Severity;
 use crate::front_end::front_end;
 use crate::types::{Type, TypeKind};
@@ -48,48 +50,6 @@ const EXCLUDED: [(&str, &str); 6] = [
     ),
 ];
 
-/// What the generator does not write yet: classes, enums, `is` and patterns (Task 4). A
-/// generated program holding one fails the test.
-const NOT_YET: [&str; 37] = [
-    "ast::Item::Class",
-    "ast::Item::Enum",
-    "ast::Member::Field",
-    "ast::Member::Method",
-    "ast::ExprKind::SelfValue",
-    "ast::ExprKind::Is",
-    "ast::ExprKind::Match",
-    "ast::PatternKind::Variant",
-    "ast::PatternKind::Literal",
-    "ast::PatternKind::Range",
-    "ast::PatternKind::Or",
-    "ast::Literal::Int",
-    "ast::Literal::Char",
-    "ast::Literal::Str",
-    "ast::Literal::Bool",
-    "ast::Bound::Literal",
-    "ast::FieldDecl.mutable = false",
-    "ast::FieldDecl.mutable = true",
-    "ast::ExprKind::Field.safe = true",
-    "ast::ExprKind::MethodCall.safe = true",
-    "ast::PatternKind::Range.inclusive = false",
-    "ast::PatternKind::Range.inclusive = true",
-    "tir::Place::Field",
-    "tir::ExprKind::New",
-    "tir::ExprKind::Variant",
-    "tir::ExprKind::Field",
-    "tir::ExprKind::Is",
-    "tir::ExprKind::Match",
-    "tir::PatternKind::Wild",
-    "tir::PatternKind::Bind",
-    "tir::PatternKind::Variant",
-    "tir::PatternKind::Bool",
-    "tir::PatternKind::Range",
-    "tir::PatternKind::Str",
-    "tir::PatternKind::Or",
-    "types::TypeKind::Class",
-    "types::TypeKind::Enum",
-];
-
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
 /// tree's variant.
 const RECEIVERS: [(&str, &[&str]); 7] = [
@@ -115,7 +75,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 16] = [
+const REACH: [&str; 17] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -124,6 +84,7 @@ const REACH: [&str; 16] = [
     "reach: an `if` statement jumps in every branch",
     "reach: a `for` over an array runs its body",
     "reach: a `while let` takes its `Some` branch",
+    "reach: a `while let` walks an enum chain",
     "reach: an index is in bounds",
     "reach: an index is meant to panic",
     "reach: an index reads a local",
@@ -356,6 +317,14 @@ struct Walk {
     later: FxHashSet<usize>,
     /// Where the value of a `while let` that runs its body starts.
     some_values: FxHashSet<usize>,
+    /// Where the value of a `while let` that walks an enum chain of a node or more starts.
+    chains: FxHashSet<usize>,
+    /// Each enum's variants, by the enum's name.
+    variants: FxHashMap<String, Vec<String>>,
+    /// The types each enum's payloads hold, by its id.
+    payloads: Vec<Vec<Type>>,
+    /// Field and element assignments of a value that may hold a class object (decision 4).
+    heap_classes: Vec<String>,
     /// Where a `+=` on a name starts.
     adds: FxHashSet<usize>,
     /// Where the value of a plain `=` to a name starts.
@@ -378,6 +347,7 @@ impl Walk {
         self.immutable.clear();
         self.later.clear();
         self.some_values.clear();
+        self.chains.clear();
         self.adds.clear();
         self.assigns.clear();
         self.ast(&ast);
@@ -396,6 +366,20 @@ impl Walk {
             .filter_map(|item| match item {
                 ast::Item::Function(f) => Some(f.name.name.as_str().to_string()),
                 ast::Item::Class(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+            })
+            .collect();
+        self.variants = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::Enum(e) => Some((
+                    e.name.name.as_str().to_string(),
+                    e.variants
+                        .iter()
+                        .map(|v| v.name.name.as_str().to_string())
+                        .collect(),
+                )),
+                ast::Item::Function(_) | ast::Item::Class(_) | ast::Item::Const(_) => None,
             })
             .collect();
         for broken in &program.broken {
@@ -478,8 +462,13 @@ impl Walk {
             if let ast::StmtKind::While { cond, body } = &stmt.kind {
                 self.while_bound(before, cond, body);
             }
-            if let ast::StmtKind::WhileLet { value, body, .. } = &stmt.kind {
-                self.while_let_bound(before, value, body);
+            if let ast::StmtKind::WhileLet {
+                pattern,
+                value,
+                body,
+            } = &stmt.kind
+            {
+                self.while_let_bound(before, pattern, value, body);
             }
             self.ast_stmt(stmt);
         }
@@ -509,8 +498,12 @@ impl Walk {
     }
 
     /// Marks the `Some` reach of a `while let` whose value `(if c { e } else { None })` the
-    /// checker gives as a wrapped `e`: a `T`, so its first run is a `Some`.
+    /// checker gives as a wrapped `e`: a `T`, so its first run is a `Some`; and the reach of one
+    /// that walks an enum chain, which the checker lowers to a `match`.
     fn some_value(&mut self, scrutinee: &tir::Expr) {
+        if self.chains.contains(&scrutinee.span.start()) {
+            self.mark("reach: a `while let` walks an enum chain");
+        }
         if self.some_values.contains(&scrutinee.span.start())
             && let tir::ExprKind::If { then_block, .. } = &scrutinee.kind
             && then_block
@@ -523,13 +516,22 @@ impl Walk {
     }
 
     /// Checks that a `while let` counts down as a `while` does, its value `(if cond { e } else
-    /// { None })`; the first run of `e` gives a `Some`, so a positive bound runs the body.
+    /// { None })`, where the first run of `e` gives a `Some`, so a positive bound runs the body;
+    /// or that it walks a chain, `while let V(t, ...) = c { c = t ... }` after
+    /// `let mut c = E.V(E.V(... end ...), ...)`, which runs once a node.
     fn while_let_bound(
         &mut self,
         before: Option<&ast::Stmt>,
+        pattern: &ast::Pattern,
         value: &ast::Expr,
         body: &ast::Block,
     ) {
+        if let Some(nodes) = self.chain_bound(before, pattern, value, body) {
+            if nodes > 0 {
+                self.chains.insert(value.span.start());
+            }
+            return;
+        }
         if let ast::ExprKind::If {
             cond,
             else_block: Some(other),
@@ -545,6 +547,67 @@ impl Walk {
         } else {
             self.unbounded
                 .push(format!("a `while let` at byte {}", value.span.start()));
+        }
+    }
+
+    /// The nodes of the chain a `while let` walks, `None` unless it walks one of at most
+    /// `MAX_BOUND` that ends in another variant of the enum.
+    fn chain_bound(
+        &self,
+        before: Option<&ast::Stmt>,
+        pattern: &ast::Pattern,
+        value: &ast::Expr,
+        body: &ast::Block,
+    ) -> Option<i128> {
+        let chain = name(value)?;
+        let ast::StmtKind::Let {
+            mutable: Some(_),
+            name: declared,
+            init,
+            ..
+        } = &before?.kind
+        else {
+            return None;
+        };
+        let ast::PatternKind::Variant {
+            name: variant,
+            fields,
+            ..
+        } = &pattern.kind
+        else {
+            return None;
+        };
+        let ast::PatternKind::Name(rest) = &fields.first()?.kind else {
+            return None;
+        };
+        let steps = matches!(&body.stmts.first()?.kind, ast::StmtKind::Assign { target, value }
+            if name(target) == Some(chain) && name(value) == Some(rest.name.as_str()));
+        let nodes = self.nodes(init, variant.name.as_str())?;
+        (declared.name.as_str() == chain && steps && nodes <= i128::from(MAX_BOUND))
+            .then_some(nodes)
+    }
+
+    /// How many nodes of the variant `variant` `e` nests, each in the first field of the one
+    /// before, `None` unless it ends in another variant of their enum.
+    fn nodes(&self, e: &ast::Expr, variant: &str) -> Option<i128> {
+        let (receiver, built, next) = match &e.kind {
+            ast::ExprKind::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } => (receiver, method, args.first().map(|arg| &arg.value)),
+            ast::ExprKind::Field { base, name, .. } => (base, name, None),
+            _ => return None,
+        };
+        let variants = self.variants.get(name(receiver)?)?;
+        let built = built.name.as_str();
+        if !variants.iter().any(|v| v == built) {
+            None
+        } else if built == variant {
+            Some(1 + self.nodes(next?, variant)?)
+        } else {
+            Some(0)
         }
     }
 
@@ -1022,6 +1085,16 @@ impl Walk {
     }
 
     fn tir(&mut self, program: &tir::Program) {
+        self.payloads = program
+            .enums
+            .iter()
+            .map(|e| {
+                e.variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().map(|field| field.ty))
+                    .collect()
+            })
+            .collect();
         for function in &program.functions {
             self.ty(function.ret);
             for local in &function.locals {
@@ -1068,6 +1141,12 @@ impl Walk {
                 }
                 tir::Stmt::Assign { place, value } => {
                     self.mark("tir::Stmt::Assign");
+                    if !matches!(place, tir::Place::Local(_))
+                        && self.holds_class(value.ty, &mut Vec::new())
+                    {
+                        self.heap_classes
+                            .push(format!("an assignment at byte {}", value.span.start()));
+                    }
                     // A non-empty literal adds chars for certain.
                     if matches!(place, tir::Place::Local(_))
                         && let tir::ExprKind::Concat { rhs, .. } = &value.kind
@@ -1098,6 +1177,30 @@ impl Walk {
         }
         if let Some(value) = &block.value {
             self.tir_expr(value, Parent::Other);
+        }
+    }
+
+    /// Whether a value of `ty` may hold a class object, where `seen` are the enums looked into.
+    fn holds_class(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
+        match ty.kind() {
+            TypeKind::Class(_) => true,
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => self.holds_class(inner, seen),
+            TypeKind::Enum(id) => {
+                !seen.contains(&id) && {
+                    seen.push(id);
+                    self.payloads[id.0]
+                        .iter()
+                        .any(|field| self.holds_class(*field, seen))
+                }
+            }
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never => false,
         }
     }
 
@@ -1544,18 +1647,14 @@ fn read_line_past_the_input_checks_clean() {
 #[test]
 fn every_variant_is_generated() {
     let universe = universe();
-    let named: Vec<&str> = EXCLUDED
-        .iter()
-        .map(|(key, _)| *key)
-        .chain(NOT_YET)
-        .collect();
+    let named: Vec<&str> = EXCLUDED.iter().map(|(key, _)| *key).collect();
     let unknown: Vec<&&str> = named
         .iter()
         .filter(|key| !universe.contains(**key))
         .collect();
     assert!(
         unknown.is_empty(),
-        "EXCLUDED or NOT_YET names what does not exist: {unknown:?}"
+        "EXCLUDED names what does not exist: {unknown:?}"
     );
     let seen = walk().seen;
     let mut missing: Vec<&String> = universe
@@ -1566,19 +1665,6 @@ fn every_variant_is_generated() {
     assert!(
         missing.is_empty(),
         "no generated program holds: {missing:#?}"
-    );
-}
-
-#[test]
-fn not_yet_is_not_generated() {
-    let seen = walk().seen;
-    let generated: Vec<&str> = NOT_YET
-        .into_iter()
-        .filter(|key| seen.contains(*key))
-        .collect();
-    assert!(
-        generated.is_empty(),
-        "NOT_YET names what a program holds: {generated:?}"
     );
 }
 
@@ -1720,6 +1806,7 @@ fn main_calls_fit_the_budget_left() {
     let mut g = Gen::new(&data);
     g.scope.funcs.push(Func {
         name: "f1".to_string(),
+        owner: None,
         params: Vec::new(),
         ret: Ty::Unit,
         ret_size: 0,
@@ -1853,18 +1940,19 @@ fn a_part_whose_spec_does_not_fit_is_written_without_it() {
 
 #[test]
 fn rare_constant_forms_check_clean() {
-    // Each input chooses, byte by byte, an item, a constant, its type, no annotation, and then
-    // its form, ending once the bytes run out, where every choice is the first.
+    // Each input chooses, byte by byte, no class or enum, an item, a constant, its type, no
+    // annotation, and then its form, ending once the bytes run out, where every choice is the
+    // first.
     for (data, form) in [
         // `-(e)` of the smallest `i64`, which has no negation: `e` alone.
         (
-            &[1, 0, 0, 0, 1, 0, 7, 1][..],
+            &[0, 1, 0, 0, 0, 1, 0, 7, 1][..],
             "const c1 = (-9223372036854775808)\n",
         ),
         // `(a && b)` and `(a || b)` of `bool`s.
-        (&[1, 0, 3, 0, 3, 1][..], "const c1 = (false && false)\n"),
+        (&[0, 1, 0, 3, 0, 3, 1][..], "const c1 = (false && false)\n"),
         (
-            &[1, 0, 3, 0, 3, 1, 0, 0, 1][..],
+            &[0, 1, 0, 3, 0, 3, 1, 0, 0, 1][..],
             "const c1 = (false || false)\n",
         ),
     ] {
@@ -1872,6 +1960,16 @@ fn rare_constant_forms_check_clean() {
         assert!(g.program.starts_with(form), "{}", g.program);
         checked(&g);
     }
+}
+
+#[test]
+fn no_generated_program_assigns_a_class_into_the_heap() {
+    // Decision 4: an object stored in a field or an element could make a cycle.
+    let stores = walk().heap_classes;
+    assert!(
+        stores.is_empty(),
+        "a class object goes into the heap: {stores:?}"
+    );
 }
 
 #[test]
@@ -1946,14 +2044,15 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
     assert_eq!(unbounded, ["a `while`", "a `while let`", "a `for`"]);
 }
 
-/// What `expr` writes for `ty` within `max`, the size it counts and the elements it knows of,
-/// over 4,096 short inputs.
-fn written(ty: &Ty, max: u64) -> impl Iterator<Item = (String, u64, u64)> {
+/// What `expr` writes for `ty` within `max`, nested `nesting` deep, the size it counts and the
+/// elements it knows of, over 4,096 short inputs.
+fn written(ty: &Ty, max: u64, nesting: u32) -> impl Iterator<Item = (String, u64, u64)> {
     (0..4_096).map(move |mut state| {
         let data: Vec<u8> = (0..4)
             .flat_map(|_| splitmix64(&mut state).to_le_bytes())
             .collect();
         let mut g = Gen::new(&data);
+        g.nesting = nesting;
         let info = g.expr(ty, max);
         (g.w.out.program, info.size, info.len)
     })
@@ -1981,9 +2080,10 @@ fn plain_list(text: &str) -> Option<Vec<u64>> {
 
 #[test]
 fn an_array_literal_counts_its_slots_and_elements() {
-    // `["ab", "c"]` is 2 slots and 3 chars: 5.
+    // `["ab", "c"]` is 2 slots and 3 chars: 5. Nested as deep as can be, the elements are
+    // literals.
     let mut seen = 0;
-    for (text, size, known) in written(&Ty::Array(Box::new(Ty::String)), 40) {
+    for (text, size, known) in written(&Ty::Array(Box::new(Ty::String)), 40, MAX_NESTING) {
         let parts = plain_list(&text).unwrap_or_default();
         if parts.len() >= 2 && parts.iter().sum::<u64>() > 0 {
             let len = u64::try_from(parts.len()).expect("the count should fit");
@@ -2002,7 +2102,7 @@ fn an_array_literal_counts_its_slots_and_elements() {
 fn a_fill_counts_each_copy() {
     // `["ab"; 3]` is 3 slots of 2 chars each: 9.
     let mut seen = 0;
-    for (text, size, known) in written(&Ty::Array(Box::new(Ty::String)), 100) {
+    for (text, size, known) in written(&Ty::Array(Box::new(Ty::String)), 100, 0) {
         let fill = text
             .strip_prefix('[')
             .and_then(plain)
@@ -2036,7 +2136,7 @@ fn a_split_counts_what_its_parts_can_take() {
         (Ty::String, "words", |n| n + 1),
     ] {
         let mut seen = 0;
-        for (text, size, _) in written(&Ty::Array(Box::new(element.clone())), 100) {
+        for (text, size, _) in written(&Ty::Array(Box::new(element.clone())), 100, 0) {
             let suffix = format!(").{method}())");
             let split = text.strip_prefix("((").and_then(plain);
             if let Some((chars, rest)) = split.filter(|(chars, rest)| *chars > 0 && *rest == suffix)
@@ -2229,7 +2329,15 @@ fn a_type_nests_at_most_twice() {
     fn depth(ty: &Ty) -> u32 {
         match ty {
             Ty::Array(inner) | Ty::Optional(inner) => 1 + depth(inner),
-            Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => 0,
+            Ty::I64
+            | Ty::U8
+            | Ty::F64
+            | Ty::Bool
+            | Ty::Char
+            | Ty::String
+            | Ty::Unit
+            | Ty::Class { .. }
+            | Ty::Enum { .. } => 0,
         }
     }
     let mut deepest = 0;

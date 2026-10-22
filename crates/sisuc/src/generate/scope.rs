@@ -16,6 +16,16 @@ pub(crate) enum Ty {
     Array(Box<Ty>),
     /// Never of an optional: `optional_of` does not nest them.
     Optional(Box<Ty>),
+    /// The class `Scope::classes[id]`, each of whose objects counts `size` (decision 5).
+    Class {
+        id: usize,
+        size: u64,
+    },
+    /// The enum `Scope::enums[id]`, whose first variant's smallest value counts `least`.
+    Enum {
+        id: usize,
+        least: u64,
+    },
 }
 
 /// The type as Sisu writes it.
@@ -31,6 +41,8 @@ impl std::fmt::Display for Ty {
             Ty::Unit => f.write_str("unit"),
             Ty::Array(element) => write!(f, "[{element}]"),
             Ty::Optional(payload) => write!(f, "{payload}?"),
+            Ty::Class { id, .. } => write!(f, "K{id}"),
+            Ty::Enum { id, .. } => write!(f, "E{id}"),
         }
     }
 }
@@ -50,14 +62,41 @@ impl Ty {
         match self {
             Ty::Array(element) => 1 + element.least(),
             Ty::Optional(payload) => payload.least(),
+            Ty::Class { .. } | Ty::Enum { .. } => self.floor(),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => 0,
         }
     }
 
-    /// Whether its values have a size: a `string`, an array, or an optional of one.
+    /// Whether a fill of it would share one object among its elements (E0067): a class or
+    /// a class optional.
+    pub(crate) fn shared(&self) -> bool {
+        let class = |ty: &Ty| matches!(ty, Ty::Class { .. });
+        class(self) || matches!(self, Ty::Optional(payload) if class(payload))
+    }
+
+    /// The size of its smallest value written with an expected type: `""`, `[]` and `None`
+    /// hold none, but a class object holds its fields and an enum value its first variant.
+    pub(crate) fn floor(&self) -> u64 {
+        match self {
+            Ty::Class { size, .. } => *size,
+            Ty::Enum { least, .. } => *least,
+            Ty::I64
+            | Ty::U8
+            | Ty::F64
+            | Ty::Bool
+            | Ty::Char
+            | Ty::String
+            | Ty::Unit
+            | Ty::Array(_)
+            | Ty::Optional(_) => 0,
+        }
+    }
+
+    /// Whether its values have a size: a `string`, an array, a class object, an enum value, or
+    /// an optional of one.
     pub(crate) fn sized(&self) -> bool {
         match self {
-            Ty::String | Ty::Array(_) => true,
+            Ty::String | Ty::Array(_) | Ty::Class { .. } | Ty::Enum { .. } => true,
             Ty::Optional(payload) => payload.sized(),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::Unit => false,
         }
@@ -74,7 +113,7 @@ impl Ty {
             Ty::Bool => 5,
             Ty::Char => 1,
             Ty::String => size,
-            Ty::Unit | Ty::Array(_) | Ty::Optional(_) => {
+            Ty::Unit | Ty::Array(_) | Ty::Optional(_) | Ty::Class { .. } | Ty::Enum { .. } => {
                 unreachable!("only a value of `Ty::VALUES` is printed")
             }
         }
@@ -148,9 +187,11 @@ pub(crate) struct Const {
     pub(crate) size: u64,
 }
 
-/// A generated function: `depth: i64` first, then its parameters.
+/// A generated function or method: `depth: i64` first, then its parameters.
 pub(crate) struct Func {
     pub(crate) name: String,
+    /// For a method, the class whose method it is.
+    pub(crate) owner: Option<Ty>,
     /// Each parameter's type, and for a `string` the most chars an argument may hold.
     pub(crate) params: Vec<(Ty, u64)>,
     pub(crate) ret: Ty,
@@ -160,10 +201,49 @@ pub(crate) struct Func {
     pub(crate) cost: [u64; DEPTHS],
 }
 
+/// A field of a class.
+pub(crate) struct Field {
+    pub(crate) name: String,
+    pub(crate) ty: Ty,
+    pub(crate) mutable: bool,
+    /// The most size its value may take (decision 5).
+    pub(crate) cap: u64,
+}
+
+/// A generated class: `K<id>`. Its fields' types are declared before it, so no class holds
+/// itself.
+pub(crate) struct Class {
+    pub(crate) fields: Vec<Field>,
+    /// The size of each of its objects: one for the object and each field's cap.
+    pub(crate) size: u64,
+}
+
+/// A variant of an enum.
+pub(crate) struct Variant {
+    pub(crate) name: String,
+    pub(crate) fields: Vec<Ty>,
+    /// Each field's label, or none at all.
+    pub(crate) labels: Vec<String>,
+}
+
+/// A generated enum: `E<id>`. Its first variant holds only types declared before it; a later
+/// one may hold the enum itself.
+pub(crate) struct Enum {
+    pub(crate) variants: Vec<Variant>,
+    /// The size of its first variant's smallest value.
+    pub(crate) least: u64,
+    /// Whether a value of it may hold a class object.
+    pub(crate) has_class: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct Scope {
     pub(crate) consts: Vec<Const>,
     pub(crate) funcs: Vec<Func>,
+    pub(crate) classes: Vec<Class>,
+    pub(crate) enums: Vec<Enum>,
+    /// The types of the classes and enums declared so far.
+    pub(crate) types: Vec<Ty>,
     /// The locals in scope, innermost last.
     pub(crate) vars: Vec<Var>,
     /// Where each open block's locals start in `vars`.
@@ -182,6 +262,17 @@ impl Scope {
     pub(crate) fn fresh(&mut self, prefix: &str) -> String {
         self.names += 1;
         format!("{prefix}{}", self.names)
+    }
+
+    /// Whether a value of `ty` may hold a class object, which no field or element assignment
+    /// may store (decision 4).
+    pub(crate) fn contains_class(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Class { .. } => true,
+            Ty::Enum { id, .. } => self.enums[*id].has_class,
+            Ty::Array(inner) | Ty::Optional(inner) => self.contains_class(inner),
+            Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => false,
+        }
     }
 
     pub(crate) fn open(&mut self) {

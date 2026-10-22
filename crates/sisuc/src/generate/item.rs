@@ -1,7 +1,7 @@
 //! The program and its items: `const`s, functions, and `main`.
 
 use super::expr::CHARS;
-use super::scope::{Const, Func, Ty, Var};
+use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::stmt::Jumps;
 use super::writer::Piece;
 use super::{Cost, DEPTHS, Gen, MAX_NESTING, MAX_SIZE};
@@ -14,6 +14,19 @@ const MAX_PARAMS: usize = 3;
 const MAX_LINES: usize = 4;
 /// The sizes a function's `string` parameter or result may have.
 const SIZES: [u64; 3] = [0, 16, 100];
+/// The most fields of a class, and of a variant.
+const MAX_FIELDS: usize = 3;
+/// The most classes and enums a program declares.
+const MAX_TYPES: usize = 3;
+/// The most methods of a class.
+const MAX_METHODS: usize = 2;
+/// The most variants of an enum.
+const MAX_VARIANTS: usize = 4;
+/// The room a field of a size has beyond its floor.
+const CAPS: [u64; 3] = [0, 8, 32];
+/// The most size of a class object, or of an enum's first variant: a few of them still fit
+/// an array.
+const MOST: u64 = 100;
 
 /// What a constant expression is known to be: an integer's or a `char`'s value, and a
 /// `string`'s length.
@@ -29,12 +42,25 @@ impl Gen<'_> {
         // Half the fuel is `main`'s, which the items before it would otherwise often spend.
         let reserve = self.fuel / 2;
         self.fuel -= reserve;
+        // The types come first, so the functions after them may use them; three quarters of
+        // what is left are the functions', which the methods would otherwise often spend.
+        let functions = self.fuel * 3 / 4;
+        self.fuel -= functions;
+        for _ in 0..self.pick(MAX_TYPES + 1) {
+            if self.pick(2) == 0 {
+                self.class();
+            } else {
+                self.enumeration();
+            }
+        }
+        self.fuel += functions;
         let mut items = 0;
         while items < MAX_ITEMS && self.pick(4) != 0 && self.spend(1) {
             if self.pick(2) == 0 {
                 self.constant();
             } else {
-                self.function();
+                self.function(None);
+                self.w.line();
             }
             items += 1;
         }
@@ -64,17 +90,14 @@ impl Gen<'_> {
         self.w.open();
     }
 
-    /// `fn f(depth: i64, params) -> R { if depth <= 0 { return default } ... value }`.
-    fn function(&mut self) {
-        let name = self.scope.fresh("f");
+    /// `fn f(depth: i64, params) -> R { if depth <= 0 { return default } ... value }`, or a
+    /// method `fn m(self, depth: i64, ...)` of the class `owner`.
+    fn function(&mut self, owner: Option<Ty>) {
+        let name = self.scope.fresh(if owner.is_some() { "m" } else { "f" });
         let mut params = Vec::new();
         for _ in 0..self.pick(MAX_PARAMS + 1) {
             let ty = self.any_type();
-            let size = if ty.sized() {
-                SIZES[self.pick(SIZES.len())]
-            } else {
-                0
-            };
+            let size = self.size_for(&ty, &SIZES);
             params.push((self.scope.fresh("v"), ty, size));
         }
         let ret = if self.pick(Ty::VALUES.len() + 1) == 0 {
@@ -82,12 +105,9 @@ impl Gen<'_> {
         } else {
             self.any_type()
         };
-        let ret_size = if ret.sized() {
-            SIZES[self.pick(SIZES.len())]
-        } else {
-            0
-        };
-        self.w.text(&format!("fn {name}(depth: i64"));
+        let ret_size = self.size_for(&ret, &SIZES);
+        let receiver = if owner.is_some() { "self, " } else { "" };
+        self.w.text(&format!("fn {name}({receiver}depth: i64"));
         for (param, ty, _) in &params {
             self.w.text(&format!(", {param}: {ty}"));
         }
@@ -98,6 +118,7 @@ impl Gen<'_> {
         self.w.text(" ");
         self.scope.funcs.push(Func {
             name,
+            owner: owner.clone(),
             params: params
                 .iter()
                 .map(|(_, ty, size)| (ty.clone(), *size))
@@ -108,6 +129,10 @@ impl Gen<'_> {
         });
         self.scope.func = Some(self.scope.funcs.len() - 1);
         self.scope.open();
+        if let Some(class) = owner {
+            let size = class.floor();
+            self.scope.vars.push(param("self".to_string(), class, size));
+        }
         self.scope.vars.push(param("depth".to_string(), Ty::I64, 0));
         for (name, ty, size) in params {
             self.scope.vars.push(param(name, ty, size));
@@ -117,16 +142,11 @@ impl Gen<'_> {
         self.w.text("if depth <= 0 ");
         self.w.open();
         self.w.line();
-        self.w.text(match ret {
-            Ty::I64 | Ty::U8 => "return 0",
-            Ty::F64 => "return 0.0",
-            Ty::Bool => "return false",
-            Ty::Char => "return 'a'",
-            Ty::String => "return \"\"",
-            Ty::Unit => "return",
-            Ty::Array(_) => "return []",
-            Ty::Optional(_) => "return None",
-        });
+        self.w.text("return");
+        if ret != Ty::Unit {
+            let value = self.default(&ret);
+            self.w.text(&format!(" {value}"));
+        }
         self.w.close();
         self.stmts(false);
         if ret != Ty::Unit {
@@ -134,7 +154,6 @@ impl Gen<'_> {
             self.expr(&ret, ret_size);
         }
         self.w.close();
-        self.w.line();
         self.scope.close();
         let own = self
             .scope
@@ -148,6 +167,152 @@ impl Gen<'_> {
             .last_mut()
             .expect("the function should have been pushed")
             .cost = cost;
+    }
+
+    /// The most size for a value of `ty` (decision 5): a class object's own, else its floor
+    /// and one of `sizes`, an optional's floor that of its payload. 0 for a type without one.
+    pub(crate) fn size_for(&mut self, ty: &Ty, sizes: &[u64]) -> u64 {
+        let floor = match ty {
+            Ty::Class { size, .. } => return *size,
+            Ty::Optional(payload) => payload.floor(),
+            _ if !ty.sized() => return 0,
+            _ => ty.floor(),
+        };
+        (floor + sizes[self.pick(sizes.len())]).min(MAX_SIZE)
+    }
+
+    /// The smallest value of `ty`, a value type, as a constant expression writes it: what a
+    /// function returns at depth 0. Its size is `ty.floor()`.
+    pub(crate) fn default(&self, ty: &Ty) -> String {
+        match ty {
+            Ty::I64 | Ty::U8 => "0".to_string(),
+            Ty::F64 => "0.0".to_string(),
+            Ty::Bool => "false".to_string(),
+            Ty::Char => "'a'".to_string(),
+            Ty::String => "\"\"".to_string(),
+            Ty::Array(_) => "[]".to_string(),
+            Ty::Optional(_) => "None".to_string(),
+            Ty::Class { id, .. } => {
+                let fields: Vec<String> = self.scope.classes[*id]
+                    .fields
+                    .iter()
+                    .map(|field| format!("{}: {}", field.name, self.default(&field.ty)))
+                    .collect();
+                format!("{ty}({})", fields.join(", "))
+            }
+            Ty::Enum { id, .. } => {
+                let variant = &self.scope.enums[*id].variants[0];
+                let values: Vec<String> = variant.fields.iter().map(|f| self.default(f)).collect();
+                format!("{ty}.{}{}", variant.name, payload(&variant.labels, &values))
+            }
+            Ty::Unit => unreachable!("`unit` has no value"),
+        }
+    }
+
+    /// A field's or a payload field's type: a type declared before, unless its floor would take
+    /// the holder past `MOST`, where an `i64` takes its place.
+    fn field_type(&mut self, size: u64) -> Ty {
+        let ty = self.any_type();
+        if size + ty.floor() > MOST {
+            Ty::I64
+        } else {
+            ty
+        }
+    }
+
+    /// `class K { [mut] f: T ... fn m(self, ...) ... }`: fields of types declared before, each
+    /// with a cap on its size, then methods, which may take and give the class itself.
+    fn class(&mut self) {
+        let id = self.scope.classes.len();
+        self.w.text(&format!("class K{id} "));
+        self.w.open();
+        let mut fields = Vec::new();
+        let mut size = 1;
+        for _ in 0..self.pick(MAX_FIELDS + 1) {
+            let mut ty = self.field_type(size);
+            let mut cap = self.size_for(&ty, &CAPS);
+            if size + cap > MOST {
+                (ty, cap) = (Ty::I64, 0);
+            }
+            size += cap;
+            let mutable = self.pick(2) == 1;
+            let name = self.scope.fresh("g");
+            self.w.line();
+            let keyword = if mutable { "mut " } else { "" };
+            self.w.text(&format!("{keyword}{name}: {ty}"));
+            fields.push(Field {
+                name,
+                ty,
+                mutable,
+                cap,
+            });
+        }
+        let ty = Ty::Class { id, size };
+        self.scope.classes.push(Class { fields, size });
+        self.scope.types.push(ty.clone());
+        for _ in 0..self.pick(MAX_METHODS + 1) {
+            if !self.spend(1) {
+                break;
+            }
+            self.w.line();
+            self.function(Some(ty.clone()));
+        }
+        self.w.close();
+        self.w.line();
+    }
+
+    /// `enum E { V ... }`: variants with no payload, with fields, or with labeled fields. The
+    /// first holds only types declared before; a later one may hold the enum itself, which a
+    /// value built finite ends in the first.
+    fn enumeration(&mut self) {
+        let id = self.scope.enums.len();
+        self.w.text(&format!("enum E{id} "));
+        self.w.open();
+        let mut variants: Vec<Variant> = Vec::new();
+        let mut least = 1;
+        let mut has_class = false;
+        // Two variants at least: a pattern of one is refutable, as `while let` needs (E0131).
+        for v in 0..2 + self.pick(MAX_VARIANTS - 1) {
+            let mut fields = Vec::new();
+            let mut size = 1;
+            for _ in 0..self.pick(MAX_FIELDS + 1) {
+                // Each later variant holds the enum itself as often as not.
+                let ty = if v > 0 && fields.is_empty() && self.pick(2) == 0 {
+                    Ty::Enum { id, least }
+                } else {
+                    self.field_type(size)
+                };
+                size += ty.floor();
+                has_class |= !matches!(ty, Ty::Enum { id: own, .. } if own == id)
+                    && self.scope.contains_class(&ty);
+                fields.push(ty);
+            }
+            if v == 0 {
+                least = size;
+            }
+            let labels: Vec<String> = if !fields.is_empty() && self.pick(3) == 0 {
+                fields.iter().map(|_| self.scope.fresh("g")).collect()
+            } else {
+                Vec::new()
+            };
+            let name = self.scope.fresh("V");
+            let types: Vec<String> = fields.iter().map(ToString::to_string).collect();
+            self.w.line();
+            self.w.text(&format!("{name}{}", payload(&labels, &types)));
+            variants.push(Variant {
+                name,
+                fields,
+                labels,
+            });
+        }
+        self.scope.enums.push(Enum {
+            variants,
+            least,
+            has_class,
+        });
+        self.scope.types.push(Ty::Enum { id, least });
+        self.w.close();
+        self.w.line();
     }
 
     /// `const c[: T] = e`, where `e` folds without a panic (`check/constant.rs`).
@@ -216,7 +381,13 @@ impl Gen<'_> {
                 let len = self.upto(max.min(8));
                 (format!("\"{}\"", self.string_text(len, 26)), 0, len)
             }
-            Ty::F64 | Ty::Bool | Ty::Unit | Ty::Array(_) | Ty::Optional(_) => {
+            Ty::F64
+            | Ty::Bool
+            | Ty::Unit
+            | Ty::Array(_)
+            | Ty::Optional(_)
+            | Ty::Class { .. }
+            | Ty::Enum { .. } => {
                 self.literal(ty, max);
                 return Folded { value: 0, size: 0 };
             }
@@ -341,9 +512,16 @@ impl Gen<'_> {
                 }
             }
             // A `char` constant has no compound form.
-            (Ty::U8 | Ty::Char | Ty::Unit | Ty::Array(_) | Ty::Optional(_), _) => {
-                self.const_literal(ty, max)
-            }
+            (
+                Ty::U8
+                | Ty::Char
+                | Ty::Unit
+                | Ty::Array(_)
+                | Ty::Optional(_)
+                | Ty::Class { .. }
+                | Ty::Enum { .. },
+                _,
+            ) => self.const_literal(ty, max),
         }
     }
 
@@ -380,6 +558,24 @@ impl Gen<'_> {
         let result = write(self);
         (self.w.swap(outer), result)
     }
+}
+
+/// A payload as written, `(a, b)` or `(l: a, m: b)`, of `values` and their `labels`, if any;
+/// nothing for none.
+fn payload(labels: &[String], values: &[String]) -> String {
+    if values.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = if labels.is_empty() {
+        values.to_vec()
+    } else {
+        labels
+            .iter()
+            .zip(values)
+            .map(|(label, value)| format!("{label}: {value}"))
+            .collect()
+    };
+    format!("({})", parts.join(", "))
 }
 
 /// A parameter: in scope, never assigned.
