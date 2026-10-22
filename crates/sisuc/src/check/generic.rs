@@ -32,13 +32,6 @@ fn names_param(ty: Type, i: usize) -> bool {
     }
 }
 
-/// Whether the type argument `arg` could be a value: a name that is not a built-in type, with
-/// no `?`.
-pub(super) fn could_be_value(arg: &ast::TypeExpr) -> bool {
-    !arg.optional
-        && matches!(arg.kind, ast::TypeKind::Name(n) if built_in_type(n.as_str()).is_none())
-}
-
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
 /// the receiver, an argument or the expected type fixes it.
 pub(super) struct Bindings {
@@ -856,9 +849,23 @@ impl Checker<'_> {
     /// type argument, which the help puts in parentheses with `name`, when a `(` follows the list
     /// and `first` could be a value: a name that is not a built-in type, with no `?`.
     pub(super) fn misread(&mut self, name: Span, first: Option<&ast::TypeExpr>) -> Poisoned {
-        let first = first.filter(|first| could_be_value(first));
+        let first = first.filter(|first| self.could_be_value(first));
         let compare = first.map(|first| self.source.text[name.start()..first.span.end()].into());
         self.misread_as(name, compare)
+    }
+
+    /// Whether the type argument `arg` could be a value: a name, with no `?`, that is a local
+    /// or names no type, built-in, class, enum or type parameter.
+    pub(super) fn could_be_value(&self, arg: &ast::TypeExpr) -> bool {
+        let ast::TypeKind::Name(n) = arg.kind else {
+            return false;
+        };
+        !arg.optional
+            && (self.body.scopes.iter().any(|scope| scope.contains_key(&n))
+                || built_in_type(n.as_str()).is_none()
+                    && !self.class_ids.contains_key(&n)
+                    && !self.enum_ids.contains_key(&n)
+                    && !self.body.type_params.contains(&n))
     }
 
     /// `misread` with the comparison `compare` its help writes, if any.

@@ -147,10 +147,25 @@ fn type_arguments_on_a_value() {
         ("fn g(a: i64) { a<[i64]>(1) }", (1, 16, "a")),
         ("fn g(a: i64) { a<i64?>(1) }", (1, 16, "a")),
         ("fn g(a: i64) { a<Point<i64>>(1) }", (1, 16, "a")),
+        // A class, an enum or a type parameter names a type too.
+        ("fn g(p: Point) { p.x<Point>(1) }", (1, 18, "p.x")),
+        (
+            "fn g(p: Point) { p.x<Color>(1) }\nenum Color { Red }",
+            (1, 18, "p.x"),
+        ),
+        ("fn g<T>(p: Point) { p.x<T>(1) }", (1, 21, "p.x")),
+        (
+            "fn g(p: Point) { U.A<Point>(p) }\nenum U { A }",
+            (1, 18, "U.A"),
+        ),
     ] {
         let d = diagnostic(&with_decls(line), Code::TypeArguments, at, &[]);
         assert!(d.help().is_none(), "{line}");
     }
+    // A local of that name is a value.
+    let line = "fn g(p: Point, Point: i64) { p.x<Point>(1) }";
+    let d = diagnostic(&with_decls(line), Code::TypeArguments, (1, 30, "p.x"), &[]);
+    assert!(d.help().is_some());
     // A built-in's method is compared as its result: the help calls one that takes no
     // arguments, and the call it writes checks. One that takes arguments has no help.
     let both = "fn both(x: bool, y: bool) -> bool { x && y }\nfn main() {}";

@@ -4,7 +4,7 @@
 use std::fmt;
 
 use super::expr::{no_member, postfix};
-use super::generic::{GenericSig, Site, could_be_value, mark, mismatched};
+use super::generic::{GenericSig, Site, mark, mismatched};
 use super::prelude::PRELUDE;
 use super::{
     Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, built_in_type, own_args, type_of,
@@ -238,7 +238,7 @@ impl Checker<'_> {
                         type_of(&checked).and_then(|ty| built_in_arity(ty, method.name.as_str()));
                     if let Some(arity) = arity
                         && types.len() > 1
-                        && could_be_value(first)
+                        && c.could_be_value(first)
                     {
                         deferred = false;
                         c.stray(args);
