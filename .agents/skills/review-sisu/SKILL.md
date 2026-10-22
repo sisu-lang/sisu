@@ -95,6 +95,10 @@ Tell the user:
 3. the fixes you made, and where each deferred finding went;
 4. the questions that wait for the user.
 
+Then delete everything in `RUN` except the briefs and reports, after the
+last round: `find RUN -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +`.
+Reviewers build there, about 7 GB a build, and nothing else removes it.
+
 ## Common mistakes
 
 | Mistake | Instead |
