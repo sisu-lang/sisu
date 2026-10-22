@@ -43,7 +43,6 @@ fn dead_write(a: [i64]) -> i64 {
         return c.len()
         b[0] = 1
     }
-    return 0
 }
 
 // The loop stores `a` in `keep.xs`, then writes `a`: `keep.xs` keeps the values it had.

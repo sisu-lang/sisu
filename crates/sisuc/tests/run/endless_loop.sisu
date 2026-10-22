@@ -1,0 +1,34 @@
+// `first_zero` leaves only from inside `while true`, holding a counted string.
+fn first_zero(xs: [i64]) -> i64 {
+    let label = "of {xs.len()}"
+    let mut i = 0
+    while true {
+        if xs[i] == 0 {
+            print(label)
+            return i
+        }
+        i += 1
+    }
+}
+
+// The loop writes `b`, which shares `a`'s array, so its pre-header makes `b` unique (ADR 0021).
+fn fill_sum(a: [i64]) -> i64 {
+    let mut b = a
+    let mut i = 0
+    let mut s = 0
+    while true {
+        if i == b.len() {
+            return s
+        }
+        b[i] = i
+        s += b[i]
+        i += 1
+    }
+}
+
+fn main() {
+    print(first_zero([3, 1, 0, 2]))
+    let a = [7, 7, 7]
+    print(fill_sum(a))
+    print("{a[0]} {a[1]} {a[2]}")
+}
