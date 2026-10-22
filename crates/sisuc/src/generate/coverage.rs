@@ -1996,7 +1996,8 @@ fn a_program_spends_no_more_than_its_fuel() {
 fn a_mutable_array_counts_its_slots_bases_and_room() {
     // Each `let mut` array's most size covers a slot and a base per element and the room left
     // for `+=` on them, within `MAX_SIZE`: 8 strings of 64 chars, 520 in all, leave room for at
-    // most 480 more, so not the 500 a `string` local may have.
+    // most 480 more, so 16 or 64 but not the 500 a `string` local may have. Only `string`
+    // elements grow, so only their arrays get room.
     let mut widest = 0;
     for element in [Ty::String, Ty::I64, Ty::Array(Box::new(Ty::String))] {
         for mut state in 0..1_024 {
@@ -2013,14 +2014,19 @@ fn a_mutable_array_counts_its_slots_bases_and_room() {
                 "{}",
                 g.w.out.program
             );
-            if element == Ty::String && var.len == MAX_BOUND && var.base == 64 {
+            assert!(
+                element == Ty::String || var.room == 0,
+                "{}",
+                g.w.out.program
+            );
+            if element == Ty::String && var.len == MAX_BOUND && var.base == 64 && var.room > 0 {
                 widest += 1;
             }
         }
     }
     assert!(
         widest > 0,
-        "no input should fail to write 8 strings of 64 chars"
+        "no input should fail to write 8 strings of 64 chars with room"
     );
 }
 
