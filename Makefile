@@ -51,8 +51,8 @@ coverage: ## Coverage of the changes since BASE
 mutants: ## Mutation-test the changes since BASE
 	scripts/mutants.sh "$(BASE)"
 
-verify: ## Coverage, then mutants, since BASE; the last line is the verdict
-	scripts/verify.sh "$(BASE)"
+verify: ## Coverage, then mutants, since BASE; the last line is the verdict; LOG=<file> writes it there
+	scripts/verify.sh "$(BASE)" $(if $(LOG),"$(LOG)")
 
 fuzz: ## Fuzz the front end for SECS seconds (1800 by default)
 	scripts/fuzz.sh "$(SECS)"
