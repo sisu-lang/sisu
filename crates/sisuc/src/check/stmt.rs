@@ -735,8 +735,7 @@ impl Checker<'_> {
         body: &ast::Block,
         expected: Option<Type>,
     ) -> Checked {
-        let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
-        frame.expected_from = self.break_source(span);
+        let frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
         let (checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
         if let Ok(checked) = &checked {
             self.discard_tail(body, checked);
@@ -781,13 +780,13 @@ impl Checker<'_> {
         let want = |frame: &LoopFrame| {
             frame
                 .expected
-                .map(|ty| (ty, frame.expected_from))
+                .map(|ty| (ty, None))
                 .or(frame.first.map(|(ty, at)| (ty, Some(at))))
         };
         let hint = want(self.frame(target));
         let from = hint
             .and_then(|(_, first)| first)
-            .map(|first| (first, vec![v.span]));
+            .map(|first| (v.span, first));
         let outer = std::mem::replace(&mut self.body.break_hint, from);
         let checked = self.expr(v, hint.map(|(ty, _)| ty));
         self.body.break_hint = outer;
