@@ -1046,8 +1046,6 @@ impl<'a> Lowering<'a> {
         self.scope.truncate(mark);
     }
 
-    /// `loop`: the current block enters the header, the body runs and jumps back to it, and
-    /// `break` jumps to an exit block that exists only once a `break` does.
     /// The index in `frames` of the loop `depth` loops out from the innermost one.
     fn jump_target(&self, depth: usize) -> usize {
         self.frames
@@ -1056,7 +1054,9 @@ impl<'a> Lowering<'a> {
             .expect("the checker should reject a jump outside a loop")
     }
 
-    /// A loop of type `ty`, whose `break`s write its value to `dest`, or to a fresh local.
+    /// `loop`: the current block enters the header, the body runs and jumps back to it, and
+    /// `break` jumps to an exit block that exists only once a `break` does. A loop of type `ty`,
+    /// whose `break`s write its value to `dest`, or to a fresh local.
     fn loop_expr(&mut self, body: &Block, ty: Type, dest: Option<LocalId>) -> Lowered {
         let dest = valued(ty).then(|| dest.unwrap_or_else(|| self.temp(ty)));
         let pre_header = self.here();

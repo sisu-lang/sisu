@@ -191,8 +191,8 @@ struct LoopFrame {
     bare: Option<Span>,
     /// The first `break` whose value's type is not `never`.
     valued: Option<Span>,
-    /// Whether a `break` value failed, a value was given to a loop that has none, or a jump
-    /// inside a loop header would leave this loop.
+    /// Whether the loop failed: a failed jump, loop label or `break` value in it. It then has
+    /// no type.
     failed: bool,
 }
 

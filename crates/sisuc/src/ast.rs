@@ -159,7 +159,7 @@ pub(crate) enum StmtKind {
         init: Expr,
     },
     /// `while cond { body }`; `keyword` is the `while` token's span. Each loop's `label` is its
-    /// loop label, `None` until loop labels are parsed.
+    /// loop label.
     While {
         label: Option<Ident>,
         keyword: Span,

@@ -311,8 +311,9 @@ impl Checker<'_> {
                 let (checked, frame) = self.loop_body(frame, |c| c.block(body, None));
                 let broken = frame.broken;
                 if endless {
-                    // Writing `loop` over a failed loop could remove its error rather than fix it,
-                    // and a safe fix may remove only its own diagnostic.
+                    // Writing `loop` over a failed loop (a failed jump, label or `break` value in
+                    // it) could remove its error rather than fix it, and a safe fix may remove
+                    // only its own diagnostic.
                     self.report(DiagnosticKind::WhileTrue {
                         at: keyword.to(cond_ast.span),
                         fix: !frame.failed,
@@ -322,7 +323,8 @@ impl Checker<'_> {
                     self.discard_tail(body, checked);
                 }
                 let (Ok(cond), Ok(body)) = (cond, checked) else {
-                    // A loop a failed jump would leave has no type, so nothing after it reports.
+                    // A failed loop (a failed jump, label or `break` value in it) has no type, so
+                    // nothing after it reports.
                     return Err(if frame.failed {
                         Poisoned::error()
                     } else if endless && !broken {
