@@ -1,0 +1,10 @@
+fn search(rest: [i64]) -> i64 {
+    rest.len()
+}
+
+fn main() {
+    let rest = [1, 2]
+    search: loop {
+        break search(rest)
+    }
+}

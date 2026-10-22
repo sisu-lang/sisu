@@ -1,0 +1,6 @@
+fn main() {
+    let outer = [1, 2]
+    outer: loop {
+        break outer[0]
+    }
+}

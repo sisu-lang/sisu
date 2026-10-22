@@ -1,0 +1,8 @@
+error[E0011]: expected end of line or `;`, found `:`
+ --> E0011-typed-name.sisu:2:10
+  |
+2 |     count: i64 = 0
+  |          ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

@@ -1,0 +1,8 @@
+fn main() {
+    let count = 2
+    for x in [1, 2] {
+        if x == count {
+            continue count
+        }
+    }
+}

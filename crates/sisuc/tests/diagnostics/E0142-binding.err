@@ -1,0 +1,14 @@
+error[E0142]: loop label `n` has the same name as the binding `n`
+ --> E0142-binding.sisu:4:15
+  |
+2 |     let n = 3
+  |         - the binding is declared here
+3 |     n: loop {
+  |     - loop label declared here
+4 |         break n
+  |               ^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

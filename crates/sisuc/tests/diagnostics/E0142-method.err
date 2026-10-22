@@ -1,0 +1,12 @@
+error[E0142]: `n` is a loop label here, so it cannot start a value
+ --> E0142-method.sisu:4:15
+  |
+3 |     n: loop {
+  |     - loop label declared here
+4 |         break n.len()
+  |               ^^
+  |
+  = help: the value of `break n` comes after the loop label; if `n` also names a value, rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

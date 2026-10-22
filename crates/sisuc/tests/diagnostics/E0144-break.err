@@ -1,0 +1,13 @@
+error[E0144]: no loop label `outr` around this `break`
+ --> E0144-break.sisu:5:23
+  |
+5 |                 break outr
+  |                       ^^^^
+  |
+help: a loop label with a similar name exists: `outer`
+  |
+5 |                 break outer
+  |                          +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0144

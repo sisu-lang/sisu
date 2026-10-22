@@ -5,12 +5,13 @@ use rustc_hash::FxHashMap;
 use super::array::optional_array;
 use super::expr::local;
 use super::pattern::LetPattern;
+use super::prelude::PRELUDE;
 use super::{
-    Binding, BindingKind, Checked, CheckedBlock, Checker, LoopContext, LoopFrame, LoopKind,
-    Poisoned, UNKNOWN, block_expr, tail, type_of,
+    Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{DiagnosticKind, MismatchSource, Unwrap};
+use crate::diagnostic::{ClashForm, ClashKind, DiagnosticKind, MismatchSource, Unwrap, closest};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -302,8 +303,9 @@ impl Checker<'_> {
             } => {
                 // Only the literal: the AST has no parenthesis node, so `(true)` is it too.
                 let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
-                let name = label.as_ref().map(|l| l.name);
-                let cond = self.in_header(*keyword, name, |c| c.expect(cond_ast, Some(Type::BOOL)));
+                let cond = self.in_header(*keyword, label.clone(), |c| {
+                    c.expect(cond_ast, Some(Type::BOOL))
+                });
                 let frame = LoopFrame::new(LoopKind::While, *keyword, label.clone(), None);
                 let (checked, frame) = self.loop_body(frame, |c| c.block(body, None));
                 let broken = frame.broken;
@@ -346,8 +348,7 @@ impl Checker<'_> {
                 value,
                 body,
             } => {
-                let name = label.as_ref().map(|l| l.name);
-                let (scrutinee, form, _) = self.in_header(*keyword, name, |c| {
+                let (scrutinee, form, _) = self.in_header(*keyword, label.clone(), |c| {
                     c.let_value(Unwrap::WhileLet, pattern, value)
                 });
                 let frame = LoopFrame::new(LoopKind::WhileLet, *keyword, label.clone(), None);
@@ -422,7 +423,7 @@ impl Checker<'_> {
         body: &ast::Block,
     ) -> Result<tir::Stmt, Poisoned> {
         let expr = |kind, ty| tir::Expr { kind, ty, span };
-        let (header, bound) = self.in_header(keyword, label.map(|l| l.name), |c| match source {
+        let (header, bound) = self.in_header(keyword, label.cloned(), |c| match source {
             ast::ForSource::Array(e) => c.for_array(span, e),
             ast::ForSource::Range {
                 start,
@@ -663,7 +664,7 @@ impl Checker<'_> {
     fn in_header<T>(
         &mut self,
         keyword: Span,
-        label: Option<Symbol>,
+        label: Option<ast::Ident>,
         f: impl FnOnce(&mut Self) -> T,
     ) -> T {
         self.body.loops.push(LoopContext::Header { keyword, label });
@@ -672,14 +673,110 @@ impl Checker<'_> {
         checked
     }
 
-    /// `f`, inside the body of `frame`'s loop, and the frame as the `break`s left it.
+    /// `f`, inside the body of `frame`'s loop, and the frame as the `break`s left it. The loop's
+    /// loop label opens for the body even when an enclosing loop has it already, which is an
+    /// error, and is reported when no jump names it.
     fn loop_body<T>(&mut self, frame: LoopFrame, f: impl FnOnce(&mut Self) -> T) -> (T, LoopFrame) {
+        let outer = frame.label.as_ref().and_then(|label| {
+            let outer = self.open_labels().rev().find(|l| l.name == label.name);
+            outer.map(|l| l.span)
+        });
+        if let (Some(label), Some(outer)) = (&frame.label, outer) {
+            // Deleting either loop label would fix the error, so neither warns as unused.
+            self.body.failed_labels.extend([outer, label.span]);
+            self.report(DiagnosticKind::LabelReused {
+                name: label.name.to_string(),
+                at: label.span,
+                outer,
+            });
+        }
         self.body.loops.push(LoopContext::Body(frame));
         let checked = f(self);
         let Some(LoopContext::Body(frame)) = self.body.loops.pop() else {
             unreachable!("a loop's body should pop the frame it pushed");
         };
+        if let Some(label) = &frame.label
+            && !frame.label_used
+            && !self.body.failed_labels.contains(&label.span)
+        {
+            self.report(DiagnosticKind::UnusedLabel {
+                name: label.name.to_string(),
+                at: label.span,
+                remove: Span::new(label.span.start(), frame.keyword.start()),
+            });
+        }
         (checked, frame)
+    }
+
+    /// The loop labels open around the code being checked, innermost last.
+    pub(super) fn open_labels(&self) -> impl DoubleEndedIterator<Item = &ast::Ident> {
+        self.body.loops.iter().filter_map(|context| match context {
+            LoopContext::Body(frame) => frame.label.as_ref(),
+            LoopContext::Header { label, .. } => label.as_ref(),
+        })
+    }
+
+    /// Records that a failed jump named the innermost open loop label `name`, so that it is not
+    /// reported unused.
+    pub(super) fn named_by_failed_jump(&mut self, name: &str) {
+        let label = self.open_labels().rev().find(|l| l.name.as_str() == name);
+        if let Some(span) = label.map(|l| l.span) {
+            self.body.failed_labels.push(span);
+        }
+    }
+
+    /// "no loop label `name`" for `name` after `keyword`, offering the closest open loop label,
+    /// which counts as named.
+    fn missing_label(&mut self, name: &ast::Ident, keyword: &'static str) {
+        let suggestion = closest(
+            name.name.as_str(),
+            self.open_labels().map(|l| l.name.as_str()),
+        )
+        .map(str::to_string);
+        if let Some(label) = &suggestion {
+            self.named_by_failed_jump(label);
+        }
+        self.report(DiagnosticKind::MissingLabel {
+            name: name.name.to_string(),
+            keyword,
+            at: name.span,
+            suggestion,
+        });
+    }
+
+    /// What `name` is when a value or a type of that spelling is in scope: a binding, a
+    /// function (the prelude's included), a constant, a class, an enum or a built-in type, and
+    /// where it is declared, when that is in the source.
+    fn in_scope(&self, name: Symbol) -> Option<(ClashKind, Option<Span>)> {
+        // A broken item's declaration is not known.
+        fn at<T>(declared: &Declared<T>, span: impl FnOnce(&T) -> Span) -> Option<Span> {
+            match declared {
+                Declared::Known(item) => Some(span(item)),
+                Declared::Broken => None,
+            }
+        }
+        if let Some(binding) = self.body.scopes.iter().rev().find_map(|s| s.get(&name)) {
+            return Some((ClashKind::Binding, Some(binding.span)));
+        }
+        if let Some(id) = self.function_ids.get(&name) {
+            let span = at(id, |id| self.signatures[id.0].span);
+            return Some((ClashKind::Function, span));
+        }
+        if PRELUDE.contains(&name.as_str()) {
+            return Some((ClashKind::Function, None));
+        }
+        if let Some(constant) = self.constants.get(&name) {
+            return Some((ClashKind::Constant, at(constant, |info| info.span)));
+        }
+        if let Some(id) = self.class_ids.get(&name) {
+            let span = at(id, |id| self.classes[id.0].name.span);
+            return Some((ClashKind::Class, span));
+        }
+        if let Some(id) = self.enum_ids.get(&name) {
+            let span = at(id, |id| self.enums[id.0].name.span);
+            return Some((ClashKind::Enum, span));
+        }
+        built_in_type(name.as_str()).map(|_| (ClashKind::BuiltInType, None))
     }
 
     /// `break` or `continue`, of type `never` even outside a loop, and `break`'s `value`. In a
@@ -692,6 +789,17 @@ impl Checker<'_> {
         value: Option<&ast::Expr>,
     ) -> Result<tir::Stmt, Poisoned> {
         let (target, depth) = self.target(span, keyword, label)?;
+        if let Some(label) = label
+            && let Some((kind, declared)) = self.in_scope(label.name)
+        {
+            let at = self.frame(target).label.as_ref().map(|l| l.span);
+            self.report(DiagnosticKind::LabelClash {
+                name: label.name.to_string(),
+                at: label.span,
+                declared: at.expect("a jump's loop label should be its target's"),
+                form: ClashForm::Name { kind, declared },
+            });
+        }
         let value = value
             .map(|v| self.break_value(span, target, v).map(Box::new))
             .transpose()?;
@@ -733,7 +841,8 @@ impl Checker<'_> {
                 } => {
                     header.get_or_insert(*loop_at);
                     // Only a loop label reaches the loop whose header holds the jump.
-                    if label.is_some_and(|label| *own == Some(label.name)) {
+                    if label.is_some_and(|label| own.as_ref().is_some_and(|l| l.name == label.name))
+                    {
                         found = Some(at);
                         break;
                     }
@@ -760,6 +869,9 @@ impl Checker<'_> {
                         frame.failed = true;
                     }
                 }
+                if let Some(label) = label {
+                    self.named_by_failed_jump(label.name.as_str());
+                }
                 self.report(DiagnosticKind::JumpInLoopHeader {
                     keyword,
                     at: span,
@@ -767,13 +879,19 @@ impl Checker<'_> {
                 });
                 Err(Poisoned::error())
             }
-            // shortcut: `continue outr`, where no loop label `outr` is open, reads as a jump
-            // outside a loop; Task 3 reports the missing loop label instead.
-            _ => {
-                self.report(DiagnosticKind::JumpOutsideLoop { keyword, at: span });
-                self.body.invalid_jump = true;
-                Err(Poisoned::typed(Type::NEVER))
-            }
+            // Only `continue` takes a name that is no open loop label; outside a loop, the
+            // jump is the error.
+            _ => match label {
+                Some(label) if !self.body.loops.is_empty() => {
+                    self.missing_label(label, "continue");
+                    Err(Poisoned::error())
+                }
+                _ => {
+                    self.report(DiagnosticKind::JumpOutsideLoop { keyword, at: span });
+                    self.body.invalid_jump = true;
+                    Err(Poisoned::typed(Type::NEVER))
+                }
+            },
         }
     }
 
@@ -820,11 +938,20 @@ impl Checker<'_> {
         if frame.kind != LoopKind::Loop {
             frame.failed = true;
             let (keyword, loop_at) = (frame.kind.keyword(), frame.keyword);
-            self.report(DiagnosticKind::BreakValueNotLoop {
-                keyword,
-                at: v.span,
-                loop_at,
-            });
+            // `break outr`, a misspelled loop label, rather than a value.
+            if let ast::ExprKind::Name(name) = v.kind
+                && self.in_scope(name).is_none()
+                && closest(name.as_str(), self.open_labels().map(|l| l.name.as_str())).is_some()
+            {
+                let name = ast::Ident { name, span: v.span };
+                self.missing_label(&name, "break");
+            } else {
+                self.report(DiagnosticKind::BreakValueNotLoop {
+                    keyword,
+                    at: v.span,
+                    loop_at,
+                });
+            }
             return Err(Poisoned::typed(Type::NEVER));
         }
         let want = |frame: &LoopFrame| {

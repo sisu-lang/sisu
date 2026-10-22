@@ -1,0 +1,14 @@
+warning[W0008]: loop label `outer` is never used
+ --> W0008-own-line.sisu:2:5
+  |
+2 |     outer:
+  |     ^^^^^
+  |
+  = help: delete the loop label, or name it in a `break` or `continue`
+help: delete the loop label
+  |
+2 -     outer:
+  |
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0008

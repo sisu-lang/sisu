@@ -1,0 +1,13 @@
+error[E0144]: no loop label `outr` around this `continue`
+ --> E0144-not-unused.sisu:6:32
+  |
+6 |     outer: while ok({ continue outr; true }) { }
+  |                                ^^^^
+  |
+help: a loop label with a similar name exists: `outer`
+  |
+6 |     outer: while ok({ continue outer; true }) { }
+  |                                   +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0144

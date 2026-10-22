@@ -1,0 +1,13 @@
+error[E0142]: `search` is a loop label here, so `(` cannot call it
+ --> E0142.sisu:9:23
+  |
+6 |     let found = search: loop {
+  |                 ------ loop label declared here
+...
+9 |                 break search(i)
+  |                       ^^^^^^^
+  |
+  = help: to give a value in parentheses, put a space after the loop label: `break search (i)`; if `search` also names a function, rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

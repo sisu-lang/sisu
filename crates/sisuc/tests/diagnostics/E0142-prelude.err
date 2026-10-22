@@ -1,0 +1,12 @@
+error[E0142]: loop label `print` has the same name as the function `print`
+ --> E0142-prelude.sisu:3:15
+  |
+2 |     print: loop {
+  |     ----- loop label declared here
+3 |         break print
+  |               ^^^^^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

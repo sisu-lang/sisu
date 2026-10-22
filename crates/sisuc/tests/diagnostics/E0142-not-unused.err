@@ -1,0 +1,15 @@
+error[E0142]: loop label `outer` has the same name as the binding `outer`
+ --> E0142-not-unused.sisu:6:26
+  |
+2 |     let outer = 2
+  |         ----- the binding is declared here
+3 |     outer: for x in [1, 2] {
+  |     ----- loop label declared here
+...
+6 |                 continue outer
+  |                          ^^^^^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

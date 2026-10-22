@@ -1,0 +1,10 @@
+enum Shape {
+    Dot(i64, i64)
+}
+
+fn main() {
+    Shape: loop {
+        break Shape
+    }
+    let _ = Shape.Dot(1, 2)
+}

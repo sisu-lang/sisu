@@ -1,0 +1,6 @@
+fn main() {
+    let n = 1
+    n: loop {
+        break n + 1
+    }
+}

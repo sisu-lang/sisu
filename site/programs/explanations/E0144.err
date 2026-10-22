@@ -1,0 +1,13 @@
+error[E0144]: no loop label `outr` around this `continue`
+ --> E0144.sisu:5:26
+  |
+5 |                 continue outr
+  |                          ^^^^
+  |
+help: a loop label with a similar name exists: `outer`
+  |
+5 |                 continue outer
+  |                             +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0144

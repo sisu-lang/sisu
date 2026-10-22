@@ -921,13 +921,61 @@ fn labeled_break_counts_for_outer_never() {
 }
 
 /// `continue nope` in a header, where no loop label `nope` is open, leaves no loop header, so it
-/// is not E0082; until Task 3 reports the missing label, it is E0038, and the header, typed
-/// `never` by it, adds E0043 (the shortcut in `target`).
+/// is the missing loop label, not E0082, and the header it poisons reports nothing more.
 #[test]
-fn continue_to_missing_label_in_header_is_not_e0082() {
+fn continue_to_missing_label_in_header_is_missing_label() {
     codes(
         "fn main() {\n    while { continue nope; true } { }\n}",
-        &[(Code::NoValue, (2, 11)), (Code::JumpOutsideLoop, (2, 13))],
+        &[(Code::MissingLabel, (2, 22))],
+    );
+}
+
+/// A loop label named by a jump is E0142 when a constant, a class or a function of its name is
+/// in scope; a function declared twice is still a name, with no declaration to point at.
+#[test]
+fn loop_label_clashes_with_items() {
+    codes(
+        "const n = 1\nfn main() {\n    n: loop { break n }\n}",
+        &[(Code::LabelClash, (3, 21))],
+    );
+    codes(
+        "class Box {}\nfn main() {\n    Box: loop { break Box }\n}",
+        &[(Code::LabelClash, (3, 23))],
+    );
+    codes(
+        "fn A() {}\nfn A() {}\nfn main() {\n    A: loop { break A }\n}",
+        &[(Code::DefinedTwice, (2, 4)), (Code::LabelClash, (4, 21))],
+    );
+}
+
+/// Loops side by side may share a loop label; a labeled loop that no jump names is W0008, whose
+/// safe fix deletes the loop label.
+#[test]
+fn loop_label_reuse_and_unused() {
+    codes(
+        "fn f(c: bool) {\n    a: while c { break a }\n    a: while c { continue a }\n}\nfn main() {}",
+        &[],
+    );
+    let src = "fn f(c: bool) {\n    outer: while c { }\n}\nfn main() {}";
+    codes(src, &[(Code::UnusedLabel, (2, 5))]);
+    fix_removes_its_code(src, &diags(src)[0]);
+    // A loop's label is open in a nested loop's header too.
+    codes(
+        "fn f(c: bool) {\n    a: while c {\n        a: while { break a; true } { }\n    }\n}\nfn main() {}",
+        &[
+            (Code::LabelReused, (3, 9)),
+            (Code::JumpInLoopHeader, (3, 20)),
+        ],
+    );
+}
+
+/// `break name` in a `for` is a misspelled loop label only when `name` is close to one; any
+/// other name is the value the `for` cannot take.
+#[test]
+fn break_name_is_a_label_only_near_one() {
+    codes(
+        "fn f() {\n    for x in [1] {\n        break nope\n    }\n}\nfn main() {}",
+        &[(Code::BreakValueNotLoop, (3, 15))],
     );
 }
 

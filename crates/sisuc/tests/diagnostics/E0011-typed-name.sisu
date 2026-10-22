@@ -1,0 +1,3 @@
+fn main() {
+    count: i64 = 0
+}

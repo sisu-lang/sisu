@@ -145,6 +145,10 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0135](E0135.md) | error | a range pattern that cannot match |
 | [E0136](E0136.md) | error | alternatives bind different names |
 | [E0141](E0141.md) | error | `break` with a value in a loop that has none |
+| [E0142](E0142.md) | error | loop label that is also a name in scope |
+| [E0143](E0143.md) | error | loop label used by an enclosing loop |
+| [E0144](E0144.md) | error | `break` or `continue` naming no loop label around it |
+| [E0145](E0145.md) | error | loop label on something that is not a loop |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |
@@ -152,6 +156,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [W0005](W0005.md) | warning | comparison with `f64.nan` |
 | [W0006](W0006.md) | warning | unreachable arm |
 | [W0007](W0007.md) | warning | unnecessary `;` |
+| [W0008](W0008.md) | warning | loop label that is never used |
 
 ## Explanations
 

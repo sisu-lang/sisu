@@ -81,6 +81,8 @@ struct Signature {
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
     ret: Option<Type>,
+    /// The name's span.
+    span: Span,
 }
 
 /// What a function, class, constant or method name stands for: the first intact item of that
@@ -139,7 +141,7 @@ enum LoopContext {
     /// A `while` condition or a `for` source, which is not part of the body.
     Header {
         keyword: Span,
-        label: Option<Symbol>,
+        label: Option<ast::Ident>,
     },
 }
 
@@ -286,6 +288,9 @@ struct Body {
     break_hint: Option<(Span, Span)>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
+    /// Where each loop label is declared that a failed jump or a reused loop label names, which
+    /// is not reported unused: its own error is.
+    failed_labels: Vec<Span>,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
@@ -649,7 +654,12 @@ impl Checker<'_> {
             .ret
             .as_ref()
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
-        self.signatures.push(Signature { name, params, ret });
+        self.signatures.push(Signature {
+            name,
+            params,
+            ret,
+            span: f.name.span,
+        });
     }
 
     /// Reports each strongly connected component of non-optional class fields once
@@ -891,10 +901,10 @@ impl Checker<'_> {
         })
     }
 
-    /// "cannot find binding `name`", offering the closest binding of any open scope. A type's
-    /// name, built in or a class's or an enum's, is in scope, but as a type: that is reported
-    /// instead.
-    fn not_found(&self, name: Symbol, span: Span) -> Diagnostic {
+    /// "cannot find binding `name`", offering the closest binding of any open scope or open loop
+    /// label. A type's name, built in or a class's or an enum's, is in scope, but as a type:
+    /// that is reported instead.
+    fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
         if built_in_type(name.as_str()).is_some()
             || self.class_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
@@ -911,10 +921,21 @@ impl Checker<'_> {
             .iter()
             .flat_map(|scope| scope.keys())
             .map(|binding| (binding.as_str(), Definition::Binding));
+        let labels = self
+            .open_labels()
+            .map(|label| (label.name.as_str(), Definition::LoopLabel));
+        let suggestion = suggestion(name.as_str(), bindings.chain(labels));
+        if let Some(found) = &suggestion
+            && found.kind == Definition::LoopLabel
+        {
+            // A misspelled loop label is one mistake, which the loop label's own warning would
+            // report twice.
+            self.named_by_failed_jump(&found.name);
+        }
         DiagnosticKind::BindingNotFound {
             name: name.to_string(),
             at: span,
-            suggestion: suggestion(name.as_str(), bindings),
+            suggestion,
         }
         .into()
     }

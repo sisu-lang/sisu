@@ -1,0 +1,12 @@
+error[E0142]: loop label `bool` has the same name as the built-in type `bool`
+ --> E0142-built-in.sisu:3:15
+  |
+2 |     bool: loop {
+  |     ---- loop label declared here
+3 |         break bool
+  |               ^^^^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

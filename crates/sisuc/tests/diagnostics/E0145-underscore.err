@@ -1,0 +1,14 @@
+error[E0145]: a loop label needs a name
+ --> E0145-underscore.sisu:2:5
+  |
+2 |     _: for x in [1, 2] {
+  |     ^^
+  |
+help: delete `_: `
+  |
+2 -     _: for x in [1, 2] {
+2 +     for x in [1, 2] {
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0145

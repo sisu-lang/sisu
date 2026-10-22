@@ -9,8 +9,8 @@ use crate::ast::{
     UnaryOp, Variant,
 };
 use crate::diagnostic::{
-    self, BuiltIn, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange, Join, LetField,
-    MatchIdiomForm, Owner, PowerFix,
+    self, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange, Join,
+    LetField, MatchIdiomForm, Owner, PowerFix,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::Span;
@@ -278,7 +278,7 @@ struct Parser<'a> {
     warnings: Vec<Diagnostic>,
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
-    labels: Vec<Symbol>,
+    labels: Vec<Ident>,
 }
 
 impl<'a> Parser<'a> {
@@ -1146,6 +1146,9 @@ impl<'a> Parser<'a> {
         let start = self.peek().span;
         let base = self.depth;
         let mut reach = base;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
         // A labeled `loop` is an expression, which `primary` reads with its loop label.
         let label = match self.after_label() {
             Some((_, TokenKind::Loop)) => None,
@@ -1217,6 +1220,9 @@ impl<'a> Parser<'a> {
             TokenKind::Break => {
                 self.bump();
                 let label = self.jump_label(false);
+                if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
+                    return Err(error);
+                }
                 let value = if self.jump_ends() {
                     None
                 } else {
@@ -1261,8 +1267,110 @@ impl<'a> Parser<'a> {
         };
         let span = self.bump().span;
         self.bump();
-        self.labels.push(name);
-        Some(Ident { name, span })
+        let label = Ident { name, span };
+        self.labels.push(label.clone());
+        Some(label)
+    }
+
+    /// The error of a `name:` before `if`, `match` or `{`, or of a `_:` before a loop, where a
+    /// loop with its loop label could stand: at the start of a statement, after the `=` of a
+    /// `let` or an assignment, and after an argument label. Any other `name:` is no loop label.
+    fn label_not_on_loop(&self) -> Option<Diagnostic> {
+        let [first, colon, next, ..] = &self.tokens[self.pos..] else {
+            return None;
+        };
+        if colon.kind != TokenKind::Colon {
+            return None;
+        }
+        let at = first.span.to(colon.span);
+        match (&first.kind, &next.kind) {
+            (TokenKind::Ident(_), TokenKind::If | TokenKind::Match | TokenKind::LBrace) => Some(
+                DiagnosticKind::LabelNotOnLoop {
+                    at,
+                    next: next.span,
+                }
+                .into(),
+            ),
+            (TokenKind::Underscore, TokenKind::Loop | TokenKind::While | TokenKind::For) => Some(
+                DiagnosticKind::UnnamedLabel {
+                    at,
+                    remove: Span::new(at.start(), next.span.start()),
+                }
+                .into(),
+            ),
+            _ => None,
+        }
+    }
+
+    /// The error of the loop label `label` after `break` when the next token would make it more
+    /// than a loop label: a `(` or `[` that touches it, or a token that can only continue an
+    /// expression.
+    fn label_clash(&self, label: &Ident) -> Option<Diagnostic> {
+        let next = self.peek();
+        let touches = next.span.start() == label.span.end();
+        let form = match next.kind {
+            TokenKind::LParen if touches => ClashForm::Call {
+                bracket: next.span,
+                text: self.bracketed(&TokenKind::LParen, &TokenKind::RParen),
+            },
+            TokenKind::LBracket if touches => ClashForm::Index {
+                bracket: next.span,
+                text: self.bracketed(&TokenKind::LBracket, &TokenKind::RBracket),
+            },
+            TokenKind::Plus
+            | TokenKind::Star
+            | TokenKind::StarStar
+            | TokenKind::Slash
+            | TokenKind::Percent
+            | TokenKind::EqEq
+            | TokenKind::NotEq
+            | TokenKind::Lt
+            | TokenKind::Le
+            | TokenKind::Gt
+            | TokenKind::Ge
+            | TokenKind::AndAnd
+            | TokenKind::OrOr
+            | TokenKind::Is
+            | TokenKind::QuestionQuestion
+            | TokenKind::Dot
+            | TokenKind::QuestionDot => ClashForm::Operator { next: next.span },
+            _ => return None,
+        };
+        let declared = self
+            .labels
+            .iter()
+            .rev()
+            .find(|open| open.name == label.name)
+            .expect("a `break` label should be an open loop label")
+            .span;
+        Some(
+            DiagnosticKind::LabelClash {
+                name: label.name.to_string(),
+                at: label.span,
+                declared,
+                form,
+            }
+            .into(),
+        )
+    }
+
+    /// The source text from the `open` bracket at the next token through its matching `close`,
+    /// or of the bracket alone when the lexer found none.
+    fn bracketed(&self, open: &TokenKind, close: &TokenKind) -> String {
+        let start = self.peek().span;
+        let mut depth = 0usize;
+        let end = self.tokens[self.pos..]
+            .iter()
+            .find(|token| {
+                if token.kind == *open {
+                    depth += 1;
+                } else if token.kind == *close {
+                    depth -= 1;
+                }
+                depth == 0
+            })
+            .map_or(start, |token| token.span);
+        self.source[start.to(end).range()].to_string()
     }
 
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
@@ -1271,7 +1379,7 @@ impl<'a> Parser<'a> {
         let TokenKind::Ident(name) = self.peek().kind else {
             return None;
         };
-        (any || self.labels.contains(&name)).then(|| Ident {
+        (any || self.labels.iter().any(|label| label.name == name)).then(|| Ident {
             name,
             span: self.bump().span,
         })
@@ -1953,6 +2061,9 @@ impl<'a> Parser<'a> {
             None => None,
         };
         self.expect(&TokenKind::Eq)?;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
         let init = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
         // Reported last, and only where the statement ends, so that the fix leaves a `let` that
@@ -2016,6 +2127,9 @@ impl<'a> Parser<'a> {
             return Err(DiagnosticKind::AssignThroughSafeAccess { at: target.span }.into());
         }
         let op_span = self.bump().span;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
         let value = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
         Ok(match op {
@@ -2579,6 +2693,9 @@ impl<'a> Parser<'a> {
         let label = if labeled {
             let label = self.ident("a label")?;
             self.bump();
+            if let Some(error) = self.label_not_on_loop() {
+                return Err(error);
+            }
             Some(label)
         } else {
             None
@@ -3103,6 +3220,34 @@ mod tests {
         assert_eq!(
             parse_err("fn main() {\n    x: i64 = 1\n}"),
             (Code::Expected, 2, 6)
+        );
+    }
+
+    /// `name:` before `if`, `match` or `{` is E0145 wherever a labeled loop could stand: a
+    /// statement, the value of a `let` or an assignment, and an argument after its label. `_:`
+    /// before a loop is E0145 too, and its safe fix deletes it.
+    #[test]
+    fn labels_not_on_loops() {
+        for (src, at) in [
+            (
+                "fn main() {\n    x = outer: if c { 1 } else { 2 }\n}",
+                (2, 9),
+            ),
+            (
+                "fn main() {\n    x += outer: match c { _ => 1 }\n}",
+                (2, 10),
+            ),
+            ("fn main() {\n    f(n: outer: { 1 })\n}", (2, 10)),
+        ] {
+            assert_eq!(parse_err(src), (Code::LabelNotOnLoop, at.0, at.1), "{src}");
+        }
+        assert_eq!(
+            fixed("fn main() {\n    _: while c { }\n}"),
+            "fn main() {\n    while c { }\n}"
+        );
+        assert_eq!(
+            parse_err("fn main() {\n    _: loop { }\n}"),
+            (Code::LabelNotOnLoop, 2, 5)
         );
     }
 

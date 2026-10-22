@@ -1,0 +1,6 @@
+fn main() {
+    let n = "abc"
+    n: loop {
+        break n.len()
+    }
+}

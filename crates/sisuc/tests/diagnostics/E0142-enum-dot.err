@@ -1,0 +1,12 @@
+error[E0142]: `Shape` is a loop label here, so it cannot start a value
+ --> E0142-enum-dot.sisu:7:15
+  |
+6 |     let found = Shape: loop {
+  |                 ----- loop label declared here
+7 |         break Shape.Dot(1, 2)
+  |               ^^^^^^
+  |
+  = help: the value of `break Shape` comes after the loop label; if `Shape` also names a value, rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

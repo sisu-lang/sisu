@@ -1,0 +1,15 @@
+error[E0142]: loop label `search` has the same name as the function `search`
+ --> E0142-function.sisu:6:15
+  |
+1 | fn search() {
+  |    ------ the function is declared here
+...
+5 |     search: loop {
+  |     ------ loop label declared here
+6 |         break search
+  |               ^^^^^^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142
