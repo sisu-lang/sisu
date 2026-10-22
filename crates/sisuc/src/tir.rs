@@ -156,8 +156,13 @@ pub(crate) enum Rank {
     /// `check::enums::inline_enums` looks (`check::enums::names_itself`): `Tree<T>` in `Tree`,
     /// `Wrap2<G<T>>` in `G`.
     Own,
+    /// It names a type parameter, and otherwise, where `inline_enums` looks and with an argument
+    /// that carries a parameter, an enum declaration on a cycle of such names with its own:
+    /// `Wrap3<C<T>>` in `A` when `C<T>` holds `A<T>`.
+    Open,
     /// It names a type parameter, and otherwise an enum declaration on a cycle of such names
-    /// with its own, where `inline_enums` looks: `P2<T, Wrap2<i64>>` in `Wrap2`.
+    /// with its own, where `inline_enums` looks, only with arguments that carry none:
+    /// `P2<T, Wrap2<i64>>` in `Wrap2`.
     Late,
     /// Any other field that names a type parameter, never boxed: `Two<T>` in `Wrap2`, or `T`.
     Never,
@@ -510,11 +515,12 @@ impl Type {
 /// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
 /// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
 /// the declaring enum's own field rather than one inside a generic type, by a pass per `Rank`,
-/// `Plain`, `Own`, then `Late`, each boxing its fields that are on a cycle of what the passes
-/// before it left unboxed. A cycle that `Plain` leaves holds an `Own` or a `Late` field, since
-/// each of its enums' declarations is named by a generic field of another on it, so the names
-/// close a cycle of declarations. A `Never` field is never boxed. The ranks read names only, so
-/// a type argument an enum never stores still counts: with `enum Two<T, U> { Both(T, T) }`,
+/// `Plain`, `Own`, `Open`, then `Late`, each boxing its fields that are on a cycle of what the
+/// passes before it left unboxed. A cycle that `Plain` leaves holds an `Own`, `Open` or `Late`
+/// field, since each of its enums' declarations is named by a generic field of another on it,
+/// so the names close a cycle of declarations. A `Never` field is never boxed. The ranks read
+/// names only, so a type argument an enum never holds inline (unused, or only in an array or a
+/// class) still counts: with `enum Two<T, U> { Both(T, T) }`,
 /// `Wrap2<T>.W: Two<T, Wrap2<T>>` is `Own`, and `G<i64>` in `enum G<T> { P(Wrap2<G<T>>) }`
 /// boxes `Wrap2<G<i64>>.W` beside `G<i64>.P`, which alone would break the cycle. Every member
 /// of a component with a box is on that cycle, and counted, though a member may hold its links
@@ -541,13 +547,13 @@ pub(crate) fn layout_enums(enums: &mut [Enum]) {
                     .is_some_and(|f| component[f.0] == component[e]);
         }
     }
-    // A program without an `Own` or a `Late` field skips the later passes' graphs.
+    // A program with only `Plain` and `Never` fields skips the later passes' graphs.
     let mut fields = enums
         .iter()
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields);
-    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Late)) {
-        for rank in [Rank::Own, Rank::Late] {
+    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Open | Rank::Late)) {
+        for rank in [Rank::Own, Rank::Open, Rank::Late] {
             let remaining = components(&held(enums, |p| !p.boxed));
             for (e, info) in enums.iter_mut().enumerate() {
                 for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {

@@ -1,7 +1,7 @@
 //! Enum declarations: their variants and payloads, the names they cannot take, which enums no
 //! value can be built of, the boxes that break a cycle, and which enums are counted.
 
-use std::{fmt, iter, mem};
+use std::{fmt, mem};
 
 use rustc_hash::FxHashMap;
 
@@ -46,13 +46,15 @@ pub(super) fn reserved_name(name: &str) -> Option<BuiltIn> {
 }
 
 /// The enum declarations `ty` names where a value of it holds them inline: `ty` itself, or its
-/// optional's payload, and the type arguments of each enum it names, through optionals.
-fn inline_enums(ty: Type) -> Vec<usize> {
+/// optional's payload, and the type arguments of each enum it names, through optionals. With
+/// `open`, only those named with an argument that carries a parameter: `C<T>`, not `Wrap3<i64>`.
+fn inline_enums(ty: Type, open: bool) -> Vec<usize> {
     match ty.kind() {
-        TypeKind::Optional(payload) => inline_enums(payload),
+        TypeKind::Optional(payload) => inline_enums(payload, open),
         TypeKind::Enum(id, args) => {
-            let args = args.get().iter().flat_map(|&arg| inline_enums(arg));
-            iter::once(id.0).chain(args).collect()
+            let named = (!open || ty.has_param()).then_some(id.0);
+            let args = args.get().iter().flat_map(|&arg| inline_enums(arg, open));
+            named.into_iter().chain(args).collect()
         }
         _ => Vec::new(),
     }
@@ -431,7 +433,7 @@ impl Checker<'_> {
                 .map(|info| {
                     let fields = info.variants.iter().flat_map(|v| v.fields.iter().flatten());
                     let generic = fields.filter(|ty| ty.has_param());
-                    generic.flat_map(|&ty| inline_enums(ty)).collect()
+                    generic.flat_map(|&ty| inline_enums(ty, false)).collect()
                 })
                 .collect();
             components(&named)
@@ -453,7 +455,12 @@ impl Checker<'_> {
                                     Rank::Plain
                                 } else if names_itself(ty, e, info.type_params.len()) {
                                     Rank::Own
-                                } else if inline_enums(ty)
+                                } else if inline_enums(ty, true)
+                                    .iter()
+                                    .any(|&n| declared[n] == declared[e])
+                                {
+                                    Rank::Open
+                                } else if inline_enums(ty, false)
                                     .iter()
                                     .any(|&n| declared[n] == declared[e])
                                 {
