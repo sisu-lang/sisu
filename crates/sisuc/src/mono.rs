@@ -449,10 +449,33 @@ fn assert_concrete(program: &Program) {
     for f in &program.functions {
         let mut exprs = Vec::new();
         f.body.exprs(&mut exprs);
+        let mut blocks = vec![&f.body];
+        for e in &exprs {
+            match &e.kind {
+                ExprKind::If {
+                    then_block,
+                    else_block,
+                    ..
+                }
+                | ExprKind::IfSome {
+                    then_block,
+                    else_block,
+                    ..
+                } => blocks.extend(
+                    [Some(then_block), else_block.as_ref()]
+                        .into_iter()
+                        .flatten(),
+                ),
+                ExprKind::Match { arms, .. } => blocks.extend(arms.iter().map(|arm| &arm.body)),
+                ExprKind::Loop(block) | ExprKind::Block(block) => blocks.push(block),
+                _ => {}
+            }
+        }
         let types = exprs
             .iter()
             .map(|e| e.ty)
             .chain(f.locals.iter().map(|l| l.ty));
+        let types = types.chain(blocks.iter().map(|b| b.ty));
         for ty in types.chain([f.ret]) {
             assert!(
                 concrete(ty),
@@ -534,6 +557,12 @@ mod tests {
              fn main() {\n    let b = Box(v: \"a\")\n}",
         );
         assert_eq!(class_names(&program), ["Holder", "Box<i64>", "Box<string>"]);
+        // Enum payloads come before any function body.
+        let program = instantiated(
+            "enum S {\n    A(Box<i64>)\n}\nclass Box<T> {\n    v: T\n}\n\
+             fn main() {\n    let b = Box(v: \"a\")\n}",
+        );
+        assert_eq!(class_names(&program), ["Box<i64>", "Box<string>"]);
     }
 
     #[test]
@@ -595,6 +624,19 @@ mod tests {
             .find(|e| matches!(e.kind, ExprKind::Variant { .. }))
             .expect("`fill` builds a `Shape`");
         assert_eq!(program.type_name(variant.ty), "Shape");
+    }
+
+    /// A generic class or enum that is the program's only generic declaration is still
+    /// instantiated, or dropped when nothing reaches it.
+    #[test]
+    fn a_lone_generic_class_or_enum_is_instantiated() {
+        let used =
+            instantiated("class Box<T> {\n    v: T\n}\nfn main() {\n    print(Box(v: 42).v)\n}");
+        assert_eq!(class_names(&used), ["Box<i64>"]);
+        let unused = instantiated("class C<T> {\n    v: T\n}\nfn main() {\n    print(1)\n}");
+        assert!(unused.classes.is_empty(), "{:?}", class_names(&unused));
+        let unused = instantiated("enum Wrap<T> {\n    W(T)\n}\nfn main() {\n    print(1)\n}");
+        assert!(unused.enums.is_empty(), "{:?}", unused.enums);
     }
 
     #[test]

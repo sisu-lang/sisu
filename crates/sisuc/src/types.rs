@@ -116,8 +116,12 @@ impl TypeArgs {
         args().lists[self.0 as usize].1
     }
 
-    /// The list with `Type::subst` applied to each element.
+    /// The list with `Type::subst` applied to each element. A list without a parameter comes
+    /// back as it is.
     pub(crate) fn subst(self, with: &[Type]) -> TypeArgs {
+        if !self.has_param() {
+            return self;
+        }
         let list: Vec<Type> = self.get().iter().map(|ty| ty.subst(with)).collect();
         TypeArgs::intern(&list)
     }
