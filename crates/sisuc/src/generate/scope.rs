@@ -13,6 +13,9 @@ pub(crate) enum Ty {
     Char,
     String,
     Unit,
+    Array(Box<Ty>),
+    /// Never of an optional: `optional_of` does not nest them.
+    Optional(Box<Ty>),
 }
 
 impl Ty {
@@ -20,15 +23,41 @@ impl Ty {
     pub(crate) const VALUES: [Ty; 6] = [Ty::I64, Ty::U8, Ty::F64, Ty::Bool, Ty::Char, Ty::String];
 
     /// The type as Sisu writes it.
-    pub(crate) fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> String {
         match self {
-            Ty::I64 => "i64",
-            Ty::U8 => "u8",
-            Ty::F64 => "f64",
-            Ty::Bool => "bool",
-            Ty::Char => "char",
-            Ty::String => "string",
-            Ty::Unit => "unit",
+            Ty::I64 => "i64".to_string(),
+            Ty::U8 => "u8".to_string(),
+            Ty::F64 => "f64".to_string(),
+            Ty::Bool => "bool".to_string(),
+            Ty::Char => "char".to_string(),
+            Ty::String => "string".to_string(),
+            Ty::Unit => "unit".to_string(),
+            Ty::Array(element) => format!("[{}]", element.name()),
+            Ty::Optional(payload) => format!("{}?", payload.name()),
+        }
+    }
+
+    /// Whether a value of it written with no expected type may take another type: an integer
+    /// literal is an `i64`, and `None` and `[]` cannot be inferred.
+    pub(crate) fn inferred(&self) -> bool {
+        matches!(self, Ty::U8 | Ty::Array(_) | Ty::Optional(_))
+    }
+
+    /// The size of its smallest value written with no expected type: an array holds an element.
+    pub(crate) fn least(&self) -> u64 {
+        match self {
+            Ty::Array(element) => 1 + element.least(),
+            Ty::Optional(payload) => payload.least(),
+            Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => 0,
+        }
+    }
+
+    /// Whether its values have a size: a `string`, an array, or an optional of one.
+    pub(crate) fn sized(&self) -> bool {
+        match self {
+            Ty::String | Ty::Array(_) => true,
+            Ty::Optional(payload) => payload.sized(),
+            Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::Unit => false,
         }
     }
 
@@ -43,7 +72,9 @@ impl Ty {
             Ty::Bool => 5,
             Ty::Char => 1,
             Ty::String => size,
-            Ty::Unit => 0,
+            Ty::Unit | Ty::Array(_) | Ty::Optional(_) => {
+                unreachable!("only a value of `Ty::VALUES` is printed")
+            }
         }
     }
 }
@@ -54,14 +85,21 @@ pub(crate) struct Var {
     pub(crate) ty: Ty,
     /// A `let mut` that no loop counts with: the body may assign to it.
     pub(crate) assignable: bool,
-    /// For a `string`: the most chars its first value or a plain assignment may hold.
+    /// For a `string`: the most chars its first value or a plain assignment may hold. For a
+    /// mutable array: the most size each element may take that way.
     pub(crate) base: u64,
-    /// For a `string`: the most chars it can ever hold, its base and its room at declaration.
+    /// The most size its value can ever reach (decision 5): for a `string`, its base and its
+    /// room at declaration.
     pub(crate) size: u64,
-    /// For a `string`: the chars that `+=` may still add, summed over every run of each one.
+    /// For a `string`, or a mutable array of them: the chars that `+=` may still add, summed
+    /// over every run of each one.
     pub(crate) room: u64,
     /// How many loops are around its declaration.
     pub(crate) loops: usize,
+    /// For an array: how many elements it holds at least, which an index stays under.
+    pub(crate) len: u64,
+    /// For an array: the most size an element can reach.
+    pub(crate) elem: u64,
 }
 
 impl Var {
@@ -82,6 +120,8 @@ impl Var {
             size: base + room,
             room,
             loops,
+            len: 0,
+            elem: base + room,
         }
     }
 

@@ -1,22 +1,28 @@
 //! The expression rules: each writes one construct of the wanted type. Every expression but a
 //! literal, a name and a call is written in parentheses, so it is an operand wherever it goes.
 
-use super::scope::{Scope, Ty};
+use super::scope::{Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
 use super::{Gen, LINE, MAX_NESTING, MAX_SIZE};
 
 /// What a rule wrote.
 #[derive(Clone, Copy)]
 pub(crate) struct Info {
-    /// For a `string`: the most chars the value holds.
+    /// The most size the value reaches (decision 5): for a `string`, its chars.
     pub(crate) size: u64,
     /// Whether it has no effect and cannot panic (decision 2).
     pub(crate) pure: bool,
+    /// For an array: how many elements it holds at least.
+    pub(crate) len: u64,
 }
 
 impl Info {
     fn leaf(size: u64) -> Info {
-        Info { size, pure: true }
+        Info {
+            size,
+            pure: true,
+            len: 0,
+        }
     }
 
     /// The value of a rule built from `parts`, which has an effect or may panic unless `pure`.
@@ -24,8 +30,14 @@ impl Info {
         Info {
             size,
             pure: pure && parts.iter().all(|part| part.pure),
+            len: 0,
         }
     }
+}
+
+/// The size of an array of `len` elements of at most `element` each (decision 5).
+pub(crate) fn array_size(len: u64, element: u64) -> u64 {
+    len + len * element
 }
 
 /// The rules an expression can be written by.
@@ -53,6 +65,22 @@ enum Rule {
     Call,
     If,
     Block,
+    /// A `T` where a `T?` is wanted.
+    Wrap,
+    /// `read_line()`, or `u8(e)`, `char(e)` or `i64(e)`, as the optional they give.
+    Raw,
+    /// `(a ?? b)`.
+    Coalesce,
+    /// `[v; n]`.
+    Fill,
+    /// `chars`, `bytes` or `words` of a `string`.
+    Split,
+    Len,
+    Sum,
+    Contains,
+    /// `string(e)` of a `[char]`.
+    FromChars,
+    Index,
 }
 
 /// The `f64` methods with an exact result and no argument.
@@ -133,20 +161,23 @@ impl Gen<'_> {
     /// Writes an expression of type `ty`, a value type, holding at most `max` chars if a
     /// `string`.
     ///
-    /// After `self.synth` is set, a `u8` is one whose own type is `u8`, for a position with no
-    /// expected type: the checker types an integer literal there by the other operands, and an
-    /// operand made only of literals, as `({ 5 })` is, as an `i64`.
+    /// After `self.synth` is set, a `u8`, an array or an optional is one of its own type, for a
+    /// position with no expected type: the checker types an integer literal there by the other
+    /// operands, and an operand made only of literals, as `({ 5 })` is, as an `i64`; it cannot
+    /// type `None` or `[]` at all. Such a value is at least `ty.least()`, which `max` holds.
     pub(crate) fn expr(&mut self, ty: &Ty, max: u64) -> Info {
-        let synth = std::mem::take(&mut self.synth) && *ty == Ty::U8;
+        let synth = std::mem::take(&mut self.synth) && ty.inferred();
+        debug_assert!(!synth || ty.least() <= max, "no {} fits {max}", ty.name());
+        let u8 = synth && *ty == Ty::U8;
         // `(u8(e) ?? d)` is the smallest `u8` of its own type.
-        let mut rules = vec![if synth { Rule::Fallible } else { Rule::Literal }];
+        let mut rules = vec![if u8 { Rule::Fallible } else { Rule::Literal }];
         if self.has_name(ty, max) {
             rules.push(Rule::Name);
         }
         if self.nesting < MAX_NESTING && self.spend(1) {
-            self.compound_rules(ty, max, &mut rules);
+            self.compound_rules(ty, max, synth, &mut rules);
         }
-        if synth {
+        if u8 {
             rules.retain(|rule| !matches!(rule, Rule::Fallible));
             rules.insert(0, Rule::Fallible);
         }
@@ -162,7 +193,7 @@ impl Gen<'_> {
         info
     }
 
-    fn compound_rules(&mut self, ty: &Ty, max: u64, rules: &mut Vec<Rule>) {
+    fn compound_rules(&mut self, ty: &Ty, max: u64, synth: bool, rules: &mut Vec<Rule>) {
         let own: &[Rule] = match ty {
             Ty::I64 => &[
                 Rule::Negate,
@@ -170,23 +201,55 @@ impl Gen<'_> {
                 Rule::Convert,
                 Rule::Fallible,
                 Rule::Math,
+                Rule::Len,
+                Rule::Sum,
             ],
             Ty::U8 => &[Rule::Arithmetic, Rule::Fallible],
-            Ty::F64 => &[Rule::Negate, Rule::Arithmetic, Rule::Convert, Rule::Math],
+            Ty::F64 => &[
+                Rule::Negate,
+                Rule::Arithmetic,
+                Rule::Convert,
+                Rule::Math,
+                Rule::Sum,
+            ],
             Ty::Bool => &[
                 Rule::Not,
                 Rule::Logic,
                 Rule::Equal,
                 Rule::Order,
                 Rule::Classify,
+                Rule::Contains,
             ],
             Ty::Char => &[Rule::Fallible],
-            Ty::String => &[Rule::Concat, Rule::Interpolate],
+            Ty::String => &[Rule::Concat, Rule::Interpolate, Rule::FromChars],
+            Ty::Array(element) => {
+                rules.push(Rule::Fill);
+                // `words` gives at most one more than its chars.
+                if matches!(**element, Ty::Char | Ty::U8) || **element == Ty::String && max > 0 {
+                    rules.push(Rule::Split);
+                }
+                &[]
+            }
+            Ty::Optional(payload) => {
+                if !synth {
+                    rules.push(Rule::Wrap);
+                }
+                if matches!(**payload, Ty::U8 | Ty::Char | Ty::I64)
+                    || **payload == Ty::String && max >= LINE
+                {
+                    rules.push(Rule::Raw);
+                }
+                &[]
+            }
             Ty::Unit => &[],
         };
         rules.extend_from_slice(own);
         if *ty == Ty::String && max >= LINE {
             rules.push(Rule::ReadLine);
+        }
+        if *ty != Ty::Unit && ty.least() <= max {
+            rules.push(Rule::Coalesce);
+            rules.push(Rule::Index);
         }
         if !self.callees(ty, max).is_empty() {
             rules.push(Rule::Call);
@@ -200,7 +263,15 @@ impl Gen<'_> {
     /// `synth` passes on to the operand that gives the rule's type.
     fn rule(&mut self, rule: Rule, ty: &Ty, max: u64, synth: bool) -> Info {
         match rule {
-            Rule::Literal => self.literal(ty, max),
+            Rule::Literal => match ty {
+                Ty::Array(element) => self.array_literal(element, max, synth),
+                Ty::Optional(payload) if synth => self.maybe(payload, max),
+                Ty::Optional(_) => {
+                    self.w.text("None");
+                    Info::leaf(0)
+                }
+                _ => self.literal(ty, max),
+            },
             Rule::Name => self.name(ty, max),
             Rule::Negate | Rule::Not => {
                 self.w.text(if *ty == Ty::Bool { "(!(" } else { "(-(" });
@@ -218,7 +289,7 @@ impl Gen<'_> {
                 Info::of(&[lhs, rhs], 0, true)
             }
             Rule::Equal => {
-                let operand = self.value_type();
+                let operand = self.any_type();
                 self.w.text("(");
                 self.synth = true;
                 let lhs = self.expr(&operand, MAX_SIZE);
@@ -261,7 +332,205 @@ impl Gen<'_> {
                 self.w.text(")");
                 info
             }
+            Rule::Wrap => {
+                let Ty::Optional(payload) = ty else {
+                    unreachable!("only an optional wraps")
+                };
+                self.expr(payload, max)
+            }
+            Rule::Raw => self.raw(ty),
+            Rule::Coalesce => self.coalesce(ty, max),
+            Rule::Fill => self.fill(ty, max, synth),
+            Rule::Split => self.split(ty, max),
+            Rule::Len => self.len(),
+            Rule::Sum => self.sum(ty),
+            Rule::Contains => self.contains(),
+            Rule::FromChars => {
+                self.w.text("string(");
+                let chars = self.expr(&Ty::Array(Box::new(Ty::Char)), max);
+                self.w.text(")");
+                Info::of(&[chars], chars.size, true)
+            }
+            Rule::Index => self.index(ty, max),
         }
+    }
+
+    /// `((s).len())` of a `string` or `((a).len())` of an array.
+    fn len(&mut self) -> Info {
+        self.w.text("((");
+        self.synth = true;
+        let receiver = if self.pick(2) == 0 {
+            self.expr(&Ty::String, MAX_SIZE)
+        } else {
+            let element = self.any_type();
+            self.expr(&Ty::Array(Box::new(element)), MAX_SIZE)
+        };
+        self.w.text(").len())");
+        Info::of(&[receiver], 0, true)
+    }
+
+    /// `((a).sum())` of an array of `ty`.
+    fn sum(&mut self, ty: &Ty) -> Info {
+        self.w.text("((");
+        self.synth = true;
+        let receiver = self.expr(&Ty::Array(Box::new(ty.clone())), MAX_SIZE);
+        self.w.text(").sum())");
+        // An `i64` sum may overflow.
+        Info::of(&[receiver], 0, *ty == Ty::F64)
+    }
+
+    /// `((a).contains(v))`.
+    fn contains(&mut self) -> Info {
+        let element = self.any_type();
+        self.w.text("((");
+        self.synth = true;
+        let receiver = self.expr(&Ty::Array(Box::new(element.clone())), MAX_SIZE);
+        self.w.text(").contains(");
+        let value = self.expr(&element, MAX_SIZE);
+        self.w.text("))");
+        Info::of(&[receiver, value], 0, true)
+    }
+
+    /// `[a, b, ...]`, of one element at least if `synth`, each one of its own type then.
+    fn array_literal(&mut self, element: &Ty, max: u64, synth: bool) -> Info {
+        let least = if synth { element.least() } else { 0 };
+        let most = (max / (1 + least)).min(4);
+        let len = u64::from(synth) + self.upto(most - u64::from(synth));
+        self.w.text("[");
+        let each = (max - len).checked_div(len).unwrap_or(0);
+        let mut parts = Vec::new();
+        for i in 0..len {
+            if i > 0 {
+                self.w.text(", ");
+            }
+            self.synth = synth;
+            parts.push(self.expr(element, each));
+        }
+        self.w.text("]");
+        let elements: u64 = parts.iter().map(|part| part.size).sum();
+        Info {
+            len,
+            ..Info::of(&parts, len + elements, true)
+        }
+    }
+
+    /// `[v; n]`, with a literal `n`.
+    fn fill(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
+        let Ty::Array(element) = ty else {
+            unreachable!("only an array is filled")
+        };
+        let least = if synth { element.least() } else { 0 };
+        let len = self.upto((max / (1 + least)).min(10));
+        self.w.text("[");
+        self.synth = synth;
+        let value = self.expr(element, (max - len).checked_div(len).unwrap_or(max));
+        self.w.text(&format!("; {len}]"));
+        Info {
+            len,
+            ..Info::of(&[value], array_size(len, value.size), true)
+        }
+    }
+
+    /// `(if c { v } else { None })`, an optional of its own type.
+    fn maybe(&mut self, payload: &Ty, max: u64) -> Info {
+        self.w.text("(if ");
+        let cond = self.expr(&Ty::Bool, 0);
+        self.w.text(" { ");
+        self.synth = true;
+        let value = self.conditionally(|g| g.expr(payload, max));
+        self.w.text(" } else { None })");
+        Info::of(&[cond, value], value.size, true)
+    }
+
+    /// `read_line()`, `u8(e)` or `char(e)` of an `i64`, or `i64(e)` of an `f64`: the optional
+    /// they give.
+    fn raw(&mut self, ty: &Ty) -> Info {
+        let Ty::Optional(payload) = ty else {
+            unreachable!("only an optional is raw")
+        };
+        if **payload == Ty::String {
+            self.w.text("read_line()");
+            return Info::of(&[], LINE, false);
+        }
+        let source = if **payload == Ty::I64 {
+            Ty::F64
+        } else {
+            Ty::I64
+        };
+        self.w.text(&format!("{}(", payload.name()));
+        let operand = self.expr(&source, 0);
+        self.w.text(")");
+        Info::of(&[operand], 0, true)
+    }
+
+    /// `(a ?? b)`: of a `T?` `a` and a `T` `b` for a `T`, of two `T?` for a `T?`.
+    fn coalesce(&mut self, ty: &Ty, max: u64) -> Info {
+        let optional = match ty {
+            Ty::Optional(_) => ty.clone(),
+            _ => Ty::Optional(Box::new(ty.clone())),
+        };
+        self.w.text("(");
+        self.synth = true;
+        let lhs = self.expr(&optional, max);
+        self.w.text(" ?? ");
+        // The `T?` the right side gives must be one: a `T` there would make the result a `T`.
+        self.synth = optional == *ty;
+        let rhs = self.conditionally(|g| g.expr(ty, max));
+        self.w.text(")");
+        Info::of(&[lhs, rhs], lhs.size.max(rhs.size), true)
+    }
+
+    /// `chars`, `bytes` or `words` of a `string`, as the array's element wants.
+    fn split(&mut self, ty: &Ty, max: u64) -> Info {
+        let Ty::Array(element) = ty else {
+            unreachable!("only an array is split")
+        };
+        // A char is at most 4 bytes, and the words of `n` chars at most `n + 1` in size.
+        let (method, chars) = match **element {
+            Ty::Char => ("chars", max),
+            Ty::U8 => ("bytes", max / 4),
+            _ => ("words", max - 1),
+        };
+        self.w.text("((");
+        let receiver = self.expr(&Ty::String, chars);
+        self.w.text(&format!(").{method}())"));
+        let size = match **element {
+            Ty::Char => receiver.size,
+            Ty::U8 => 4 * receiver.size,
+            _ => receiver.size + 1,
+        };
+        Info::of(&[receiver], size, true)
+    }
+
+    /// `(v[i])` of an array local, or `([a, b, ...][i])` of a literal, with `i` in bounds.
+    fn index(&mut self, ty: &Ty, max: u64) -> Info {
+        let vars: Vec<usize> = (0..self.scope.vars.len())
+            .filter(|&v| indexable(&self.scope.vars[v], ty, max))
+            .collect();
+        if !vars.is_empty() && self.pick(2) == 1 {
+            let pick = self.pick(vars.len());
+            let var = &self.scope.vars[vars[pick]];
+            let (name, len, elem) = (var.name.clone(), var.len, var.elem);
+            let at = self.upto(len - 1);
+            self.w.text(&format!("({name}[{at}])"));
+            return Info::of(&[], elem, false);
+        }
+        let most = (MAX_SIZE / (1 + ty.least())).min(4);
+        let len = 1 + self.upto(most - 1);
+        let each = max.min((MAX_SIZE - len) / len);
+        self.w.text("([");
+        let mut parts = Vec::new();
+        for i in 0..len {
+            if i > 0 {
+                self.w.text(", ");
+            }
+            self.synth = true;
+            parts.push(self.expr(ty, each));
+        }
+        let at = self.upto(len - 1);
+        self.w.text(&format!("][{at}])"));
+        let size = parts.iter().map(|part| part.size).max().unwrap_or(0);
+        Info::of(&parts, size, false)
     }
 
     /// Runs `write` where the code may not run (decision 2).
@@ -275,6 +544,26 @@ impl Gen<'_> {
     /// A value type, the smallest first.
     pub(crate) fn value_type(&mut self) -> Ty {
         Ty::VALUES[self.pick(Ty::VALUES.len())].clone()
+    }
+
+    /// A value type, an array or an optional, nested at most twice.
+    pub(crate) fn any_type(&mut self) -> Ty {
+        self.type_within(2)
+    }
+
+    fn type_within(&mut self, nesting: u32) -> Ty {
+        let values = Ty::VALUES.len();
+        let choice = self.pick(values + if nesting > 0 { 2 } else { 0 });
+        if choice < values {
+            return Ty::VALUES[choice].clone();
+        }
+        let inner = self.type_within(nesting - 1);
+        match (choice - values, inner) {
+            (0, inner) => Ty::Array(Box::new(inner)),
+            // `optional_of` does not nest optionals.
+            (_, Ty::Optional(payload)) => Ty::Optional(payload),
+            (_, inner) => Ty::Optional(Box::new(inner)),
+        }
     }
 
     fn has_name(&self, ty: &Ty, max: u64) -> bool {
@@ -323,7 +612,9 @@ impl Gen<'_> {
                 self.w.text(&format!("\"{text}\""));
                 Info::leaf(len)
             }
-            Ty::Unit => unreachable!("`unit` has no literal"),
+            Ty::Unit | Ty::Array(_) | Ty::Optional(_) => {
+                unreachable!("`Rule::Literal` writes a literal of a scalar only")
+            }
         }
     }
 
@@ -649,15 +940,19 @@ impl Gen<'_> {
     /// panic instead, while the first keeps the `if` a value (E0043).
     fn if_expr(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
         self.w.text("(if ");
-        let cond = self.expr(&Ty::Bool, 0);
+        let (cond, mut binding) = self.condition();
         let mut parts = vec![cond];
         let mut size = 0;
         self.conditionally(|g| {
             loop {
                 g.w.text(" { ");
                 let branch = if parts.len() == 1 {
+                    let vars = g.scope.vars.len();
+                    g.scope.vars.extend(binding.take());
                     g.synth = synth;
-                    g.expr(ty, max)
+                    let branch = g.expr(ty, max);
+                    g.scope.vars.truncate(vars);
+                    branch
                 } else {
                     g.branch(ty, max)
                 };
@@ -679,9 +974,41 @@ impl Gen<'_> {
         Info::of(&parts, size, true)
     }
 
-    /// A branch of an `if` after the first: a value, or now and then a panic.
+    /// The head of an `if`: a condition, or `let p = e` of an optional `e`, and what the first
+    /// branch binds.
+    pub(crate) fn condition(&mut self) -> (Info, Option<Var>) {
+        if self.pick(4) != 3 || !self.spend(1) {
+            return (self.expr(&Ty::Bool, 0), None);
+        }
+        let payload = match self.any_type() {
+            Ty::Optional(payload) => *payload,
+            ty => ty,
+        };
+        let name = if self.pick(4) == 0 {
+            None
+        } else {
+            Some(self.scope.fresh("v"))
+        };
+        self.w
+            .text(&format!("let {} = ", name.as_deref().unwrap_or("_")));
+        self.synth = true;
+        let value = self.expr(&Ty::Optional(Box::new(payload.clone())), MAX_SIZE);
+        let loops = self.cost.depth();
+        let binding = name.map(|name| Var::new(name, payload, false, value.size, 0, loops));
+        (value, binding)
+    }
+
+    /// A branch of an `if` after the first: a value, or now and then a panic: a call of
+    /// `panic` or `todo`, or an index past the end of an array.
     fn branch(&mut self, ty: &Ty, max: u64) -> Info {
         match self.pick(8) {
+            6 if self.pick(2) == 1 => {
+                // `[e][1]`: index 1 out of bounds for length 1.
+                self.w.text("([");
+                self.synth = true;
+                self.expr(ty, MAX_SIZE - 1);
+                self.w.text("][1])");
+            }
             6 => {
                 let message = self.message();
                 self.w.text(&format!("panic({message})"));
@@ -713,6 +1040,11 @@ fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'
         .filter(move |c| c.ty == *ty && c.size <= max)
         .map(|c| (c.name.as_str(), c.size));
     vars.chain(consts)
+}
+
+/// Whether an index into `var` reads a `ty` of at most `max` in bounds.
+fn indexable(var: &Var, ty: &Ty, max: u64) -> bool {
+    matches!(&var.ty, Ty::Array(element) if **element == *ty) && var.len > 0 && var.elem <= max
 }
 
 /// `n` with a `_` between each group of three digits.

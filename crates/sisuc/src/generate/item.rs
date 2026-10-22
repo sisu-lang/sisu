@@ -26,6 +26,9 @@ pub(crate) struct Folded {
 impl Gen<'_> {
     /// Writes the program, and returns its cost (decision 5).
     pub(crate) fn program(&mut self) -> u64 {
+        // Half the fuel is `main`'s, which the items before it would otherwise often spend.
+        let reserve = self.fuel / 2;
+        self.fuel -= reserve;
         let mut items = 0;
         while items < MAX_ITEMS && self.pick(4) != 0 && self.spend(1) {
             if self.pick(2) == 0 {
@@ -35,6 +38,7 @@ impl Gen<'_> {
             }
             items += 1;
         }
+        self.fuel += reserve;
         self.w.text("fn main() ");
         self.open_body();
         self.stmts(false);
@@ -65,19 +69,20 @@ impl Gen<'_> {
         let name = self.scope.fresh("f");
         let mut params = Vec::new();
         for _ in 0..self.pick(MAX_PARAMS + 1) {
-            let ty = self.value_type();
-            let size = if ty == Ty::String {
+            let ty = self.any_type();
+            let size = if ty.sized() {
                 SIZES[self.pick(SIZES.len())]
             } else {
                 0
             };
             params.push((self.scope.fresh("v"), ty, size));
         }
-        let ret = match self.pick(Ty::VALUES.len() + 1) {
-            0 => Ty::Unit,
-            n => Ty::VALUES[n - 1].clone(),
+        let ret = if self.pick(Ty::VALUES.len() + 1) == 0 {
+            Ty::Unit
+        } else {
+            self.any_type()
         };
-        let ret_size = if ret == Ty::String {
+        let ret_size = if ret.sized() {
             SIZES[self.pick(SIZES.len())]
         } else {
             0
@@ -119,6 +124,8 @@ impl Gen<'_> {
             Ty::Char => "return 'a'",
             Ty::String => "return \"\"",
             Ty::Unit => "return",
+            Ty::Array(_) => "return []",
+            Ty::Optional(_) => "return None",
         });
         self.w.close();
         self.stmts(false);
@@ -209,7 +216,7 @@ impl Gen<'_> {
                 let len = self.upto(max.min(8));
                 (format!("\"{}\"", self.string_text(len, 26)), 0, len)
             }
-            Ty::F64 | Ty::Bool | Ty::Unit => {
+            Ty::F64 | Ty::Bool | Ty::Unit | Ty::Array(_) | Ty::Optional(_) => {
                 self.literal(ty, max);
                 return Folded { value: 0, size: 0 };
             }
@@ -334,7 +341,9 @@ impl Gen<'_> {
                 }
             }
             // A `char` constant has no compound form.
-            (Ty::U8 | Ty::Char | Ty::Unit, _) => self.const_literal(ty, max),
+            (Ty::U8 | Ty::Char | Ty::Unit | Ty::Array(_) | Ty::Optional(_), _) => {
+                self.const_literal(ty, max)
+            }
         }
     }
 

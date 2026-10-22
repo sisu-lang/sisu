@@ -7,7 +7,7 @@
 
 use std::fmt::Write as _;
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::scope::{Const, Func, Ty, Var};
 use super::{BUDGET, Cost, DEPTHS, FUEL, Gen, Generated, MAX_BOUND, MAX_SIZE, Shape, generate};
@@ -48,26 +48,16 @@ const EXCLUDED: [(&str, &str); 6] = [
     ),
 ];
 
-/// What the generator does not write yet: arrays, optionals and `string` methods (Task 3);
-/// classes, enums, `is` and patterns (Task 4). A generated program holding one fails the test.
-const NOT_YET: [&str; 71] = [
+/// What the generator does not write yet: classes, enums, `is` and patterns (Task 4). A
+/// generated program holding one fails the test.
+const NOT_YET: [&str; 37] = [
     "ast::Item::Class",
     "ast::Item::Enum",
     "ast::Member::Field",
     "ast::Member::Method",
-    "ast::TypeKind::Array",
-    "ast::StmtKind::WhileLet",
-    "ast::ForSource::Array",
     "ast::ExprKind::SelfValue",
-    "ast::ExprKind::NoneLit",
-    "ast::ExprKind::ArrayLit",
-    "ast::ExprKind::ArrayFill",
-    "ast::ExprKind::Index",
     "ast::ExprKind::Is",
-    "ast::ExprKind::IfLet",
     "ast::ExprKind::Match",
-    "ast::PatternKind::Wild",
-    "ast::PatternKind::Name",
     "ast::PatternKind::Variant",
     "ast::PatternKind::Literal",
     "ast::PatternKind::Range",
@@ -77,31 +67,16 @@ const NOT_YET: [&str; 71] = [
     "ast::Literal::Str",
     "ast::Literal::Bool",
     "ast::Bound::Literal",
-    "ast::TypeExpr.optional = true",
     "ast::FieldDecl.mutable = false",
     "ast::FieldDecl.mutable = true",
     "ast::ExprKind::Field.safe = true",
     "ast::ExprKind::MethodCall.safe = true",
     "ast::PatternKind::Range.inclusive = false",
     "ast::PatternKind::Range.inclusive = true",
-    "tir::Stmt::Append",
     "tir::Place::Field",
-    "tir::Place::Index",
-    "tir::ExprKind::None",
     "tir::ExprKind::New",
     "tir::ExprKind::Variant",
     "tir::ExprKind::Field",
-    "tir::ExprKind::Wrap",
-    "tir::ExprKind::ArrayLit",
-    "tir::ExprKind::ArrayFill",
-    "tir::ExprKind::Index",
-    "tir::ExprKind::Len",
-    "tir::ExprKind::Chars",
-    "tir::ExprKind::Bytes",
-    "tir::ExprKind::Words",
-    "tir::ExprKind::FromChars",
-    "tir::ExprKind::Sum",
-    "tir::ExprKind::Contains",
     "tir::ExprKind::Is",
     "tir::ExprKind::Match",
     "tir::PatternKind::Wild",
@@ -113,15 +88,6 @@ const NOT_YET: [&str; 71] = [
     "tir::PatternKind::Or",
     "types::TypeKind::Class",
     "types::TypeKind::Enum",
-    "types::TypeKind::Array",
-    "tir::ExprKind::Len on String",
-    "tir::ExprKind::Len on Array",
-    "tir::ExprKind::Chars on String",
-    "tir::ExprKind::Bytes on String",
-    "tir::ExprKind::Words on String",
-    "tir::ExprKind::FromChars on Array",
-    "tir::ExprKind::Sum on Array",
-    "tir::ExprKind::Contains on Array",
 ];
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
@@ -149,13 +115,16 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 6] = [
+const REACH: [&str; 9] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
     "reach: a loop runs its body",
     "reach: a string literal holds an escape",
     "reach: an `if` statement jumps in every branch",
+    "reach: a `for` over an array runs its body",
+    "reach: a `while let` takes its `Some` branch",
+    "reach: an index is in bounds",
 ];
 
 /// Whether a program's text holds a form.
@@ -370,6 +339,8 @@ struct Walk {
     params: Vec<String>,
     /// The text of the program being walked.
     source: String,
+    /// The length of each array local whose `let` writes it as a literal or a fill.
+    lens: FxHashMap<String, i128>,
 }
 
 impl Walk {
@@ -382,6 +353,7 @@ impl Walk {
     fn program(&mut self, g: &Generated) {
         let (ast, tir) = checked(g);
         self.source.clone_from(&g.program);
+        self.lens.clear();
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -476,17 +448,51 @@ impl Walk {
 
     fn ast_block(&mut self, block: &ast::Block) {
         for (i, stmt) in block.stmts.iter().enumerate() {
+            let before = i.checked_sub(1).map(|at| &block.stmts[at]);
             if let ast::StmtKind::While { cond, body } = &stmt.kind {
-                let before = i.checked_sub(1).map(|at| &block.stmts[at]);
                 self.while_bound(before, cond, body);
+            }
+            if let ast::StmtKind::WhileLet { value, body, .. } = &stmt.kind {
+                self.while_let_bound(before, value, body);
             }
             self.ast_stmt(stmt);
         }
     }
 
+    /// Checks that a `while let` counts down as a `while` does, its value `(if cond { e } else
+    /// { None })`; the first run of `e` gives a `Some`, so a positive bound runs the body.
+    fn while_let_bound(
+        &mut self,
+        before: Option<&ast::Stmt>,
+        value: &ast::Expr,
+        body: &ast::Block,
+    ) {
+        if let ast::ExprKind::If {
+            cond,
+            else_block: Some(other),
+            ..
+        } = &value.kind
+            && let [none] = &other.stmts[..]
+            && matches!(&none.kind, ast::StmtKind::Expr(e) if matches!(e.kind, ast::ExprKind::NoneLit))
+        {
+            if self.while_bound(before, cond, body) > 0 {
+                self.mark("reach: a `while let` takes its `Some` branch");
+            }
+        } else {
+            self.unbounded
+                .push(format!("a `while let` at byte {}", value.span.start()));
+        }
+    }
+
     /// Checks that a `while` counts down (decision 5): `let mut c = n` before it, with `n` at most
-    /// `MAX_BOUND`, a condition that starts `c > 0`, and `c -= 1` first in its body.
-    fn while_bound(&mut self, before: Option<&ast::Stmt>, cond: &ast::Expr, body: &ast::Block) {
+    /// `MAX_BOUND`, a condition that starts `c > 0`, and `c -= 1` first in its body. Gives `n`,
+    /// 0 for a loop that does not count down.
+    fn while_bound(
+        &mut self,
+        before: Option<&ast::Stmt>,
+        cond: &ast::Expr,
+        body: &ast::Block,
+    ) -> i128 {
         let start = if let ast::ExprKind::Binary {
             op: ast::BinaryOp::And,
             lhs,
@@ -532,17 +538,23 @@ impl Walk {
                 if n > 0 {
                     self.mark("reach: a loop runs its body");
                 }
+                n
             }
-            _ => self
-                .unbounded
-                .push(format!("a `while` at byte {}", cond.span.start())),
+            _ => {
+                self.unbounded
+                    .push(format!("a `while` at byte {}", cond.span.start()));
+                0
+            }
         }
     }
 
     fn ast_stmt(&mut self, stmt: &ast::Stmt) {
         match &stmt.kind {
-            ast::StmtKind::Let { ty, init, .. } => {
+            ast::StmtKind::Let { ty, init, name, .. } => {
                 self.mark("ast::StmtKind::Let");
+                if let Some(len) = array_len(init) {
+                    self.lens.insert(name.name.as_str().to_string(), len);
+                }
                 if let Some(ty) = ty {
                     self.type_expr(ty);
                 }
@@ -568,6 +580,16 @@ impl Walk {
                 match source {
                     ast::ForSource::Array(array) => {
                         self.mark("ast::ForSource::Array");
+                        match array_len(array) {
+                            Some(runs) if runs <= i128::from(MAX_BOUND) => {
+                                if runs > 0 {
+                                    self.mark("reach: a `for` over an array runs its body");
+                                }
+                            }
+                            _ => self
+                                .unbounded
+                                .push(format!("a `for` at byte {}", array.span.start())),
+                        }
                         self.ast_expr(array);
                     }
                     ast::ForSource::Range {
@@ -772,6 +794,13 @@ impl Walk {
             }
             ast::ExprKind::Index { base, index } => {
                 self.mark("ast::ExprKind::Index");
+                let len =
+                    name(base).map_or_else(|| array_len(base), |name| self.lens.get(name).copied());
+                if let (Some(len), Some(at)) = (len, int(index))
+                    && (0..len).contains(&at)
+                {
+                    self.mark("reach: an index is in bounds");
+                }
                 self.ast_expr(base);
                 self.ast_expr(index);
             }
@@ -1236,6 +1265,17 @@ fn int(e: &ast::Expr) -> Option<i128> {
     }
 }
 
+/// The length of an array literal, or of a fill of a literal length.
+fn array_len(e: &ast::Expr) -> Option<i128> {
+    if let ast::ExprKind::ArrayLit(elements) = &e.kind {
+        i128::try_from(elements.len()).ok()
+    } else if let ast::ExprKind::ArrayFill { len, .. } = &e.kind {
+        int(len)
+    } else {
+        None
+    }
+}
+
 /// The name `e` is, if it is one.
 fn name(e: &ast::Expr) -> Option<&str> {
     if let ast::ExprKind::Name(name) = &e.kind {
@@ -1338,6 +1378,18 @@ fn every_short_input_checks_clean() {
     for b in 0..=u8::MAX {
         checked(&generate(&[b]));
     }
+}
+
+#[test]
+fn read_line_past_the_input_checks_clean() {
+    // A program that calls `read_line` in more places than its stdin has lines can read past the
+    // end, where `read_line` gives `None` (Review Focus 4), here one that keeps the optional
+    // rather than replacing a `None` with `??` at once. Some seed writes one, and it checks.
+    let past = seeds().map(|data| generate(&data)).find(|g| {
+        let calls = g.program.matches("read_line()").count();
+        calls > g.stdin.lines().count() && calls > g.program.matches("read_line() ??").count()
+    });
+    checked(&past.expect("some seed's program should read past its stdin"));
 }
 
 #[test]
@@ -1677,4 +1729,156 @@ fn rare_constant_forms_check_clean() {
 fn every_loop_is_bounded() {
     let unbounded = walk().unbounded;
     assert!(unbounded.is_empty(), "loops not bounded: {unbounded:?}");
+}
+
+/// What `expr` writes for `ty` within `max`, and the size it counts, over 4,096 short inputs.
+fn written(ty: &Ty, max: u64) -> impl Iterator<Item = (String, u64)> {
+    (0..4_096).map(move |mut state| {
+        let data: Vec<u8> = (0..4)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = Gen::new(&data);
+        let size = g.expr(ty, max).size;
+        (g.w.out.program, size)
+    })
+}
+
+/// The chars of a string literal at the start of `text` with no escape or interpolation, and
+/// the text after it.
+fn plain(text: &str) -> Option<(u64, &str)> {
+    let (literal, rest) = text.strip_prefix('"')?.split_once('"')?;
+    let chars = u64::try_from(literal.chars().count()).expect("the count should fit");
+    (!literal.contains(['\\', '{'])).then_some((chars, rest))
+}
+
+#[test]
+fn an_array_literal_counts_its_slots_and_elements() {
+    // `["ab", "c"]` is 2 slots and 3 chars: 5.
+    let mut seen = 0;
+    for (text, size) in written(&Ty::Array(Box::new(Ty::String)), 40) {
+        let mut rest = text.strip_prefix('[').unwrap_or("");
+        let mut parts = Vec::new();
+        while let Some((chars, after)) = plain(rest) {
+            parts.push(chars);
+            rest = after.strip_prefix(", ").unwrap_or(after);
+        }
+        if rest == "]" && parts.len() >= 2 && parts.iter().sum::<u64>() > 0 {
+            let len = u64::try_from(parts.len()).expect("the count should fit");
+            assert_eq!(size, len + parts.iter().sum::<u64>(), "{text}");
+            seen += 1;
+        }
+    }
+    assert!(
+        seen > 0,
+        "no input should fail to write a literal of plain strings"
+    );
+}
+
+#[test]
+fn a_fill_counts_each_copy() {
+    // `["ab"; 3]` is 3 slots of 2 chars each: 9.
+    let mut seen = 0;
+    for (text, size) in written(&Ty::Array(Box::new(Ty::String)), 100) {
+        let fill = text
+            .strip_prefix('[')
+            .and_then(plain)
+            .and_then(|(chars, rest)| {
+                let len = rest
+                    .strip_prefix("; ")?
+                    .strip_suffix(']')?
+                    .parse::<u64>()
+                    .ok()?;
+                Some((chars, len))
+            });
+        if let Some((chars, len)) = fill.filter(|&(chars, len)| chars > 0 && len >= 2) {
+            assert_eq!(size, len + len * chars, "{text}");
+            seen += 1;
+        }
+    }
+    assert!(
+        seen > 0,
+        "no input should fail to write a fill of a plain string"
+    );
+}
+
+#[test]
+fn a_split_counts_what_its_parts_can_take() {
+    // Of `n` chars, `chars` gives `n` chars, `bytes` up to `4 * n` bytes, `words` up to `n`
+    // chars in `n + 1` words at most.
+    for (element, method, size_of) in [
+        (Ty::Char, "chars", (|n| n) as fn(u64) -> u64),
+        (Ty::U8, "bytes", |n| 4 * n),
+        (Ty::String, "words", |n| n + 1),
+    ] {
+        let mut seen = 0;
+        for (text, size) in written(&Ty::Array(Box::new(element.clone())), 100) {
+            let suffix = format!(").{method}())");
+            let split = text.strip_prefix("((").and_then(plain);
+            if let Some((chars, rest)) = split.filter(|(chars, rest)| *chars > 0 && *rest == suffix)
+            {
+                assert_eq!(size, size_of(chars), "{text} {rest}");
+                seen += 1;
+            }
+        }
+        assert!(
+            seen > 0,
+            "no input should fail to write `{method}` of a plain string"
+        );
+    }
+}
+
+/// A `Gen` over `data` in `main`, holding `let mut s0: [string]` of `len` elements with `base`
+/// and `room`, inside a loop of `bound` runs if any.
+fn with_strings(data: &[u8], len: u64, base: u64, room: u64, bound: Option<u64>) -> Gen<'_> {
+    let mut g = with_string(data, base, room, bound);
+    let var = &mut g.scope.vars[0];
+    var.ty = Ty::Array(Box::new(Ty::String));
+    var.len = len;
+    var.size = super::expr::array_size(len, base) + room;
+    g
+}
+
+#[test]
+fn an_element_takes_at_most_its_base() {
+    // `s0` holds 3 strings of 2 chars at most: 9 in all, but `s0[i] = e` may write 2 chars only.
+    let mut seen = 0;
+    for mut state in 0..1_024 {
+        let data: Vec<u8> = (0..32)
+            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
+            .collect();
+        let mut g = with_strings(&data, 3, 2, 0, None);
+        g.stmts(false);
+        for line in g.w.out.program.lines() {
+            let assigned = ["s0[0] = ", "s0[1] = ", "s0[2] = "]
+                .into_iter()
+                .find_map(|prefix| line.trim_start().strip_prefix(prefix))
+                .and_then(plain);
+            if let Some((chars, _)) = assigned {
+                assert!(chars <= 2, "{line}");
+                seen += 1;
+            }
+        }
+    }
+    assert!(
+        seen > 0,
+        "no input should fail to assign a plain string to an element"
+    );
+}
+
+#[test]
+fn an_element_appends_another_only_within_the_room() {
+    // `s0[i] += (s0[j])` adds all an element can hold, its base and the room: with room 500 and
+    // no base, once fits ...
+    let appended = |bound| {
+        (0..=u8::MAX).any(|b| {
+            let data = [b; 16];
+            let mut g = with_strings(&data, 2, 0, 500, bound);
+            g.compound();
+            let text = &g.w.out.program;
+            text.starts_with("s0[") && text.contains("] += (s0[")
+        })
+    };
+    assert!(appended(None));
+    // ... and in a loop of 8 it does not: each run may add only 62.
+    assert!(!appended(Some(8)));
 }

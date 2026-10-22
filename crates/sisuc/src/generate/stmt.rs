@@ -1,7 +1,7 @@
 //! The statement rules. Each statement starts a line, spends fuel, and counts toward the cost of
 //! the body it is in (decision 5).
 
-use super::expr::Info;
+use super::expr::{Info, array_size};
 use super::scope::{Ty, Var};
 use super::{Gen, MAX_BOUND, MAX_LOOPS, MAX_SIZE};
 
@@ -26,10 +26,14 @@ enum Rule {
     Discard,
     Inexact,
     Assign,
+    /// `v[i] = e`.
+    Element,
     Compound,
     If,
     While,
+    WhileLet,
     For,
+    ForArray,
     Call,
 }
 
@@ -55,19 +59,22 @@ impl Gen<'_> {
 
     fn stmt(&mut self) {
         let mut rules = vec![Rule::Print, Rule::Let, Rule::Discard, Rule::Inexact];
-        if self.scope.vars.iter().any(|var| var.assignable) {
+        if self.scope.vars.iter().any(assignable) {
             rules.push(Rule::Assign);
         }
-        if self.scope.vars.iter().any(compoundable) {
+        if self.scope.vars.iter().any(has_elements) {
+            rules.push(Rule::Element);
+        }
+        if !self.compound_targets().is_empty() {
             rules.push(Rule::Compound);
         }
         if self.blocks < MAX_BLOCKS {
             rules.push(Rule::If);
             if self.cost.depth() < MAX_LOOPS {
-                rules.push(Rule::For);
+                rules.extend([Rule::For, Rule::ForArray]);
                 // A `while` is three statements: its counter, itself and the step.
                 if self.fuel >= 2 {
-                    rules.push(Rule::While);
+                    rules.extend([Rule::While, Rule::WhileLet]);
                 }
             }
         }
@@ -87,7 +94,7 @@ impl Gen<'_> {
             Rule::Let => self.let_stmt(),
             Rule::Discard => {
                 self.w.text("let _ = ");
-                let ty = self.value_type();
+                let ty = self.any_type();
                 self.synth = true;
                 self.expr(&ty, MAX_SIZE);
             }
@@ -106,7 +113,7 @@ impl Gen<'_> {
             }
             Rule::Assign => {
                 let vars: Vec<usize> = (0..self.scope.vars.len())
-                    .filter(|&v| self.scope.vars[v].assignable)
+                    .filter(|&v| assignable(&self.scope.vars[v]))
                     .collect();
                 let pick = self.pick(vars.len());
                 let var = &self.scope.vars[vars[pick]];
@@ -114,10 +121,26 @@ impl Gen<'_> {
                 self.w.text(&format!("{} = ", var.name));
                 self.expr(&ty, base);
             }
+            Rule::Element => {
+                let vars: Vec<usize> = (0..self.scope.vars.len())
+                    .filter(|&v| has_elements(&self.scope.vars[v]))
+                    .collect();
+                let pick = self.pick(vars.len());
+                let var = &self.scope.vars[vars[pick]];
+                let (name, len, base) = (var.name.clone(), var.len, var.base);
+                let Ty::Array(element) = var.ty.clone() else {
+                    unreachable!("only an array has elements")
+                };
+                let at = self.upto(len - 1);
+                self.w.text(&format!("{name}[{at}] = "));
+                self.expr(&element, base);
+            }
             Rule::Compound => self.compound(),
             Rule::If => self.if_stmt(false),
             Rule::While => self.while_stmt(),
+            Rule::WhileLet => self.while_let(),
             Rule::For => self.for_stmt(),
+            Rule::ForArray => self.for_array(),
             Rule::Call => {
                 self.call(&Ty::Unit, 0);
             }
@@ -125,42 +148,105 @@ impl Gen<'_> {
     }
 
     /// `let [mut] v[: T] = e`. A mutable `string` gets a size for its first value and plain
-    /// assignments, and room for what `+=` adds.
+    /// assignments, and room for what `+=` adds; a mutable optional of a size, a size.
     fn let_stmt(&mut self) {
-        const SIZES: [u64; 4] = [0, 16, 64, MAX_SIZE / 2];
-        let ty = self.value_type();
+        let ty = self.any_type();
         let mutable = self.pick(2) == 1;
         let name = self.scope.fresh("v");
         let keyword = if mutable { "let mut" } else { "let" };
         self.w.text(&format!("{keyword} {name}"));
-        if ty == Ty::U8 || self.pick(2) == 1 {
+        // A value of a type the checker infers needs one where it is not written.
+        if ty.inferred() || self.pick(2) == 1 {
             self.w.text(&format!(": {}", ty.name()));
         }
         self.w.text(" = ");
+        if mutable && let Ty::Array(element) = &ty {
+            let element = (**element).clone();
+            return self.array_let(name, ty, &element);
+        }
         let (base, room) = match (&ty, mutable) {
             (Ty::String, true) => (SIZES[self.pick(SIZES.len())], SIZES[self.pick(SIZES.len())]),
-            (Ty::String, false) => (MAX_SIZE, 0),
+            (_, true) if ty.sized() => (SIZES[self.pick(SIZES.len())], 0),
+            (_, false) if ty.sized() => (MAX_SIZE, 0),
             _ => (0, 0),
         };
         let init = self.expr(&ty, base);
         let base = if mutable { base } else { init.size };
-        let var = Var::new(name, ty, mutable, base, room, self.cost.depth());
-        debug_assert!(var.size <= MAX_SIZE, "a string may hold {} chars", var.size);
+        let mut var = Var::new(name, ty, mutable, base, room, self.cost.depth());
+        var.len = init.len;
+        debug_assert!(var.size <= MAX_SIZE, "a value may reach {}", var.size);
         self.scope.vars.push(var);
     }
 
+    /// The literal or fill of a mutable array of `len` elements, each at most `base` but for
+    /// what `+=` adds to them, all of them within the `string` elements' room.
+    fn array_let(&mut self, name: String, ty: Ty, element: &Ty) {
+        const BASES: [u64; 3] = [0, 16, 64];
+        let base = if element.sized() {
+            BASES[self.pick(BASES.len())]
+        } else {
+            0
+        };
+        let fill = self.pick(2) == 1;
+        let len = self.upto(if fill { MAX_BOUND } else { 4 });
+        let size = array_size(len, base);
+        let rooms: Vec<u64> = SIZES
+            .into_iter()
+            .filter(|room| *element == Ty::String && size + room <= MAX_SIZE || *room == 0)
+            .collect();
+        let room = rooms[self.pick(rooms.len())];
+        self.w.text("[");
+        if fill {
+            self.expr(element, base);
+            self.w.text(&format!("; {len}"));
+        } else {
+            for i in 0..len {
+                if i > 0 {
+                    self.w.text(", ");
+                }
+                self.expr(element, base);
+            }
+        }
+        self.w.text("]");
+        let mut var = Var::new(name, ty, true, base, room, self.cost.depth());
+        var.size = size + room;
+        var.len = len;
+        self.scope.vars.push(var);
+    }
+
+    /// The places a compound assignment may target: a local, `false`, or one of its elements,
+    /// `true`.
+    fn compound_targets(&self) -> Vec<(usize, bool)> {
+        let vars = &self.scope.vars;
+        (0..vars.len())
+            .filter_map(|v| {
+                let var = &vars[v];
+                match &var.ty {
+                    ty if !var.assignable || !compoundable(ty) => None,
+                    Ty::Array(_) if var.len == 0 => None,
+                    Ty::Array(_) => Some((v, true)),
+                    _ => Some((v, false)),
+                }
+            })
+            .collect()
+    }
+
     /// `v op= e` on a number, or `v += e` on a `string`, whose room is what each run of it,
-    /// in every loop since `v`'s declaration, takes.
+    /// in every loop since `v`'s declaration, takes; or the same on an element of an array.
     pub(crate) fn compound(&mut self) {
         const OPS: [&str; 5] = [" += ", " -= ", " *= ", " /= ", " %= "];
-        let vars: Vec<usize> = (0..self.scope.vars.len())
-            .filter(|&v| compoundable(&self.scope.vars[v]))
-            .collect();
-        let v = vars[self.pick(vars.len())];
-        let (name, ty, loops) = {
+        let targets = self.compound_targets();
+        let (v, element) = targets[self.pick(targets.len())];
+        let (mut name, mut ty, loops, len) = {
             let var = &self.scope.vars[v];
-            (var.name.clone(), var.ty.clone(), var.loops)
+            (var.name.clone(), var.ty.clone(), var.loops, var.len)
         };
+        if element {
+            name = format!("{name}[{}]", self.upto(len - 1));
+            if let Ty::Array(inner) = ty {
+                ty = *inner;
+            }
+        }
         if ty == Ty::String {
             let times = self.cost.times_since(loops);
             self.w.text(&format!("{name} += "));
@@ -190,10 +276,13 @@ impl Gen<'_> {
             }
         };
         self.w.text("if ");
-        self.expr(&Ty::Bool, 0);
+        let (_, binding) = self.condition();
         self.conditionally(|g| {
             g.w.text(" ");
+            let vars = g.scope.vars.len();
+            g.scope.vars.extend(binding);
             branch(g);
+            g.scope.vars.truncate(vars);
             while g.pick(3) == 2 && g.spend(1) {
                 g.w.text(" else if ");
                 g.expr(&Ty::Bool, 0);
@@ -237,6 +326,44 @@ impl Gen<'_> {
         });
     }
 
+    /// `let mut c = n` and `while let x = (if c > 0 { e } else { None }) { c -= 1 ... }`:
+    /// `while_stmt`'s bounds, and `x` bound to each `e`.
+    fn while_let(&mut self) {
+        self.spend(2);
+        let bound = self.upto(MAX_BOUND);
+        let counter = self.scope.fresh("v");
+        self.w.text(&format!("let mut {counter} = {bound}"));
+        self.w.line();
+        self.cost.statement();
+        let payload = match self.any_type() {
+            Ty::Optional(payload) => *payload,
+            ty => ty,
+        };
+        let name = if self.pick(4) == 0 {
+            None
+        } else {
+            Some(self.scope.fresh("v"))
+        };
+        let pattern = name.as_deref().unwrap_or("_");
+        self.w
+            .text(&format!("while let {pattern} = (if {counter} > 0 {{ "));
+        let var = Var::new(counter.clone(), Ty::I64, false, 0, 0, self.cost.depth());
+        self.scope.vars.push(var);
+        self.conditionally(|g| {
+            g.cost.enter_condition(bound);
+            // The value has no expected type, and an `if` takes the type of its first branch.
+            g.synth = true;
+            let value = g.expr(&payload, MAX_SIZE);
+            g.cost.exit_loop();
+            g.w.text(" } else { None }) ");
+            let loops = g.cost.depth() + 1;
+            let binding = name.map(|name| Var::new(name, payload, false, value.size, 0, loops));
+            g.cost.enter_loop(bound);
+            g.loop_body(&format!("{counter} -= 1"), binding);
+            g.cost.exit_loop();
+        });
+    }
+
     /// `for v in a..b` or `for v in a..=b`, with literal ends at most `MAX_BOUND` apart, now
     /// and then at an end of `i64`'s range.
     fn for_stmt(&mut self) {
@@ -258,22 +385,57 @@ impl Gen<'_> {
         let dots = if inclusive { "..=" } else { ".." };
         self.w
             .text(&format!("for {name} in {start}{dots}{} ", start + span));
+        let var = Var::new(name, Ty::I64, false, 0, 0, self.cost.depth() + 1);
         self.conditionally(|g| {
             g.cost.enter_loop(count);
-            g.loop_body("", Some(name));
+            g.loop_body("", Some(var));
             g.cost.exit_loop();
         });
     }
 
-    /// A loop's body: `first`, if any, then statements, which may `break` and `continue`.
-    fn loop_body(&mut self, first: &str, name: Option<String>) {
+    /// `for v in [a, b, ...]` or `for v in [e; n]`, of at most `MAX_BOUND` elements.
+    fn for_array(&mut self) {
+        let element = self.any_type();
+        let name = self.scope.fresh("v");
+        self.w.text(&format!("for {name} in ["));
+        // The source has no expected type.
+        let (count, size) = if self.pick(2) == 0 {
+            let most = (MAX_SIZE / (1 + element.least())).min(MAX_BOUND);
+            let count = 1 + self.upto(most - 1);
+            let each = (MAX_SIZE - count) / count;
+            let mut size = 0;
+            for i in 0..count {
+                if i > 0 {
+                    self.w.text(", ");
+                }
+                self.synth = true;
+                size = size.max(self.expr(&element, each).size);
+            }
+            (count, size)
+        } else {
+            let count = self.upto(MAX_BOUND);
+            self.synth = true;
+            let each = (MAX_SIZE - count).checked_div(count).unwrap_or(MAX_SIZE);
+            let size = self.expr(&element, each).size;
+            self.w.text(&format!("; {count}"));
+            (count, size)
+        };
+        self.w.text("] ");
+        let var = Var::new(name, element, false, size, 0, self.cost.depth() + 1);
+        self.conditionally(|g| {
+            g.cost.enter_loop(count);
+            g.loop_body("", Some(var));
+            g.cost.exit_loop();
+        });
+    }
+
+    /// A loop's body: `first`, if any, then statements, which may `break` and `continue`, with
+    /// `var` in scope.
+    fn loop_body(&mut self, first: &str, var: Option<Var>) {
         let jumps = self.jumps;
         self.jumps.in_loop = true;
         self.open_block();
-        if let Some(name) = name {
-            let var = Var::new(name, Ty::I64, false, 0, 0, self.cost.depth());
-            self.scope.vars.push(var);
-        }
+        self.scope.vars.extend(var);
         if !first.is_empty() {
             self.w.line();
             self.cost.statement();
@@ -367,7 +529,24 @@ impl Gen<'_> {
     }
 }
 
-/// Whether `var` can take a compound assignment: a number, or a `string` with room.
-fn compoundable(var: &Var) -> bool {
-    var.assignable && matches!(var.ty, Ty::I64 | Ty::U8 | Ty::F64 | Ty::String)
+/// The sizes a mutable `string` or optional may have, and the room of a `string`.
+const SIZES: [u64; 4] = [0, 16, 64, MAX_SIZE / 2];
+
+/// Whether `var` can take a plain assignment: an array's elements take them instead.
+fn assignable(var: &Var) -> bool {
+    var.assignable && !matches!(var.ty, Ty::Array(_))
+}
+
+/// Whether `var` is a mutable array with an element to assign to.
+fn has_elements(var: &Var) -> bool {
+    var.assignable && matches!(var.ty, Ty::Array(_)) && var.len > 0
+}
+
+/// Whether a compound assignment can target a value of `ty`, or the elements of an array of
+/// it: a number, or a `string`.
+fn compoundable(ty: &Ty) -> bool {
+    match ty {
+        Ty::Array(element) => matches!(**element, Ty::I64 | Ty::U8 | Ty::F64 | Ty::String),
+        _ => matches!(ty, Ty::I64 | Ty::U8 | Ty::F64 | Ty::String),
+    }
 }
