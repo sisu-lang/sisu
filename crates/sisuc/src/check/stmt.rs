@@ -929,6 +929,7 @@ impl Checker<'_> {
                         break;
                     }
                     frame.broken |= keyword == "break";
+                    frame.crossed |= keyword == "break" && depth > 0;
                     frame.label_used |= label.is_some();
                     return Ok((at, depth));
                 }
@@ -980,7 +981,7 @@ impl Checker<'_> {
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
             if let (true, Some((ty, _))) = (frame.widened, frame.first) {
-                checked.each_expr_mut(&mut |e| wrap_breaks(e, 0, ty));
+                checked.each_expr_mut(&mut |e| wrap_breaks(e, 0, ty, frame.crossed));
             }
         }
         if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
@@ -1296,10 +1297,19 @@ struct ForHeader {
 }
 
 /// Wraps into `ty` each value of another type that a `break` in `e` gives the loop `depth` loops
-/// out from `e`: the `T` values of a loop that a `T?` value widened.
-fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type) {
-    let inner = depth + usize::from(matches!(e.kind, ExprKind::Loop(_)));
-    e.each_child_mut(&mut |child| wrap_breaks(child, inner, ty));
+/// out from `e`: the `T` values of a loop that a `T?` value widened. It enters nested loops only
+/// when `crossed`: when a `break` in one targets that loop.
+fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
+    let nested = matches!(e.kind, ExprKind::Loop(_));
+    if nested && !crossed {
+        return;
+    }
+    #[cfg(test)]
+    if nested {
+        super::WRAP_LOOPS.set(super::WRAP_LOOPS.get() + 1);
+    }
+    let inner = depth + usize::from(nested);
+    e.each_child_mut(&mut |child| wrap_breaks(child, inner, ty, crossed));
     if let ExprKind::Break {
         depth: target,
         value: Some(value),

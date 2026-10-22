@@ -871,6 +871,22 @@ fn optional_value_after_payload_widens_the_loop() {
     assert_eq!(loop_type(src), Type::optional(Type::I64));
 }
 
+/// The walk that wraps a widened loop's values enters a nested loop only when a `break` in
+/// one targets the widened loop: `break loop { ... }` at every level stays linear.
+#[test]
+fn widening_walk_enters_only_crossed_loops() {
+    let entered = |label: &str, inner: &str| {
+        let src = format!(
+            "fn f(c: bool) -> i64? {{\n    {label}loop {{\n        if c {{ break 1 }}\n        break loop {{\n            {inner}\n            break None\n        }}\n    }}\n}}\nfn main() {{}}"
+        );
+        WRAP_LOOPS.set(0);
+        lowered(&src);
+        WRAP_LOOPS.get()
+    };
+    assert_eq!(entered("", "if c { break 2 }"), 0);
+    assert_eq!(entered("outer: ", "if c { break outer None }"), 1);
+}
+
 /// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
 #[test]
 fn loop_after_coalesce_is_its_values_type() {

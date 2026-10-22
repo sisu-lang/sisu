@@ -187,6 +187,8 @@ struct LoopFrame {
     first: Option<(Type, Span)>,
     /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
     widened: bool,
+    /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
+    crossed: bool,
     /// The first bare `break`.
     bare: Option<Span>,
     /// The first `break` whose value's type is not `never`.
@@ -215,6 +217,7 @@ impl LoopFrame {
             valued: None,
             failed: false,
             widened: false,
+            crossed: false,
         }
     }
 
@@ -252,6 +255,8 @@ struct Source<'src> {
 thread_local! {
     /// How many class fields the class-cycle search has read on this thread.
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many nested loops the walk that wraps a widened loop's values has entered.
+    pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
