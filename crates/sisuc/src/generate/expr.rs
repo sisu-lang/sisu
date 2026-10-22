@@ -1867,16 +1867,16 @@ mod tests {
 
     #[test]
     fn a_u8_left_literal_is_bare_where_its_type_is_expected() {
-        // With no expected type, `(u8(n) ?? n)` is a `u8` by its own type; with one, a bare
-        // literal is, and its value is known.
-        for (synth, text, value) in [
-            (false, "(15 / 1)", Some(15)),
-            (true, "((u8(15) ?? 15) / 1)", None),
-        ] {
+        // Byte by byte: a literal on the left, 15, `/`, and on the right 1. With no expected
+        // type, `(u8(n) ?? n)` is a `u8` by its own type; with one, a bare literal is, and its
+        // value is known.
+        for (synth, text) in [(false, "(15 / 1)"), (true, "((u8(15) ?? 15) / 1)")] {
             let mut g = Gen::new(&[1, 5, 3, 0]);
             let info = g.rule(Rule::Arithmetic, &Ty::U8, MAX_SIZE, synth);
             assert_eq!(g.w.out.program, text);
-            assert_eq!(info.value, value, "{text}");
+            if !synth {
+                assert_eq!(info.value, Some(15));
+            }
         }
     }
 

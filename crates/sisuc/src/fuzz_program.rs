@@ -562,15 +562,15 @@ mod tests {
     }
 
     /// `f` on a thread with a `STACK_SIZE` stack, as `program`'s contract asks.
-    fn on_stack(f: impl FnOnce() + Send) {
+    fn on_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
         thread::scope(|scope| {
             thread::Builder::new()
                 .stack_size(crate::STACK_SIZE)
                 .spawn_scoped(scope, f)
                 .expect("the OS should start a thread with a 64 MiB stack")
                 .join()
-                .expect("the test's thread should not panic");
-        });
+                .expect("the test's thread should not panic")
+        })
     }
 
     /// The three builds of `source`, each run with `stdin` for at most `limit`.
@@ -673,7 +673,10 @@ mod tests {
     fn a_timed_out_child_is_reaped() {
         let scratch = Scratch::new();
         let exe = scratch.0.join("hang.sh");
-        fs::write(&exe, "#!/bin/sh\necho $$\nexec sleep 10\n").expect("the test should write it");
+        // Left alive, the script ends by writing `done`: a child that was not killed shows.
+        let done = scratch.0.join("done");
+        let script = format!("#!/bin/sh\necho $$\nsleep 10\ntouch '{}'\n", done.display());
+        fs::write(&exe, script).expect("the test should write it");
         fs::set_permissions(&exe, fs::Permissions::from_mode(0o700))
             .expect("the test should make the script executable");
         let stdin = scratch.0.join("stdin.txt");
@@ -695,6 +698,7 @@ mod tests {
             .status()
             .expect("sh should run");
         assert!(!alive.success(), "process {pid} should be gone");
+        assert!(!done.exists(), "process {pid} should have been killed");
     }
 
     /// A run that exits 0 and prints `1`.
@@ -970,19 +974,14 @@ mod tests {
 
     /// `program` end to end, all six builds and properties 1 to 5: it passes and leaves no
     /// directory behind. Seed 44 is the smallest seed with rewrites, a value site and a panic
-    /// site, so the panic marker `judge_known` reads must be the one `item.rs` writes.
+    /// site.
     #[test]
     fn program_passes_and_cleans_up() {
         let tmp = Scratch::new();
         let data = seed(44);
         let g = generate(&data);
-        let panics = g
-            .known
-            .iter()
-            .filter(|known| matches!(known.answer, Answer::Panic(_)))
-            .count();
         assert!(
-            g.rewritten != g.program && panics == 1 && g.known.len() > panics,
+            g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
             "seed 44 should have rewrites, a value site and a panic site"
         );
         on_stack(|| program_in(&data, &runtime(), &tmp.0));
@@ -990,46 +989,40 @@ mod tests {
             .expect("the test's directory should be readable")
             .count();
         assert_eq!(left, 0, "`program` should remove its directory");
-        // `judge_known` takes a run without the marker line for an earlier panic; the O0 run
-        // ends with it, so property 5 judged this panic site.
+    }
+
+    /// Seed 44's one panic site is the last thing its O0 run prints, as the marker `item.rs`
+    /// writes. `judge_known` takes a run without that line for an earlier panic, so with it
+    /// property 5 judged this panic site.
+    #[test]
+    fn seed_44_reaches_its_panic_marker() {
+        let g = generate(&seed(44));
+        assert_eq!(panic_sites(&g), 1, "seed 44 should have one panic site");
         let marker = g
             .known
             .iter()
             .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
             .expect("seed 44 should have a panic site");
-        on_stack(|| {
-            let program = checked("program", &g.program).expect("a seed should check clean");
-            let stdin = tmp.0.join("stdin.txt");
-            fs::write(&stdin, &g.stdin).expect("the test should write the stdin");
-            let exe = tmp.0.join("program");
-            build(
-                "program",
-                &g.program,
-                &program,
-                &BUILDS[0].1,
-                &runtime(),
-                &exe,
-            );
-            let Run { exit, stdout, .. } = run(&exe, &stdin, &tmp.0, LIMIT);
-            assert_eq!(exit, Exit::Code(101), "{}", g.program);
-            assert_eq!(
-                String::from_utf8_lossy(&stdout).lines().last(),
-                Some(format!("@{marker} panics").as_str()),
-                "{}",
-                g.program
-            );
-        });
+        let Run { exit, stdout, .. } = o0_run(&g);
+        assert_eq!(exit, Exit::Code(101), "{}", g.program);
+        assert_eq!(
+            String::from_utf8_lossy(&stdout).lines().last(),
+            Some(format!("@{marker} panics").as_str()),
+            "{}",
+            g.program
+        );
     }
 
-    /// Loops nested as deep as decision 5 lets them, each run to its bound, finish at O0 within
-    /// the limit, so a bound written past what the cost counts shows as `TimedOut`. No
-    /// assertion on time.
-    #[test]
-    fn a_budget_program_is_fast() {
-        // Byte by byte: no types, no items, a statement of `main`, a `while` of bound 8, twice
-        // more inside it, and in the innermost a `print` of a literal; then every choice is the
-        // first.
-        let g = generate(&[0, 0, 1, 7, 8, 0, 1, 7, 8, 0, 1, 7, 8, 0, 1, 0, 0, 0, 0]);
+    /// How many of `g`'s known answers are panics.
+    fn panic_sites(g: &Generated) -> usize {
+        g.known
+            .iter()
+            .filter(|known| matches!(known.answer, Answer::Panic(_)))
+            .count()
+    }
+
+    /// `g`'s program checked, built at O0 and run on its stdin.
+    fn o0_run(g: &Generated) -> Run {
         on_stack(|| {
             let scratch = Scratch::new();
             let program = checked("program", &g.program).expect("a seed should check clean");
@@ -1044,11 +1037,23 @@ mod tests {
                 &runtime(),
                 &exe,
             );
-            let Run { exit, stdout, .. } = run(&exe, &stdin, &scratch.0, LIMIT);
-            assert_eq!(exit, Exit::Code(0), "{}", g.program);
-            // One line from each pass of the innermost loop: every loop ran to its bound.
-            assert_eq!(String::from_utf8_lossy(&stdout).lines().count(), 8 * 8 * 8);
-        });
+            run(&exe, &stdin, &scratch.0, LIMIT)
+        })
+    }
+
+    /// Loops nested as deep as decision 5 lets them, each run to its bound, finish at O0 within
+    /// the limit, so a bound written past what the cost counts shows as `TimedOut`. No
+    /// assertion on time.
+    #[test]
+    fn a_budget_program_is_fast() {
+        // Byte by byte: no types, no items, a statement of `main`, a `while` of bound 8, twice
+        // more inside it, and in the innermost a `print` of a literal; then every choice is the
+        // first.
+        let g = generate(&[0, 0, 1, 7, 8, 0, 1, 7, 8, 0, 1, 7, 8, 0, 1, 0, 0, 0, 0]);
+        let Run { exit, stdout, .. } = o0_run(&g);
+        assert_eq!(exit, Exit::Code(0), "{}", g.program);
+        // One line from each pass of the innermost loop: every loop ran to its bound.
+        assert_eq!(String::from_utf8_lossy(&stdout).lines().count(), 8 * 8 * 8);
     }
 
     /// Set in a child process that one of the tests below starts from this binary.
