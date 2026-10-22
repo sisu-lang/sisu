@@ -80,8 +80,8 @@ $ timeout 120 $D/p.asan
 
 The "Redundant instrumentation detected" warning from `clang` is harmless.
 The runtime itself is not instrumented, and in the system archive its
-`sisu_free` frees through plain `free()`, so neither ASan nor Valgrind sees a free with the wrong size
-or alignment. The layout shim does:
+`sisu_free` frees through plain `free()`, so neither ASan nor Valgrind sees a
+free with the wrong size or alignment. The layout shim does:
 
 ```console
 $ timeout 20 $S build --emit ir-raw $D/p.sisu > $D/p.ll

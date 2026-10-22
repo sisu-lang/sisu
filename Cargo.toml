@@ -44,8 +44,9 @@ undocumented_unsafe_blocks = "warn"
 semicolon_if_nothing_returned = "warn"
 
 [profile.dev]
-# The runtime is a staticlib called from generated code over the C ABI; a
-# Rust panic must never unwind into it. Tests ignore this setting.
+# The runtime is an rlib that the two staticlib crates link, and generated
+# code calls it over the C ABI; a Rust panic must never unwind into it. Tests
+# ignore this setting.
 panic = "abort"
 
 [profile.release]

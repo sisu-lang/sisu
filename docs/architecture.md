@@ -159,9 +159,11 @@ every value the program reads without the heap block, such as an array's length
 or an element of a fill. An allocation larger than the size checks allow
 (about 2^63 bytes) aborts with exit code 134 when its allocator call remains;
 at `-O0` every such allocation aborts. On Linux, a smaller request that the
-machine cannot back succeeds in a default build, because mimalloc maps memory
-without reserving it, and the kernel's out-of-memory killer ends the program
-with 137 once it touches the memory
+machine cannot back can succeed in a default build, because mimalloc maps
+memory without reserving it and the kernel overcommits; the program may then
+end with 137, from the out-of-memory killer, once it touches memory the
+machine cannot back. An allocation can still fail at once with 134, when the
+kernel refuses a request far beyond RAM plus swap
 ([ADR 0031](adr/0031-compiled-programs-allocate-with-mimalloc.md)).
 
 `codegen/layout.rs` holds how a value sits in memory: the LLVM type of each

@@ -25,7 +25,7 @@ setup: ## Once per clone: LLVM 23, the pre-commit hook, cargo-mutants, cargo-llv
 audit-setup: ## For the audit-sisu skill: add opt and clang, with the ASan runtime, to .llvm/23
 	scripts/install-llvm.sh --audit
 
-build: ## Build sisu and the runtime library
+build: ## Build sisu and the two runtime archives
 	cargo build --workspace
 
 test: ## Run every test with nextest, whose setup script builds the runtime
