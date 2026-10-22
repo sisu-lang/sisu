@@ -522,9 +522,13 @@ impl Type {
 /// names only, so a type argument an enum never holds inline (unused, or only in an array or a
 /// class) still counts: with `enum Two<T, U> { Both(T, T) }`,
 /// `Wrap2<T>.W: Two<T, Wrap2<T>>` is `Own`, and `G<i64>` in `enum G<T> { P(Wrap2<G<T>>) }`
-/// boxes `Wrap2<G<i64>>.W` beside `G<i64>.P`, which alone would break the cycle. Every member
-/// of a component with a box is on that cycle, and counted, though a member may hold its links
-/// inline.
+/// boxes `Wrap2<G<i64>>.W` beside `G<i64>.P`, which alone would break the cycle. And a `Late`
+/// declaring field that names its cycle only through closed names can lose its box to an
+/// `Open` field inside the generic type: with `enum Wrap8<T> { W(P2<T, Y8<T>>) N }` and
+/// `enum Y8<T> { V(P2<T, Wrap8<i64>>) N }`, `G<T>.P: P2<T, Wrap8<G<i64>>>` is `Late`, so the
+/// `Open` pass boxes `Wrap8<G<i64>>.W` and leaves `G<i64>.P` inline. Each of these places a box
+/// where it is not needed, and never leaves a cycle unboxed. Every member of a component with
+/// a box is on that cycle, and counted, though a member may hold its links inline.
 pub(crate) fn layout_enums(enums: &mut [Enum]) {
     // The holds-inline graph over the fields `keep` picks.
     let held = |enums: &[Enum], keep: fn(&Payload) -> bool| -> Vec<Vec<usize>> {
