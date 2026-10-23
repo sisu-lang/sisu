@@ -17,3 +17,7 @@ description = "The built-in types, optionals, never and the conversions between 
 [[page]]
 file = "operators"
 description = "Each operator, its precedence, comparison chains, overflow and division by zero."
+
+[[page]]
+file = "expressions"
+description = "Blocks, if, match and loop as expressions, calls, fields, indexes and the order of evaluation."
