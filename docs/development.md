@@ -604,8 +604,10 @@ What the test does depends on the kind of example:
   example does not compile yet.
 - A `no-run` example: the test builds the example and does not run it.
 - All other examples: the test builds and runs the example and compares its
-  output with the page. When the example has warning markers, the test also
-  compares the warnings with them.
+  output with the page.
+
+Each warning from an example that builds must have a warning marker on its
+line.
 
 `make test` runs these tests.
 

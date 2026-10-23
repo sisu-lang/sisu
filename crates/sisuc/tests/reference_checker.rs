@@ -607,10 +607,12 @@ fn malformed_fences_should_each_be_a_fault() {
 
 /// GIVEN pages whose `sisu` fence on line 3 has `\\` or `&` in its info string, which Markdown
 /// would decode
-/// AND a page whose `outp&#117;t` fence on line 6, which Markdown decodes to `output`, follows an
-/// example
+/// AND a page with a `stderr&amp;` fence on line 3
+/// AND a page with a valid example on line 3, then an example whose `outp&#117;t` fence on
+/// line 12, which Markdown decodes to `output`, follows it
 /// WHEN the checker checks each page
-/// THEN each fails on the line of that fence and says that the info string cannot hold them
+/// THEN each fails on the line of that fence and shows the info string as the page has it
+/// AND the valid example stays and the example before the `outp&#117;t` fence is dropped
 #[test]
 fn escape_in_info_string_should_be_a_fault() {
     let mut pages: Vec<_> = [
@@ -628,8 +630,29 @@ fn escape_in_info_string_should_be_a_fault() {
     })
     .into();
     pages.push((
-        "# Page\n\n```sisu\nfn main() {}\n```\n```outp&#117;t\n```\n".to_string(),
-        6,
+        "# Page\n\n```stderr&amp;\n```\n".to_string(),
+        3,
+        "the fence `stderr&amp;` is not one of `sisu ...`, `output`, `input`, `stderr`, `sh` and \
+         `text`",
+    ));
+    let companion = "\
+# Page
+
+```sisu
+fn main() {}
+```
+
+Text.
+
+```sisu
+fn main() {}
+```
+```outp&#117;t
+```
+";
+    pages.push((
+        companion.to_string(),
+        12,
         "a companion block's info string cannot hold `\\` or `&`",
     ));
     for (page, line, message) in pages {
@@ -641,6 +664,12 @@ fn escape_in_info_string_should_be_a_fault() {
             .collect();
         assert_eq!(lines, [(line, message)], "{page}");
     }
+    let kept: Vec<_> = read_page(companion)
+        .examples
+        .iter()
+        .map(|example| example.line)
+        .collect();
+    assert_eq!(kept, [3]);
 }
 
 /// GIVEN a `sisu check` of a pending example that cannot read its file and exits 1

@@ -800,6 +800,13 @@ class Build(unittest.TestCase):
         with self.assertRaisesRegex(build.BuildError, r'^docs/reference/bad\.md: .*heading'):
             build.reference_pages(entries)
 
+    def test_anchors_should_read_each_line_once(self):
+        # An unclosed fence, then many lines that look like fences but do not close it.
+        text = '# T\n\n' + '`' * 2000 + '\n' + '``` x\n' * 2000
+        step = self.enterContext(mock.patch.object(build.check_links, 'fence_after', wraps=build.check_links.fence_after))
+        self.assertEqual(list(build.check_links.anchors(temp_file(self, text))), ['t'])
+        self.assertEqual(step.call_count, len(text.split('\n')))
+
     def test_markers_should_split_lines_as_the_reference_test_does(self):
         # Rust's str::lines splits only at a newline and drops a carriage return before it.
         self.assertEqual(build.markers('    print("a // error[E0008]\u2028b")\n'), [])

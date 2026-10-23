@@ -222,8 +222,10 @@ impl Reader {
                         None
                     }
                     _ => Some(format!(
-                        "the fence `{info}` is not one of `sisu ...`, `output`, `input`, \
-                         `stderr`, `sh` and `text`"
+                        "the fence `{}` is not one of `sisu ...`, `output`, `input`, \
+                         `stderr`, `sh` and `text`",
+                        // As the page has it: `info` is decoded.
+                        fence_line.trim_start_matches('`').trim()
                     )),
                 }
             }
@@ -529,14 +531,14 @@ fn diagnostics(example: &Example, sisu: &Path, dir: &Path, error: bool) -> Resul
         .expect("sisu should start");
     let json = String::from_utf8_lossy(&out.stderr);
     let mut found: Vec<(&str, u64)> = Vec::new();
+    // A panic's text can follow an empty line, so the error shows all of standard error.
     let records = json
         .lines()
-        .map(|line| {
-            serde_json::from_str(line).map_err(|_| {
-                format!("`sisu check --format json` wrote a line that is not JSON: {line}")
-            })
-        })
-        .collect::<Result<Vec<Value>, String>>()?;
+        .map(serde_json::from_str)
+        .collect::<Result<Vec<Value>, _>>()
+        .map_err(|_| {
+            format!("`sisu check --format json` wrote a line that is not JSON:\n{json}")
+        })?;
     for record in &records {
         if record["kind"] == "diagnostic" {
             found.push((
@@ -581,4 +583,41 @@ fn diagnostics(example: &Example, sisu: &Path, dir: &Path, error: bool) -> Resul
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    // The imports are in the test: the `reference` binary has no test harness, so it drops the
+    // test and would find them unused.
+    /// GIVEN a fake `sisu` that writes a JSON line, an empty line and a panic text to standard
+    /// error and exits 101
+    /// WHEN the checker compares an example's diagnostics with its markers
+    /// THEN the check fails, and its error holds the panic text
+    #[test]
+    fn diagnostics_should_show_all_of_standard_error_when_a_line_is_not_json() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::Path;
+
+        use super::{diagnostics, read_page};
+        use crate::support;
+
+        let dir = support::case_dir(Path::new("reference_check/diagnostics_panic"));
+        let sisu = dir.join("sisu");
+        let script = "#!/bin/sh\n\
+                      echo '{\"kind\":\"summary\"}' >&2\n\
+                      echo >&2\n\
+                      echo \"thread 'main' panicked at src/check.rs:1:1\" >&2\n\
+                      exit 101\n";
+        fs::write(&sisu, script).expect("the case directory should be writable");
+        fs::set_permissions(&sisu, fs::Permissions::from_mode(0o755))
+            .expect("the fake sisu should become executable");
+        let page = read_page("# Page\n\n```sisu\nfn main() {}\n```\n");
+        let failure =
+            diagnostics(&page.examples[0], &sisu, &dir, false).expect_err("the check should fail");
+        assert!(
+            failure.contains("thread 'main' panicked at src/check.rs:1:1"),
+            "{failure}"
+        );
+    }
 }

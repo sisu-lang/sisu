@@ -40,18 +40,24 @@ def in_repo(path):
     return path.rstrip('/') in TRACKED or git('check-ignore', '-q', path).returncode == 0
 
 
+def fence_after(line, fence):
+    """The fence that is open after `line`, when `fence` is open before it (None: no fence). A fence
+    closes only on a line of its character, at least as long, with only spaces or tabs after it,
+    so a ```` fence can show a ``` one."""
+    run = FENCE.match(line)
+    if fence is None:
+        return run and run[0]
+    closes = run and run[0][0] == fence[0] and len(run[0]) >= len(fence) and not line[run.end():].strip(' \t')
+    return None if closes else fence
+
+
 def prose(path):
-    """The file's text with fenced code blocks removed. A fence closes only on a line of its
-    character, at least as long, with only spaces after it, so a ```` fence can show a ``` one."""
+    """The file's text with fenced code blocks removed, each line read once."""
     kept, fence = [], None
     for line in path.read_text().split('\n'):
-        run = FENCE.match(line)
-        if fence is None and run:
-            fence = run[0]
-        elif fence is None:
+        before, fence = fence, fence_after(line, fence)
+        if before is None and fence is None:
             kept.append(line)
-        elif run and run[0][0] == fence[0] and len(run[0]) >= len(fence) and not line[run.end():].strip(' \t'):
-            fence = None
     return '\n'.join(kept)
 
 
