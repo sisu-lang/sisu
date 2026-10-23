@@ -971,16 +971,16 @@ mod tests {
     }
 
     /// `program` end to end, all six builds and properties 1 to 5: it passes and leaves no
-    /// directory behind. Seed 179 is the smallest seed with rewrites, a value site and a panic
-    /// site that its run reaches.
+    /// directory behind. Of the seeds under 4000 with rewrites, a value site and a panic site
+    /// that its run reaches, seed 2978 has the shortest program, so its builds are quick.
     #[test]
     fn program_passes_and_cleans_up() {
         let tmp = Scratch::new();
-        let data = seed(179);
+        let data = seed(2978);
         let g = generate(&data);
         assert!(
             g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
-            "seed 179 should have rewrites, a value site and a panic site"
+            "seed 2978 should have rewrites, a value site and a panic site"
         );
         on_stack(|| program_in(&data, &runtime(), &tmp.0));
         let left = fs::read_dir(&tmp.0)
@@ -989,18 +989,18 @@ mod tests {
         assert_eq!(left, 0, "`program` should remove its directory");
     }
 
-    /// Seed 179's one panic site is the last thing its O0 run prints, as the marker `item.rs`
+    /// Seed 2978's one panic site is the last thing its O0 run prints, as the marker `item.rs`
     /// writes. `judge_known` takes a run without that line for an earlier panic, so with it
     /// property 5 judged this panic site.
     #[test]
-    fn seed_179_reaches_its_panic_marker() {
-        let g = generate(&seed(179));
-        assert_eq!(panic_sites(&g), 1, "seed 179 should have one panic site");
+    fn seed_2978_reaches_its_panic_marker() {
+        let g = generate(&seed(2978));
+        assert_eq!(panic_sites(&g), 1, "seed 2978 should have one panic site");
         let marker = g
             .known
             .iter()
             .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
-            .expect("seed 179 should have a panic site");
+            .expect("seed 2978 should have a panic site");
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(101), "{}", g.program);
         assert_eq!(
