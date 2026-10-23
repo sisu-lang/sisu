@@ -33,6 +33,28 @@ pub(super) struct Use {
     at: Span,
 }
 
+impl Owner {
+    /// The owner's index among the owners: its `FuncId`, or for a constant, the number of
+    /// functions plus its order.
+    fn index(self, functions: usize) -> usize {
+        match self {
+            Owner::Func(f) => f.0,
+            Owner::Const(c) => functions + c,
+        }
+    }
+}
+
+impl Used {
+    /// The owner that this use names: a function, a method or a constant.
+    fn owner(self) -> Option<Owner> {
+        match self {
+            Used::Func(f) => Some(Owner::Func(f)),
+            Used::Const(c) => Some(Owner::Const(c)),
+            Used::Class(_) | Used::Variant(..) => None,
+        }
+    }
+}
+
 /// The class or enum of a method.
 #[derive(Clone, Copy)]
 enum Holder {
@@ -42,7 +64,7 @@ enum Holder {
 
 /// What the walk from the roots reaches.
 struct Reached {
-    /// Each owner that live code uses, by its index (`Checker::reach`).
+    /// Each owner that live code uses, by its index (`Owner::index`).
     live: Vec<bool>,
     /// Each class that live code builds.
     built: Vec<bool>,
@@ -66,10 +88,6 @@ impl Checker<'_> {
         let functions = self.signatures.len();
         let constants = self.constant_names();
         let owners = functions + constants.len();
-        let owner = |o: Owner| match o {
-            Owner::Func(f) => f.0,
-            Owner::Const(c) => functions + c,
-        };
         let reached = self.reach(&constants);
         let holders = self.holders();
         let function_kind = |f: usize| match holders[f] {
@@ -78,22 +96,23 @@ impl Checker<'_> {
         };
 
         // Each item, by an index past the owners: classes, then enums.
+        let enums = owners + self.classes.len();
         let item = |to: Used| match to {
-            Used::Func(f) => f.0,
-            Used::Const(c) => functions + c,
+            Used::Func(f) => Owner::Func(f).index(functions),
+            Used::Const(c) => Owner::Const(c).index(functions),
             Used::Class(c) => owners + c.0,
-            Used::Variant(e, _) => owners + self.classes.len() + e.0,
+            Used::Variant(e, _) => enums + e.0,
         };
-        // The uses in dead code of each item, but an item's own.
-        let mut cited = vec![Vec::new(); owners + self.classes.len() + self.enums.len()];
+        // The first three uses in dead code of each item, except its own uses, in source order.
+        // Each list holds at most four entries, so a use costs constant work. A use at the same
+        // place as an earlier one goes after it.
+        let mut cited = vec![Vec::new(); enums + self.enums.len()];
         for (i, u) in self.uses.iter().enumerate() {
-            let own = match u.to {
-                Used::Func(f) => Some(Owner::Func(f)),
-                Used::Const(c) => Some(Owner::Const(c)),
-                Used::Class(_) | Used::Variant(..) => None,
-            };
-            if !reached.live[owner(u.from)] && own != Some(u.from) {
-                cited[item(u.to)].push(i);
+            if !reached.live[u.from.index(functions)] && u.to.owner() != Some(u.from) {
+                let first: &mut Vec<usize> = &mut cited[item(u.to)];
+                let at = first.partition_point(|&j| self.uses[j].at.start() <= u.at.start());
+                first.insert(at, i);
+                first.truncate(3);
             }
         }
         let named = |o: Owner| match o {
@@ -109,9 +128,8 @@ impl Checker<'_> {
             if name.starts_with('_') {
                 return;
             }
-            let mut sites = std::mem::take(&mut cited[item]);
-            sites.sort_by_key(|&i| self.uses[i].at.start());
-            let sites = sites.iter().take(3).map(|&i| {
+            let sites = std::mem::take(&mut cited[item]);
+            let sites = sites.iter().map(|&i| {
                 let u = &self.uses[i];
                 let (kind, name) = named(u.from);
                 (u.at, kind, self.text(name).to_string())
@@ -136,7 +154,6 @@ impl Checker<'_> {
                 report(function_kind(f), self.signatures[f].span, f);
             }
         }
-        let enums = owners + self.classes.len();
         for (c, class) in self.classes.iter().enumerate() {
             if !reached.built[c] {
                 report(Definition::Class, class.name.span, owners + c);
@@ -149,9 +166,9 @@ impl Checker<'_> {
         }
         for (c, span) in constants.iter().enumerate() {
             if let Some(span) = *span
-                && !reached.live[functions + c]
+                && !reached.live[Owner::Const(c).index(functions)]
             {
-                report(Definition::Constant, span, functions + c);
+                report(Definition::Constant, span, Owner::Const(c).index(functions));
             }
         }
         found
@@ -172,18 +189,13 @@ impl Checker<'_> {
     }
 
     /// What the uses reach from the roots: `main`, and each function, method and constant whose
-    /// name starts with `_`. An owner's index is its `FuncId`, or for a constant, the number of
-    /// functions plus its order.
+    /// name starts with `_`. Owners are indexed by `Owner::index`.
     fn reach(&self, constants: &[Option<Span>]) -> Reached {
         let functions = self.signatures.len();
         let owners = functions + constants.len();
         let mut edges = vec![Vec::new(); owners];
         for (i, u) in self.uses.iter().enumerate() {
-            let from = match u.from {
-                Owner::Func(f) => f.0,
-                Owner::Const(c) => functions + c,
-            };
-            edges[from].push(i);
+            edges[u.from.index(functions)].push(i);
         }
         let main = match self.function_ids.get(&Symbol::intern("main")) {
             Some(&Declared::Known(id)) => Some(id.0),
@@ -208,8 +220,8 @@ impl Checker<'_> {
         while let Some(o) = stack.pop() {
             for &i in &edges[o] {
                 let reached = match self.uses[i].to {
-                    Used::Func(f) => f.0,
-                    Used::Const(c) => functions + c,
+                    Used::Func(f) => Owner::Func(f),
+                    Used::Const(c) => Owner::Const(c),
                     Used::Class(c) => {
                         built[c.0] = true;
                         continue;
@@ -218,7 +230,8 @@ impl Checker<'_> {
                         variants[e.0][v] = true;
                         continue;
                     }
-                };
+                }
+                .index(functions);
                 if !std::mem::replace(&mut live[reached], true) {
                     stack.push(reached);
                 }
