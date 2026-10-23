@@ -29,3 +29,7 @@ description = "Bindings, assignment, constants, loops, loop labels, break, conti
 [[page]]
 file = "functions"
 description = "Declarations, parameters, return types, recursion, main, panic and todo."
+
+[[page]]
+file = "classes"
+description = "Fields, mut fields, constructors, methods, self and object identity."

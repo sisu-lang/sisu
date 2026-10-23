@@ -291,7 +291,7 @@ fn main() {
 
 ### `is`
 
-`a is b` is true when `a` and `b` refer to the same object. It applies to classes, and to optionals of classes. When two optionals are both `None`, `a is b` is true. An object and `None` are not the same.
+`a is b` is true when `a` and `b` refer to the same object. It applies to [classes](classes.md#identity), and to optionals of classes. When two optionals are both `None`, `a is b` is true. An object and `None` are not the same.
 
 ```sisu
 class Sauna {

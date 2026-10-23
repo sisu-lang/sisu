@@ -121,7 +121,7 @@ The rules:
 An assignment `place = value` stores a value in a place. These are the places:
 
 - a binding of a `let mut`
-- a `mut` field of an object ([Fields](expressions.md#fields))
+- a `mut` field of an object ([Classes](classes.md#fields))
 - an element of an array in one of these places, such as `xs[i]` or `grid[i][j]`
 
 ```sisu

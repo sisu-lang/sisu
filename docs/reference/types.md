@@ -25,7 +25,7 @@ These are the built-in types:
 | `char` | One Unicode scalar value |
 | `string` | Text in UTF-8 |
 
-A program can also use arrays, such as `[i64]`, optionals, such as `i64?`, and the classes and enums that it declares.
+A program can also use arrays, such as `[i64]`, optionals, such as `i64?`, and the [classes](classes.md) and enums that it declares.
 
 ## Type names
 

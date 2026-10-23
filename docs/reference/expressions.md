@@ -215,7 +215,7 @@ fn main() {
 
 ### Method calls
 
-A method call `x.m(a)` runs the method `m` of the value `x`, with `x` as its receiver. The built-in types have methods too, such as the methods on numbers ([Types](types.md#methods-on-numbers)).
+A method call `x.m(a)` runs the method `m` of the value `x`, with `x` as its receiver ([Classes](classes.md#methods)). The built-in types have methods too, such as the methods on numbers ([Types](types.md#methods-on-numbers)).
 
 ```sisu
 fn main() {
@@ -229,7 +229,7 @@ A name that is not a field or a method of the type is an error ([E0063](../diagn
 
 ## Fields
 
-`x.name` reads the field `name` of the object `x`. For an optional object, use `?.` ([Operators](operators.md#optional-chaining)).
+`x.name` reads the field `name` of the object `x` ([Classes](classes.md#fields)). For an optional object, use `?.` ([Operators](operators.md#optional-chaining)).
 
 ```sisu
 class Point {
