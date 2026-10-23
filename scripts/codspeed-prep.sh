@@ -46,7 +46,8 @@ done
 
 # step0 returns its argument. stepi adds 1 through an array, a class and an
 # optional chain, and 0 through constants, an enum, f64 methods, a string built
-# with += and format specs, while let, u8 and char; then it calls step(i-1).
+# with += and format specs, while let, u8 and char, and a generic function,
+# class and enum, each instantiated twice; then it calls step(i-1).
 # main prints step(N-1)(0) = N-1. Not fi: f64 is a built-in type.
 large_input() {
     local sections=$1 dir=$2
@@ -73,6 +74,29 @@ class C$i {
     fn get(self) -> i64 { self.v }
 }
 
+fn pick$i<T>(xs: [T], fallback: T) -> T {
+    if xs.len() > 0 { xs[0] } else { fallback }
+}
+
+class Pair$i<A, B> {
+    a: A
+    b: B
+
+    fn first(self) -> A { self.a }
+}
+
+enum Tree$i<T> {
+    Leaf
+    Node(Tree$i<T>, T, Tree$i<T>)
+
+    fn size(self) -> i64 {
+        match self {
+            Tree$i.Leaf => 0
+            Tree$i.Node(l, _, r) => l.size() + 1 + r.size()
+        }
+    }
+}
+
 fn below$i(k: i64) -> i64? {
     if k > 0 { k - 1 } else { None }
 }
@@ -96,7 +120,12 @@ fn step$i(x: i64) -> i64 {
     let first = text.chars()[0]
     let zero = if shapes[2].is_dot() && first == 's' { i64(b) - spins } else { 1 }
     let c: C$i? = C$i(v: sum - x - xs[1], label: text)
-    step$((i - 1))(x + (c?.get() ?? 0) + zero)
+    let p = Pair$i(a: pick$i([K$i], 0), b: pick$i(["g"], ""))
+    let t = Tree$i.Node(Tree$i.Leaf, p.first(), Tree$i.Leaf)
+    let u = Tree$i.Node(Tree$i.Leaf, p.b, Tree$i.Node(Tree$i.Leaf, "h", Tree$i.Leaf))
+    let q = Pair$i(a: p.b, b: p.first())
+    let generic = t.size() + u.size() - 3 + q.b - K$i
+    step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU
     done

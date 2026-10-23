@@ -4,6 +4,7 @@
 use std::f64::consts;
 
 use super::expr::{no_member, postfix, typed};
+use super::generic::Site;
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, built_in_type};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
@@ -86,7 +87,7 @@ pub(super) fn method(ty: Type, name: &str) -> Option<(MathOp, usize)> {
 
 /// The constant that another language's name means: `PI`, `Infinity` and `inf` are `pi` and
 /// `infinity`.
-fn constant_named(name: &str) -> Option<&'static str> {
+pub(super) fn constant_named(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     let lower = if lower == "inf" { "infinity" } else { &lower };
     CONSTANTS
@@ -110,20 +111,48 @@ impl Checker<'_> {
         base: &ast::Expr,
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
+        expected: Option<Type>,
     ) -> Option<Checked> {
-        let ast::ExprKind::Name(name) = base.kind else {
-            return None;
+        let (ident, written, angles) = match &base.kind {
+            ast::ExprKind::Name(name) => (
+                ast::Ident {
+                    name: *name,
+                    span: base.span,
+                },
+                &[][..],
+                None,
+            ),
+            ast::ExprKind::Applied {
+                name,
+                types,
+                angles,
+            } => (name.clone(), &types[..], Some(*angles)),
+            _ => return None,
         };
+        let name = ident.name;
         // A local cannot take an enum's name, so the enum wins over one that tried.
         match self.enum_ids.get(&name) {
-            Some(&Declared::Known(id)) => return Some(self.enum_path(span, id, member, call)),
+            Some(&Declared::Known(id)) => {
+                let generic = !self.enums[id.0].type_params.is_empty();
+                if let Some(angles) = angles.filter(|_| !generic) {
+                    self.not_generic(name, angles);
+                }
+                let site = Site {
+                    name: &ident,
+                    written,
+                    angles: angles.unwrap_or(base.span),
+                    expected,
+                };
+                return Some(self.enum_path(span, id, member, call, site));
+            }
             Some(Declared::Broken) => {
                 self.stray(call.map_or(&[], |(args, _)| args));
                 return Some(Err(Poisoned::error()));
             }
             None => {}
         }
-        if self.lookup(name).is_some() {
+        // Any other base with type arguments is checked as a value, which reports them.
+        if angles.is_some() || self.lookup(name).is_some() {
             return None;
         }
         let written = base.span.to(member.span);

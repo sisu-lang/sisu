@@ -1,0 +1,9 @@
+class Cell<T> {
+    value: T
+}
+
+fn size(c: Cell<unit>) -> i64 {
+    0
+}
+
+fn main() {}

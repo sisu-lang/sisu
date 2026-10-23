@@ -1,0 +1,5 @@
+fn first<T: Ord>(xs: [T]) -> T? {
+    None
+}
+
+fn main() {}

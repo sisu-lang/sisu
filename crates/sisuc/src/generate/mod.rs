@@ -5,6 +5,7 @@
 //! smallest valid one, which is what every choice is once the bytes run out.
 
 mod expr;
+mod generic;
 mod item;
 mod scope;
 mod stmt;
@@ -259,6 +260,12 @@ impl Cost {
     /// The loops around the point being written.
     pub(crate) fn depth(&self) -> usize {
         self.loops.len()
+    }
+
+    /// A call of a generic function whose body costs `units`.
+    pub(crate) fn generic_call(&mut self, units: u64) {
+        let times = self.times();
+        self.statements = self.statements.saturating_add(times.saturating_mul(units));
     }
 
     pub(crate) fn statement(&mut self) {

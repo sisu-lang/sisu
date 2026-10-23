@@ -57,7 +57,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0047](E0047.md) | error | comparison of values of different types |
 | [E0048](E0048.md) | error | `??` on a value that is not optional |
 | [E0049](E0049.md) | error | `?.` on a value that is not optional |
-| [E0050](E0050.md) | error | `None` without a type |
+| [E0050](E0050.md) | error | a type that cannot be inferred |
 | [E0051](E0051.md) | error | `if let` or `while let` on a value that is not an enum or optional |
 | [E0052](E0052.md) | error | call of a function that does not exist |
 | [E0053](E0053.md) | error | call with the wrong number of arguments |
@@ -144,6 +144,10 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0134](E0134.md) | error | interpolation in a string pattern |
 | [E0135](E0135.md) | error | a range pattern that cannot match |
 | [E0136](E0136.md) | error | alternatives bind different names |
+| [E0137](E0137.md) | error | type arguments that do not fit |
+| [E0138](E0138.md) | error | type that cannot be a type argument |
+| [E0139](E0139.md) | error | operator on a value of a type parameter |
+| [E0140](E0140.md) | error | instantiations that never end |
 | [E0141](E0141.md) | error | `break` with a value in a loop that has none |
 | [E0142](E0142.md) | error | loop label that is also a name in scope |
 | [E0143](E0143.md) | error | loop label used by an enclosing loop |

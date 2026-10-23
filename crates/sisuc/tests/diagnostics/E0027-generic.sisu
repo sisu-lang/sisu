@@ -1,0 +1,9 @@
+enum Two<T> {
+    Both(T, T)
+}
+
+enum Expr {
+    Pair(Two<Expr>)
+}
+
+fn main() {}

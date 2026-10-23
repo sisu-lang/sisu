@@ -11,6 +11,7 @@ mod constants;
 mod enums;
 mod floats;
 mod for_loops;
+mod generics;
 mod patterns;
 mod places;
 mod prelude;

@@ -1,6 +1,7 @@
 //! Members: fields and methods found through `.` and `?.`.
 
 use super::expr::{if_some, local, no_member, path};
+use super::generic::Ahead;
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, optional_of, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind};
@@ -21,7 +22,10 @@ impl Checker<'_> {
         name: &ast::Ident,
         member: impl FnOnce(&mut Self, Checked) -> Checked,
     ) -> Checked {
-        let scrutinee = self.value(receiver, None);
+        let scrutinee = match self.kept(receiver.span, false) {
+            Some((_, Ahead::Receiver(checked))) => checked,
+            _ => self.value(receiver, None),
+        };
         if !safe {
             return member(self, scrutinee);
         }
@@ -69,10 +73,9 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
     ) -> Checked {
-        let Some((class, index)) = self.find_field(type_of(&base), receiver, name, false) else {
+        let Some((_, index, ty)) = self.find_field(type_of(&base), receiver, name, false) else {
             return Err(Poisoned::error());
         };
-        let ty = self.classes[class.0].fields[index].ty;
         match (base, ty) {
             (Ok(base), Some(ty)) => Ok(tir::Expr {
                 kind: tir::ExprKind::Field {
@@ -86,7 +89,22 @@ impl Checker<'_> {
         }
     }
 
-    /// The class and index of field `name` of `receiver`, a value of type `base`. `None` when
+    /// The type of field `index` of a value of the class type `base`: `base`'s arguments stand
+    /// for its class's parameters. `None` when the field's type is `Error`.
+    pub(super) fn field_type(&self, base: Type, index: usize) -> Option<Type> {
+        let TypeKind::Class(class, args) = base.kind() else {
+            panic!("a field should only be found on a value of a class type, not `{base}`")
+        };
+        let info = &self.classes[class.0];
+        assert_eq!(
+            args.get().len(),
+            info.type_params.len(),
+            "a class type should give each of its class's type parameters an argument"
+        );
+        info.fields[index].ty.map(|ty| ty.subst(args.get()))
+    }
+
+    /// The class, index and type of field `name` of `receiver`, a value of type `base`. `None` when
     /// there is none, reported unless `base` is `Error`. `target` when the field is assigned,
     /// where neither `()` nor `?.` can follow the access.
     pub(super) fn find_field(
@@ -95,7 +113,7 @@ impl Checker<'_> {
         receiver: &ast::Expr,
         name: &ast::Ident,
         target: bool,
-    ) -> Option<(tir::ClassId, usize)> {
+    ) -> Option<(tir::ClassId, usize, Option<Type>)> {
         let ty = base?;
         let method = |owner, safe: bool| DiagnosticKind::MethodNotField {
             name: name.name.to_string(),
@@ -104,10 +122,10 @@ impl Checker<'_> {
             call: (!target).then_some(safe),
         };
         let d = match ty.kind() {
-            TypeKind::Class(class) => {
+            TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
                 if let Some(index) = info.fields.iter().position(|f| f.name.name == name.name) {
-                    return Some((class, index));
+                    return Some((class, index, self.field_type(ty, index)));
                 }
                 match info.methods.get(&name.name) {
                     Some(Declared::Known(func)) => {
@@ -122,7 +140,7 @@ impl Checker<'_> {
                     }
                 }
             }
-            TypeKind::Enum(id) => match self.enums[id.0].methods.get(&name.name) {
+            TypeKind::Enum(id, _) => match self.enums[id.0].methods.get(&name.name) {
                 Some(Declared::Known(func)) => {
                     let no_arguments = self.signatures[func.0].params.is_empty();
                     method(self.type_name(ty), no_arguments).into()
@@ -157,7 +175,7 @@ impl Checker<'_> {
     ) -> Option<tir::FuncId> {
         let ty = ty?;
         let d = match ty.kind() {
-            TypeKind::Class(class) => {
+            TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
                 match info.methods.get(&name.name) {
                     Some(&Declared::Known(func)) => return Some(func),
@@ -177,7 +195,7 @@ impl Checker<'_> {
                     no_member(Definition::Method, self.type_name(ty), name, methods)
                 }
             }
-            TypeKind::Enum(id) => {
+            TypeKind::Enum(id, _) => {
                 let info = &self.enums[id.0];
                 match info.methods.get(&name.name) {
                     Some(&Declared::Known(func)) => return Some(func),

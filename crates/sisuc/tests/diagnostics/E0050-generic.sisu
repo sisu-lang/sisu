@@ -1,0 +1,8 @@
+fn first<T>(xs: [T]) -> T? {
+    if xs.len() == 0 { return None }
+    xs[0]
+}
+
+fn main() {
+    let x = first([])
+}

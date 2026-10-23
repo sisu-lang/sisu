@@ -15,6 +15,7 @@ mod graph;
 mod lexer;
 mod link;
 mod mir;
+mod mono;
 mod parser;
 mod report;
 mod run;
@@ -404,7 +405,9 @@ fn run_check(reporter: &mut Report, input: &Source) -> ExitCode {
     let Some((name, text)) = read_source(reporter, input) else {
         return ExitCode::FAILURE;
     };
-    if front_end(reporter, &name, &text).is_some() {
+    let (program, diagnostics) = front_end::checked(&text);
+    reporter.diagnostics(&name, &text, &diagnostics);
+    if program.is_some() {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

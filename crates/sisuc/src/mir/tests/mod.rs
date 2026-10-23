@@ -58,7 +58,7 @@ pub(super) const UNREACHABLE_CODE: &str = "fn f() -> i64 { panic(\"x\") }\n\
      fn m(c: bool) -> i64 {\n    match c {\n        true => 1\n        _ => 0\n    }\n}";
 
 /// The typed tree of `src`, which checks without an error, with an empty `main` added when it
-/// has none.
+/// has none, as `mono` instantiates it for `build`.
 fn checked(src: &str) -> tir::Program {
     let src = if src.contains("fn main") {
         src.to_owned()
@@ -66,7 +66,7 @@ fn checked(src: &str) -> tir::Program {
         format!("{src}\nfn main() {{}}")
     };
     let (program, diagnostics) = check(&parse_ok(&src), &src);
-    program.unwrap_or_else(|| panic!("{diagnostics:?}"))
+    crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")))
 }
 
 /// The mir of `program` as lowering leaves it under the assumed flags, before any pass.
@@ -195,7 +195,7 @@ impl Builder {
         self.function.locals.push(Local {
             name: Some(name.to_owned()),
             ty,
-            counted: !matches!(ty.kind(), tir::TypeKind::Enum(_)) && ty.is_counted(&[]),
+            counted: !matches!(ty.kind(), tir::TypeKind::Enum(..)) && ty.is_counted(&[]),
             scope: BlockId(0),
             token: false,
         });

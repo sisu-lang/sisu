@@ -1,0 +1,9 @@
+class Cell<T> {
+    v: T
+
+    fn deeper(self) {
+        Cell(v: [self.v]).deeper()
+    }
+}
+
+fn main() {}

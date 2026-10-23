@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::branch::Branch;
 use super::enums::reserved_name;
 use super::exhaust::{self, Report, Row};
-use super::{Checked, CheckedBlock, Checker, Poisoned, type_of};
+use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, GuardHelp, MismatchSource, Unwrap, suggestion,
@@ -66,7 +66,7 @@ pub(super) enum LetPattern {
 fn matchable(ty: Type) -> bool {
     matches!(
         ty.kind(),
-        TypeKind::Enum(_)
+        TypeKind::Enum(..)
             | TypeKind::I64
             | TypeKind::U8
             | TypeKind::Bool
@@ -316,7 +316,7 @@ impl Checker<'_> {
                 (checked, LetValue::Unwrap { name, bound }, false)
             }
             // `pattern_in_scope` reports any other pattern on an optional.
-            (Some((_, TypeKind::Optional(_) | TypeKind::Enum(_))) | None, _) => {
+            (Some((_, TypeKind::Optional(_) | TypeKind::Enum(..))) | None, _) => {
                 (checked, LetValue::Match { ty }, false)
             }
             (Some((ty, kind)), _) => {
@@ -360,7 +360,7 @@ impl Checker<'_> {
                 let pattern = self.pattern_in_scope(pattern, ty, keyword.word(), None);
                 // An optional takes only a name or `_`, which unwraps it: only an enum gets here.
                 if let (Some(ty), Some((pattern, _))) = (ty, &pattern)
-                    && let TypeKind::Enum(_) = ty.kind()
+                    && let TypeKind::Enum(..) = ty.kind()
                 {
                     let rows = [Row {
                         pattern,
@@ -507,7 +507,7 @@ impl Checker<'_> {
     ) -> Option<tir::PatternKind> {
         let text = name.name.as_str();
         let enum_id = match ty.kind() {
-            TypeKind::Enum(id) => Some(id.0),
+            TypeKind::Enum(id, _) => Some(id.0),
             _ => None,
         };
         if let Some(id) = enum_id
@@ -870,16 +870,25 @@ impl Checker<'_> {
         parens: Option<Span>,
     ) -> Option<(usize, Vec<Option<Type>>)> {
         let path = written(qualifier, name);
-        let named = match qualifier {
-            Some(q) => Some(self.resolve(&ast::TypeExpr {
-                kind: ast::TypeKind::Name(q.name),
-                optional: false,
-                span: q.span,
-            })?),
-            None => None,
+        // A qualifier names an enum, whatever arguments `ty` gives it, as an enum path does in
+        // an expression; any other type it names is resolved for its own errors, and fits no
+        // enum.
+        let fits = match qualifier {
+            None => true,
+            Some(q) if let Some(&Declared::Known(named)) = self.enum_ids.get(&q.name) => {
+                matches!(ty.kind(), TypeKind::Enum(id, _) if id == named)
+            }
+            Some(q) => {
+                self.resolve(&ast::TypeExpr {
+                    kind: ast::TypeKind::Name(q.name),
+                    optional: false,
+                    span: q.span,
+                })?;
+                false
+            }
         };
-        let id = match ty.kind() {
-            TypeKind::Enum(id) if named.is_none_or(|named| named == ty) => id.0,
+        let (id, args) = match ty.kind() {
+            TypeKind::Enum(id, args) if fits => (id.0, args),
             _ => {
                 let want = self.type_name(ty);
                 self.report(DiagnosticKind::PatternMismatch {
@@ -927,7 +936,11 @@ impl Checker<'_> {
                 found: fields.len(),
                 at: span,
             },
-            _ => return Some((variant, info.variants[variant].fields.clone())),
+            _ => {
+                let fields = &info.variants[variant].fields;
+                let fields = fields.iter().map(|ty| ty.map(|ty| ty.subst(args.get())));
+                return Some((variant, fields.collect()));
+            }
         };
         self.report(kind);
         None

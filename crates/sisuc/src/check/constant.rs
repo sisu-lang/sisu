@@ -270,7 +270,7 @@ impl Checker<'_> {
             ExprKind::Unary { operand, .. } => self.gate(operand, user, order),
             ExprKind::Binary { lhs, rhs, .. } => all(self, &mut [&**lhs, &**rhs].into_iter()),
             ExprKind::Compare { operands, .. } => all(self, &mut operands.iter()),
-            ExprKind::Call { callee, args }
+            ExprKind::Call { callee, args, .. }
                 if matches!(callee.name.as_str(), "i64" | "u8" | "char" | "f64") =>
             {
                 all(self, &mut args.iter().map(|arg| &arg.value))

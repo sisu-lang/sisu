@@ -60,7 +60,12 @@ impl Checker<'_> {
                 }
                 .into()
             }
-            Some(ty) if matches!(ty.kind(), TypeKind::Class(_) | TypeKind::Enum(_)) => {
+            Some(ty)
+                if matches!(
+                    ty.kind(),
+                    TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Param(..)
+                ) =>
+            {
                 DiagnosticKind::PrintArgument {
                     function,
                     at: arg.value.span,

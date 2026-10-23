@@ -1,0 +1,8 @@
+error[E0140]: `Cell.deeper` instantiates itself without end
+ --> E0140-method.sisu:5:9
+  |
+5 |         Cell(v: [self.v]).deeper()
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ `Cell<[T]>.deeper` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

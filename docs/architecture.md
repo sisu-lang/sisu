@@ -8,7 +8,7 @@ system C compiler `cc`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="architecture/sisu-pipeline-dark.svg">
-  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker, mir and codegen to LLVM, and the link step combines the object file with one of the two runtime archives into an executable." src="architecture/sisu-pipeline-light.svg">
+  <img alt="The Sisu compiler pipeline: source text flows through the lexer, parser, checker, mono, mir and codegen to LLVM, and the link step combines the object file with one of the two runtime archives into an executable." src="architecture/sisu-pipeline-light.svg">
 </picture>
 
 This page stays at the level of stages and the data between them. The code
@@ -46,7 +46,10 @@ end a statement becomes a `Newline` token, because statements end at
 newlines ([ADR 0001](adr/0001-newline-terminated-statements.md)). A `;`
 between two statements on one line becomes a `Newline` too, and an
 unnecessary one, such as a `;` at the end of a line, is dropped with W0007
-([ADR 0028](adr/0028-a-semicolon-stands-in-for-a-line-break.md)). It
+([ADR 0028](adr/0028-a-semicolon-stands-in-for-a-line-break.md)). A `>` at
+a line's end ends the statement when it closes a type annotation, as in
+`b: Box<i64>`. Any other `>` there lets the line go on: a comparison, a
+header's type parameters, or a call's type arguments. It
 decodes a `char` literal and its escapes into one scalar value, and a string
 literal into its text, so later stages never see the escape text. An integer
 literal's token holds only its value; a diagnostic that quotes the literal as
@@ -74,13 +77,19 @@ joined by `|`. `if let` and `while let` take a pattern too. A `name:` before
 `loop`, `while`, `while let` or `for` is a loop label, which stays open to the end of
 that loop's body; after `break` or `continue`, a name is the loop label when a
 loop around the jump has it, and otherwise begins the value
-([ADR 0034](adr/0034-loop-and-loop-labels.md)). It rejects an item that nests deeper than
+([ADR 0034](adr/0034-loop-and-loop-labels.md)). A function, class
+or enum header may take type parameters, `<T, U>`, and a type may take type
+arguments, `Stack<i64>`. In an expression, a `<` after a name starts type
+arguments only when the tokens up to its `>` read as types and a `(` or `.`
+follows, as in `first<i64>([])`; any other `<` compares. A `>=` that closes a
+list, as in `let s: Stack<i64>= x`, splits into the `>` and the `=`. It rejects an item that nests deeper than
 256 levels, because every later stage walks the tree recursively.
 
-**Front end** (`front_end.rs`). Runs the lexer, parser and checker in order and
-returns the program and every diagnostic, in position order: the checker's are
-merged in by position. The checker runs only when
-every item has a name.
+**Front end** (`front_end.rs`). Runs the lexer, parser and checker in order,
+then `mono`, and returns the program and every diagnostic, in position order:
+the checker's are merged in by position. The checker runs only when
+every item has a name. `sisu check` stops after the checker
+(`front_end::checked`), because it prints no instantiation.
 
 **Checker** (`check/`, `tir.rs`). Resolves every name, types every expression
 and lowers sugar: `while`, `while let` and `for` become loops, `?.` and `??`
@@ -93,10 +102,11 @@ function such as `print` or `panic` has its own rule, and `panic(msg)` and
 `todo` become a `Panic` node of type `never`. A format spec on a part becomes a padding and a precision, and a precision on a
 value that is not an `f64` is an error. A method on a number, such as
 `x.sqrt()` or `n.max(m)`, becomes a `Math` node, and a constant such as
-`f64.pi` becomes a literal. `check/enums.rs` declares each enum: it rejects an
-enum that no value can be built of, and finds the payload fields that close a
-cycle of enums, the ones that go behind a box, and the enums that hold a
-counted part. Building a variant, `Expr.Num(2)`, becomes a `Variant` node
+`f64.pi` becomes a literal. `check/enums.rs` declares each enum and rejects an
+enum that no value can be built of. `tir::layout_enums` then finds the payload
+fields that close a cycle of enums, the ones that go behind a box, and the
+enums that hold a counted part. In a generic enum the box goes on the declaring
+enum's own field, not on one inside a generic type it names. Building a variant, `Expr.Num(2)`, becomes a `Variant` node
 ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)).
 `check/pattern.rs` checks each pattern against the type at its position and
 declares the names it binds. `if let` on an enum becomes a `match` whose `_`
@@ -110,12 +120,34 @@ a warning. The same check rejects an `if let` or `while let` whose pattern
 always matches. `check/operator.rs` checks operators (arithmetic, comparison,
 equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
 their branch types, `check/call.rs` calls, method calls and constructors, and
-`check/member.rs` fields and methods found through `.` and `?.`. The checker
+`check/member.rs` fields and methods found through `.` and `?.`.
+`check/generic.rs` handles type parameters. It checks a generic function,
+class or enum once, at its definition, with each type parameter an opaque
+`TypeKind::Param`. A value of a type parameter can be moved, stored, passed,
+returned, put in an array or a field, or wrapped in `T?`, and nothing else: an
+operator on one is E0139. A call takes its type arguments written out, or
+infers them from its receiver, its arguments and the expected type. `tir`
+keeps the type parameters, and a call records the type arguments it chose.
+`check/cycle.rs` then rejects a program whose instantiations would never end
+(E0140). Its graph has a node for each type parameter of every declaration,
+and an edge for each type argument that names one; a cycle through an edge
+whose argument grows, as `[T]` for `T` does, is the error. The checker
 reports every error in one run: an expression that already failed gets the
 poison type, so one mistake produces one diagnostic. A program with no errors comes out as the
 typed tree, `tir`, which `mir` is built from. A type in `tir` is a
 4-byte `Type` handle into one table (`types.rs`), as a name is a `Symbol`;
 its `kind()` gives the structure, and equal structures get the same handle.
+
+**mono** (`mono.rs`). Monomorphization. Starting from the declarations that are
+not generic, it copies each generic function, class and enum once for each list
+of type arguments the program reaches, and substitutes the arguments into every
+type. Each copy is named as a program writes it: `first<i64>`,
+`Stack<string>.peek`, `Tree<i64>`. A method is copied only when a call reaches
+it, never with its class. `mono` then lays out the enums again with
+`tir::layout_enums`, because an instantiation can close a cycle of enums that
+no declaration has. `mir` and codegen see only concrete types, and a program
+with no generic declaration passes through unchanged. `--emit tir` prints the
+program after `mono`.
 
 **mir** (`mir/`). The mid-level IR between `tir` and LLVM IR
 ([ADR 0025](adr/0025-mir-holds-every-count.md)), built on the build path only,
@@ -151,7 +183,8 @@ that nothing writes or changes what a borrow reads.
 **Codegen** (`codegen/`). Walks `mir` and builds an LLVM module through the
 [inkwell](https://github.com/TheDan64/inkwell) bindings. Each Sisu function
 becomes an LLVM function named `sisu.<name>`, and each method of a class or an
-enum one named `sisu.<Type>.<method>`. Codegen also emits a `main` with the C
+enum one named `sisu.<Type>.<method>`; an instantiation keeps the name `mono`
+gave it, as in `sisu.first<i64>` and `sisu.Stack<string>.peek`. Codegen also emits a `main` with the C
 signature,
 which the C startup code calls and which runs `sisu.main`, passing it `args`,
 a `[string]` built from `argc` and `argv`, when `sisu.main` takes that
@@ -206,7 +239,9 @@ counted part also gets `sisu_rc.retain.<Enum>` and `sisu_rc.release.<Enum>`,
 which switch on the tag. A box whose count reaches zero is not freed by
 recursion. It joins a pending list, linked through its dead count word, and
 `sisu_rc.drain.<Enum>` frees the boxes on the list one by one, so the stack
-stays the same size for a value of any depth.
+stays the same size for a value of any depth. A field of an enum on the same
+cycle that is held inline, such as `Two<Expr>.Both`'s `Expr` in
+`enum Expr { Pair(Two<Expr>) }`, is walked in place with the same lists.
 
 `mir/lower/pattern.rs` lowers a `match`. It evaluates the scrutinee once into
 a temporary that the `match` owns, then tests the arms' patterns against it in

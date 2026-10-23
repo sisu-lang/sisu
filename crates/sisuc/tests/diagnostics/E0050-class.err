@@ -1,0 +1,10 @@
+error[E0050]: cannot infer `T` for `Cell`
+ --> E0050-class.sisu:6:13
+  |
+6 |     let c = Cell(value: None)
+  |             ^^^^
+  |
+  = help: annotate the result, or write the type: `Cell<...>(...)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

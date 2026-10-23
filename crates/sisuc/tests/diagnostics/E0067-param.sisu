@@ -1,0 +1,5 @@
+fn copies<T>(x: T) -> [T] {
+    [x; 3]
+}
+
+fn main() {}

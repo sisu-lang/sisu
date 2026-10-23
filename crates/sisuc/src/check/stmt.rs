@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 
 use super::array::optional_array;
 use super::expr::{fits, local};
+use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::{
@@ -17,6 +18,33 @@ use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
 use std::slice::SliceIndex;
 
+/// What `block_statements` has checked of a block, and what those statements leave.
+pub(super) struct BlockSoFar {
+    stmts: Vec<tir::Stmt>,
+    /// `never` once a statement is, else the last statement's type; `None` is `Error`.
+    ty: Option<Type>,
+    failed: bool,
+    /// Whether "unreachable code" is reported, or moot.
+    warned: bool,
+    /// Whether the value rejected the type expected of it.
+    mismatch: bool,
+    /// How many of the block's statements are checked.
+    done: usize,
+}
+
+impl Default for BlockSoFar {
+    fn default() -> Self {
+        BlockSoFar {
+            stmts: Vec::new(),
+            ty: Some(Type::UNIT),
+            failed: false,
+            warned: false,
+            mismatch: false,
+            done: 0,
+        }
+    }
+}
+
 /// The most values of one statement that share one fix.
 // shortcut: past the cap the warnings offer no fix; store one fix per statement and share it if
 // long `match` statements need fixes.
@@ -27,8 +55,13 @@ impl Checker<'_> {
     /// there is none). Warns "unreachable code" on the first statement after a `never` one.
     /// Every statement is checked, also after one fails. `expected` is for the block's value.
     pub(super) fn block(&mut self, block: &ast::Block, expected: Option<Type>) -> CheckedBlock {
-        self.body.scopes.push(FxHashMap::default());
-        self.scoped_block(block, expected)
+        // Ranking an argument may have checked all but the block's value (see `tail_waits`).
+        let (scope, so_far) = match self.kept(block.span, true) {
+            Some((_, Ahead::Block(scope, so_far))) => (scope, so_far),
+            _ => (FxHashMap::default(), BlockSoFar::default()),
+        };
+        self.body.scopes.push(scope);
+        self.resume_block(block, expected, so_far)
     }
 
     /// `block`, in the scope just opened for it, which it closes.
@@ -37,49 +70,24 @@ impl Checker<'_> {
         block: &ast::Block,
         expected: Option<Type>,
     ) -> CheckedBlock {
-        let mut stmts = Vec::new();
-        let mut ty = Some(Type::UNIT);
-        let (mut failed, mut warned, mut mismatch) = (false, false, false);
-        for (i, stmt) in block.stmts.iter().enumerate() {
-            if ty == Some(Type::NEVER) && !warned {
-                self.report(DiagnosticKind::UnreachableCode { at: stmt.span });
-                warned = true;
-            }
-            let last = i + 1 == block.stmts.len();
-            let outer_jump = std::mem::take(&mut self.body.invalid_jump);
-            let checked = self.stmt(stmt, expected.filter(|_| last));
-            let invalid_jump = self.body.invalid_jump;
-            // Nested blocks leave their flag set, so an enclosing statement sees it too.
-            self.body.invalid_jump |= outer_jump;
-            let stmt_ty = match checked {
-                Ok(lowered) => {
-                    if !last
-                        && let (StmtKind::Expr(source), tir::Stmt::Expr(e)) = (&stmt.kind, &lowered)
-                    {
-                        self.discard(source, e);
-                    }
-                    // `let _ = e` lowers to an expression, but a `let` has no value.
-                    let ty = if matches!(stmt.kind, StmtKind::Let { .. }) {
-                        Type::UNIT
-                    } else {
-                        stmt_type(&lowered)
-                    };
-                    stmts.push(lowered);
-                    Some(ty)
-                }
-                Err(poisoned) => {
-                    failed = true;
-                    mismatch = last && poisoned.mismatch;
-                    // An invalid jump made the block `never` only by error; what follows is no
-                    // new news. Any other failed `never` statement still leaves the block.
-                    warned |= invalid_jump && poisoned.ty == Some(Type::NEVER);
-                    poisoned.ty
-                }
-            };
-            if ty != Some(Type::NEVER) {
-                ty = stmt_ty;
-            }
-        }
+        self.resume_block(block, expected, BlockSoFar::default())
+    }
+
+    /// `scoped_block`, its statements before `so_far.done` checked already.
+    fn resume_block(
+        &mut self,
+        block: &ast::Block,
+        expected: Option<Type>,
+        mut so_far: BlockSoFar,
+    ) -> CheckedBlock {
+        self.block_statements(block, expected, &mut so_far, block.stmts.len());
+        let BlockSoFar {
+            mut stmts,
+            ty,
+            failed,
+            mismatch,
+            ..
+        } = so_far;
         self.pop_scope();
         let ty = match ty {
             Some(ty) if !failed => ty,
@@ -104,6 +112,59 @@ impl Checker<'_> {
             }
         };
         Ok(tir::Block { stmts, value, ty })
+    }
+
+    /// Checks the statements of `block` from `so_far.done` up to `end`, at most its length, in
+    /// its scope; `expected` is for its value.
+    pub(super) fn block_statements(
+        &mut self,
+        block: &ast::Block,
+        expected: Option<Type>,
+        so_far: &mut BlockSoFar,
+        end: usize,
+    ) {
+        let done = so_far.done;
+        for (i, stmt) in (done..).zip(&block.stmts[done..end]) {
+            if so_far.ty == Some(Type::NEVER) && !so_far.warned {
+                self.report(DiagnosticKind::UnreachableCode { at: stmt.span });
+                so_far.warned = true;
+            }
+            let last = i + 1 == block.stmts.len();
+            let outer_jump = std::mem::take(&mut self.body.invalid_jump);
+            let checked = self.stmt(stmt, expected.filter(|_| last));
+            let invalid_jump = self.body.invalid_jump;
+            // Nested blocks leave their flag set, so an enclosing statement sees it too.
+            self.body.invalid_jump |= outer_jump;
+            let stmt_ty = match checked {
+                Ok(lowered) => {
+                    if !last
+                        && let (StmtKind::Expr(source), tir::Stmt::Expr(e)) = (&stmt.kind, &lowered)
+                    {
+                        self.discard(source, e);
+                    }
+                    // `let _ = e` lowers to an expression, but a `let` has no value.
+                    let ty = if matches!(stmt.kind, StmtKind::Let { .. }) {
+                        Type::UNIT
+                    } else {
+                        stmt_type(&lowered)
+                    };
+                    so_far.stmts.push(lowered);
+                    Some(ty)
+                }
+                Err(poisoned) => {
+                    so_far.failed = true;
+                    so_far.mismatch = last && poisoned.mismatch;
+                    // An invalid jump made the block `never` only by error; what follows is no
+                    // new news. Any other failed `never` statement still leaves the block.
+                    so_far.warned |= invalid_jump && poisoned.ty == Some(Type::NEVER);
+                    poisoned.ty
+                }
+            };
+            if so_far.ty != Some(Type::NEVER) {
+                so_far.ty = stmt_ty;
+            }
+        }
+        so_far.done = end;
     }
 
     /// Warns "unused value" at `source`, whose checked form is `checked`, unless its type is
@@ -598,7 +659,7 @@ impl Checker<'_> {
         match &e.kind {
             ExprKind::Local(local) => !self.body.locals[local.0].mutable,
             ExprKind::Field { base, index } => {
-                matches!(base.ty.kind(), TypeKind::Class(class)
+                matches!(base.ty.kind(), TypeKind::Class(class, _)
                     if !self.classes[class.0].fields[*index].mutable)
                     && self.fixed_place(base)
             }
@@ -1174,7 +1235,7 @@ impl Checker<'_> {
         let last_exit = operands.iter().rposition(tir::Expr::exits);
         let first_counted = operands
             .iter()
-            .position(|e| e.ty.is_counted(&self.lowered_enums));
+            .position(|e| e.ty.may_be_counted(&self.lowered_enums));
         let Some(last_exit) = last_exit.filter(|&exit| first_counted.is_some_and(|c| c < exit))
         else {
             return (Vec::new(), operands);

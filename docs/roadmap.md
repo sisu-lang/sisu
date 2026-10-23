@@ -51,6 +51,15 @@ enums with `match`.
   `Expr.Num(2)` builds a value, an enum has methods and compares with `==`,
   and a recursive enum such as `Add(Expr, Expr)` works with no annotation,
   its recursive fields stored behind counted boxes; enum values never change
+- generic functions, classes, enums and methods, such as
+  `fn first<T>(xs: [T]) -> T?`, `class Stack<T>` and `enum Tree<T>`, with
+  type arguments inferred from the arguments and the expected type, or
+  written out (`first<i64>([])`, `Stack<string>(top: None)`); a generic body
+  is checked once, at its definition, and compiled once for each list of type
+  arguments the program reaches. A type parameter takes no bound yet, so a
+  value of one has no operators (`E0139`), and an optional is not a type
+  argument (`E0138`); a use that would need copies without end is an error
+  (`E0140`)
 - `match` on an enum, `i64`, `u8`, `bool`, `char` or `string`, as an
   expression or a statement, with one arm per line or a `;` between arms; a
   pattern is a variant, bare or through its enum (`Num(n)`, `Expr.Num(n)`),

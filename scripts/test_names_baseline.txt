@@ -884,7 +884,6 @@ crates/sisuc/src/fuzz.rs::rejects_overlapping_edits
 crates/sisuc/src/fuzz.rs::rejects_start_after_end
 crates/sisuc/src/fuzz.rs::rejects_start_inside_a_char
 crates/sisuc/src/fuzz.rs::reports_in_color_text_then_json
-crates/sisuc/src/fuzz_program.rs::a_budget_program_is_fast
 crates/sisuc/src/fuzz_program.rs::a_clean_program_passes
 crates/sisuc/src/fuzz_program.rs::a_compiler_panic_leaves_the_dump
 crates/sisuc/src/fuzz_program.rs::a_dump_it_cannot_write_is_reported
@@ -905,12 +904,10 @@ crates/sisuc/src/fuzz_program.rs::pair_ignores_panic_locations
 crates/sisuc/src/fuzz_program.rs::pair_rejects_a_different_exit
 crates/sisuc/src/fuzz_program.rs::pair_rejects_a_different_panic_message
 crates/sisuc/src/fuzz_program.rs::pair_rejects_different_stdout
-crates/sisuc/src/fuzz_program.rs::program_passes_and_cleans_up
 crates/sisuc/src/fuzz_program.rs::seed_0_program_passes
 crates/sisuc/src/fuzz_program.rs::seed_0_rewritten_passes
 crates/sisuc/src/fuzz_program.rs::seed_1_program_passes
 crates/sisuc/src/fuzz_program.rs::seed_1_rewritten_passes
-crates/sisuc/src/fuzz_program.rs::seed_2978_reaches_its_panic_marker
 crates/sisuc/src/fuzz_program.rs::seed_2_program_passes
 crates/sisuc/src/fuzz_program.rs::seed_2_rewritten_passes
 crates/sisuc/src/fuzz_program.rs::seed_3_program_passes

@@ -8,10 +8,11 @@ mod render;
 mod suggest;
 
 pub(crate) use registry::{
-    BadRange, BuiltIn, ClashForm, ClashKind, Code, Conversion, Definition, DiagnosticKind, Earlier,
-    ForeignPattern, ForeignRange, GuardHelp, Immutable, InterpolateHelp, Join, LetField, Literal,
-    LiteralKind, MatchIdiomForm, MathFix, Member, MismatchFix, MismatchSource, NanFix, Operand,
-    Owner, Panic, PowerFix, RETIRED, TypedLiteral, Unbuilt, Unwrap, VariantLabels, invisible,
+    ArgumentsForm, BadRange, BuiltIn, ClashForm, ClashKind, Code, Conversion, Definition,
+    DiagnosticKind, Earlier, ForeignPattern, ForeignRange, GuardHelp, Immutable, InterpolateHelp,
+    Join, LetField, Literal, LiteralKind, MainForm, MatchIdiomForm, MathFix, Member, MismatchFix,
+    MismatchSource, NanFix, Operand, Owner, Panic, PowerFix, RETIRED, TypedLiteral, Unbuilt,
+    Unwrap, VariantLabels, invisible,
 };
 pub(crate) use suggest::{Suggestion, alias, closest, suggestion};
 

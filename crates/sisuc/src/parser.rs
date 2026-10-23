@@ -1,10 +1,12 @@
 //! The parser: tokens to the syntax tree.
 
+use std::cell::OnceCell;
+use std::mem;
 use std::ops::Range;
 
 use crate::ast::{
-    Align, Arg, Arm, BinaryOp, Block, Bound, Broken, BrokenKind, Class, CompareOp, Const, Enum,
-    Expr, ExprKind, FieldDecl, ForSource, FormatSpec, Function, Ident, Item, Literal, Member,
+    Align, Applied, Arg, Arm, BinaryOp, Block, Bound, Broken, BrokenKind, Class, CompareOp, Const,
+    Enum, Expr, ExprKind, FieldDecl, ForSource, FormatSpec, Function, Ident, Item, Literal, Member,
     Param, Part, Pattern, PatternKind, PayloadField, Program, Stmt, StmtKind, TypeExpr, TypeKind,
     UnaryOp, Variant,
 };
@@ -45,9 +47,12 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         diagnostics.is_sorted_by_key(|d| d.span().start()),
         "`lexer_in` searches the lexer's diagnostics by where they start"
     );
+    let halves = OnceCell::new();
     Parser {
         source,
         tokens: &tokens,
+        window: &tokens,
+        halves: &halves,
         pos: 0,
         depth: 0,
         lexer: &diagnostics,
@@ -149,6 +154,12 @@ fn format_spec(text: &str, at: Span) -> Result<FormatSpec, Diagnostic> {
 /// How deep the syntax tree may nest. Every later stage walks the tree recursively, and so does
 /// dropping it, so the parser is the one place that bounds the stack they need.
 const MAX_DEPTH: usize = 256;
+
+#[cfg(test)]
+thread_local! {
+    /// How many tokens `type_args_follow` has visited on this thread.
+    static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// An infix operator other than the comparisons of level 4.
 enum Infix {
@@ -279,16 +290,64 @@ struct Parser<'a> {
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
     labels: Vec<Ident>,
+    /// `tokens`, or once a type-argument list takes the `>` of a `>=` (a split), the tokens before
+    /// it. `peek` reads it with the bounds check it needs anyway, so only a split pays for one.
+    window: &'a [Token],
+    /// The `=` left of each `>=`, built at the first split.
+    halves: &'a OnceCell<Vec<Token>>,
 }
 
 impl<'a> Parser<'a> {
     fn peek(&self) -> &'a Token {
-        // `Eof` is last and never consumed, so `pos` stays in range.
-        &self.tokens[self.pos]
+        match self.window.get(self.pos) {
+            Some(token) => token,
+            None => self.past_window(),
+        }
+    }
+
+    /// The token at `pos`, which is past `window`: the `=` left of the split `>=` there, or, once
+    /// the parser has moved past that, the token itself. `Eof` is last and never consumed, so
+    /// `pos` stays in range.
+    #[cold]
+    fn past_window(&self) -> &'a Token {
+        if !self.split() {
+            return &self.tokens[self.pos];
+        }
+        let halves = self.halves.get_or_init(|| {
+            let ge = self.tokens.iter().filter(|t| t.kind == TokenKind::Ge);
+            ge.map(|t| Token {
+                kind: TokenKind::Eq,
+                span: Span::new(t.span.start() + 1, t.span.end()),
+            })
+            .collect()
+        });
+        let start = self.tokens[self.pos].span.start() + 1;
+        let half = halves
+            .binary_search_by_key(&start, |t| t.span.start())
+            .expect("a split token should be a `>=`, which `halves` holds");
+        &halves[half]
+    }
+
+    /// Whether `pos` is at a split `>=`.
+    fn split(&self) -> bool {
+        self.pos == self.window.len()
     }
 
     fn bump(&mut self) -> &'a Token {
-        let token = self.peek();
+        let Some(token) = self.window.get(self.pos) else {
+            return self.bump_past_window();
+        };
+        if token.kind != TokenKind::Eof {
+            self.pos += 1;
+        }
+        token
+    }
+
+    /// `bump` past `window`, which then covers every token again.
+    #[cold]
+    fn bump_past_window(&mut self) -> &'a Token {
+        let token = self.past_window();
+        self.window = self.tokens;
         if token.kind != TokenKind::Eof {
             self.pos += 1;
         }
@@ -296,7 +355,9 @@ impl<'a> Parser<'a> {
     }
 
     fn at(&self, kind: &TokenKind) -> bool {
-        self.peek().kind == *kind
+        // Most tokens asked about are of another kind, which the discriminant settles inline.
+        let next = &self.peek().kind;
+        mem::discriminant(next) == mem::discriminant(kind) && next == kind
     }
 
     /// Consumes the next token if it is `kind`.
@@ -389,6 +450,9 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.expected(&kind.describe()))
     }
 
+    // Inlined: declarations, types, labels and members all read their names through it, and LLVM
+    // stopped inlining it once its callers grew.
+    #[inline]
     fn ident(&mut self, what: &str) -> Result<Ident, Diagnostic> {
         match self.peek().kind {
             TokenKind::Ident(name) => Ok(Ident {
@@ -432,7 +496,19 @@ impl<'a> Parser<'a> {
             (TypeKind::Array(Box::new(element)), start.to(close.span))
         } else {
             let ident = self.ident("a type")?;
-            (TypeKind::Name(ident.name), ident.span)
+            if self.at(&TokenKind::Lt) {
+                let (args, angles) = self.type_args()?;
+                (
+                    TypeKind::Applied(Box::new(Applied {
+                        name: ident.name,
+                        args,
+                        angles,
+                    })),
+                    Span::new(ident.span.start(), self.closing_angle()),
+                )
+            } else {
+                (TypeKind::Name(ident.name), ident.span)
+            }
         };
         let optional = self.eat(&TokenKind::Question).is_some();
         if optional {
@@ -459,6 +535,137 @@ impl<'a> Parser<'a> {
             optional,
             span,
         })
+    }
+
+    /// `<` types `>` at the next token, with an optional trailing comma, and its span. The caller
+    /// has seen the `<`, and for an expression, that `type_args_follow` holds.
+    fn type_args(&mut self) -> Result<(Vec<TypeExpr>, Span), Diagnostic> {
+        let open = self.bump().span;
+        let base = self.depth;
+        let mut reach = base;
+        let mut args = Vec::new();
+        loop {
+            args.push(self.child(base, &mut reach, Self::parse_type)?);
+            if self.eat(&TokenKind::Comma).is_none()
+                || matches!(self.peek().kind, TokenKind::Gt | TokenKind::Ge)
+            {
+                break;
+            }
+        }
+        self.close_angle()?;
+        self.depth = reach;
+        Ok((args, Span::new(open.start(), self.closing_angle())))
+    }
+
+    /// The `>` that closes a list. A `>=` closes it too, and then reads as the `=` it holds: in
+    /// `let s: Stack<i64>= x`, the `>` is the list's.
+    fn close_angle(&mut self) -> Result<(), Diagnostic> {
+        if self.eat(&TokenKind::Gt).is_some() {
+            return Ok(());
+        }
+        if self.at(&TokenKind::Ge) {
+            self.window = &self.tokens[..self.pos];
+            return Ok(());
+        }
+        Err(self.expected("`,` or `>`"))
+    }
+
+    /// Where the `>` that `close_angle` just took ends.
+    fn closing_angle(&self) -> usize {
+        if self.split() {
+            // What is left of the `>=` starts where the `>` ends.
+            self.peek().span.start()
+        } else {
+            self.last_span().end()
+        }
+    }
+
+    /// Whether the `<` at the next token starts a type-argument list in an expression: the tokens
+    /// from it form one by the type grammar, and a `(` or `.` follows its `>`. Anything else is a
+    /// comparison. The scan builds nothing, so a failed scan leaves no diagnostic behind.
+    fn type_args_follow(&self) -> bool {
+        let mut at = self.pos;
+        self.scan_list(&mut at, 0) && matches!(self.scanned(at), TokenKind::LParen | TokenKind::Dot)
+    }
+
+    /// The kind of the token at `at`, which the scan counts as visited.
+    fn scanned(&self, at: usize) -> &'a TokenKind {
+        #[cfg(test)]
+        SCANNED.set(SCANNED.get() + 1);
+        &self.tokens[at].kind
+    }
+
+    /// Scans a list from its `<` at `at` through its `>`, which `at` then follows. A list nested
+    /// deeper than `MAX_DEPTH` is none (`scan_type` stops it), and that cutoff keeps a run of
+    /// `a < a < a < …` linear: a name followed by `<` inside a list opens a nested one, so
+    /// `MAX_DEPTH + 1` scans visit a token at most.
+    fn scan_list(&self, at: &mut usize, depth: usize) -> bool {
+        *at += 1;
+        loop {
+            if !self.scan_type(at, depth + 1) {
+                return false;
+            }
+            match self.scanned(*at) {
+                TokenKind::Comma => {
+                    *at += 1;
+                    if *self.scanned(*at) == TokenKind::Gt {
+                        *at += 1;
+                        return true;
+                    }
+                }
+                TokenKind::Gt => {
+                    *at += 1;
+                    return true;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Scans a type: a name and its list, or `[type]`, then an optional `?`.
+    fn scan_type(&self, at: &mut usize, depth: usize) -> bool {
+        if depth > MAX_DEPTH {
+            return false;
+        }
+        match self.scanned(*at) {
+            TokenKind::LBracket => {
+                *at += 1;
+                if !self.scan_type(at, depth + 1) || *self.scanned(*at) != TokenKind::RBracket {
+                    return false;
+                }
+                *at += 1;
+            }
+            TokenKind::Ident(_) => {
+                *at += 1;
+                if *self.scanned(*at) == TokenKind::Lt && !self.scan_list(at, depth) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        if *self.scanned(*at) == TokenKind::Question {
+            *at += 1;
+        }
+        true
+    }
+
+    /// `<T, U>` after the name of a function, class or enum, with an optional trailing comma;
+    /// empty when no `<` follows.
+    fn type_params(&mut self) -> Result<Vec<Ident>, Diagnostic> {
+        let mut params = Vec::new();
+        if self.eat(&TokenKind::Lt).is_none() {
+            return Ok(params);
+        }
+        loop {
+            params.push(self.name("a type parameter")?);
+            if self.eat(&TokenKind::Comma).is_none() || self.at(&TokenKind::Gt) {
+                break;
+            }
+        }
+        if self.eat(&TokenKind::Gt).is_none() {
+            return Err(self.expected("`,` or `>`"));
+        }
+        Ok(params)
     }
 
     /// The program, which keeps the lexer's `breaks`.
@@ -740,6 +947,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Class, Diagnostic> {
         self.expect(&TokenKind::Class)?;
         let name = self.name("a class name")?;
+        let type_params = self.type_params()?;
         self.expect(&TokenKind::LBrace)?;
         let mut members = Vec::new();
         let mut broken_methods = Vec::new();
@@ -767,6 +975,7 @@ impl<'a> Parser<'a> {
         self.bump();
         Ok(Class {
             name,
+            type_params,
             members,
             broken_methods,
         })
@@ -868,6 +1077,7 @@ impl<'a> Parser<'a> {
             .into());
         }
         let name = self.name("an enum name")?;
+        let type_params = self.type_params()?;
         let owner = Owner::Enum(name.name.to_string());
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
@@ -903,6 +1113,7 @@ impl<'a> Parser<'a> {
         self.bump();
         Ok(Enum {
             name,
+            type_params,
             variants,
             methods: fns,
             broken_methods,
@@ -998,6 +1209,8 @@ impl<'a> Parser<'a> {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            window: self.tokens,
+            halves: self.halves,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -1043,6 +1256,13 @@ impl<'a> Parser<'a> {
     fn function(&mut self, owner: Option<&Owner>) -> Result<Function, Diagnostic> {
         let fn_token = self.expect(&TokenKind::Fn)?;
         let name = self.name("a function name")?;
+        let open = self.peek().span;
+        let type_params = self.type_params()?;
+        let angles = if type_params.is_empty() {
+            name.span.end_point()
+        } else {
+            open.to(self.last_span())
+        };
         self.expect(&TokenKind::LParen)?;
         let mut self_param = None;
         let mut params = Vec::new();
@@ -1108,6 +1328,8 @@ impl<'a> Parser<'a> {
         let body = self.block()?;
         Ok(Function {
             name,
+            type_params,
+            angles,
             self_param,
             params,
             ret,
@@ -2407,16 +2629,34 @@ impl<'a> Parser<'a> {
             let access = self.bump();
             let safe = access.kind == TokenKind::QuestionDot;
             let name = self.ident("a field or method name")?;
-            expr = if self.at(&TokenKind::LParen) {
+            // The type arguments and the value arguments are siblings of the receiver: each
+            // starts at the receiver's own level and only the deepest counts.
+            let written = if self.at(&TokenKind::Lt) && self.type_args_follow() {
+                self.depth = base + 1;
+                let (types, angles) = self.type_args()?;
+                if !self.at(&TokenKind::LParen) {
+                    // A field takes no type arguments, so `a.b<i64>.c` has nowhere to put them.
+                    return Err(self.expected("`(`"));
+                }
+                Some((types, angles, self.depth.max(wrapped)))
+            } else {
+                None
+            };
+            // Without type arguments a field access holds no list to drop.
+            expr = if written.is_some() || self.at(&TokenKind::LParen) {
+                let (types, angles, types_reach) =
+                    written.unwrap_or_else(|| (Vec::new(), name.span.end_point(), wrapped));
                 self.depth = base + 1;
                 let open = self.peek().span;
                 let (args, close) = self.args()?;
-                self.depth = self.depth.max(wrapped);
+                self.depth = self.depth.max(types_reach);
                 Expr {
                     span: expr.span.to(close),
                     kind: ExprKind::MethodCall {
                         receiver: Box::new(expr),
                         method: name,
+                        types,
+                        angles,
                         args,
                         parens: open.to(close),
                         safe,
@@ -2531,16 +2771,43 @@ impl<'a> Parser<'a> {
                 if let Some(error) = self.path_idiom(token.span) {
                     return Err(error);
                 }
+                // The type arguments and the value arguments are siblings: each starts at the
+                // callee's level and only the deepest counts.
+                let base = self.depth;
+                let written = if self.at(&TokenKind::Lt) && self.type_args_follow() {
+                    Some(self.type_args()?)
+                } else {
+                    None
+                };
+                let types_reach = self.depth;
+                let callee = Ident {
+                    name,
+                    span: token.span,
+                };
                 if self.at(&TokenKind::LParen) {
+                    let (types, angles) =
+                        written.unwrap_or_else(|| (Vec::new(), token.span.end_point()));
+                    self.depth = base;
                     let (args, close) = self.args()?;
+                    self.depth = self.depth.max(types_reach);
                     return Ok(Expr {
                         span: token.span.to(close),
                         kind: ExprKind::Call {
-                            callee: Ident {
-                                name,
-                                span: token.span,
-                            },
+                            callee,
+                            types,
+                            angles,
                             args,
+                        },
+                    });
+                }
+                // A plain name holds no list to drop.
+                if let Some((types, angles)) = written {
+                    return Ok(Expr {
+                        span: token.span.to(self.last_span()),
+                        kind: ExprKind::Applied {
+                            name: callee,
+                            types,
+                            angles,
                         },
                     });
                 }
@@ -4001,6 +4268,390 @@ mod tests {
     }
 
     #[test]
+    fn generic_declarations_should_parse() {
+        let rows = [
+            (
+                "fn first<T>(xs: [T]) -> T? {}",
+                "(fn first<T> ((xs [T])) T? (block))",
+            ),
+            (
+                "fn pair<K, V,>(k: K, v: V) {}",
+                "(fn pair<K, V> ((k K) (v V)) unit (block))",
+            ),
+            (
+                "class Stack<T> {\n    mut items: [T]\n}",
+                "(class Stack<T> (mut items [T]))",
+            ),
+            (
+                "enum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}",
+                "(enum Tree<T> Leaf (Node Tree<T> T Tree<T>))",
+            ),
+            (
+                "class Stack<T> {\n    fn map_all<U>(self, f: U) {}\n}",
+                "(class Stack<T> (fn map_all<U> (self (f U)) unit (block)))",
+            ),
+            ("const c: Stack<i64>= x", "(const c Stack<i64> x)"),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(program(src), expected, "{src}");
+        }
+    }
+
+    #[test]
+    fn type_parameters_should_hold_names_only() {
+        // A bound waits for interfaces: the list closes at `,` or `>`.
+        assert_eq!(parse_err("fn f<T: Ord>() {}"), (Code::Expected, 1, 7));
+        assert_eq!(parse_err("fn f<>() {}"), (Code::Expected, 1, 6));
+        assert_eq!(parse_err("class A<_> {}"), (Code::UnderscoreName, 1, 9));
+        assert_eq!(parse_err("enum E<T: Ord> {}"), (Code::Expected, 1, 9));
+        assert_eq!(parse_err("fn f(x: Stack<1>) {}"), (Code::Expected, 1, 15));
+    }
+
+    #[test]
+    fn generic_types_should_parse() {
+        let rows = [
+            ("Stack<i64>", "Stack<i64>"),
+            ("[Stack<i64>]", "[Stack<i64>]"),
+            ("Stack<i64>?", "Stack<i64>?"),
+            ("Map<string, [i64]>", "Map<string, [i64]>"),
+            ("Map<string, [i64],>", "Map<string, [i64]>"),
+            ("Stack<Stack<i64>>", "Stack<Stack<i64>>"),
+        ];
+        for (ty, expected) in rows {
+            let src = format!("fn main() {{ let x: {ty} = y }}");
+            assert_eq!(body(&src), format!("(block (let x {expected} y))"), "{src}");
+        }
+    }
+
+    /// `>=` closes the list that ends before it, and the `=` stays for the `let`.
+    #[test]
+    fn a_greater_equal_should_close_a_type_argument_list() {
+        for (src, expected) in [
+            ("let s: Stack<i64>= x", "(let s Stack<i64> x)"),
+            ("let t: A<B<i64>>= y", "(let t A<B<i64>> y)"),
+            ("let t: A<B<i64>,>= y", "(let t A<B<i64>> y)"),
+        ] {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+        // The type ends with its `>`, not with the `>=`.
+        let src = "fn main() { let s: Stack<i64>= x }";
+        let StmtKind::Let { ty: Some(ty), .. } = &first_fn(src).body.stmts[0].kind else {
+            panic!("expected a typed let");
+        };
+        assert_eq!(&src[ty.span.range()], "Stack<i64>");
+        // One `>=` closes one list, so the outer list is left open, and what is left of the
+        // token is the `=` after the `>`, wherever an error finds it.
+        assert_eq!(expr_err("let t: A<B<i64>= y"), (Code::Expected, 1, 28));
+        assert_eq!(expr_err("let t: [A<i64>= y] = z"), (Code::Expected, 1, 27));
+        assert_eq!(parse_err("fn f(x: A<i64>= 1) {}"), (Code::Expected, 1, 15));
+    }
+
+    /// A line break after the `>` that closes type arguments ends a statement, as one after a
+    /// type with none does; inside `( )` it does not, and after a `>` that compares, the line goes
+    /// on.
+    #[test]
+    fn a_line_break_after_type_arguments_should_end_the_statement() {
+        for (src, expected) in [
+            (
+                "class D {\n    b: Box<i64>\n    n: i64\n}",
+                "(class D (b Box<i64>) (n i64))",
+            ),
+            (
+                "fn f(\n    a: Box<i64>\n) {}",
+                "(fn f ((a Box<i64>)) unit (block))",
+            ),
+            (
+                "fn f(a: Box<i64>,\n    b: i64) {}",
+                "(fn f ((a Box<i64>) (b i64)) unit (block))",
+            ),
+            (
+                "fn f() {\n    let t = Tree<i64>\n        .Leaf\n}",
+                "(fn f () unit (block (let t (. Tree<i64> Leaf))))",
+            ),
+            (
+                "fn f() {\n    let b = a >\n        c\n    let d = a >\n        - c\n    let e = (a >\n        c)\n}",
+                "(fn f () unit (block (let b (> a c)) (let d (> a (- c))) (let e (> a c))))",
+            ),
+            // A `{` after a comparison's `>` is its operand, outside parentheses and inside.
+            (
+                "fn f() {\n    let b = 2 >\n        { 1 }\n    print(2 >\n        { 1 })\n}",
+                "(fn f () unit (block (let b (> 2 (block 1))) (call print (> 2 (block 1)))))",
+            ),
+            // A function's header goes on after its type parameters.
+            ("fn f<T>\n(x: T) {}", "(fn f<T> ((x T)) unit (block))"),
+            (
+                "class C {\n    fn m<U>\n    (self, y: U) {}\n}",
+                "(class C (fn m<U> (self (y U)) unit (block)))",
+            ),
+            // So does a call's line after its type arguments, though a `:` comes before them,
+            // and a comparison's, though one is inside its parentheses.
+            (
+                "fn f() {\n    let g: i64 = f<i64>\n    (x)\n    let b = g(x: a < c) >\n        d\n}",
+                "(fn f () unit (block (let g i64 (call f<i64> x)) (let b (> (call g (: x (< a c))) d))))",
+            ),
+            // A constant's comparison goes on too.
+            ("const b = 2 >\n    1", "(const b (> 2 1))"),
+            // A type with an inner list closed at a line's end goes on to its outer `>`.
+            (
+                "class D {\n    b: Box<Box<i64>\n    >\n    n: i64\n}",
+                "(class D (b Box<Box<i64>>) (n i64))",
+            ),
+            // A `>=` that closes a type annotation holds its `=`, so a comparison in the value
+            // after it goes on, fused, spaced and nested alike.
+            (
+                "fn f() {\n    let x: Box<i64>= if 2 >\n        1 { y } else { z }\n}",
+                "(fn f () unit (block (let x Box<i64> (if (> 2 1) (block y) (block z)))))",
+            ),
+            (
+                "fn f() {\n    let x: Box<i64> = if 2 >\n        1 { y } else { z }\n}",
+                "(fn f () unit (block (let x Box<i64> (if (> 2 1) (block y) (block z)))))",
+            ),
+            (
+                "fn f() {\n    let x: Box<Box<i64>>= if 2 >\n        1 { y } else { z }\n}",
+                "(fn f () unit (block (let x Box<Box<i64>> (if (> 2 1) (block y) (block z)))))",
+            ),
+        ] {
+            assert_eq!(program(src), expected, "{src}");
+        }
+        // A header's condition that ends in `>` takes the `{` as its operand, so the error is
+        // the missing body, with no join to offer.
+        for src in [
+            "fn f() {\n    if a >\n    {\n    }\n}",
+            "fn f() {\n    while a >\n    {\n    }\n}",
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::Expected, "{src}");
+            assert!(fix_edits(&d).is_none(), "{src}");
+        }
+        assert_eq!(parse_err("fn f<T>; (x: T) {}"), (Code::Expected, 1, 8));
+        // An error in a split header's body is the only one: the header holds together.
+        assert_eq!(
+            parse_err("fn f<T>\n(x: T) { let = 1 }"),
+            (Code::Expected, 2, 14)
+        );
+        // Without type parameters, the line break ends the header, as it always has.
+        let d = &parsed("fn f\n(x: i64) {}").diagnostics[0];
+        assert_eq!((d.code(), d.span().start()), (Code::Expected, 4));
+        // As after `i64`: the `=` cannot start the next line, nor the `{`.
+        assert_eq!(
+            parse_err("fn f() {\n    let s: Box<i64>\n    = x\n}"),
+            (Code::Expected, 2, 20)
+        );
+    }
+
+    /// A header's line that ends in type arguments ends the header, so a `{` on the next line
+    /// is E0004, as after a type with none.
+    #[test]
+    fn a_brace_after_a_header_ending_in_type_arguments_should_be_e0004() {
+        assert_eq!(
+            parse_err("fn f() -> Box<i64>\n{\n}"),
+            (Code::BraceOnNewLine, 2, 1)
+        );
+        // A return type at a line's end ends the header, as `-> i64` does.
+        assert_eq!(
+            parse_err("fn f() -> Box<i64>\nfn g() {}"),
+            (Code::Expected, 1, 19)
+        );
+        // After another statement too, ended by a line break or a `;`: the header is its own.
+        assert_eq!(
+            parse_err("const a = 1\nfn f() -> Box<i64>\n{\n}"),
+            (Code::BraceOnNewLine, 3, 1)
+        );
+        assert_eq!(
+            parse_err("const a = 1; fn f() -> Box<i64>\n{\n}"),
+            (Code::BraceOnNewLine, 2, 1)
+        );
+        // Inside the header's parentheses too: the statement around them is still the header.
+        assert_eq!(
+            parse_err("fn f(x: Box<i64>\n{}) {}"),
+            (Code::BraceOnNewLine, 2, 1)
+        );
+        // A split header's brace on its own line gets that error alone, in a function and a
+        // method.
+        assert_eq!(
+            parse_err("fn f<T>\n(x: T) -> Box<T>\n{\n}"),
+            (Code::BraceOnNewLine, 3, 1)
+        );
+        assert_eq!(
+            parse_err("class C {\n    fn m<U>\n    (self, y: U) -> Box<U>\n    {\n    }\n}"),
+            (Code::BraceOnNewLine, 4, 5)
+        );
+    }
+
+    #[test]
+    fn type_arguments_in_expressions_should_parse() {
+        let rows = [
+            ("f<i64>(x)", "(call f<i64> x)"),
+            ("f<i64,>(x)", "(call f<i64> x)"),
+            ("f<i64?>(x)", "(call f<i64?> x)"),
+            ("f<Stack<i64>>(x)", "(call f<Stack<i64>> x)"),
+            (
+                "Stack<string>(items: [])",
+                "(call Stack<string> (: items (array)))",
+            ),
+            ("Tree<i64>.Leaf", "(. Tree<i64> Leaf)"),
+            ("Tree<i64>.Node(x)", "(call (. Tree<i64> Node) x)"),
+            ("s.map_all<f64>(1.5)", "(call (. s map_all<f64>) 1.5)"),
+            ("largest<[i64]>([])", "(call largest<[i64]> (array))"),
+            ("a < b > (c)", "(call a<b> c)"),
+            ("f(a < b, c > (d))", "(call f (call a<b, c> d))"),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+    }
+
+    /// A `<` that no type-argument list and `(` or `.` completes is a comparison.
+    #[test]
+    fn a_less_than_should_be_a_comparison_unless_type_arguments_follow() {
+        let rows = [
+            ("f(a < b, c > d)", "(call f (< a b) (> c d))"),
+            ("a < b", "(< a b)"),
+            ("x < y.len()", "(< x (call (. y len)))"),
+            ("while i < n { }", "(while (< i n) (block))"),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(expr(src), expected, "{src}");
+        }
+    }
+
+    #[test]
+    fn a_non_list_after_a_less_than_should_keep_its_diagnostic() {
+        for (src, code, col) in [
+            ("a < b > c", Code::ComparisonDirection, 19),
+            ("a < [b] > c", Code::ComparisonDirection, 21),
+            ("a < [b, c] > (d)", Code::ComparisonDirection, 24),
+            ("a < b c > (d)", Code::Expected, 19),
+            ("a < [] > (d)", Code::ComparisonDirection, 20),
+            // A field takes no type arguments, so there is nowhere to put these.
+            ("a.b<i64>.c", Code::Expected, 21),
+        ] {
+            assert_eq!(expr_err(src), (code, 1, col), "{src}");
+        }
+    }
+
+    /// Whether `type_args_follow` holds at the `<` that is the second token of `src`.
+    fn follows(src: &str) -> bool {
+        let lexed = lex(src).expect("source lexes");
+        Parser {
+            source: lexed.source,
+            tokens: &lexed.tokens,
+            pos: 1,
+            depth: 0,
+            lexer: &lexed.diagnostics,
+            comments: &lexed.comments,
+            breaks: &lexed.breaks,
+            specs: Vec::new(),
+            warnings: Vec::new(),
+            labels: Vec::new(),
+            window: &lexed.tokens,
+            halves: &OnceCell::new(),
+        }
+        .type_args_follow()
+    }
+
+    /// A list nested more than `MAX_DEPTH` levels below its `<` is none, however its nesting is
+    /// made: the type below `MAX_DEPTH - 1` brackets or lists is the deepest one allowed.
+    #[test]
+    fn type_argument_lists_should_end_at_max_depth() {
+        for allowed in [true, false] {
+            let n = MAX_DEPTH - 1 + usize::from(!allowed);
+            let brackets = format!("f<{}i64{}>(x)", "[".repeat(n), "]".repeat(n));
+            let lists = format!("f<{}i64{}>(x)", "A<".repeat(n), ">".repeat(n));
+            assert_eq!(follows(&brackets), allowed, "{n} brackets");
+            assert_eq!(follows(&lists), allowed, "{n} lists");
+        }
+    }
+
+    /// A list that scans as one can still be too deep to parse, below the depth of its call.
+    #[test]
+    fn type_arguments_should_count_toward_the_nesting_limit() {
+        let source = |name: &str, types: &str| {
+            let n = MAX_DEPTH - 8;
+            format!(
+                "fn main() {{ {}{name}<{types}>(x){} }}",
+                "(".repeat(n),
+                ")".repeat(n)
+            )
+        };
+        let nested = format!("{}i64{}", "[".repeat(9), "]".repeat(9));
+        // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
+        let codes = std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || {
+                ["f", "s.f"].map(|name| {
+                    let fits = parsed(&source(name, "i64")).diagnostics.len();
+                    (fits, parse_err(&source(name, &nested)).0)
+                })
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the parse should not overflow the stack");
+        // One `i64` fits where nine brackets around it do not.
+        assert_eq!(codes, [(0, Code::NestingTooDeep); 2]);
+    }
+
+    /// Type arguments and value arguments are siblings in the tree, so the deepest of them counts,
+    /// whichever way the call is written, and what follows the call sits above both.
+    #[test]
+    fn type_arguments_and_value_arguments_should_be_siblings() {
+        fn brackets(n: usize) -> String {
+            format!("{}i64{}", "[".repeat(n), "]".repeat(n))
+        }
+        let access = ".x".repeat(30);
+        let cases = [
+            // Two lists of 130 brackets side by side are 134 deep, not 264.
+            format!("f<{0}>(g<{0}>())", brackets(130)),
+            format!("s.f<{0}>(g<{0}>())", brackets(130)),
+            // 240 brackets with 30 accesses above them are too deep either way.
+            format!("f<{}>(){access}", brackets(240)),
+            format!("s.f<{}>(){access}", brackets(240)),
+        ];
+        // The most brackets that a call of `callee` can hold in its type argument.
+        let most = |callee: &str| {
+            (0..MAX_DEPTH)
+                .take_while(|&n| {
+                    let src = format!("fn main() {{ {callee}<{}>() }}", brackets(n));
+                    parsed(&src).diagnostics.is_empty()
+                })
+                .last()
+                .expect("a call without brackets should parse")
+        };
+        // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
+        let (found, free, method) = std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || {
+                let found = cases.map(|src| {
+                    parsed(&format!("fn main() {{ {src} }}"))
+                        .diagnostics
+                        .first()
+                        .map(Diagnostic::code)
+                });
+                (found, most("f"), most("s.f"))
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the parse should not overflow the stack");
+        let too_deep = Some(Code::NestingTooDeep);
+        assert_eq!(found, [None, None, too_deep, too_deep]);
+        // The receiver is a level of its own, so the method call's arguments sit one lower.
+        assert_eq!(free, method + 1);
+    }
+
+    /// Every operand opens a nested scan, so the cutoff at `MAX_DEPTH` is what keeps a chain
+    /// linear: each token is then scanned by at most `MAX_DEPTH + 1` of them.
+    #[test]
+    fn long_comparison_chains_should_scan_linearly() {
+        let scanned = |n: usize| {
+            let chain = vec!["a"; n].join(" < ");
+            SCANNED.set(0);
+            first_fn(&format!("fn main() {{ print({chain}) }}"));
+            SCANNED.get()
+        };
+        crate::mir::tests::assert_near_linear(scanned(1000), scanned(2000), scanned(3000));
+    }
+
+    #[test]
     fn if_let_chain() {
         assert_eq!(
             body("fn main() { if let n = node { a } else if let m = other { b } else { c } }"),
@@ -4783,9 +5434,21 @@ mod tests {
         for src in [
             "fn main() { let x = 1; let y = 2 }",
             "class A {\n    x: i64; y: i64\n}",
+            // A `>` that closes a field's type arguments ends the field, as `i64` does.
+            "class D { c: Box<i64>; n: i64 }",
+            "class D { c: Box<Box<i64>>; n: i64 }",
+            "fn main() { let b: Box<i64> = x; let n = 1 }",
         ] {
             parse_ok(src);
         }
+        // At a line's end the `;` is redundant there, as after `i64`.
+        let src = "class D {\n    c: Box<i64>;\n    n: i64\n}";
+        let codes: Vec<_> = parsed(src)
+            .diagnostics
+            .iter()
+            .map(Diagnostic::code)
+            .collect();
+        assert_eq!(codes, [Code::RedundantSemicolon], "{src}");
     }
 
     #[test]
@@ -4961,6 +5624,9 @@ mod tests {
             ("fn main() { let x = ; }", 21),
             ("fn main() { [1; 2; 3] }", 18),
             ("fn main() { f(1; 2) }", 16),
+            // A `>` that compares does not end a statement, nor one that closes a header's list.
+            ("fn main() { let x = a >; }", 24),
+            ("fn f<T>; (x: T) {}", 8),
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::Expected, "{src}");

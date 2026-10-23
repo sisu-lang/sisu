@@ -58,12 +58,17 @@ state = "works"
 notes = [["Roadmap: strings and constants", "docs/roadmap.md"]]
 
 [[area.feature]]
+text = "Generic functions, classes and enums"
+state = "works"
+notes = [["ADR 0023", "docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
+
+[[area.feature]]
 text = "Optionals that nest, such as <code>i64??</code>"
 state = "planned"
 notes = [["ADR 0024", "docs/adr/0024-optionals-nest.md"]]
 
 [[area.feature]]
-text = "Generics and interfaces"
+text = "Interfaces"
 state = "planned"
 notes = [["ADR 0023", "docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md"], ["Roadmap: proposed next steps", "docs/roadmap.md"]]
 

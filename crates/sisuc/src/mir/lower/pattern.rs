@@ -221,7 +221,7 @@ impl Lowering<'_> {
         let seed = (borrowed.as_ref())
             .filter(|place| {
                 place.projections.is_empty()
-                    && matches!(scrutinee.ty.kind(), TypeKind::Enum(_))
+                    && matches!(scrutinee.ty.kind(), TypeKind::Enum(..))
                     && self.borrowed.get(place.local.0) == Some(&true)
             })
             .map(|place| place.local)
@@ -259,7 +259,7 @@ impl Lowering<'_> {
                 Some(guard) => self.guard_holds(guard, retry),
             };
             if passed {
-                let parts = if counted && matches!(scrutinee.ty.kind(), TypeKind::Enum(_)) {
+                let parts = if counted && matches!(scrutinee.ty.kind(), TypeKind::Enum(..)) {
                     self.parts(&arm.pattern, &place, scrutinee.ty, &arm.bindings)
                 } else {
                     None
@@ -384,7 +384,7 @@ impl Lowering<'_> {
             .parts(pattern, place, ty, bindings)
             .map(|parts| parts.tokens);
         for (token, _) in tokens.into_iter().flatten() {
-            let TypeKind::Enum(f) = token.kind() else {
+            let TypeKind::Enum(f, _) = token.kind() else {
                 unreachable!("a tested box should hold an enum")
             };
             #[cfg(test)]
@@ -492,7 +492,7 @@ impl Lowering<'_> {
                 }
             }
             PatternKind::Variant { variant, fields } => {
-                let TypeKind::Enum(id) = ty.kind() else {
+                let TypeKind::Enum(id, _) = ty.kind() else {
                     unreachable!("the checker should allow a variant pattern only at an enum")
                 };
                 let value = if boxed { parts.token(ty, place) } else { value };
@@ -529,7 +529,7 @@ impl Lowering<'_> {
         match &pattern.kind {
             PatternKind::Bind(binding) => self.locals[binding.0].counted,
             PatternKind::Variant { variant, fields } => {
-                let TypeKind::Enum(id) = ty.kind() else {
+                let TypeKind::Enum(id, _) = ty.kind() else {
                     unreachable!("the checker should allow a variant pattern only at an enum")
                 };
                 let payloads = &self.program.enums[id.0].variants[*variant].fields;
@@ -566,7 +566,7 @@ impl Lowering<'_> {
                 fail
             }
             PatternKind::Variant { variant, fields } => {
-                let TypeKind::Enum(id) = ty.kind() else {
+                let TypeKind::Enum(id, _) = ty.kind() else {
                     unreachable!("the checker should allow a variant pattern only at an enum")
                 };
                 let next = self.new_block();

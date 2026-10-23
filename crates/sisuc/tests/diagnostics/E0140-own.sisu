@@ -1,0 +1,9 @@
+class Cell<T> {
+    v: T
+
+    fn spread<U>(self, x: U) {
+        self.spread([x])
+    }
+}
+
+fn main() {}

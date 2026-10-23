@@ -1,0 +1,10 @@
+error[E0050]: cannot infer `T` for `first`
+ --> E0050-generic.sisu:7:13
+  |
+7 |     let x = first([])
+  |             ^^^^^
+  |
+  = help: annotate the result, or write the type: `first<...>(...)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

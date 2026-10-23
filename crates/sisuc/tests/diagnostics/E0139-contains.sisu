@@ -1,0 +1,5 @@
+fn has<T>(xs: [T], x: T) -> bool {
+    xs.contains(x)
+}
+
+fn main() {}

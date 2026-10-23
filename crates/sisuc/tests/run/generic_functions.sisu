@@ -1,0 +1,71 @@
+// Generic functions: one compiled copy for each list of type arguments, on `i64`, `string`,
+// `[i64]` and a class, through a generic caller, from two call sites, and with written type
+// arguments. Valgrind checks that every object is freed exactly once.
+// `count_from` is recursive, and not in tail position, and `main` calls it from a loop with a
+// start that changes, so `-O2` keeps the call to the instantiation.
+// o2-calls: main count_from<string> 1
+class Point {
+    x: i64
+    y: i64
+}
+
+fn first<T>(xs: [T]) -> T? {
+    if xs.len() > 0 { xs[0] } else { None }
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+// `first`'s `T` is this function's `T`.
+fn first_of<T>(xs: [T]) -> T? {
+    first(xs)
+}
+
+fn wrap_one<T>(x: T) -> [T] {
+    [x]
+}
+
+fn pair<T>(a: T, b: T) -> [T] {
+    [a, b]
+}
+
+// Needs context: checked after `fixed`, but called first.
+fn made<T>() -> [T] {
+    print(1)
+    []
+}
+
+fn fixed() -> [i64] {
+    print(2)
+    [7]
+}
+
+fn count_from<T>(xs: [T], i: i64) -> i64 {
+    if i >= xs.len() { 0 } else { 1 + count_from(xs, i + 1) }
+}
+
+fn main() {
+    print(first([10, 20]) ?? 0)                    // 10
+    print(first([30]) ?? 0)                        // 30: the same `first<i64>`
+    print(first(["a", "b"]) ?? "none")             // a
+    print((first([[1, 2], [3]]) ?? [0]).len())     // 2
+    print((first([Point(x: 1, y: 2)]) ?? Point(x: 0, y: 0)).y) // 2
+    print(id(5))                                   // 5
+    print(id("s" + "t"))                           // st
+    print(id([4, 5, 6]).len())                     // 3
+    print(id(Point(x: 3, y: 4)).x)                 // 3
+    print(first_of([8, 9]) ?? 0)                   // 8
+    print(first_of(["x"]) ?? "none")               // x
+    print(wrap_one("w")[0])                        // w
+    print(first<string>([]) ?? "empty")            // empty
+    print(id<i64>(9))                              // 9
+    let both = pair(made(), fixed())               // 1, then 2
+    print(both.len())                              // 2
+    print(both[1][0])                              // 7
+    let mut total = 0
+    for start in 0..3 {
+        total += count_from(["a", "b", "c"], start)
+    }
+    print(total)                                   // 6: 3 + 2 + 1
+}

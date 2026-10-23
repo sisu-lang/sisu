@@ -25,6 +25,10 @@ impl Checker<'_> {
         let expected = expected.or_else(|| none_literal(operand).then_some(Type::I64));
         let before = self.diagnostics.len();
         let checked = self.value(operand, expected);
+        if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
+            self.param_lacks(operand.span, ty, "-");
+            return Err(Poisoned::error());
+        }
         if type_of(&checked) == Some(Type::U8) {
             // A literal's "does not fit" is moot once its negation is an error.
             if matches!(operand.kind, ExprKind::Int { .. }) {
@@ -59,7 +63,8 @@ impl Checker<'_> {
         ops: &[CompareOp],
     ) -> Checked {
         let operands: Vec<_> = operands.iter().collect();
-        let (checked, ty, mismatched) = self.integers(&operands, None, Operator::Compare);
+        let op = |i: usize| ops[i.saturating_sub(1)].to_string();
+        let (checked, ty, mismatched) = self.integers(&operands, None, Operator::Compare, &op);
         let operands = checked.into_iter().collect::<Result<Vec<_>, _>>().ok();
         match operands {
             Some(operands) if ty == Some(Type::STRING) => {
@@ -104,7 +109,9 @@ impl Checker<'_> {
             Operator::Arithmetic
         };
         let start = self.diagnostics.len();
-        let (checked, ty, mismatched) = self.binary_operands(span, &[lhs, rhs], expected, operator);
+        let op = |_| op.to_string();
+        let (checked, ty, mismatched) =
+            self.binary_operands(span, &[lhs, rhs], expected, operator, &op);
         if checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
             self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
             return Err(Poisoned::error());
@@ -138,16 +145,17 @@ impl Checker<'_> {
         operands: &[&ast::Expr],
         expected: Option<Type>,
         operator: Operator,
+        op: &dyn Fn(usize) -> String,
     ) -> (Vec<Checked>, Option<Type>, bool) {
         let joins = operator == (Operator::Plus { compound: false });
         if !joins || literal_type(expected) == Type::I64 {
-            return self.integers(operands, expected, operator);
+            return self.integers(operands, expected, operator, op);
         }
         if self.body.joins.contains(&span) {
-            return self.integers(operands, None, operator);
+            return self.integers(operands, None, operator, op);
         }
         let (diagnostics, locals) = (self.diagnostics.len(), self.body.locals.len());
-        let result = self.integers(operands, expected, operator);
+        let result = self.integers(operands, expected, operator, op);
         if result.1 != Some(Type::STRING) {
             return result;
         }
@@ -155,7 +163,7 @@ impl Checker<'_> {
         self.diagnostics.truncate(diagnostics);
         self.body.locals.truncate(locals);
         self.body.joins.insert(span);
-        self.integers(operands, None, operator)
+        self.integers(operands, None, operator, op)
     }
 
     /// The operands of one number operator, checked in source order; the type they share, `None`
@@ -186,6 +194,9 @@ impl Checker<'_> {
     /// operands come before a `string?` leader, they are checked with no expected type, and the
     /// `string?` is the operand reported, as when it comes first. A join
     /// after an `Error` is `Error`. An expected `u8` or `f64` is `binary_operands`' to drop.
+    ///
+    /// The first operand whose type names a type parameter is reported, as lacking `op` of its
+    /// index, and makes the type `Error`.
     #[expect(
         clippy::too_many_lines,
         reason = "one pass over the operands, so the rules that depend on each other read in one place"
@@ -195,6 +206,7 @@ impl Checker<'_> {
         operands: &[&ast::Expr],
         expected: Option<Type>,
         operator: Operator,
+        op: &dyn Fn(usize) -> String,
     ) -> (Vec<Checked>, Option<Type>, bool) {
         let arithmetic = operator != Operator::Compare;
         let compound = operator == (Operator::Plus { compound: true });
@@ -240,6 +252,7 @@ impl Checker<'_> {
         // A mismatch of the first operand, in `deferred` at the index, that waits to be labelled
         // by the second operand, if that is a `string`.
         let mut unlabelled = None;
+        let mut lacks = false;
         for (i, e) in operands.iter().enumerate() {
             if held && leader == Some(i) {
                 want = ty;
@@ -254,6 +267,14 @@ impl Checker<'_> {
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
             let got = type_of(&value);
+            if let Some(param) = got.filter(|ty| ty.has_param()) {
+                if !std::mem::replace(&mut lacks, true) {
+                    self.param_lacks(e.span, param, op(i));
+                }
+                checked.push(Err(Poisoned::error()));
+                (want, ty, before) = (None, None, None);
+                continue;
+            }
             if let (Some(at), Some(found)) = (unlabelled.take(), before) {
                 deferred[at] = self.concat_mismatch(operands[0], found, operands, compound, got);
             }
@@ -451,6 +472,15 @@ impl Checker<'_> {
         } else {
             (checked, other)
         };
+        // `x == None` tests an optional, which any `T?` is.
+        if !none_literal(second)
+            && let Some((side, ty)) = [(lhs, &l), (rhs, &r)]
+                .into_iter()
+                .find_map(|(side, c)| Some((side, type_of(c).filter(|ty| ty.has_param())?)))
+        {
+            self.param_lacks(side.span, ty, if negated { "!=" } else { "==" });
+            return Err(Poisoned::typed(Type::BOOL));
+        }
         self.nan_comparison(negated, (lhs, &l), (rhs, &r));
         self.compared(span, l, r, |lhs, rhs| tir::ExprKind::Equal {
             negated,
@@ -481,12 +511,13 @@ impl Checker<'_> {
             let Some(ty) = type_of(checked) else { break };
             if matches!(
                 payload(ty).kind(),
-                TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(_)
+                TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(..)
             ) || !ty.is_counted(&self.lowered_enums)
             {
                 let kind = DiagnosticKind::IsNeedsObjects {
                     found: self.type_name(ty),
                     at: side.span,
+                    help: !ty.has_param(),
                 };
                 self.diagnostics.push(kind.into());
                 return Err(Poisoned::error());

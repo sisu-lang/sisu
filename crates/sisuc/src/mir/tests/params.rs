@@ -530,17 +530,26 @@ fn parameter_matched_in_a_loop_should_stay_borrowed() {
 }
 
 /// Lowers `f` of `src` with every parameter borrowed: `SEEDED`, `DEDUPED`, `COUNTERS` and the
-/// parameters marked in `reuses`.
+/// parameters marked in `reuses`. The front end recurses once per nested `match`, so it runs on
+/// a stack of the compiler's own size; the counters are that thread's.
 fn seed_counts(src: &str) -> (usize, usize, usize, Vec<bool>) {
-    let program = checked(src);
-    let id = (program.functions.iter())
-        .position(|f| f.name == "f")
-        .expect("the program should define `f`");
-    let borrowed = vec![true; program.functions[id].params.len()];
-    SEEDED.set(0);
-    DEDUPED.set(0);
-    let (_, _, reuses) = lower::function(&program, FuncId(id), &borrowed);
-    (SEEDED.get(), DEDUPED.get(), COUNTERS.get(), reuses)
+    let src = src.to_string();
+    std::thread::Builder::new()
+        .stack_size(crate::STACK_SIZE)
+        .spawn(move || {
+            let program = checked(&src);
+            let id = (program.functions.iter())
+                .position(|f| f.name == "f")
+                .expect("the program should define `f`");
+            let borrowed = vec![true; program.functions[id].params.len()];
+            SEEDED.set(0);
+            DEDUPED.set(0);
+            let (_, _, reuses) = lower::function(&program, FuncId(id), &borrowed);
+            (SEEDED.get(), DEDUPED.get(), COUNTERS.get(), reuses)
+        })
+        .expect("the thread should start")
+        .join()
+        .expect("the front end and lowering should not overflow the stack")
 }
 
 /// Each construction writes one counter and each arm on a parameter reads one twice, so `n`
@@ -589,4 +598,21 @@ fn seed_bookkeeping_is_linear() {
     let (_, deduped, counters, reuses) = seed_counts(&wide);
     assert_eq!((deduped, counters), (2 * n, n));
     assert_eq!(reuses, vec![true]);
+}
+
+/// Each instantiation is a mir function of its own, so inference gives each its own flags: a
+/// `string` that `peek` only reads is borrowed, and one that `keep` stores is owned.
+#[test]
+fn instantiations_should_infer_their_own_modes() {
+    let printed = built(
+        "fn peek<T>(x: T) -> i64 { 0 }\nfn keep<T>(x: T) -> [T] { [x] }\n\
+         fn main() {\n    print(peek(\"s\"))\n    print(peek(1))\n    print(keep(\"s\").len())\n    print(keep(1).len())\n}",
+    );
+    signature(
+        &printed,
+        "peek<string>",
+        "fn peek<string>(x#0: borrow string)",
+    );
+    signature(&printed, "peek<i64>", "fn peek<i64>(x#0: i64)");
+    signature(&printed, "keep<string>", "fn keep<string>(x#0: string)");
 }
