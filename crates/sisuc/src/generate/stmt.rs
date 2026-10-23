@@ -625,10 +625,7 @@ impl Gen<'_> {
     /// `while let V(t, ...) = c { c = t ... }`, which takes one node a run, so runs once a node
     /// (decision 5).
     pub(crate) fn while_chain(&mut self, id: usize, variant: usize) {
-        let ty = Ty::Enum {
-            id,
-            least: self.scope.enums[id].least,
-        };
+        let ty = self.scope.enum_ty(id);
         let nodes = self.upto(MAX_BOUND);
         let chain = self.scope.fresh("v");
         self.w.text(&format!("let mut {chain} = "));
@@ -663,7 +660,7 @@ impl Gen<'_> {
         let qualifier = if self.pick(2) == 0 {
             String::new()
         } else {
-            format!("{ty}.")
+            format!("{}.", ty.bare())
         };
         let label = self.label();
         self.w.text(&format!(

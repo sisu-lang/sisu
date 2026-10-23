@@ -45,7 +45,7 @@ impl Info {
     }
 
     /// The value of a rule built from `parts`, which has an effect or may panic unless `pure`.
-    fn of(parts: &[Info], size: u64, pure: bool) -> Info {
+    pub(crate) fn of(parts: &[Info], size: u64, pure: bool) -> Info {
         Info {
             pure: pure && parts.iter().all(|part| part.pure),
             ..Info::leaf(size)
@@ -117,6 +117,8 @@ enum Rule {
     Interpolate,
     ReadLine,
     Call,
+    /// `h(a)` or `h<A>(a)`, a call of a generic function.
+    Generic,
     If,
     Block,
     /// `({ let mut c = n loop { ... } })`, a `loop` value.
@@ -394,6 +396,9 @@ impl Gen<'_> {
         if !self.callees(ty, max).is_empty() {
             rules.push(Rule::Call);
         }
+        if !self.gcallees(ty, max).is_empty() {
+            rules.push(Rule::Generic);
+        }
         rules.push(Rule::If);
         if !self.one_line && self.blocks < MAX_BLOCKS {
             rules.push(Rule::Block);
@@ -478,6 +483,7 @@ impl Gen<'_> {
                 Info::of(&[default], default.size.max(LINE), false)
             }
             Rule::Call => self.call(ty, max),
+            Rule::Generic => self.gcall(ty, max),
             Rule::If => self.if_expr(ty, max, synth),
             Rule::Block => {
                 self.w.text("(");
@@ -575,8 +581,8 @@ impl Gen<'_> {
     /// An object of the class `class`, or an optional one if `safe`: what a `.` or a `?.`
     /// reads.
     fn receiver(&mut self, class: usize, safe: bool) -> Info {
+        let ty = self.scope.class_ty(class);
         let size = self.scope.classes[class].size;
-        let ty = Ty::Class { id: class, size };
         if safe {
             self.synth = true;
             self.expr(&Ty::Optional(Box::new(ty)), size)
@@ -590,12 +596,21 @@ impl Gen<'_> {
         self.scope.funcs[f].owner.is_some()
     }
 
-    /// `K(g: a, h: b)`: every field, each within its cap.
-    fn object(&mut self, ty: &Ty) -> Info {
-        let Ty::Class { id, size } = *ty else {
+    /// `K(g: a, h: b)`: every field, each within its cap. An instance of a generic class is
+    /// `G<n><A>(g: a)`, or `G<n>(g: a)` as often as its fields name every type parameter, where
+    /// each field is of its own type (`Gen::expr`).
+    pub(crate) fn object(&mut self, ty: &Ty) -> Info {
+        let Ty::Class { id, size, .. } = *ty else {
             unreachable!("only a class has objects")
         };
-        self.w.text(&format!("{ty}("));
+        // A field of its own type holds at least what `Ty::least` says.
+        let fits = self.scope.classes[id]
+            .fields
+            .iter()
+            .all(|field| field.ty.least() <= field.cap);
+        let infer = fits && self.inferable(ty) && self.pick(2) == 0;
+        let name = if infer { ty.bare() } else { ty.to_string() };
+        self.w.text(&format!("{name}("));
         let mut parts = Vec::new();
         for f in 0..self.scope.classes[id].fields.len() {
             let (name, field, cap) = {
@@ -606,6 +621,7 @@ impl Gen<'_> {
                 self.w.text(", ");
             }
             self.w.text(&format!("{name}: "));
+            self.synth = infer;
             parts.push(self.expr(&field, cap));
         }
         self.w.text(")");
@@ -623,8 +639,7 @@ impl Gen<'_> {
             (0..variants.len())
                 .filter(|&v| {
                     let floor: u64 = variants[v].fields.iter().map(Ty::floor).sum();
-                    let holds = variants[v].fields.iter().any(|field| field == ty);
-                    Some(v) != except && floor < max && holds == recursive
+                    Some(v) != except && floor < max && variants[v].recursive == recursive
                 })
                 .collect()
         };
@@ -634,15 +649,21 @@ impl Gen<'_> {
             variants.extend(recursive);
         }
         let v = variants[self.pick(variants.len())];
-        let (name, fields, labels) = {
+        let (name, fields, labels, inferable) = {
             let variant = &self.scope.enums[id].variants[v];
             (
                 variant.name.clone(),
                 variant.fields.clone(),
                 variant.labels.clone(),
+                variant.inferable,
             )
         };
-        self.w.text(&format!("{ty}.{name}"));
+        // Where the fields name every type parameter of a generic enum, the type arguments may
+        // be left out; each field is then of its own type (`Gen::expr`).
+        let fits = fields.iter().map(Ty::least).sum::<u64>() < max;
+        let infer = inferable && fits && self.pick(2) == 0;
+        let enum_name = if infer { ty.bare() } else { ty.to_string() };
+        self.w.text(&format!("{enum_name}.{name}"));
         if fields.is_empty() {
             return Info::leaf(1);
         }
@@ -656,7 +677,11 @@ impl Gen<'_> {
             if let Some(label) = labels.get(f) {
                 self.w.text(&format!("{label}: "));
             }
-            let later: u64 = fields[f + 1..].iter().map(Ty::floor).sum();
+            let later: u64 = fields[f + 1..]
+                .iter()
+                .map(|ty| if infer { ty.least() } else { ty.floor() })
+                .sum();
+            self.synth = infer;
             let part = self.expr(field, left - later);
             left -= part.size;
             parts.push(part);
@@ -869,9 +894,11 @@ impl Gen<'_> {
 
     fn type_within(&mut self, nesting: u32) -> Ty {
         let values = Ty::VALUES.len();
-        // The declared types share one choice, so they take no more of the values' as they grow.
+        // The declared types share one choice, so they take no more of the values' as they grow;
+        // so do the instances of generic types, whose number does not crowd out the declared.
         let declared = usize::from(!self.scope.types.is_empty());
-        let choice = self.pick(values + declared + if nesting > 0 { 2 } else { 0 });
+        let generic = usize::from(!self.scope.generic_types.is_empty());
+        let choice = self.pick(values + declared + generic + if nesting > 0 { 2 } else { 0 });
         if choice < values {
             return Ty::VALUES[choice].clone();
         }
@@ -879,7 +906,11 @@ impl Gen<'_> {
             let pick = self.pick(self.scope.types.len());
             return self.scope.types[pick].clone();
         }
-        let choice = choice - declared;
+        if choice < values + declared + generic {
+            let pick = self.pick(self.scope.generic_types.len());
+            return self.scope.generic_types[pick].clone();
+        }
+        let choice = choice - declared - generic;
         // Arrays of strings, whose elements `+=` may grow, come more often.
         let inner = if choice == values && self.pick(2) == 0 {
             Ty::String
@@ -1502,8 +1533,7 @@ impl Gen<'_> {
             MATCHED[choice].clone()
         } else {
             let id = self.pick(enums);
-            let least = self.scope.enums[id].least;
-            Ty::Enum { id, least }
+            self.scope.enum_ty(id)
         };
         self.w.text("(match ");
         self.synth = true;
@@ -1704,7 +1734,7 @@ impl Gen<'_> {
 
     /// `V`, `E.V`, `V(p, ...)` or `E.V(p, ...)` of the variant `v` of the enum `ty`, binding
     /// names into `binds` if any; and whether it matches every value of the variant.
-    fn variant_pattern(
+    pub(crate) fn variant_pattern(
         &mut self,
         ty: &Ty,
         v: usize,
@@ -1721,7 +1751,7 @@ impl Gen<'_> {
         let mut text = if self.pick(2) == 0 {
             name
         } else {
-            format!("{ty}.{name}")
+            format!("{}.{name}", ty.bare())
         };
         if fields.is_empty() {
             return (text, true);

@@ -1,7 +1,17 @@
 //! What the generator knows at a point of the program: the names in scope, their types, the
 //! sizes their values can reach, and the values it knows.
 
+use std::rc::Rc;
+
 use super::DEPTHS;
+use super::generic::{GFunc, Generic};
+
+/// An instance of a generic class or enum: `Scope::generics[generic]` applied to `args`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Applied {
+    pub(crate) generic: usize,
+    pub(crate) args: Vec<Ty>,
+}
 
 /// A type the generator writes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,11 +30,13 @@ pub(crate) enum Ty {
     Class {
         id: usize,
         size: u64,
+        applied: Option<Rc<Applied>>,
     },
     /// The enum `Scope::enums[id]`, whose first variant's smallest value counts `least`.
     Enum {
         id: usize,
         least: u64,
+        applied: Option<Rc<Applied>>,
     },
 }
 
@@ -41,13 +53,67 @@ impl std::fmt::Display for Ty {
             Ty::Unit => f.write_str("unit"),
             Ty::Array(element) => write!(f, "[{element}]"),
             Ty::Optional(payload) => write!(f, "{payload}?"),
-            Ty::Class { id, .. } => write!(f, "K{id}"),
-            Ty::Enum { id, .. } => write!(f, "E{id}"),
+            Ty::Class { id, applied, .. } => written(f, "K", *id, applied.as_deref()),
+            Ty::Enum { id, applied, .. } => written(f, "E", *id, applied.as_deref()),
         }
     }
 }
 
+/// `K3` or `E3` for a declared type, `G1<i64, [string]>` for an instance of a generic one.
+fn written(
+    f: &mut std::fmt::Formatter<'_>,
+    prefix: &str,
+    id: usize,
+    applied: Option<&Applied>,
+) -> std::fmt::Result {
+    let Some(Applied { generic, args }) = applied else {
+        return write!(f, "{prefix}{id}");
+    };
+    write!(f, "G{generic}<")?;
+    for (i, arg) in args.iter().enumerate() {
+        if i > 0 {
+            f.write_str(", ")?;
+        }
+        write!(f, "{arg}")?;
+    }
+    f.write_str(">")
+}
+
 impl Ty {
+    /// The declared class `K<id>`.
+    pub(crate) const fn class(id: usize, size: u64) -> Ty {
+        Ty::Class {
+            id,
+            size,
+            applied: None,
+        }
+    }
+
+    /// The declared enum `E<id>`.
+    pub(crate) const fn enumeration(id: usize, least: u64) -> Ty {
+        Ty::Enum {
+            id,
+            least,
+            applied: None,
+        }
+    }
+
+    /// The name without type arguments, which a pattern and an inferred construction write:
+    /// `G<n>` for an instance of a generic class or enum.
+    pub(crate) fn bare(&self) -> String {
+        match self {
+            Ty::Class {
+                applied: Some(a), ..
+            }
+            | Ty::Enum {
+                applied: Some(a), ..
+            } => {
+                format!("G{}", a.generic)
+            }
+            _ => self.to_string(),
+        }
+    }
+
     /// The types that have values: every type but `unit`.
     pub(crate) const VALUES: [Ty; 6] = [Ty::I64, Ty::U8, Ty::F64, Ty::Bool, Ty::Char, Ty::String];
 
@@ -229,6 +295,8 @@ pub(crate) struct Class {
     pub(crate) fields: Vec<Field>,
     /// The size of each of its objects: one for the object and each field's cap.
     pub(crate) size: u64,
+    /// For an instance of a generic class, which one and with what.
+    pub(crate) applied: Option<Rc<Applied>>,
 }
 
 /// A variant of an enum.
@@ -237,6 +305,12 @@ pub(crate) struct Variant {
     pub(crate) fields: Vec<Ty>,
     /// Each field's label, or none at all.
     pub(crate) labels: Vec<String>,
+    /// Whether a value of it holds a value of the enum, or of one that holds the enum again. A
+    /// value built finite ends in a variant that is not. The first variant is not.
+    pub(crate) recursive: bool,
+    /// For a variant of an instance: whether its fields name every type parameter of the
+    /// generic enum, so a construction may leave the type arguments out.
+    pub(crate) inferable: bool,
 }
 
 /// A generated enum: `E<id>`. Its first variant holds only types declared before it; a later
@@ -247,6 +321,8 @@ pub(crate) struct Enum {
     pub(crate) least: u64,
     /// Whether a value of it may hold a class object.
     pub(crate) has_class: bool,
+    /// For an instance of a generic enum, which one and with what.
+    pub(crate) applied: Option<Rc<Applied>>,
 }
 
 #[derive(Default)]
@@ -257,6 +333,14 @@ pub(crate) struct Scope {
     pub(crate) enums: Vec<Enum>,
     /// The types of the classes and enums declared so far.
     pub(crate) types: Vec<Ty>,
+    /// The instances of generic classes and enums that the program names in its types.
+    pub(crate) generic_types: Vec<Ty>,
+    /// The generic classes and enums, each written once.
+    pub(crate) generics: Vec<Generic>,
+    /// The generic functions.
+    pub(crate) gfuncs: Vec<GFunc>,
+    /// The instances made so far: a generic, its type arguments, and the type that results.
+    pub(crate) instances: Vec<(Rc<Applied>, Ty)>,
     /// The locals in scope, innermost last.
     pub(crate) vars: Vec<Var>,
     /// Where each open block's locals start in `vars`.
@@ -285,6 +369,26 @@ impl Scope {
             Ty::Enum { id, .. } => self.enums[*id].has_class,
             Ty::Array(inner) | Ty::Optional(inner) => self.contains_class(inner),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => false,
+        }
+    }
+
+    /// The type of the class `Scope::classes[id]`.
+    pub(crate) fn class_ty(&self, id: usize) -> Ty {
+        let class = &self.classes[id];
+        Ty::Class {
+            id,
+            size: class.size,
+            applied: class.applied.clone(),
+        }
+    }
+
+    /// The type of the enum `Scope::enums[id]`.
+    pub(crate) fn enum_ty(&self, id: usize) -> Ty {
+        let e = &self.enums[id];
+        Ty::Enum {
+            id,
+            least: e.least,
+            applied: e.applied.clone(),
         }
     }
 
