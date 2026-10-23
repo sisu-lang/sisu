@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use super::generic::Site;
 use super::{Binding, Checked, Checker, Poisoned, UNKNOWN, payload, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -99,7 +100,34 @@ impl Checker<'_> {
             ExprKind::Index { base, index } => self.index(e.span, base, index),
             ExprKind::NoneLit => self.none(e.span, expected),
             ExprKind::Name(name) => self.name(e.span, *name),
-            ExprKind::Call { callee, args } => self.call(e.span, callee, args),
+            ExprKind::Call {
+                callee,
+                types,
+                angles,
+                args,
+            } => {
+                if let Some(value) = self.named_args(callee, types, *angles, true) {
+                    self.stray(args);
+                    return Err(value);
+                }
+                let site = Site {
+                    name: callee,
+                    written: types,
+                    angles: *angles,
+                    expected,
+                };
+                let checked = self.call(e.span, site, args);
+                self.misread_unless_checked(e.span, types, &checked);
+                checked
+            }
+            ExprKind::Applied {
+                name,
+                types,
+                angles,
+            } => match self.named_args(name, types, *angles, false) {
+                Some(value) => Err(value),
+                None => self.name(name.span, name.name),
+            },
             ExprKind::Todo { keyword, args } => self.todo(e.span, *keyword, args),
             ExprKind::SelfValue => {
                 let Some(ty) = self.body.self_type else {
@@ -110,7 +138,7 @@ impl Checker<'_> {
                 node(tir::ExprKind::Local(tir::LocalId(0)), ty)
             }
             ExprKind::Field { base, name, safe } => {
-                if !safe && let Some(checked) = self.type_path(e.span, base, name, None) {
+                if !safe && let Some(checked) = self.type_path(e.span, base, name, None, expected) {
                     return checked;
                 }
                 self.member(e.span, *safe, base, name, |c, checked| {
@@ -120,10 +148,22 @@ impl Checker<'_> {
             ExprKind::MethodCall {
                 receiver,
                 method,
+                types,
+                angles,
                 args,
                 parens,
                 safe,
-            } => self.method_expr(e.span, *safe, receiver, method, args, *parens),
+            } => {
+                let site = Site {
+                    name: method,
+                    written: types,
+                    angles: *angles,
+                    expected,
+                };
+                let checked = self.method_expr(e.span, *safe, receiver, site, args, *parens);
+                self.misread_unless_checked(e.span, types, &checked);
+                checked
+            }
             ExprKind::Coalesce { lhs, rhs } => self.coalesce(e.span, lhs, rhs),
             ExprKind::Is { lhs, rhs } => self.is(e.span, lhs, rhs),
             ExprKind::Unary { op, operand } => {
@@ -219,14 +259,21 @@ impl Checker<'_> {
     /// An expression whose value is used: not `unit` or `never`.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Option<Type>) -> Checked {
         let checked = self.expr(e, expected);
-        let never = match type_of(&checked) {
-            Some(Type::UNIT) => false,
-            Some(Type::NEVER) => true,
-            _ => return checked,
-        };
-        self.diagnostics
-            .push(DiagnosticKind::NoValue { at: e.span, never }.into());
-        Err(Poisoned::error())
+        match type_of(&checked) {
+            Some(ty @ (Type::UNIT | Type::NEVER)) => {
+                self.no_value(e.span, ty);
+                Err(Poisoned::error())
+            }
+            _ => checked,
+        }
+    }
+
+    /// Reports a value of `ty`, `unit` or `never`, used at `at`.
+    pub(super) fn no_value(&mut self, at: Span, ty: Type) {
+        self.report(DiagnosticKind::NoValue {
+            at,
+            never: ty == Type::NEVER,
+        });
     }
 
     /// A value of type `want`; `None` is `Error`, which every type matches. A `T` where `want`

@@ -3,10 +3,12 @@
 
 use std::fmt;
 
+use crate::ast::angled;
+use crate::graph::components;
 use crate::source::Span;
 
 pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
-pub(crate) use crate::types::{Type, TypeKind};
+pub(crate) use crate::types::{Type, TypeArgs, TypeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LocalId(pub(crate) usize);
@@ -109,6 +111,8 @@ pub(crate) struct Program {
 #[derive(Debug)]
 pub(crate) struct Class {
     pub(crate) name: String,
+    /// The names of its type parameters, in order; empty when it is not generic.
+    pub(crate) type_params: Vec<String>,
     pub(crate) fields: Vec<Field>,
 }
 
@@ -116,26 +120,52 @@ pub(crate) struct Class {
 #[derive(Debug)]
 pub(crate) struct Enum {
     pub(crate) name: String,
+    /// The names of its type parameters, in order; empty when it is not generic.
+    pub(crate) type_params: Vec<String>,
     pub(crate) variants: Vec<Variant>,
-    /// Whether a value has counted parts: a boxed field, or a field of a counted type.
+    /// Whether a value has counted parts: its component has a box, or a field is of a counted
+    /// type.
     pub(crate) counted: bool,
     /// The enum's strongly connected component of the holds-inline graph, when that component
     /// has a boxed field.
     pub(crate) cycle: Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Variant {
     pub(crate) name: String,
     pub(crate) fields: Vec<Payload>,
 }
 
 /// A payload field. A `boxed` one is stored behind a counted pointer, since its enum, or the
-/// enum of its optional, holds the declaring enum inline.
-#[derive(Debug)]
+/// enum of its optional, holds the declaring enum inline (`layout_enums`).
+#[derive(Clone, Debug)]
 pub(crate) struct Payload {
     pub(crate) ty: Type,
     pub(crate) boxed: bool,
+    pub(crate) rank: Rank,
+}
+
+/// Which pass of `layout_enums` may box a payload field, from its declared type; kept through
+/// `mono`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Rank {
+    /// It names no type parameter: `Two<Expr>` in `Expr`.
+    Plain,
+    /// It names a type parameter, and its own enum applied to its own parameters where
+    /// `check::enums::inline_enums` looks (`check::enums::names_itself`): `Tree<T>` in `Tree`,
+    /// `Wrap2<G<T>>` in `G`.
+    Own,
+    /// It names a type parameter, and otherwise, where `inline_enums` looks and with an argument
+    /// that carries a parameter, an enum declaration on a cycle of such names with its own:
+    /// `Wrap3<C<T>>` in `A` when `C<T>` holds `A<T>`.
+    Open,
+    /// It names a type parameter, and otherwise an enum declaration on a cycle of such names
+    /// with its own, where `inline_enums` looks, only with arguments that carry none:
+    /// `P2<T, Wrap2<i64>>` in `Wrap2`.
+    Late,
+    /// Any other field that names a type parameter, never boxed: `Two<T>` in `Wrap2`, or `T`.
+    Never,
 }
 
 #[derive(Debug)]
@@ -145,16 +175,20 @@ pub(crate) struct Field {
     pub(crate) mutable: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Function {
     pub(crate) name: String,
+    /// The names of the type parameters in scope: a method's owner's, then its own.
+    pub(crate) type_params: Vec<String>,
+    /// How many of `type_params` belong to the class or enum of a method.
+    pub(crate) owner_params: usize,
     pub(crate) params: Vec<LocalId>,
     pub(crate) ret: Type,
     pub(crate) locals: Vec<Local>,
     pub(crate) body: Block,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Local {
     /// `None` for a local the checker made up.
     pub(crate) name: Option<String>,
@@ -163,7 +197,7 @@ pub(crate) struct Local {
 }
 
 /// `value` is the last statement when it was an expression statement in `ast`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Block {
     pub(crate) stmts: Vec<Stmt>,
     pub(crate) value: Option<Box<Expr>>,
@@ -171,7 +205,7 @@ pub(crate) struct Block {
 }
 
 /// `Append` is `place += value` on a `string` field or element: its place is never a `Local`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Stmt {
     Let { local: LocalId, init: Expr },
     Assign { place: Place, value: Expr },
@@ -179,7 +213,7 @@ pub(crate) enum Stmt {
     Expr(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Place {
     Local(LocalId),
     /// Field `index` of the class `base` has.
@@ -194,7 +228,7 @@ pub(crate) enum Place {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Expr {
     pub(crate) kind: ExprKind,
     pub(crate) ty: Type,
@@ -263,7 +297,7 @@ impl fmt::Display for Format {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum ExprKind {
     Int(i64),
     Float(f64),
@@ -276,6 +310,9 @@ pub(crate) enum ExprKind {
     Local(LocalId),
     Call {
         func: FuncId,
+        /// The callee's type arguments, a method's receiver's first; `NONE` when it is not
+        /// generic.
+        types: TypeArgs,
         args: Vec<Expr>,
     },
     New {
@@ -411,7 +448,7 @@ pub(crate) enum ExprKind {
 
 /// One arm of a `Match`. `bindings` holds each local its pattern binds, once, which every
 /// alternative of an `Or` binds alike. `guard`, a `bool`, runs after the pattern matched.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Arm {
     pub(crate) pattern: Pattern,
     pub(crate) bindings: Vec<LocalId>,
@@ -421,13 +458,13 @@ pub(crate) struct Arm {
     pub(crate) reachable: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Pattern {
     pub(crate) kind: PatternKind,
     pub(crate) span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum PatternKind {
     /// `_`.
     Wild,
@@ -454,21 +491,105 @@ impl Type {
     /// which codegen counts. `enums` are the program's.
     pub(crate) fn is_counted(self, enums: &[Enum]) -> bool {
         match self.kind() {
-            TypeKind::String | TypeKind::Class(_) | TypeKind::Array(_) => true,
-            TypeKind::Enum(id) => enums[id.0].counted,
+            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => true,
+            TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Optional(payload) => payload.is_counted(enums),
             _ => false,
         }
+    }
+
+    /// Whether a value of this type may be counted: it is, or a type argument may make it so.
+    pub(crate) fn may_be_counted(self, enums: &[Enum]) -> bool {
+        self.is_counted(enums) || self.has_param()
     }
 
     /// The enum a payload field of this type holds inline unless boxed: `F`'s for `F` or `F?`.
     /// These are the edges of the holds-inline graph.
     pub(crate) fn inline_enum(self) -> Option<EnumId> {
         match self.kind() {
-            TypeKind::Enum(id) => Some(id),
+            TypeKind::Enum(id, _) => Some(id),
             TypeKind::Optional(payload) => payload.inline_enum(),
             _ => None,
         }
+    }
+}
+
+/// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
+/// cycle of the holds-inline graph, and sets each enum's `cycle` and `counted`. The box goes on
+/// the declaring enum's own field rather than one inside a generic type, by a pass per `Rank`,
+/// `Plain`, `Own`, `Open`, then `Late`, each boxing its fields that are on a cycle of what the
+/// passes before it left unboxed. A cycle that `Plain` leaves holds an `Own`, `Open` or `Late`
+/// field, since each of its enums' declarations is named by a generic field of another on it,
+/// so the names close a cycle of declarations. A `Never` field is never boxed. The ranks read
+/// names only, so a type argument an enum never holds inline (unused, or only in an array or a
+/// class) still counts: with `enum Two<T, U> { Both(T, T) }`,
+/// `Wrap2<T>.W: Two<T, Wrap2<T>>` is `Own`, and `G<i64>` in `enum G<T> { P(Wrap2<G<T>>) }`
+/// boxes `Wrap2<G<i64>>.W` beside `G<i64>.P`, which alone would break the cycle. And a `Late`
+/// declaring field that names its cycle only through closed names can lose its box to an
+/// `Open` field inside the generic type: with `enum Wrap8<T> { W(P2<T, Y8<T>>) N }` and
+/// `enum Y8<T> { V(P2<T, Wrap8<i64>>) N }`, `G<T>.P: P2<T, Wrap8<G<i64>>>` is `Late`, so the
+/// `Open` pass boxes `Wrap8<G<i64>>.W` and leaves `G<i64>.P` inline. Each of these places a box
+/// where it is not needed, and never leaves a cycle unboxed. Every member of a component with
+/// a box is on that cycle, and counted, though a member may hold its links inline.
+pub(crate) fn layout_enums(enums: &mut [Enum]) {
+    // The holds-inline graph over the fields `keep` picks.
+    let held = |enums: &[Enum], keep: fn(&Payload) -> bool| -> Vec<Vec<usize>> {
+        (enums.iter())
+            .map(|e| {
+                let fields = e.variants.iter().flat_map(|v| &v.fields);
+                (fields.filter(|p| keep(p)))
+                    .filter_map(|p| p.ty.inline_enum())
+                    .map(|id| id.0)
+                    .collect()
+            })
+            .collect()
+    };
+    let component = components(&held(enums, |_| true));
+    for (e, info) in enums.iter_mut().enumerate() {
+        for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
+            p.boxed = p.rank == Rank::Plain
+                && p.ty
+                    .inline_enum()
+                    .is_some_and(|f| component[f.0] == component[e]);
+        }
+    }
+    // A program with only `Plain` and `Never` fields skips the later passes' graphs.
+    let mut fields = enums
+        .iter()
+        .flat_map(|e| &e.variants)
+        .flat_map(|v| &v.fields);
+    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Open | Rank::Late)) {
+        for rank in [Rank::Own, Rank::Open, Rank::Late] {
+            let remaining = components(&held(enums, |p| !p.boxed));
+            for (e, info) in enums.iter_mut().enumerate() {
+                for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
+                    let on_cycle =
+                        p.ty.inline_enum()
+                            .is_some_and(|f| remaining[f.0] == remaining[e]);
+                    p.boxed |= p.rank == rank && on_cycle;
+                }
+            }
+        }
+    }
+    let mut has_box = vec![false; enums.len()];
+    for (e, info) in enums.iter().enumerate() {
+        has_box[component[e]] |= info
+            .variants
+            .iter()
+            .flat_map(|v| &v.fields)
+            .any(|p| p.boxed);
+    }
+    // A component is numbered after every component it holds, and holds its own members only
+    // when it has a box, so counting in component order sees each other held enum counted.
+    let mut order: Vec<usize> = (0..enums.len()).collect();
+    order.sort_by_key(|&e| component[e]);
+    for e in order {
+        let boxed = has_box[component[e]];
+        enums[e].cycle = boxed.then_some(component[e]);
+        let counted = boxed
+            || (enums[e].variants.iter().flat_map(|v| &v.fields))
+                .any(|p| p.ty.may_be_counted(enums));
+        enums[e].counted = counted;
     }
 }
 
@@ -702,6 +823,114 @@ impl Place {
     }
 }
 
+impl Expr {
+    /// `self` and every expression inside it, outermost first.
+    fn exprs<'a>(&'a self, out: &mut Vec<&'a Expr>) {
+        use ExprKind as K;
+        out.push(self);
+        match &self.kind {
+            K::Int(_)
+            | K::Float(_)
+            | K::Bool(_)
+            | K::Char(_)
+            | K::Str(_)
+            | K::None
+            | K::Local(_)
+            | K::ReadLine
+            | K::Break { value: None, .. }
+            | K::Continue { .. }
+            | K::Return(None) => {}
+            K::Call { args, .. }
+            | K::New { args, .. }
+            | K::Variant { args, .. }
+            | K::ArrayLit(args)
+            | K::Math { operands: args, .. }
+            | K::Interpolate { parts: args, .. }
+            | K::Compare { operands: args, .. } => args.iter().for_each(|a| a.exprs(out)),
+            K::Field { base: e, .. }
+            | K::Wrap(e)
+            | K::Convert(e)
+            | K::Print { operand: e, .. }
+            | K::Panic(e)
+            | K::Len(e)
+            | K::Chars(e)
+            | K::Bytes(e)
+            | K::Words(e)
+            | K::FromChars(e)
+            | K::Sum(e)
+            | K::Unary { operand: e, .. }
+            | K::Break { value: Some(e), .. }
+            | K::Return(Some(e)) => e.exprs(out),
+            K::ArrayFill { value: a, len: b }
+            | K::Index { base: a, index: b }
+            | K::Contains { base: a, value: b }
+            | K::Binary { lhs: a, rhs: b, .. }
+            | K::Concat { lhs: a, rhs: b }
+            | K::Equal { lhs: a, rhs: b, .. }
+            | K::Is { lhs: a, rhs: b } => {
+                a.exprs(out);
+                b.exprs(out);
+            }
+            K::If {
+                cond: first,
+                then_block,
+                else_block,
+            }
+            | K::IfSome {
+                scrutinee: first,
+                then_block,
+                else_block,
+                ..
+            } => {
+                first.exprs(out);
+                then_block.exprs(out);
+                if let Some(b) = else_block {
+                    b.exprs(out);
+                }
+            }
+            K::Match {
+                scrutinee, arms, ..
+            } => {
+                scrutinee.exprs(out);
+                for arm in arms {
+                    arm.guard.iter().for_each(|g| g.exprs(out));
+                    arm.body.exprs(out);
+                }
+            }
+            K::Loop(block) | K::Block(block) => block.exprs(out),
+        }
+    }
+}
+
+impl Block {
+    /// Every expression in the block, each before those inside it, in order.
+    pub(crate) fn exprs<'a>(&'a self, out: &mut Vec<&'a Expr>) {
+        for stmt in &self.stmts {
+            match stmt {
+                Stmt::Let { init: e, .. } | Stmt::Expr(e) => e.exprs(out),
+                Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+                    place.exprs(out);
+                    value.exprs(out);
+                }
+            }
+        }
+        self.value.iter().for_each(|v| v.exprs(out));
+    }
+}
+
+impl Place {
+    fn exprs<'a>(&'a self, out: &mut Vec<&'a Expr>) {
+        match self {
+            Place::Local(_) => {}
+            Place::Field { base, .. } => base.exprs(out),
+            Place::Index { base, index } => {
+                base.exprs(out);
+                index.exprs(out);
+            }
+        }
+    }
+}
+
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self.kind() {
@@ -714,8 +943,9 @@ impl fmt::Display for Type {
             TypeKind::Unit => "unit",
             TypeKind::Never => "never",
             // A class's name lives in the program: `Program::type_name` prints it.
-            TypeKind::Class(id) => return write!(f, "class#{}", id.0),
-            TypeKind::Enum(id) => return write!(f, "enum#{}", id.0),
+            TypeKind::Param(name, _) => return write!(f, "{name}"),
+            TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
+            TypeKind::Enum(id, _) => return write!(f, "enum#{}", id.0),
             TypeKind::Array(element) => return write!(f, "[{element}]"),
             TypeKind::Optional(payload) => return write!(f, "{payload}?"),
         })
@@ -800,9 +1030,10 @@ impl Printer<'_> {
             ExprKind::Str(s) => write!(f, "{s:?}"),
             ExprKind::None => f.write_str("None"),
             ExprKind::Local(id) => self.local(f, *id),
-            ExprKind::Call { func, args } => {
+            ExprKind::Call { func, types, args } => {
                 let name = &self.program.functions[func.0].name;
-                self.list(f, format_args!("call {name}"), args)
+                let types = types.written(|ty| self.program.type_name(ty));
+                self.list(f, format_args!("call {name}{types}"), args)
             }
             ExprKind::New { class, args } => {
                 let name = &self.program.classes[class.0].name;
@@ -923,7 +1154,7 @@ impl Printer<'_> {
             PatternKind::Wild => f.write_str("_"),
             PatternKind::Bind(local) => self.local(f, *local),
             PatternKind::Variant { variant, fields } => {
-                let TypeKind::Enum(id) = ty.kind() else {
+                let TypeKind::Enum(id, _) = ty.kind() else {
                     panic!(
                         "the checker should only emit a variant pattern at an enum position, not `{ty}`"
                     )
@@ -1013,7 +1244,7 @@ impl Printer<'_> {
 
     /// `(. base name)`.
     fn field(&self, f: &mut fmt::Formatter<'_>, base: &Expr, index: usize) -> fmt::Result {
-        let TypeKind::Class(class) = base.ty.kind() else {
+        let TypeKind::Class(class, _) = base.ty.kind() else {
             panic!(
                 "the checker should only emit a field access on a class-typed base, not `{}`",
                 base.ty
@@ -1093,7 +1324,7 @@ impl Program {
     /// The field drop follows in a loop: the last, in declaration order, whose type is
     /// `class` or `class?`.
     pub(crate) fn chain_field(&self, class: ClassId) -> Option<usize> {
-        let own = Type::intern(TypeKind::Class(class));
+        let own = Type::intern(TypeKind::Class(class, TypeArgs::NONE));
         self.classes[class.0].fields.iter().rposition(|field| {
             field.ty == own
                 || matches!(field.ty.kind(), TypeKind::Optional(payload) if payload == own)
@@ -1102,12 +1333,74 @@ impl Program {
 
     /// A type as `--emit tir` prints it: a class or an enum by its name.
     pub(crate) fn type_name(&self, ty: Type) -> String {
-        match ty.kind() {
-            TypeKind::Class(id) => self.classes[id.0].name.clone(),
-            TypeKind::Enum(id) => self.enums[id.0].name.clone(),
-            TypeKind::Array(element) => format!("[{}]", self.type_name(element)),
-            TypeKind::Optional(payload) => format!("{}?", self.type_name(payload)),
-            _ => ty.to_string(),
+        let mut name = String::new();
+        self.write_names(&mut name, vec![Step::Type(ty)]);
+        name
+    }
+
+    /// `<a, b>` for `args`, each named as `type_name` names it; nothing for none.
+    pub(crate) fn args_name(&self, args: &[Type]) -> String {
+        let mut name = String::new();
+        let mut steps = Vec::new();
+        push_args(&mut name, &mut steps, args);
+        self.write_names(&mut name, steps);
+        name
+    }
+
+    /// Writes `steps` to `out`, the last first, each type as `type_name` names it. One string
+    /// grows in place, and a stack stands in for recursion: a type can nest deeper than the
+    /// call stack allows.
+    fn write_names<'a>(&'a self, out: &mut String, mut steps: Vec<Step<'a>>) {
+        while let Some(step) = steps.pop() {
+            let ty = match step {
+                Step::Text(text) => {
+                    out.push_str(text);
+                    continue;
+                }
+                Step::Type(ty) => ty,
+            };
+            let (name, args) = match ty.kind() {
+                TypeKind::Class(id, args) => (&self.classes[id.0].name, args),
+                TypeKind::Enum(id, args) => (&self.enums[id.0].name, args),
+                TypeKind::Array(element) => {
+                    out.push('[');
+                    steps.extend([Step::Text("]"), Step::Type(element)]);
+                    continue;
+                }
+                TypeKind::Optional(payload) => {
+                    steps.extend([Step::Text("?"), Step::Type(payload)]);
+                    continue;
+                }
+                _ => {
+                    fmt::Write::write_fmt(out, format_args!("{ty}"))
+                        .expect("writing to a `String` should not fail");
+                    continue;
+                }
+            };
+            out.push_str(name);
+            push_args(out, &mut steps, args.get());
+        }
+    }
+}
+
+/// What `Program::write_names` writes next: a type, or text around one.
+enum Step<'a> {
+    Type(Type),
+    Text(&'a str),
+}
+
+/// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
+/// for `Program::write_names`, `a` on top.
+fn push_args(out: &mut String, steps: &mut Vec<Step<'_>>, args: &[Type]) {
+    if args.is_empty() {
+        return;
+    }
+    out.push('<');
+    steps.push(Step::Text(">"));
+    for (i, &ty) in args.iter().enumerate().rev() {
+        steps.push(Step::Type(ty));
+        if i > 0 {
+            steps.push(Step::Text(", "));
         }
     }
 }
@@ -1117,7 +1410,12 @@ impl fmt::Display for Program {
         // Classes first, then enums, then functions, one per line.
         let mut separator = "";
         for class in &self.classes {
-            write!(f, "{separator}(class {}", class.name)?;
+            write!(
+                f,
+                "{separator}(class {}{}",
+                class.name,
+                angled(&class.type_params)
+            )?;
             for field in &class.fields {
                 let keyword = if field.mutable { "mut " } else { "" };
                 let ty = self.type_name(field.ty);
@@ -1127,7 +1425,7 @@ impl fmt::Display for Program {
             separator = "\n";
         }
         for e in &self.enums {
-            write!(f, "{separator}(enum {}", e.name)?;
+            write!(f, "{separator}(enum {}{}", e.name, angled(&e.type_params))?;
             for variant in &e.variants {
                 if variant.fields.is_empty() {
                     write!(f, " {}", variant.name)?;
@@ -1154,7 +1452,13 @@ impl fmt::Display for Program {
                 program: self,
                 function,
             };
-            write!(f, "(fn {} (", function.name)?;
+            let (owner, own) = function.type_params.split_at(function.owner_params);
+            match function.name.split_once('.') {
+                Some((class, method)) => {
+                    write!(f, "(fn {class}{}.{method}{} (", angled(owner), angled(own))?;
+                }
+                None => write!(f, "(fn {}{} (", function.name, angled(own))?,
+            }
             for (j, param) in function.params.iter().enumerate() {
                 if j > 0 {
                     f.write_str(" ")?;
@@ -1182,6 +1486,7 @@ fn jump_depth(f: &mut fmt::Formatter<'_>, depth: usize) -> fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::symbol::Symbol;
 
     fn expr(kind: ExprKind, ty: Type) -> Expr {
         Expr {
@@ -1240,6 +1545,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: vec![],
+                owner_params: 0,
                 params: vec![],
                 ret: Type::I64,
                 locals: vec![],
@@ -1334,6 +1641,7 @@ mod tests {
         let call = expr(
             ExprKind::Call {
                 func: FuncId(0),
+                types: TypeArgs::NONE,
                 args: vec![neg3],
             },
             Type::I64,
@@ -1353,6 +1661,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::I64,
                 locals,
@@ -1388,7 +1698,7 @@ mod tests {
     /// `match s { Running(c) => c  Idle => 0  _ => 1 }` over `enum State { Idle  Running(i64) }`.
     #[test]
     fn prints_match() {
-        let state = Type::intern(TypeKind::Enum(EnumId(0)));
+        let state = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
         let pattern = |kind| Pattern {
             kind,
             span: Span::new(0, 0),
@@ -1435,6 +1745,7 @@ mod tests {
             classes: vec![],
             enums: vec![Enum {
                 name: "State".into(),
+                type_params: Vec::new(),
                 variants: vec![
                     Variant {
                         name: "Idle".into(),
@@ -1445,6 +1756,7 @@ mod tests {
                         fields: vec![Payload {
                             ty: Type::I64,
                             boxed: false,
+                            rank: Rank::Plain,
                         }],
                     },
                 ],
@@ -1453,6 +1765,8 @@ mod tests {
             }],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::I64,
                 locals: vec![
@@ -1503,6 +1817,8 @@ mod tests {
         // fn second(a: i64, ok: bool) -> bool { first(); ok && (a == 3 && a < 4) }
         let first = Function {
             name: "first".into(),
+            type_params: Vec::new(),
+            owner_params: 0,
             params: vec![],
             ret: Type::UNIT,
             locals: vec![],
@@ -1511,6 +1827,7 @@ mod tests {
         let call = expr(
             ExprKind::Call {
                 func: FuncId(0),
+                types: TypeArgs::intern(&[Type::I64]),
                 args: vec![],
             },
             Type::UNIT,
@@ -1534,6 +1851,8 @@ mod tests {
         let value = binary(BinaryOp::And, ok, binary(BinaryOp::And, a_eq_3, a_lt_4));
         let second = Function {
             name: "second".into(),
+            type_params: Vec::new(),
+            owner_params: 0,
             params: vec![LocalId(0), LocalId(1)],
             ret: Type::BOOL,
             locals: vec![param("a", Type::I64), param("ok", Type::BOOL)],
@@ -1551,7 +1870,7 @@ mod tests {
         assert_eq!(
             program.to_string(),
             "(fn first () unit (block (return)))\n\
-             (fn second ((a#0 i64) (ok#1 bool)) bool (block (call first) (&& ok#1 (&& (== a#0 3) (< a#0 4)))))"
+             (fn second ((a#0 i64) (ok#1 bool)) bool (block (call first<i64>) (&& ok#1 (&& (== a#0 3) (< a#0 4)))))"
         );
     }
 
@@ -1580,6 +1899,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -1612,6 +1933,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("c", Type::CHAR)],
@@ -1639,6 +1962,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -1657,6 +1982,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -1676,6 +2003,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING)],
@@ -1703,6 +2032,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING)],
@@ -1736,6 +2067,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
                 ret: Type::UNIT,
                 locals: vec![param("s", Type::STRING), param("n", Type::I64)],
@@ -1784,6 +2117,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
                 ret: Type::UNIT,
                 locals: vec![param("n", Type::I64), param("x", Type::F64)],
@@ -1808,6 +2143,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![LocalId(0)],
                 ret: Type::UNIT,
                 locals: vec![
@@ -1850,6 +2187,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![Local {
@@ -1882,6 +2221,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
                 params: vec![],
                 ret: Type::UNIT,
                 locals: vec![],
@@ -1909,9 +2250,11 @@ mod tests {
         };
         let class = |name: &str, fields: Vec<Field>| Class {
             name: name.into(),
+            type_params: Vec::new(),
             fields,
         };
-        let optional = |id: usize| Type::optional(Type::intern(TypeKind::Class(ClassId(id))));
+        let optional =
+            |id: usize| Type::optional(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
         let program = Program {
             classes: vec![
                 class(
@@ -1931,7 +2274,10 @@ mod tests {
                     vec![
                         field("next", optional(2)),
                         field("value", Type::I64),
-                        field("tag", Type::intern(TypeKind::Class(ClassId(3)))),
+                        field(
+                            "tag",
+                            Type::intern(TypeKind::Class(ClassId(3), TypeArgs::NONE)),
+                        ),
                     ],
                 ),
                 class("Tag", vec![]),
@@ -1947,8 +2293,9 @@ mod tests {
 
     #[test]
     fn types_print_their_source_names() {
-        let class = Type::intern(TypeKind::Class(ClassId(3)));
+        let class = Type::intern(TypeKind::Class(ClassId(3), TypeArgs::NONE));
         let nested = Type::optional(Type::array(Type::array(Type::optional(Type::I64))));
+        let param = |name, i| Type::intern(TypeKind::Param(Symbol::intern(name), i));
         for (ty, text) in [
             (Type::I64, "i64"),
             (Type::U8, "u8"),
@@ -1960,6 +2307,7 @@ mod tests {
             (Type::NEVER, "never"),
             (class, "class#3"),
             (nested, "[[i64?]]?"),
+            (param("T", 0), "T"),
         ] {
             assert_eq!(ty.to_string(), text);
         }
@@ -1969,8 +2317,69 @@ mod tests {
 
     #[test]
     fn prints_an_enum_type_by_its_id() {
-        let ty = Type::optional(Type::intern(TypeKind::Enum(EnumId(2))));
+        let ty = Type::optional(Type::intern(TypeKind::Enum(EnumId(2), TypeArgs::NONE)));
         assert_eq!(ty.to_string(), "enum#2?");
+    }
+
+    #[test]
+    fn type_names_should_write_the_arguments() {
+        let t = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let program = Program {
+            classes: vec![Class {
+                name: "Stack".into(),
+                type_params: Vec::new(),
+                fields: vec![],
+            }],
+            enums: vec![Enum {
+                name: "Tree".into(),
+                type_params: Vec::new(),
+                variants: vec![],
+                counted: false,
+                cycle: None,
+            }],
+            functions: vec![],
+        };
+        let args = TypeArgs::intern(&[Type::array(t)]);
+        let pair = TypeArgs::intern(&[Type::I64, t]);
+        let class = |args| Type::intern(TypeKind::Class(ClassId(0), args));
+        let enumeration = |args| Type::intern(TypeKind::Enum(EnumId(0), args));
+        for (ty, text) in [
+            (class(TypeArgs::NONE), "Stack"),
+            (class(args), "Stack<[T]>"),
+            (enumeration(TypeArgs::NONE), "Tree"),
+            (enumeration(pair), "Tree<i64, T>"),
+            (Type::optional(class(args)), "Stack<[T]>?"),
+            (t, "T"),
+        ] {
+            assert_eq!(program.type_name(ty), text);
+        }
+    }
+
+    /// A type nested deeper than a 64 KiB stack allows recursing into is named all the same.
+    #[test]
+    fn deep_types_should_be_named_without_recursion() {
+        let levels = 10_000;
+        let name = std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(move || {
+                let mut ty = Type::I64;
+                for _ in 0..levels {
+                    ty = Type::array(ty);
+                }
+                let program = Program {
+                    classes: Vec::new(),
+                    enums: Vec::new(),
+                    functions: Vec::new(),
+                };
+                program.type_name(ty)
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("naming should not overflow the stack");
+        assert_eq!(
+            name,
+            format!("{}i64{}", "[".repeat(levels), "]".repeat(levels))
+        );
     }
 
     #[test]
@@ -1990,6 +2399,7 @@ mod tests {
         let ret = expr(ExprKind::Return(None), Type::NEVER);
         let call = ExprKind::Call {
             func: FuncId(0),
+            types: TypeArgs::NONE,
             args: vec![int(1), ret],
         };
         assert!(expr(call, Type::UNIT).exits());
@@ -1999,7 +2409,13 @@ mod tests {
             variant: 0,
             args: vec![int(1), expr(ExprKind::Return(None), Type::NEVER)],
         };
-        assert!(expr(variant, Type::intern(TypeKind::Enum(EnumId(0)))).exits());
+        assert!(
+            expr(
+                variant,
+                Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE))
+            )
+            .exits()
+        );
         // A `return` in an operand of `is`.
         let is = ExprKind::Is {
             lhs: Box::new(local(0)),
@@ -2075,6 +2491,7 @@ mod tests {
             (
                 ExprKind::Call {
                     func: FuncId(0),
+                    types: TypeArgs::NONE,
                     args: ints([1, 2]),
                 },
                 2,

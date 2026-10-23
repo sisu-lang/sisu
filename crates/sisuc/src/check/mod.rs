@@ -5,9 +5,11 @@ mod array;
 mod branch;
 mod call;
 mod constant;
+mod cycle;
 mod enums;
 mod exhaust;
 mod expr;
+mod generic;
 mod member;
 mod number;
 mod operator;
@@ -22,12 +24,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MismatchFix,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
     MismatchSource, Severity, Unbuilt, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use prelude::PRELUDE;
@@ -79,6 +81,8 @@ static UNKNOWN: Type = Type::NEVER;
 struct Signature {
     /// `f`, or `P.m` for a method.
     name: String,
+    /// The type parameters in scope: a method's owner's, then its own.
+    type_params: Vec<Symbol>,
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
     ret: Option<Type>,
@@ -97,6 +101,7 @@ enum Declared<T> {
 
 struct ClassInfo {
     name: ast::Ident,
+    type_params: Vec<Symbol>,
     /// The first field of each name, in declaration order.
     fields: Vec<FieldInfo>,
     /// The first method of each name, and every broken one.
@@ -262,6 +267,8 @@ thread_local! {
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many type parameter names have been indexed or looked up on this thread.
+    pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -353,6 +360,14 @@ impl std::ops::DerefMut for Diagnostics {
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
+    /// The type parameters in scope, which `resolve` finds before any other type.
+    type_params: Vec<Symbol>,
+    /// Where in `type_params` each name first is, so a lookup does not scan them.
+    type_param_at: FxHashMap<Symbol, usize>,
+    /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
+    /// misread as a call change the count of the arguments of the call they are an argument of,
+    /// which is then not reported.
+    misread: FxHashSet<usize>,
     scopes: Vec<FxHashMap<Symbol, Binding>>,
     locals: Vec<tir::Local>,
     /// `None` is `Error`.
@@ -392,6 +407,33 @@ struct Body {
     exits: u32,
     /// How many W0005 (a comparison with `f64.nan`) the body has reported.
     nans: u32,
+    /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done
+    /// for and whether that is a block's; `None` once used.
+    ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
+    /// Where in `ahead` the last work kept for each span and kind is.
+    ahead_at: FxHashMap<(Span, bool), usize>,
+}
+
+impl Body {
+    /// Puts `params` in scope, in place of the type parameters there.
+    fn set_type_params(&mut self, params: &[Symbol]) {
+        self.type_params.clear();
+        self.type_params.extend_from_slice(params);
+        self.type_param_at.clear();
+        // Backwards, so a repeated name keeps its first place, as the scan it replaces did.
+        for (i, &name) in params.iter().enumerate().rev() {
+            #[cfg(test)]
+            PARAM_STEPS.set(PARAM_STEPS.get() + 1);
+            self.type_param_at.insert(name, i);
+        }
+    }
+
+    /// Where the type parameter `name` is in `type_params`, if it is one.
+    fn type_param(&self, name: Symbol) -> Option<usize> {
+        #[cfg(test)]
+        PARAM_STEPS.set(PARAM_STEPS.get() + 1);
+        self.type_param_at.get(&name).copied()
+    }
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error. `parsed`
@@ -407,7 +449,8 @@ pub(crate) fn check<'src>(
     let declared = checker.collect_signatures(program);
     checker.fold_constants(program);
     let cyclic = checker.never_constructed();
-    checker.lowered_enums = checker.lower_enums(&cyclic);
+    let unbuilt;
+    (checker.lowered_enums, unbuilt) = checker.lower_enums(&cyclic);
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
@@ -416,6 +459,7 @@ pub(crate) fn check<'src>(
         .enumerate()
         .map(|(i, &(f, owner))| checker.function(f, tir::FuncId(i), owner))
         .collect();
+    checker.instantiation_cycles(&functions, &unbuilt);
     let classes = checker.classes.iter().map(lower_class).collect();
     let mut diagnostics = checker.diagnostics.into_vec();
     diagnostics.sort_by_key(|d| d.span().start());
@@ -506,6 +550,7 @@ fn lower_class(class: &ClassInfo) -> Option<tir::Class> {
         .collect::<Option<_>>()?;
     Some(tir::Class {
         name: class.name.name.to_string(),
+        type_params: class.type_params.iter().map(Symbol::to_string).collect(),
         fields,
     })
 }
@@ -578,9 +623,11 @@ impl Checker<'_> {
         for item in &program.items {
             match item {
                 ast::Item::Class(class) => {
+                    let type_params = self.type_params(&[], &class.type_params);
                     let id = tir::ClassId(self.classes.len());
                     self.classes.push(ClassInfo {
                         name: class.name.clone(),
+                        type_params,
                         fields: Vec::new(),
                         methods: FxHashMap::default(),
                     });
@@ -606,9 +653,11 @@ impl Checker<'_> {
                     next_function += 1;
                 }
                 ast::Item::Enum(e) => {
+                    let type_params = self.type_params(&[], &e.type_params);
                     let id = tir::EnumId(self.enums.len());
                     self.enums.push(EnumInfo {
                         name: e.name.clone(),
+                        type_params,
                         variants: Vec::new(),
                         index: FxHashMap::default(),
                         methods: FxHashMap::default(),
@@ -733,7 +782,7 @@ impl Checker<'_> {
         for item in &program.items {
             let class = match item {
                 ast::Item::Function(f) => {
-                    self.signature(f, f.name.name.to_string());
+                    self.signature(f, f.name.name.to_string(), &[]);
                     declared.push((f, None));
                     continue;
                 }
@@ -747,11 +796,15 @@ impl Checker<'_> {
             };
             let id = tir::ClassId(next_class);
             next_class += 1;
+            let owner = self.classes[id.0].type_params.clone();
+            let receiver = Type::intern(TypeKind::Class(id, own_args(&owner)));
             let mut first = FxHashMap::default();
             for member in &class.members {
                 match member {
                     ast::Member::Field(field) => {
+                        self.body.set_type_params(&owner);
                         let ty = self.resolve(&field.ty);
+                        self.body.set_type_params(&[]);
                         if self.first_definition(
                             &mut first,
                             Definition::Field,
@@ -778,8 +831,9 @@ impl Checker<'_> {
                                 .methods
                                 .insert(method.name.name, Declared::Known(func));
                         }
-                        self.signature(method, format!("{}.{}", class.name.name, method.name.name));
-                        declared.push((method, Some(Type::intern(TypeKind::Class(id)))));
+                        let name = format!("{}.{}", class.name.name, method.name.name);
+                        self.signature(method, name, &class.type_params);
+                        declared.push((method, Some(receiver)));
                     }
                 }
             }
@@ -792,14 +846,20 @@ impl Checker<'_> {
         declared
     }
 
-    fn signature(&mut self, f: &ast::Function, name: String) {
+    /// `f`'s signature, named `name`, where `owner` are the type parameters of a method's class
+    /// or enum.
+    fn signature(&mut self, f: &ast::Function, name: String, owner: &[ast::Ident]) {
+        let type_params = self.type_params(owner, &f.type_params);
+        self.body.set_type_params(&type_params);
         let params = f.params.iter().map(|p| self.resolve(&p.ty)).collect();
         let ret = f
             .ret
             .as_ref()
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
+        self.body.set_type_params(&[]);
         self.signatures.push(Signature {
             name,
+            type_params,
             params,
             ret,
             span: f.name.span,
@@ -822,7 +882,7 @@ impl Checker<'_> {
                         #[cfg(test)]
                         FIELD_READS.set(FIELD_READS.get() + 1);
                         match f.ty.map(Type::kind) {
-                            Some(TypeKind::Class(d)) => Some(d.0),
+                            Some(TypeKind::Class(d, _)) => Some(d.0),
                             _ => None,
                         }
                     })
@@ -847,7 +907,7 @@ impl Checker<'_> {
                 .fields
                 .iter()
                 .find_map(|f| match f.ty.map(Type::kind) {
-                    Some(TypeKind::Class(d)) if component[d.0] == component[c] => Some((f, d)),
+                    Some(TypeKind::Class(d, _)) if component[d.0] == component[c] => Some((f, d)),
                     _ => None,
                 })
                 .expect(
@@ -880,6 +940,11 @@ impl Checker<'_> {
             None => self.report(DiagnosticKind::NoMain),
             Some(Declared::Broken) => {}
             Some(Declared::Known(id)) => {
+                let main = declared[id.0].0;
+                if !main.type_params.is_empty() {
+                    self.main_type_params(main);
+                    return;
+                }
                 let Signature { params, ret, .. } = &self.signatures[id.0];
                 if params.iter().any(Option::is_none) || ret.is_none() {
                     return;
@@ -887,49 +952,100 @@ impl Checker<'_> {
                 let args = Some(Type::array(Type::STRING));
                 let takes = params.is_empty() || *params == [args];
                 if !takes || *ret != Some(Type::UNIT) {
-                    let at = declared[id.0].0.name.span;
-                    self.report(DiagnosticKind::MainSignature { at });
+                    self.report(DiagnosticKind::MainSignature {
+                        at: main.name.span,
+                        form: MainForm::Signature,
+                    });
                 }
             }
         }
     }
 
-    /// `None`, reported at the name without its `?`, for an unknown type.
+    /// `None`, reported at the name without its `?`, for an unknown type, and for type
+    /// arguments that do not fit.
     fn resolve(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
         let named = match &ty.kind {
             ast::TypeKind::Array(element) => Type::array(self.resolve(element)?),
-            ast::TypeKind::Name(name) => {
-                // A broken name poisons every use, a built-in type's too.
-                if let Some(Declared::Broken) = self.class_ids.get(name) {
-                    return None;
-                } else if let Some(Declared::Broken) = self.enum_ids.get(name) {
-                    return None;
-                } else if let Some(named) = built_in_type(name.as_str()) {
-                    named
-                } else if let Some(&Declared::Known(id)) = self.class_ids.get(name) {
-                    Type::intern(TypeKind::Class(id))
-                } else if let Some(&Declared::Known(id)) = self.enum_ids.get(name) {
-                    Type::intern(TypeKind::Enum(id))
-                } else {
-                    let span = Span::new(ty.span.start(), ty.span.start() + name.as_str().len());
-                    let types = ["i64", "u8", "f64", "bool", "char", "string"]
-                        .map(|ty| (ty, Definition::Type));
-                    let classes = self.class_names();
-                    let enums = self.enum_ids.keys().map(|e| (e.as_str(), Definition::Enum));
-                    let candidates = types.into_iter().chain(classes).chain(enums);
-                    self.report(DiagnosticKind::UnknownType {
-                        name: name.to_string(),
-                        at: span,
-                        suggestion: suggestion(name.as_str(), candidates),
-                    });
-                    return None;
-                }
+            ast::TypeKind::Applied(applied) => {
+                self.named_type(ty, applied.name, &applied.args, applied.angles)?
             }
+            ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
         };
         if !ty.optional {
             return Some(named);
         }
         Some(optional_of(named))
+    }
+
+    /// The type `name`, written in `ty` with the type arguments `args` in `angles`.
+    fn named_type(
+        &mut self,
+        ty: &ast::TypeExpr,
+        name: Symbol,
+        args: &[ast::TypeExpr],
+        angles: Span,
+    ) -> Option<Type> {
+        // Built only for `type_args`, which reads it when `args` do not fit: most names have
+        // none, and their declarations take none.
+        let ident = || ast::Ident {
+            name,
+            span: Span::new(ty.span.start(), ty.span.start() + name.as_str().len()),
+        };
+        // A type parameter or a built-in type is not generic.
+        let plain = |c: &mut Self, ty| {
+            if args.is_empty() {
+                return Some(ty);
+            }
+            c.type_args(&ident(), &[], args, angles).map(|_| ty)
+        };
+        if let Some(i) = self.body.type_param(name) {
+            let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
+            return plain(self, Type::intern(TypeKind::Param(name, i)));
+        }
+        let declared = (
+            self.class_ids.get(&name).copied(),
+            self.enum_ids.get(&name).copied(),
+        );
+        // A broken name poisons every use, a built-in type's too.
+        if let (Some(Declared::Broken), _) | (_, Some(Declared::Broken)) = declared {
+            return None;
+        }
+        if let Some(named) = built_in_type(name.as_str()) {
+            return plain(self, named);
+        }
+        match declared {
+            (Some(Declared::Known(id)), _) => {
+                let args = if args.is_empty() && self.classes[id.0].type_params.is_empty() {
+                    TypeArgs::NONE
+                } else {
+                    let declared = self.classes[id.0].type_params.clone();
+                    self.type_args(&ident(), &declared, args, angles)?
+                };
+                Some(Type::intern(TypeKind::Class(id, args)))
+            }
+            (_, Some(Declared::Known(id))) => {
+                let args = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
+                    TypeArgs::NONE
+                } else {
+                    let declared = self.enums[id.0].type_params.clone();
+                    self.type_args(&ident(), &declared, args, angles)?
+                };
+                Some(Type::intern(TypeKind::Enum(id, args)))
+            }
+            _ => {
+                let types =
+                    ["i64", "u8", "f64", "bool", "char", "string"].map(|ty| (ty, Definition::Type));
+                let classes = self.class_names();
+                let enums = self.enum_ids.keys().map(|e| (e.as_str(), Definition::Enum));
+                let candidates = types.into_iter().chain(classes).chain(enums);
+                self.report(DiagnosticKind::UnknownType {
+                    name: name.to_string(),
+                    at: ident().span,
+                    suggestion: suggestion(name.as_str(), candidates),
+                });
+                None
+            }
+        }
     }
 
     /// Checks `f`'s body against its own signature, `id`. The function, unless its return type
@@ -944,11 +1060,17 @@ impl Checker<'_> {
     ) -> Option<tir::Function> {
         let sig = &self.signatures[id.0];
         let (name, param_types, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        let fresh = Body {
+        let owner_params = match owner.map(Type::kind) {
+            Some(TypeKind::Class(class, _)) => self.classes[class.0].type_params.len(),
+            Some(TypeKind::Enum(e, _)) => self.enums[e.0].type_params.len(),
+            _ => 0,
+        };
+        let mut fresh = Body {
             ret,
             self_type: owner,
             ..Body::default()
         };
+        fresh.set_type_params(&sig.type_params);
         let ((params, body), state) = self.with_body(fresh, |c| {
             c.body.scopes.push(FxHashMap::default());
             // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.
@@ -989,6 +1111,7 @@ impl Checker<'_> {
             (params, body)
         });
         let locals = state.locals;
+        let type_params = state.type_params.iter().map(Symbol::to_string).collect();
         match (ret, block_type(&body)) {
             (Some(want), Some(got)) if want != Type::UNIT && got != Type::NEVER && got != want => {
                 let d = if got == Type::UNIT {
@@ -1008,6 +1131,8 @@ impl Checker<'_> {
         }
         Some(tir::Function {
             name,
+            type_params,
+            owner_params,
             params,
             ret: ret?,
             locals,
@@ -1108,8 +1233,16 @@ impl Checker<'_> {
 
     fn type_name(&self, ty: Type) -> String {
         match ty.kind() {
-            TypeKind::Class(id) => self.classes[id.0].name.name.to_string(),
-            TypeKind::Enum(id) => self.enums[id.0].name.name.to_string(),
+            TypeKind::Class(id, args) => format!(
+                "{}{}",
+                self.classes[id.0].name.name,
+                args.written(|ty| self.type_name(ty))
+            ),
+            TypeKind::Enum(id, args) => format!(
+                "{}{}",
+                self.enums[id.0].name.name,
+                args.written(|ty| self.type_name(ty))
+            ),
             TypeKind::Array(element) => format!("[{}]", self.type_name(element)),
             TypeKind::Optional(payload) => format!("{}?", self.type_name(payload)),
             _ => ty.to_string(),
@@ -1193,6 +1326,15 @@ impl Checker<'_> {
 /// which can fail only from an `f64`, the one argument that makes it an optional.
 fn can_fail(e: &ast::Expr) -> bool {
     matches!(&e.kind, ast::ExprKind::Call { callee, .. } if matches!(callee.name.as_str(), "u8" | "char" | "i64"))
+}
+
+/// `params` as the arguments of their own declaration: `<T, U>` as `Param`s.
+fn own_args(params: &[Symbol]) -> TypeArgs {
+    let list: Vec<Type> = (0..)
+        .zip(params)
+        .map(|(i, &name)| Type::intern(TypeKind::Param(name, i)))
+        .collect();
+    TypeArgs::intern(&list)
 }
 
 /// The type a built-in type name names.

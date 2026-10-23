@@ -26,6 +26,15 @@ fn function_should_warn_when_every_path_calls_itself() {
 }
 
 #[test]
+fn function_should_warn_when_a_generic_function_calls_itself() {
+    warns(
+        &with_main("fn first<T>(xs: [T]) -> T {\n    first(xs)\n}"),
+        (1, 4, "first"),
+        &[(2, 5)],
+    );
+}
+
+#[test]
 fn if_should_warn_when_both_branches_call_itself() {
     warns(
         &f(&["if n > 0 { f(n - 1) } else { f(n + 1) }"]),

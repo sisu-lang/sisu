@@ -91,6 +91,31 @@ fn while_should_not_warn_when_it_compares_arrays_of_objects() {
     ));
 }
 
+/// A generic enum holds what its type arguments hold.
+#[test]
+fn while_should_not_warn_when_it_compares_generic_enums_of_objects() {
+    clean(&with_main(
+        "class Node {\n    v: i64\n}\nenum Opt<T> {\n    Has(T)\n    Empty\n}\nfn f(a: Opt<Node>, b: Opt<Node>) {\n    while a != b { print(1) }\n}",
+    ));
+}
+
+#[test]
+fn while_should_not_warn_when_its_enum_holds_a_generic_enum_of_objects() {
+    clean(&with_main(
+        "class Node {\n    v: i64\n}\nenum Opt<T> {\n    Has(T)\n    Empty\n}\nenum Wrap {\n    W(Opt<Node>)\n}\nfn f(a: Wrap, b: Wrap) {\n    while a != b { print(1) }\n}",
+    ));
+}
+
+#[test]
+fn while_should_warn_when_it_compares_generic_enums_of_numbers() {
+    warns(
+        &with_main(
+            "enum Opt<T> {\n    Has(T)\n    Empty\n}\nfn f(a: Opt<i64>, b: Opt<i64>) {\n    while a != b { print(1) }\n}",
+        ),
+        (6, 11, "a != b"),
+    );
+}
+
 #[test]
 fn while_should_warn_when_it_compares_an_object_with_none() {
     warns(

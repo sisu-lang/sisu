@@ -1,0 +1,23 @@
+// A spill in a generic body: `id(x)` runs before an argument that may `return`, so the checker
+// binds it to a local, which the `return` releases. In `g<string>` the temporary is a counted
+// string built at run time; Valgrind and `--rc-checks` see no leak. The pattern is
+// `ownership.sisu`'s `spill_return`.
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn take<T>(a: T, b: i64) -> T {
+    a
+}
+
+fn g<T>(x: T, stop: bool) -> T? {
+    take(id(x), if stop { return None } else { 0 })
+}
+
+fn main() {
+    let s = "ab" + "cd"
+    print(g(s, true) ?? "returned")       // returned
+    print(g(s, false) ?? "returned")      // abcd
+    print(g(5, true) ?? 0)                // 0
+    print(g(5, false) ?? 0)               // 5
+}

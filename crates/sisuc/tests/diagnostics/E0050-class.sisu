@@ -1,0 +1,7 @@
+class Cell<T> {
+    value: T?
+}
+
+fn main() {
+    let c = Cell(value: None)
+}

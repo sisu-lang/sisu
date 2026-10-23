@@ -1,0 +1,10 @@
+error[E0050]: cannot infer `T` for `Tree.Leaf`
+ --> E0050-variant.sisu:7:13
+  |
+7 |     let t = Tree.Leaf
+  |             ^^^^^^^^^
+  |
+  = help: annotate the result, or write the type: `Tree<...>.Leaf`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

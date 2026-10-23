@@ -1,0 +1,8 @@
+class Point {
+    x: i64
+}
+
+fn main() {
+    let p = Point<i64>(x: 1)
+    print(p.x)
+}

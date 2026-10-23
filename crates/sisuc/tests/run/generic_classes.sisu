@@ -1,0 +1,107 @@
+// A generic class: `Stack<T>` over `Cell<T>`, instantiated as `Stack<i64>`, `Stack<string>`,
+// `Stack<[i64]>`, `Stack<Node>` and `Stack<Stack<i64>>`, with a generic method of its own.
+// Valgrind and `--rc-checks` check that every object it builds is freed exactly once.
+class Cell<T> {
+    value: T
+    next: Cell<T>?
+}
+
+class Stack<T> {
+    mut top: Cell<T>?
+    mut size: i64
+
+    fn push(self, x: T) {
+        self.top = Cell(value: x, next: self.top)
+        self.size += 1
+    }
+
+    fn pop(self) -> T? {
+        if let cell = self.top {
+            self.top = cell.next
+            self.size -= 1
+            cell.value
+        } else {
+            None
+        }
+    }
+
+    fn len(self) -> i64 {
+        self.size
+    }
+
+    // A method with its own parameter: `[u]`, or `[]` when the stack is empty.
+    fn tag<U>(self, u: U) -> [U] {
+        if self.size > 0 { [u] } else { [] }
+    }
+}
+
+class Node {
+    name: string
+}
+
+fn empty<T>() -> Stack<T> {
+    Stack(top: None, size: 0)
+}
+
+fn opt<T>(x: T?) -> T? {
+    x
+}
+
+fn found(s: Stack<i64>?, label: string) -> Stack<i64>? {
+    print(label)
+    s
+}
+
+fn main() {
+    let ints: Stack<i64> = empty()
+    ints.push(1)
+    ints.push(2)
+    print(ints.len())                      // 2
+    print(ints.pop() ?? 0)                 // 2
+    print(ints.pop() ?? 0)                 // 1
+    print(ints.pop() ?? -1)                // -1: empty
+    print(ints.len())                      // 0
+
+    let words: Stack<string> = empty()
+    words.push("a" + "b")
+    words.push("c")
+    print(words.pop() ?? "")               // c
+    print(words.len())                     // 1
+
+    let arrays: Stack<[i64]> = empty()
+    arrays.push([1, 2, 3])
+    if let xs = arrays.pop() {
+        print(xs.len())                    // 3
+    }
+    arrays.push([4])
+
+    let nodes: Stack<Node> = empty()
+    nodes.push(Node(name: "n1"))
+    nodes.push(Node(name: "n2"))
+    print((nodes.pop() ?? Node(name: "none")).name) // n2
+
+    let stacks: Stack<Stack<i64>> = empty()
+    stacks.push(ints)
+    let inner: Stack<i64> = empty()
+    inner.push(7)
+    stacks.push(inner)
+    print(stacks.len())                    // 2
+    if let s = stacks.pop() {
+        print(s.pop() ?? 0)                // 7
+    }
+
+    let names = words.tag("z")
+    print(names.len())                     // 1
+    print(names[0])                        // z
+    print(nodes.tag(2.5)[0])               // 2.5
+    print(ints.tag(Node(name: "m")).len()) // 0: `ints` is empty
+
+    // `?.` on a generic method whose type comes from the call around it: the receiver is
+    // evaluated once, before the call.
+    let seven: Stack<i64> = empty()
+    seven.push(7)
+    let present: [[i64]]? = opt(found(seven, "present")?.tag([])) // present
+    print((present ?? [[0], [0]]).len())   // 1
+    let absent: [[i64]]? = opt(found(None, "absent")?.tag([])) // absent
+    print(absent == None)                  // true
+}

@@ -334,7 +334,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                 first_on_line = true;
                 // Look ahead only where a `Newline` would be pushed: the next newlines of a
                 // blank run then find `Newline` last and skip it, so no gap is scanned twice.
-                if ends_statement(&tokens, &brackets.open, brackets.trailing_semicolons) {
+                if ends_statement(&tokens, &mut brackets) {
                     if let Some(gap) = continues_line(&source[start..]) {
                         // Jump to the `.`/`?.`, so a long gap is scanned once.
                         while chars.next_if(|&(i, _)| i < start + gap).is_some() {}
@@ -415,7 +415,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
         let unclosed = DiagnosticKind::UnclosedBracket { bracket, at };
         return Err(first_or(diagnostics, unclosed.into()));
     }
-    if ends_statement(&tokens, &brackets.open, brackets.trailing_semicolons) {
+    if ends_statement(&tokens, &mut brackets) {
         tokens.push(newline(Span::new(source.len(), source.len())));
     }
     let warnings = separate(source, &mut tokens, &brackets.separators);
@@ -446,6 +446,7 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
     if separators.is_empty() {
         return warnings;
     }
+    let mut statements = Statements::default();
     let mut indices = 0..tokens.len();
     while let Some(i) = indices.next() {
         let start = tokens[i].span.start();
@@ -458,7 +459,8 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
             .take_while(|t| t.kind == TokenKind::Semicolon)
             .count();
         // Every `;` after the first is redundant: it leaves the first its neighbours.
-        let redundant = match judge(source, tokens, i..end, separators[found].between_items) {
+        let between_items = separators[found].between_items;
+        let redundant = match judge(source, tokens, i..end, between_items, &mut statements) {
             Judgement::Separator => {
                 tokens[i].kind = TokenKind::Newline;
                 i + 1
@@ -485,12 +487,19 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
 
 /// What becomes of the first `;` of `run`, a run of `;`s among `tokens`, in statement context.
 /// `between_items` is true when the run stands between top-level items, after a `fn`, `class` or
-/// `enum`.
+/// `enum`. `statements` reads `tokens` forward, to tell whether a `>` before the run closes a type
+/// annotation, which ends a statement as at a line's end.
 /// The rules, in order: a `.` after the run is a continuation unless the `;` is needed to end the
 /// statement; a `;` that joins two lines into a different statement stays; a `;` next to a line
 /// break, a `{`, a `}`, an `else` or an item that needs no separator is redundant.
-fn judge(source: &str, tokens: &[Token], run: Range<usize>, between_items: bool) -> Judgement {
-    use TokenKind::{Class, Const, Dot, Else, Enum, Fn, LBrace, Newline, QuestionDot, RBrace};
+fn judge(
+    source: &str,
+    tokens: &[Token],
+    run: Range<usize>,
+    between_items: bool,
+    statements: &mut Statements,
+) -> Judgement {
+    use TokenKind::{Class, Const, Dot, Else, Enum, Fn, Gt, LBrace, Newline, QuestionDot, RBrace};
     let (i, end) = (run.start, run.end);
     let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
     let first = tokens[i].span;
@@ -501,16 +510,17 @@ fn judge(source: &str, tokens: &[Token], run: Range<usize>, between_items: bool)
     let break_after = next
         .is_none_or(|n| n.kind == Newline || source[first.start()..n.span.start()].contains('\n'));
     let next = next.map(|n| &n.kind);
+    // A `>` that closes a type annotation ends a statement, as at a line's end.
+    let ends = can_end_statement(prev)
+        || prev.is_some_and(|p| p.kind == Gt) && statements.annotates_type(&tokens[..i]);
     if matches!(next, Some(Dot | QuestionDot)) {
         // Without the `;`, the line break before the `.` would continue the line.
-        if can_end_statement(prev) && !break_before {
+        if ends && !break_before {
             Judgement::Separator
         } else {
             Judgement::Kept
         }
-    } else if prev.is_some_and(|p| !can_end_statement(prev) && !matches!(p.kind, LBrace | Newline))
-        && !break_before
-    {
+    } else if prev.is_some_and(|p| !ends && !matches!(p.kind, LBrace | Newline)) && !break_before {
         // Without the `;`, the lines would join into a different statement.
         Judgement::Kept
     } else if next == Some(&Else)
@@ -587,6 +597,8 @@ struct Brackets {
     /// needs no separator before the next item, rather than a `const` or none.
     // shortcut: assumes no `fn` inside a const's value; revisit with function types or closures
     self_ending: bool,
+    /// The statements the tokens end in, read forward.
+    statements: Statements,
 }
 
 /// A `;` that separates statements, which `separate` judges.
@@ -595,6 +607,97 @@ struct Separator {
     at: usize,
     /// Whether it stands between top-level items, after a `fn`, `class` or `enum`.
     between_items: bool,
+}
+
+/// The statements that the tokens read so far end in: one for each open bracket, innermost
+/// last, so a block that closes gives back the statement around it as it was. A `>` at a line's
+/// end and a `{` that starts a line ask about theirs, and only the tokens since the last
+/// question are read, so neither scans back to its statement's start.
+///
+/// Only tokens up to the last code token are read. Every later change to the tokens is after
+/// it: a line-start `{` removes the `Newline` before it, and a cut ends an interpolation, which
+/// no line break or line start falls in.
+#[derive(Default)]
+struct Statements {
+    read: usize,
+    enclosing: Vec<Statement>,
+    current: Statement,
+}
+
+/// What a statement's tokens so far, outside its closed brackets, show.
+#[derive(Clone, Copy, Default)]
+struct Statement {
+    /// Whether its first token is `fn`, `class` or `enum`; `None` before its first token.
+    header: Option<bool>,
+    /// After its last `:` or `->` that no `=` follows, how many more `>` than `<` there are;
+    /// `None` when there is no such `:` or `->`.
+    annotation: Option<isize>,
+}
+
+impl Statements {
+    /// The innermost statement after reading the tokens before `end`.
+    fn read(&mut self, tokens: &[Token], end: usize) -> Statement {
+        use TokenKind::{
+            Arrow, Colon, Eq, Ge, Gt, LBrace, LBracket, LParen, Loop, Lt, Newline, RBrace,
+            RBracket, RParen, Semicolon, StrHead, StrTail,
+        };
+        for t in &tokens[self.read..end] {
+            #[cfg(test)]
+            JUDGED.set(JUDGED.get() + 1);
+            let s = &mut self.current;
+            s.header = s.header.or(Some(matches!(
+                t.kind,
+                TokenKind::Fn | TokenKind::Class | TokenKind::Enum
+            )));
+            match t.kind {
+                // A block's statements start at its `{`. Inside `( )`, `[ ]` or an interpolation
+                // the statement around it goes on, though no type annotation does.
+                LBrace | LParen | LBracket | StrHead(_) => {
+                    let header = if t.kind == LBrace { None } else { s.header };
+                    self.enclosing.push(*s);
+                    self.current = Statement {
+                        header,
+                        annotation: None,
+                    };
+                }
+                RBrace | RParen | RBracket | StrTail(_) => {
+                    self.current = self.enclosing.pop().unwrap_or_default();
+                }
+                Newline | Semicolon => *s = Statement::default(),
+                Colon | Arrow => s.annotation = Some(0),
+                // A `>=` after a type annotation closes it and starts its value. So does a loop
+                // keyword: it follows a loop label's `:`, which is no annotation.
+                Eq | Ge | TokenKind::While | TokenKind::For | Loop => s.annotation = None,
+                Gt => s.annotation = s.annotation.map(|a| a + 1),
+                Lt => s.annotation = s.annotation.map(|a| a - 1),
+                _ => {}
+            }
+        }
+        self.read = end;
+        self.current
+    }
+
+    /// Whether the `>` that ends `tokens`, at a line's end, closes a type annotation: in its
+    /// statement, a `:` or `->` has no `=` after it, and every `<` after that is closed
+    /// (`b: Box<i64>`, `fn f() -> Box<i64>`). Anywhere else the `>` compares (`a >`), closes a
+    /// header's type parameters before its `(` (`fn f<T>`), or an inner list of a type that
+    /// goes on (`b: Pair<Box<i64>`), and the line goes on. This is the one place that decides
+    /// it: every later reader sees a `Newline` or none.
+    #[inline(never)]
+    fn annotates_type(&mut self, tokens: &[Token]) -> bool {
+        self.read(tokens, tokens.len()).annotation == Some(0)
+    }
+
+    /// Whether the statement that `tokens` ends with, before the `Newline`s and `;`s after it,
+    /// is a `fn`, `class` or `enum` header, where a `>` can only close type arguments, never
+    /// compare.
+    fn closes_header(&mut self, tokens: &[Token]) -> bool {
+        let end = tokens
+            .iter()
+            .rposition(|t| !matches!(t.kind, TokenKind::Newline | TokenKind::Semicolon))
+            .map_or(0, |i| i + 1);
+        self.read(tokens, end).header == Some(true)
+    }
 }
 
 impl Brackets {
@@ -644,13 +747,13 @@ impl Brackets {
     /// `(` or `[`. That `Newline` sits before the line's `;`s, or is the last token when they are
     /// before it.
     fn line_start(
-        &self,
+        &mut self,
         source: &str,
         tokens: &mut Vec<Token>,
         (kind, span): (&TokenKind, Span),
         skipped: Option<usize>,
     ) -> Option<Diagnostic> {
-        let d = check_line_start(source, tokens, &self.open, kind, span)?;
+        let d = check_line_start(source, tokens, &self.open, &mut self.statements, kind, span)?;
         let at = tokens.len().checked_sub(self.trailing_semicolons + 1);
         if let Some(at) =
             at.filter(|&i| tokens.get(i).is_some_and(|t| t.kind == TokenKind::Newline))
@@ -891,9 +994,22 @@ fn newline(span: Span) -> Token {
 /// Whether a line break here ends a statement: the token before the last `trailing` tokens, which
 /// are `;`s that separate statements, can end one, and the innermost open bracket, if any, is a
 /// block. A `;` is transparent, so `x;\n` ends a statement as `x\n` does, and `{;\n` does not.
-fn ends_statement(tokens: &[Token], open: &[Open], trailing: usize) -> bool {
-    can_end_statement(before_semicolons(tokens, trailing))
-        && open.last().is_none_or(|&(c, _)| c == '{')
+/// A `>` ends one too when it closes a type annotation (`annotates_type`).
+fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
+    let trailing = brackets.trailing_semicolons;
+    let last = before_semicolons(tokens, trailing);
+    brackets.open.last().is_none_or(|&(c, _)| c == '{')
+        && (can_end_statement(last)
+            || last.is_some_and(|t| matches!(t.kind, TokenKind::Gt))
+                && brackets
+                    .statements
+                    .annotates_type(&tokens[..tokens.len() - trailing]))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many tokens `Statements::read` has read on this thread.
+    static JUDGED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether `token` can end a statement (Go's rule).
@@ -930,14 +1046,16 @@ fn can_end_statement(token: Option<&Token>) -> bool {
 
 /// Layout rules 2 and 3 where the parser cannot see them; `kind` starts a line.
 /// A `{` only ever follows `fn …`, `if …`, `else`, `match …` or `while …` on its own line, so a
-/// line-initial `{` after a token that could end a statement, or after `else`, breaks
-/// rule 2 at any depth. Inside `( )` and `[ ]`, where no `Newline` reaches the parser, so does
-/// a line-initial `else` (rule 3), and a line-initial `[` after a token that could end a
-/// statement, which would silently index the line above.
+/// line-initial `{` after a token that could end a statement, after `else`, or after the `>`
+/// of a `fn`, `class` or `enum` header's type arguments, breaks rule 2 at any depth; after a
+/// `>` that compares, the `{` is its operand. Inside `( )` and `[ ]`, where no `Newline`
+/// reaches the parser, so does a line-initial `else` (rule 3), and a line-initial `[` after a
+/// token that could end a statement, which would silently index the line above.
 fn check_line_start(
     source: &str,
     tokens: &[Token],
     open: &[Open],
+    statements: &mut Statements,
     kind: &TokenKind,
     span: Span,
 ) -> Option<Diagnostic> {
@@ -948,7 +1066,8 @@ fn check_line_start(
             match code {
                 Some(code)
                     if can_end_statement(Some(code))
-                        || matches!(code.kind, TokenKind::Else | TokenKind::Loop) =>
+                        || matches!(code.kind, TokenKind::Else | TokenKind::Loop)
+                        || code.kind == TokenKind::Gt && statements.closes_header(tokens) =>
                 {
                     // Only a header takes the `{`: joining it to another statement almost never
                     // gives a valid one (`print(1) {`, `let x = 1 {`, `} {`). Inside `(` or `[`
@@ -2702,6 +2821,56 @@ mod tests {
         tokens(src).into_iter().map(|t| t.kind).collect()
     }
 
+    /// A line-end `>` ends the statement only where it closes a type annotation, and the scan
+    /// back for the annotation steps over brackets, stops at its block's `{` and skips the `;`s.
+    #[test]
+    fn a_line_end_gt_should_end_only_a_type_annotation() {
+        let newlines = |src: &str| {
+            all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count()
+        };
+        assert_eq!(newlines("class D {\n    b: Box<[i64]>\n    n: i64\n}"), 3);
+        assert_eq!(newlines("class D {\n    b: Box<i64>;\n    n: i64\n}"), 3);
+        assert_eq!(newlines("fn f() -> bool {\n    x < y >\n        z\n}"), 2);
+    }
+
+    /// A loop label's `:` does not start a type annotation, so a `>` at a line's end after it still
+    /// compares and the condition goes on.
+    #[test]
+    fn a_loop_label_should_not_start_a_type_annotation() {
+        let newlines = |src: &str| {
+            all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count()
+        };
+        let src =
+            "fn f() {\n    outer: while a < b && c >\n        d {\n        break outer\n    }\n}";
+        assert_eq!(newlines(src), 3);
+    }
+
+    /// An interpolated string is one bracket to the statement around it: after it closes, a `{`
+    /// that starts a line after a `>` asks that statement, not the one outside it nor the one in
+    /// the bracket the string stood in.
+    #[test]
+    fn an_interpolated_string_should_close_like_a_bracket() {
+        let braces = |src: &str| {
+            let lexed = lex(src).expect("the source should lex");
+            lexed
+                .diagnostics
+                .iter()
+                .filter(|d| d.code() == Code::BraceOnNewLine)
+                .count()
+        };
+        assert_eq!(braces("fn f() {\n    b = (\"{x}\") >\n        { 1 }\n}"), 0);
+        assert_eq!(
+            braces("fn f(x: Box<i64> = { \"{y}\" }, y: Box<i64>\n{}) {}"),
+            1
+        );
+    }
+
     #[test]
     fn newline_after_rparen() {
         use TokenKind::{Eof, LParen, Newline, RParen};
@@ -3809,6 +3978,25 @@ mod tests {
                     parsed.diagnostics
                 );
             }
+        }
+    }
+
+    /// A `>` at a line's end, and a `{` that starts the line after it, read their statement
+    /// without scanning back to its start, so a comparison continued over many lines is read
+    /// once: with plain operands, block operands (each `{` asks whether a header is open), and
+    /// block operands with comparisons of their own, bare and in parentheses (an inner block's
+    /// `>` must not cost the outer statement its place).
+    #[test]
+    fn continued_comparisons_should_be_judged_linearly() {
+        for operand in ["a", "{ a }", "{ a >\n a }", "({ a >\n a })"] {
+            let judged = |n: usize| {
+                let chain = vec![operand; n].join(" >\n");
+                JUDGED.set(0);
+                lex_clean(&format!("fn f() {{\n    let b: bool = {chain}\n}}"))
+                    .expect("the source should lex");
+                JUDGED.get()
+            };
+            crate::mir::tests::assert_near_linear(judged(1000), judged(2000), judged(3000));
         }
     }
 }

@@ -1,0 +1,11 @@
+error[E0140]: `g` instantiates itself without end
+ --> E0140.sisu:6:5
+  |
+2 |     g(x)
+  |     ---- which instantiates `g<T>`
+...
+6 |     f([x])
+  |     ^^^^^^ `f<[T]>` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

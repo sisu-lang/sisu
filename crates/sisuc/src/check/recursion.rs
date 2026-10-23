@@ -81,7 +81,7 @@ impl Walk {
             | ExprKind::None
             | ExprKind::Local(_)
             | ExprKind::ReadLine => Flow::PASS,
-            ExprKind::Call { func, args } if *func == self.id => {
+            ExprKind::Call { func, args, .. } if *func == self.id => {
                 let flow = self.all(args, open, calls);
                 if open && !flow.recurses {
                     calls.push(e.span);

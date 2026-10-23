@@ -54,6 +54,8 @@ pub(crate) struct Const {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Class {
     pub(crate) name: Ident,
+    /// `<T, U>` after the name; empty when the class is not generic.
+    pub(crate) type_params: Vec<Ident>,
     pub(crate) members: Vec<Member>,
     /// The names of the methods that hold a syntax error; the class itself is intact.
     pub(crate) broken_methods: Vec<Ident>,
@@ -63,6 +65,8 @@ pub(crate) struct Class {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Enum {
     pub(crate) name: Ident,
+    /// `<T, U>` after the name; empty when the enum is not generic.
+    pub(crate) type_params: Vec<Ident>,
     pub(crate) variants: Vec<Variant>,
     pub(crate) methods: Vec<Function>,
     /// The names of the methods that hold a syntax error; the enum itself is intact.
@@ -99,6 +103,10 @@ pub(crate) struct FieldDecl {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Function {
     pub(crate) name: Ident,
+    /// `<T, U>` after the name; empty when the function is not generic.
+    pub(crate) type_params: Vec<Ident>,
+    /// `<` through `>` of `type_params`; empty, after the name, when there are none.
+    pub(crate) angles: Span,
     /// The `self` token of a method's first parameter.
     pub(crate) self_param: Option<Span>,
     pub(crate) params: Vec<Param>,
@@ -132,8 +140,18 @@ pub(crate) struct TypeExpr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TypeKind {
     Name(Symbol),
+    /// `Name<A, B>`, boxed as rare, so a plain name's `TypeExpr` stays small.
+    Applied(Box<Applied>),
     /// `[T]`; the element type may itself be optional or an array.
     Array(Box<TypeExpr>),
+}
+
+/// `Name<A, B>`; at least one argument. `angles` is `<` through `>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Applied {
+    pub(crate) name: Symbol,
+    pub(crate) args: Vec<TypeExpr>,
+    pub(crate) angles: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,9 +264,19 @@ pub(crate) enum ExprKind {
     /// and its expressions, in order.
     Interpolate(Vec<Part>),
     Name(Symbol),
+    /// `types` are the type arguments of `f<i64>(x)`; empty when none is written. `angles` is
+    /// `<` through `>`, or empty after the callee.
     Call {
         callee: Ident,
+        types: Vec<TypeExpr>,
+        angles: Span,
         args: Vec<Arg>,
+    },
+    /// `Tree<i64>` before a `.`, as in `Tree<i64>.Leaf`; `angles` is `<` through `>`.
+    Applied {
+        name: Ident,
+        types: Vec<TypeExpr>,
+        angles: Span,
     },
     /// `todo` or `todo(args)`; bare `todo` has no args. `keyword` is the `todo` token's span,
     /// which parentheses around the expression do not widen.
@@ -264,10 +292,14 @@ pub(crate) enum ExprKind {
         name: Ident,
         safe: bool,
     },
-    /// `safe` is `receiver?.method(args)`; `parens` is the span of `(args)`.
+    /// `safe` is `receiver?.method(args)`; `parens` is the span of `(args)`; `types` are the
+    /// type arguments of `receiver.method<i64>(args)`, empty when none is written, and `angles`
+    /// is `<` through `>`, or empty after the method.
     MethodCall {
         receiver: Box<Expr>,
         method: Ident,
+        types: Vec<TypeExpr>,
+        angles: Span,
         args: Vec<Arg>,
         parens: Span,
         safe: bool,
@@ -545,6 +577,7 @@ impl fmt::Display for TypeExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             TypeKind::Name(name) => f.write_str(name.as_str())?,
+            TypeKind::Applied(applied) => write!(f, "{}{}", applied.name, angled(&applied.args))?,
             TypeKind::Array(element) => write!(f, "[{element}]")?,
         }
         if self.optional {
@@ -557,6 +590,32 @@ impl fmt::Display for TypeExpr {
 /// Writes each item after a space.
 fn spaced<T: fmt::Display>(f: &mut fmt::Formatter<'_>, items: &[T]) -> fmt::Result {
     items.iter().try_for_each(|item| write!(f, " {item}"))
+}
+
+/// `<a, b>` to write after a name, or nothing for an empty list.
+pub(crate) struct Angled<'a, T>(&'a [T]);
+
+impl<T: fmt::Display> fmt::Display for Angled<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some((first, rest)) = self.0.split_first() else {
+            return Ok(());
+        };
+        write!(f, "<{first}")?;
+        for item in rest {
+            write!(f, ", {item}")?;
+        }
+        f.write_str(">")
+    }
+}
+
+pub(crate) fn angled<T>(items: &[T]) -> Angled<'_, T> {
+    Angled(items)
+}
+
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name.as_str())
+    }
 }
 
 impl fmt::Display for Program {
@@ -584,7 +643,7 @@ impl fmt::Display for Program {
 
 impl fmt::Display for Class {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(class {}", self.name.name)?;
+        write!(f, "(class {}{}", self.name.name, angled(&self.type_params))?;
         for member in &self.members {
             match member {
                 Member::Field(field) => {
@@ -600,7 +659,7 @@ impl fmt::Display for Class {
 
 impl fmt::Display for Enum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(enum {}", self.name.name)?;
+        write!(f, "(enum {}{}", self.name.name, angled(&self.type_params))?;
         for variant in &self.variants {
             match &variant.payload {
                 None => write!(f, " {}", variant.name.name)?,
@@ -714,7 +773,7 @@ impl fmt::Display for Arg {
 
 impl fmt::Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(fn {} (", self.name.name)?;
+        write!(f, "(fn {}{} (", self.name.name, angled(&self.type_params))?;
         let params = self
             .params
             .iter()
@@ -825,6 +884,10 @@ pub(crate) fn dot(safe: bool) -> &'static str {
 }
 
 impl fmt::Display for Expr {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per node kind, so the printed form reads in one place"
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             ExprKind::Int { value, .. } => write!(f, "{value}"),
@@ -838,11 +901,17 @@ impl fmt::Display for Expr {
                 f.write_str(")")
             }
             ExprKind::Name(name) => f.write_str(name.as_str()),
-            ExprKind::Call { callee, args } => {
-                write!(f, "(call {}", callee.name)?;
+            ExprKind::Call {
+                callee,
+                types,
+                args,
+                ..
+            } => {
+                write!(f, "(call {}{}", callee.name, angled(types))?;
                 spaced(f, args)?;
                 f.write_str(")")
             }
+            ExprKind::Applied { name, types, .. } => write!(f, "{}{}", name.name, angled(types)),
             ExprKind::Todo { args, .. } => {
                 f.write_str("(todo")?;
                 spaced(f, args)?;
@@ -856,11 +925,18 @@ impl fmt::Display for Expr {
             ExprKind::MethodCall {
                 receiver,
                 method,
+                types,
                 args,
                 safe,
                 ..
             } => {
-                write!(f, "(call ({} {receiver} {})", dot(*safe), method.name)?;
+                write!(
+                    f,
+                    "(call ({} {receiver} {}{})",
+                    dot(*safe),
+                    method.name,
+                    angled(types)
+                )?;
                 spaced(f, args)?;
                 f.write_str(")")
             }
@@ -968,6 +1044,8 @@ mod tests {
     fn func(name: &str, params: Vec<Param>, ret: Option<TypeExpr>, body: Block) -> Function {
         Function {
             name: ident(name),
+            type_params: Vec::new(),
+            angles: sp(),
             self_param: None,
             params,
             ret,
@@ -991,6 +1069,8 @@ mod tests {
                 }),
                 stmt(StmtKind::Expr(expr(ExprKind::Call {
                     callee: ident("print"),
+                    types: Vec::new(),
+                    angles: sp(),
                     args: vec![Arg {
                         label: None,
                         value: name("x"),
@@ -1063,6 +1143,7 @@ mod tests {
         let second = func("g", vec![], None, block(vec![]));
         let shape = Enum {
             name: ident("Shape"),
+            type_params: Vec::new(),
             variants: vec![
                 Variant {
                     name: ident("Dot"),

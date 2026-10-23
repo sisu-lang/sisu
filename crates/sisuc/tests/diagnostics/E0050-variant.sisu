@@ -1,0 +1,8 @@
+enum Tree<T> {
+    Leaf
+    Node(Tree<T>, T, Tree<T>)
+}
+
+fn main() {
+    let t = Tree.Leaf
+}

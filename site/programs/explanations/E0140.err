@@ -1,0 +1,8 @@
+error[E0140]: `nest` instantiates itself without end
+ --> E0140.sisu:3:9
+  |
+3 |         nest([x], n - 1)
+  |         ^^^^^^^^^^^^^^^^ `nest<[T]>` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

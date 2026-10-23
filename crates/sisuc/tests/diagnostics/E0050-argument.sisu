@@ -1,0 +1,8 @@
+fn count<T>(xs: [T]) -> i64 {
+    xs.len()
+}
+
+fn main() {
+    let n: i64 = count([])
+    print(n)
+}

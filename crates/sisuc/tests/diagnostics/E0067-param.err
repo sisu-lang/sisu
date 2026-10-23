@@ -1,0 +1,8 @@
+error[E0067]: every element could be the same `T` object
+ --> E0067-param.sisu:2:6
+  |
+2 |     [x; 3]
+  |      ^ `T` may be a class, and every element would be the same object
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0067

@@ -26,7 +26,7 @@ fn compiled_from<'ctx>(
 ) -> Module<'ctx> {
     let program = parse_ok(src);
     let (program, diagnostics) = check(&program, src, &[]);
-    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     let mut mir = mir::build(&program);
     edit(&mut mir);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
@@ -1102,7 +1102,7 @@ fn whole_place(local: LocalId) -> Place {
 
 #[test]
 fn store_to_a_moved_root_faults() {
-    let holder = Type::intern(TypeKind::Class(ClassId(0)));
+    let holder = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
     assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
         let place = Place {
             projections: vec![Projection::Field {
@@ -1152,7 +1152,7 @@ fn check_of_a_moved_array_faults() {
 /// enum field reads the class that holds it.
 #[test]
 fn switch_on_a_field_of_a_moved_class_faults() {
-    let holder = Type::intern(TypeKind::Class(ClassId(0)));
+    let holder = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
     assert_root_read_faults(holder, ("make_holder", "take_holder"), |r| {
         let shape = Place {
             projections: vec![Projection::Field {
@@ -1693,7 +1693,7 @@ fn binary_takes_and_and_or_of_two_computed_bools() {
     let context = Context::create();
     let src = "fn main() {}";
     let (program, diagnostics) = check(&parse_ok(src), src, &[]);
-    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let codegen = Codegen::new(&context, &program, "test.sisu", src, &machine, false);
     let bool_type = context.bool_type();
@@ -2531,4 +2531,32 @@ fn take_apart_of_swap_retains_nothing() {
         "{swap}"
     );
     assert!(!swap.contains("@sisu_rc.retain.Expr("), "{swap}");
+}
+
+/// An instantiation's symbol names its type arguments, which LLVM quotes, and each
+/// instantiation is defined once however many calls reach it.
+#[test]
+fn instantiation_symbols_should_name_their_arguments() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "fn first<T>(xs: [T]) -> T? {\n    if xs.len() > 0 { xs[0] } else { None }\n}\n\
+         class Stack<T> {\n    mut items: [T]\n    fn push(self, x: T) { self.items = [x] }\n}\n\
+         enum E<T> {\n    A(T)\n    fn map<U>(self, u: U) -> [U] { [u] }\n}\n\
+         fn main() {\n    print(first([1]) ?? 0)\n    print(first([2]) ?? 0)\n    let s = Stack(items: [\"a\"])\n    s.push(\"b\")\n\
+             print(E.A(1).map(\"a\").len())\n}",
+    )
+    .print_to_string()
+    .to_string();
+    for symbol in [
+        "@\"sisu.first<i64>\"(",
+        "@\"sisu.Stack<string>.push\"(",
+        "@\"sisu.E<i64>.map<string>\"(",
+    ] {
+        let defined = ir
+            .lines()
+            .filter(|line| line.starts_with("define") && line.contains(symbol))
+            .count();
+        assert_eq!(defined, 1, "{symbol} in\n{ir}");
+    }
 }

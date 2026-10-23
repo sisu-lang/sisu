@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 6] = [
+const EXCLUDED: [(&str, &str); 8] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -48,6 +48,14 @@ const EXCLUDED: [(&str, &str); 6] = [
     (
         "ast::PatternKind::None",
         "a `None` pattern is an error in every position (E0127)",
+    ),
+    (
+        "tir::Step::Type",
+        "a private worklist item of `Program::write_names`, which is no node of the typed tree",
+    ),
+    (
+        "tir::Step::Text",
+        "a private worklist item of `Program::write_names`, which is no node of the typed tree",
     ),
 ];
 
@@ -76,7 +84,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 35] = [
+const REACH: [&str; 43] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -112,6 +120,14 @@ const REACH: [&str; 35] = [
     "reach: a labeled jump leaves an inner loop",
     "reach: `break l -1` is a label and `-1`",
     "reach: `break x -1` is `x - 1`",
+    "reach: a generic function is called with written type arguments",
+    "reach: a generic function is called with inferred type arguments",
+    "reach: a generic function calls a generic function",
+    "reach: a generic function matches a generic enum",
+    "reach: a generic class is built with written type arguments",
+    "reach: a generic class is built with inferred type arguments",
+    "reach: a generic variant is built with inferred type arguments",
+    "reach: a generic type is a type argument",
 ];
 
 /// Whether a program's text holds a form.
@@ -173,9 +189,11 @@ fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// The program's syntax tree and typed tree, after asserting it checks without an error.
+/// The program's syntax tree and typed tree, after asserting it checks without an error. The
+/// typed tree is the checker's, before `mono`, so it holds the generic declarations with their
+/// type parameters (`types::TypeKind::Param`).
 fn checked(source: &str) -> (ast::Program, tir::Program) {
-    let (program, diagnostics) = front_end(source);
+    let (program, diagnostics) = crate::front_end::checked(source);
     // An unused loop label would be a label no rule meant to write. Every generated function
     // returns and every generated loop ends, so W0010 and W0011 may not appear.
     let errors: Vec<String> = diagnostics
@@ -336,6 +354,12 @@ struct Walk {
     out_of_bounds: Vec<String>,
     /// The functions of the program being walked.
     funcs: FxHashSet<String>,
+    /// The generic functions, classes and enums of it.
+    generic_funcs: FxHashSet<String>,
+    generic_classes: FxHashSet<String>,
+    generic_enums: FxHashSet<String>,
+    /// Whether the function being walked is generic.
+    in_generic: bool,
     /// The function being walked, and its parameters.
     func: String,
     params: Vec<String>,
@@ -420,6 +444,18 @@ impl Walk {
                 ast::Item::Class(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
             })
             .collect();
+        self.generic_funcs = generic_names(program, |item| match item {
+            ast::Item::Function(f) => Some((&f.name, &f.type_params)),
+            ast::Item::Class(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+        });
+        self.generic_classes = generic_names(program, |item| match item {
+            ast::Item::Class(c) => Some((&c.name, &c.type_params)),
+            ast::Item::Function(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+        });
+        self.generic_enums = generic_names(program, |item| match item {
+            ast::Item::Enum(e) => Some((&e.name, &e.type_params)),
+            ast::Item::Function(_) | ast::Item::Class(_) | ast::Item::Const(_) => None,
+        });
         self.variants = program
             .items
             .iter()
@@ -486,8 +522,30 @@ impl Walk {
         }
     }
 
+    /// Marks a call of `callee`, with its type arguments left out if `inferred`, that is generic.
+    fn generic_call(&mut self, callee: &str, inferred: bool) {
+        if self.generic_funcs.contains(callee) {
+            self.mark(if inferred {
+                "reach: a generic function is called with inferred type arguments"
+            } else {
+                "reach: a generic function is called with written type arguments"
+            });
+            if self.in_generic {
+                self.mark("reach: a generic function calls a generic function");
+            }
+        }
+        if self.generic_classes.contains(callee) {
+            self.mark(if inferred {
+                "reach: a generic class is built with inferred type arguments"
+            } else {
+                "reach: a generic class is built with written type arguments"
+            });
+        }
+    }
+
     fn ast_function(&mut self, f: &ast::Function) {
         self.func = f.name.name.as_str().to_string();
+        self.in_generic = !f.type_params.is_empty();
         self.params.clear();
         for param in &f.params {
             self.type_expr(&param.ty);
@@ -503,6 +561,15 @@ impl Walk {
         self.mark(&format!("ast::TypeExpr.optional = {}", ty.optional));
         match &ty.kind {
             ast::TypeKind::Name(_) => self.mark("ast::TypeKind::Name"),
+            ast::TypeKind::Applied(applied) => {
+                self.mark("ast::TypeKind::Applied");
+                for arg in &applied.args {
+                    if matches!(arg.kind, ast::TypeKind::Applied(_)) {
+                        self.mark("reach: a generic type is a type argument");
+                    }
+                    self.type_expr(arg);
+                }
+            }
             ast::TypeKind::Array(element) => {
                 self.mark("ast::TypeKind::Array");
                 self.type_expr(element);
@@ -678,7 +745,7 @@ impl Walk {
             ast::ExprKind::Field { base, name, .. } => (base, name, None),
             _ => return None,
         };
-        let variants = self.variants.get(name(receiver)?)?;
+        let variants = self.variants.get(enum_name(receiver)?)?;
         let built = built.name.as_str();
         if !variants.iter().any(|v| v == built) {
             None
@@ -1042,9 +1109,21 @@ impl Walk {
                     self.mark("reach: a parameter other than `depth` is read");
                 }
             }
-            ast::ExprKind::Call { callee, args } => {
+            ast::ExprKind::Applied { types, .. } => {
+                self.mark("ast::ExprKind::Applied");
+                for ty in types {
+                    self.type_expr(ty);
+                }
+            }
+            ast::ExprKind::Call {
+                callee,
+                args,
+                types,
+                ..
+            } => {
                 self.mark("ast::ExprKind::Call");
                 let callee = callee.name.as_str();
+                self.generic_call(callee, types.is_empty());
                 self.mark(&format!("prelude {callee}"));
                 if callee == "panic" {
                     self.message(args);
@@ -1084,9 +1163,12 @@ impl Walk {
             } => {
                 self.mark("ast::ExprKind::MethodCall");
                 self.mark(&format!("ast::ExprKind::MethodCall.safe = {safe}"));
-                let built = name(receiver)
+                let built = enum_name(receiver)
                     .and_then(|receiver| self.variants.get(receiver))
                     .is_some_and(|variants| variants.iter().any(|v| v == method.name.as_str()));
+                if built && name(receiver).is_some_and(|n| self.generic_enums.contains(n)) {
+                    self.mark("reach: a generic variant is built with inferred type arguments");
+                }
                 if built && !args.is_empty() {
                     self.mark(if args.iter().all(|arg| arg.label.is_some()) {
                         "reach: a variant is built with labeled fields"
@@ -1232,6 +1314,9 @@ impl Walk {
                 scrutinee, arms, ..
             } => {
                 self.mark("ast::ExprKind::Match");
+                if self.in_generic {
+                    self.mark("reach: a generic function matches a generic enum");
+                }
                 self.ast_expr(scrutinee);
                 for arm in arms {
                     self.ast_pattern(&arm.pattern);
@@ -1321,6 +1406,19 @@ impl Walk {
                     .collect()
             })
             .collect();
+        for field in program
+            .enums
+            .iter()
+            .flat_map(|e| e.variants.iter().flat_map(|v| &v.fields))
+        {
+            self.mark(match field.rank {
+                tir::Rank::Plain => "tir::Rank::Plain",
+                tir::Rank::Own => "tir::Rank::Own",
+                tir::Rank::Open => "tir::Rank::Open",
+                tir::Rank::Late => "tir::Rank::Late",
+                tir::Rank::Never => "tir::Rank::Never",
+            });
+        }
         for function in &program.functions {
             self.ty(function.ret);
             for local in &function.locals {
@@ -1341,8 +1439,9 @@ impl Walk {
             TypeKind::String => ("types::TypeKind::String", None),
             TypeKind::Unit => ("types::TypeKind::Unit", None),
             TypeKind::Never => ("types::TypeKind::Never", None),
-            TypeKind::Class(_) => ("types::TypeKind::Class", None),
-            TypeKind::Enum(_) => ("types::TypeKind::Enum", None),
+            TypeKind::Class(..) => ("types::TypeKind::Class", None),
+            TypeKind::Enum(..) => ("types::TypeKind::Enum", None),
+            TypeKind::Param(..) => ("types::TypeKind::Param", None),
             TypeKind::Array(element) => ("types::TypeKind::Array", Some(element)),
             TypeKind::Optional(inner) => ("types::TypeKind::Optional", Some(inner)),
         };
@@ -1406,17 +1505,20 @@ impl Walk {
         }
     }
 
-    /// Whether a value of `ty` may hold a class object, where `seen` are the enums looked into.
+    /// Whether a value of `ty` may hold a class object, where `seen` are the enums looked into. A
+    /// type parameter of a generic body may stand for a class.
     fn holds_class(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
         match ty.kind() {
-            TypeKind::Class(_) => true,
+            TypeKind::Class(..) | TypeKind::Param(..) => true,
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.holds_class(inner, seen),
-            TypeKind::Enum(id) => {
+            TypeKind::Enum(id, args) => {
                 !seen.contains(&id) && {
                     seen.push(id);
+                    // A payload names the enum's parameters, which its arguments stand for.
+                    let args = args.get();
                     self.payloads[id.0]
                         .iter()
-                        .any(|field| self.holds_class(*field, seen))
+                        .any(|field| self.holds_class(field.subst(args), seen))
                 }
             }
             TypeKind::I64
@@ -1475,8 +1577,9 @@ impl Walk {
                 | TypeKind::Never
                 | TypeKind::Array(_)
                 | TypeKind::Optional(_)
-                | TypeKind::Class(_)
-                | TypeKind::Enum(_) => {}
+                | TypeKind::Class(..)
+                | TypeKind::Enum(..)
+                | TypeKind::Param(..) => {}
             }
         }
         if written && left && matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8) {
@@ -1749,8 +1852,9 @@ fn kind_name(ty: Type) -> &'static str {
         TypeKind::String => "String",
         TypeKind::Unit => "Unit",
         TypeKind::Never => "Never",
-        TypeKind::Class(_) => "Class",
-        TypeKind::Enum(_) => "Enum",
+        TypeKind::Class(..) => "Class",
+        TypeKind::Enum(..) => "Enum",
+        TypeKind::Param(..) => "Param",
         TypeKind::Array(_) => "Array",
         TypeKind::Optional(_) => "Optional",
     }
@@ -1796,6 +1900,28 @@ fn tail(block: &ast::Block) -> Option<&ast::Expr> {
         Some(e)
     } else {
         None
+    }
+}
+
+/// The names of the items `pick` selects, with their type parameters, that have any.
+fn generic_names<'a>(
+    program: &'a ast::Program,
+    pick: impl Fn(&'a ast::Item) -> Option<(&'a ast::Ident, &'a Vec<ast::Ident>)>,
+) -> FxHashSet<String> {
+    program
+        .items
+        .iter()
+        .filter_map(pick)
+        .filter(|(_, params)| !params.is_empty())
+        .map(|(name, _)| name.name.as_str().to_string())
+        .collect()
+}
+
+/// The enum a variant is built from, `E` of `E.V` and of `E<A>.V`.
+fn enum_name(receiver: &ast::Expr) -> Option<&str> {
+    match &receiver.kind {
+        ast::ExprKind::Applied { name, .. } => Some(name.name.as_str()),
+        _ => name(receiver),
     }
 }
 
@@ -1933,7 +2059,9 @@ fn walk() -> Walk {
 #[test]
 fn every_generated_program_checks_clean() {
     for data in seeds() {
-        checked(&generate(&data).program);
+        let (_, program) = checked(&generate(&data).program);
+        // In a debug build, `mono` asserts that no type parameter is left in what it gives.
+        crate::mono::instantiate(program);
     }
 }
 
@@ -2415,25 +2543,28 @@ fn an_int_literal_is_worth_what_it_says() {
 
 #[test]
 fn rare_constant_forms_check_clean() {
-    // Each input chooses, byte by byte, no class or enum, an item, a constant, its type, no
-    // annotation, and then its form, ending once the bytes run out, where every choice is the
-    // first.
+    // Each input chooses, byte by byte, no class or enum, no generic type, no generic function,
+    // an item, a constant, its type, no annotation, and then its form, ending once the bytes run
+    // out, where every choice is the first.
     for (data, form) in [
         // `-(e)` of the smallest `i64`, which has no negation: `e` alone.
         (
-            &[0, 1, 0, 0, 0, 1, 0, 63][..],
+            &[0, 0, 0, 1, 0, 0, 0, 1, 0, 63][..],
             "const c1 = (-9223372036854775808)\n",
         ),
         // `a - b` of the smallest `i64` and a negative literal, which fits where `a + b` would
         // overflow: the fold must know the literal's sign.
         (
-            &[0, 1, 0, 0, 0, 3, 0, 63, 0, 6, 0, 0, 0][..],
+            &[0, 0, 0, 1, 0, 0, 0, 3, 0, 63, 0, 6, 0, 0, 0][..],
             "const c1 = ((-9223372036854775808) - (-1))\n",
         ),
         // `(a && b)` and `(a || b)` of `bool`s.
-        (&[0, 1, 0, 3, 0, 3, 1][..], "const c1 = (false && false)\n"),
         (
-            &[0, 1, 0, 3, 0, 3, 1, 0, 0, 1][..],
+            &[0, 0, 0, 1, 0, 3, 0, 3, 1][..],
+            "const c1 = (false && false)\n",
+        ),
+        (
+            &[0, 0, 0, 1, 0, 3, 0, 3, 1, 0, 0, 1][..],
             "const c1 = (false || false)\n",
         ),
     ] {
@@ -2463,6 +2594,170 @@ fn every_loop_is_bounded() {
 fn every_index_is_in_bounds_or_meant_to_panic() {
     let out_of_bounds = walk().out_of_bounds;
     assert!(out_of_bounds.is_empty(), "{out_of_bounds:?}");
+}
+
+/// What the walker marks for `source`, which must check.
+fn marked(source: &str) -> FxHashSet<String> {
+    let mut walk = Walk::default();
+    walk.program(source);
+    walk.seen
+}
+
+#[test]
+fn the_walker_should_mark_a_generic_call_by_how_it_names_its_type_arguments() {
+    let program = |body: &str| {
+        format!(
+            "fn id<T>(x: T) -> T {{
+    x
+}}
+fn again<T>(x: T) -> T {{
+    {body}
+}}
+fn main() {{
+    print(id(1))
+}}
+"
+        )
+    };
+    let key =
+        |kind: &str| format!("reach: a generic function is called with {kind} type arguments");
+    // `main` infers, and a generic function that calls `id` is one that calls a generic one.
+    let seen = marked(&program("id(x)"));
+    assert!(seen.contains(&key("inferred")));
+    assert!(!seen.contains(&key("written")));
+    assert!(seen.contains("reach: a generic function calls a generic function"));
+    let seen = marked(&program("id<T>(x)"));
+    assert!(seen.contains(&key("written")));
+    // A call from `main` is no call from a generic function.
+    let seen = marked(&program("x"));
+    assert!(!seen.contains("reach: a generic function calls a generic function"));
+}
+
+#[test]
+fn the_walker_should_mark_an_inferred_class_and_variant_apart_from_a_written_one() {
+    let program = |class: &str, variant: &str| {
+        format!(
+            "class B<T> {{
+    v: T
+}}
+enum E<T> {{
+    Z
+    C(T)
+}}
+fn main() {{
+    let _ = {class}
+    let _ = {variant}
+}}
+"
+        )
+    };
+    let keys = [
+        "reach: a generic class is built with written type arguments",
+        "reach: a generic class is built with inferred type arguments",
+        "reach: a generic variant is built with inferred type arguments",
+    ];
+    let marks =
+        |class: &str, variant: &str| keys.map(|k| marked(&program(class, variant)).contains(k));
+    assert_eq!(marks("B(v: 1)", "E.C(1)"), [false, true, true]);
+    assert_eq!(marks("B<i64>(v: 1)", "E<i64>.C(1)"), [true, false, false]);
+}
+
+#[test]
+fn the_walker_should_mark_a_match_in_a_generic_function_only() {
+    let key = "reach: a generic function matches a generic enum";
+    let program = |generic: &str| {
+        format!(
+            "enum E<T> {{
+    Z
+    C(T)
+}}
+fn unwrap{generic}(e: E<i64>, d: i64) -> i64 {{
+    match e {{
+        E.C(p) => p
+        _ => d
+    }}
+}}
+fn main() {{}}
+"
+        )
+    };
+    assert!(!marked(&program("")).contains(key));
+    // `unwrap<T>` has a type parameter, though `E<i64>` does not name it.
+    assert!(marked(&program("<T>")).contains(key));
+}
+
+#[test]
+fn the_walker_should_mark_a_type_argument_that_is_itself_applied() {
+    let key = "reach: a generic type is a type argument";
+    let program = |ty: &str| {
+        format!(
+            "class B<T> {{
+    v: T
+}}
+fn take(b: {ty}) {{}}
+fn main() {{}}
+"
+        )
+    };
+    assert!(marked(&program("B<B<i64>>")).contains(key));
+    assert!(!marked(&program("B<i64>")).contains(key));
+}
+
+#[test]
+fn the_walker_should_mark_the_rank_of_each_payload_field() {
+    let seen = marked(
+        "enum Two<T> {
+    Both(T, T)
+}
+enum Expr {
+    Lit(i64)
+    Pair(Two<Expr>)
+}
+enum Tree<T> {
+    Leaf
+    Node(Tree<T>, T, Tree<T>)
+}
+fn main() {}
+",
+    );
+    for rank in ["Plain", "Own", "Never"] {
+        assert!(seen.contains(&format!("tir::Rank::{rank}")), "{rank}");
+    }
+    for rank in ["Open", "Late"] {
+        assert!(!seen.contains(&format!("tir::Rank::{rank}")), "{rank}");
+    }
+}
+
+#[test]
+fn the_walker_should_see_a_type_parameter_before_mono_makes_copies() {
+    let seen = marked("fn id<T>(x: T) -> T {\n    x\n}\nfn main() {}\n");
+    assert!(seen.contains("types::TypeKind::Param"));
+    assert!(!marked("fn main() {}\n").contains("types::TypeKind::Param"));
+}
+
+#[test]
+fn the_walker_should_read_the_arguments_of_a_generic_enum_for_a_class() {
+    // `W<i64>` holds none, though `W`'s payload names a parameter, and `W<K>` holds one.
+    let stores = |arg: &str, value: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!(
+            "class K {{
+    x: i64
+}}
+enum W<T> {{
+    A(T)
+    B
+}}
+fn main() {{
+    let mut a: [W<{arg}>] = [W.B]
+    a[0] = {value}
+}}
+"
+        ));
+        walk.heap_classes.len()
+    };
+    assert_eq!(stores("i64", "W<i64>.A(1)"), 0);
+    assert_eq!(stores("K", "W<K>.A(K(x: 1))"), 1);
 }
 
 #[test]
@@ -2746,7 +3041,7 @@ fn an_expression_stays_within_its_most() {
     // from its least value's to a few elements' worth, holds no more than that most: a `K0`
     // optional below the 9 of a `K0` among them.
     let string = || Box::new(Ty::String);
-    let class = || Ty::Class { id: 0, size: 9 };
+    let class = || Ty::class(0, 9);
     let types = [
         Ty::I64,
         Ty::Char,
@@ -2803,7 +3098,7 @@ fn a_program_spends_no_more_than_its_fuel() {
 fn an_array_of_class_objects_is_never_a_fill() {
     // `[k; n]` would share one object among the elements (E0067); a `string` fill is fine.
     let mut fills = FxHashSet::default();
-    let class = Ty::Class { id: 0, size: 9 };
+    let class = Ty::class(0, 9);
     let elements = [
         ("K0", class.clone()),
         ("K0?", Ty::Optional(Box::new(class))),
@@ -3119,12 +3414,12 @@ enum E0 {
 ";
 
 /// `E0`, as `declare` declares it.
-const E0: Ty = Ty::Enum { id: 0, least: 1 };
+const E0: Ty = Ty::enumeration(0, 1);
 
 /// `K0`, a class of 9, and `E0`, which holds it, in each variant but the first two, and in
 /// `V1` itself.
 fn declare(g: &mut Gen) {
-    let class = Ty::Class { id: 0, size: 9 };
+    let class = Ty::class(0, 9);
     let field = |name: &str, ty, mutable, cap| Field {
         name: name.to_string(),
         ty,
@@ -3137,11 +3432,15 @@ fn declare(g: &mut Gen) {
             field("g1", Ty::I64, false, 0),
         ],
         size: 9,
+        applied: None,
+        inferable: false,
     });
-    let variant = |name: &str, fields| Variant {
+    let variant = |name: &str, fields: Vec<Ty>| Variant {
         name: name.to_string(),
+        recursive: fields.iter().any(|f| matches!(f, Ty::Enum { id: 0, .. })),
         fields,
         labels: Vec::new(),
+        inferable: false,
     };
     g.scope.enums.push(Enum {
         variants: vec![
@@ -3152,6 +3451,7 @@ fn declare(g: &mut Gen) {
         ],
         least: 1,
         has_class: true,
+        applied: None,
     });
     g.scope.types.extend([class, E0]);
 }
@@ -3307,15 +3607,19 @@ fn a_chain_ends_in_a_variant_within_its_room() {
             .flat_map(|_| splitmix64(&mut state).to_le_bytes())
             .collect();
         let mut g = Gen::new(&data);
-        let class = Ty::Class { id: 0, size: 111 };
+        let class = Ty::class(0, 111);
         g.scope.classes.push(Class {
             fields: Vec::new(),
             size: 111,
+            applied: None,
+            inferable: false,
         });
-        let variant = |name: &str, fields| Variant {
+        let variant = |name: &str, fields: Vec<Ty>| Variant {
             name: name.to_string(),
+            recursive: fields.iter().any(|f| matches!(f, Ty::Enum { id: 0, .. })),
             fields,
             labels: Vec::new(),
+            inferable: false,
         };
         g.scope.enums.push(Enum {
             variants: vec![
@@ -3325,6 +3629,7 @@ fn a_chain_ends_in_a_variant_within_its_room() {
             ],
             least: 1,
             has_class: true,
+            applied: None,
         });
         g.scope.types.extend([class, E0]);
         g.while_chain(0, 1);
@@ -3425,10 +3730,12 @@ fn an_enum_match_ends_in_a_catch_all_only_where_its_arms_leave_a_value() {
     // without a guard: some matches end in a variant's arm and others in `_` or a name.
     const SMALL: &str = "enum E0 {\n    V0\n    V1(bool)\n    V2\n}\n";
     let program = matches_check_clean(SMALL, |g| {
-        let variant = |name: &str, fields| Variant {
+        let variant = |name: &str, fields: Vec<Ty>| Variant {
             name: name.to_string(),
+            recursive: fields.iter().any(|f| matches!(f, Ty::Enum { id: 0, .. })),
             fields,
             labels: Vec::new(),
+            inferable: false,
         };
         g.scope.enums.push(Enum {
             variants: vec![
@@ -3438,6 +3745,7 @@ fn an_enum_match_ends_in_a_catch_all_only_where_its_arms_leave_a_value() {
             ],
             least: 1,
             has_class: false,
+            applied: None,
         });
         g.scope.types.push(E0);
     });
@@ -3491,7 +3799,7 @@ fn an_element_takes_an_assignment_only_where_it_holds_no_class() {
         let mut g = Gen::new(&data);
         declare(&mut g);
         for (name, element, base) in [
-            ("ks", Ty::Class { id: 0, size: 9 }, 9),
+            ("ks", Ty::class(0, 9), 9),
             ("es", E0, 10),
             ("ss", Ty::String, 8),
         ] {
@@ -3539,6 +3847,30 @@ fn a_declared_type_leaves_arrays_among_the_types() {
 }
 
 #[test]
+fn a_variant_should_be_recursive_when_it_holds_its_enum() {
+    let (mut recursive, mut other) = (0, 0);
+    for data in seeds() {
+        let mut g = Gen::new(&data);
+        g.program();
+        for (id, e) in g.scope.enums.iter().enumerate() {
+            let own = |ty: &Ty| matches!(ty, Ty::Enum { id: own, .. } if *own == id);
+            for variant in &e.variants {
+                // An instance of a generic enum says it by its declaration, not by its fields.
+                if e.applied.is_none() {
+                    assert_eq!(variant.recursive, variant.fields.iter().any(own));
+                }
+                recursive += usize::from(variant.recursive);
+                other += usize::from(!variant.recursive);
+            }
+        }
+    }
+    assert!(
+        recursive > 0 && other > 0,
+        "{recursive} recursive, {other} not"
+    );
+}
+
+#[test]
 fn each_count_reaches_its_most_and_stays_within_it() {
     // 3 fields of a class or a variant, 2 methods, 2 to 4 variants.
     let (mut fields, mut methods, mut variants, mut payload) = (0, 0, (usize::MAX, 0), 0);
@@ -3568,7 +3900,7 @@ fn each_count_reaches_its_most_and_stays_within_it() {
 fn a_cap_holds_the_least_value_of_its_field() {
     // A `K0` of 50, or a `K0` optional, takes its 50 and more; a number, or a number optional,
     // takes none.
-    let class = Ty::Class { id: 0, size: 50 };
+    let class = Ty::class(0, 50);
     for byte in 0..3 {
         let data = [byte];
         let mut g = Gen::new(&data);
@@ -3587,7 +3919,7 @@ fn a_part_holds_at_most_its_whole_or_a_class_its_own() {
     // A class object counts its size wherever it is, so its own is the tighter of the two.
     assert_eq!(Ty::String.within(40), 40);
     assert_eq!(Ty::Optional(Box::new(Ty::String)).within(40), 40);
-    assert_eq!(Ty::Class { id: 0, size: 9 }.within(40), 9);
+    assert_eq!(Ty::class(0, 9).within(40), 9);
 }
 
 #[test]
@@ -3595,7 +3927,7 @@ fn a_field_type_past_most_is_an_i64() {
     // A field of a class of 50 fits a holder of 50 within `MOST`, but not one of 51.
     for (size, fits) in [(50, true), (51, false)] {
         let mut g = Gen::new(&[6]);
-        let class = Ty::Class { id: 0, size: 50 };
+        let class = Ty::class(0, 50);
         g.scope.types.push(class.clone());
         let ty = g.field_type(size);
         assert_eq!(ty, if fits { class } else { Ty::I64 }, "within {size}");
@@ -3611,8 +3943,10 @@ fn a_field_cap_past_most_is_an_i64() {
         g.scope.classes.push(Class {
             fields: Vec::new(),
             size: held,
+            applied: None,
+            inferable: false,
         });
-        g.scope.types.push(Ty::Class { id: 0, size: held });
+        g.scope.types.push(Ty::class(0, held));
         g.class();
         let class = &g.scope.classes[1];
         let last = &class.fields[1];
@@ -3707,7 +4041,7 @@ fn a_mutable_array_of_large_elements_holds_fewer_of_them() {
             .flat_map(|_| splitmix64(&mut state).to_le_bytes())
             .collect();
         let mut g = Gen::new(&data);
-        let class = Ty::Class { id: 0, size: 99 };
+        let class = Ty::class(0, 99);
         g.scope.classes.push(Class {
             fields: vec![Field {
                 name: "g0".to_string(),
@@ -3716,11 +4050,15 @@ fn a_mutable_array_of_large_elements_holds_fewer_of_them() {
                 cap: 98,
             }],
             size: 99,
+            applied: None,
+            inferable: false,
         });
-        let variant = |name: &str, fields| Variant {
+        let variant = |name: &str, fields: Vec<Ty>| Variant {
             name: name.to_string(),
+            recursive: fields.iter().any(|f| matches!(f, Ty::Enum { id: 0, .. })),
             fields,
             labels: Vec::new(),
+            inferable: false,
         };
         g.scope.enums.push(Enum {
             variants: vec![
@@ -3729,8 +4067,9 @@ fn a_mutable_array_of_large_elements_holds_fewer_of_them() {
             ],
             least: 100,
             has_class: true,
+            applied: None,
         });
-        let element = Ty::Enum { id: 0, least: 100 };
+        let element = Ty::enumeration(0, 100);
         g.scope.types.extend([class, element.clone()]);
         g.array_let(
             "v0".to_string(),
@@ -4481,7 +4820,7 @@ fn known_answers_are_integer() {
                 std::slice::from_ref(&**operand)
             };
             for part in parts {
-                if let tir::ExprKind::Call { func, args } = &part.kind
+                if let tir::ExprKind::Call { func, args, .. } = &part.kind
                     && known.contains(&func.0)
                 {
                     sites += 1;

@@ -40,7 +40,9 @@ use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
 use crate::mir::{self, BlockId, Const, Operand, Place, Projection, Rvalue, Statement, Terminator};
 use crate::source::{LineIndex, Span};
-use crate::tir::{ClassId, EnumId, FuncId, LocalId, Program, Stream, Type, TypeKind, UnaryOp};
+use crate::tir::{
+    ClassId, EnumId, FuncId, LocalId, Program, Stream, Type, TypeArgs, TypeKind, UnaryOp,
+};
 
 /// The `expect` message for a builder call: codegen positions the builder before it emits code.
 const POSITIONED: &str =
@@ -152,7 +154,10 @@ pub(crate) fn compile<'ctx>(
     codegen.lay_out_types();
     // Every class gets its release helper, used or not; an `eq` helper is made on first use.
     for id in 0..program.classes.len() {
-        codegen.helper(Helper::Release, Type::intern(TypeKind::Class(ClassId(id))));
+        codegen.helper(
+            Helper::Release,
+            Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)),
+        );
     }
     // Declare every function first so that calls can refer to functions defined later.
     for f in &mir.functions {
@@ -194,7 +199,7 @@ fn declare_printers<'ctx>(module: &Module<'ctx>, prefix: &str) -> Printers<'ctx>
 
 /// The class of a field access's base, whose type is `ty`.
 fn class_of(ty: Type) -> ClassId {
-    let TypeKind::Class(id) = ty.kind() else {
+    let TypeKind::Class(id, _) = ty.kind() else {
         unreachable!("the checker should only allow field access on a class-typed value")
     };
     id
@@ -202,7 +207,7 @@ fn class_of(ty: Type) -> ClassId {
 
 /// The enum of a payload projection's base, whose type is `ty`.
 fn enum_of(ty: Type) -> EnumId {
-    let TypeKind::Enum(id) = ty.kind() else {
+    let TypeKind::Enum(id, _) = ty.kind() else {
         unreachable!("mir should project a payload only out of an enum")
     };
     id

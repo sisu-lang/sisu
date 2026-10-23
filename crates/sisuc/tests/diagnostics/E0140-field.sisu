@@ -1,0 +1,5 @@
+class Link<T> {
+    next: Link<Link<[T]>>?
+}
+
+fn main() {}

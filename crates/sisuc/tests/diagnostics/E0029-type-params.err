@@ -1,0 +1,14 @@
+error[E0029]: `main` takes no type parameters
+ --> E0029-type-params.sisu:1:8
+  |
+1 | fn main<T>() {
+  |        ^^^
+  |
+help: remove the type parameters
+  |
+1 - fn main<T>() {
+1 + fn main() {
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0029

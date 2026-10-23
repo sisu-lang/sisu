@@ -1,0 +1,4 @@
+fn main<T>() {
+    let x: T? = None
+    print(x == None)
+}

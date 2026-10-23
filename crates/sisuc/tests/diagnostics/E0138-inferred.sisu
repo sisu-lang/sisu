@@ -1,0 +1,8 @@
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let n: i64? = None
+    let x = id(n)
+}

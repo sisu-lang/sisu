@@ -1,0 +1,139 @@
+// Generic enums: `Tree<T>` on `i64` and `string`; `Expr`, which holds itself through
+// `Two<Expr>`, so the box sits on `Expr.Pair`'s field and `Both` holds its `Expr`s inline; and
+// `Chain`, which holds itself through the optional `T?` of `Opt2<Chain>`. Valgrind and
+// `--rc-checks` check that every value is released exactly once.
+// o2-calls: main words 1
+enum Tree<T> {
+    Leaf
+    Node(Tree<T>, T, Tree<T>)
+
+    fn size(self) -> i64 {
+        match self {
+            Tree.Leaf => 0
+            Tree.Node(l, _, r) => l.size() + 1 + r.size()
+        }
+    }
+
+    // A method with its own parameter: `[u]`, or `[]` for a leaf.
+    fn label<U>(self, u: U) -> [U] {
+        match self {
+            Tree.Leaf => []
+            Tree.Node(_, _, _) => [u]
+        }
+    }
+}
+
+fn leaf<T>(v: T) -> Tree<T> {
+    Tree.Node(Tree.Leaf, v, Tree.Leaf)
+}
+
+// `t`'s values in order.
+fn ints(t: Tree<i64>) {
+    if let Tree.Node(l, v, r) = t {
+        ints(l)
+        print(v)
+        ints(r)
+    }
+}
+
+fn words(t: Tree<string>) {
+    if let Tree.Node(l, v, r) = t {
+        words(l)
+        print(v)
+        words(r)
+    }
+}
+
+enum Two<T> {
+    Both(T, T)
+}
+
+enum Expr {
+    Lit(i64)
+    Pair(Two<Expr>)
+}
+
+// A pair's value is its first operand's, times 10, plus its second's.
+fn eval(e: Expr) -> i64 {
+    match e {
+        Expr.Lit(n) => n
+        Expr.Pair(Two.Both(a, b)) => eval(a) * 10 + eval(b)
+    }
+}
+
+fn swap(e: Expr) -> Expr {
+    match e {
+        Expr.Pair(Two.Both(a, b)) => Expr.Pair(Two.Both(b, a))
+        other => other
+    }
+}
+
+enum Wrap<T> {
+    W(T)
+}
+
+fn take<T>(x: T, n: i64) -> i64 {
+    n
+}
+
+// The first argument is built and spilled before the second may return, which releases it.
+fn wrapped(s: string, stop: bool) {
+    print(take(Wrap.W(s + "x"), if stop { return } else { 1 }))
+}
+
+fn paired(n: i64, stop: bool) {
+    print(take(Expr.Pair(Two.Both(Expr.Lit(n), Expr.Lit(n))), if stop { return } else { 2 }))
+}
+
+enum Opt2<T> {
+    S(T?)
+    N
+}
+
+enum Chain {
+    End
+    Link(Opt2<Chain>)
+}
+
+// `depth` present links, then `Link(bottom)`.
+fn chain(depth: i64, bottom: Opt2<Chain>) -> Chain {
+    let mut c = Chain.Link(bottom)
+    let mut i = 0
+    while i < depth {
+        c = Chain.Link(Opt2.S(c))
+        i += 1
+    }
+    c
+}
+
+fn main() {
+    let t = Tree.Node(leaf(1), 2, Tree.Node(Tree.Leaf, 3, leaf(4)))
+    ints(t)                                 // 1, 2, 3, 4, a line each
+    print(t.size())                         // 4
+    print(t.label("x").len())               // 1
+    let empty: Tree<i64> = Tree.Leaf
+    print(empty.label(true).len())          // 0
+    let w = Tree.Node(leaf("a" + "b"), "c", leaf("d"))
+    words(w)                                // ab, c, d, a line each
+    print(w.size())                         // 3
+
+    let e = Expr.Pair(Two.Both(Expr.Lit(1), Expr.Pair(Two.Both(Expr.Lit(2), Expr.Lit(3)))))
+    print(eval(e))                          // 1 * 10 + (2 * 10 + 3) = 33
+    let s = swap(e)
+    print(eval(s))                          // (2 * 10 + 3) * 10 + 1 = 231
+    print(eval(swap(Expr.Lit(7))))          // 7: not a pair
+    print(s == swap(swap(s)))               // true
+
+    wrapped("a", true)                      // nothing: returns
+    wrapped("a", false)                     // 1
+    paired(5, true)                         // nothing: returns
+    paired(5, false)                        // 2
+
+    let absent = Chain.Link(Opt2.S(None))
+    print(absent == Chain.Link(Opt2.S(None)))           // true: both absent
+    print(absent == Chain.Link(Opt2.S(Chain.End)))      // false: absent and present
+    print(Chain.Link(Opt2.S(Chain.End)) == absent)      // false: present and absent
+    print(chain(1000, Opt2.N) == chain(1000, Opt2.N))   // true
+    print(chain(1000, Opt2.N) == chain(1000, Opt2.S(None)))  // false: differs at the bottom
+    print(chain(1000, Opt2.S(Chain.End)) == chain(1000, Opt2.S(None)))  // false: at the bottom
+}

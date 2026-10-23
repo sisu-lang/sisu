@@ -17,7 +17,7 @@ const MAX_LINES: usize = 4;
 /// The sizes a function's `string` parameter or result may have.
 const SIZES: [u64; 3] = [0, 16, 100];
 /// The most fields of a class, and of a variant.
-const MAX_FIELDS: usize = 3;
+pub(crate) const MAX_FIELDS: usize = 3;
 /// The most classes and enums a program declares.
 const MAX_TYPES: usize = 3;
 /// The most methods of a class.
@@ -69,6 +69,7 @@ impl Gen<'_> {
                 self.enumeration();
             }
         }
+        self.generics();
         self.fuel += functions;
         let mut items = 0;
         while items < MAX_ITEMS && self.pick(4) != 0 && self.spend(1) {
@@ -374,8 +375,13 @@ impl Gen<'_> {
                 cap,
             });
         }
-        let ty = Ty::Class { id, size };
-        self.scope.classes.push(Class { fields, size });
+        let ty = Ty::class(id, size);
+        self.scope.classes.push(Class {
+            fields,
+            size,
+            applied: None,
+            inferable: false,
+        });
         self.scope.types.push(ty.clone());
         for _ in 0..self.pick(MAX_METHODS + 1) {
             if !self.spend(1) {
@@ -405,7 +411,7 @@ impl Gen<'_> {
             for _ in 0..self.pick(MAX_FIELDS + 1) {
                 // Each later variant holds the enum itself as often as not.
                 let ty = if v > 0 && fields.is_empty() && self.pick(2) == 0 {
-                    Ty::Enum { id, least }
+                    Ty::enumeration(id, least)
                 } else {
                     self.field_type(size)
                 };
@@ -428,16 +434,21 @@ impl Gen<'_> {
             self.w.text(&format!("{name}{}", payload(&labels, &types)));
             variants.push(Variant {
                 name,
+                recursive: fields
+                    .iter()
+                    .any(|f| matches!(f, Ty::Enum { id: own, .. } if *own == id)),
                 fields,
                 labels,
+                inferable: false,
             });
         }
         self.scope.enums.push(Enum {
             variants,
             least,
             has_class,
+            applied: None,
         });
-        self.scope.types.push(Ty::Enum { id, least });
+        self.scope.types.push(Ty::enumeration(id, least));
         self.w.close();
         self.w.line();
     }
@@ -689,7 +700,7 @@ impl Gen<'_> {
 
 /// A payload as written, `(a, b)` or `(l: a, m: b)`, of `values` and their `labels`, if any;
 /// nothing for none.
-fn payload(labels: &[String], values: &[String]) -> String {
+pub(crate) fn payload(labels: &[String], values: &[String]) -> String {
     if values.is_empty() {
         return String::new();
     }

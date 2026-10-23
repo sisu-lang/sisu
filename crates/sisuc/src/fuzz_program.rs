@@ -1000,15 +1000,15 @@ mod tests {
 
     /// `program` end to end, all six builds and properties 1 to 5: it passes and leaves no
     /// directory behind. Of the seeds under 4000 with rewrites, a value site and a panic site
-    /// that its run reaches, seed 2978 has the shortest program, so its builds are quick.
+    /// that its run reaches, seed 793 has the shortest program, so its builds are quick.
     #[test]
-    fn program_passes_and_cleans_up() {
+    fn program_should_pass_and_leave_no_directory_behind() {
         let tmp = Scratch::new();
-        let data = seed(2978);
+        let data = seed(793);
         let g = generate(&data);
         assert!(
             g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
-            "seed 2978 should have rewrites, a value site and a panic site"
+            "seed 793 should have rewrites, a value site and a panic site"
         );
         on_stack(|| program_in(&data, &runtime(), &tmp.0));
         let left = fs::read_dir(&tmp.0)
@@ -1017,18 +1017,18 @@ mod tests {
         assert_eq!(left, 0, "`program` should remove its directory");
     }
 
-    /// Seed 2978's one panic site is the last thing its O0 run prints, as the marker `item.rs`
+    /// Seed 793's one panic site is the last thing its O0 run prints, as the marker `item.rs`
     /// writes. `judge_known` takes a run without that line for an earlier panic, so with it
     /// property 5 judged this panic site.
     #[test]
-    fn seed_2978_reaches_its_panic_marker() {
-        let g = generate(&seed(2978));
-        assert_eq!(panic_sites(&g), 1, "seed 2978 should have one panic site");
+    fn a_seed_with_a_panic_site_should_print_its_marker_last() {
+        let g = generate(&seed(793));
+        assert_eq!(panic_sites(&g), 1, "seed 793 should have one panic site");
         let marker = g
             .known
             .iter()
             .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
-            .expect("seed 2978 should have a panic site");
+            .expect("seed 793 should have a panic site");
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(101), "{}", g.program);
         assert_eq!(
@@ -1071,12 +1071,12 @@ mod tests {
     /// the limit, so a bound written past what the cost counts shows as `TimedOut`. No
     /// assertion on time.
     #[test]
-    fn a_budget_program_is_fast() {
-        // Byte by byte: no types, no items, a statement of `main`, a `while` of bound 8 and no
-        // loop label, twice more inside it, and in the innermost a `print` of a literal; then
-        // every choice is the first.
+    fn a_budget_program_should_finish_within_the_limit() {
+        // Byte by byte: no types, no generic types, no generic functions, no items, a statement
+        // of `main`, a `while` of bound 8 and no loop label, twice more inside it, and in the
+        // innermost a `print` of a literal; then every choice is the first.
         let g = generate(&[
-            0, 0, 1, 7, 8, 0, 0, 1, 7, 8, 0, 0, 1, 7, 8, 0, 0, 1, 0, 0, 0, 0,
+            0, 0, 0, 0, 1, 7, 8, 0, 0, 1, 7, 8, 0, 0, 1, 7, 8, 0, 0, 1, 0, 0, 0, 0,
         ]);
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);

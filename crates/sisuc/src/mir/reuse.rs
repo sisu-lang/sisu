@@ -120,7 +120,7 @@ fn take(
         .iter()
         .enumerate()
     {
-        if !field.boxed || !matches!(field.ty.kind(), TypeKind::Enum(_)) {
+        if !field.boxed || !matches!(field.ty.kind(), TypeKind::Enum(..)) {
             continue;
         }
         if let Some(i) = set.iter().position(|token| locals[token.0].ty == field.ty) {

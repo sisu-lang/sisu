@@ -9,7 +9,7 @@ use crate::mir::certify::{
 };
 use crate::mir::elaborate::flagged;
 use crate::source::Span;
-use crate::tir::TypeKind;
+use crate::tir::{TypeArgs, TypeKind};
 
 // Statements and operands, written short.
 
@@ -903,7 +903,7 @@ fn scalar_store_needs_no_take() {
 fn none_stored_with_no_take() {
     for payload in [
         Type::STRING,
-        Type::intern(TypeKind::Class(ClassId(0))),
+        Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE)),
         Type::array(Type::I64),
     ] {
         let mut b = Builder::new("f");
@@ -1140,7 +1140,7 @@ fn store_int(place: Place) -> Statement {
 }
 
 fn object() -> Type {
-    Type::intern(TypeKind::Class(ClassId(0)))
+    Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE))
 }
 
 /// `b = borrow xs` in one block, then `make_unique xs` and a read of `b` in the next: the
@@ -1395,7 +1395,7 @@ fn payload_of_an_unstable_borrow_keeps_its_clobbers() {
         ret(),
     );
     let mut function = b.finish();
-    function.locals[t.0].ty = Type::intern(TypeKind::Enum(EnumId(0)));
+    function.locals[t.0].ty = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
     rejects(&function, 0, u, Rule::Borrow);
 }
 
@@ -1949,7 +1949,10 @@ fn store_inside_a_taken_place() {
 #[test]
 fn read_of_a_field_beside_a_taken_one() {
     let mut b = Builder::new("f");
-    let o = b.param("o", Type::intern(TypeKind::Class(ClassId(0))));
+    let o = b.param(
+        "o",
+        Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE)),
+    );
     let t = b.local("t", Type::STRING);
     let u = b.local("u", Type::STRING);
     let old = b.local("old", Type::STRING);
@@ -2634,14 +2637,17 @@ fn arm_chain_reads_linearly() {
 /// `e`, an owned parameter of enum 0. `Builder::local` never counts an enum, so it is counted
 /// here, as an enum with a box is.
 pub(super) fn enum_param(b: &mut Builder) -> LocalId {
-    let e = b.param("e", Type::intern(TypeKind::Enum(EnumId(0))));
+    let e = b.param("e", Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE)));
     b.function.locals[e.0].counted = true;
     e
 }
 
 /// A token of enum 0.
 pub(super) fn token(b: &mut Builder) -> LocalId {
-    b.token("tok", Type::intern(TypeKind::Enum(EnumId(0))))
+    b.token(
+        "tok",
+        Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE)),
+    )
 }
 
 /// `take_apart scrutinee: tok = token (scrutinee as 0).0`, and each of `bindings` moved from
@@ -2661,7 +2667,7 @@ pub(super) fn take_apart(scrutinee: LocalId, tok: LocalId, bindings: &[LocalId])
 fn token_scope_released_on_a_continue_edge_is_rejected() {
     let mut b = Builder::new("f");
     let c = b.param("c", Type::BOOL);
-    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0))));
+    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE)));
     b.function.locals[x.0].counted = true;
     let tok = token(&mut b);
     b.scope(x, BlockId(1));
@@ -2799,7 +2805,7 @@ pub(super) fn reused(dest: LocalId, tok: LocalId) -> Statement {
 pub(super) fn free_after_reuse() -> (Function, LocalId) {
     let mut b = Builder::new("f");
     let e = enum_param(&mut b);
-    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0))));
+    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE)));
     let tok = token(&mut b);
     b.block(
         vec![
@@ -2828,8 +2834,8 @@ fn free_after_reuse_is_accepted() {
 fn reuse_of_a_token_twice_is_rejected() {
     let mut b = Builder::new("f");
     let e = enum_param(&mut b);
-    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0))));
-    let y = b.local("y", Type::intern(TypeKind::Enum(EnumId(0))));
+    let x = b.local("x", Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE)));
+    let y = b.local("y", Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE)));
     let tok = token(&mut b);
     b.block(
         vec![

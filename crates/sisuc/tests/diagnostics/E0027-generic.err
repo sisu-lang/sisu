@@ -1,0 +1,8 @@
+error[E0027]: no value of `Expr` can be built
+ --> E0027-generic.sisu:5:6
+  |
+5 | enum Expr {
+  |      ^^^^ `Expr.Pair` holds a `Two<Expr>`, and `Two.Both` holds a `Expr`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0027

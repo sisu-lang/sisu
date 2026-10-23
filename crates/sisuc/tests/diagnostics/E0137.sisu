@@ -1,0 +1,11 @@
+fn both(x: bool, y: bool) -> bool {
+    x && y
+}
+
+fn main() {
+    let a = 1
+    let b = 2
+    let c = 3
+    let d = 4
+    print(both(a < b, c > (d)))
+}
