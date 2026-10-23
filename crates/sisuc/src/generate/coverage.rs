@@ -2418,7 +2418,8 @@ fn every_index_is_in_bounds_or_meant_to_panic() {
 #[test]
 fn the_walker_reports_unbounded_loops_and_stray_indexes() {
     // Indexes past the end, `[e][1]` among them where it is not a later branch of an `if`, and
-    // a `while`, a `while let` and a `for` of 9 runs or no bound at all: the walker lists each.
+    // a `while`, a `while let`, a `for` and a `loop` of 9 runs or no bound at all, and `loop`s
+    // with no counter or a guard on no counter: the walker lists each.
     // `b[1]` is in bounds through the block, and `[1][1]` in a later branch is meant to panic.
     let program = "fn main() {
     let a = [1, 2]
@@ -2445,6 +2446,14 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
     loop {
         if d == 0 { break }
         d -= 1
+    }
+    loop {
+        break
+    }
+    let mut e = 1
+    loop {
+        if e + 1 == 0 { break }
+        e -= 1
     }
 }
 ";
@@ -2473,7 +2482,14 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
         .collect();
     assert_eq!(
         unbounded,
-        ["a `while`", "a `while let`", "a `for`", "a `loop`"]
+        [
+            "a `while`",
+            "a `while let`",
+            "a `for`",
+            "a `loop`",
+            "a `loop`",
+            "a `loop`"
+        ]
     );
 }
 
