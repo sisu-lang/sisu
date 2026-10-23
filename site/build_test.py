@@ -933,6 +933,32 @@ class Pages(unittest.TestCase):
         for kind in ('input', 'output', 'stderr'):
             self.assertIn(f'<figure class="panel"><figcaption class="cap">{kind}</figcaption><pre data-lang="out">', literals)
 
+    def test_literals_page_should_have_its_navigation(self):
+        # GIVEN the real docs/reference/literals.md and data/reference.toml
+        markdown = (build.ROOT / 'docs/reference/literals.md').read_text(encoding='utf-8')
+        # WHEN the site is built
+        page = self.page('reference/literals.html')
+        # THEN the sidebar marks Literals as the current page
+        side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
+        self.assertEqual(re.findall(r'<a href="([^"]*)" aria-current="page">', side), ['literals.html'])
+        # AND "On this page" lists each ## and ### heading, and each entry goes to a heading of the page
+        toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.S)[0]
+        entries = re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc)
+        self.assertEqual([(level, text) for level, _, text in entries],
+                         [(str(len(m[1])), m[2]) for m in re.finditer(r'^(#{2,3}) (.*)$', markdown, re.M)])
+        for level, slug, _ in entries:
+            self.assertIn(f'<h{level} id="{slug}">', page)
+        # AND the pager goes back to Lexical structure and on to Types
+        pager = re.search(r'<nav class="pager".*?</nav>', page, re.S)[0]
+        self.assertEqual(re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
+                         [('lexical.html', 'Previous', 'Lexical structure'), ('types.html', 'Next', 'Types')])
+        # AND each marker of the source is a link in a paragraph after its example
+        after = ''.join(re.findall(r'</pre></figure>\n((?:<p class="marker">.*?</p>\n)+)', page))
+        linked = re.findall(r'<p class="marker"><a href="\.\./diagnostics/(\w+)\.html">\1</a>', after)
+        self.assertIn('E0008', linked)
+        self.assertEqual(linked, re.findall(r'// (?:error|warning)\[(\w+)\]', markdown))
+        self.assertEqual(page.count('<p class="marker">'), len(linked))
+
 
 class Metas(HTMLParser):
     """The `content` of each `<meta name="description">` of a page."""

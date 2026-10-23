@@ -89,7 +89,7 @@ The rules:
 
 - A name cannot be a keyword or a reserved word.
 - `_` alone is not a name. It is a keyword that `let`, `for` and `match` use to bind nothing.
-- The built-in functions and types, such as `print`, `i64` and `string`, are names, not keywords.
+- The built-in functions and [types](types.md), such as `print`, `i64` and `string`, are names, not keywords.
 
 ## Keywords
 

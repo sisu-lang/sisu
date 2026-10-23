@@ -187,7 +187,7 @@ A float literal never becomes an integer.
 
 ## Float literals
 
-A float literal has a fraction, an exponent or both. Its type is always `f64`.
+A float literal has a fraction, an exponent or both. Its type is always [`f64`](types.md#floating-point-numbers).
 
 ```sisu
 fn main() {
@@ -221,7 +221,7 @@ fn main() {
 
 ## Character literals
 
-A character literal is one Unicode scalar value between single quotes, such as `'a'` or `'ä'`. Its type is `char`. An escape can write the value.
+A character literal is one Unicode scalar value between single quotes, such as `'a'` or `'ä'`. Its type is [`char`](types.md#char). An escape can write the value.
 
 ```sisu
 fn main() {
@@ -243,7 +243,7 @@ A `'` in a character literal must be the escape `\'`. A `"` can stand as it is. 
 
 ## String literals
 
-A string literal is text between double quotes, such as `"sauna"`. Its type is `string`. The text can hold any character, and the escapes below.
+A string literal is text between double quotes, such as `"sauna"`. Its type is [`string`](types.md#string). The text can hold any character, and the escapes below.
 
 ```sisu
 fn main() {
@@ -330,7 +330,7 @@ fn main() {
 
 ## Boolean literals
 
-`true` and `false` are the two values of `bool`.
+`true` and `false` are the two values of [`bool`](types.md#bool).
 
 ```sisu
 fn main() {
