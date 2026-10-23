@@ -89,7 +89,7 @@ $ make verify    # coverage, then mutants, on your diff
       <h2 id="standards">Code standards</h2>
       <p>Clippy, rustfmt and the hooks enforce the mechanical rules. <a href="https://github.com/sisu-lang/sisu/blob/main/CODING_STANDARDS.md">CODING_STANDARDS.md</a> holds the judgement calls that no check can make. Four of them:</p>
       <ul>
-        <li><strong>A test proves its name.</strong> It must fail when the contract it names breaks.</li>
+        <li><strong>A test proves its name.</strong> It must fail when the contract it names breaks. The name says what should hold, as <code>&lt;subject&gt;_should_&lt;result&gt;</code>.</li>
         <li><strong>An <code>expect</code> message states the invariant.</strong> It says what should hold and why, so a panic reads as a broken assumption.</li>
         <li><strong>A cost claim is measured.</strong> A claimed speedup comes with instruction counts before and after. Without a measured gain, the simpler code wins.</li>
         <li><strong>Wording lives in the registry.</strong> No call site writes diagnostic text.</li>

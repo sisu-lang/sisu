@@ -103,6 +103,9 @@ vague or generic error, or with none.
 - **Diagnostics.** Each error the feature creates is designed: its code
   (new or existing), its message, label and help text, and its span.
 - **Testability.** Each requirement can be proved by a test.
+- **Scenarios.** The acceptance tests are Gherkin scenarios with IDs, as
+  "Specs and plans" in `CODING_STANDARDS.md` says. Each THEN states a
+  result that a test can see.
 
 # Check, for a plan
 
@@ -119,6 +122,8 @@ vague or generic error, or with none.
 - **Claims.** As in "Check, for every kind", item 8.
 - **Tests.** Each task names its unit tests and end-to-end cases, and they
   pass the `test-audit` value bar.
+- **Scenarios.** Each spec scenario is in exactly one task, with the test
+  that proves it. Test names follow "Tests" in `CODING_STANDARDS.md`.
 
 # Check, for a diff
 

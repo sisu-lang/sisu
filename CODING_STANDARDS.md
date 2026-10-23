@@ -14,6 +14,10 @@ Reviewers apply these rules to every diff. Clippy, rustfmt and prek already enfo
 ## Tests
 
 - **A test proves its name.** It must fail when the contract it names breaks. For example, a test that byte offsets are not character offsets needs non-ASCII input. A test that a line break inside `( )` inserts no `Newline` needs the break after a token that could end a statement.
+- **A test name says what should hold.** Write `<subject>_should_<result>`, and add `_when_<condition>` when the result depends on a condition. Use common words and no abbreviations. Do not repeat the module path. Keep the name to about 12 words; a longer name usually checks two things. Example: `emit_tokens_should_print_each_token_with_its_position`.
+- **An end-to-end test has GIVEN, WHEN and THEN lines.** A test in `crates/*/tests` has a doc comment with a GIVEN line, a WHEN line and a THEN line, in that order. Use AND for a second line of the same kind. Each line is one sentence. THEN states the result that the assertions check. When the test proves a spec scenario, copy the scenario's lines.
+- **A unit test gets a comment only when its input needs one.** The comment says why the input finds the defect, for example "non-ASCII text, so byte offsets and char offsets differ". It does not repeat the name.
+- **The `test-names` hook checks new tests.** It rejects a `#[test]` without `_should_` in its name, and a test in `crates/*/tests` without GIVEN, WHEN and THEN. The tests in `scripts/test_names_baseline.txt` are older than the rule. When you change one of them, make it obey the rules above and remove its line from the file. Never add a line. The hook cannot see a changed body, so the reviewer checks this. `tests/run` cases and diagnostic fixtures are files, not functions, and keep their names.
 - **Every diagnostic code has a fixture.** It is `crates/sisuc/tests/diagnostics/<CODE>.sisu`, and its `.err` and `.json` pin its text and `line:col`. Unit tests assert codes and positions, never wording; the `test-wording` prek hook rejects a test that reads a message, a label or help text. Every layout rule in "Statements end at newlines" has a case outside `( )` and a case inside.
 - **IR tests check the contract, not LLVM's naming.** Match opcodes, predicates, intrinsic names and block-name prefixes. Value names such as `%0` or `%cmp` change when unrelated code changes. Prove runtime behaviour end to end with a case in `crates/sisuc/tests/run`.
 - **Plan-pinned tests keep their expected values.** When behaviour grows, add a new case.
@@ -28,6 +32,34 @@ Reviewers apply these rules to every diff. Clippy, rustfmt and prek already enfo
 - **A shortcut that only skips work is not pinned.** When a surviving mutant's only effect is extra work that stays linear, such as a reparse a guard skips, accept it with a note in the report that names the work. Test-only counters and stack-depth tricks to observe it cost more than the work they guard.
 - **A language feature has a generator rule.** A new AST, TIR or type variant, operator, prelude function or built-in method is done only when the program fuzzer generates it; the coverage test in `crates/sisuc/src/generate/` fails until it does ([ADR 0033](docs/adr/0033-every-language-feature-has-a-generator-rule.md)).
 - **A test fits its time budget.** On a GitHub-hosted runner a unit test takes under 1 s and an end-to-end test, any test in `crates/*/tests`, under 4 s; a developer machine takes about half that. `scripts/slow_tests.py` reads nextest's JUnit report and warns about each test over budget, in CI and in the pre-commit hook. It never fails a run, because wall-clock time varies with the machine. A test you add or change that goes over budget is a finding: shrink its input, or split a loop over cases into one test per case so nextest runs them in parallel.
+
+## Specs and plans
+
+Reviewers apply these rules to specs and plans (`review-sisu`).
+
+- **A spec states its acceptance tests as scenarios.** Write each one in Gherkin form: `Scenario:`, then GIVEN, WHEN and THEN lines. Use AND for a second line of the same kind. Each line is one sentence. Standard Gherkin writes `Given`; Sisu writes the keywords in capitals so that they are easy to see and a test comment can copy them.
+- **THEN states a result that a test can see.** For example: output, an exit code, a diagnostic code at `line:col`, or the shape of the `-O2` IR. "It works" and "it is handled" are not results.
+- **Similar cases share one outline.** When cases differ only in their input and result, write one `Scenario Outline:` with an `Examples:` table. Each row has a Proves column that says what the row adds.
+- **Each scenario has an ID.** Use `S1`, `S2` and so on. A change to the spec never uses an ID again.
+- **A plan maps each scenario to a test.** Each task lists its scenario IDs and the test that proves each one, as `file::test_name`. Each scenario is in exactly one task. A task is done when its scenarios pass.
+- **A test keeps its scenario's words.** The GIVEN, WHEN and THEN lines of an end-to-end test copy its scenario. Do not write the ID in the test: specs stay out of the repository.
+
+```gherkin
+Scenario: S4. Code after `continue` is unreachable
+  GIVEN a `while` loop whose body has `print(i)` on line 6, column 9, after `continue`
+  WHEN `sisu check` runs on it
+  THEN it reports W0001 at 6:9
+
+Scenario Outline: S5. Only a statement that always leaves makes the next line unreachable
+  GIVEN a `main` whose body is <first> on line 2 and then `print(1)` on line 3, column 5
+  WHEN `sisu check` runs on it
+  THEN it reports <result>
+
+  Examples:
+    | first                | result         | Proves                                |
+    | `return`             | W0001 at 3:5   | `return` always leaves                |
+    | `if true { return }` | no diagnostic  | a branch can continue to the next line |
+```
 
 ## Staging work across tasks
 
