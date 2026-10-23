@@ -521,3 +521,40 @@ fn enum_value_rules() {
         codes(&src, &[(Code::ConstantNotKnown, (1, 11))]);
     }
 }
+
+/// A bare variant in parentheses: the fix replaces the whole name, parentheses included, and
+/// the fixed source parses no worse than the source.
+#[test]
+fn parenthesized_bare_variant_fix_should_replace_the_parentheses() {
+    // Each row: the value, the declarations and the enums that have the variant.
+    let rows = [
+        ("(Red)", "enum E {\n    Red\n}", &["E"][..]),
+        ("((Red))", "enum E {\n    Red\n}", &["E"]),
+        (
+            "(Red)",
+            "enum E {\n    Red\n}\nenum F {\n    Red\n}",
+            &["E", "F"],
+        ),
+    ];
+    for (value, decls, enums) in rows {
+        let src = format!("{decls}\nfn main() {{\n    let _ = {value}\n}}");
+        let line = decls.lines().count() + 2;
+        let d = diagnostic(&src, Code::BareVariant, (line, 13, value), &[]);
+        let safe = enums.len() == 1;
+        let expected: Vec<_> = enums
+            .iter()
+            .map(|e| (safe, vec![(line, 13, value, format!("{e}.Red"))]))
+            .collect();
+        assert_eq!(fixes(&src, &d), expected, "{value}");
+        for fix in d.fixes() {
+            let fixed = fix.apply(&src);
+            assert!(
+                crate::front_end::syntax_errors(&fixed) <= crate::front_end::syntax_errors(&src),
+                "{fixed}"
+            );
+        }
+        if safe {
+            fix_removes_its_code(&src, &d);
+        }
+    }
+}
