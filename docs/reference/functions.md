@@ -42,7 +42,7 @@ The rules:
 - A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic` or `read_line` ([E0034](../diagnostics/E0034.md)).
 - A function cannot be named `_` ([E0080](../diagnostics/E0080.md)).
 - A function cannot be declared in the body of another function.
-- A binding or a parameter can take the name of a function. A call still finds the function, because a binding is never called ([Shadowing](statements.md#shadowing)).
+- A binding or a parameter can take the name of a function or a class. A call still finds the function or the class, because a binding is never called ([Shadowing](statements.md#shadowing)).
 
 ```sisu
 fn twice() {
@@ -257,7 +257,8 @@ The rules:
 - The program writes all its output from before the panic first.
 - A call of `panic` has the type `never` ([Types](types.md#never)). So it can be a branch of an `if` or a `match`, or the right side of `??`.
 - It can also be the value of a `break`, or the end of a function body.
-- As an argument, an operand, the value of an assignment or the value of a `return`, it is an error ([E0043](../diagnostics/E0043.md)).
+- In other places, it is an error ([E0043](../diagnostics/E0043.md)). Such places are an argument, an operand, a condition, an index, and the value of a `let`, an assignment or a `return`.
+- As the argument of `print` or `eprint`, it is an error too ([E0061](../diagnostics/E0061.md)).
 
 ```sisu panics
 fn main() {

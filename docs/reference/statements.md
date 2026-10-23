@@ -95,7 +95,7 @@ fn main() {
 }
 ```
 
-A binding can also take the name of a function, such as `print`. A call still finds the function, because a binding is never called.
+A binding can also take the name of a function, such as `print`, or of a class. A call still finds the function or the class, because a binding is never called.
 
 ```sisu
 const LIMIT = 3
@@ -255,8 +255,7 @@ The rules:
 
 - The condition must be a `bool` ([E0032](../diagnostics/E0032.md)).
 - A `while` has no value. A `break` that ends a `while` cannot have a value ([E0141](../diagnostics/E0141.md)).
-- Sometimes nothing in the loop changes the locals that the condition reads. When the loop also has no `break`, `continue`, `return`, `panic` or `todo`, the program builds with a warning ([W0011](../diagnostics/W0011.md)).
-- Such a loop runs zero times or never ends. A call or a field in the condition means no warning. [W0011](../diagnostics/W0011.md) lists all the conditions.
+- A `while` can warn when its condition reads locals that the loop does not change ([W0011](../diagnostics/W0011.md)). The diagnostic page tells when it warns.
 - When W0011 warns about a `let mut` that never changes, [W0002](../diagnostics/W0002.md) does not warn about it.
 - A `while` with the condition `true` builds with a warning ([W0009](../diagnostics/W0009.md)). Write `loop` for an endless loop.
 
