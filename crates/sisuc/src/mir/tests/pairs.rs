@@ -34,20 +34,20 @@ fn field_compared_with_a_key_is_borrowed() {
         &printed,
         "count",
         &[
-            "e#6 = borrow _[_]",
-            "_ = borrow e#6",
+            "e#5 = borrow es#0[_]",
+            "_ = borrow e#5",
             "_ = copy _.0",
-            "end _\n    end e#6",
+            "end _\n    end e#5",
             "_ = borrow key#1",
             "end _",
         ],
     );
     let f = function(&printed, "count");
-    assert!(!f.contains("e#6 = copy"), "{f}");
+    assert!(!f.contains("e#5 = copy"), "{f}");
     assert!(!f.contains("= copy key#1"), "{f}");
     assert_eq!(f.matches("\n    end ").count(), 3, "{f}");
-    // The field copy's, the array's and the key's own releases are left.
-    assert_eq!(f.matches("release ").count(), 3, "{f}");
+    // The field copy's and the key's own releases are left.
+    assert_eq!(f.matches("release ").count(), 2, "{f}");
 }
 
 /// The `f64` store through the copy `_7` is not a clobber, so the chain `p`, `_11` around it is
@@ -109,13 +109,17 @@ fn for_loop_element_is_borrowed() {
     has(
         &printed,
         "long_words",
-        &["w#5 = borrow _[_]", "_ = borrow w#5", "end _\n    end w#5"],
+        &[
+            "w#4 = borrow ws#0[_]",
+            "_ = borrow w#4",
+            "end _\n    end w#4",
+        ],
     );
     let f = function(&printed, "long_words");
-    assert!(!f.contains("w#5 = copy"), "{f}");
+    assert!(!f.contains("w#4 = copy"), "{f}");
     assert_eq!(f.matches("\n    end ").count(), 2, "{f}");
-    // Only the array's release is left.
-    assert_eq!(f.matches("release ").count(), 1, "{f}");
+    // The loop reads the borrowed `ws` in place, so no release is left.
+    assert_eq!(f.matches("release ").count(), 0, "{f}");
 }
 
 /// The member is an object and its root a whole local, so a `take` and a store through it

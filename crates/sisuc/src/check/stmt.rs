@@ -548,30 +548,38 @@ impl Checker<'_> {
         };
         self.diagnostics.extend(d);
         let ty = type_of(&checked).unwrap_or(Type::UNIT);
-        let array = self.fresh(ty);
+        // A place that cannot change during the loop is read in place, not copied into a local
+        // that parameter inference would take for a consume.
+        let fixed = checked.as_ref().is_ok_and(|e| self.fixed_place(e));
+        let array = (!fixed).then(|| self.fresh(ty));
         let len = self.fresh(Type::I64);
         let counter = self.fresh_var(Type::I64);
         let (Ok(checked), Some(element)) = (checked, element) else {
             return (None, element);
         };
         let expr = |kind, ty| tir::Expr { kind, ty, span };
-        let read = || local(array, ty, e.span);
-        let stmts = vec![
-            tir::Stmt::Let {
+        let read = || match array {
+            Some(array) => local(array, ty, e.span),
+            None => reread(&checked),
+        };
+        let mut stmts = Vec::new();
+        let (len_init, item_base) = (read(), read());
+        if let Some(array) = array {
+            stmts.push(tir::Stmt::Let {
                 local: array,
                 init: checked,
-            },
-            tir::Stmt::Let {
-                local: len,
-                init: expr(ExprKind::Len(Box::new(read())), Type::I64),
-            },
-            tir::Stmt::Let {
-                local: counter,
-                init: expr(ExprKind::Int(0), Type::I64),
-            },
-        ];
+            });
+        }
+        stmts.push(tir::Stmt::Let {
+            local: len,
+            init: expr(ExprKind::Len(Box::new(len_init)), Type::I64),
+        });
+        stmts.push(tir::Stmt::Let {
+            local: counter,
+            init: expr(ExprKind::Int(0), Type::I64),
+        });
         let item = ExprKind::Index {
-            base: Box::new(read()),
+            base: Box::new(item_base),
             index: Box::new(local(counter, Type::I64, span)),
         };
         let header = ForHeader {
@@ -582,6 +590,20 @@ impl Checker<'_> {
             item: expr(item, element),
         };
         (Some(header), Some(element))
+    }
+
+    /// Whether `e` names a value that no code can change while a `for` over it runs: a local
+    /// without `mut`, or a field without `mut` of such a place (W0002 and ADR 0011).
+    fn fixed_place(&self, e: &tir::Expr) -> bool {
+        match &e.kind {
+            ExprKind::Local(local) => !self.body.locals[local.0].mutable,
+            ExprKind::Field { base, index } => {
+                matches!(base.ty.kind(), TypeKind::Class(class)
+                    if !self.classes[class.0].fields[*index].mutable)
+                    && self.fixed_place(base)
+            }
+            _ => false,
+        }
     }
 
     /// The header of `for x in start..end`, or `start..=end` when `inclusive`, and the type of
@@ -1294,6 +1316,23 @@ struct ForHeader {
     limit: tir::LocalId,
     go: Option<tir::LocalId>,
     item: tir::Expr,
+}
+
+/// A new expression for the fixed place `e` (see `fixed_place`).
+fn reread(e: &tir::Expr) -> tir::Expr {
+    let kind = match &e.kind {
+        ExprKind::Local(local) => ExprKind::Local(*local),
+        ExprKind::Field { base, index } => ExprKind::Field {
+            base: Box::new(reread(base)),
+            index: *index,
+        },
+        _ => unreachable!("a fixed place should be a local or a field of one"),
+    };
+    tir::Expr {
+        kind,
+        ty: e.ty,
+        span: e.span,
+    }
 }
 
 /// Wraps into `ty` each value of another type, `never` aside, that a `break` in `e` gives the

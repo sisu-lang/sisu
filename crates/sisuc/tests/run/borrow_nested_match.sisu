@@ -1,0 +1,52 @@
+enum C {
+    C1(string)
+    C2
+}
+
+enum E {
+    B(C)
+    A
+}
+
+fn d(e: E) -> i64 {
+    match e {
+        B(x) => match x {
+            C1(_) => 1
+            _ => 2
+        }
+        _ => 0
+    }
+}
+
+fn inner(x: C) -> i64 {
+    match x {
+        C1(_) => 1
+        _ => 2
+    }
+}
+
+fn d2(e: E) -> i64 {
+    match e {
+        B(x) => inner(x)
+        _ => 0
+    }
+}
+
+// `e` is returned, so it is owned and the inner `match` takes it apart.
+fn d3(e: E) -> E {
+    match e {
+        B(x) => match x {
+            C1(_) => E.A
+            _ => e
+        }
+        _ => e
+    }
+}
+
+fn main() {
+    let e = E.B(C.C1("a"))
+    print(d(e) + d2(e)) // 2
+    print(d(E.B(C.C2)) + d(E.A)) // 2
+    print(d(d3(E.B(C.C1("b"))))) // 0
+    print(d(d3(E.B(C.C2)))) // 2
+}
