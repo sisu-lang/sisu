@@ -397,7 +397,7 @@ impl Checker<'_> {
                     want.is_some(),
                     "a unified pattern should name only bound parameters"
                 );
-                mark(self.against(e, checked, want))
+                mark(self.against(e, checked, want, None))
             }
             // `Error`, which binds nothing.
             None => checked,
@@ -537,7 +537,7 @@ impl Checker<'_> {
         let mut any = false;
         for block in blocks {
             match block.stmts.last().map(|stmt| &stmt.kind) {
-                Some(StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue) => {}
+                Some(StmtKind::Return(_) | StmtKind::Break { .. } | StmtKind::Continue { .. }) => {}
                 Some(StmtKind::Expr(tail)) if self.tail_waits(block, tail, fit) => any = true,
                 _ => return false,
             }

@@ -363,6 +363,10 @@ impl Mono {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per node kind, so the walk reads in one place"
+    )]
     fn expr(&mut self, e: &mut Expr, args: &[Type]) {
         use ExprKind as K;
         e.ty = self.ty(e.ty, args);
@@ -376,8 +380,8 @@ impl Mono {
             | K::None
             | K::Local(_)
             | K::ReadLine
-            | K::Break
-            | K::Continue
+            | K::Break { value: None, .. }
+            | K::Continue { .. }
             | K::Return(None) => {}
             K::Call {
                 func,
@@ -425,6 +429,10 @@ impl Mono {
             | K::FromChars(operand)
             | K::Sum(operand)
             | K::Unary { operand, .. }
+            | K::Break {
+                value: Some(operand),
+                ..
+            }
             | K::Return(Some(operand)) => self.expr(operand, args),
             K::ArrayFill { value: a, len: b }
             | K::Index { base: a, index: b }
@@ -577,7 +585,7 @@ mod tests {
         "fn first<T>(xs: [T]) -> T? {\n    if xs.len() > 0 { xs[0] } else { None }\n}";
 
     #[test]
-    fn one_instantiation_per_argument_list() {
+    fn each_argument_list_should_be_instantiated_once() {
         let program = instantiated(&format!(
             "{FIRST}\nfn main() {{\n    let a = first([1])\n    let b = first([2, 3])\n    let c = first([\"s\"])\n}}"
         ));
@@ -590,7 +598,7 @@ mod tests {
     /// A queue takes `a`'s body before `b`'s, so `c` is reached before `d`; a stack would take
     /// `b`'s first. Class fields come before any function body.
     #[test]
-    fn instantiations_follow_the_worklist() {
+    fn instantiations_should_follow_the_worklist_order() {
         let program = instantiated(
             "fn a<T>(x: T) { c(x) }\nfn b<T>(x: T) { d(x) }\nfn c<T>(x: T) {}\nfn d<T>(x: T) {}\n\
              fn main() {\n    a(1)\n    b(2)\n}",
@@ -613,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn no_param_survives() {
+    fn no_type_parameter_should_survive_instantiation() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run");
         let mut seen = 0;
         for entry in std::fs::read_dir(dir).expect("tests/run should be readable") {
@@ -633,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn methods_are_instantiated_on_demand() {
+    fn methods_should_be_instantiated_on_demand() {
         let program = instantiated(
             "class C<T> {\n    v: T\n    fn up(self) -> C<[T]> { C(v: [self.v]) }\n}\n\
              fn main() {\n    let c = C(v: 1).up()\n}",
@@ -647,7 +655,7 @@ mod tests {
     /// enum whose payload is an instantiation, and a generic enum declared before it, which no
     /// type reaches and which takes no id. `instantiate`'s own check finds no type left generic.
     #[test]
-    fn every_node_is_instantiated() {
+    fn every_node_should_be_instantiated() {
         let program = instantiated(
             "enum Unused<T> {\n    U(T)\n}\nenum Shape {\n    Boxed(Box<i64>)\n    Empty\n}\n\
              class Box<T> {\n    v: T\n}\n\
@@ -676,7 +684,7 @@ mod tests {
     /// A generic class or enum that is the program's only generic declaration is still
     /// instantiated, or dropped when nothing reaches it.
     #[test]
-    fn a_lone_generic_class_or_enum_is_instantiated() {
+    fn a_lone_generic_class_or_enum_should_be_instantiated() {
         let used =
             instantiated("class Box<T> {\n    v: T\n}\nfn main() {\n    print(Box(v: 42).v)\n}");
         assert_eq!(class_names(&used), ["Box<i64>"]);
@@ -701,7 +709,7 @@ mod tests {
     /// breaks every cycle through it alone, directly or, in `S2<i64>.P`, through an optional.
     /// Every member of a component with a box is on that cycle and counted.
     #[test]
-    fn box_goes_on_the_declaring_enum() {
+    fn the_box_should_go_on_the_declaring_enum() {
         let program = instantiated(
             "enum Two<T> {\n    Both(T, T)\n}\nenum Expr {\n    Lit(i64)\n    Pair(Two<Expr>)\n}\n\
              enum Opt2<T> {\n    S(T?)\n    N\n}\nenum E {\n    L\n    P(Opt2<E>)\n}\n\
@@ -770,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn concrete_looks_through_arrays_and_optionals() {
+    fn concrete_should_look_through_arrays_and_optionals() {
         let param = Type::intern(TypeKind::Param(crate::symbol::Symbol::intern("T"), 0));
         let i64s = TypeArgs::intern(&[Type::I64]);
         let class = |args| Type::intern(TypeKind::Class(ClassId(0), args));
@@ -790,7 +798,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "mono should leave no generic type in id")]
-    fn a_type_parameter_left_behind_is_caught() {
+    fn a_type_parameter_left_behind_should_be_caught() {
         let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(1))\n}";
         let (program, diagnostics) = check(&parse_ok(src), src);
         assert_concrete(&program.unwrap_or_else(|| panic!("{diagnostics:?}")));
@@ -799,7 +807,7 @@ mod tests {
     /// A type parameter left only in a nested block's type is caught: in either branch of an
     /// `if`, an `if let`'s, a `match` arm's, a loop's or a block's.
     #[test]
-    fn a_block_type_left_generic_is_caught() {
+    fn a_block_type_left_generic_should_be_caught() {
         use crate::source::Span;
         use crate::tir::{LocalId, Pattern, PatternKind};
         let span = Span::new(0, 0);
@@ -887,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn program_without_generics_is_unchanged() {
+    fn a_program_without_generics_should_stay_unchanged() {
         let src = "class P {\n    x: i64\n    fn get(self) -> i64 { self.x }\n}\n\
                    enum E {\n    A(P)\n    B\n}\n\
                    fn f(e: E) -> i64 {\n    match e {\n        E.A(p) => p.get()\n        E.B => 0\n    }\n}\n\

@@ -835,8 +835,8 @@ impl Expr {
             | K::None
             | K::Local(_)
             | K::ReadLine
-            | K::Break
-            | K::Continue
+            | K::Break { value: None, .. }
+            | K::Continue { .. }
             | K::Return(None) => {}
             K::Call { args, .. }
             | K::New { args, .. }
@@ -857,6 +857,7 @@ impl Expr {
             | K::FromChars(e)
             | K::Sum(e)
             | K::Unary { operand: e, .. }
+            | K::Break { value: Some(e), .. }
             | K::Return(Some(e)) => e.exprs(out),
             K::ArrayFill { value: a, len: b }
             | K::Index { base: a, index: b }
@@ -1542,6 +1543,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                type_params: vec![],
+                owner_params: 0,
                 params: vec![],
                 ret: Type::I64,
                 locals: vec![],
@@ -2316,7 +2319,7 @@ mod tests {
     }
 
     #[test]
-    fn type_names_write_the_arguments() {
+    fn type_names_should_write_the_arguments() {
         let t = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
         let program = Program {
             classes: vec![Class {
@@ -2351,7 +2354,7 @@ mod tests {
 
     /// A type nested deeper than a 64 KiB stack allows recursing into is named all the same.
     #[test]
-    fn deep_types_are_named_without_recursion() {
+    fn deep_types_should_be_named_without_recursion() {
         let levels = 10_000;
         let name = std::thread::Builder::new()
             .stack_size(64 * 1024)
@@ -2484,6 +2487,7 @@ mod tests {
             (
                 ExprKind::Call {
                     func: FuncId(0),
+                    types: TypeArgs::NONE,
                     args: ints([1, 2]),
                 },
                 2,

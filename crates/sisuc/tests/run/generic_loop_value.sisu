@@ -1,0 +1,82 @@
+// GIVEN generic functions, a generic class and its method, whose bodies give values through
+// `break v` from `loop`, and through `break outer v` from a labelled outer `loop`
+// WHEN the program runs on `i64`, `string` and a class
+// THEN each loop gives the value of its `break`, of the instantiation's type
+// AND Valgrind and `--rc-checks` find every object freed exactly once
+class Box<T> {
+    items: [T]
+
+    // The item at `n`, found by a `loop` that counts up to it, or `None` past the end.
+    fn at(self, n: i64) -> T? {
+        let mut i = 0
+        loop {
+            if i == self.items.len() { break None }
+            if i == n { break self.items[i] }
+            i += 1
+        }
+    }
+}
+
+class Pet {
+    name: string
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+// The item at `n`, found by a `loop` that counts up to it.
+fn nth<T>(xs: [T], n: i64) -> T {
+    let mut i = 0
+    loop {
+        if i == n { break xs[i] }
+        i += 1
+    }
+}
+
+// The first item whose flag is set; the `break` with no flag gives `None`.
+fn first_kept<T>(xs: [T], keep: [bool]) -> T? {
+    let mut i = 0
+    let found: T? = loop {
+        if i == xs.len() { break None }
+        if keep[i] { break xs[i] }
+        i += 1
+    }
+    found
+}
+
+// The item `want` places into the rows, given from the inner loop to the outer one.
+fn in_rows<T>(rows: [[T]], want: i64) -> T? {
+    let mut seen = 0
+    let mut r = 0
+    let v: T? = outer: loop {
+        if r == rows.len() { break None }
+        let mut c = 0
+        loop {
+            if c == rows[r].len() { break }
+            if seen == want { break outer rows[r][c] }
+            seen += 1
+            c += 1
+        }
+        r += 1
+    }
+    v
+}
+
+fn main() {
+    print(nth([10, 20, 30], 2))                                 // 30
+    print(nth(["a", "b" + "c"], 1))                             // bc
+    print(nth([Pet(name: "cat"), Pet(name: "dog")], 0).name)    // cat
+    print(first_kept([1, 2, 3], [false, true, true]) ?? -1)     // 2
+    print(first_kept(["x", "y"], [false, false]) ?? "none")     // none
+    print(in_rows([[1, 2], [3], [4, 5]], 3) ?? -1)              // 4
+    print(in_rows([["p"], ["q" + "r"]], 1) ?? "none")           // qr
+    print(in_rows([[1]], 5) ?? -1)                              // -1
+    let s: string = loop {
+        break id("w" + "x")
+    }
+    print(s)                                                    // wx
+    let b = Box(items: [Pet(name: "ant"), Pet(name: "bee")])
+    if let p = b.at(1) { print(p.name) }                        // bee
+    print(Box(items: [7]).at(1) ?? -1)                          // -1
+}

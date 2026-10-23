@@ -4268,7 +4268,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_declarations() {
+    fn generic_declarations_should_parse() {
         let rows = [
             (
                 "fn first<T>(xs: [T]) -> T? {}",
@@ -4298,7 +4298,7 @@ mod tests {
     }
 
     #[test]
-    fn type_parameters_hold_names_only() {
+    fn type_parameters_should_hold_names_only() {
         // A bound waits for interfaces: the list closes at `,` or `>`.
         assert_eq!(parse_err("fn f<T: Ord>() {}"), (Code::Expected, 1, 7));
         assert_eq!(parse_err("fn f<>() {}"), (Code::Expected, 1, 6));
@@ -4308,7 +4308,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_types() {
+    fn generic_types_should_parse() {
         let rows = [
             ("Stack<i64>", "Stack<i64>"),
             ("[Stack<i64>]", "[Stack<i64>]"),
@@ -4325,7 +4325,7 @@ mod tests {
 
     /// `>=` closes the list that ends before it, and the `=` stays for the `let`.
     #[test]
-    fn a_greater_equal_closes_a_type_argument_list() {
+    fn a_greater_equal_should_close_a_type_argument_list() {
         for (src, expected) in [
             ("let s: Stack<i64>= x", "(let s Stack<i64> x)"),
             ("let t: A<B<i64>>= y", "(let t A<B<i64>> y)"),
@@ -4350,7 +4350,7 @@ mod tests {
     /// type with none does; inside `( )` it does not, and after a `>` that compares, the line goes
     /// on.
     #[test]
-    fn a_line_break_after_type_arguments_ends_the_statement() {
+    fn a_line_break_after_type_arguments_should_end_the_statement() {
         for (src, expected) in [
             (
                 "class D {\n    b: Box<i64>\n    n: i64\n}",
@@ -4442,7 +4442,7 @@ mod tests {
     /// A header's line that ends in type arguments ends the header, so a `{` on the next line
     /// is E0004, as after a type with none.
     #[test]
-    fn a_brace_after_a_header_ending_in_type_arguments() {
+    fn a_brace_after_a_header_ending_in_type_arguments_should_be_e0004() {
         assert_eq!(
             parse_err("fn f() -> Box<i64>\n{\n}"),
             (Code::BraceOnNewLine, 2, 1)
@@ -4479,7 +4479,7 @@ mod tests {
     }
 
     #[test]
-    fn type_arguments_in_expressions() {
+    fn type_arguments_in_expressions_should_parse() {
         let rows = [
             ("f<i64>(x)", "(call f<i64> x)"),
             ("f<i64,>(x)", "(call f<i64> x)"),
@@ -4503,7 +4503,7 @@ mod tests {
 
     /// A `<` that no type-argument list and `(` or `.` completes is a comparison.
     #[test]
-    fn a_less_than_is_a_comparison_unless_type_arguments_follow() {
+    fn a_less_than_should_be_a_comparison_unless_type_arguments_follow() {
         let rows = [
             ("f(a < b, c > d)", "(call f (< a b) (> c d))"),
             ("a < b", "(< a b)"),
@@ -4516,7 +4516,7 @@ mod tests {
     }
 
     #[test]
-    fn a_non_list_after_a_less_than_keeps_its_diagnostic() {
+    fn a_non_list_after_a_less_than_should_keep_its_diagnostic() {
         for (src, code, col) in [
             ("a < b > c", Code::ComparisonDirection, 19),
             ("a < [b] > c", Code::ComparisonDirection, 21),
@@ -4543,6 +4543,7 @@ mod tests {
             breaks: &lexed.breaks,
             specs: Vec::new(),
             warnings: Vec::new(),
+            labels: Vec::new(),
             window: &lexed.tokens,
             halves: &OnceCell::new(),
         }
@@ -4552,7 +4553,7 @@ mod tests {
     /// A list nested more than `MAX_DEPTH` levels below its `<` is none, however its nesting is
     /// made: the type below `MAX_DEPTH - 1` brackets or lists is the deepest one allowed.
     #[test]
-    fn type_argument_lists_end_at_max_depth() {
+    fn type_argument_lists_should_end_at_max_depth() {
         for allowed in [true, false] {
             let n = MAX_DEPTH - 1 + usize::from(!allowed);
             let brackets = format!("f<{}i64{}>(x)", "[".repeat(n), "]".repeat(n));
@@ -4564,7 +4565,7 @@ mod tests {
 
     /// A list that scans as one can still be too deep to parse, below the depth of its call.
     #[test]
-    fn type_arguments_count_toward_the_nesting_limit() {
+    fn type_arguments_should_count_toward_the_nesting_limit() {
         let source = |name: &str, types: &str| {
             let n = MAX_DEPTH - 8;
             format!(
@@ -4593,7 +4594,7 @@ mod tests {
     /// Type arguments and value arguments are siblings in the tree, so the deepest of them counts,
     /// whichever way the call is written, and what follows the call sits above both.
     #[test]
-    fn type_arguments_and_value_arguments_are_siblings() {
+    fn type_arguments_and_value_arguments_should_be_siblings() {
         fn brackets(n: usize) -> String {
             format!("{}i64{}", "[".repeat(n), "]".repeat(n))
         }
@@ -4640,7 +4641,7 @@ mod tests {
     /// Every operand opens a nested scan, so the cutoff at `MAX_DEPTH` is what keeps a chain
     /// linear: each token is then scanned by at most `MAX_DEPTH + 1` of them.
     #[test]
-    fn long_comparison_chains_scan_linearly() {
+    fn long_comparison_chains_should_scan_linearly() {
         let scanned = |n: usize| {
             let chain = vec!["a"; n].join(" < ");
             SCANNED.set(0);

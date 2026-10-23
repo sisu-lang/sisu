@@ -499,6 +499,12 @@ impl Walk {
         self.mark(&format!("ast::TypeExpr.optional = {}", ty.optional));
         match &ty.kind {
             ast::TypeKind::Name(_) => self.mark("ast::TypeKind::Name"),
+            ast::TypeKind::Applied(applied) => {
+                self.mark("ast::TypeKind::Applied");
+                for arg in &applied.args {
+                    self.type_expr(arg);
+                }
+            }
             ast::TypeKind::Array(element) => {
                 self.mark("ast::TypeKind::Array");
                 self.type_expr(element);
@@ -1038,7 +1044,13 @@ impl Walk {
                     self.mark("reach: a parameter other than `depth` is read");
                 }
             }
-            ast::ExprKind::Call { callee, args } => {
+            ast::ExprKind::Applied { types, .. } => {
+                self.mark("ast::ExprKind::Applied");
+                for ty in types {
+                    self.type_expr(ty);
+                }
+            }
+            ast::ExprKind::Call { callee, args, .. } => {
                 self.mark("ast::ExprKind::Call");
                 let callee = callee.name.as_str();
                 self.mark(&format!("prelude {callee}"));
@@ -1337,8 +1349,9 @@ impl Walk {
             TypeKind::String => ("types::TypeKind::String", None),
             TypeKind::Unit => ("types::TypeKind::Unit", None),
             TypeKind::Never => ("types::TypeKind::Never", None),
-            TypeKind::Class(_) => ("types::TypeKind::Class", None),
-            TypeKind::Enum(_) => ("types::TypeKind::Enum", None),
+            TypeKind::Class(..) => ("types::TypeKind::Class", None),
+            TypeKind::Enum(..) => ("types::TypeKind::Enum", None),
+            TypeKind::Param(..) => ("types::TypeKind::Param", None),
             TypeKind::Array(element) => ("types::TypeKind::Array", Some(element)),
             TypeKind::Optional(inner) => ("types::TypeKind::Optional", Some(inner)),
         };
@@ -1405,9 +1418,10 @@ impl Walk {
     /// Whether a value of `ty` may hold a class object, where `seen` are the enums looked into.
     fn holds_class(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
         match ty.kind() {
-            TypeKind::Class(_) => true,
+            // A type parameter may stand for a class.
+            TypeKind::Class(..) | TypeKind::Param(..) => true,
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.holds_class(inner, seen),
-            TypeKind::Enum(id) => {
+            TypeKind::Enum(id, _) => {
                 !seen.contains(&id) && {
                     seen.push(id);
                     self.payloads[id.0]
@@ -1471,8 +1485,9 @@ impl Walk {
                 | TypeKind::Never
                 | TypeKind::Array(_)
                 | TypeKind::Optional(_)
-                | TypeKind::Class(_)
-                | TypeKind::Enum(_) => {}
+                | TypeKind::Class(..)
+                | TypeKind::Enum(..)
+                | TypeKind::Param(..) => {}
             }
         }
         if written && left && matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8) {
@@ -1745,8 +1760,9 @@ fn kind_name(ty: Type) -> &'static str {
         TypeKind::String => "String",
         TypeKind::Unit => "Unit",
         TypeKind::Never => "Never",
-        TypeKind::Class(_) => "Class",
-        TypeKind::Enum(_) => "Enum",
+        TypeKind::Class(..) => "Class",
+        TypeKind::Enum(..) => "Enum",
+        TypeKind::Param(..) => "Param",
         TypeKind::Array(_) => "Array",
         TypeKind::Optional(_) => "Optional",
     }
@@ -4465,7 +4481,7 @@ fn known_answers_are_integer() {
                 std::slice::from_ref(&**operand)
             };
             for part in parts {
-                if let tir::ExprKind::Call { func, args } = &part.kind
+                if let tir::ExprKind::Call { func, args, .. } = &part.kind
                     && known.contains(&func.0)
                 {
                     sites += 1;

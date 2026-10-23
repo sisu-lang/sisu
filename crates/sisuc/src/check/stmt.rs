@@ -659,7 +659,7 @@ impl Checker<'_> {
         match &e.kind {
             ExprKind::Local(local) => !self.body.locals[local.0].mutable,
             ExprKind::Field { base, index } => {
-                matches!(base.ty.kind(), TypeKind::Class(class)
+                matches!(base.ty.kind(), TypeKind::Class(class, _)
                     if !self.classes[class.0].fields[*index].mutable)
                     && self.fixed_place(base)
             }

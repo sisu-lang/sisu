@@ -12,7 +12,7 @@ fn with_decls(line: &str) -> String {
 }
 
 #[test]
-fn generic_declarations_check_clean() {
+fn generic_declarations_should_check_clean() {
     for src in [
         "fn id<T>(x: T) -> T { x }",
         "fn wrap<T>(x: T) -> [T] { [x] }",
@@ -44,7 +44,7 @@ fn generic_declarations_check_clean() {
 
 /// `tir` names each declaration's type parameters, a method's owner's before its own.
 #[test]
-fn type_parameters_reach_tir() {
+fn type_parameters_should_reach_tir() {
     contains(
         &with_decls(
             "class Holder<T> {\n    value: T\n    fn pair<U>(self, u: U) -> [U] { [u] }\n}\nenum Opt<T> {\n    No\n    Yes(T)\n    fn pick<U>(self, u: U) -> U { u }\n}",
@@ -62,7 +62,7 @@ fn type_parameters_reach_tir() {
 /// A value whose type names a parameter may be counted, so an exit after it spills it, as
 /// does a generic enum, counted for its parameter.
 #[test]
-fn values_of_parameter_types_spill() {
+fn values_of_parameter_types_should_spill() {
     contains(
         "fn g<T>(x: T, c: bool) {\n    g(x, if c { return } else { false })\n}\nfn main() {}",
         &["(let #2 x#0)"],
@@ -74,7 +74,7 @@ fn values_of_parameter_types_spill() {
 }
 
 #[test]
-fn type_arguments_in_types() {
+fn type_arguments_that_do_not_fit_a_type_should_be_reported() {
     let arguments = |at| vec![(Code::TypeArguments, at)];
     let argument = vec![(Code::TypeArgument, (1, 15))];
     for (line, expected) in [
@@ -108,7 +108,7 @@ fn type_arguments_in_types() {
 
 /// A non-generic name's list is deleted, in a type and in an expression alike.
 #[test]
-fn type_arguments_on_a_non_generic_name_are_removed() {
+fn type_arguments_on_a_non_generic_name_should_be_removed() {
     for (line, at) in [
         ("fn f(p: Point<i64>) {}", (1, 14)),
         ("fn g() -> Point { Point<i64>(x: 1) }", (1, 24)),
@@ -126,7 +126,7 @@ fn type_arguments_on_a_non_generic_name_are_removed() {
 /// `a<b, c>(d)` calls `a`, which is a value: one diagnostic, at the value, and the arguments
 /// are not resolved.
 #[test]
-fn type_arguments_on_a_value() {
+fn type_arguments_on_a_value_should_report_only_the_value() {
     let src = "fn g(a: i64, b: i64, c: i64, d: i64) { f(a < b, c > (d)) }\nfn f(x: bool) {}\nfn main() {}";
     let d = diagnostic(src, Code::TypeArguments, (1, 42, "a"), &[]);
     assert!(d.help().is_some());
@@ -189,7 +189,7 @@ fn type_arguments_on_a_value() {
 
 /// A pattern's qualifier that names a type other than an enum fits no enum.
 #[test]
-fn a_class_qualifier_fits_no_enum() {
+fn a_class_qualifier_should_fit_no_enum() {
     codes(
         "class K {\n    x: i64\n}\nenum E { A }\nfn f(e: E) -> i64 {\n    match e {\n        K.A => 1\n        _ => 0\n    }\n}\nfn main() {}",
         &[(Code::Mismatch, (7, 9))],
@@ -203,7 +203,7 @@ const MISREAD_DECLS: &str = "enum E { A(bool, bool) }\nclass K {\n    fn m(self,
 /// that is a value, and a built-in's method, are compared, and an unknown name is reported
 /// alone. One that checks, or a list without a comma, does not.
 #[test]
-fn a_failed_list_with_a_comma_hides_the_count() {
+fn a_failed_list_with_a_comma_should_hide_the_count() {
     let decls = MISREAD_DECLS;
     for (line, expected) in [
         (
@@ -271,7 +271,7 @@ fn a_failed_list_with_a_comma_hides_the_count() {
 /// and wherever operators put the comparison in its argument. A list around that one, or around
 /// a block that holds the comparison, still has its count reported.
 #[test]
-fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
+fn a_misread_comparison_should_hide_only_the_count_of_its_own_list() {
     let decls = MISREAD_DECLS;
     let misread = |col| (Code::TypeArguments, (1, col));
     let count = (Code::ArgumentCount, (1, 40));
@@ -332,7 +332,7 @@ fn a_misread_comparison_hides_only_the_count_of_its_own_list() {
 }
 
 #[test]
-fn values_of_parameter_types_have_no_operators() {
+fn values_of_parameter_types_should_have_no_operators() {
     let lacks = |at| vec![(Code::ParamLacks, at)];
     for (src, expected) in [
         ("fn f<T>(a: T, b: T) -> bool { a < b }", lacks((1, 31))),
@@ -387,14 +387,14 @@ fn values_of_parameter_types_have_no_operators() {
 
 /// The `==` help of `is` would point at an operator a parameter lacks.
 #[test]
-fn is_on_a_parameter_has_no_help() {
+fn is_on_a_parameter_should_have_no_help() {
     let src = with_decls("fn f<T>(a: T, b: T) -> bool { a is b }");
     let d = diagnostic(&src, Code::IsNeedsObjects, (1, 31, "a"), &[]);
     assert!(d.help().is_none());
 }
 
 #[test]
-fn main_takes_no_type_parameters() {
+fn main_should_take_no_type_parameters() {
     let src = "fn main<T>() {}";
     let d = diagnostic(src, Code::MainSignature, (1, 8, "<T>"), &[]);
     assert_eq!(fixes(src, &d), [(true, vec![(1, 8, "<T>", String::new())])]);
@@ -410,7 +410,7 @@ fn main_takes_no_type_parameters() {
 }
 
 #[test]
-fn type_parameter_names() {
+fn type_parameter_names_should_not_clash() {
     for (src, expected) in [
         ("fn f<i64>() {}", vec![(Code::BuiltInName, (1, 6))]),
         ("fn f<T, T>() {}", vec![(Code::DefinedTwice, (1, 9))]),
@@ -458,7 +458,7 @@ fn type_parameter_names() {
 /// Which generic enums can be built depends on which of their arguments can: `Two<Expr>` only
 /// if `Expr` can, and `Nest<T>` needs a `Nest<[T]>`, which needs what it does.
 #[test]
-fn generic_enums_that_cannot_be_built() {
+fn generic_enums_should_be_built_only_from_arguments_that_can_be() {
     for (src, expected) in [
         (
             "enum Two<T> { Both(T, T) }\nenum Expr { Pair(Two<Expr>) }",
@@ -555,7 +555,7 @@ fn generic_enums_that_cannot_be_built() {
 /// an enum of `n` fields, each of an enum built later or of a class wrapping one, costs a few
 /// scans per field.
 #[test]
-fn the_can_be_built_fixed_point_scans_linearly() {
+fn the_can_be_built_fixed_point_should_scan_linearly() {
     let scans = |n: usize, wrap: &str| {
         let names: Vec<String> = (0..n).map(|i| format!("E{i}")).collect();
         let fields: Vec<String> = names.iter().map(|name| wrap.replace('_', name)).collect();
@@ -576,7 +576,7 @@ fn the_can_be_built_fixed_point_scans_linearly() {
 /// A list after a name that takes none is reported at the list in every expression form, and
 /// one after a value at the value.
 #[test]
-fn type_arguments_in_expressions() {
+fn type_arguments_in_expressions_should_be_reported_at_the_list() {
     let arguments = |at| vec![(Code::TypeArguments, at)];
     for (src, expected) in [
         ("fn g() { print<i64>(1) }", arguments((1, 15))),
@@ -667,7 +667,7 @@ fn type_arguments_in_expressions() {
 /// A member the receiver does not have is reported alone, and so is a path's receiver that is
 /// no idiom: no list is reported after either.
 #[test]
-fn type_arguments_on_an_unknown_member() {
+fn an_unknown_member_should_be_reported_alone() {
     for (src, expected) in [
         (
             "fn g() { [1].what<i64>() }",
@@ -749,7 +749,7 @@ fn infers(rows: &[(&str, &str, &[&str])]) {
 /// Arguments and a method's receiver bind the callee's type parameters, or written type
 /// arguments give them; the result's type is the return type with them substituted.
 #[test]
-fn arguments_bind_type_parameters() {
+fn arguments_should_bind_type_parameters() {
     infers(&[
         (
             "fn g() -> i64? { first([3, 9, 2]) }",
@@ -846,7 +846,7 @@ fn arguments_bind_type_parameters() {
 /// The expected type binds what no other argument does, an optional one's payload a return
 /// type that is not optional.
 #[test]
-fn the_expected_type_binds_the_rest() {
+fn the_expected_type_should_bind_the_rest() {
     infers(&[
         (
             "fn g() {\n    let s: Stack<string> = Stack(top: None)\n}",
@@ -881,7 +881,7 @@ fn the_expected_type_binds_the_rest() {
 /// A call of a method with type parameters of its own, on a local or a field of one, waits for
 /// context as a call of a generic function does.
 #[test]
-fn generic_methods_wait_for_context() {
+fn generic_methods_should_wait_for_context() {
     infers(&[
         (
             "fn g(b: Box<i64>) {\n    let xs: [i64] = id(b.make())\n}",
@@ -982,7 +982,7 @@ fn generic_methods_wait_for_context() {
 /// Each binding is checked once, and a failed one undoes only what it bound, so inference's
 /// work grows with a call's type parameters, not with their square.
 #[test]
-fn inference_checks_each_binding_once() {
+fn inference_should_check_each_binding_once() {
     let visits = |n: usize| {
         let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
         let params: Vec<_> = (0..n).map(|i| format!("x{i}: T{i}")).collect();
@@ -1004,7 +1004,7 @@ fn inference_checks_each_binding_once() {
 /// reported ones, so its work grows with them, not with their square; a call that binds them
 /// all looks at none.
 #[test]
-fn reported_type_parameters_are_found_in_one_pass() {
+fn reported_type_parameters_should_be_found_in_one_pass() {
     let scanned = |n: usize, args: &str| {
         let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
         let params: Vec<_> = (0..n).map(|i| format!("x{i}: T{i}")).collect();
@@ -1026,7 +1026,7 @@ fn reported_type_parameters_are_found_in_one_pass() {
 /// A type parameter is found in one step, however many a body declares: indexing them is one
 /// step each, and each lookup, by a type or by a type argument that may be a value, is one more.
 #[test]
-fn type_parameters_are_found_in_one_step() {
+fn type_parameters_should_be_found_in_one_step() {
     let steps = |n: usize| {
         let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
         let src = format!(
@@ -1046,7 +1046,7 @@ fn type_parameters_are_found_in_one_step() {
 /// Work kept ahead of a call is found by its span in one step, so finding it grows with the
 /// call's arguments, not with their square: one step per receiver and per block.
 #[test]
-fn work_kept_ahead_is_found_in_one_step() {
+fn work_kept_ahead_should_be_found_in_one_step() {
     let inspected = |n: usize, arg: &str, ty: &str| {
         let params: Vec<_> = (0..n).map(|i| format!("x{i}: T")).collect();
         let src = with_generics(&format!(
@@ -1067,7 +1067,7 @@ fn work_kept_ahead_is_found_in_one_step() {
 /// A literal-like argument takes its type from the others, as an array literal's element
 /// does from its neighbours.
 #[test]
-fn literal_like_arguments_follow_the_others() {
+fn literal_like_arguments_should_follow_the_others() {
     infers(&[
         ("fn g() -> [i64] { pair(1, 2) }", "pair", &["i64", "[i64]"]),
         (
@@ -1130,7 +1130,7 @@ fn literal_like_arguments_follow_the_others() {
 
 /// A `T?` parameter takes an optional's payload, or a value the call wraps.
 #[test]
-fn an_optional_parameter_takes_the_payload() {
+fn an_optional_parameter_should_take_the_payload() {
     infers(&[
         ("fn g() -> i64? { opt(5) }", "opt", &["i64", "i64?"]),
         ("fn g(n: i64?) -> i64? { opt(n) }", "opt", &["i64", "i64?"]),
@@ -1140,7 +1140,7 @@ fn an_optional_parameter_takes_the_payload() {
 
 /// An argument that needs context is checked against its parameter once the others bind it.
 #[test]
-fn arguments_that_need_context_wait_for_it() {
+fn arguments_that_need_context_should_wait_for_it() {
     infers(&[
         (
             "fn g() {\n    let xs: [i64] = id(id([]))\n}",
@@ -1183,7 +1183,7 @@ fn arguments_that_need_context_wait_for_it() {
 /// An argument with no `[]`, `None` or generic name to bind binds on its own, whatever its
 /// form.
 #[test]
-fn other_arguments_bind_on_their_own() {
+fn other_arguments_should_bind_on_their_own() {
     infers(&[
         (
             "fn g() {\n    let x = id(make_ints())\n}",
@@ -1217,7 +1217,7 @@ fn other_arguments_bind_on_their_own() {
 /// Whether an argument needs context goes by what its names resolve to: a call's callee by
 /// its declaration, whatever local takes the name, and a local before a variant.
 #[test]
-fn context_follows_name_resolution() {
+fn context_should_follow_name_resolution() {
     infers(&[
         (
             "fn g() {\n    let make = 42\n    print(make)\n    let xs: [i64] = id(make())\n}",
@@ -1234,7 +1234,7 @@ fn context_follows_name_resolution() {
 
 /// Inside a generic body, the caller's parameters are fixed types that bind the callee's.
 #[test]
-fn callee_params_are_not_the_callers() {
+fn callee_params_should_not_be_the_callers() {
     infers(&[
         (
             "fn g<T>(xs: [T]) -> T? { first(xs) }",
@@ -1248,7 +1248,7 @@ fn callee_params_are_not_the_callers() {
 /// A field, a method's signature and a pattern's payload take the receiver's or the
 /// scrutinee's arguments, and coverage splits the substituted payload.
 #[test]
-fn members_and_patterns_substitute_the_arguments() {
+fn members_and_patterns_should_substitute_the_arguments() {
     for line in [
         "fn g(s: Stack<string>) -> Cell<string>? { s.top }",
         "fn g(s: Stack<i64>) { s.top = None }",
@@ -1263,7 +1263,7 @@ fn members_and_patterns_substitute_the_arguments() {
 /// An argument that may exit after one whose type names a parameter, or a generic enum's
 /// variant, spills it, as for a call of a declaration that is not generic.
 #[test]
-fn generic_calls_spill_their_arguments() {
+fn generic_calls_should_spill_their_arguments() {
     contains(
         &with_generics("fn h<T>(x: T, c: bool) {\n    take(x, if c { return } else { 0 })\n}"),
         &["(let #2 x#0)"],
@@ -1279,7 +1279,7 @@ fn generic_calls_spill_their_arguments() {
 /// A generic call that cannot bind a parameter, or whose argument or list cannot fit, reports
 /// that once, and so does each mistake a call of a declaration that is not generic can make.
 #[test]
-fn generic_calls_that_do_not_check() {
+fn a_generic_call_that_does_not_check_should_report_once() {
     let infer = |at| vec![(Code::CannotInfer, at)];
     let arguments = |at| vec![(Code::TypeArguments, at)];
     let argument = |at| vec![(Code::TypeArgument, at)];
@@ -1376,7 +1376,7 @@ fn generic_calls_that_do_not_check() {
 /// The new form of `CannotInfer` is at the callee's name, with a help, and so is the list on a
 /// variant; an inferred optional's `TypeArgument` is at the argument that binds it.
 #[test]
-fn what_inference_reports() {
+fn cannot_infer_should_be_reported_at_the_callee_name() {
     let src = with_generics("fn g() {\n    let x = first([])\n}");
     let d = diagnostic(&src, Code::CannotInfer, (2, 13, "first"), &[]);
     assert!(d.help().is_some());
@@ -1391,7 +1391,7 @@ fn what_inference_reports() {
 
 /// A type parameter and a built-in type take no type arguments.
 #[test]
-fn parameters_and_built_ins_take_no_type_arguments() {
+fn parameters_and_built_ins_should_take_no_type_arguments() {
     codes(
         "fn g<T>(x: T<i64>, y: i64<bool>) {}\nfn main() {}",
         &[
@@ -1404,7 +1404,7 @@ fn parameters_and_built_ins_take_no_type_arguments() {
 /// A generic call's arguments in each form reach the report of a non-generic one, and an
 /// argument whose type cannot fit its parameter's leaves the parameter to the others.
 #[test]
-fn generic_arguments_that_do_not_check() {
+fn generic_arguments_that_do_not_check_should_report_as_other_arguments() {
     let two = "class Two<A, B> {\n    a: A\n    b: B\n}\n";
     for (line, expected) in [
         // A method that takes no type arguments of its own is reported once.
@@ -1505,7 +1505,7 @@ fn generic_arguments_that_do_not_check() {
 /// A generic method's call that cannot check reports once, whether it waits for context or
 /// its receiver's type is not known.
 #[test]
-fn generic_method_calls_that_do_not_check() {
+fn a_generic_method_call_that_does_not_check_should_report_once() {
     for (line, expected) in [
         // The generic method waits for `id`, which nothing binds.
         (
@@ -1554,7 +1554,7 @@ fn generic_method_calls_that_do_not_check() {
 /// Ranking an argument checks a method's receiver, and the statements before a block's value,
 /// once: what checking the argument reports, it reports once.
 #[test]
-fn work_done_ahead_is_not_done_again() {
+fn work_done_ahead_should_not_be_done_again() {
     for (line, expected) in [
         (
             "fn g(b: Box<i64>) {\n    let xs: [i64] = id({ let n = nope; b.make() })\n}",
@@ -1587,7 +1587,7 @@ fn work_done_ahead_is_not_done_again() {
 
 /// A path before the `.` is not checked as a value, so a call on it does not wait.
 #[test]
-fn calls_on_paths_do_not_wait() {
+fn calls_on_paths_should_not_wait() {
     for (line, expected) in [
         (
             "fn g() {\n    let x = id(math.sqrt(2.0))\n}",
@@ -1606,7 +1606,7 @@ fn calls_on_paths_do_not_wait() {
 /// reports that, not the enclosing call's inference: it is checked with context when there is
 /// some, else on its own.
 #[test]
-fn waiting_calls_report_their_own_shape() {
+fn waiting_calls_should_report_their_own_shape() {
     for (line, expected) in [
         // A wrong count, or a label, of a function's, a method's, a class's or a variant's.
         (
@@ -1717,7 +1717,7 @@ fn waiting_calls_report_their_own_shape() {
 /// growing one that does not come back, are clean, and so is a class whose method makes a
 /// bigger instance of it.
 #[test]
-fn cycles() {
+fn growing_instantiation_cycles_should_be_one_error_each() {
     for (src, at, notes) in [
         ("fn f<T>(x: T) { f([x]) }", (1, 17), vec![]),
         (
@@ -1801,7 +1801,7 @@ fn cycles() {
             vec![],
         ),
         (
-            "fn f<T>(x: T) {\n    while true {\n        f([x])\n    }\n}",
+            "fn f<T>(x: T) {\n    loop {\n        f([x])\n    }\n}",
             (3, 9),
             vec![],
         ),
@@ -1832,7 +1832,7 @@ fn cycles() {
 
 /// Instantiation cycles beside each other and beside other errors.
 #[test]
-fn cycles_with_other_errors() {
+fn instantiation_cycles_should_be_reported_beside_other_errors() {
     // Each parameter grows into itself at a call of its own, reported at each.
     codes(
         "fn f<T, U>(x: T, y: U) {\n    f([x], y)\n    f(x, [y])\n}\nfn main() {}",
