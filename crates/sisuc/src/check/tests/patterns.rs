@@ -967,6 +967,13 @@ fn literal_patterns() {
     contains(&src, &["(arm \"a\" (block 1))"]);
 }
 
+/// One below `'\u{E000}'` is a surrogate, which no `char` is.
+#[test]
+fn exclusive_char_range_should_end_below_the_surrogates_when_it_leaves_out_e000() {
+    let (src, _) = typed("", "char", &["'a'..'\\u{E000}' => 1", "_ => 0"]);
+    contains(&src, &["(arm 'a'..='\\u{d7ff}' (block 1))"]);
+}
+
 #[test]
 fn range_patterns() {
     // Each row: the type, the arm before `_ => 0`, and the code it reports with its column.

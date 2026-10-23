@@ -1,7 +1,8 @@
 // Range patterns hit at each bound: one before the start, the start, the end, and one past the
 // end, for `..=` and for `..`, which leaves its end out. `i64` ranges compare signed, so a range
 // across zero holds its negative values. `u8` ranges compare unsigned, so `100..=200` holds 127,
-// 128 and 200, and `0..=127 | 128..=255` covers every `u8` with no `_`.
+// 128 and 200, and `0..=127 | 128..=255` covers every `u8` with no `_`. A `char` range that
+// leaves out `'\u{E000}'` ends at `'\u{D7FF}'`, the last `char` below the surrogates.
 fn letter(c: char) -> string {
     match c {
         'b'..='d' => "b to d"
@@ -40,6 +41,14 @@ fn half(b: u8) -> string {
 fn any(b: u8) -> u8 {
     match b {
         0..=127 | 128..=255 => b
+    }
+}
+
+// No `_`: the surrogates are not `char`s, so the two ranges cover every `char`.
+fn plane(c: char) -> string {
+    match c {
+        '\u{0}'..'\u{E000}' => "below"
+        '\u{E000}'..='\u{10FFFF}' => "private use or above"
     }
 }
 
@@ -82,4 +91,7 @@ fn main() {
     print(any(127))     // 127
     print(any(128))     // 128
     print(any(255))     // 255
+    print(plane('a'))         // below
+    print(plane('\u{D7FF}'))  // below
+    print(plane('\u{E000}'))  // private use or above
 }

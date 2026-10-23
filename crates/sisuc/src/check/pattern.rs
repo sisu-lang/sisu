@@ -725,7 +725,12 @@ impl Checker<'_> {
             return None;
         }
         // Not empty, so `hi - 1` cannot overflow.
-        let hi = if inclusive { hi } else { hi - 1 };
+        let hi = match (inclusive, ty) {
+            (true, _) => hi,
+            // One below `'\u{E000}'` is a surrogate, which no `char` is.
+            (false, Type::CHAR) if hi == 0xE000 => 0xD7FF,
+            (false, _) => hi - 1,
+        };
         Some(tir::PatternKind::Range { lo, hi })
     }
 
