@@ -13,7 +13,7 @@ The design decisions behind Sisu, each written down as a short record with its r
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
     <p class="meta">{{adr-count}} records · at commit 7d4d6d0</p>
   </div></section>
-  <!-- source: docs/adr/ (32 files, 0001 to 0032), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (33 files, 0001 to 0033), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -112,8 +112,9 @@ The design decisions behind Sisu, each written down as a short record with its r
       <h2 id="compiler">The compiler</h2>
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0026-one-compiler-crate.md"><span class="num">0026</span><b>The compiler stays one crate</b><span>A split before LLVM was measured against a rule set in advance: an edit already rebuilds the tests in about 2 s, so a split cannot pay for itself.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0033-every-language-feature-has-a-generator-rule.md"><span class="num">0033</span><b>Every language feature has a generator rule</b><span>A feature is done only when the program fuzzer generates it, and a unit test fails when a variant has no generated program.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0026-one-compiler-crate.md -->
+      <!-- source: docs/adr/0026-one-compiler-crate.md, docs/adr/0033-every-language-feature-has-a-generator-rule.md -->
 
       <h2 id="avoided">What Sisu deliberately avoids</h2>
       <p>These come from the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#deliberately-avoided">Deliberately avoided</a> list.</p>

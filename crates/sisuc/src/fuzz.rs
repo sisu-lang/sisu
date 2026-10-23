@@ -37,15 +37,21 @@ pub fn front_end(data: &[u8]) -> String {
     String::from_utf8(out).expect("the reports should be UTF-8, as the source they quote is")
 }
 
-/// Prints `program` as a typed tree, then compiles it, without and with `--rc-checks`, and asserts
-/// that LLVM verifies each module. No pass runs and nothing links: `-O2` changes only the pipeline,
-/// not the module codegen makes.
-fn assert_compiles(program: &Program, source: &str) {
+/// Prints `program` as a typed tree and as MIR, then compiles it, without and with `--rc-checks`,
+/// and asserts that LLVM verifies each module. No pass runs and nothing links: `-O2` changes only
+/// the pipeline, not the module codegen makes.
+pub(crate) fn assert_compiles(program: &Program, source: &str) {
     // The printer's only check is that it does not panic.
     drop(program.to_string());
     let machine = codegen::target_machine(codegen::OptLevel::O0)
         .expect("LLVM should have a target machine for the host sisu runs on");
     let mir = mir::build(program);
+    // The printer's only check is that it does not panic.
+    let printed = mir::print(&mir, program);
+    #[cfg(test)]
+    PRINTED.set(printed);
+    #[cfg(not(test))]
+    drop(printed);
     for rc_checks in [false, true] {
         let context = Context::create();
         let module = codegen::compile(
@@ -76,6 +82,10 @@ fn assert_verified(module: &Module<'_>, rc_checks: bool) {
 
 #[cfg(test)]
 thread_local! {
+    /// The text `assert_compiles` last printed for the MIR on this thread, so a test can see the
+    /// printer ran and what it wrote.
+    static PRINTED: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+
     /// How many modules `assert_verified` has passed on this thread, without and with
     /// `--rc-checks`, so a test can see that `front_end` compiles a clean input both ways.
     static VERIFIED: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
@@ -254,8 +264,8 @@ mod tests {
     use inkwell::context::Context;
 
     use super::{
-        VERIFIED, assert_fixes_keep_syntax, assert_safe_fixes, assert_spans, assert_verified,
-        front_end,
+        PRINTED, VERIFIED, assert_fixes_keep_syntax, assert_safe_fixes, assert_spans,
+        assert_verified, front_end,
     };
     use crate::diagnostic::{Code, Diagnostic};
     use crate::source::Span;
@@ -420,6 +430,19 @@ mod tests {
     fn compiles_a_clean_input_with_and_without_rc_checks() {
         assert_eq!(verified("fn main() {\n    print(1)\n}\n"), [1, 1]);
         assert_eq!(verified("fn main() {\n    print(x)\n}\n"), [0, 0]);
+    }
+
+    /// The MIR text `front_end` prints for `source`, run on this thread; empty when it prints none.
+    fn printed(source: &str) -> String {
+        PRINTED.take();
+        front_end(source.as_bytes());
+        PRINTED.take()
+    }
+
+    #[test]
+    fn prints_the_mir_of_a_clean_input() {
+        assert!(printed("fn main() {\n    print(1)\n}\n").contains("fn main("));
+        assert_eq!(printed("fn main() {\n    print(x)\n}\n"), "");
     }
 
     #[test]

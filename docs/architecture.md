@@ -29,7 +29,13 @@ fuzzer calls the library too:
 diagnostic span and fix edit is well formed, and that every safe fix, applied
 alone, deletes no comment and removes its diagnostic and no other. For an
 input that checks clean, it also prints the typed tree, builds its mir and
-runs codegen, and LLVM must verify the module. `sisu check` and `sisu build --emit`
+runs codegen, and LLVM must verify the module. The program fuzzer adds two
+modules, compiled only in tests and under the `fuzz` feature: `generate/`
+turns fuzz bytes into a well-typed program, its standard input and a rewritten
+copy that must print the same, and `fuzz_program.rs` builds both at O0, at
+`-O2` and with `--rc-checks`, runs each build and judges the runs
+([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)).
+`sisu check` and `sisu build --emit`
 stop the pipeline early, as
 [Developing Sisu](development.md#look-inside-the-compiler) lists.
 `--format json` switches the diagnostics to JSON Lines, and `sisu explain <code>`

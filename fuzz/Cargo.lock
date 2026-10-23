@@ -356,6 +356,7 @@ name = "sisuc"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
+ "arbitrary",
  "clap",
  "inkwell",
  "rustc-hash",
