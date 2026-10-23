@@ -4,6 +4,7 @@ mod literal;
 
 use std::fmt::Write;
 use std::iter::Peekable;
+use std::ops::Range;
 use std::str::CharIndices;
 
 use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Join};
@@ -316,10 +317,8 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
     let (mut tokens, mut diagnostics) = (Vec::new(), Vec::new());
     let (mut comments, mut breaks) = (Vec::new(), Vec::new());
     let mut brackets = Brackets::default();
-    // Whether a `;` that separates statements was pushed, so that `separate` has work.
-    let mut semicolons = false;
     let mut chars = source.char_indices().peekable();
-    let mut line_start = true;
+    let mut first_on_line = true;
     // Where the last skipped text starts.
     let mut skipped = None;
     while let Some((start, c)) = chars.next() {
@@ -329,7 +328,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                 breaks.push(start);
                 let cut = brackets.end_line(start, false, &mut tokens, &mut diagnostics);
                 skipped = cut.or(skipped);
-                line_start = true;
+                first_on_line = true;
                 // Look ahead only where a `Newline` would be pushed: the next newlines of a
                 // blank run then find `Newline` last and skip it, so no gap is scanned twice.
                 if ends_statement(&tokens, &brackets.open, brackets.trailing_semicolons) {
@@ -377,7 +376,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                     .is_some_and(|t| t.kind == TokenKind::Newline) =>
             {
                 let at = Span::new(start, start + 1);
-                if !after_skip(source, &tokens, brackets.in_block(), skipped) {
+                if !after_skip(source, &tokens, &brackets, skipped) {
                     diagnostics.push(DiagnosticKind::LeadingBinaryMinus { at }.into());
                 }
                 TokenKind::Minus
@@ -396,16 +395,15 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
         // A `;` that separates statements does not end the line's start: the token after it is
         // the first one the source would have there without it.
         let separator = kind == TokenKind::Semicolon && brackets.in_block();
-        if line_start {
+        if first_on_line {
             diagnostics.extend(brackets.line_start(source, &mut tokens, (&kind, span), skipped));
-            line_start = separator;
+            first_on_line = separator;
         }
         if let Err(d) = track_bracket(&mut brackets.open, &kind, span) {
             return Err(first_or(diagnostics, d));
         }
+        brackets.note(&kind, start, separator);
         tokens.push(Token { kind, span });
-        brackets.count(separator);
-        semicolons |= separator;
     }
     brackets.end_line(source.len(), true, &mut tokens, &mut diagnostics);
     if let Some(&(bracket, at)) = brackets.open.last() {
@@ -415,7 +413,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
     if ends_statement(&tokens, &brackets.open, brackets.trailing_semicolons) {
         tokens.push(newline(Span::new(source.len(), source.len())));
     }
-    let warnings = separate(source, &mut tokens, semicolons);
+    let warnings = separate(source, &mut tokens, &brackets.separators);
     tokens.push(eof(&tokens));
     Ok(Lexed {
         source,
@@ -434,109 +432,92 @@ enum Judgement {
     Kept,
 }
 
-/// Judges each `;` in statement context: a separator becomes a `Newline` with the `;`'s span,
-/// a redundant one is dropped with a W0007, and any other stays for the parser to report.
-/// Removing a redundant `;` leaves tokens that the parser reads the same, so its fix is safe.
-/// Without a `;` in a block (`semicolons`), there is nothing to judge.
-fn separate(source: &str, tokens: &mut Vec<Token>, semicolons: bool) -> Vec<Diagnostic> {
-    use TokenKind::{
-        Class, Const, Dot, Else, Enum, Fn, LBrace, LBracket, LParen, Newline, QuestionDot, RBrace,
-        RBracket, RParen, Semicolon, StrHead, StrTail,
-    };
+/// Judges each `;` in `separators`, those that `lex` found in statement context: a separator
+/// becomes a `Newline` with the `;`'s span, a redundant one is dropped with a W0007, and any
+/// other stays for the parser to report. Removing a redundant `;` leaves tokens that the parser
+/// reads the same, so its fix is safe. Without a `;` in a block, there is nothing to judge.
+fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> Vec<Diagnostic> {
     let mut warnings = Vec::new();
-    if !semicolons {
+    if separators.is_empty() {
         return warnings;
     }
-    // Whether each open bracket, innermost last, is a block's `{`; an interpolation is not.
-    let mut open = Vec::new();
-    // Whether the top-level item so far is a `fn`, `class` or `enum`, which ends at its `}` and
-    // needs no separator before the next item, rather than a `const` or none.
-    // shortcut: assumes no `fn` inside a const's value; revisit with function types or closures
-    let mut self_ending = false;
-    let mut i = 0;
-    while i < tokens.len() {
-        match tokens[i].kind {
-            LParen | LBracket | StrHead(_) => open.push(false),
-            LBrace => open.push(true),
-            RParen | RBracket | RBrace | StrTail(_) => {
-                open.pop();
+    let mut indices = 0..tokens.len();
+    while let Some(i) = indices.next() {
+        let start = tokens[i].span.start();
+        let found = separators.binary_search_by_key(&start, |s| s.at);
+        let (TokenKind::Semicolon, Ok(found)) = (&tokens[i].kind, found) else {
+            continue;
+        };
+        let end = i + tokens[i..]
+            .iter()
+            .take_while(|t| t.kind == TokenKind::Semicolon)
+            .count();
+        // Every `;` after the first is redundant: it leaves the first its neighbours.
+        let redundant = match judge(source, tokens, i..end, separators[found].between_items) {
+            Judgement::Separator => {
+                tokens[i].kind = TokenKind::Newline;
+                i + 1
             }
-            Fn | Class | Enum if open.is_empty() => self_ending = true,
-            Const if open.is_empty() => self_ending = false,
-            Semicolon if open.last().is_none_or(|&block| block) => {
-                let end = i + tokens[i..]
-                    .iter()
-                    .take_while(|t| t.kind == Semicolon)
-                    .count();
-                let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
-                let first = tokens[i].span;
-                let break_before = prev.is_none_or(|p| {
-                    p.kind == Newline || source[p.span.end()..first.start()].contains('\n')
-                });
-                // A `{` that moved up may have popped the `Newline` after the run, so the source
-                // between the run and `next` tells.
-                let break_after = next.is_none_or(|n| {
-                    n.kind == Newline || source[first.start()..n.span.start()].contains('\n')
-                });
-                let next = next.map(|n| &n.kind);
-                let judgement = if matches!(next, Some(Dot | QuestionDot)) {
-                    // Without the `;`, the line break before the `.` would continue the line.
-                    if can_end_statement(prev) && !break_before {
-                        Judgement::Separator
-                    } else {
-                        Judgement::Kept
-                    }
-                } else if prev.is_some_and(|p| {
-                    !can_end_statement(prev) && !matches!(p.kind, LBrace | Newline)
-                }) && !break_before
-                {
-                    // Without the `;`, the lines would join into a different statement.
-                    Judgement::Kept
-                } else if next == Some(&Else)
-                    || break_before
-                    || break_after
-                    || prev.is_none_or(|p| p.kind == LBrace)
-                    || next == Some(&RBrace)
-                    || (open.is_empty()
-                        && self_ending
-                        && matches!(next, Some(Fn | Class | Enum | Const)))
-                {
-                    Judgement::Redundant
-                } else if open.is_empty()
-                    && self_ending
-                    && prev.is_some_and(|p| p.kind != RBrace)
-                    && next == Some(&LBrace)
-                {
-                    // The `;` cuts an item's header, and no item starts with `{`: as a separator,
-                    // the `;` would make the `{` a second error, after the one at the `;`
-                    // (`fn main(); { }`). After a `const` or an item's `}`, it separates.
-                    Judgement::Kept
-                } else {
-                    Judgement::Separator
-                };
-                // Every `;` after the first is redundant: it leaves the first its neighbours.
-                let redundant = match judgement {
-                    Judgement::Separator => {
-                        tokens[i].kind = Newline;
-                        i + 1
-                    }
-                    Judgement::Redundant => i,
-                    Judgement::Kept => i + 1,
-                };
-                warnings.extend(
-                    (tokens[redundant..end].iter().enumerate())
-                        .map(|(k, t)| redundant_semicolon(source, t.span, k == 0)),
-                );
-                i = end;
-                continue;
-            }
-            _ => {}
-        }
-        i += 1;
+            Judgement::Redundant => i,
+            Judgement::Kept => i + 1,
+        };
+        warnings.extend(
+            (tokens[redundant..end].iter().enumerate())
+                .map(|(k, t)| redundant_semicolon(source, t.span, k == 0)),
+        );
+        indices.start = end;
     }
     let mut dropped = warnings.iter().map(Diagnostic::span).peekable();
     tokens.retain(|t| dropped.next_if_eq(&t.span).is_none());
     warnings
+}
+
+/// What becomes of the first `;` of `run`, a run of `;`s among `tokens`, in statement context.
+/// `between_items` is true when the run stands between top-level items, after a `fn`, `class` or
+/// `enum`.
+/// The rules, in order: a `.` after the run is a continuation unless the `;` is needed to end the
+/// statement; a `;` that joins two lines into a different statement stays; a `;` next to a line
+/// break, a `{`, a `}`, an `else` or an item that needs no separator is redundant.
+fn judge(source: &str, tokens: &[Token], run: Range<usize>, between_items: bool) -> Judgement {
+    use TokenKind::{Class, Const, Dot, Else, Enum, Fn, LBrace, Newline, QuestionDot, RBrace};
+    let (i, end) = (run.start, run.end);
+    let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
+    let first = tokens[i].span;
+    let break_before = prev
+        .is_none_or(|p| p.kind == Newline || source[p.span.end()..first.start()].contains('\n'));
+    // A `{` that moved up may have popped the `Newline` after the run, so the source
+    // between the run and `next` tells.
+    let break_after = next
+        .is_none_or(|n| n.kind == Newline || source[first.start()..n.span.start()].contains('\n'));
+    let next = next.map(|n| &n.kind);
+    if matches!(next, Some(Dot | QuestionDot)) {
+        // Without the `;`, the line break before the `.` would continue the line.
+        if can_end_statement(prev) && !break_before {
+            Judgement::Separator
+        } else {
+            Judgement::Kept
+        }
+    } else if prev.is_some_and(|p| !can_end_statement(prev) && !matches!(p.kind, LBrace | Newline))
+        && !break_before
+    {
+        // Without the `;`, the lines would join into a different statement.
+        Judgement::Kept
+    } else if next == Some(&Else)
+        || break_before
+        || break_after
+        || prev.is_none_or(|p| p.kind == LBrace)
+        || next == Some(&RBrace)
+        || (between_items && matches!(next, Some(Fn | Class | Enum | Const)))
+    {
+        Judgement::Redundant
+    } else if between_items && prev.is_some_and(|p| p.kind != RBrace) && next == Some(&LBrace) {
+        // The `;` cuts an item's header, and no item starts with `{`: as a separator,
+        // the `;` would make the `{` a second error, after the one at the `;`
+        // (`fn main(); { }`). After a `const` or an item's `}`, it separates.
+        Judgement::Kept
+    } else {
+        Judgement::Separator
+    }
 }
 
 /// The W0007 of the redundant `;` at `at`, the `first` of its run to be removed. Its fix leaves
@@ -576,12 +557,28 @@ struct Brackets {
     /// How many `;`s that separate statements end the tokens, as `in_block` says. A cut that
     /// shortens the tokens resets it.
     trailing_semicolons: usize,
+    /// The `;`s that separate statements among the tokens, in source order. A cut leaves
+    /// those in the literal it ends: no token starts there, so `separate` never finds them.
+    separators: Vec<Separator>,
+    /// Whether the top-level item so far is a `fn`, `class` or `enum`, which ends at its `}` and
+    /// needs no separator before the next item, rather than a `const` or none.
+    // shortcut: assumes no `fn` inside a const's value; revisit with function types or closures
+    self_ending: bool,
+}
+
+/// A `;` that separates statements, which `separate` judges.
+struct Separator {
+    /// Where the `;` starts.
+    at: usize,
+    /// Whether it stands between top-level items, after a `fn`, `class` or `enum`.
+    between_items: bool,
 }
 
 impl Brackets {
     /// Whether the innermost open bracket is a block's `{`, or there is none: a `;` here
     /// separates statements. An interpolation's `{` is not a block.
     fn in_block(&self) -> bool {
+        // Without `at_end`, a `;` directly in an interpolation would be a separator.
         self.open.last().is_none_or(|&(c, _)| c == '{') && !self.at_end()
     }
 
@@ -599,6 +596,23 @@ impl Brackets {
         } else {
             0
         };
+    }
+
+    /// Counts a token of `kind` that starts at `at`, about to be pushed, and notes it when it is a
+    /// `;` that `separator` says separates statements.
+    fn note(&mut self, kind: &TokenKind, at: usize, separator: bool) {
+        match kind {
+            TokenKind::Fn | TokenKind::Class | TokenKind::Enum if self.open.is_empty() => {
+                self.self_ending = true;
+            }
+            TokenKind::Const if self.open.is_empty() => self.self_ending = false,
+            _ => {}
+        }
+        if separator {
+            let between_items = self.open.is_empty() && self.self_ending;
+            self.separators.push(Separator { at, between_items });
+        }
+        self.count(separator);
     }
 
     /// The layout error of the token `at`, which starts a line, unless text was `skipped` on the
@@ -620,7 +634,7 @@ impl Brackets {
         {
             tokens.remove(at);
         }
-        (!after_skip(source, tokens, self.in_block(), skipped)).then_some(d)
+        (!after_skip(source, tokens, self, skipped)).then_some(d)
     }
 
     /// Ends every open interpolation at the line end or the end of the file at `at`, and returns
@@ -799,8 +813,8 @@ fn first_or(diagnostics: Vec<Diagnostic>, bracket: Diagnostic) -> Diagnostic {
 /// Whether text was `skipped` on the line of the last code token or after it. A line-start
 /// diagnostic then reads text that recovery may have dropped, so it may be a consequence of the
 /// skip's own diagnostic, and is not reported. In a block, a `;` is not code.
-fn after_skip(source: &str, tokens: &[Token], in_block: bool, skipped: Option<usize>) -> bool {
-    let code = last_code(tokens, in_block);
+fn after_skip(source: &str, tokens: &[Token], brackets: &Brackets, skipped: Option<usize>) -> bool {
+    let code = last_code(tokens, brackets.in_block());
     skipped.zip(code).is_some_and(|(s, code)| {
         // `None` when the skip comes after the code token.
         source
