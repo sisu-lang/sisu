@@ -222,17 +222,83 @@ fn call_followed_by_work_is_not_a_tail_call() {
     signature(&printed, "stroll", "fn stroll(s#0: borrow string");
 }
 
-/// A `for` loop reads `es` into a temporary that the loop's blocks use and its exit releases.
-/// Pairs cannot drop a copy whose release is in another block, so the read consumes `es`;
-/// `len_of`'s temporary lives in one block and stays an alias.
+/// A spill reads `es` into a temporary that the blocks around a `break` use. Pairs cannot drop a
+/// copy whose release is in another block, so the read consumes `es`; `len_of`'s temporary lives
+/// in one block and stays an alias.
 #[test]
 fn temporary_used_in_another_block_consumes_its_local() {
     let printed = built(
-        "fn count(es: [i64]) -> i64 {\n    let mut n = 0\n    for e in es {\n        n += e\n    }\n    n\n}\n\
+        "fn h(a: [i64], b: i64) -> i64 { a.len() + b }\n\
+         fn count(es: [i64], c: bool) -> i64 {\n    let mut n = 0\n    for i in 0..3 {\n        n += h(es, if c { break } else { 1 })\n    }\n    n\n}\n\
          fn len_of(es: [i64]) -> i64 { es.len() }",
     );
-    signature(&printed, "count", "fn count(es#0: [i64])");
+    signature(&printed, "count", "fn count(es#0: [i64], c#1: bool)");
     signature(&printed, "len_of", "fn len_of(es#0: borrow [i64])");
+}
+
+/// The loop reads `xs` in place, so `total` does not consume it and its caller retains nothing.
+#[test]
+fn for_over_a_parameter_should_borrow_it() {
+    let printed = built(
+        "fn total(xs: [i64]) -> i64 {\n    let mut s = 0\n    for x in xs { s += x }\n    s\n}\n\
+         fn main() {\n    let xs = [1, 2, 3]\n    print(total(xs) + total(xs))\n}",
+    );
+    signature(&printed, "total", "fn total(xs#0: borrow [i64])");
+    let total = function(&printed, "total");
+    assert!(!total.contains("release"), "{total}");
+    let main = function(&printed, "main");
+    assert!(!main.contains("copy"), "{main}");
+}
+
+/// The iterable is a field without `mut` of a parameter, which no code can change.
+#[test]
+fn for_over_a_fixed_field_should_borrow_the_parameter() {
+    let printed = built(
+        "class Bag {\n    items: [string]\n}\n\
+         fn count(b: Bag) -> i64 {\n    let mut n = 0\n    for w in b.items { n += w.len() }\n    n\n}",
+    );
+    signature(&printed, "count", "fn count(b#0: borrow Bag)");
+    let count = function(&printed, "count");
+    assert!(!count.contains("copy b#0.0"), "{count}");
+}
+
+/// The body writes `ys`, so the loop must visit a copy of it. A `mut` field of a class
+/// parameter can change too, and a `for` over it reads a copy.
+#[test]
+fn for_over_a_place_that_can_change_should_read_a_copy() {
+    let printed = built(
+        "class Bag {\n    mut items: [string]\n}\n\
+         fn doubled(xs: [i64]) -> i64 {\n    let mut ys = xs\n    let mut s = 0\n    for y in ys {\n        ys[0] = y + 1\n        s += y\n    }\n    s\n}\n\
+         fn drain(b: Bag) -> i64 {\n    let mut n = 0\n    for w in b.items {\n        b.items = []\n        n += w.len()\n    }\n    n\n}",
+    );
+    signature(&printed, "doubled", "fn doubled(xs#0: [i64])");
+    has(&printed, "doubled", &["_ = copy ys#"]);
+    signature(&printed, "drain", "fn drain(b#0: borrow Bag)");
+    has(&printed, "drain", &["= copy b#0.0"]);
+}
+
+/// The inner `match` tests the binding `x` of the outer arm in place, so `e` is not taken apart.
+#[test]
+fn match_on_a_binding_of_a_match_on_a_parameter_should_borrow_it() {
+    let printed = built(
+        "enum C {\n    C1(string)\n    C2\n}\nenum E {\n    B(C)\n    A\n}\n\
+         fn d(e: E) -> i64 {\n    match e {\n        B(x) => match x {\n            C1(_) => 1\n            _ => 2\n        }\n        _ => 0\n    }\n}",
+    );
+    signature(&printed, "d", "fn d(e#0: borrow E)");
+    let d = function(&printed, "d");
+    assert!(!d.contains("take_apart") && !d.contains("release"), "{d}");
+}
+
+/// A parameter that the function consumes is owned, so the binding is not borrowed and the
+/// inner `match` takes its scrutinee apart as before.
+#[test]
+fn match_on_a_binding_of_a_match_on_an_owned_parameter_should_take_it_apart() {
+    let printed = built(
+        "enum C {\n    C1(string)\n    C2\n}\nenum E {\n    B(C)\n    A\n}\n\
+         fn d(e: E) -> E {\n    match e {\n        B(x) => match x {\n            C1(_) => E.A\n            _ => e\n        }\n        _ => e\n    }\n}",
+    );
+    signature(&printed, "d", "fn d(e#0: E)");
+    has(&printed, "d", &["take_apart"]);
 }
 
 /// An `if` expression's result is assigned on each path, so each assignment consumes.

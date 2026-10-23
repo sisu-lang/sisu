@@ -114,7 +114,8 @@ impl Lowering<'_> {
     }
 
     /// The place `e` names when it is a borrowed place of a counted value: a borrowed parameter,
-    /// or a field without `mut` of a borrowed place. Marks the parameter at its root consulted.
+    /// a binding that a `match` or an `if let` on a borrowed place borrows, inside its arm, or a
+    /// field without `mut` of a borrowed place. Marks the parameter at its root consulted.
     fn borrowed_place(&mut self, e: &Expr) -> Option<Place> {
         if !self.counted(e.ty) {
             return None;
@@ -122,6 +123,11 @@ impl Lowering<'_> {
         match &e.kind {
             ExprKind::Local(local) if self.borrowed.get(local.0) == Some(&true) => {
                 self.consulted[local.0] = true;
+                Some(whole(*local))
+            }
+            // A guarded binding outside the guard stack is one that its arm's body reads, and it
+            // is guarded there only when the arm borrows. The outer `match` marked the root.
+            ExprKind::Local(local) if self.guarded[local.0] && !self.guard.contains(local) => {
                 Some(whole(*local))
             }
             ExprKind::Field { base, index } => {
@@ -214,7 +220,9 @@ impl Lowering<'_> {
         let borrows = borrowed.is_some();
         let seed = (borrowed.as_ref())
             .filter(|place| {
-                place.projections.is_empty() && matches!(scrutinee.ty.kind(), TypeKind::Enum(_))
+                place.projections.is_empty()
+                    && matches!(scrutinee.ty.kind(), TypeKind::Enum(_))
+                    && self.borrowed.get(place.local.0) == Some(&true)
             })
             .map(|place| place.local)
             // A later read, or a loop, makes the scrutinee a copy that shares the box.

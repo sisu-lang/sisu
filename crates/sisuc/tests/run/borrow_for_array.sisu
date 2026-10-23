@@ -1,0 +1,50 @@
+class Bag {
+    mut items: [string]
+}
+
+fn total(xs: [i64]) -> i64 {
+    let mut s = 0
+    for x in xs { s += x }
+    s
+}
+
+fn total2(xs: [i64]) -> i64 {
+    let mut s = 0
+    for i in 0..xs.len() { s += xs[i] }
+    s
+}
+
+fn lengths(ws: [string]) -> i64 {
+    let mut n = 0
+    for w in ws { n += w.len() }
+    n
+}
+
+// The loop reads a copy of `ys`, so the writes do not change what it visits.
+fn doubled(xs: [i64]) -> i64 {
+    let mut ys = xs
+    let mut s = 0
+    for y in ys {
+        ys[0] = y + 1
+        s += y
+    }
+    s + ys[0]
+}
+
+// `items` is a `mut` field, so the loop reads a copy of it.
+fn drain(b: Bag) -> i64 {
+    let mut n = 0
+    for w in b.items {
+        b.items = []
+        n += w.len()
+    }
+    n
+}
+
+fn main() {
+    let xs = [1, 2, 3]
+    print(total(xs) + total2(xs)) // 12
+    print(lengths(["ab", "cde"])) // 5
+    print(doubled([1, 2, 3])) // 10
+    print(drain(Bag(items: ["a", "bc"]))) // 3
+}

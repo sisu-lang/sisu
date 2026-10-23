@@ -11,8 +11,8 @@
 //!   only its own block mentions, gives `d → l`. Lowering reads a value a statement only reads
 //!   into such a temporary: `print(s)` is `_1 = use s; print(_1); release _1`. A named `d`, one
 //!   assigned on several paths to a join, or one used or released in another block, such as a
-//!   `for` loop's array, consumes `l` instead: pairs (part 3) cannot drop a copy whose release
-//!   is in another block.
+//!   spilled operand of a call, consumes `l` instead: pairs (part 3) cannot drop a copy whose
+//!   release is in another block.
 //! - **owners:** a borrowed binding consumes the local it borrows from (the backward rule).
 //! - **call:** an argument naming `l` at position `i` of a call to `g` gives `(g, i) → l`.
 //! - **tail:** a call is in tail position when only scope releases and `end`s, through `goto`s,

@@ -7,8 +7,16 @@ fn lowers_for_over_array() {
     contains(
         "fn f(xs: [i64]) { for x in xs { print(x) } }\nfn main() {}",
         &[
-            "(block (let #1 xs#0) (let #2 (len #1)) (let mut #3 0) (loop (block (if (< #3 #2) (block (let x#4 (index #1 #3)) (= #3 (+unchecked #3 1)) (block (print x#4))) (block (break))))))",
+            "(block (let #1 (len xs#0)) (let mut #2 0) (loop (block (if (< #2 #1) (block (let x#3 (index xs#0 #2)) (= #2 (+unchecked #2 1)) (block (print x#3))) (block (break))))))",
         ],
+    );
+}
+
+#[test]
+fn for_over_a_mut_local_should_copy_the_array() {
+    contains(
+        "fn f() { let mut xs = [1]\n    for x in xs { xs[0] = x } }\nfn main() {}",
+        &["(let #1 xs#0) (let #2 (len #1))"],
     );
 }
 
