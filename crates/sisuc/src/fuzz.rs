@@ -201,11 +201,16 @@ fn assert_safe_fixes(source: &str, diagnostics: &[Diagnostic]) {
             &mut codes(&fixed_lexer_diagnostics),
             &fixed,
         );
+        // A report of the code where `d` was is another one's when the fix moved that one there.
+        let at = moved_span(d.span());
+        let moved_there = diagnostics
+            .iter()
+            .any(|e| !std::ptr::eq(e, d) && e.code() == code && moved_span(e.span()) == at);
         assert!(
-            !after
-                .iter()
-                .any(|e| e.code() == code
-                    && (e.span().start(), e.span().end()) == moved_span(d.span())),
+            moved_there
+                || !after
+                    .iter()
+                    .any(|e| e.code() == code && (e.span().start(), e.span().end()) == at),
             "{code:?}: a safe fix leaves its diagnostic:\n{fixed}"
         );
     }
@@ -596,6 +601,17 @@ mod tests {
     fn rejects_a_safe_fix_that_leaves_its_diagnostic_moved() {
         let at = STRAY.find('$').expect("STRAY has a `$`");
         assert_safe_fixes(STRAY, &stray_with_fix(&[(span(at - 1, at), "  ")]));
+    }
+
+    /// The fix of a `;` at the start of a line also removes the blanks after it, so removing the
+    /// first `;` moves the second to where the first was. That report is the second `;`'s.
+    #[test]
+    fn report_moved_to_a_fixed_place_should_not_count_as_kept() {
+        let src = "fn main() {\n    print(1)\n;  ;\n}\n";
+        let ds = crate::front_end::front_end(src).1;
+        let codes: Vec<Code> = ds.iter().map(Diagnostic::code).collect();
+        assert_eq!(codes, [Code::RedundantSemicolon, Code::RedundantSemicolon]);
+        assert_safe_fixes(src, &ds);
     }
 
     /// Past the `$`, the first lexer error, the parser's E0011 is not compared: a fix may remove
