@@ -62,6 +62,13 @@ entry = "scripts/check-test-wording.sh"
 types = ["rust"]
 
 [[repos.hooks]]
+id = "test-names"
+name = "test names say what should hold"
+language = "system"
+entry = "python3 scripts/test_names.py"
+types = ["rust"]
+
+[[repos.hooks]]
 id = "registry-no-debug-format"
 name = "diagnostic text does not use {:?}"
 language = "system"

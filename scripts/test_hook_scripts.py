@@ -7,6 +7,7 @@ import unittest
 
 import comment_width
 import registry_debug_format
+import test_names
 
 
 def run(main, text):
@@ -41,6 +42,58 @@ class RegistryDebugFormat(unittest.TestCase):
     def test_debug_format_in_the_tests_passes(self):
         text = 'use a;\n#[cfg(test)]\nformat!("{x:?}")\n'
         self.assertEqual(run(registry_debug_format.main, text), (0, ''))
+
+
+def run_test_names(text, path='crates/sisuc/src/f.rs', baseline=''):
+    """test_names' exit code and output on one file at `path` holding `text`."""
+    with tempfile.TemporaryDirectory() as d:
+        full = os.path.join(d, path)
+        os.makedirs(os.path.dirname(full))
+        with open(full, 'w', encoding='utf-8') as f:
+            f.write(text)
+        old = os.path.join(d, 'baseline.txt')
+        with open(old, 'w', encoding='utf-8') as f:
+            f.write(baseline.replace('PATH', full))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = test_names.main([full], old)
+    return code, out.getvalue()
+
+
+GWT = '/// GIVEN a file\n/// WHEN sisu builds it\n/// AND it runs\n/// THEN it prints 1\n'
+
+
+class TestNames(unittest.TestCase):
+    def test_a_name_without_should_should_fail_at_its_fn_line(self):
+        code, out = run_test_names('#[test]\n#[should_panic]\nfn emit_ir() {}\n')
+        self.assertEqual(code, 1)
+        self.assertIn(':3: test name `emit_ir`', out)
+
+    def test_a_name_with_should_should_pass(self):
+        self.assertEqual(run_test_names('#[test]\nfn ir_should_verify() {}\n'), (0, ''))
+
+    def test_a_name_in_the_baseline_should_pass(self):
+        text = '#[test]\nfn emit_ir() {}\n'
+        self.assertEqual(run_test_names(text, baseline='# old\nPATH::emit_ir\n'), (0, ''))
+
+    def test_an_end_to_end_test_should_fail_without_then(self):
+        text = '/// GIVEN a file\n/// WHEN sisu builds it\n#[test]\nfn ir_should_verify() {}\n'
+        code, out = run_test_names(text, path='crates/sisuc/tests/cli.rs')
+        self.assertEqual(code, 1)
+        self.assertIn(':4: end-to-end test `ir_should_verify` needs GIVEN', out)
+
+    def test_an_end_to_end_test_should_fail_when_its_lines_are_out_of_order(self):
+        text = ('/// WHEN sisu builds it\n/// GIVEN a file\n/// THEN it prints 1\n'
+                '#[test]\nfn ir_should_verify() {}\n')
+        self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs')[0], 1)
+
+    def test_an_end_to_end_test_should_pass_with_given_when_and_then_above_its_attributes(self):
+        text = GWT + '#[test]\n#[ignore]\nfn ir_should_verify() {}\n'
+        self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs'), (0, ''))
+
+    def test_a_unit_test_should_pass_without_given_when_and_then(self):
+        text = '#[test]\nfn ir_should_verify() {}\n'
+        self.assertEqual(run_test_names(text, path='crates/sisuc/src/check/tests/u8.rs'), (0, ''))
 
 
 if __name__ == '__main__':
