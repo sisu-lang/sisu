@@ -62,7 +62,7 @@ The rules:
 
 ## Calls
 
-A call does not copy its arguments. A parameter cannot change ([Parameters](functions.md#parameters)), so a function cannot change a value of its caller that behaves as a copy.
+A call does not copy its arguments. A parameter cannot change ([Parameters](functions.md#parameters)), so a function cannot change a value that it gets as an argument and that behaves as a copy.
 
 A function can write the `mut` fields of an object that it gets, because the object is shared.
 
@@ -119,7 +119,7 @@ The rules:
 
 Sisu counts the references to each object. An object is freed at once when its last reference goes away.
 
-A reference held by a local can go away at its last use, before the end of its block. When Sisu frees an object, the references in its fields go away too. So an object that only it held is freed after it.
+A reference held by a local can go away at its last use, before the end of its block. When Sisu frees an object, it releases the references in the fields of that object. So an object whose last reference was in such a field is freed too.
 
 ```sisu
 class Node {
