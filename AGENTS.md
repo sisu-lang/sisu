@@ -19,6 +19,10 @@ Once per clone, run `make setup`. It installs LLVM 23 into `.llvm/23`, which `.c
 - Reviews: apply `CODING_STANDARDS.md`.
 - Write code to the rules in `CODING_STANDARDS.md` as well as reviewing against them; its Performance section covers allocation and measurement.
 
+## Writing
+
+Write all prose in ASD-STE100 Simplified Technical English: diagnostics, comments, docs, commit messages, pull requests and GitHub issues. `CODING_STANDARDS.md` (Writing) has the rules.
+
 ## Open-source facts: use GitHits, do not guess
 
 Check every fact about an open-source dependency, tool or GitHub Action (`inkwell`, `llvm-sys`, LLVM, `cargo-nextest`, `cargo-deny`, `prek`, `.github/workflows/`) with the GitHits tools, at the version in `Cargo.lock` or the pinned SHA; the `githits-mcp` skill says which tool to use. Cite what you used and name what you could not verify. If GitHits is unavailable, say so and read the pinned source in `~/.cargo/registry/src/`.
@@ -27,11 +31,11 @@ Check every fact about an open-source dependency, tool or GitHub Action (`inkwel
 
 ### Issue tracker
 
-Issues live as local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+Issues are GitHub issues on `sisu-lang/sisu`, made with `gh api`. When GitHub cannot be reached, write a fallback issue under `.scratch/<feature>/issues/`. Specs, plans and review notes are private and never go into an issue. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), recorded as `Status:` lines. See `docs/agents/triage-labels.md`.
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), as GitHub labels, plus kind, area and severity labels. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 

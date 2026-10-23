@@ -18,8 +18,8 @@ people and agents alike. This page is the route through them.
    or explain each uncovered region and kill or explain each surviving
    mutant.
 
-Work is tracked as local Markdown issues under `.scratch/`, as
-[docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) describes.
+Work is tracked as [GitHub issues](https://github.com/sisu-lang/sisu/issues),
+as [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) describes.
 
 ## Pull requests
 

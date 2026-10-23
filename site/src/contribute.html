@@ -32,7 +32,7 @@ How to help with Sisu, a one-person learning project at an early stage.
       <ul>
         <li><strong>A program that gives a wrong answer.</strong> Correctness comes first: a program must never give a silent wrong answer. A nightly fuzzer runs generated programs and compares their builds, but it finds only what its generator writes, so a small program that shows one is valuable.</li>
         <li><strong>A program that crashes the compiler or leaks memory.</strong> The smaller the program, the easier it is to turn into a test case.</li>
-        <li><strong>An error message that misleads.</strong> Diagnostics should be simple, clear and specific. Wording that is wrong, vague or full of compiler jargon counts as a bug.</li>
+        <li><strong>An error message that misleads.</strong> Diagnostics should be clear and specific, in simple technical English. Wording that is wrong, vague or full of compiler jargon counts as a bug.</li>
         <li><strong>A benchmark that disagrees.</strong> <a href="benchmarks.html">The benchmarks</a> compare Sisu with other languages. A result you cannot reproduce, measured as <a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md#running-them">the benchmark guide</a> describes, is worth knowing.</li>
         <li><strong>A document that is wrong.</strong> A doc that states what a program prints must match a real run.</li>
       </ul>
@@ -42,8 +42,8 @@ How to help with Sisu, a one-person learning project at an early stage.
       <p>Each step of work is designed before it is built. Its design is settled in a working spec, and the lasting decisions become ADRs. A proposal in the roadmap is not decided until it lands in a spec or an ADR.</p>
       <p>So raise an idea before you write code for it. Read the <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#open-decisions">open decisions</a> first: your idea may already be one of them.</p>
       <p>Open a <a href="https://github.com/sisu-lang/sisu/issues">GitHub issue</a> to discuss an idea.</p>
-      <p>The maintainer's own work is tracked as local Markdown files, not in a public issue tracker.</p>
-      <!-- source: docs/roadmap.md (intro: design settled in a working spec, lasting ones recorded as ADRs; "Beyond milestone 6": nothing decided until it lands in a spec or an ADR; "Open decisions"), CONTRIBUTING.md (local Markdown issues under .scratch/); the owner's answer, 2026-10-18: ideas go to GitHub issues -->
+      <p>The maintainer's own work is tracked in the same <a href="https://github.com/sisu-lang/sisu/issues">GitHub issues</a>.</p>
+      <!-- source: docs/roadmap.md (intro: design settled in a working spec, lasting ones recorded as ADRs; "Beyond milestone 6": nothing decided until it lands in a spec or an ADR; "Open decisions"), CONTRIBUTING.md (work is tracked as GitHub issues); the owner's answer, 2026-10-18: ideas go to GitHub issues -->
 
       <h2 id="build">Build from source</h2>
       <p>Sisu builds and runs on x86-64 and ARM64 Linux and on ARM64 macOS. You need:</p>

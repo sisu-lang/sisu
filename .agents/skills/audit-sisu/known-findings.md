@@ -2,7 +2,7 @@
 
 Behavior a run must not report as new: intended, documented, or ruled
 won't-fix. Step 5 of the skill adds a row each time the user rules on a
-finding. A finding that is ticketed lives in `.scratch/`, not here.
+finding. A finding that is ticketed is a GitHub issue, not a row here.
 
 | Behavior | Ruling | Source |
 | --- | --- | --- |

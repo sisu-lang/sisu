@@ -6,7 +6,7 @@ Reviewers apply these rules to every diff. Clippy, rustfmt and prek already enfo
 
 - **Approve against the done condition.** Approve when every line of the task's done condition holds in the diff and the code, the fix reaches the cause the task names and not only its repro, and the diff adds no wrong output, crash, leak, unsound IR or newly rejected valid program. Check a cheap claim yourself with a repro or a test. When the task states no done condition, write the bar you applied above your verdict. Everything else is a nit, and a nit never blocks.
 - **Block regressions, not old gaps.** Compare with the code before the diff. A defect the diff introduces blocks. A defect the old code had too is a nit: the diff names it in a comment or doc note, and fixing it is a separate task.
-- **Diagnostic wording blocks when it misleads.** Messages, labels and help text are simple, clear and specific technical English. Block for a wrong code, a wrong position, a cascade, a crash or wrong behaviour, and for wording that is wrong, misleading, vague, full of compiler jargon, or different from the spec's text. A weak unsafe fix, or a rewording where both versions are clear, is a nit.
+- **Diagnostic wording blocks when it misleads.** Messages, labels and help text are clear and specific, and follow "Writing" below. Block for a wrong code, a wrong position, a cascade, a crash or wrong behaviour, and for wording that is wrong, misleading, vague, full of compiler jargon, or different from the spec's text. A weak unsafe fix, or a rewording where both versions are clear, is a nit.
 - **A nit names what it changes.** Give the input whose output, diagnostic or cost changes, or mark the nit "comment only". Drop a nit whose change no test could observe.
 - **A comment's facts were observed.** A comment or doc that states run-time behavior, such as a printed value, an order, or what the OS or a library does, matches a real run or the cited source. Check each such claim in the diff. A wrong one blocks.
 - **Export a commit to build it.** `git -C <repo> archive <sha> | tar -x -C <scratch dir>` gives a clean copy to build, run or mutate; link `.llvm` into it from the repository. Do not use `git worktree add`: it leaves an entry in the shared `.git` that a sandbox cannot prune.
@@ -60,6 +60,12 @@ Reviewers apply these rules to every diff. Clippy, rustfmt and prek already enfo
 - **A recovery or fix change is probed for cascades.** Fixing only the first error must leave every other diagnostic in place ([ADR 0013](docs/adr/0013-diagnostics-have-stable-codes.md)). Probe skipped text inside, before and after an item; a broken item header; a redeclared name; and a failed condition before a branch that returns. `each_safe_fix_removes_exactly_its_diagnostic` checks the fixtures; the reviewer probes the inputs no fixture covers.
 - **The primary span covers the offending code.** For "end of line" and "end of file", it is an empty span at that point. `Diagnostic::render` asserts in debug builds that every span sits on character boundaries and does not end with a line break.
 - **A span comes from its token or node.** Carry the keyword's or operand's own span into the AST rather than computing one as `span.start + n` from a wider span: a parenthesized expression's span starts at `(`, and a comment can put multi-byte characters before the token. Stepping one byte past a known ASCII byte, such as a `"`, is fine.
+
+## Writing
+
+- **Text follows ASD-STE100 Simplified Technical English.** This applies to diagnostic messages, labels and help text, comments and doc comments, docs, commit messages, and pull request and issue text. An instruction has at most 20 words, and a description at most 25 words. Write one idea in each sentence. Use the active voice and the present tense. Use common words, and give each word one meaning: "use", not "leverage" or "utilise". Do not use idioms. Code names, types, error codes and flags stay as they are.
+- **Only new and changed text must comply.** A diff does not reword old text that it does not touch.
+- **A violation is a nit.** It blocks only when the text also misleads or is vague, as "Diagnostic wording blocks when it misleads" says.
 
 ## Files the compiler writes
 
