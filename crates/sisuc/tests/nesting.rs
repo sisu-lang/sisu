@@ -249,8 +249,11 @@ fn errors_past_the_limit(name: &str, program: fn(usize) -> Generated, limit: usi
 macro_rules! construct {
     ($name:ident, $program:ident, $limit:expr) => {
         mod $name {
+            /// GIVEN a generated program that nests one construct as deep as the limit allows
+            /// WHEN it is built and run
+            /// THEN the build prints no diagnostic and the program exits 0
             #[test]
-            fn compiles_at_the_limit() {
+            fn construct_should_compile_at_the_nesting_limit() {
                 super::compiles_at_the_limit(
                     concat!("nesting_", stringify!($name)),
                     super::$program,
@@ -258,8 +261,11 @@ macro_rules! construct {
                 );
             }
 
+            /// GIVEN a generated program that nests one construct one level past the limit
+            /// WHEN `check` runs on it
+            /// THEN it exits 1 with the one nesting error at the token where the depth runs out
             #[test]
-            fn errors_one_level_past_the_limit() {
+            fn construct_should_report_nesting_too_deep_one_level_past_the_limit() {
                 super::errors_past_the_limit(
                     concat!("nesting_past_", stringify!($name)),
                     super::$program,
@@ -291,11 +297,15 @@ construct!(array_types, array_type, 254);
 construct!(match_bodies, match_body, 254);
 construct!(match_patterns, match_pattern, 253);
 
+/// GIVEN a `match` that nests in the assignment arm bodies of other `match` expressions
+/// WHEN it is parsed with `--emit ast` at the limit and one level past it
+/// THEN parsing succeeds at the limit and reports the nesting error one level past it
+///
 /// An assignment arm body sits in a block of its own, one level more, so `x = match …` nests half
-/// as far as `match … => match …` (`match_bodies`). Its arms have no value, so the program stops at
-/// `--emit ast`, before the checker.
+/// as far as `match … => match …` (`match_bodies`). Its arms have no value, so the program stops
+/// at `--emit ast`, before the checker.
 #[test]
-fn match_nests_to_the_limit() {
+fn nested_assignment_match_should_parse_to_the_limit_and_fail_one_level_past_it() {
     type Program = fn(usize) -> String;
     let cases: [(&str, usize, Program); 1] = [("assignment", 127, |n| {
         "x = ".to_string() + &"match y { _ => x = ".repeat(n) + "1" + &" }".repeat(n)
@@ -318,11 +328,15 @@ fn match_nests_to_the_limit() {
     }
 }
 
+/// GIVEN a pattern that nests variants, each holding an alternation of two patterns
+/// WHEN it is parsed with `--emit ast` at 126 levels and at 127 levels
+/// THEN parsing succeeds at 126 levels and reports the nesting error at 127 levels
+///
 /// An alternation is the parent of its alternatives, one level more than a pattern without one:
 /// `R.A(<inner> | _)` nests half as far as `R.A(<inner>)` (`match_patterns`). It stops at
 /// `--emit ast`, so the test isolates parsing.
 #[test]
-fn alternatives_nest_a_level_more() {
+fn alternation_patterns_should_count_one_more_level_of_nesting_than_plain_patterns() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let limit = 126;
     for (n, code) in [(limit, Some(0)), (limit + 1, Some(1))] {
@@ -344,10 +358,14 @@ fn alternatives_nest_a_level_more() {
     }
 }
 
+/// GIVEN a `**` whose right side is wrapped in 253 or in 254 parentheses
+/// WHEN `check` runs on it
+/// THEN it reports one `E0107` error at 253 parentheses and one `E0071` error at 254
+///
 /// The right side of a `**` is parsed as a `*`'s would be, one level in: the parser reports the
 /// `**` up to 253 parentheses deep, and the depth past that, which no other construct ends with.
 #[test]
-fn the_right_side_of_a_power_nests_one_level_in() {
+fn power_right_side_should_count_one_level_of_nesting_more_than_its_operator() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     for (n, code) in [(253, "E0107"), (254, "E0071")] {
         let source = format!(
@@ -387,8 +405,11 @@ fn assert_too_deep(name: &str, source: &str) {
     }
 }
 
+/// GIVEN programs that nest parentheses, sums, `else if`, patterns, `match` and types 100000 deep
+/// WHEN `check`, `build --emit ast` and `build` run on each
+/// THEN each run exits 1 with the one nesting error and does not abort
 #[test]
-fn a_hundred_thousand_levels_is_an_error_not_an_abort() {
+fn programs_nested_a_hundred_thousand_levels_should_fail_with_one_nesting_error() {
     let n = 100_000;
     let body = |expr: String| format!("fn main() {{\n    print({expr})\n}}\n");
     assert_too_deep(
@@ -439,11 +460,15 @@ fn wrapped_chains(suffix: &str, links: usize, rounds: usize) -> String {
     format!("{PRELUDE}fn main() {{\n    print({expr})\n}}\n")
 }
 
+/// GIVEN programs that wrap a chain in parentheses and chain onto it again, for many rounds
+/// WHEN `check`, `build --emit ast` and `build` run on each
+/// THEN each run exits 1 with the one nesting error
+///
 /// Each round builds a subtree about `links` high and wraps it in parentheses, which are no node
 /// of their own. The parser must still see the height when the next round's chain stacks onto it:
 /// a hundred rounds of a hundred links is a tree ten thousand high, not a hundred.
 #[test]
-fn a_chain_on_top_of_a_wrapped_chain_adds_to_its_height() {
+fn chains_stacked_on_wrapped_chains_should_add_their_heights() {
     // `links` is 1 for the operators that do not chain: `a == b == c` is an error.
     let shapes = [
         ("+1", 100),
@@ -470,16 +495,25 @@ fn a_chain_on_top_of_a_wrapped_chain_adds_to_its_height() {
     }
 }
 
-/// The repro of the review: it parsed with `--emit ast` and overflowed the stack in the checker.
+/// GIVEN a program of a hundred rounds that wrap a sum of a hundred terms in parentheses
+/// WHEN `check`, `build --emit ast` and `build` run on it
+/// THEN each run exits 1 with the one nesting error
+///
+/// This is the repro of the review: it parsed with `--emit ast` and overflowed the stack in the
+/// checker.
 #[test]
-fn a_hundred_rounds_of_a_hundred_plus_terms_is_too_deep() {
+fn sums_wrapped_a_hundred_times_should_fail_with_one_nesting_error() {
     assert_too_deep("nesting_wrapped_sum", &wrapped_chains("+1", 100, 100));
 }
 
+/// GIVEN a sum and a method chain of ten thousand steps
+/// WHEN `check`, `build --emit ast` and `build` run on each
+/// THEN each run exits 1 with the one nesting error
+///
 /// A flat chain is as tall as it is long when each operator or `.` wraps the one before, so a
 /// long one is the same error and never an overflow.
 #[test]
-fn a_ten_thousand_step_left_chain_is_too_deep() {
+fn left_chains_of_ten_thousand_steps_should_fail_with_one_nesting_error() {
     let n = 10_000;
     let body = |expr: String| format!("{PRELUDE}fn main() {{\n    print({expr})\n}}\n");
     assert_too_deep("nesting_long_sum", &body(format!("1{}", "+1".repeat(n))));
@@ -492,10 +526,14 @@ fn a_ten_thousand_step_left_chain_is_too_deep() {
     );
 }
 
+/// GIVEN a comparison chain of ten thousand operands
+/// WHEN it is built and run
+/// THEN the build prints no diagnostic and the program prints `false`
+///
 /// A comparison chain `a < b < c` is one node with all its operands, so ten thousand of them are
 /// a shallow tree and compile.
 #[test]
-fn a_ten_thousand_operand_comparison_chain_is_shallow() {
+fn comparison_chain_of_ten_thousand_operands_should_compile_as_a_shallow_tree() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let source = format!("fn main() {{\n    print(1{})\n}}\n", "<1".repeat(10_000));
     fs::write(dir.join("nesting_compare.sisu"), source).expect("writes");
@@ -513,11 +551,15 @@ fn a_ten_thousand_operand_comparison_chain_is_shallow() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "false\n");
 }
 
+/// GIVEN a sum of `k` links inside an operand of a comparison, a method call, an index or a call
+/// WHEN it is parsed with `--emit ast` for the deepest `k` that parses and for one more
+/// THEN parsing succeeds for the deepest `k` and reports the nesting error for one more
+///
 /// A node that wraps what was parsed puts the new operand one level below itself and everything
 /// it wrapped one level deeper. Each shape is `print(<expr>)` with a sum of `k` links inside the
 /// operand, and parsing alone decides: the deepest `k` that parses, and the first that does not.
 #[test]
-fn an_operand_of_a_wrapping_node_counts_the_wrapping_node() {
+fn operands_of_wrapping_nodes_should_count_the_wrapping_node_in_their_depth() {
     type Shape = (&'static str, fn(usize) -> String, usize);
     let shapes: [Shape; 6] = [
         ("sum", |k| format!("1{}", "+1".repeat(k)), 253),
@@ -553,10 +595,14 @@ fn an_operand_of_a_wrapping_node_counts_the_wrapping_node() {
     }
 }
 
+/// GIVEN a sum of a hundred parenthesized groups, each a sum of a hundred terms
+/// WHEN `check` runs on it
+/// THEN it exits 0 and prints no diagnostic
+///
 /// Many subtrees side by side are not nested: a hundred groups of a hundred terms, joined by `+`,
 /// stand about two hundred high, far less than their ten thousand terms.
 #[test]
-fn wide_trees_are_not_counted_by_size() {
+fn wide_trees_should_pass_check_because_depth_is_not_size() {
     let group = format!("(1{})", "+1".repeat(100));
     let sum = vec![group; 100].join("+");
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -569,10 +615,14 @@ fn wide_trees_are_not_counted_by_size() {
     );
 }
 
+/// GIVEN a function of 300 groups of statements that each nest a little
+/// WHEN `check` runs on it
+/// THEN it exits 0 and prints no diagnostic
+///
 /// Depth is the nesting at a point, not a count of everything parsed: a function of many
 /// statements, each nesting a little, stays far below the limit at every statement.
 #[test]
-fn siblings_do_not_add_up_to_the_limit() {
+fn sibling_statements_should_not_add_up_to_the_nesting_limit() {
     let group = |i: usize| {
         format!(
             "\

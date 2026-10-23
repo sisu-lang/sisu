@@ -8,8 +8,11 @@ use std::process::{Command, Output, Stdio};
 
 mod scratch_path;
 
+/// GIVEN a file that holds `fn main() {}`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output starts with the `Fn` token at 1:1 and the `Ident` token at 1:4
 #[test]
-fn emit_tokens() {
+fn emit_tokens_should_print_each_token_with_its_line_and_column() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens.sisu"), "fn main() {}\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -21,8 +24,12 @@ fn emit_tokens() {
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("1:1 Fn fn\n1:4 Ident main\n"));
 }
 
+/// GIVEN a source with `class`, `None`, `is`, `self`, `.`, `?`, `?.`, `??` and `_`
+/// WHEN it is built with `--emit tokens`
+/// THEN the first nine token names are `Class`, `NoneKw`, `Is`, `SelfKw`, `Dot`, `Question`,
+/// `QuestionDot`, `QuestionQuestion` and `Underscore`
 #[test]
-fn emit_tokens_names_the_class_and_optional_tokens() {
+fn emit_tokens_should_name_the_class_none_and_optional_chaining_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("emit_new_tokens.sisu"),
@@ -56,8 +63,11 @@ fn emit_tokens_names_the_class_and_optional_tokens() {
     );
 }
 
+/// GIVEN a source with the character literals `'ä'` and `'\n'`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output starts with two `Char` tokens, at 1:1 and at 1:5, that show each literal
 #[test]
-fn emit_tokens_char() {
+fn emit_tokens_should_print_a_char_token_for_each_character_literal() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens_char.sisu"), "'ä' '\\n'\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -73,8 +83,11 @@ fn emit_tokens_char() {
     );
 }
 
+/// GIVEN a source that holds only the literal `1.5e3`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output is one `Float` token, then `Newline` and `Eof` at 1:6
 #[test]
-fn emit_tokens_float() {
+fn emit_tokens_should_print_a_float_token_for_a_literal_with_an_exponent() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens_float.sisu"), "1.5e3\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -89,8 +102,11 @@ fn emit_tokens_float() {
     );
 }
 
+/// GIVEN a source that holds `x ** 2`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output has one `StarStar` token between the `Ident` and the `Int` tokens
 #[test]
-fn emit_tokens_star_star() {
+fn emit_tokens_should_print_a_star_star_token_for_the_power_operator() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens_star_star.sisu"), "x ** 2\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -105,8 +121,11 @@ fn emit_tokens_star_star() {
     );
 }
 
+/// GIVEN a source that holds only `todo`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output is a `Todo` token, then `Newline` and `Eof`
 #[test]
-fn emit_tokens_todo() {
+fn emit_tokens_should_print_a_todo_token_for_the_todo_keyword() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens_todo.sisu"), "todo\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -121,8 +140,13 @@ fn emit_tokens_todo() {
     );
 }
 
+/// GIVEN a source with a character literal, a string with two holes and a plain string
+/// WHEN it is built with `--emit tokens`
+/// THEN the output has `StrHead`, `StrMiddle` and `StrTail` tokens around the holes, and a `Str`
+/// token
+/// for the plain string
 #[test]
-fn emit_tokens_strings() {
+fn emit_tokens_should_split_an_interpolated_string_into_head_middle_and_tail_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("emit_tokens_strings.sisu"),
@@ -145,8 +169,11 @@ fn emit_tokens_strings() {
     }
 }
 
+/// GIVEN a source with the words `record` and `const` on two lines
+/// WHEN it is built with `--emit tokens`
+/// THEN `record` is a `Reserved` token at 1:1 and `const` is a `Const` token at 2:1
 #[test]
-fn emit_tokens_reserved() {
+fn emit_tokens_should_print_reserved_and_const_words_as_their_own_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens_reserved.sisu"), "record\nconst\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -160,8 +187,11 @@ fn emit_tokens_reserved() {
     assert!(stdout.contains("\n2:1 Const const\n"), "{stdout}");
 }
 
+/// GIVEN a source that holds `a & b`
+/// WHEN it is built with `--emit tokens`
+/// THEN the exit code is 1, the first diagnostic is an error, and it is E0010 at 1:3 of the file
 #[test]
-fn lexer_error_exits_1() {
+fn emit_tokens_should_exit_1_with_e0010_when_the_source_has_an_unknown_character() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("lexer_error_exits_1.sisu"), "a & b\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -179,9 +209,13 @@ fn lexer_error_exits_1() {
     );
 }
 
+/// GIVEN a source that holds a stray bracket
+/// WHEN it is built with `--emit tokens` and with `--emit ast`
+/// THEN each run exits 1 and the first diagnostic on stderr is an error
+///
 /// A source the lexer cannot finish (a stray bracket) fails `--emit tokens` and `--emit ast`.
 #[test]
-fn unlexable_source_exits_1_for_tokens_and_ast() {
+fn emit_tokens_and_ast_should_exit_1_when_the_lexer_cannot_finish_the_source() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("unlexable_source.sisu"), ")\n").expect("writes");
     for stage in ["tokens", "ast"] {
@@ -199,9 +233,13 @@ fn unlexable_source_exits_1_for_tokens_and_ast() {
     }
 }
 
+/// GIVEN no arguments, `help`, `-h` or `--help`
+/// WHEN `sisu` runs
+/// THEN it exits 0, stdout names `build`, `run`, `check` and `explain`, and stderr is empty
+///
 /// No arguments, `help`, `-h` and `--help` print the usage to stdout and exit 0.
 #[test]
-fn help_and_no_arguments_exit_0() {
+fn usage_should_print_to_stdout_and_exit_0_when_help_is_asked_for() {
     for args in [&[][..], &["help"], &["-h"], &["--help"]] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
             .args(args)
@@ -216,6 +254,10 @@ fn help_and_no_arguments_exit_0() {
     }
 }
 
+/// GIVEN a stdout that is `/dev/full`
+/// WHEN `sisu` prints help, the version, an explanation or any emitted stage
+/// THEN it exits 1 and stderr says it cannot write to stdout because no space is left
+///
 /// Help, version, an explanation and an emitted stage that cannot be written are a tool error,
 /// not a panic or a silent success.
 #[test]
@@ -223,7 +265,7 @@ fn help_and_no_arguments_exit_0() {
     not(target_os = "linux"),
     ignore = "writes to /dev/full, which only Linux has"
 )]
-fn output_into_a_full_stdout_is_a_tool_error() {
+fn sisu_should_exit_1_with_a_tool_error_when_stdout_is_full() {
     const MAIN: &str = "fn main() { print(1) }";
     for args in [
         &[][..],
@@ -257,10 +299,14 @@ fn output_into_a_full_stdout_is_a_tool_error() {
     }
 }
 
+/// GIVEN a stdout pipe whose read end is closed
+/// WHEN `sisu` prints `--help` or an explanation
+/// THEN it exits 0 and stderr is empty
+///
 /// A reader that has already left is a quiet end, not an error: `sisu --help | head -1`. The read
 /// end is closed before `sisu` starts, so the write fails every time.
 #[test]
-fn output_into_a_closed_pipe_is_quiet() {
+fn sisu_should_exit_0_and_print_no_error_when_stdout_is_a_closed_pipe() {
     // `--help` is written by clap in several writes, `explain` by `print_stdout`.
     for args in [&["--help"][..], &["explain", "E0001"]] {
         let (reader, writer) = std::io::pipe().expect("a pipe should open");
@@ -276,9 +322,15 @@ fn output_into_a_closed_pipe_is_quiet() {
     }
 }
 
+/// GIVEN an unknown command, a missing argument, a repeated file or a flag the command does not
+/// allow
+/// WHEN `sisu` runs
+/// THEN it exits 2 with clap's error on stderr and nothing on stdout
+/// AND the error for `-O2` with `--emit tir` names the flag and shows the usage of `build`
+///
 /// A wrong command line exits 2, and a broken flag rule names the flag with `build`'s usage.
 #[test]
-fn usage_errors_exit_2() {
+fn sisu_should_exit_2_with_a_usage_error_when_the_command_line_is_wrong() {
     assert_usage_errors(&[
         &["bogus"],
         &["build"],
@@ -297,15 +349,23 @@ fn usage_errors_exit_2() {
     assert!(stderr.contains("\nUsage: sisu build "), "{stderr}");
 }
 
+/// GIVEN `check` with no file, or with the arguments of another command
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
+///
 /// A subcommand with too few arguments, or with the arguments of another one.
 #[test]
-fn mode_with_the_wrong_arguments_is_a_usage_error() {
+fn check_should_exit_2_when_it_has_no_file_or_gets_the_arguments_of_another_command() {
     assert_usage_errors(&[&["check"], &["check", "tir", "f.sisu"]]);
 }
 
+/// GIVEN the flag `--version` or `-V`
+/// WHEN `sisu` runs
+/// THEN it exits 0, stdout is `sisu` and the package version, and stderr is empty
+///
 /// `--version` and `-V` print the name and the version, and nothing else.
 #[test]
-fn version_prints_the_version() {
+fn version_flags_should_print_the_name_and_the_version_and_nothing_else() {
     for flag in ["--version", "-V"] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
             .arg(flag)
@@ -321,10 +381,15 @@ fn version_prints_the_version() {
     }
 }
 
+/// GIVEN the flags `--version --verbose` or `-vV`
+/// WHEN `sisu` runs
+/// THEN it exits 0 and prints four lines: the name and version, the commit, the host and the LLVM
+/// version
+///
 /// `--version --verbose` adds the commit, the host and the LLVM version; each line is checked
 /// by shape, since the values change with the checkout and the machine.
 #[test]
-fn verbose_version_prints_four_lines() {
+fn verbose_version_should_print_name_commit_host_and_llvm_version_on_four_lines() {
     for args in [&["--version", "--verbose"][..], &["-vV"]] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
             .args(args)
@@ -365,9 +430,13 @@ fn verbose_version_prints_four_lines() {
     }
 }
 
+/// GIVEN `-v` alone, with `check`, or `-V` with a subcommand
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
+///
 /// `--verbose` means something only with `--version`; `--version` takes no subcommand.
 #[test]
-fn verbose_alone_is_a_usage_error() {
+fn verbose_should_exit_2_when_it_does_not_go_with_version() {
     assert_usage_errors(&[
         &["-v"],
         &["check", "-v", "f.sisu"],
@@ -393,9 +462,14 @@ fn assert_usage_errors(cases: &[&[&str]]) -> String {
     stderr
 }
 
+/// GIVEN `--rc-checks` with `explain`, `check`, a stage other than `ir`, no file or a repeat
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
+/// AND the error for `--emit tir` names `--rc-checks` and the commands that allow it
+///
 /// `--rc-checks` goes only with a build or IR, once.
 #[test]
-fn rc_checks_is_build_or_ir_only() {
+fn rc_checks_should_exit_2_when_the_command_cannot_use_it() {
     let cases: [&[&str]; 8] = [
         &["explain", "--rc-checks", "E0001"],
         &["build", "--rc-checks", "--emit", "tir", "f.sisu"],
@@ -417,10 +491,14 @@ fn rc_checks_is_build_or_ir_only() {
     );
 }
 
+/// GIVEN a program that prints 1
+/// WHEN it is built with `--emit ir-raw` or `--emit ir`, with and without `--rc-checks`
+/// THEN the IR calls `@sisu_rc_check_exit` with the flag, and does not call it without the flag
+///
 /// `--rc-checks` with `--emit ir-raw` and `--emit ir` prints the module with the count checks
 /// built in, so a refactor can compare that IR too; without it, the module has none.
 #[test]
-fn emit_ir_with_rc_checks() {
+fn emit_ir_should_contain_the_count_check_exit_function_only_with_rc_checks() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_rc.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
     let ir = |args: &[&str]| {
@@ -447,8 +525,11 @@ fn emit_ir_with_rc_checks() {
     assert!(!ir(&["build", "--emit", "ir-raw"]).contains("@sisu_rc_check_exit"));
 }
 
+/// GIVEN a program whose `main` prints `1 + 2`
+/// WHEN it is built with `--emit ast`
+/// THEN stdout is `(fn main () unit (block (call print (+ 1 2))))`
 #[test]
-fn emit_ast() {
+fn emit_ast_should_print_each_function_as_an_s_expression() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("emit_ast.sisu"),
@@ -467,8 +548,11 @@ fn emit_ast() {
     );
 }
 
+/// GIVEN a program that runs `x += 2` on a mutable variable
+/// WHEN it is built with `--emit ast`
+/// THEN the output has the node `(+= x 2)` and no `=` node
 #[test]
-fn emit_ast_keeps_compound_assign() {
+fn emit_ast_should_keep_a_compound_assignment_as_one_node() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("emit_ast_compound.sisu"),
@@ -487,8 +571,12 @@ fn emit_ast_keeps_compound_assign() {
     );
 }
 
+/// GIVEN a class with a `mut` field and a `main` with a `let mut` variable
+/// WHEN it is built with `--emit ast` and with `--emit tir`
+/// THEN both outputs print `mut` for the field and the variable, and the TIR numbers the variable
+/// as `x#0`
 #[test]
-fn emit_ast_and_tir_print_mut() {
+fn emit_ast_and_tir_should_print_mut_for_mutable_variables_and_fields() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("emit_mut.sisu"),
@@ -514,8 +602,11 @@ fn emit_ast_and_tir_print_mut() {
     );
 }
 
+/// GIVEN a source that holds `let x = 1` at the top level
+/// WHEN it is built with `--emit ast`
+/// THEN the exit code is 1 and the first diagnostic is the error E0011 at 1:1 of the file
 #[test]
-fn parse_error_exits_1() {
+fn emit_ast_should_exit_1_with_e0011_when_a_top_level_item_is_a_let() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("parse_error_exits_1.sisu"), "let x = 1\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -560,15 +651,21 @@ fn check(name: &str, source: &str) -> Output {
     run_on(name, source, &["check"])
 }
 
+/// GIVEN a valid file
+/// WHEN `sisu check` runs on it
+/// THEN it exits 0 and stderr is empty
 #[test]
-fn check_valid_file() {
+fn check_should_exit_0_with_no_output_when_the_file_is_valid() {
     let out = check("check_valid_file", "fn main() {\n    print(1)\n}\n");
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
 }
 
+/// GIVEN a file with a `let mut` variable that is never reassigned
+/// WHEN `sisu check` runs on it
+/// THEN it exits 0 and stderr starts with the warning W0002
 #[test]
-fn check_warning_exits_0() {
+fn check_should_exit_0_and_print_the_warning_when_the_file_has_only_a_warning() {
     let out = check(
         "check_warning_exits_0",
         "fn main() {\n    let mut count = 0\n    print(count)\n}\n",
@@ -577,8 +674,11 @@ fn check_warning_exits_0() {
     assert!(String::from_utf8_lossy(&out.stderr).starts_with("warning[W0002]: "));
 }
 
+/// GIVEN a file that assigns to an immutable variable
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 and stderr starts with the error E0001
 #[test]
-fn check_error_exits_1() {
+fn check_should_exit_1_and_print_the_error_when_the_file_has_an_error() {
     let out = check(
         "check_error_exits_1",
         "fn main() {\n    let n = 0\n    n = 1\n}\n",
@@ -587,8 +687,11 @@ fn check_error_exits_1() {
     assert!(String::from_utf8_lossy(&out.stderr).starts_with("error[E0001]: cannot assign to `n`"));
 }
 
+/// GIVEN a file with an unused `let mut` and an unknown name
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 and the warning comes before the error on stderr
 #[test]
-fn check_warning_and_error_exits_1() {
+fn check_should_print_the_warning_before_the_error_and_exit_1_when_the_file_has_both() {
     let out = check(
         "check_warning_and_error_exits_1",
         "fn f() { let mut x = 0 }\nfn main() { print(missing) }\n",
@@ -600,8 +703,11 @@ fn check_warning_and_error_exits_1() {
     assert!(warning < error, "{stderr}");
 }
 
+/// GIVEN the code `E0001` written as `E0001` and as `e0001`
+/// WHEN `sisu explain` runs
+/// THEN it exits 0, stdout is the page `docs/diagnostics/E0001.md`, and stderr is empty
 #[test]
-fn explain_prints_the_explanation() {
+fn explain_should_print_the_page_of_a_code_in_either_case() {
     let expected = fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../docs/diagnostics/E0001.md"
@@ -618,9 +724,13 @@ fn explain_prints_the_explanation() {
     }
 }
 
+/// GIVEN the retired code `E0012` written as `E0012` and as `e0012`
+/// WHEN `sisu explain` runs
+/// THEN it exits 0 and stdout has a line that starts with `Status: retired`
+///
 /// A retired code's page is still served, in either case, and says it is retired.
 #[test]
-fn explain_prints_a_retired_explanation() {
+fn explain_should_print_the_page_of_a_retired_code_with_its_status() {
     for code in ["E0012", "e0012"] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
             .args(["explain", code])
@@ -635,8 +745,11 @@ fn explain_prints_a_retired_explanation() {
     }
 }
 
+/// GIVEN the code `E9999`, which does not exist
+/// WHEN `sisu explain` runs
+/// THEN it exits 1, stdout is empty, and stderr says the code is unknown
 #[test]
-fn explain_rejects_an_unknown_code() {
+fn explain_should_exit_1_with_an_error_when_the_code_is_unknown() {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .args(["explain", "E9999"])
         .output()
@@ -649,8 +762,11 @@ fn explain_rejects_an_unknown_code() {
     );
 }
 
+/// GIVEN a path whose directory does not exist
+/// WHEN `sisu check` and `sisu run` run on it
+/// THEN each exits 1 and stderr says `sisu: cannot read` with the path
 #[test]
-fn unreadable_input_exits_1() {
+fn check_and_run_should_exit_1_when_the_input_file_cannot_be_read() {
     for command in ["check", "run"] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
             .current_dir(env!("CARGO_TARGET_TMPDIR"))
@@ -666,8 +782,11 @@ fn unreadable_input_exits_1() {
     }
 }
 
+/// GIVEN a sparse file that is one byte over 1 GiB
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 and stderr says the file is larger than 1 GiB
 #[test]
-fn oversized_input_is_a_tool_error() {
+fn check_should_exit_1_when_the_input_file_is_larger_than_1_gib() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let name = "oversized_input_is_a_tool_error.sisu";
     let file = fs::File::create(dir.join(name)).expect("creates");
@@ -686,8 +805,11 @@ fn oversized_input_is_a_tool_error() {
     );
 }
 
+/// GIVEN a valid program sent through a pipe to `/dev/stdin`
+/// WHEN `sisu check /dev/stdin` runs
+/// THEN it exits 0 and stderr is empty
 #[test]
-fn check_reads_a_pipe() {
+fn check_should_exit_0_when_the_source_comes_from_a_pipe() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .args(["check", "/dev/stdin"])
         .stdin(Stdio::piped())
@@ -723,8 +845,11 @@ fn check_bytes(name: &str, bytes: &[u8]) -> (Option<i32>, String) {
     )
 }
 
+/// GIVEN a file with two non-ASCII characters on line 1 and an invalid byte on line 2
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 and reports E0072 at 2:12, a column that counts characters and not bytes
 #[test]
-fn invalid_utf8_on_line_two_is_a_diagnostic_at_its_line_and_column() {
+fn check_should_report_e0072_at_the_character_column_when_line_two_is_not_utf8() {
     // Line 1 holds two non-ASCII chars on four bytes: the column counts chars, not bytes.
     let name = "invalid_utf8_line_two.sisu";
     let (code, stderr) = check_bytes(name, b"// \xc3\xa4\xc3\xa4\nfn main() {\xff}\n");
@@ -737,8 +862,11 @@ fn invalid_utf8_on_line_two_is_a_diagnostic_at_its_line_and_column() {
     );
 }
 
+/// GIVEN a file whose first byte is invalid UTF-8
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 and reports E0072 at 1:1
 #[test]
-fn invalid_utf8_at_the_start_is_a_diagnostic() {
+fn check_should_report_e0072_at_1_1_when_the_file_starts_with_an_invalid_byte() {
     let name = "invalid_utf8_start.sisu";
     let (code, stderr) = check_bytes(name, b"\xff\nfn main() {}\n");
     assert_eq!(code, Some(1));
@@ -750,8 +878,11 @@ fn invalid_utf8_at_the_start_is_a_diagnostic() {
     );
 }
 
+/// GIVEN a file that ends in the first two bytes of a three-byte character
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 and reports E0072 at 2:1
 #[test]
-fn a_truncated_character_at_end_of_file_is_a_diagnostic() {
+fn check_should_report_e0072_at_the_start_of_a_truncated_character_at_the_end_of_the_file() {
     // `\xe2\x82` starts the three-byte `€` and stops.
     let name = "invalid_utf8_truncated.sisu";
     let (code, stderr) = check_bytes(name, b"fn main() {}\n\xe2\x82");
@@ -764,8 +895,12 @@ fn a_truncated_character_at_end_of_file_is_a_diagnostic() {
     );
 }
 
+/// GIVEN files with CRLF line breaks and an invalid byte after two breaks, and right after one
+/// break
+/// WHEN `sisu check` runs on them
+/// THEN it reports E0072 at 3:3 for the first file and at 2:1 for the second
 #[test]
-fn invalid_utf8_after_crlf_line_breaks_counts_each_break_as_one_line() {
+fn check_should_count_each_crlf_as_one_line_when_it_reports_invalid_utf8() {
     let (name, name_start) = ("invalid_utf8_crlf.sisu", "invalid_utf8_crlf_start.sisu");
     let (code, stderr) = check_bytes(name, b"a\r\nb\r\nxy\xff\r\n");
     assert_eq!(code, Some(1));
@@ -785,8 +920,11 @@ fn invalid_utf8_after_crlf_line_breaks_counts_each_break_as_one_line() {
     );
 }
 
+/// GIVEN a file with the bytes of the surrogate U+D800 after `xy` on line 2
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 and reports E0072 at 2:3
 #[test]
-fn an_encoded_surrogate_is_invalid_utf8_at_its_first_byte() {
+fn check_should_report_e0072_at_the_first_byte_of_an_encoded_surrogate() {
     // `\xed\xa0\x80` would be U+D800, which UTF-8 does not allow.
     let name = "invalid_utf8_surrogate.sisu";
     let (code, stderr) = check_bytes(name, b"a\nxy\xed\xa0\x80\n");
@@ -799,8 +937,11 @@ fn an_encoded_surrogate_is_invalid_utf8_at_its_first_byte() {
     );
 }
 
+/// GIVEN the program `loops.sisu`, which declares a `let mut` inside a loop body
+/// WHEN it is built with `--emit ir`
+/// THEN the module before `mem2reg` has an `alloca` and the module after it has none
 #[test]
-fn mem2reg_removes_every_alloca() {
+fn emit_ir_should_show_allocas_before_mem2reg_and_none_after() {
     // `loops.sisu` declares `let mut sq` inside the loop body: its `alloca` must still sit in the
     // entry block, or `mem2reg` leaves it in place.
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -838,8 +979,11 @@ fn ir_sections(stdout: &str) -> (&str, &str) {
     (before, after)
 }
 
+/// GIVEN a program that assigns to an immutable variable
+/// WHEN it is built with `--emit ir`
+/// THEN it exits 1, stderr starts with the error E0001, and stdout is empty
 #[test]
-fn emit_ir_error_prints_no_ir() {
+fn emit_ir_should_exit_1_and_print_no_ir_when_the_program_has_an_error() {
     let out = run_on(
         "emit_ir_error_prints_no_ir",
         "fn main() {\n    let n = 0\n    n = 1\n}\n",
@@ -850,8 +994,11 @@ fn emit_ir_error_prints_no_ir() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "");
 }
 
+/// GIVEN a program with a `let mut` variable that is never reassigned
+/// WHEN it is built with `--emit ir`
+/// THEN it exits 0, stderr starts with the warning W0002, and stdout holds both IR sections
 #[test]
-fn emit_ir_warning_still_prints_ir() {
+fn emit_ir_should_print_the_ir_and_the_warning_when_the_program_has_only_a_warning() {
     let out = run_on(
         "emit_ir_warning_still_prints_ir",
         "fn main() {\n    let mut count = 0\n    print(count)\n}\n",
@@ -865,9 +1012,13 @@ fn emit_ir_warning_still_prints_ir() {
     ir_sections(&String::from_utf8_lossy(&out.stdout));
 }
 
+/// GIVEN a program with a redundant semicolon
+/// WHEN it is built with `--emit tokens` and with `--emit ast`
+/// THEN each run exits 0, stderr starts with the warning W0007, and stdout has the stage's output
+///
 /// A warning does not stop `--emit tokens` or `--emit ast`, as it does not stop `check`.
 #[test]
-fn emit_with_a_redundant_semicolon_still_prints() {
+fn emit_tokens_and_ast_should_print_and_exit_0_when_the_program_has_a_warning() {
     for (stage, first) in [("tokens", "1:1 Fn fn\n"), ("ast", "(fn main ")] {
         let out = run_on(
             "emit_with_a_redundant_semicolon_still_prints",
@@ -884,8 +1035,11 @@ fn emit_with_a_redundant_semicolon_still_prints() {
     }
 }
 
+/// GIVEN a program with a `while` loop over a mutable counter
+/// WHEN it is built with `--emit tir`
+/// THEN stdout shows the loop as `loop`, with an `if` whose else branch is a `break`
 #[test]
-fn emit_tir() {
+fn emit_tir_should_print_a_while_loop_as_a_loop_with_a_break() {
     let out = run_on(
         "emit_tir",
         "fn main() {\n    let mut i = 0\n    while i < 2 {\n        i = i + 1\n    }\n}\n",
@@ -903,8 +1057,11 @@ fn emit_tir() {
     );
 }
 
+/// GIVEN a function that returns its array parameter
+/// WHEN it is built with `--emit mir`
+/// THEN stdout has the line `= move xs#0`
 #[test]
-fn emit_mir_shows_moves() {
+fn emit_mir_should_show_a_move_when_a_function_returns_its_parameter() {
     let out = run_on(
         "emit_mir_shows_moves",
         "fn f(xs: [i64]) -> [i64] { xs }\nfn main() {}\n",
@@ -919,9 +1076,13 @@ fn emit_mir_shows_moves() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("= move xs#0"));
 }
 
+/// GIVEN a program with an enum, a `match` and a `main`
+/// WHEN it is built with `--emit mir`
+/// THEN stdout has the function `main` and the block `bb0:`
+///
 /// `--emit mir` prints every function's blocks.
 #[test]
-fn emit_mir() {
+fn emit_mir_should_print_the_blocks_of_each_function() {
     let out = run_on(
         "emit_mir",
         "enum E {\n    A(string)\n    B\n}\n\nfn name(e: E) -> string {\n    match e {\n        A(s) => s\n        B => \"b\"\n    }\n}\n\nfn main() {\n    print(name(E.A(\"a\")))\n}\n",
@@ -940,9 +1101,13 @@ fn emit_mir() {
     );
 }
 
+/// GIVEN the stage name `bogus`
+/// WHEN `sisu build --emit bogus` runs
+/// THEN it exits 2 and the error lists the stages `tokens, ast, tir, mir, ir, ir-raw`
+///
 /// A stage `--emit` does not know is a usage error, and clap's error lists `mir` among the stages.
 #[test]
-fn emit_unknown_stage_lists_mir() {
+fn emit_should_list_mir_among_the_possible_stages_when_the_stage_is_unknown() {
     let stderr = assert_usage_errors(&[&["build", "--emit", "bogus", "f.sisu"]]);
     assert!(
         stderr.contains("[possible values: tokens, ast, tir, mir, ir, ir-raw]"),
@@ -950,8 +1115,12 @@ fn emit_unknown_stage_lists_mir() {
     );
 }
 
+/// GIVEN a program that assigns to an immutable variable
+/// WHEN it is built with `--emit tir`, with `--emit mir`, and with `--format json --emit tir`
+/// THEN each run exits 1, stderr starts with the error E0001 in the format asked for, and stdout is
+/// empty
 #[test]
-fn emit_with_an_error_prints_nothing_on_stdout() {
+fn emit_should_print_nothing_on_stdout_when_the_program_has_an_error() {
     let flags: [(&[&str], &str); 3] = [
         (&["build", "--emit", "tir"], "error[E0001]: "),
         (&["build", "--emit", "mir"], "error[E0001]: "),
@@ -973,10 +1142,14 @@ fn emit_with_an_error_prints_nothing_on_stdout() {
     }
 }
 
+/// GIVEN a valid program
+/// WHEN it is built with each `--emit` stage, in text format and in JSON format
+/// THEN stdout is the same in both formats, and stderr holds only the JSON summary in JSON format
+///
 /// On a valid file, `--format json` leaves stdout as text has it, and stderr holds only the
 /// summary.
 #[test]
-fn json_emit_keeps_stdout() {
+fn json_format_should_not_change_the_emitted_stage_on_stdout() {
     for stage in ["tokens", "ast", "tir", "mir", "ir", "ir-raw"] {
         let text = run_on(
             "json_emit_keeps_stdout",
@@ -1009,8 +1182,11 @@ fn json_emit_keeps_stdout() {
 
 const FIB: &str = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\n\nfn main() {\n    print(fib(30))\n}\n";
 
+/// GIVEN `-O2` with `explain`, `check`, a stage other than `ir`, no file or a repeat
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
 #[test]
-fn o2_combinations_are_usage_errors() {
+fn o2_should_exit_2_when_the_command_or_the_stage_does_not_allow_it() {
     let cases: [&[&str]; 13] = [
         &["explain", "-O2", "E0001"],
         &["build", "-O2", "--emit", "mir", "f.sisu"],
@@ -1029,9 +1205,17 @@ fn o2_combinations_are_usage_errors() {
     assert_usage_errors(&cases);
 }
 
+/// GIVEN `-O3` with `-O2`, `check` or `--emit ir-raw`, or `--linker` with `check`, `--emit`, a
+/// repeat
+/// or an unknown linker
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
+/// AND the error for `--linker` with `--emit ir` says the flag works only when building an
+/// executable
+///
 /// `-O3` takes `-O2`'s place, once, and `--linker` goes with a build only, once.
 #[test]
-fn o3_and_linker_combinations_are_usage_errors() {
+fn o3_and_linker_should_exit_2_when_the_command_does_not_allow_them() {
     let cases: [&[&str]; 9] = [
         &["build", "-O2", "-O3", "f.sisu", "-o", "out"],
         &["build", "-O3", "-O2", "f.sisu", "-o", "out"],
@@ -1053,10 +1237,17 @@ fn o3_and_linker_combinations_are_usage_errors() {
     );
 }
 
+/// GIVEN `--allocator` with an unknown allocator, with `check`, with a repeat or with `--emit ir`
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
+/// AND the unknown-allocator error names `mimalloc` and `system`, and the `--emit ir` error says
+/// the
+/// flag works only when building an executable
+///
 /// `--allocator` names one of the two runtimes, and goes with a build only, once: neither
 /// runtime changes the emitted IR, so even the default, `mimalloc`, is refused with `--emit`.
 #[test]
-fn allocator_goes_with_a_build_only() {
+fn allocator_should_exit_2_unless_the_command_builds_an_executable() {
     let stderr = assert_usage_errors(&[&["build", "--allocator", "glibc", "f.sisu", "-o", "out"]]);
     assert!(
         stderr.contains("mimalloc") && stderr.contains("system"),
@@ -1085,8 +1276,11 @@ fn allocator_goes_with_a_build_only() {
     }
 }
 
+/// GIVEN a program that computes `fib(30)`
+/// WHEN it is built with `--emit ir-raw`
+/// THEN LLVM parses the output into a module that verifies, and the output has no `; before` header
 #[test]
-fn emit_ir_raw_parses_back() {
+fn emit_ir_raw_should_print_ir_that_the_llvm_parser_reads_and_verifies() {
     let out = run_on(
         "emit_ir_raw_parses_back",
         FIB,
@@ -1108,8 +1302,11 @@ fn emit_ir_raw_parses_back() {
     assert!(!String::from_utf8_lossy(&out.stdout).contains("; before"));
 }
 
+/// GIVEN the program `loops.sisu`
+/// WHEN it is built with `--emit ir-raw` and with `--emit ir`
+/// THEN the raw output equals the section of the `ir` output before `mem2reg`
 #[test]
-fn emit_ir_raw_is_the_ir_before_mem2reg() {
+fn emit_ir_raw_should_equal_the_before_section_of_emit_ir() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run");
     let emit = |stage| {
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -1128,8 +1325,13 @@ fn emit_ir_raw_is_the_ir_before_mem2reg() {
 const SQUARE: &str =
     "fn sq(n: i64) -> i64 {\n    n * n\n}\n\nfn main() {\n    print(sq(3) + 4)\n}\n";
 
+/// GIVEN a program that calls a small function and prints the sum of the result and 4
+/// WHEN it is built with `-O2 --emit ir`
+/// THEN the output has `default<O2>` sections, the call is in the before section only, and the
+/// after
+/// section prints the constant 13 and holds the target's data layout and triple
 #[test]
-fn emit_ir_o2() {
+fn emit_ir_at_o2_should_inline_and_fold_a_call_in_the_after_section() {
     let out = run_on("emit_ir_o2", SQUARE, &["build", "-O2", "--emit", "ir"]);
     assert_eq!(
         out.status.code(),
@@ -1181,10 +1383,16 @@ fn latches(ir: &str) -> usize {
     latches
 }
 
+/// GIVEN a loop that branches on a flag it never changes and does work on both sides
+/// WHEN it is built with `-O2 --emit ir` and with `-O3 --emit ir`
+/// THEN each output has the sections of its own pipeline, and the `-O3` output has more loops than
+/// the
+/// `-O2` output
+///
 /// Only `default<O3>` unswitches a loop whose branch does work on both sides: it splits the
 /// loop into one per side, so the program has more loops than at `default<O2>`.
 #[test]
-fn emit_ir_o3_runs_the_o3_pipeline() {
+fn emit_ir_at_o3_should_have_more_loops_than_at_o2_when_a_loop_can_unswitch() {
     let loops = |level: &str| {
         let out = run_on("emit_ir_o3", UNSWITCH, &["build", level, "--emit", "ir"]);
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -1203,11 +1411,15 @@ fn emit_ir_o3_runs_the_o3_pipeline() {
     assert!(o3 > o2, "-O3 has {o3} loops, -O2 {o2}");
 }
 
+/// GIVEN a nested loop that reads an array and may call `print`
+/// WHEN it is built with `-O2 --emit ir`
+/// THEN the before section calls `@sisu_panic_bounds` and the after section does not
+///
 /// A `print` that may never run does not make the loop reload the array's length: the
 /// runtime's print functions write only memory the module cannot reach, so `-O2` proves
 /// every `xs[i]` in range from the loop bound and drops both bounds checks.
 #[test]
-fn print_in_a_loop_keeps_no_bounds_check_at_o2() {
+fn print_in_a_loop_should_not_keep_a_bounds_check_at_o2() {
     let source = "fn main() {\n    let xs = [1; 10_000]\n    let mut total = 0\n\
                   for round in 0..1000 {\n        for i in 0..10_000 {\n\
                   if xs[i] == 0 { print(i) }\n            total += xs[i]\n        }\n    }\n\
@@ -1227,10 +1439,14 @@ fn print_in_a_loop_keeps_no_bounds_check_at_o2() {
     assert!(!after.contains("call void @sisu_panic_bounds("), "{after}");
 }
 
+/// GIVEN a `for i in 0..=n` loop over constant bounds that sums its counter
+/// WHEN it is built with `-O2 --emit ir`
+/// THEN the after section prints the constant 55 and has no `with.overflow` call
+///
 /// A `for ..=` loop steps its counter only while it is below the end, so the step needs no
 /// overflow check, and `-O2` folds a loop over constant bounds as it does over `..`.
 #[test]
-fn inclusive_for_folds_at_o2() {
+fn inclusive_for_loop_should_fold_to_a_constant_without_overflow_checks_at_o2() {
     let source = "fn main() {\n    let n = 10\n    let mut total = 0\n\
                   for i in 0..=n {\n        total += i\n    }\n    print(total)\n}\n";
     let out = run_on(
@@ -1256,8 +1472,11 @@ fn inclusive_for_folds_at_o2() {
 const CLEAN_SUMMARY: &str =
     r#"{"version":1,"kind":"summary","errors":0,"warnings":0,"explanations":{}}"#;
 
+/// GIVEN a path whose directory does not exist
+/// WHEN `sisu check --format json` runs on it
+/// THEN it exits 1 and stderr is a `tool_error` record followed by the clean summary
 #[test]
-fn json_unreadable_input_is_a_tool_error() {
+fn check_with_json_format_should_report_an_unreadable_input_as_a_tool_error() {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(env!("CARGO_TARGET_TMPDIR"))
         .args(["check", "--format", "json", "no_such_dir/missing.sisu"])
@@ -1275,10 +1494,14 @@ fn json_unreadable_input_is_a_tool_error() {
     );
 }
 
+/// GIVEN `--format` with no value, with the value `yaml`, or with `explain`
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error in text, also when `--format json` is in use
+///
 /// `--format` takes `text` or `json`, and never goes with `explain`. A usage error is clap's
 /// text, also with `--format json`.
 #[test]
-fn format_usage_errors() {
+fn format_flag_should_exit_2_with_clap_text_when_it_is_misused() {
     assert_usage_errors(&[
         &["check", "--format", "json"],
         &["check", "--format", "yaml", "a.sisu"],
@@ -1290,8 +1513,13 @@ fn format_usage_errors() {
     ]);
 }
 
+/// GIVEN a `PATH` with only `cc`, which cannot find the linker `mold`
+/// WHEN `sisu build --format json --linker mold` runs
+/// THEN it exits 1 and every stderr line is JSON, the last line is the summary, and one
+/// `tool_error`
+/// holds the exit status and the output of `cc`
 #[test]
-fn json_link_failure_stays_json() {
+fn build_with_json_format_should_report_a_link_failure_as_one_tool_error() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("json_link_failure.sisu"), "fn main() {}\n").expect("writes");
     // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
@@ -1340,8 +1568,12 @@ fn json_link_failure_stays_json() {
     assert_eq!(detail, detail.trim(), "{message}");
 }
 
+/// GIVEN an output path that is the input file
+/// WHEN `sisu build --format json` runs
+/// THEN it exits 1, stderr is a `tool_error` record and the summary, and the input file is
+/// unchanged
 #[test]
-fn json_overwrite_is_a_tool_error() {
+fn build_with_json_format_should_refuse_an_output_that_would_overwrite_the_input() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("json_overwrite.sisu"), "fn main() {}\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -1372,8 +1604,11 @@ fn json_overwrite_is_a_tool_error() {
     );
 }
 
+/// GIVEN a program with a `let mut` variable that is never reassigned
+/// WHEN it is built to an executable
+/// THEN it exits 0, stderr ends with the summary for W0002, and the executable prints 3
 #[test]
-fn warnings_only_build_succeeds_with_summary() {
+fn build_should_exit_0_and_print_a_warning_summary_when_the_program_has_only_a_warning() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("warnings_only_build.sisu"),
@@ -1400,8 +1635,11 @@ fn warnings_only_build_succeeds_with_summary() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n");
 }
 
+/// GIVEN a file with an error
+/// WHEN `sisu check` runs with and without `--format text`
+/// THEN both runs exit 1, print the same stderr, and it starts with the text error E0001
 #[test]
-fn format_text_is_the_default() {
+fn check_should_print_text_diagnostics_when_the_format_flag_is_absent() {
     let source = "fn main() {\n    let n = 0\n    n = 1\n}\n";
     let plain = run_on("format_text_is_the_default", source, &["check"]);
     let text = run_on(
@@ -1418,8 +1656,11 @@ fn format_text_is_the_default() {
     assert_eq!(text.stderr, plain.stderr);
 }
 
+/// GIVEN a source that prints the string `"{x:>8.2}"`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output has the tokens `StrHead`, `Ident`, `FormatSpec` with `:>8.2`, and `StrTail`
 #[test]
-fn emit_tokens_format_spec() {
+fn emit_tokens_should_print_a_format_spec_token_inside_an_interpolated_string() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("emit_tokens_format_spec.sisu"),
@@ -1438,8 +1679,11 @@ fn emit_tokens_format_spec() {
     );
 }
 
+/// GIVEN a source that holds only `enum`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output is an `Enum` token and then `Eof`
 #[test]
-fn emit_tokens_enum() {
+fn emit_tokens_should_print_an_enum_token_for_the_enum_keyword() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens_enum.sisu"), "enum\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -1454,8 +1698,11 @@ fn emit_tokens_enum() {
     );
 }
 
+/// GIVEN a source that holds `match =>`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output is a `Match` token, a `FatArrow` token and `Eof`
 #[test]
-fn emit_tokens_match() {
+fn emit_tokens_should_print_match_and_fat_arrow_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens_match.sisu"), "match =>\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -1470,8 +1717,11 @@ fn emit_tokens_match() {
     );
 }
 
+/// GIVEN a source that holds `| ..= ||`
+/// WHEN it is built with `--emit tokens`
+/// THEN the output is the tokens `Pipe`, `DotDotEq` and `OrOr`, then `Eof`
 #[test]
-fn emit_tokens_pipe_and_inclusive_range() {
+fn emit_tokens_should_print_pipe_inclusive_range_and_or_or_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("emit_tokens_pipe.sisu"), "| ..= ||\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -1486,8 +1736,14 @@ fn emit_tokens_pipe_and_inclusive_range() {
     );
 }
 
+/// GIVEN enums declared before the enums they hold, an enum with no fields and an enum with 257
+/// variants
+/// WHEN they are built with `--emit ir`
+/// THEN each enum type has the smallest tag that holds its variants, and storage for its largest
+/// payload
+/// AND the enum with no fields has no storage
 #[test]
-fn enum_layouts_follow_the_target() {
+fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
     use std::fmt::Write as _;
     // `Outer` is declared before the `Pair?` it holds and `Holder` before the `Trio` it holds,
     // so each layout needs a later one's first. `Wide` has 257 variants, one more than an `i8`
@@ -1537,10 +1793,16 @@ fn enum_layouts_follow_the_target() {
     }
 }
 
+/// GIVEN a copy of `sisu` with no runtime library beside it, and a temporary directory that is
+/// absent
+/// WHEN it runs `build` and `run`, with the default allocator and with `--allocator system`
+/// THEN each run exits 1 and stderr says the runtime library is not found, with the archive of the
+/// allocator
+///
 /// A `sisu` with no runtime library beside it says so before it compiles: with no
 /// temporary directory, a compile would fail at the object file first.
 #[test]
-fn missing_runtime_is_found_before_the_compile() {
+fn build_and_run_should_report_a_missing_runtime_library_before_they_compile() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing_runtime");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("creates");
@@ -1574,10 +1836,15 @@ fn missing_runtime_is_found_before_the_compile() {
     }
 }
 
+/// GIVEN output paths in a missing directory, in a regular file, under a regular file, and a
+/// directory
+/// WHEN `sisu build -o` runs with each path
+/// THEN each run exits 1 and stderr is the message for that path, so the compile does not start
+///
 /// An output whose directory does not exist, or that is a directory, is reported before
 /// the compile.
 #[test]
-fn bad_output_path_is_found_before_the_compile() {
+fn build_should_report_a_bad_output_path_before_it_compiles() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bad_output_path");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("outdir")).expect("creates");
@@ -1609,10 +1876,15 @@ fn bad_output_path_is_found_before_the_compile() {
     }
 }
 
+/// GIVEN `--rc-checks`, `-O2`, `-O3` and `--linker`, placed before or after the file
+/// WHEN `sisu build` runs
+/// THEN each build exits 0 and its executable prints 1
+/// AND `--emit ir -O2` after the file gives the `default<O2>` sections
+///
 /// `build`'s flags go before or after the file, in any order. The `--linker` rows run on Linux
 /// only: Apple's clang has no `bfd`, and for `lld` it looks for `ld64.lld`, which `.llvm/23` lacks.
 #[test]
-fn flags_in_any_order() {
+fn build_should_accept_its_flags_in_any_order_before_or_after_the_file() {
     let dir = scratch_path::empty_dir("flags_in_any_order");
     fs::write(dir.join("f.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
     // `ld.lld` is in LLVM's `bin`.
@@ -1680,10 +1952,16 @@ fn flags_in_any_order() {
     );
 }
 
+/// GIVEN a source file in the current directory, and one in the parent directory
+/// WHEN `sisu build` runs without `-o`, and with `-o`
+/// THEN the executable is named after the file without its extension, in the current directory, and
+/// it
+/// prints the expected output
+///
 /// Without `-o`, `build` names the executable after the file, without its extension, in the
 /// current directory, wherever the file is.
 #[test]
-fn build_writes_the_stem_in_the_current_directory() {
+fn build_should_name_the_executable_after_the_file_stem_in_the_current_directory() {
     let dir = scratch_path::empty_dir("build_writes_the_stem");
     let source = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run"));
     fs::copy(source.join("loops.sisu"), dir.join("loops.sisu")).expect("copies");
@@ -1718,9 +1996,13 @@ fn build_writes_the_stem_in_the_current_directory() {
     }
 }
 
+/// GIVEN a file with an error
+/// WHEN `sisu check --format json` runs
+/// THEN it exits 1 and stderr is two JSON lines: the E0001 diagnostic and the summary
+///
 /// `--format` follows the subcommand.
 #[test]
-fn format_after_the_subcommand() {
+fn check_should_print_json_records_when_format_follows_the_subcommand() {
     let out = run_on(
         "format_after_the_subcommand",
         "fn main() {\n    let n = 0\n    n = 1\n}\n",
@@ -1737,9 +2019,13 @@ fn format_after_the_subcommand() {
     assert_eq!(lines[1]["kind"], "summary", "{stderr}");
 }
 
+/// GIVEN `--emit ast` with `-o x`
+/// WHEN `sisu build` runs
+/// THEN it exits 2 with a usage error
+///
 /// `--emit` prints to stdout, so it takes no `-o`.
 #[test]
-fn emit_with_output_is_a_usage_error() {
+fn emit_should_exit_2_when_the_command_also_has_an_output_flag() {
     assert_usage_errors(&[&["build", "--emit", "ast", "f.sisu", "-o", "x"]]);
 }
 
@@ -1752,9 +2038,14 @@ fn sisu_in_tmp(args: &[&str]) -> Output {
         .expect("sisu starts")
 }
 
+/// GIVEN programs given with `-e`, one valid and one with a warning
+/// WHEN `sisu check -e` runs
+/// THEN the valid program exits 0 with empty stderr, and the warning names `<inline>` at its
+/// position
+///
 /// `check -e` reports a program given on the command line, named `<inline>`.
 #[test]
-fn check_takes_an_inline_program() {
+fn check_should_report_an_inline_program_under_the_name_inline() {
     let out = sisu_in_tmp(&["check", "-e", "fn main() { print(1) }"]);
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
@@ -1771,8 +2062,11 @@ fn check_takes_an_inline_program() {
     );
 }
 
+/// GIVEN an inline program with an error
+/// WHEN `sisu check --format json -e` runs
+/// THEN it exits 1 and the file of the first record is `<inline>`
 #[test]
-fn inline_program_in_json() {
+fn check_should_name_the_file_inline_in_json_diagnostics_for_an_inline_program() {
     let out = sisu_in_tmp(&["check", "--format", "json", "-e", "fn main() { x }"]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1781,8 +2075,11 @@ fn inline_program_in_json() {
     assert_eq!(record["primary"]["file"], "<inline>", "{stderr}");
 }
 
+/// GIVEN an inline program that prints 7
+/// WHEN `sisu build -e` runs with `-o`, and with `--emit tir`
+/// THEN the executable prints 7, and the TIR is the same as the TIR of a file with that program
 #[test]
-fn build_takes_an_inline_program() {
+fn build_should_compile_an_inline_program_like_the_same_file() {
     let dir = scratch_path::empty_dir("build_takes_an_inline_program");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(&dir)
@@ -1809,9 +2106,13 @@ fn build_takes_an_inline_program() {
     assert_eq!(inline.stdout, from_file.stdout);
 }
 
+/// GIVEN an inline program and no `-o`
+/// WHEN `sisu build -e` runs
+/// THEN it exits 2 and the error says an inline program needs `-o <output>`
+///
 /// An inline program has no name to give an executable.
 #[test]
-fn inline_build_needs_an_output() {
+fn build_should_exit_2_when_an_inline_program_has_no_output_path() {
     let stderr = assert_usage_errors(&[&["build", "-e", "fn main() {}"]]);
     assert!(
         stderr.starts_with("error: an inline program needs `-o <output>` to build an executable\n"),
@@ -1819,9 +2120,13 @@ fn inline_build_needs_an_output() {
     );
 }
 
+/// GIVEN `-e` together with a file, `-e` twice, or `-e` with no value
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
+///
 /// A file and `-e` exclude each other, and `-e` takes one program.
 #[test]
-fn file_and_inline_program_conflict() {
+fn inline_flag_should_exit_2_when_given_with_a_file_twice_or_without_a_value() {
     assert_usage_errors(&[
         &["check", "f.sisu", "-e", "fn main() {}"],
         &["build", "f.sisu", "-e", "fn main() {}", "-o", "x"],
@@ -1830,8 +2135,11 @@ fn file_and_inline_program_conflict() {
     ]);
 }
 
+/// GIVEN an inline program that reads an array out of bounds
+/// WHEN it is built with `-e` and run
+/// THEN it exits 101 and stderr starts with `sisu: panic at <inline>:1:`
 #[test]
-fn inline_panic_names_inline() {
+fn built_inline_program_should_name_inline_in_its_panic_message() {
     let dir = scratch_path::empty_dir("inline_panic_names_inline");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(&dir)
@@ -1858,8 +2166,11 @@ fn inline_panic_names_inline() {
     assert!(stderr.starts_with("sisu: panic at <inline>:1:"), "{stderr}");
 }
 
+/// GIVEN an inline program with an invalid byte
+/// WHEN `sisu check -e` runs
+/// THEN it exits 1 and reports E0072 at `<inline>:1:13`
 #[test]
-fn inline_program_not_utf8() {
+fn check_should_report_e0072_for_an_inline_program_that_is_not_utf8() {
     use std::os::unix::ffi::OsStrExt;
 
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -1894,8 +2205,13 @@ fn assert_empty(tmp: &Path) {
     assert!(left.is_empty(), "left in {}: {left:?}", tmp.display());
 }
 
+/// GIVEN a program that echoes its arguments and its input
+/// WHEN `sisu run` runs it with arguments, with input on stdin, and with `--`
+/// THEN the output is the expected output, stderr is empty, a first `--` is dropped, a later `--`
+/// passes
+/// on, and the temporary directory is empty
 #[test]
-fn run_passes_stdin_and_arguments() {
+fn run_should_pass_stdin_and_arguments_to_the_program_and_leave_no_directory() {
     let tmp = scratch_path::empty_dir("run_passes_stdin_and_arguments");
     let case = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run"));
     let mut child = sisu_run(&tmp)
@@ -1932,8 +2248,12 @@ fn run_passes_stdin_and_arguments() {
     assert_empty(&tmp);
 }
 
+/// GIVEN a program that ends well, one that overflows the stack, and one that panics
+/// WHEN `sisu run` runs each
+/// THEN the exit codes are 0, 139 and 101, a panic prints its output and message, and the temporary
+/// directory is empty
 #[test]
-fn run_passes_the_exit_code() {
+fn run_should_return_the_exit_status_of_the_program_and_leave_no_directory() {
     let tmp = scratch_path::empty_dir("run_passes_the_exit_code");
     let out = sisu_run(&tmp)
         .arg("run/args_none.sisu")
@@ -1970,8 +2290,13 @@ fn run_passes_the_exit_code() {
     assert_empty(&tmp);
 }
 
+/// GIVEN the program `E0001.sisu`, which has a compile error
+/// WHEN `sisu run` runs it
+/// THEN it exits 1, stdout is empty, stderr is the blessed diagnostic, and the temporary directory
+/// is
+/// empty
 #[test]
-fn run_with_a_compile_error_runs_nothing() {
+fn run_should_run_nothing_and_exit_1_when_the_program_has_a_compile_error() {
     let tmp = scratch_path::empty_dir("run_with_a_compile_error_runs_nothing");
     let diagnostics = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/diagnostics"));
     let out = sisu_run(&tmp)
@@ -1988,8 +2313,11 @@ fn run_with_a_compile_error_runs_nothing() {
     assert_empty(&tmp);
 }
 
+/// GIVEN a valid program
+/// WHEN `sisu run -O2 --rc-checks` runs it
+/// THEN it exits 0, prints 0, and leaves the temporary directory empty
 #[test]
-fn run_takes_build_flags() {
+fn run_should_accept_build_flags_before_the_file() {
     let tmp = scratch_path::empty_dir("run_takes_build_flags");
     let out = sisu_run(&tmp)
         .args(["-O2", "--rc-checks", "run/args_none.sisu"])
@@ -2005,11 +2333,16 @@ fn run_takes_build_flags() {
     assert_empty(&tmp);
 }
 
+/// GIVEN `MIMALLOC_VERBOSE=1`, and `--allocator system` or no allocator flag
+/// WHEN `sisu run -e` runs
+/// THEN the default run prints `mimalloc:` lines to stderr, the `system` run prints none, and both
+/// print 1
+///
 /// `sisu run` links the runtime `--allocator` names: mimalloc by default, which writes
 /// `mimalloc:` lines to stderr under `MIMALLOC_VERBOSE=1`, and with `system` a runtime that
 /// holds no mimalloc.
 #[test]
-fn run_takes_the_allocator_flag() {
+fn run_should_link_the_runtime_that_the_allocator_flag_names() {
     let tmp = scratch_path::empty_dir("run_takes_the_allocator_flag");
     for (flags, mimalloc) in [(&[][..], true), (&["--allocator", "system"], false)] {
         let out = sisu_run(&tmp)
@@ -2030,10 +2363,15 @@ fn run_takes_the_allocator_flag() {
     assert_empty(&tmp);
 }
 
+/// GIVEN a program with a warning that then panics
+/// WHEN `sisu run -e` runs it
+/// THEN it exits 101, stderr has the warning and the summary once, and then only the panic of the
+/// program
+///
 /// The warnings and their summary are on stderr before the program starts, and the summary
 /// is not written again after it ends.
 #[test]
-fn run_prints_warnings_first() {
+fn run_should_print_the_warnings_and_summary_before_the_program_starts() {
     let tmp = scratch_path::empty_dir("run_prints_warnings_first");
     let out = sisu_run(&tmp)
         .args(["-e", "fn main() { let mut x = 1; panic(\"x is {x}\") }"])
@@ -2053,8 +2391,11 @@ fn run_prints_warnings_first() {
     assert_empty(&tmp);
 }
 
+/// GIVEN an inline program that prints its arguments, and one argument
+/// WHEN `sisu run -e` runs
+/// THEN it exits 0 and prints the argument
 #[test]
-fn run_takes_an_inline_program() {
+fn run_should_pass_the_arguments_after_an_inline_program_to_main() {
     let tmp = scratch_path::empty_dir("run_takes_an_inline_program");
     let out = sisu_run(&tmp)
         .args([
@@ -2069,9 +2410,13 @@ fn run_takes_an_inline_program() {
     assert_empty(&tmp);
 }
 
+/// GIVEN an inline program that prints its argument count, then `-O2` and `x`
+/// WHEN `sisu run -e` runs
+/// THEN it prints 2, so the program gets `-O2` as an argument
+///
 /// As with `python -c`, every argument after the code goes to the program, flags included.
 #[test]
-fn run_passes_flags_after_inline_code_to_the_program() {
+fn run_should_pass_flags_after_inline_code_to_the_program() {
     let tmp = scratch_path::empty_dir("run_passes_flags_after_inline_code");
     let out = sisu_run(&tmp)
         .args([
@@ -2087,10 +2432,14 @@ fn run_passes_flags_after_inline_code_to_the_program() {
     assert_empty(&tmp);
 }
 
+/// GIVEN a program that prints forever, and a reader that leaves after one line
+/// WHEN `sisu run -e` runs it
+/// THEN it exits with 141, stderr is empty, and the temporary directory is empty
+///
 /// `sisu run x | head -1`: the program dies of SIGPIPE, as it would run directly, and `sisu`
 /// says nothing of its own.
 #[test]
-fn run_into_a_closed_pipe_dies_of_sigpipe() {
+fn run_should_let_the_program_die_of_sigpipe_when_stdout_closes() {
     use std::io::{BufRead, BufReader};
 
     let tmp = scratch_path::empty_dir("run_into_a_closed_pipe");
@@ -2111,9 +2460,13 @@ fn run_into_a_closed_pipe_dies_of_sigpipe() {
     assert_empty(&tmp);
 }
 
+/// GIVEN two `sisu run` processes of one file at the same time
+/// WHEN both run to the end
+/// THEN each exits 0 and prints 0, and the temporary directory is empty
+///
 /// Two `run`s of one file at once each get a directory of their own.
 #[test]
-fn two_runs_at_once() {
+fn run_should_give_two_runs_of_one_file_a_directory_each() {
     let tmp = scratch_path::empty_dir("two_runs_at_once");
     let start = || {
         sisu_run(&tmp)
@@ -2136,8 +2489,12 @@ fn two_runs_at_once() {
     assert_empty(&tmp);
 }
 
+/// GIVEN the program `E0001.sisu`, which has a compile error
+/// WHEN `sisu run --format json` runs it
+/// THEN it exits 1, stdout is empty, stderr is a diagnostic record and a summary, and the temporary
+/// directory is empty
 #[test]
-fn json_run_with_an_error_runs_nothing() {
+fn run_with_json_format_should_run_nothing_when_the_program_has_an_error() {
     let tmp = scratch_path::empty_dir("json_run_with_an_error");
     let out = sisu_run(&tmp)
         .args(["--format", "json", "diagnostics/E0001.sisu"])
@@ -2158,14 +2515,23 @@ fn json_run_with_an_error_runs_nothing() {
     assert_empty(&tmp);
 }
 
+/// GIVEN `run` with no file, and `run -O2` with no file
+/// WHEN `sisu` runs
+/// THEN it exits 2 with a usage error
 #[test]
-fn run_without_a_program_is_a_usage_error() {
+fn run_should_exit_2_when_no_program_is_given() {
     assert_usage_errors(&[&["run"], &["run", "-O2"]]);
 }
 
+/// GIVEN a program that waits for a line on stdin
+/// WHEN `sisu run -e` has started it
+/// THEN the temporary directory is empty before the program ends, and the program then prints its
+/// line
+/// and exits 0
+///
 /// The program's directory is gone while it still runs: `sisu` removes it before it waits.
 #[test]
-fn run_removes_its_directory_while_the_program_runs() {
+fn run_should_remove_its_directory_while_the_program_still_runs() {
     use std::io::{BufRead, BufReader};
     use std::time::{Duration, Instant};
 
@@ -2206,9 +2572,14 @@ fn run_removes_its_directory_while_the_program_runs() {
     assert_eq!(String::from_utf8_lossy(&out.stdout), "line\n");
 }
 
+/// GIVEN a `PATH` with no `cc`
+/// WHEN `sisu run` runs
+/// THEN it exits 1, stdout is empty, stderr says it cannot run `cc`, and the temporary directory is
+/// empty
+///
 /// A link that fails, here because `cc` is not on `PATH`, leaves nothing behind.
 #[test]
-fn run_link_failure_leaves_nothing() {
+fn run_should_exit_1_and_leave_nothing_when_the_link_fails() {
     let tmp = scratch_path::empty_dir("run_link_failure_leaves_nothing");
     let out = sisu_run(&tmp)
         .env("PATH", scratch_path::empty_dir("run_link_failure_path"))
@@ -2222,10 +2593,14 @@ fn run_link_failure_leaves_nothing() {
     assert_empty(&tmp);
 }
 
+/// GIVEN a `TMPDIR` that does not exist
+/// WHEN `sisu run` and `sisu build` run
+/// THEN each exits 1 and stderr says it cannot create its file in that directory
+///
 /// A temp directory that does not exist is a tool error: `run` cannot make its directory there,
 /// and `build` cannot write its object file.
 #[test]
-fn missing_temp_dir_is_a_tool_error() {
+fn run_and_build_should_exit_1_when_the_temporary_directory_is_missing() {
     let dir = scratch_path::empty_dir("missing_temp_dir");
     let absent = dir.join("absent");
     let output = dir.join("out");
@@ -2254,11 +2629,15 @@ fn missing_temp_dir_is_a_tool_error() {
     }
 }
 
+/// GIVEN a umask that takes the write bit of the owner
+/// WHEN `sisu run -e` runs
+/// THEN it exits 0, prints 42, and leaves the temporary directory empty
+///
 /// Under a umask that takes the owner's write bit, `run` still makes its directory the
 /// owner's, runs the program and leaves nothing behind. `umask 0777` shows the same bug but
 /// would make the coverage run's own profile file unreadable.
 #[test]
-fn run_under_a_restrictive_umask_leaves_nothing() {
+fn run_should_succeed_and_leave_nothing_under_a_restrictive_umask() {
     let tmp = scratch_path::empty_dir("run_under_a_restrictive_umask");
     let out = Command::new("sh")
         .args(["-c", "umask 0200; exec \"$@\"", "sh"])
@@ -2318,10 +2697,16 @@ fn fake_cc(name: &str) -> std::ffi::OsString {
         .expect("PATH joins")
 }
 
+/// GIVEN a fake `cc` that writes no executable, and a program with a warning
+/// WHEN `sisu run` runs, in text format and in JSON format
+/// THEN it exits 1 and reports a tool error after the summary, as one text line and as a JSON
+/// record
+/// AND the temporary directory is empty
+///
 /// A program that cannot start is a tool error after the summary, in text and in JSON, and
 /// its directory is gone.
 #[test]
-fn run_reports_a_program_that_cannot_start_after_the_summary() {
+fn run_should_report_a_program_that_cannot_start_after_the_summary() {
     let tmp = scratch_path::empty_dir("run_program_cannot_start");
     let path = fake_cc("run_program_cannot_start_cc");
     let prefix = format!("cannot run {}/sisu-", tmp.display());
@@ -2385,11 +2770,18 @@ fn unlock_and_empty(tmp: &Path) -> usize {
     entries.len()
 }
 
+/// GIVEN a fake `cc` that takes the write permission from the temporary directory, or from the
+/// private
+/// directory and fails
+/// WHEN `sisu run` runs
+/// THEN a started program keeps its exit code and the tool error follows the summary
+/// AND after a failed link the tool error comes before the summary, after the error of the link
+///
 /// A private directory that cannot be removed is a tool error: after the summary once the
 /// program has started, which still runs and keeps its exit code; before it after a failed
 /// link, after the link's own error.
 #[test]
-fn run_reports_a_directory_it_cannot_remove() {
+fn run_should_report_a_directory_it_cannot_remove_as_a_tool_error() {
     use std::os::unix::fs::MetadataExt;
 
     let tmp = scratch_path::empty_dir("run_directory_cannot_be_removed");
