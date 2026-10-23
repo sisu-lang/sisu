@@ -63,7 +63,7 @@ Give every finding one ruling:
 
 - **Accept:** you will fix it.
 - **Reject:** with a reason that cites the target, the code, or `CODING_STANDARDS.md`.
-- **Defer:** with where it goes: a later task, a roadmap entry, or a ticket under `.scratch/` per `docs/agents/issue-tracker.md`.
+- **Defer:** with where it goes: a later task, a roadmap entry, or a GitHub issue per `docs/agents/issue-tracker.md`.
 
 Rules for ruling:
 

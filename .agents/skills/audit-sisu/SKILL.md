@@ -40,7 +40,7 @@ From the repository root:
 
 1. `cargo build --workspace`. Every probe uses this checkout's `target/debug/sisu`. Then `make audit-setup`, which adds `opt` and `clang` to `.llvm/23/bin` for the ASan, lint and layout-shim recipes; it does nothing when they are there.
 2. `mktemp -d "${TMPDIR:-/tmp}/sisu-audit-XXXXXXXX"` makes the run directory, `RUN`. Shell variables do not survive between tool calls, so from here on write `RUN`, the repository root and the tool paths as literal paths.
-3. Write `RUN/known-tickets.md`: the title and path of every ticket under `.scratch/*/issues/` whose `Status:` is not `wontfix` or `resolved`, or "none" when `.scratch/` does not exist. `.scratch/` is untracked, so read it in the main checkout, the first path `git worktree list` prints.
+3. Write `RUN/known-tickets.md`: the number and title of every open GitHub issue (`gh api 'repos/sisu-lang/sisu/issues?state=open&per_page=100'`, without the items that have a `pull_request` field), then the title and path of every fallback issue under `.scratch/*/issues/` with a `GitHub: pending` line. `.scratch/` is untracked, so read it in the main checkout, the first path `git worktree list` prints. Write "none" when there are no issues.
 
 Done when `sisu` builds, `.llvm/23/bin/opt` and `.llvm/23/bin/clang` run, and `RUN/known-tickets.md` exists.
 
@@ -106,8 +106,8 @@ Write `RUN/report.md`: one section per kept finding, ordered by severity as
 each; then the dropped findings with the reason. Tell the user the path,
 the count per severity, and the top findings in one line each.
 
-Then ask which findings to file. For each one the user picks, write a
-ticket at `.scratch/audit-<date>/issues/<NN>-<slug>.md` per
-`docs/agents/issue-tracker.md`, with `Status: needs-triage` and the
-finding's text as the body. For each one the user rules intended or won't
+Then ask which findings to file. For each one the user picks, create a
+GitHub issue per `docs/agents/issue-tracker.md`, with the `needs-triage`
+label and the finding's text rewritten in that format. Use the fallback
+folder `.scratch/audit-<date>/issues/` only when GitHub cannot be reached. For each one the user rules intended or won't
 fix, add a row to [known-findings.md](known-findings.md).
