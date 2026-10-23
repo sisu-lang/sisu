@@ -23,6 +23,8 @@ A call gives the arguments to the parameters in order ([Calls](expressions.md#ca
 
 A function declaration is `fn`, the name, the parameters in parentheses, an optional return type after `->`, and the body. A function is declared at the top level.
 
+This page shows functions without type parameters. A generic function also has type parameters after its name.
+
 ```sisu
 fn main() {
     print(double(21))            // 42
@@ -37,9 +39,10 @@ The rules:
 
 - A function can call a function that is declared below it.
 - Functions, classes, enums and constants share one set of names. Each name is declared once ([E0034](../diagnostics/E0034.md)).
-- A function cannot take the name of a built-in type, such as `i64` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic` or `read_line` ([E0034](../diagnostics/E0034.md)).
+- A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic` or `read_line` ([E0034](../diagnostics/E0034.md)).
 - A function cannot be named `_` ([E0080](../diagnostics/E0080.md)).
 - A function cannot be declared in the body of another function.
+- A binding or a parameter can take the name of a function. A call still finds the function, because a binding is never called ([Shadowing](statements.md#shadowing)).
 
 ```sisu
 fn twice() {
@@ -74,6 +77,7 @@ The rules:
 - A parameter cannot change. An assignment to it is an error ([E0001](../diagnostics/E0001.md)), and a parameter cannot be `mut` ([E0019](../diagnostics/E0019.md)).
 - To change the value, copy it into a `let mut` binding. A `let` can shadow a parameter ([Shadowing](statements.md#shadowing)).
 - Two parameters of one function cannot have the same name ([E0039](../diagnostics/E0039.md)).
+- As a binding cannot, a parameter cannot take the name `Option`, `Result`, `Some`, `Ok`, `Err` or the name of an enum ([Shadowing](statements.md#shadowing)).
 - An argument must have the type of its parameter. Where the parameter is a `T?`, a `T` becomes a `T?` ([Calls](expressions.md#calls)).
 
 ```sisu
@@ -177,7 +181,9 @@ fn main() {
 
 A call can use space on the stack until it returns. When a recursion goes too deep, the stack is full and the program stops. This is not a panic, and output that the program did not write yet can be lost.
 
-A function that calls itself on every path can never return, and the program builds with a warning ([W0010](../diagnostics/W0010.md)). To repeat without an end, write a `loop`.
+A function that calls itself on every path can never return. The program builds with a warning when each path reaches such a call before a way out ([W0010](../diagnostics/W0010.md)).
+
+For this check, a loop that can finish a pass is a way out. So a call after such a loop does not warn. To repeat without an end, write a `loop`.
 
 ```sisu no-run
 fn count(n: i64) {               // warning[W0010]
@@ -192,7 +198,7 @@ fn main() {
 
 ## main
 
-A program starts at its function `main`. When `main` returns, the program ends with the exit code 0.
+A program starts with a call of its function `main`. When that first call returns, the program ends with the exit code 0.
 
 ```sisu
 fn main() {
@@ -205,7 +211,8 @@ The rules:
 - `main` takes no parameters, or one `[string]`. It has no return type ([E0029](../diagnostics/E0029.md)).
 - A `main` with a `[string]` parameter gets the arguments of the program, without the name of the program.
 - A program without `main` is an error ([E0028](../diagnostics/E0028.md)).
-- A `return` in `main` ends the program.
+- A `return` in the first call of `main` ends the program.
+- A program can call `main` again. That call returns to its caller, as any call does.
 - A panic ends the program with the exit code 101 ([panic](#panic)).
 
 ```sisu args="sauna sisu"
@@ -248,7 +255,9 @@ The rules:
 - The message is a `string` ([E0032](../diagnostics/E0032.md)).
 - Standard error gets `sisu: panic at`, then the file, line and column of `panic`, then the message.
 - The program writes all its output from before the panic first.
-- A call of `panic` has the type `never`. So it can be where a value is expected, such as on the right side of `??` ([Types](types.md#never)).
+- A call of `panic` has the type `never` ([Types](types.md#never)). So it can be a branch of an `if` or a `match`, or the right side of `??`.
+- It can also be the value of a `break`, or the end of a function body.
+- As an argument, an operand, the value of an assignment or the value of a `return`, it is an error ([E0043](../diagnostics/E0043.md)).
 
 ```sisu panics
 fn main() {
@@ -281,10 +290,10 @@ sisu: panic at example.sisu:2:5: not yet implemented
 
 The rules:
 
-- `todo` is a keyword. It has two forms: `todo`, and `todo("message")` with one message.
+- `todo` is a keyword. It has two forms: `todo`, and `todo("message")`. The message is one `string`.
 - With a message, the panic message is `not yet implemented: ` and then the message.
-- Other forms, such as `todo()` or `todo!()`, are errors ([E0099](../diagnostics/E0099.md)).
-- `todo` has the type `never`, as a call of `panic` has. So it can stand in for the value of a function.
+- `todo()` and `todo!()` are errors ([E0099](../diagnostics/E0099.md)).
+- `todo` has the type `never`, as a call of `panic` has. So it can be in the same places, such as the end of a function body.
 
 ```sisu panics
 fn main() {
