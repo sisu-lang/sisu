@@ -63,7 +63,9 @@ hash names as integers; `tir` and diagnostics hold the text as a `String`. After
 the lexer skips the bad text and goes on, so it records every one of them,
 and the parser keeps the earliest per item. A bracket that is unclosed or does
 not match is the exception: the run then reports one diagnostic and the parser
-and checker do not run.
+and checker do not run. A literal that is not closed can eat the closers after
+it on its line, so after one, a closer also closes the brackets above its
+opener that were opened before the literal, and the run goes on.
 
 **Parser** (`parser.rs`, `ast.rs`). Turns tokens into a syntax tree, the AST.
 It reports one error per broken item, then resumes at the next item. The
