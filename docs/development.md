@@ -58,7 +58,7 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-mutants, carg
 $ make help    # every target
 $ make build   # sisu and the two runtime archives
 $ make test    # unit tests and end-to-end cases
-$ make lint    # fmt, clippy, expect messages, typos, file hygiene, shell and workflow lint, as in CI
+$ make lint    # fmt, clippy (also with the fuzz feature), expect messages, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
 $ make miri    # the runtime's unit tests under Miri, which stops at undefined behaviour
 $ make check   # lint, test and deny; CI also runs make miri
@@ -363,6 +363,126 @@ Then:
 - If the input now compiles, add a checker or parser unit test.
 - Either way, the minimized input becomes a test that fails before the fix.
 
+## Fuzz generated programs
+
+The second fuzz target, `fuzz/fuzz_targets/program.rs`, turns each input's
+bytes into a Sisu program that is well typed by construction, the standard
+input it reads, and a rewritten copy that must print the same
+([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)). The
+generator lives in `crates/sisuc/src/generate/`, and the runner that judges
+the program in `crates/sisuc/src/fuzz_program.rs`. Both compile only in tests
+and under the `fuzz` feature, never into the released `sisu`. Each program
+must pass five properties, cheapest first:
+
+1. It checks clean. Warnings are allowed.
+2. Its mir builds and certifies, and LLVM verifies its module, without and
+   with `--rc-checks`.
+3. Its O0, `-O2` and `--rc-checks` builds each run and exit 0 or 101, never by
+   a signal or past 10 s, and agree on stdout, stderr and exit code. The
+   `--rc-checks` build reports no count fault, and no leak when it exits 0:
+   a panic exits at once, before the leak check.
+4. The rewritten copy runs as the program does. Panic locations are left out
+   of the comparison.
+5. The program prints the integer answers the generator worked out itself, or
+   panics with the overflow or division by zero it expects.
+
+Name the target with `--target`, before the other arguments:
+
+```console
+$ make fuzz TARGET=program [SECS=<seconds>]
+$ scripts/fuzz.sh --target program --replay <input>
+$ scripts/fuzz.sh --target program --tmin <input>
+$ scripts/fuzz.sh --target program --cmin
+$ scripts/fuzz.sh --target program --coverage
+```
+
+The script first builds the runtime archive in release mode and points
+`SISU_RUNTIME` at it, since the builds link it. The target's corpus is
+`fuzz/corpus/program`, its failing inputs go to `fuzz/artifacts/program/`,
+and it starts from the corpus alone, with no seeds and no dictionary. Its
+limits are `-max_len=4096 -timeout=300 -len_control=0`: libFuzzer tries
+full-length inputs at once, since a short input runs out of bytes and gets a
+small program. After a run, the script replays up to 3 new `crash-` inputs
+for up to 340 s each.
+
+Expect about 1 program a second per core when the machine is busy. Each input
+is built six times, the program's three builds and its copy's three, and
+most of that time is `cc` linking. Fork mode runs one job per core, so the
+rate scales with the cores: a runner with few cores fuzzes far fewer programs
+than a 32-core machine. Before `-len_control=0`, when the programs were
+smaller, the rate was about 2 a second per core when busy and 5 on an idle
+core, where one input took about 0.2 s on one thread, nine tenths of it
+linking.
+
+A replay prints the failure to stderr: the failed property as
+`property <n>: <what disagreed>`, or `compiler panic`, then the program, the
+rewritten copy and the standard input, each under a `==> <name>` line, then
+each build's exit status, stdout and stderr. It also writes `program.sisu`,
+`rewritten.sisu`, `stdin.txt` and `failure.txt` to
+`fuzz/artifacts/program/<input name>.dump/`. The replays after a fuzz run
+write the same directories.
+
+`--coverage` works for either target. It runs `cargo fuzz coverage` over the
+target's corpus, and for `front_end` its seeds too, then prints the line
+coverage of each compiler stage (lexer, parser, check, mir, codegen) and how
+many inputs reach codegen. `make fuzz-coverage [TARGET=program]` runs it, for
+`front_end` by default. A program input that the checker rejects is a crash,
+never a corpus entry, so every program input reaches codegen.
+
+### The nightly program job
+
+The `Fuzz programs` workflow (`.github/workflows/fuzz-program.yml`) runs
+every night at 03:53 UTC for 30 minutes. It works as
+[the front-end job](#the-nightly-job) does, with its own corpus cache,
+`fuzz-program-corpus-`, and its own concurrency group per ref, so neither job
+waits for the other. On a failure it uploads `fuzz/artifacts/` as
+`fuzz-program-failure`, with the `.dump` directory of each replayed crash, and
+the minimized inputs as `fuzz-program-minimized`. Nothing files an issue or
+blocks a merge: watch the runs and act on a red one.
+
+Program inputs are slow, so watch the corpus as well. The job summary gives
+the corpus size before and after cmin and whether cmin finished within its
+600 s. A cmin that runs out leaves the corpus whole, and it grows from night
+to night. Fork mode first merges the restored corpus, and the summary's
+executions count only the fuzzing after that merge: few executions, or
+`unknown`, mean the run spent its time replaying its corpus.
+
+A first job, `scripts/fuzz_program_plan.py`, decides how long to fuzz and
+whether to measure coverage, and sets the job's time limit from that. A run
+by hand with `workflow_dispatch` takes the seconds to fuzz, 60 to 14,400, and
+whether to run `--coverage`. GitHub offers that only for a workflow already on
+`main`.
+
+To fuzz a branch, open a pull request and add one label `fuzz-program`
+(2 hours), `fuzz-program <n>m` or `fuzz-program <n>h`, such as
+`fuzz-program 45m`. The run starts when the label is added and again on each
+push, which cancels the run in progress. Removing the label stops later
+pushes from starting runs; cancel a run in progress from the Actions tab. Any
+`<n>m` or `<n>h` from 1 minute to 4 hours works, which leaves the job inside
+GitHub's 6-hour limit, and each label must first exist in the repository. A
+pull request with two such labels fails the plan, and adding any other label
+starts nothing. A labeled run always ends with `--coverage` and puts its
+stage lines in the job summary. It restores the newest corpus of its own
+earlier runs or of `main`, and the corpus it saves stays with the pull
+request. GitHub runs no workflow for a pull request with a merge conflict, so
+resolve it first.
+
+### Fix a program fuzz failure
+
+1. Minimize the input with `--tmin`, then replay the newest
+   `minimized-from-` file with `--replay` for its dump. Fewer bytes mean fewer
+   generator choices and a smaller program.
+2. Decide which side is wrong. A program that does not check, or a rewrite or
+   known answer that is wrong by the language's rules, is a generator bug.
+   Anything else is a compiler or runtime bug.
+3. For a compiler or runtime bug, `program.sisu` becomes a `run/` or
+   `run-fail/` case, and `stdin.txt`, when it is not empty, its `<name>.in`.
+   Check its `.out` by hand, as `CODING_STANDARDS.md` asks, see the case fail,
+   then fix the root cause. A runtime fix also runs `make miri`.
+4. For a generator bug, add a test in `crates/sisuc/src/generate/coverage.rs`
+   that fails on it, then fix the generator. Never steer the generator around
+   a compiler bug.
+
 ## Compile and run a program
 
 `sisu build` takes a source file and writes the executable, named after the file
@@ -570,8 +690,8 @@ must accept any syntax those programs use.
 | `crates/runtime-mimalloc`, `crates/runtime-system` | `sisu-runtime-mimalloc` and `sisu-runtime-system`, the static archives that link it, on mimalloc and on the System allocator. Every compiled program links one. |
 | `bench` | The benchmark programs, and under `features/` the Sisu-only ones for CodSpeed. |
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
-| `fuzz` | The front-end fuzz target, its own Cargo workspace, run by `scripts/fuzz.sh`. |
+| `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |

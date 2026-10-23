@@ -5,6 +5,8 @@ a slot above "# Report" is left unfilled, so a template change cannot slip past 
 Usage: python3 diff_brief.py REPO BASE..HEAD OUT [--doc PATH]... [--focus FILE]
   REPO     the repository root that holds the diff (a worktree is fine)
   --doc    a spec or plan the reviewer reads with the diff; repeat for each
+REPO and each --doc are written as absolute paths: the reviewer runs in REPO, and a doc under
+the main checkout's gitignored docs/superpowers/ is not in a worktree.
   --focus  a file whose text goes under "# Focus"; without it, Focus is "none"
 """
 import argparse
@@ -31,9 +33,9 @@ def main():
     t = TEMPLATE.read_text()
     t = t.replace('a <spec | plan | diff> of Sisu', 'a diff of Sisu')
     t = t.replace('Target: <path, or base..head>.', f'Target: {a.range}.')
-    t = t.replace('<repository root>', a.repo)
+    t = t.replace('<repository root>', str(Path(a.repo).resolve()))
     t = t.replace('<base>..<head>', a.range)
-    docs = ''.join(f'- {d}\n' for d in a.doc)
+    docs = ''.join(f'- {Path(d).resolve()}\n' for d in a.doc)
     t = re.sub(r'- <the other documents to read.*?>\n', docs, t, flags=re.S)
     for slot, path in SKILLS.items():
         if path.exists():

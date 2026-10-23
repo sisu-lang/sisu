@@ -119,8 +119,9 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'test(oversized_input_is_a_tool_error)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
+# The program fuzzer's unit tests link the programs they build against target/debug's runtime.
 [[profile.default.scripts]]
-filter = "package(sisuc) & kind(test)"
+filter = "package(sisuc) & (kind(test) | test(/^fuzz_program::/))"
 setup = "build-runtime"
 
 # Valgrind tests are slow and memory hungry, so cap how many run at once.

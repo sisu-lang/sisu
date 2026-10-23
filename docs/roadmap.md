@@ -483,10 +483,15 @@ The compiler is fuzzed in two stages:
    out-of-memory, or on a malformed span or fix in the report. An input that
    checks clean is also compiled, and fails when LLVM rejects the module. CI runs it
    nightly; [development.md](development.md#fuzz-the-front-end) covers it.
-2. Wrong-code oracles. Open. Generators of well-typed programs, run
-   differentially (a build without `-O2` against one with it, for example),
-   would catch a program that compiles but computes the wrong answer, which
-   crash fuzzing cannot see.
+2. Wrong-code oracles. Done. A second target generates well-typed programs
+   from the input bytes, builds each at O0, at `-O2` and with `--rc-checks`,
+   runs them, and fails when the builds disagree, a build dies by a signal or
+   leaks on a normal exit, a rewritten copy prints something else, or an
+   integer answer the generator worked out is wrong. CI runs it nightly;
+   [development.md](development.md#fuzz-generated-programs) covers it. Two
+   oracles are deferred: a reference interpreter, until the pairs and known
+   answers stop finding bugs, and runs under Valgrind, which `--rc-checks`
+   and signal detection stand in for first.
 
 ## Proposed milestones 8 to 12
 
@@ -497,6 +502,8 @@ The compiler is fuzzed in two stages:
 | 10 | Records, named arguments, default parameters, and `p as name` to bind a whole sub-pattern | A `Point` record prints and compares with no hand-written methods |
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |
 | 12 | Error handling: `Result<T, E>` and a `?` operator | File I/O code has no nested error checks |
+
+Every milestone's "Done when" also includes generator rules for its features ([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)).
 
 Order matters in these places:
 
@@ -1268,9 +1275,6 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
   The C FFI, binary file formats and hashing need `i32`, `u32`, `u64` and
   `f32`. "Integer widths and wrapping" in "Open decisions" covers only part of
   this.
-- **Fuzzing the compiler.** Mutation testing measures the tests. Nothing
-  feeds generated programs to the parser, checker and codegen to find
-  crashes or wrong code.
 - **Distributing `sisu`.** Nothing installs Sisu outside a clone. `sisu`
   finds `libsisu_runtime_mimalloc.a` and `libsisu_runtime_system.a` only next
   to its own executable in a Cargo target directory (`link.rs`), and it links

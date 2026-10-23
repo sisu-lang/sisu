@@ -460,6 +460,10 @@ _Avoid_: follow-on error, knock-on error
 A habit from another language, such as `var` or `len(xs)`, that has its own
 diagnostic code naming the Sisu way.
 
+**Generator rule**:
+The part of the program fuzzer that writes one kind of syntax, type or built-in into generated programs. A language feature is done only when it has one.
+_Avoid_: fuzz rule, grammar rule
+
 **Reference count**:
 The number of references to an object; the object is dropped when it reaches
 0.

@@ -30,13 +30,13 @@ How to help with Sisu, a one-person learning project at an early stage.
       <p>All help is welcome.</p>
       <p>These kinds of input match what the project's own rules care about most:</p>
       <ul>
-        <li><strong>A program that gives a wrong answer.</strong> Correctness comes first: a program must never give a silent wrong answer. Fuzzing catches compiler crashes today, but not wrong results, so a small program that shows one is valuable.</li>
+        <li><strong>A program that gives a wrong answer.</strong> Correctness comes first: a program must never give a silent wrong answer. A nightly fuzzer runs generated programs and compares their builds, but it finds only what its generator writes, so a small program that shows one is valuable.</li>
         <li><strong>A program that crashes the compiler or leaks memory.</strong> The smaller the program, the easier it is to turn into a test case.</li>
         <li><strong>An error message that misleads.</strong> Diagnostics should be simple, clear and specific. Wording that is wrong, vague or full of compiler jargon counts as a bug.</li>
         <li><strong>A benchmark that disagrees.</strong> <a href="benchmarks.html">The benchmarks</a> compare Sisu with other languages. A result you cannot reproduce, measured as <a href="https://github.com/sisu-lang/sisu/blob/main/docs/benchmarks.md#running-them">the benchmark guide</a> describes, is worth knowing.</li>
         <li><strong>A document that is wrong.</strong> A doc that states what a program prints must match a real run.</li>
       </ul>
-      <!-- source: README.md "What Sisu values" (correctness: no silent wrong answer); docs/roadmap.md "Fuzzing" (crash fuzzing done, wrong-code oracles open); docs/development.md (Valgrind catches leaks in tests); CODING_STANDARDS.md "Reviewing" (diagnostic wording blocks when it misleads; a comment's facts were observed); docs/benchmarks.md "Running them" -->
+      <!-- source: README.md "What Sisu values" (correctness: no silent wrong answer); docs/roadmap.md "Fuzzing" (crash fuzzing and wrong-code oracles done); docs/development.md (Valgrind catches leaks in tests); CODING_STANDARDS.md "Reviewing" (diagnostic wording blocks when it misleads; a comment's facts were observed); docs/benchmarks.md "Running them" -->
 
       <h2 id="talk">Talk before you build</h2>
       <p>Each step of work is designed before it is built. Its design is settled in a working spec, and the lasting decisions become ADRs. A proposal in the roadmap is not decided until it lands in a spec or an ADR.</p>
