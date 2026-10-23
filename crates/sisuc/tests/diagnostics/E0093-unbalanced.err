@@ -1,0 +1,16 @@
+error[E0093]: string literal is not closed
+ --> E0093-unbalanced.sisu:2:11
+  |
+2 |     print("abc)
+  |           ^
+  |
+  = help: write `\n` for a line break
+
+error[E0032]: expected `i64`, found `string`
+ --> E0093-unbalanced.sisu:5:18
+  |
+5 |     let x: i64 = "s"
+  |                  ^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0093

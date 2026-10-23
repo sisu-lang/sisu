@@ -1,0 +1,6 @@
+fn main() {
+    print("abc)
+}
+fn f() {
+    let x: i64 = "s"
+}
