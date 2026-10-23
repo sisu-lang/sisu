@@ -182,8 +182,14 @@ impl Checker<'_> {
     /// drives from either side: an operand of another type is reported against `string`, with
     /// the unsafe fix to interpolate, the one before a `string` included, in place of what its own
     /// type was found to lack. A `string?` first operand makes the `+` a join and is reported
-    /// against `string`, its label under the other operand only if that is a `string`. A join
+    /// against `string`, its label under the other operand only if that is a `string`. If
+    /// operands come before a `string?` leader, they are checked with no expected type, and the
+    /// `string?` is the operand reported, as when it comes first. A join
     /// after an `Error` is `Error`. An expected `u8` or `f64` is `binary_operands`' to drop.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over the operands, so the rules that depend on each other read in one place"
+    )]
     fn integers(
         &mut self,
         operands: &[&ast::Expr],
@@ -212,6 +218,15 @@ impl Checker<'_> {
             Some(Type::I64)
         };
         let (mut want, leader) = (ty, first.as_ref().map(|(k, _)| *k));
+        // A `string?` leader after other operands: they are checked with no expected type, so the
+        // leader is the one reported, as when it comes first.
+        let held = first
+            .as_ref()
+            .and_then(|f| type_of(&f.1))
+            .is_some_and(|t| t != Type::STRING && payload(t) == Type::STRING);
+        if held {
+            want = None;
+        }
         // An integer literal first is the operator's `i64`, as is an `i64` wanted: no list then.
         let takes = (!wants_i64 && !int_literal(operands[0])).then(|| operator.takes());
         let by_char = arithmetic && first.as_ref().and_then(|f| type_of(&f.1)) == Some(Type::CHAR);
@@ -226,6 +241,9 @@ impl Checker<'_> {
         // by the second operand, if that is a `string`.
         let mut unlabelled = None;
         for (i, e) in operands.iter().enumerate() {
+            if held && leader == Some(i) {
+                want = ty;
+            }
             let start = self.diagnostics.len();
             let value = match first.take_if(|(k, _)| *k == i) {
                 Some((_, operand)) => operand,

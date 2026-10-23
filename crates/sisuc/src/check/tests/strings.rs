@@ -237,10 +237,10 @@ fn concat_mismatch() {
             Some("print(\"{n} items\")"),
         ),
         ("print(s + xs)", (2, 15, "xs"), &[(2, 11)], None),
-        // A `string?` makes the `+` a join and is the one reported; the other operand is no
-        // `string`, so it gets no label.
+        // A `string?` makes the `+` a join and is the one reported, in either order; the other
+        // operand is no `string`, so it gets no label and no fix.
         ("print(o + 1)", (2, 11, "o"), &[], None),
-        ("print(1 + o)", (2, 11, "1"), &[], Some("print(\"{1}{o}\")")),
+        ("print(1 + o)", (2, 15, "o"), &[], None),
         // A `string` after an operand that is no number still drives.
         (
             "print(true + s)",
@@ -283,6 +283,21 @@ fn concat_mismatch() {
             Some("let b: u8 = \"{300}{s}\""),
         ),
     ]);
+}
+
+/// A `string?` is the operand reported when a literal comes before it, as when it comes first.
+#[test]
+fn optional_string_after_literal_should_be_the_one_reported() {
+    for (statement, pos) in [
+        ("print(None + o)", (2, 18, "o")),
+        ("print([] + o)", (2, 16, "o")),
+        ("print(1 < o)", (2, 15, "o")),
+        ("print(None < o)", (2, 18, "o")),
+    ] {
+        let src = body("o: string?", statement);
+        let d = diagnostic(&src, Code::Mismatch, pos, &[]);
+        assert_eq!(fixes(&src, &d), [], "{src}");
+    }
 }
 
 /// A `None` beside a `string` that holds a mismatch of its own gets the label, and that
