@@ -3606,63 +3606,79 @@ fn a_field_cap_past_most_is_an_i64() {
     }
 }
 
-#[test]
-fn declared_types_keep_their_sizes() {
+/// Checks seed `n`'s declared types as `declared_types_keep_their_sizes` says, and gives how
+/// many class fields hold a class optional and how many enums hold a class.
+fn check_declared_types(n: u64) -> (usize, usize) {
+    let (mut optional_classes, mut enum_classes) = (0, 0);
+    let data = seed(n);
+    let mut g = Gen::new(&data);
+    g.program();
+    let text = &g.w.out.program;
+    for class in &g.scope.classes {
+        let caps: u64 = class.fields.iter().map(|field| field.cap).sum();
+        assert_eq!(class.size, 1 + caps, "{text}");
+        assert!(class.size <= MOST, "{text}");
+        for field in &class.fields {
+            let least = match &field.ty {
+                Ty::Optional(payload) => payload.floor(),
+                ty => ty.floor(),
+            };
+            assert!(field.cap >= least, "{}: {text}", field.name);
+            optional_classes += usize::from(
+                matches!(&field.ty, Ty::Optional(payload) if matches!(**payload, Ty::Class { .. })),
+            );
+        }
+    }
+    for (id, e) in g.scope.enums.iter().enumerate() {
+        let own = |ty: &Ty| matches!(ty, Ty::Enum { id: of, .. } if *of == id);
+        let first = &e.variants[0].fields;
+        assert!(!first.iter().any(own), "{text}");
+        assert_eq!(
+            e.least,
+            1 + first.iter().map(Ty::floor).sum::<u64>(),
+            "{text}"
+        );
+        let holds = e
+            .variants
+            .iter()
+            .flat_map(|variant| &variant.fields)
+            .any(|field| !own(field) && g.scope.contains_class(field));
+        assert_eq!(e.has_class, holds, "{text}");
+        enum_classes += usize::from(holds);
+    }
+    (optional_classes, enum_classes)
+}
+
+/// Checks the declared types of the `seeds` (`check_declared_types`), of which some enum should
+/// hold a class.
+fn declared_types_keep_their_sizes(seeds: std::ops::Range<u64>) {
     // A class's size is a node and its fields' caps, within `MOST`, and each cap holds its
     // field's least value, or the least value of the type an optional field holds. An enum's
     // least is its first variant's, which holds no value of the enum, and it holds a class
-    // where a field of a variant may. Past the first 512 seeds, the walk goes on only until a
-    // class holds a class optional and an enum a class, as a class optional is rare.
-    let (mut optional_classes, mut enum_classes) = (0, 0);
-    for seed in 0..4_096 {
-        if seed >= 512 && optional_classes > 0 && enum_classes > 0 {
-            break;
-        }
-        let mut state = seed;
-        let data: Vec<u8> = (0..SEED_LEN / 8)
-            .flat_map(|_| splitmix64(&mut state).to_le_bytes())
-            .collect();
-        let mut g = Gen::new(&data);
-        g.program();
-        let text = &g.w.out.program;
-        for class in &g.scope.classes {
-            let caps: u64 = class.fields.iter().map(|field| field.cap).sum();
-            assert_eq!(class.size, 1 + caps, "{text}");
-            assert!(class.size <= MOST, "{text}");
-            for field in &class.fields {
-                let least = match &field.ty {
-                    Ty::Optional(payload) => payload.floor(),
-                    ty => ty.floor(),
-                };
-                assert!(field.cap >= least, "{}: {text}", field.name);
-                optional_classes += usize::from(
-                    matches!(&field.ty, Ty::Optional(payload) if matches!(**payload, Ty::Class { .. })),
-                );
-            }
-        }
-        for (id, e) in g.scope.enums.iter().enumerate() {
-            let own = |ty: &Ty| matches!(ty, Ty::Enum { id: of, .. } if *of == id);
-            let first = &e.variants[0].fields;
-            assert!(!first.iter().any(own), "{text}");
-            assert_eq!(
-                e.least,
-                1 + first.iter().map(Ty::floor).sum::<u64>(),
-                "{text}"
-            );
-            let holds = e
-                .variants
-                .iter()
-                .flat_map(|variant| &variant.fields)
-                .any(|field| !own(field) && g.scope.contains_class(field));
-            assert_eq!(e.has_class, holds, "{text}");
-            enum_classes += usize::from(holds);
-        }
-    }
+    // where a field of a variant may.
+    let enum_classes: usize = seeds.map(|n| check_declared_types(n).1).sum();
+    assert!(enum_classes > 0, "no enum should fail to hold a class");
+}
+
+// Two batches of 256 seeds, so nextest runs them in parallel within the time budget.
+#[test]
+fn declared_types_keep_their_sizes_0() {
+    declared_types_keep_their_sizes(0..256);
+}
+
+#[test]
+fn declared_types_keep_their_sizes_256() {
+    declared_types_keep_their_sizes(256..512);
+}
+
+#[test]
+fn a_class_optional_field_keeps_its_size() {
+    // A class field that holds a class optional is rare: seed 698 is the first seed with one.
+    let (optional_classes, _) = check_declared_types(698);
     assert!(
         optional_classes > 0,
         "no class should fail to hold a class optional"
     );
-    assert!(enum_classes > 0, "no enum should fail to hold a class");
 }
 
 #[test]
