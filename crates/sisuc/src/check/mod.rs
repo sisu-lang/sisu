@@ -321,10 +321,12 @@ struct Body {
     joins: FxHashSet<Span>,
 }
 
-/// Diagnostics sorted by span start (stable); the program only when none is an error.
+/// Diagnostics sorted by span start (stable); the program only when none is an error. `parsed`
+/// holds the parser's diagnostics, sorted by span start: their errors count against a function too.
 pub(crate) fn check<'src>(
     program: &'src ast::Program,
     source: &'src str,
+    parsed: &[Diagnostic],
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let mut checker = Checker::new(program, source);
     checker.collect_names(program);
@@ -349,7 +351,7 @@ pub(crate) fn check<'src>(
         .filter_map(|(i, function)| {
             let (f, owner) = declared[i];
             let function = function.as_ref()?;
-            if has_error_in(&diagnostics, f.span) {
+            if has_error_in(&diagnostics, f.span) || has_error_in(parsed, f.span) {
                 return None;
             }
             let calls = recursion::unconditional(function, tir::FuncId(i))?;

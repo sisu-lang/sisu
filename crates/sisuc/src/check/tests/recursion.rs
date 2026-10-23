@@ -366,3 +366,77 @@ fn self_call_should_not_be_marked_after_a_self_call_on_every_path() {
         &[(3, 13)],
     );
 }
+
+/// `fn f(n: i64) -> bool` whose body is a `match` on `n` with `arms`, one to a line.
+fn guarded(arms: &[&str]) -> String {
+    let arms: Vec<_> = arms.iter().map(|arm| format!("        {arm}")).collect();
+    with_main(&format!(
+        "fn f(n: i64) -> bool {{\n    match n {{\n{}\n    }}\n}}",
+        arms.join("\n")
+    ))
+}
+
+/// A pattern that always matches runs its guard before every later arm.
+#[test]
+fn guard_should_end_every_later_path_after_a_pattern_that_always_matches() {
+    for pattern in ["_", "m", "0 | _"] {
+        let src = guarded(&[&format!("{pattern} if f(n) => f(1)"), "_ => f(2)"]);
+        let at = 9 + pattern.len() + 4;
+        warns(&src, (1, 4, "f"), &[(3, at)]);
+    }
+}
+
+#[test]
+fn guard_should_warn_when_it_calls_itself_before_every_arm() {
+    warns(
+        &guarded(&["_ if f(n) => true", "_ => false"]),
+        (1, 4, "f"),
+        &[(3, 14)],
+    );
+}
+
+/// An arm with no guard and a pattern that always matches ends every path: no later arm runs.
+#[test]
+fn unreachable_arm_should_not_be_marked() {
+    assert_eq!(
+        found(&guarded(&["_ => f(0)", "_ => f(1)"])),
+        [
+            (Code::UnconditionalRecursion, (1, 4), vec![(3, 14)]),
+            (Code::UnreachableArm, (4, 9), vec![(3, 9)]),
+        ]
+    );
+}
+
+/// A pattern that may not match lets a path skip its guard.
+#[test]
+fn guard_should_not_end_later_paths_after_a_pattern_that_may_not_match() {
+    for pattern in ["0", "0 | 1"] {
+        clean(&guarded(&[
+            &format!("{pattern} if f(n) => true"),
+            "_ => false",
+        ]));
+    }
+}
+
+/// The codes the whole front end reports for `src`, the parser's among them.
+fn front_end_codes(src: &str) -> Vec<Code> {
+    let ds = crate::front_end::front_end(src).1;
+    ds.iter().map(Diagnostic::code).collect()
+}
+
+/// The parser keeps a function with a format-spec error, but the error still counts against it.
+#[test]
+fn function_should_not_warn_when_its_body_has_a_format_spec_error() {
+    let src = f(&["print(\"{n:zz}\")", "f(n)"]);
+    assert_eq!(front_end_codes(&src), [Code::UnsupportedFormatSpec]);
+}
+
+/// A lexer error that starts at the byte after the function's `}` is not inside it.
+#[test]
+fn function_should_warn_when_an_error_starts_right_after_it() {
+    let src = f(&["f(n)"]).replacen("}\n", "}@\n", 1);
+    assert_eq!(
+        front_end_codes(&src),
+        [Code::UnconditionalRecursion, Code::UnexpectedCharacter]
+    );
+}

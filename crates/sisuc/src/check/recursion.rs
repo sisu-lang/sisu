@@ -165,12 +165,22 @@ impl Walk {
             } => {
                 let first = self.walk(scrutinee, open, calls);
                 let open = open && !first.recurses;
+                // The arms are tried in order. `called`: every path that goes on to the next arm
+                // has called the function, or no path goes on.
+                let mut called = false;
                 let arms = arms.iter().map(|arm| {
+                    let reached = if called { Flow::RECURSE } else { Flow::PASS };
+                    let open = open && !called;
                     let guard = arm
                         .guard
                         .as_ref()
                         .map_or(Flow::PASS, |guard| self.walk(guard, open, calls));
-                    guard.then(self.block(&arm.body, open && !guard.recurses, calls))
+                    let body = self.block(&arm.body, open && !guard.recurses, calls);
+                    // A path that a pattern can miss goes on as it came.
+                    if always_matches(&arm.pattern) {
+                        called = called || arm.guard.is_none() || guard.recurses;
+                    }
+                    reached.then(guard).then(body)
                 });
                 first.then(arms.reduce(Flow::or).unwrap_or(Flow::PASS))
             }
@@ -236,5 +246,18 @@ impl Walk {
                 base.then(self.walk(index, open && !base.recurses, calls))
             }
         }
+    }
+}
+
+/// Whether `pattern` matches every value of its type. `false` when it cannot tell, such as for a
+/// variant of an enum that has only one, so that a path may skip the arm.
+fn always_matches(pattern: &tir::Pattern) -> bool {
+    match &pattern.kind {
+        tir::PatternKind::Wild | tir::PatternKind::Bind(_) => true,
+        tir::PatternKind::Or(alternatives) => alternatives.iter().any(always_matches),
+        tir::PatternKind::Variant { .. }
+        | tir::PatternKind::Bool(_)
+        | tir::PatternKind::Range { .. }
+        | tir::PatternKind::Str(_) => false,
     }
 }

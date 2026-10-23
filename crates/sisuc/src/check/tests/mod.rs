@@ -21,7 +21,7 @@ mod u8;
 mod unused;
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    check(&parse_ok(src), src)
+    check(&parse_ok(src), src, &[])
 }
 
 fn diags(src: &str) -> Vec<Diagnostic> {

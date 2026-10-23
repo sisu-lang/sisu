@@ -65,7 +65,7 @@ fn checked(src: &str) -> tir::Program {
     } else {
         format!("{src}\nfn main() {{}}")
     };
-    let (program, diagnostics) = check(&parse_ok(&src), &src);
+    let (program, diagnostics) = check(&parse_ok(&src), &src, &[]);
     program.unwrap_or_else(|| panic!("{diagnostics:?}"))
 }
 
