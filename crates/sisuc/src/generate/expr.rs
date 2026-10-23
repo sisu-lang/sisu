@@ -608,7 +608,7 @@ impl Gen<'_> {
             .fields
             .iter()
             .all(|field| field.ty.least() <= field.cap);
-        let infer = fits && self.inferable(ty) && self.pick(2) == 0;
+        let infer = fits && self.scope.classes[id].inferable && self.pick(2) == 0;
         let name = if infer { ty.bare() } else { ty.to_string() };
         self.w.text(&format!("{name}("));
         let mut parts = Vec::new();

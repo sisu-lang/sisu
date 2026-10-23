@@ -53,30 +53,19 @@ impl std::fmt::Display for Ty {
             Ty::Unit => f.write_str("unit"),
             Ty::Array(element) => write!(f, "[{element}]"),
             Ty::Optional(payload) => write!(f, "{payload}?"),
-            Ty::Class { id, applied, .. } => written(f, "K", *id, applied.as_deref()),
-            Ty::Enum { id, applied, .. } => written(f, "E", *id, applied.as_deref()),
+            Ty::Class { id, applied, .. } => f.write_str(&written("K", *id, applied.as_deref())),
+            Ty::Enum { id, applied, .. } => f.write_str(&written("E", *id, applied.as_deref())),
         }
     }
 }
 
 /// `K3` or `E3` for a declared type, `G1<i64, [string]>` for an instance of a generic one.
-fn written(
-    f: &mut std::fmt::Formatter<'_>,
-    prefix: &str,
-    id: usize,
-    applied: Option<&Applied>,
-) -> std::fmt::Result {
+fn written(prefix: &str, id: usize, applied: Option<&Applied>) -> String {
     let Some(Applied { generic, args }) = applied else {
-        return write!(f, "{prefix}{id}");
+        return format!("{prefix}{id}");
     };
-    write!(f, "G{generic}<")?;
-    for (i, arg) in args.iter().enumerate() {
-        if i > 0 {
-            f.write_str(", ")?;
-        }
-        write!(f, "{arg}")?;
-    }
-    f.write_str(">")
+    let args: Vec<String> = args.iter().map(ToString::to_string).collect();
+    format!("G{generic}<{}>", args.join(", "))
 }
 
 impl Ty {
@@ -297,6 +286,9 @@ pub(crate) struct Class {
     pub(crate) size: u64,
     /// For an instance of a generic class, which one and with what.
     pub(crate) applied: Option<Rc<Applied>>,
+    /// For an instance: whether its fields name every type parameter of the generic class, so a
+    /// construction may leave out the type arguments.
+    pub(crate) inferable: bool,
 }
 
 /// A variant of an enum.

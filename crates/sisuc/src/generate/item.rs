@@ -380,6 +380,7 @@ impl Gen<'_> {
             fields,
             size,
             applied: None,
+            inferable: false,
         });
         self.scope.types.push(ty.clone());
         for _ in 0..self.pick(MAX_METHODS + 1) {

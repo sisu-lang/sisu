@@ -520,6 +520,7 @@ impl Gen<'_> {
         let params = self.scope.generics[generic].params;
         let ty = match self.scope.generics[generic].body.clone() {
             Body::Class(fields) => {
+                let inferable = GTy::name_all(fields.iter().map(|f| &f.ty), params);
                 let mut made = Vec::new();
                 let mut size = 1;
                 for field in &fields {
@@ -539,6 +540,7 @@ impl Gen<'_> {
                     fields: made,
                     size,
                     applied: applied.clone(),
+                    inferable,
                 });
                 Ty::Class { id, size, applied }
             }
@@ -575,21 +577,6 @@ impl Gen<'_> {
             labels: Vec::new(),
             recursive: variant.recursive,
             inferable: GTy::name_all(&variant.fields, params),
-        }
-    }
-
-    /// Whether a construction of the instance `ty` of a generic class can leave out its type
-    /// arguments: its fields name every type parameter.
-    pub(crate) fn inferable(&self, ty: &Ty) -> bool {
-        let Ty::Class {
-            applied: Some(a), ..
-        } = ty
-        else {
-            return false;
-        };
-        match &self.scope.generics[a.generic].body {
-            Body::Class(fields) => GTy::name_all(fields.iter().map(|f| &f.ty), a.args.len()),
-            Body::Enum(_) => false,
         }
     }
 
@@ -1069,7 +1056,7 @@ fn tparams(params: usize) -> String {
 mod tests {
     use super::{Body, GField, GFunc, GTy, GVariant, Generic, Shape, unify};
     use crate::generate::scope::Ty;
-    use crate::generate::{Gen, MAX_SIZE, generate};
+    use crate::generate::{BUDGET, FUEL, Gen, MAX_NESTING, MAX_SIZE, STATEMENT_MOST, generate};
     use crate::tir::Rank;
 
     /// No generic function.
@@ -1228,7 +1215,7 @@ mod tests {
     #[test]
     fn an_instance_should_put_its_arguments_into_its_fields() {
         let mut g = Gen::new(&[]);
-        g.scope.generics.push(pair_class());
+        declare(&mut g, vec![pair_class()]);
         let ty = g.instance(0, &[Ty::I64, Ty::String]);
         assert_eq!(ty.to_string(), "G0<i64, string>");
         let class = &g.scope.classes[0];
@@ -1282,6 +1269,7 @@ mod tests {
             fields: Vec::new(),
             size: 1,
             applied: None,
+            inferable: false,
         });
         let _ = g.instance(0, &[Ty::class(0, 1)]);
         let _ = g.instance(0, &[Ty::I64]);
@@ -1341,9 +1329,9 @@ mod tests {
         });
         let first = g.instance(0, &[Ty::I64, Ty::I64]);
         let second = g.instance(1, &[Ty::I64, Ty::I64]);
-        assert!(g.inferable(&first));
-        assert!(!g.inferable(&second), "`U` is named nowhere");
-        assert!(!g.inferable(&Ty::class(0, 1)));
+        assert!(g.scope.classes[0].inferable);
+        assert!(!g.scope.classes[1].inferable, "`U` is named nowhere");
+        assert_eq!((first, second), (g.scope.class_ty(0), g.scope.class_ty(1)));
     }
 
     #[test]
@@ -1355,6 +1343,7 @@ mod tests {
                 fields: Vec::new(),
                 size: 99,
                 applied: None,
+                inferable: false,
             });
             g.scope.types.push(Ty::class(0, 99));
             let ty = g.type_arg();
@@ -1429,17 +1418,90 @@ mod tests {
 
     #[test]
     fn a_body_should_call_an_earlier_function_and_count_its_cost() {
+        // The first byte picks the argument for the call's own; the second leaves the type
+        // arguments out when 0, and writes them when 1.
+        for (data, text) in [(&[0u8, 0][..], "h1(a)"), (&[0, 1][..], "h1<T>(a)")] {
+            let mut g = Gen::new(data);
+            g.scope.gfuncs.push(identity(4));
+            let mut env = vec![("a".to_string(), param(0), false)];
+            let solved = g.gcall_in(&param(0), &mut env, 0).unwrap();
+            assert_eq!(solved.text, text);
+            assert_eq!(solved.cost, 4);
+            assert!(env[0].2);
+        }
+    }
+
+    #[test]
+    fn a_body_should_skip_a_function_whose_result_is_another_type() {
         let mut g = Gen::new(&[]);
-        g.scope.gfuncs.push(identity(4));
+        g.scope.gfuncs.push(GFunc {
+            ret: array(param(0)),
+            ..identity(1)
+        });
+        g.scope.gfuncs.push(GFunc {
+            name: "h2".to_string(),
+            ..identity(2)
+        });
         let mut env = vec![("a".to_string(), param(0), false)];
         let solved = g.gcall_in(&param(0), &mut env, 0).unwrap();
-        assert!(
-            solved.text == "h1(a)" || solved.text == "h1<T>(a)",
-            "{}",
-            solved.text
+        assert!(solved.text.starts_with("h2"), "{}", solved.text);
+        assert_eq!(solved.cost, 2);
+    }
+
+    #[test]
+    fn an_argument_should_be_used_once() {
+        let mut env = vec![
+            ("a".to_string(), param(0), true),
+            ("b".to_string(), param(1), false),
+        ];
+        assert!(Gen::argument(&param(0), &mut env).is_none());
+        assert!(Gen::argument(&param(1), &mut env).is_some());
+        assert!(Gen::argument(&param(1), &mut env).is_none());
+    }
+
+    #[test]
+    fn a_parameter_or_a_scalar_should_not_be_built() {
+        let mut g = Gen::new(&[]);
+        let mut env = vec![("a".to_string(), param(0), false)];
+        assert!(g.build(&param(0), &mut env, 0).is_none());
+        assert!(g.build(&plain(Ty::I64), &mut env, 0).is_none());
+        assert!(!env[0].2);
+    }
+
+    #[test]
+    fn a_type_with_a_parameter_should_name_no_closed_type() {
+        let g = Gen::new(&[]);
+        for ty in [
+            param(0),
+            array(param(0)),
+            optional(param(0)),
+            GTy::Applied(0, vec![param(0)]),
+        ] {
+            assert_eq!(g.closed(&ty), None, "{ty}");
+            assert!(!g.small(&ty), "{ty}");
+        }
+        assert_eq!(
+            g.closed(&array(plain(Ty::U8))),
+            Some(Ty::Array(Box::new(Ty::U8)))
         );
-        assert_eq!(solved.cost, 4);
-        assert!(env[0].2);
+        let optional_string = optional(plain(Ty::String));
+        assert_eq!(
+            g.closed(&optional_string),
+            Some(Ty::Optional(Box::new(Ty::String)))
+        );
+        assert!(g.small(&plain(Ty::I64)));
+    }
+
+    #[test]
+    fn a_type_argument_should_not_be_small_when_its_instance_does_not_exist() {
+        let mut g = Gen::new(&[]);
+        g.scope.generics.push(wrapper());
+        let applied = GTy::Applied(0, vec![plain(Ty::I64)]);
+        assert_eq!(g.closed(&applied), None);
+        assert!(!g.small(&applied));
+        let ty = g.instance(0, &[Ty::I64]);
+        assert_eq!(g.closed(&applied), Some(ty));
+        assert!(g.small(&applied));
     }
 
     #[test]
@@ -1502,10 +1564,7 @@ mod tests {
         assert!(!info.pure);
         // In `main`, the cost comes out of the budget; it goes into the statements, too.
         assert_eq!(g.cost.statements, 2);
-        assert_eq!(
-            g.budget,
-            super::super::BUDGET - super::super::FUEL * super::super::STATEMENT_MOST - 2
-        );
+        assert_eq!(g.budget, BUDGET - FUEL * STATEMENT_MOST - 2);
     }
 
     #[test]
@@ -1628,6 +1687,541 @@ mod tests {
             let ty = g.instance(0, &[Ty::I64]);
             g.w.out.program.clear();
             g.variant(&ty, max, Some(0));
+            assert!(g.w.out.program.starts_with(start), "{}", g.w.out.program);
+        }
+    }
+
+    #[test]
+    fn a_generic_type_should_be_written_as_the_program_writes_it() {
+        let ty = GTy::Applied(1, vec![array(param(0)), plain(Ty::I64)]);
+        assert_eq!(optional(ty).to_string(), "G1<[T], i64>?");
+        assert_eq!(array(param(1)).to_string(), "[U]");
+        assert_eq!(super::angled(&[Ty::I64, Ty::Bool]), "<i64, bool>");
+        assert_eq!(super::tparams(1), "<T>");
+        assert_eq!(super::tparams(2), "<T, U>");
+    }
+
+    #[test]
+    fn unify_should_refuse_applied_types_of_other_arguments_or_other_counts() {
+        let one = GTy::Applied(0, vec![plain(Ty::I64)]);
+        let two = GTy::Applied(0, vec![plain(Ty::I64), plain(Ty::I64)]);
+        let other = GTy::Applied(0, vec![plain(Ty::U8)]);
+        assert!(!unify(&one, &two, &mut []));
+        assert!(!unify(&two, &one, &mut []));
+        assert!(!unify(&one, &other, &mut []));
+        assert!(unify(&one, &one, &mut []));
+    }
+
+    #[test]
+    fn the_generics_of_a_given_size_should_be_found_by_their_parameters_and_kind() {
+        let mut g = Gen::new(&[]);
+        declare(&mut g, vec![wrapper(), pair_class()]);
+        let pair = Generic {
+            params: 2,
+            body: Body::Enum(vec![variant("V9", vec![param(0), param(1)], false)]),
+        };
+        g.declare_enum(2, 2, vec![variant("V9", vec![param(0), param(1)], false)]);
+        assert_eq!(pair.params, 2);
+        assert_eq!(g.generic_enums(1), [0]);
+        assert_eq!(g.generic_enums(2), [2]);
+        assert_eq!(g.all_generic_enums(), [0, 2]);
+    }
+
+    #[test]
+    fn each_count_of_generics_should_reach_its_most_and_stay_within_it() {
+        // Each generic type and each generic function spends one fuel. A generic class has 3
+        // fields at most; a generic enum, 3 variants and 3 fields in a variant. A function has 2
+        // type parameters, and 4 arguments: the 3 of `(o: G<n><T, U>, d: T, e: U)` and one more.
+        let (mut types, mut functions, mut params, mut args) = (0, 0, 0, 0);
+        let (mut fields, mut variants, mut payload, mut mutable) =
+            (0, (usize::MAX, 0), 0, [false; 2]);
+        for state in 0..256 {
+            let data = crate::generate::coverage::seed(state);
+            let mut g = Gen::new(&data);
+            g.generics();
+            functions = functions.max(g.scope.gfuncs.len());
+            let spent = usize::try_from(FUEL - g.fuel).unwrap();
+            types = types.max(spent - g.scope.gfuncs.len());
+            for generic in &g.scope.generics {
+                params = params.max(generic.params);
+                match &generic.body {
+                    Body::Class(list) => {
+                        fields = fields.max(list.len());
+                        for field in list {
+                            mutable[usize::from(field.mutable)] = true;
+                        }
+                    }
+                    Body::Enum(list) => {
+                        variants = (variants.0.min(list.len()), variants.1.max(list.len()));
+                        payload =
+                            payload.max(list.iter().map(|v| v.fields.len()).max().unwrap_or(0));
+                    }
+                }
+            }
+            for func in &g.scope.gfuncs {
+                params = params.max(func.params);
+                args = args.max(func.args.len());
+            }
+        }
+        assert_eq!(
+            (
+                types, functions, params, args, fields, variants, payload, mutable
+            ),
+            (5, 3, 2, 4, 3, (2, 3), 3, [true; 2])
+        );
+    }
+
+    #[test]
+    fn a_generic_enum_of_the_plain_shape_should_have_a_second_variant_now_and_then() {
+        for (data, variants) in [(&[0u8; 8][..], 2), (&[1; 8][..], 3)] {
+            let mut g = Gen::new(data);
+            g.generic_enum(Shape::Plain, &[]);
+            let Body::Enum(list) = &g.scope.generics[0].body else {
+                panic!("an enum")
+            };
+            assert_eq!(list.len(), variants);
+            assert!(list.iter().all(|v| !v.recursive));
+        }
+        let mut g = Gen::new(&[]);
+        g.generic_enum(Shape::Recursive, &[]);
+        let Body::Enum(list) = &g.scope.generics[0].body else {
+            panic!("an enum")
+        };
+        assert_eq!(
+            list.iter().map(|v| v.recursive).collect::<Vec<_>>(),
+            [false, true]
+        );
+        // The enum itself is its first field, which a `while let` can walk.
+        assert_eq!(list[1].fields[0], GTy::Applied(0, vec![param(0)]));
+    }
+
+    #[test]
+    fn a_base_variant_should_hold_nothing_a_parameter_or_a_scalar() {
+        let fields = |byte: u8| {
+            let data = [byte, 1];
+            let mut g = Gen::new(&data);
+            g.base_variant(2).fields
+        };
+        assert_eq!(fields(0), []);
+        assert_eq!(fields(1), [param(1)]);
+        assert!(matches!(fields(2)[..], [GTy::Plain(_)]));
+    }
+
+    #[test]
+    fn a_field_should_be_a_parameter_an_array_an_optional_a_scalar_or_a_generic_enum() {
+        let mut seen = [false; 5];
+        for byte in 0..=u8::MAX {
+            let data = [byte; 4];
+            let mut g = Gen::new(&data);
+            declare(&mut g, vec![wrapper()]);
+            match g.gfield(1, &[0]) {
+                GTy::Param(_) => seen[0] = true,
+                GTy::Array(_) => seen[1] = true,
+                GTy::Optional(_) => seen[2] = true,
+                GTy::Plain(_) => seen[3] = true,
+                GTy::Applied(..) => seen[4] = true,
+            }
+        }
+        assert_eq!(seen, [true; 5]);
+        // With no generic enum to apply, a field is never one.
+        for byte in 0..=u8::MAX {
+            let data = [byte; 4];
+            assert!(!matches!(Gen::new(&data).gfield(1, &[]), GTy::Applied(..)));
+        }
+    }
+
+    #[test]
+    fn a_parameter_field_should_name_its_parameter_alone_in_an_array_or_in_an_optional() {
+        let fields: Vec<GTy> = (0..3)
+            .map(|byte| {
+                let data = [byte];
+                Gen::new(&data).param_field(1)
+            })
+            .collect();
+        assert_eq!(fields, [param(1), array(param(1)), optional(param(1))]);
+    }
+
+    #[test]
+    fn an_applied_generic_should_take_a_parameter_an_array_of_one_or_a_scalar() {
+        let mut seen = [false; 3];
+        for byte in 0..=u8::MAX {
+            let data = [byte; 6];
+            let mut g = Gen::new(&data);
+            declare(&mut g, vec![wrapper()]);
+            let GTy::Applied(0, args) = g.applied(0, 2) else {
+                panic!("an application of `G0`")
+            };
+            match &args[..] {
+                [GTy::Param(i)] => {
+                    assert!(*i < 2);
+                    seen[0] = true;
+                }
+                [GTy::Array(inner)] => {
+                    assert!(matches!(**inner, GTy::Param(i) if i < 2));
+                    seen[1] = true;
+                }
+                [GTy::Plain(_)] => seen[2] = true,
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(seen, [true; 3]);
+    }
+
+    #[test]
+    fn a_type_should_follow_the_choices_of_values_declared_types_instances_arrays_and_optionals() {
+        // The choices, in order: the 6 values, a declared type, an instance, an array, an
+        // optional. Each is present only when it can be made.
+        for (declared, instances) in [(false, false), (true, false), (false, true), (true, true)] {
+            for byte in 0..=u8::MAX {
+                let data = [byte; 8];
+                let mut kinds = Ty::VALUES.to_vec();
+                let mut g = Gen::new(&data);
+                if declared {
+                    g.scope.types.push(Ty::class(0, 1));
+                    kinds.push(Ty::class(0, 1));
+                }
+                if instances {
+                    g.scope.generic_types.push(Ty::enumeration(1, 1));
+                    kinds.push(Ty::enumeration(1, 1));
+                }
+                let choice = Gen::new(&data).pick(kinds.len() + 2);
+                let ty = g.any_type();
+                match kinds.get(choice) {
+                    Some(kind) => assert_eq!(ty, *kind, "choice {choice}"),
+                    None if choice == kinds.len() => assert!(matches!(ty, Ty::Array(_))),
+                    None => assert!(matches!(ty, Ty::Optional(_))),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_declared_class_should_be_built_with_fields_typed_by_the_class() {
+        // `u8` literals come bare, not as `(u8(n) ?? n)`, which only a generic class's fields
+        // use.
+        let mut g = Gen::new(&[]);
+        g.scope.classes.push(crate::generate::scope::Class {
+            fields: vec![crate::generate::scope::Field {
+                name: "g1".to_string(),
+                ty: Ty::U8,
+                mutable: false,
+                cap: 0,
+            }],
+            size: 1,
+            applied: None,
+            inferable: false,
+        });
+        g.object(&Ty::class(0, 1));
+        assert!(
+            g.w.out.program.starts_with("K0(g1: "),
+            "{}",
+            g.w.out.program
+        );
+        assert!(!g.w.out.program.contains("u8("), "{}", g.w.out.program);
+    }
+
+    #[test]
+    fn a_generic_enum_value_should_end_in_a_variant_that_holds_no_enum() {
+        // At the depth where a recursive variant is no longer allowed, only the other is.
+        let recursive = vec![
+            variant("V1", Vec::new(), false),
+            variant("V2", vec![GTy::Applied(0, vec![param(0)])], true),
+        ];
+        for (nesting, start) in [
+            (super::MAX_SOLVE - 1, "G0<i64>.V1"),
+            (super::MAX_SOLVE - 2, "G0.V2("),
+        ] {
+            let mut g = Gen::new(&[1]);
+            declare(
+                &mut g,
+                vec![Generic {
+                    params: 1,
+                    body: Body::Enum(recursive.clone()),
+                }],
+            );
+            let mut env = Vec::new();
+            let solved = g
+                .construct(0, &[plain(Ty::I64)], &mut env, nesting)
+                .unwrap();
+            assert!(solved.text.starts_with(start), "{}", solved.text);
+        }
+    }
+
+    #[test]
+    fn a_construction_should_leave_out_its_type_arguments_only_for_fields_that_name_them() {
+        let enum_text = |byte: u8, fields: Vec<GTy>| {
+            let data = [byte];
+            let mut g = Gen::new(&data);
+            declare(
+                &mut g,
+                vec![Generic {
+                    params: 1,
+                    body: Body::Enum(vec![variant("V1", fields, false)]),
+                }],
+            );
+            let mut env = vec![("a".to_string(), param(0), false)];
+            let solved = g.construct(0, &[param(0)], &mut env, 0).unwrap();
+            (solved.text, solved.extra)
+        };
+        assert_eq!(enum_text(0, vec![param(0)]), ("G0.V1(a)".to_string(), 1));
+        assert_eq!(enum_text(1, vec![param(0)]), ("G0<T>.V1(a)".to_string(), 1));
+        // No field, so no type parameter is named: they stay, and `a` stays unused.
+        assert_eq!(enum_text(0, Vec::new()), ("G0<T>.V1".to_string(), 1));
+        let class_text = |byte: u8| {
+            let data = [byte];
+            let mut g = Gen::new(&data);
+            g.scope.generics.push(Generic {
+                params: 1,
+                body: Body::Class(vec![field("g1", param(0), false)]),
+            });
+            let mut env = vec![("a".to_string(), param(0), false)];
+            let solved = g.construct(0, &[param(0)], &mut env, 0).unwrap();
+            (solved.text, solved.extra)
+        };
+        assert_eq!(class_text(0), ("G0(g1: a)".to_string(), 0));
+        assert_eq!(class_text(1), ("G0<T>(g1: a)".to_string(), 0));
+    }
+
+    #[test]
+    fn a_body_should_offer_a_call_and_a_match_only_above_the_depth_that_ends_it() {
+        let solved = |byte: u8, nesting: u32| {
+            let data = [byte];
+            let mut g = Gen::new(&data);
+            declare(&mut g, vec![wrapper()]);
+            g.scope.gfuncs.push(identity(1));
+            let mut env = vec![
+                ("o".to_string(), GTy::Applied(0, vec![param(0)]), false),
+                ("d".to_string(), param(0), false),
+            ];
+            g.solve(&param(0), &mut env, nesting).unwrap().text
+        };
+        // At the depth limit, only the argument itself remains.
+        for byte in 0..3 {
+            assert_eq!(solved(byte, super::MAX_SOLVE), "d");
+        }
+        // Above it, a byte picks the argument, the call or the `match`.
+        assert_eq!(solved(0, 0), "d");
+        assert!(solved(1, 0).starts_with("h1"), "{}", solved(1, 0));
+        assert!(solved(2, 0).starts_with("(match o"), "{}", solved(2, 0));
+    }
+
+    #[test]
+    fn a_body_should_not_offer_a_match_on_an_argument_that_is_a_class() {
+        let mut g = Gen::new(&[1]);
+        declare(&mut g, vec![pair_class()]);
+        let mut env = vec![
+            (
+                "o".to_string(),
+                GTy::Applied(0, vec![param(0), param(1)]),
+                false,
+            ),
+            ("d".to_string(), param(0), false),
+        ];
+        let before = g.u.len();
+        assert_eq!(g.solve(&param(0), &mut env, 0).unwrap().text, "d");
+        // One option leaves nothing to pick, so the byte stays.
+        assert_eq!(g.u.len(), before);
+    }
+
+    #[test]
+    fn a_scalar_should_be_written_as_its_literal() {
+        let text = |ty: Ty, byte: u8| {
+            let data = [byte, 3, 2, 1];
+            let mut g = Gen::new(&data);
+            g.scalar(&plain(ty)).unwrap().text
+        };
+        assert_eq!(text(Ty::I64, 0), "3");
+        assert_eq!(text(Ty::U8, 0), "(u8(0) ?? 0)");
+        assert_eq!(text(Ty::Bool, 0), "false");
+        assert_eq!(text(Ty::Bool, 1), "true");
+        assert_eq!(text(Ty::Char, 0), "'a'");
+        assert!(text(Ty::F64, 0).starts_with(|c: char| c.is_ascii_digit() || c == 'f'));
+        let string = text(Ty::String, 2);
+        assert!(string.starts_with('"') && string.ends_with('"'), "{string}");
+        assert!(string.len() - 2 <= 4, "{string}");
+    }
+
+    #[test]
+    fn an_optional_and_an_array_should_come_in_their_two_forms() {
+        let make = |byte: u8, target: GTy| {
+            let data = [byte, 1];
+            let mut g = Gen::new(&data);
+            let mut env = vec![
+                ("a".to_string(), param(0), false),
+                ("b".to_string(), param(0), false),
+            ];
+            let solved = g.build(&target, &mut env, 0).unwrap();
+            (solved.text, solved.extra)
+        };
+        assert_eq!(
+            make(0, optional(param(0))).0,
+            "(if true { a } else { None })"
+        );
+        assert_eq!(
+            make(1, optional(param(0))).0,
+            "(if false { a } else { None })"
+        );
+        // An array of one element takes the first byte as 0, and of two as 1.
+        assert_eq!(make(0, array(param(0))), ("[a]".to_string(), 1));
+        assert_eq!(make(1, array(param(0))), ("[a, b]".to_string(), 2));
+    }
+
+    #[test]
+    fn a_generic_function_should_be_written_with_its_type_parameters_and_arguments() {
+        // Byte by byte: one type parameter; the argument `T` and no other; the result `T`.
+        let mut g = Gen::new(&[]);
+        g.generic_function();
+        assert_eq!(g.w.out.program, "fn h1<T>(v2: T) -> T {\n    v2\n}\n");
+        // Two type parameters, an argument for each, the result the first.
+        let mut g = Gen::new(&[1]);
+        g.generic_function();
+        assert_eq!(
+            g.w.out.program,
+            "fn h1<T, U>(v2: T, v3: U) -> T {\n    v2\n}\n"
+        );
+        assert_eq!(g.scope.gfuncs[0].cost, 1);
+        assert_eq!(g.scope.gfuncs[0].params, 2);
+        assert_eq!(g.scope.gfuncs[0].args, [param(0), param(1)]);
+        assert_eq!(g.scope.gfuncs[0].ret, param(0));
+    }
+
+    #[test]
+    fn a_function_over_an_enum_and_a_parameter_should_match_the_enum_for_the_parameter() {
+        // Byte by byte: two type parameters; the unwrap form (0 of 4); no extra argument; and
+        // the `match`, the second of two ways to make a `T`.
+        let mut g = Gen::new(&[1, 0, 0, 1]);
+        declare(&mut g, vec![wrapper()]);
+        g.w.out.program.clear();
+        g.generic_function();
+        let text = &g.w.out.program;
+        assert!(
+            text.starts_with("fn h1<T, U>(v2: G0<T>, v3: T, v4: U) -> T {"),
+            "{text}"
+        );
+        assert!(
+            text.contains("(match v2 { G0.V2(p) => p; _ => v3 })"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_match_should_leave_the_other_fields_of_its_variant_unnamed() {
+        let mut g = Gen::new(&[]);
+        g.declare_enum(
+            0,
+            1,
+            vec![
+                variant("V1", Vec::new(), false),
+                variant("V2", vec![plain(Ty::I64), param(0), plain(Ty::Bool)], false),
+            ],
+        );
+        let mut env = vec![
+            ("o".to_string(), GTy::Applied(0, vec![param(0)]), false),
+            ("d".to_string(), param(0), false),
+        ];
+        let solved = g.destructure(&param(0), &mut env, 0).unwrap();
+        assert_eq!(solved.text, "(match o { G0.V2(_, p, _) => p; _ => d })");
+    }
+
+    #[test]
+    fn a_call_should_skip_a_function_that_does_not_give_the_type() {
+        let mut g = Gen::new(&[]);
+        g.scope.gfuncs.push(GFunc {
+            ret: array(param(0)),
+            ..identity(1)
+        });
+        assert_eq!(g.gcallees(&Ty::I64, 0), NONE);
+        g.scope.gfuncs.push(identity(1));
+        assert_eq!(g.gcallees(&Ty::I64, 0), [1]);
+    }
+
+    #[test]
+    fn a_call_should_separate_its_arguments_with_commas() {
+        let mut g = Gen::new(&[]);
+        g.scope.gfuncs.push(GFunc {
+            args: vec![param(0), param(0)],
+            ..identity(1)
+        });
+        g.gcall(&Ty::I64, MAX_SIZE);
+        assert_eq!(g.w.out.program, "h1(0, 0)");
+    }
+
+    #[test]
+    fn a_sized_result_should_hold_the_nodes_it_adds() {
+        let mut g = Gen::new(&[]);
+        g.scope.gfuncs.push(GFunc {
+            ret: array(param(0)),
+            extra: 3,
+            ..identity(1)
+        });
+        // The argument is a `string` of no chars, and the call adds 3.
+        assert_eq!(g.gcall(&Ty::Array(Box::new(Ty::String)), MAX_SIZE).size, 3);
+    }
+
+    #[test]
+    fn a_type_argument_should_have_a_floor_of_the_most_and_no_more() {
+        let mut found = [false; 2];
+        for byte in 0..=u8::MAX {
+            let data = [byte, 0, 0];
+            let mut g = Gen::new(&data);
+            g.scope.types.push(Ty::class(0, super::ARG_FLOOR));
+            g.scope.types.push(Ty::class(1, super::ARG_FLOOR + 1));
+            match g.type_arg() {
+                Ty::Class { id: 0, .. } => found[0] = true,
+                Ty::Class { id: 1, .. } => found[1] = true,
+                _ => {}
+            }
+        }
+        assert_eq!(found, [true, false]);
+    }
+
+    #[test]
+    fn an_enum_instance_should_count_its_first_variant_as_its_least_value() {
+        let mut g = Gen::new(&[]);
+        g.scope.classes.push(crate::generate::scope::Class {
+            fields: Vec::new(),
+            size: 5,
+            applied: None,
+            inferable: false,
+        });
+        g.declare_enum(
+            0,
+            1,
+            vec![
+                variant("V1", vec![param(0), plain(Ty::I64)], false),
+                variant("V2", Vec::new(), false),
+            ],
+        );
+        let ty = g.instance(0, &[Ty::class(0, 5)]);
+        // The node, and the object.
+        assert!(matches!(ty, Ty::Enum { least: 6, .. }), "{ty:?}");
+        assert_eq!(g.scope.enums[0].least, 6);
+    }
+
+    #[test]
+    fn a_value_of_a_recursive_enum_should_take_the_recursive_variant_only_while_fuel_lasts() {
+        // Byte 1 picks the second of two variants when both can come.
+        for (fuel, nesting, start) in [
+            (0, 0, "G0<i64>.V1"),
+            (1, MAX_NESTING, "G0<i64>.V1"),
+            (1, MAX_NESTING - 1, "G0.V2("),
+        ] {
+            let mut g = Gen::new(&[1]);
+            declare(
+                &mut g,
+                vec![Generic {
+                    params: 1,
+                    body: Body::Enum(vec![
+                        variant("V1", Vec::new(), false),
+                        variant("V2", vec![GTy::Applied(0, vec![param(0)])], true),
+                    ]),
+                }],
+            );
+            let ty = g.instance(0, &[Ty::I64]);
+            g.w.out.program.clear();
+            g.fuel = fuel;
+            g.nesting = nesting;
+            g.variant(&ty, 10, None);
             assert!(g.w.out.program.starts_with(start), "{}", g.w.out.program);
         }
     }

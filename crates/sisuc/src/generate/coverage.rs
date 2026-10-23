@@ -3417,6 +3417,7 @@ fn declare(g: &mut Gen) {
         ],
         size: 9,
         applied: None,
+        inferable: false,
     });
     let variant = |name: &str, fields: Vec<Ty>| Variant {
         name: name.to_string(),
@@ -3595,6 +3596,7 @@ fn a_chain_ends_in_a_variant_within_its_room() {
             fields: Vec::new(),
             size: 111,
             applied: None,
+            inferable: false,
         });
         let variant = |name: &str, fields: Vec<Ty>| Variant {
             name: name.to_string(),
@@ -3926,6 +3928,7 @@ fn a_field_cap_past_most_is_an_i64() {
             fields: Vec::new(),
             size: held,
             applied: None,
+            inferable: false,
         });
         g.scope.types.push(Ty::class(0, held));
         g.class();
@@ -4032,6 +4035,7 @@ fn a_mutable_array_of_large_elements_holds_fewer_of_them() {
             }],
             size: 99,
             applied: None,
+            inferable: false,
         });
         let variant = |name: &str, fields: Vec<Ty>| Variant {
             name: name.to_string(),
