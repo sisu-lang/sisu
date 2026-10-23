@@ -119,10 +119,11 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'test(check_should_exit_1_when_the_input_file_is_larger_than_1_gib)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
-# A checker test runs an example from a made-up page, and a mistake in the page or in the checker
-# can make it run for ever, so kill it fast. This guards against a mistake; it is not a time check.
+# A checker test runs an example from a made-up page, and a reference test runs an example from a
+# real page; a mistake in the page or in the checker can make it run for ever, so kill it fast. This guards against a mistake; it is not a time
+# check.
 [[profile.default.overrides]]
-filter = 'binary(reference_checker)'
+filter = 'binary(reference) | binary(reference_checker)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # The program fuzzer's unit tests link the programs they build against target/debug's runtime.

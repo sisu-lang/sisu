@@ -460,6 +460,7 @@ dependencies = [
  "clap",
  "datatest-stable",
  "inkwell",
+ "libtest-mimic",
  "pulldown-cmark",
  "rustc-hash",
  "serde",
