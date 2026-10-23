@@ -2,8 +2,9 @@
 //!
 //! `read_page` reads a page's fenced blocks with `pulldown-cmark` and finds its examples and the
 //! faults in its Markdown. `check` writes one example to `example.sisu` and checks it as its
-//! kind says: its diagnostic markers against `sisu check --format json`, then one plain build,
-//! then one run whose exit, standard output and standard error must be what the page says.
+//! kind says. First, `sisu check --format json` must report its diagnostic markers. Then one
+//! plain build runs. Last, one run must give the exit, standard output and standard error that
+//! the page says.
 
 use std::ffi::OsString;
 use std::fs;
@@ -77,13 +78,16 @@ pub(crate) fn read_page(text: &str) -> Page {
         .chain(text.match_indices('\n').map(|(at, _)| at + 1))
         .collect();
     let line_of = |offset: usize| line_starts.partition_point(|&start| start <= offset);
-    let mut examples = Vec::new();
-    let mut dropped = Vec::new();
-    let mut faults = Vec::new();
-    let mut open = Open::Nothing;
+    let mut reader = Reader {
+        examples: Vec::new(),
+        dropped: Vec::new(),
+        faults: Vec::new(),
+        open: Open::Nothing,
+    };
     // The code block being read: its start offset, its kind and its text so far.
     let mut block: Option<(usize, CodeBlockKind, String)> = None;
-    for (event, range) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {
+    let mut events = Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter();
+    for (event, range) in events.by_ref() {
         match event {
             Event::Start(Tag::CodeBlock(kind)) => block = Some((range.start, kind, String::new())),
             // Text outside a code block is inside a paragraph or a heading, whose start
@@ -98,83 +102,135 @@ pub(crate) fn read_page(text: &str) -> Page {
                     .take()
                     .expect("a code block should end after it starts");
                 let line = line_of(start);
-                let at_line_start = line_starts[line - 1] == start;
-                let fault = match &kind {
-                    CodeBlockKind::Indented => {
-                        Some("an indented code block is not checked; use a ``` fence".to_string())
-                    }
-                    // A fence in a block quote or a list item starts after the `>` or the
-                    // item's indent, so it is not at column 0 either.
-                    CodeBlockKind::Fenced(_)
-                        if !at_line_start || text.as_bytes()[start] != b'`' =>
-                    {
-                        Some(
-                            "a fence must be ``` at column 0, outside block quotes and list items"
-                                .to_string(),
-                        )
-                    }
-                    CodeBlockKind::Fenced(info) => {
-                        let (name, words) = info.split_once(' ').unwrap_or((info, ""));
-                        match name {
-                            "sisu" => match example(line, words, body) {
-                                Ok(found) => {
-                                    examples.push(found);
-                                    dropped.push(false);
-                                    open = Open::Example(examples.len() - 1);
-                                    None
-                                }
-                                Err(fault) => {
-                                    open = Open::Faulted;
-                                    faults.push(fault);
-                                    None
-                                }
-                            },
-                            "output" | "input" | "stderr" if words.is_empty() => match open {
-                                Open::Nothing => Some(format!(
-                                    "this `{name}` block follows no example; put it directly \
-                                     after its `sisu` block"
-                                )),
-                                Open::Faulted => None,
-                                Open::Example(index) => {
-                                    let fault = companion(&mut examples[index], name, body);
-                                    dropped[index] |= fault.is_some();
-                                    fault
-                                }
-                            },
-                            "sh" | "text" if words.is_empty() => {
-                                open = Open::Nothing;
-                                None
-                            }
-                            _ => Some(format!(
-                                "the fence `{info}` is not one of `sisu ...`, `output`, `input`, \
-                                 `stderr`, `sh` and `text`"
-                            )),
-                        }
-                    }
-                };
-                if let Some(message) = fault {
-                    faults.push(Fault { line, message });
-                }
+                let at_column_0 = line_starts[line - 1] == start && text.as_bytes()[start] == b'`';
+                reader.code_block(line, at_column_0, &kind, body);
             }
             // Any other block comes between an example and a companion block.
             Event::Start(Tag::HtmlBlock) => {
-                faults.push(Fault {
+                reader.faults.push(Fault {
                     line: line_of(range.start),
                     message: "a raw HTML block is not allowed: the site shows a fence in it, \
                               and the checker cannot see that fence"
                         .to_string(),
                 });
-                open = Open::Nothing;
+                reader.open = Open::Nothing;
             }
-            _ => open = Open::Nothing,
+            _ => reader.open = Open::Nothing,
         }
     }
+    let Reader {
+        examples,
+        dropped,
+        mut faults,
+        ..
+    } = reader;
+    faults.extend(
+        events
+            .reference_definitions()
+            .iter()
+            .filter_map(|(_, definition)| indented_after(text, &line_starts, definition.span.end)),
+    );
+    faults.sort_by_key(|fault| fault.line);
     let examples = examples
         .into_iter()
         .zip(dropped)
         .filter_map(|(example, dropped)| (!dropped).then_some(example))
         .collect();
     Page { examples, faults }
+}
+
+/// What `read_page` has found so far, and what a companion block attaches to.
+struct Reader {
+    examples: Vec<Example>,
+    /// For each example, if a companion block of it has a fault.
+    dropped: Vec<bool>,
+    faults: Vec<Fault>,
+    open: Open,
+}
+
+impl Reader {
+    /// Reads the code block of `kind` with `body` on Markdown `line`. `at_column_0` says that it
+    /// starts with a backtick at column 0.
+    fn code_block(&mut self, line: usize, at_column_0: bool, kind: &CodeBlockKind, body: String) {
+        let fault = match kind {
+            CodeBlockKind::Indented => {
+                Some("an indented code block is not checked; use a ``` fence".to_string())
+            }
+            // A fence in a block quote or a list item starts after the `>` or the
+            // item's indent, so it is not at column 0 either.
+            CodeBlockKind::Fenced(_) if !at_column_0 => Some(
+                "a fence must be ``` at column 0, outside block quotes and list items".to_string(),
+            ),
+            CodeBlockKind::Fenced(info) => {
+                let (name, words) = info.split_once(' ').unwrap_or((info, ""));
+                match name {
+                    "sisu" => match example(line, words, body) {
+                        Ok(found) => {
+                            self.examples.push(found);
+                            self.dropped.push(false);
+                            self.open = Open::Example(self.examples.len() - 1);
+                            None
+                        }
+                        Err(fault) => {
+                            self.open = Open::Faulted;
+                            self.faults.push(fault);
+                            None
+                        }
+                    },
+                    "output" | "input" | "stderr" if words.is_empty() => match self.open {
+                        Open::Nothing => Some(format!(
+                            "this `{name}` block follows no example; put it directly \
+                             after its `sisu` block"
+                        )),
+                        Open::Faulted => None,
+                        Open::Example(index) => {
+                            let fault = companion(&mut self.examples[index], name, body);
+                            self.dropped[index] |= fault.is_some();
+                            fault
+                        }
+                    },
+                    "sh" | "text" if words.is_empty() => {
+                        self.open = Open::Nothing;
+                        None
+                    }
+                    _ => Some(format!(
+                        "the fence `{info}` is not one of `sisu ...`, `output`, `input`, \
+                         `stderr`, `sh` and `text`"
+                    )),
+                }
+            }
+        };
+        if let Some(message) = fault {
+            self.faults.push(Fault { line, message });
+        }
+    }
+}
+
+/// The fault of an indented line directly under a link reference definition that ends at byte
+/// `end`. markdown-it ends the definition at its line, so the site shows that line as a code
+/// block, and pulldown-cmark reads it as text of a paragraph. The hooks strip blanks at a line
+/// end, so the line is not blank.
+// shortcut: sees only the first definition of a label, outside block quotes and list items;
+// check every definition's line when a page uses reference links.
+fn indented_after(text: &str, line_starts: &[usize], end: usize) -> Option<Fault> {
+    // The index of the line after the definition's last line is that last line's number.
+    let next = line_starts.partition_point(|&start| start < end);
+    let column = text[*line_starts.get(next)?..]
+        .bytes()
+        .take_while(|&byte| byte == b' ' || byte == b'\t')
+        .fold(0, |column, byte| {
+            if byte == b'\t' {
+                column / 4 * 4 + 4
+            } else {
+                column + 1
+            }
+        });
+    (column >= 4).then(|| Fault {
+        line: next + 1,
+        message: "an indented line directly under a link reference definition is a code block on \
+                  the site; put a blank line before it"
+            .to_string(),
+    })
 }
 
 /// The example of the `sisu` fence on Markdown `line`, with the info words after `sisu` and the
@@ -199,13 +255,21 @@ fn example(line: usize, words: &str, source: String) -> Result<Example, Fault> {
         }
     }
     let error = markers.iter().any(|marker| marker.code.starts_with('E'));
+    if error && matches!(kind, Kind::Panics | Kind::NoRun) {
+        return Err(fault(
+            line,
+            "a panics or no-run example takes only warning markers",
+        ));
+    }
     if args.is_some() && (error || matches!(kind, Kind::NoRun | Kind::Pending)) {
         return Err(fault(
             line,
             "only a working, warning or panics example takes `args`",
         ));
     }
-    if let Some(number) = first_output.filter(|_| error || kind == Kind::NoRun) {
+    if let Some(number) =
+        first_output.filter(|_| (error && kind == Kind::Run) || kind == Kind::NoRun)
+    {
         return Err(fault(
             line + number,
             "an error or no-run example has no output lines; this trailing comment is not a \
@@ -419,7 +483,7 @@ pub(crate) fn check(example: &Example, dir: &Path) -> Result<(), String> {
 
 /// Checks that `stdout` is the output lines of `source`, its trailing comments that are not
 /// markers, each with a line break.
-fn output_lines(source: &str, stdout: &[u8]) -> Result<(), String> {
+pub(crate) fn output_lines(source: &str, stdout: &[u8]) -> Result<(), String> {
     let wanted: Vec<(usize, &str)> = comments(source)
         .filter(|(_, comment)| marker(comment).is_none())
         .collect();
@@ -446,6 +510,9 @@ fn output_lines(source: &str, stdout: &[u8]) -> Result<(), String> {
         }
     }
     let rest: String = lines.collect();
+    if rest.is_empty() {
+        return Err(format!("the standard output is not UTF-8: {found:?}"));
+    }
     Err(format!(
         "the program prints more than its output lines: {rest:?}"
     ))

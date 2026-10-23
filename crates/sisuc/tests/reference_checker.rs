@@ -7,7 +7,7 @@ mod reference_check;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 
-use reference_check::{check, pending_result, read_page};
+use reference_check::{check, output_lines, pending_result, read_page};
 
 /// Checks the one example of `page` in a fresh case directory named after `test`. It asserts
 /// that the page has no fault and one example, whose line is the line of the page's `sisu` fence.
@@ -24,6 +24,12 @@ fn verdict(test: &str, page: &str) -> Result<(), String> {
     assert_eq!(example.line, fence + 1, "the example's line in {page}");
     let dir = support::case_dir(&Path::new("reference_checker").join(test));
     check(example, &dir)
+}
+
+/// Checks that the one example of `page` fails, with `fragment` in the checker's error.
+fn fails_with(test: &str, page: &str, fragment: &str) {
+    let failure = verdict(test, page).expect_err("the example should fail");
+    assert!(failure.contains(fragment), "{failure}");
 }
 
 /// The lines of the faults in `page`, each fault with a message.
@@ -62,7 +68,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("wrong_output_line_should_fail", page).is_err());
+    fails_with(
+        "wrong_output_line_should_fail",
+        page,
+        r#"line 2: the output line is "43""#,
+    );
 }
 
 /// GIVEN a page with the example `print(1)` and `print(2) // 2`
@@ -78,7 +88,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("unlisted_output_should_fail", page).is_err());
+    fails_with(
+        "unlisted_output_should_fail",
+        page,
+        r#"line 3: the output line is "2", and the program prints "1\n""#,
+    );
 }
 
 /// GIVEN a page with a loop that prints 1 and 2, with an `output` block "1\n2"
@@ -184,7 +198,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("missing_input_block_should_fail", page).is_err());
+    fails_with(
+        "missing_input_block_should_fail",
+        page,
+        r#"the program prints "none\n""#,
+    );
 }
 
 /// GIVEN a page with a `sisu args=\"a b\"` example that prints each of its arguments
@@ -221,7 +239,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("unexpected_standard_error_should_fail", page).is_err());
+    fails_with(
+        "unexpected_standard_error_should_fail",
+        page,
+        "the standard error is not empty",
+    );
 }
 
 /// GIVEN a page with the example `print(1000_) // error[E0008]` on line 2
@@ -251,7 +273,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("wrong_code_should_fail", page).is_err());
+    fails_with(
+        "wrong_code_should_fail",
+        page,
+        "the markers give [E0009 on line 2], and sisu check reports [E0008 on line 2]",
+    );
 }
 
 /// GIVEN a page with the E0008 line on line 2 and its marker on line 3
@@ -267,7 +293,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("marker_on_the_wrong_line_should_fail", page).is_err());
+    fails_with(
+        "marker_on_the_wrong_line_should_fail",
+        page,
+        "the markers give [E0008 on line 3], and sisu check reports [E0008 on line 2]",
+    );
 }
 
 /// GIVEN a page with a `let mut` never changed, marked `// warning[W0002]`, then `print(n) // 42`
@@ -304,7 +334,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("unmarked_diagnostic_should_fail", page).is_err());
+    fails_with(
+        "unmarked_diagnostic_should_fail",
+        page,
+        "sisu check reports [E0008 on line 6, E0009 on line 2]",
+    );
 }
 
 /// GIVEN a page with `todo` under `sisu panics` with `// warning[W0003]` and its `stderr` block
@@ -338,7 +372,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("warning_example_output_should_be_checked", page).is_err());
+    fails_with(
+        "warning_example_output_should_be_checked",
+        page,
+        r#"line 3: the output line is "43""#,
+    );
 }
 
 /// GIVEN a page with a `let mut` never changed, with no marker
@@ -354,7 +392,11 @@ fn main() {
 }
 ```
 ";
-    assert!(verdict("working_example_with_a_warning_should_fail", page).is_err());
+    fails_with(
+        "working_example_with_a_warning_should_fail",
+        page,
+        "sisu build warns, and the example has no marker",
+    );
 }
 
 /// GIVEN a page with a `sisu panics` example that adds 1 to the largest i64
@@ -379,7 +421,11 @@ sisu: panic at example.sisu:3:11: integer overflow
 ";
     assert_eq!(verdict(test, overflow), Ok(()));
     let column = overflow.replace("3:11", "3:12");
-    assert!(verdict(test, &column).is_err());
+    fails_with(
+        test,
+        &column,
+        "the standard error is not the `stderr` block",
+    );
     // The same output and standard error as the panic, so only the exit code differs.
     let exits_0 = "\
 ```sisu panics
@@ -391,7 +437,7 @@ fn main() {
 sisu: panic at example.sisu:3:11: integer overflow
 ```
 ";
-    assert!(verdict(test, exits_0).is_err());
+    fails_with(test, exits_0, "the program should exit 101");
 }
 
 /// GIVEN a page with a `sisu pending` example that compiles
@@ -563,6 +609,18 @@ fn pending_check_failure_should_not_say_it_compiles() {
     assert!(!killed.contains("compiles"), "{killed}");
 }
 
+/// GIVEN an example whose output line is the replacement character U+FFFD
+/// AND a standard output of the byte 0xFF and a newline, which is not UTF-8
+/// WHEN the checker compares them
+/// THEN it fails and says that the output is not UTF-8
+#[test]
+fn output_that_is_not_utf8_should_be_named() {
+    let source = "fn main() {\n    print(\"\u{FFFD}\") // \u{FFFD}\n}\n";
+    let failure =
+        output_lines(source, b"\xFF\n").expect_err("bytes that are not UTF-8 should fail");
+    assert!(failure.contains("not UTF-8"), "{failure}");
+}
+
 /// GIVEN a page with a `sisu pending` example that calls a function that does not exist
 /// AND the marker `// error[E0008]`, which is the wrong code
 /// WHEN the checker checks the page
@@ -651,6 +709,76 @@ fn main() {
     assert_eq!(faults(page), [3]);
 }
 
+/// GIVEN a page with a `sisu panics` example with an error marker, on line 3
+/// WHEN the checker checks the page
+/// THEN it fails and names the line of the fence
+#[test]
+fn error_marker_on_a_panics_example_should_be_a_fault() {
+    let page = "\
+# Page
+
+```sisu panics
+fn main() {
+    print(1000_) // error[E0008]
+}
+```
+";
+    assert_eq!(faults(page), [3]);
+}
+
+/// GIVEN a page with a `sisu no-run` example with an error marker, on line 3
+/// WHEN the checker checks the page
+/// THEN it fails and names the line of the fence
+#[test]
+fn error_marker_on_a_no_run_example_should_be_a_fault() {
+    let page = "\
+# Page
+
+```sisu no-run
+fn main() {
+    print(1000_) // error[E0008]
+}
+```
+";
+    assert_eq!(faults(page), [3]);
+}
+
+/// GIVEN a page with a `sisu pending` example with an error marker and `print(1) // ignored`
+/// WHEN the checker checks the page
+/// THEN the result is pass
+#[test]
+fn pending_example_should_not_check_its_output_comments() {
+    let page = "\
+```sisu pending
+fn main() {
+    not_written_yet() // error[E0008]
+    print(1) // ignored
+}
+```
+";
+    assert_eq!(
+        verdict("pending_example_should_not_check_its_output_comments", page),
+        Ok(())
+    );
+}
+
+/// GIVEN a page with a link reference definition on line 1
+/// AND code indented with four spaces, or with a tab, directly under it on line 2
+/// WHEN the checker checks each page
+/// THEN each fails and names line 2
+#[test]
+fn indented_code_after_a_link_definition_should_be_a_fault() {
+    // markdown-it shows the indented lines as a code block, and pulldown-cmark reads them as
+    // text of the definition's paragraph.
+    for indent in ["    ", "\t"] {
+        let page = format!(
+            "[link]: https://example.com\n{indent}fn main() {{\n{indent}    print(42) // 43\n\
+             {indent}}}\n\n```sisu\nfn main() {{}}\n```\n"
+        );
+        assert_eq!(faults(&page), [2], "{page}");
+    }
+}
+
 /// GIVEN a page with a `sisu` fence in a block quote, on line 3
 /// WHEN the checker checks the page
 /// THEN it fails and names the line of the fence
@@ -697,7 +825,11 @@ fn main() {
 ```
 ";
     assert_eq!(verdict(test, tab), Ok(()));
-    assert!(verdict(test, &tab.replace("a\tb", "a b")).is_err());
+    fails_with(
+        test,
+        &tab.replace("a\tb", "a b"),
+        r#"line 2: the output line is "a b""#,
+    );
 }
 
 /// GIVEN a page with `fn main() {}` and no output lines
@@ -717,5 +849,9 @@ fn main() {}
     let empty = format!("{silent}```output\n```\n");
     assert_eq!(verdict(test, &empty), Ok(()));
     let prints = empty.replace("fn main() {}", "fn main() {\n    print(1)\n}");
-    assert!(verdict(test, &prints).is_err());
+    fails_with(
+        test,
+        &prints,
+        "the standard output is not the `output` block",
+    );
 }
