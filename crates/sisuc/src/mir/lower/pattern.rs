@@ -198,7 +198,8 @@ impl Lowering<'_> {
 
     /// `match scrutinee { arms }`, with the scrutinee in `temp`, or tested in place when it is a
     /// borrowed place. A `match` on a borrowed parameter of an enum type marks it in `reuses` when
-    /// an arm would take a box of an enum `F` apart in the owned form and its body builds a
+    /// the scrutinee holds the parameter's last mention, no loop encloses the `match`, and an arm
+    /// would take a box of an enum `F` apart in the owned form and its body builds a
     /// `Variant` with a boxed `F` field: the arm notes `F`'s count in `built` before its body, and
     /// the count differs after.
     pub(super) fn match_expr(
@@ -215,7 +216,9 @@ impl Lowering<'_> {
             .filter(|place| {
                 place.projections.is_empty() && matches!(scrutinee.ty.kind(), TypeKind::Enum(_))
             })
-            .map(|place| place.local);
+            .map(|place| place.local)
+            // A later read, or a loop, makes the scrutinee a copy that shares the box.
+            .filter(|&local| self.frames.is_empty() && self.mentions.last_in(local, scrutinee));
         // `counted`: whether the scrutinee is in a temporary that owns a reference.
         let (place, counted) = if let Some(place) = borrowed {
             (place, false)

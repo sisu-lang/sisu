@@ -89,7 +89,8 @@ struct Lowering<'a> {
     /// Per parameter, whether its flag decided the form of a `match` or an `if let`.
     consulted: Vec<bool>,
     /// Per parameter, whether a `match` on it has an arm that would take a box of some enum `F`
-    /// apart in the owned form, and whose body builds a `Variant` with a boxed `F` field.
+    /// apart in the owned form, and whose body builds a `Variant` with a boxed `F` field. Only a
+    /// `match` that holds the parameter's last mention and is in no loop counts.
     reuses: Vec<bool>,
     /// Per enum looked at so far, the `Variant` constructions lowered with a boxed field of that
     /// enum, and the stamp of the last construction or arm that looked at it, so that one counts
@@ -1310,6 +1311,15 @@ impl Mentions {
         };
         at.get(at.partition_point(|&position| position < start))
             .is_some_and(|&position| position < end)
+    }
+
+    /// Whether `e` holds the last mention of `local` in walk order.
+    fn last_in(&self, local: LocalId, e: &Expr) -> bool {
+        let end = self.span(e).1;
+        // A lowering temporary is past the `tir` locals, and no expression mentions it.
+        self.at
+            .get(local.0)
+            .is_none_or(|at| at.last().is_none_or(|&position| position < end))
     }
 
     fn span(&self, e: &Expr) -> (usize, usize) {
