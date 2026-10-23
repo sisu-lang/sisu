@@ -129,8 +129,8 @@ The rules, in order:
   - the two operands of an arithmetic operator, `==` or `!=`
   - the operands of a comparison chain
   - the elements of an array literal
-  - the branches of an `if`, an `if let` or a `match`
-- In all other places, the literal is an `i64`.
+  - the branches of an `if` or an `if let`, or the arms of a `match`
+- When a literal has no expected type and is not in a group, it is an `i64`.
 
 These places give an expected type:
 
@@ -141,8 +141,10 @@ These places give an expected type:
 - the return type, for a `return` value and for the last expression of a function body
 - the element type, for each element of an array literal
 - the type of the value in the left operand of `??`, for the right operand
-- the type that an earlier `break` of the same loop gave, for a `break` value
-- the expected type of a block, an `if` or a `match`, for its last expression or its branches
+- the expected type of an arithmetic operation or a unary `-`, for its operands
+- the type of the value that a `match` tests, for a literal in a pattern
+- the expected type of a loop, for each `break` value
+- the expected type of a block, an `if` or a `match`, for its last expression, the branches of the `if` or the arms of the `match`
 
 ```sisu
 fn main() {
@@ -152,10 +154,14 @@ fn main() {
     print(o ?? 3)                        // 3.0
     print(match c { 1 => x; _ => 4 })    // 4.0
     print(x.max(7))                      // 7.0
+    let y: f64 = loop { break 1 }
+    print(y)                             // 1.0
+    let z: f64 = -3 + 1
+    print(z)                             // -2.0
 }
 ```
 
-The first `break` with a value gives the loop its type, in the order of the source. So after `break 300`, a later `break b` is an error when `b` is a `u8`.
+When a loop has no expected type, its `break` values give the loop its type. Their types must agree ([E0032](../diagnostics/E0032.md)).
 
 An operand that has only integer literals, `+`, `-`, `*`, `/`, `%` and unary `-` counts as a literal in a group. So `1 + 2 + b` is a `u8` sum when `b` is a `u8`.
 
