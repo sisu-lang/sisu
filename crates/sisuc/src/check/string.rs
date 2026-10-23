@@ -356,7 +356,7 @@ impl Checker<'_> {
                     .iter()
                     .any(|c| deleted.contains(c) || (!grouped && tail.contains(c)));
                 DiagnosticKind::AlreadyConverted {
-                    value: path(&arg.value).or_else(|| literal(&arg.value)),
+                    value: path(&arg.value).or_else(|| self.literal_name(&arg.value)),
                     ty: self.type_name(to),
                     at: arg.value.span,
                     conversion: span,
@@ -452,27 +452,32 @@ impl Checker<'_> {
     }
 }
 
-/// A string literal, for the message, in Sisu's escapes, and a character the user cannot see
-/// but a space by its code point: no other literal is named.
-fn literal(e: &ast::Expr) -> Option<String> {
-    let ExprKind::Str(text) = &e.kind else {
-        return None;
-    };
-    let mut quoted = String::from('"');
-    for c in text.chars() {
+impl Checker<'_> {
+    /// The name of `e` in a message when it is a string literal that starts at its quote: a
+    /// literal in parentheses starts at its `(` and has no name, nor has an interpolation.
+    fn literal_name(&self, e: &ast::Expr) -> Option<String> {
+        (matches!(e.kind, ExprKind::Str(_))
+            && self.source.quotes.binary_search(&e.span.start()).is_ok())
+        .then(|| literal(&self.source.text[e.span.range()]))
+    }
+}
+
+/// The name of a string literal in a message: its `spelling` in the source, with each raw
+/// character the user cannot see but a space written as an escape that decodes to it. Any other
+/// text stays as written, so a message never shows text that is not in the file.
+fn literal(spelling: &str) -> String {
+    let mut named = String::new();
+    for c in spelling.chars() {
         match c {
-            '\\' | '"' | '{' | '}' => quoted.extend(['\\', c]),
-            '\n' => quoted.push_str("\\n"),
-            '\t' => quoted.push_str("\\t"),
-            '\r' => quoted.push_str("\\r"),
-            '\0' => quoted.push_str("\\0"),
-            c if c != ' ' && invisible(c) => write!(quoted, "\\u{{{:X}}}", u32::from(c))
+            '\t' => named.push_str("\\t"),
+            '\r' => named.push_str("\\r"),
+            '\0' => named.push_str("\\0"),
+            c if c != ' ' && invisible(c) => write!(named, "\\u{{{:X}}}", u32::from(c))
                 .expect("writing to a `String` should never fail"),
-            c => quoted.push(c),
+            c => named.push(c),
         }
     }
-    quoted.push('"');
-    Some(quoted)
+    named
 }
 
 /// Whether `e` is one term as written: a name, a literal, a call, a field or index read, or an
@@ -535,7 +540,7 @@ fn and(lhs: tir::Expr, rhs: tir::Expr, span: Span) -> tir::Expr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::{TokenKind, lex};
+    use crate::lexer::lex;
 
     /// Beside other code, a `match` needs its parentheses, and a parenthesized one has them.
     #[test]
@@ -559,29 +564,34 @@ mod tests {
         }
     }
 
-    /// The name of a literal is Sisu that lexes back to the literal's text.
+    /// The name of a literal is its spelling, with each raw character the user cannot see written
+    /// as an escape that decodes to it.
     #[test]
-    fn literal_names_lex_back() {
-        for text in [
-            "hi!",
-            "{}",
-            "\\\"",
-            "a\nb\tc\rd\0e",
-            "\u{7}\u{1B}\u{7F}\u{85}",
-            "é😀",
-            "a b\u{AD}\u{2028}\u{FEFF}",
+    fn literal_name_should_keep_the_spelling_and_escape_unseen_characters() {
+        // (the spelling, what its name is when that is not the spelling)
+        for (spelling, named) in [
+            ("\"\\u{61}\"", None),
+            ("\"hi!\"", None),
+            ("\"\\{\\}\"", None),
+            ("\"\\\\\\\"\"", None),
+            ("\"a\\tb\"", None),
+            ("\"a\tb\"", Some("\"a\\tb\"")),
+            (
+                "\"\u{7}\u{1B}\u{7F}\u{85}\"",
+                Some("\"\\u{7}\\u{1B}\\u{7F}\\u{85}\""),
+            ),
+            ("\"a\rb\0\"", Some("\"a\\rb\\0\"")),
+            ("\"é😀\"", None),
+            (
+                "\"a b\u{AD}\u{2028}\u{FEFF}\"",
+                Some("\"a b\\u{AD}\\u{2028}\\u{FEFF}\""),
+            ),
         ] {
-            let e = ast::Expr {
-                kind: ExprKind::Str(text.to_string()),
-                span: Span::new(0, 0),
-            };
-            let name = literal(&e).expect("a string literal has a name");
+            let name = literal(spelling);
+            assert_eq!(name, named.unwrap_or(spelling));
+            let source = lex(spelling).expect("the spelling should lex");
             let lexed = lex(&name).expect("the name should lex");
-            assert_eq!(
-                lexed.tokens[0].kind,
-                TokenKind::Str(text.to_string()),
-                "{name}"
-            );
+            assert_eq!(lexed.tokens[0].kind, source.tokens[0].kind, "{name}");
             assert!(lexed.diagnostics.is_empty(), "{name}");
             assert!(!name.chars().any(|c| c != ' ' && invisible(c)), "{name}");
         }

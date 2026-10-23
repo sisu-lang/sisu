@@ -1,0 +1,38 @@
+error[E0054]: `"\u{61}"` is already `string`
+ --> E0054-spelled.sisu:2:18
+  |
+2 |     print(string("\u{61}"))
+  |                  ^^^^^^^^
+  |
+help: remove the conversion
+  |
+2 -     print(string("\u{61}"))
+2 +     print("\u{61}")
+  |
+
+error[E0054]: this value is already `string`
+ --> E0054-spelled.sisu:3:18
+  |
+3 |     print(string(("\u{61}")))
+  |                  ^^^^^^^^^^
+  |
+help: remove the conversion
+  |
+3 -     print(string(("\u{61}")))
+3 +     print(("\u{61}"))
+  |
+
+error[E0054]: this value is already `string`
+ --> E0054-spelled.sisu:4:18
+  |
+4 |     print(string("a{1}b"))
+  |                  ^^^^^^^
+  |
+help: remove the conversion
+  |
+4 -     print(string("a{1}b"))
+4 +     print("a{1}b")
+  |
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0054
