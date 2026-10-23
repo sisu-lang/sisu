@@ -27,8 +27,8 @@
 //! and each parameter lowering marks in `reuses`, whose box a `match` that is its last mention
 //! and in no loop would build a new box into (part 5), seeds one worklist search that visits each
 //! edge at most once. A parameter is owned when the search reaches it. That is what solving the
-//! call graph one component at a time,
-//! callees first, would give, without scanning a component twice.
+//! call graph one component at a time, callees first, would give, without scanning a component
+//! twice.
 //!
 //! The hoist (ADR 0021) stays sound. A copy of a borrowed parameter that outlives the call is
 //! returned, stored, kept in a named local or passed to an owned parameter, and each of those
