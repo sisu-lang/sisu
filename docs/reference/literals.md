@@ -90,13 +90,21 @@ fn main() {
 }
 ```
 
-The one exception is the smallest `i64`. Its magnitude, `9223372036854775808`, is a literal only as the operand of a unary `-`. The same rule applies to it in other bases, such as `-0x8000000000000000`.
+The one exception is the smallest `i64`. Its magnitude, `9223372036854775808`, is a literal only directly after a unary `-`. Spaces or tabs can come between the `-` and the digits, but parentheses cannot.
 
 ```sisu
 fn main() {
     print(-9223372036854775808)    // -9223372036854775808
 }
 ```
+
+```sisu
+fn main() {
+    print(-(9223372036854775808))  // error[E0009]
+}
+```
+
+The same rule applies in other bases, such as `-0x8000000000000000`.
 
 A `.`, `?.` or `[` after the literal applies before the `-` does. So `-9223372036854775808.max(0)` is an error.
 
@@ -116,13 +124,38 @@ fn main() {
 
 The rules, in order:
 
-- An expected type of `u8` or `u8?` makes the literal a `u8`. An expected type of `f64` or `f64?` makes it an `f64`. The expected type comes from a declared type, an assignment, a parameter, a field, a return type, or an element of an expected array.
+- When the context expects a `u8` or a `u8?`, the literal is a `u8`. When the context expects an `f64` or an `f64?`, the literal is an `f64`.
 - In a group of operands, the checker first finds the types of the operands that are not integer literals. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
   - the two operands of an arithmetic operator, `==` or `!=`
   - the operands of a comparison chain
   - the elements of an array literal
-  - the branches of an `if` or `if let`
+  - the branches of an `if`, an `if let` or a `match`
 - In all other places, the literal is an `i64`.
+
+These places give an expected type:
+
+- the declared type of a `let` or a `const`
+- the place of an assignment, also with `+=` and the other compound operators
+- a parameter of a function or a method, also a built-in method such as `max`
+- a field of a class constructor, or a value of an enum variant
+- the return type, for a `return` value and for the last expression of a function body
+- the element type, for each element of an array literal
+- the type of the value in the left operand of `??`, for the right operand
+- the type that an earlier `break` of the same loop gave, for a `break` value
+- the expected type of a block, an `if` or a `match`, for its last expression or its branches
+
+```sisu
+fn main() {
+    let o: f64? = None
+    let c = 2
+    let x = 2.5
+    print(o ?? 3)                        // 3.0
+    print(match c { 1 => x; _ => 4 })    // 4.0
+    print(x.max(7))                      // 7.0
+}
+```
+
+The first `break` with a value gives the loop its type, in the order of the source. So after `break 300`, a later `break b` is an error when `b` is a `u8`.
 
 An operand that has only integer literals, `+`, `-`, `*`, `/`, `%` and unary `-` counts as a literal in a group. So `1 + 2 + b` is a `u8` sum when `b` is a `u8`.
 
@@ -207,7 +240,7 @@ A string literal must close on its line ([E0093](../diagnostics/E0093.md)). For 
 
 ### Interpolation
 
-A `{` in a string literal starts an interpolation. The expression between `{` and `}` is evaluated, and its text goes into the string.
+A `{` in a string literal starts an interpolation. The program calculates the expression between `{` and `}`, and puts its text into the string.
 
 ```sisu
 fn main() {
@@ -218,13 +251,21 @@ fn main() {
 
 The rules:
 
-- The expression can be any expression, including a string literal of its own: `"{ "a" + "b" }"`.
+- The value of the expression must be an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` ([E0098](../diagnostics/E0098.md)).
+- The expression can include a string literal of its own: `"{ "a" + "b" }"`.
 - The expression must be on the line of the string literal.
 - A `}` closes the interpolation only when every bracket opened in the interpolation is closed. A `{` or `}` in a string or character literal in the expression does not count, so `"{ c == '}' }"` is valid.
 - A `:` after the expression starts a format spec, such as `"{x:.2}"`.
 - An empty interpolation, `"{}"` or `"{ }"`, is an error ([E0096](../diagnostics/E0096.md)).
 - A comment cannot be in an interpolation ([E0097](../diagnostics/E0097.md)).
 - A `}` in the text, outside an interpolation, is an error ([E0095](../diagnostics/E0095.md)).
+
+```sisu
+fn main() {
+    let xs = [1, 2]
+    print("xs = {xs}")       // error[E0098]
+}
+```
 
 For a literal brace in the text, write `\{` or `\}`.
 
