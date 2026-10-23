@@ -128,7 +128,11 @@ pub(crate) fn read_page(text: &str) -> Page {
         events
             .reference_definitions()
             .iter()
-            .filter_map(|(_, definition)| indented_after(text, &line_starts, definition.span.end)),
+            .map(|(_, definition)| Fault {
+                line: line_of(definition.span.start),
+                message: "a link reference definition is not allowed; use an inline link"
+                    .to_string(),
+            }),
     );
     faults.sort_by_key(|fault| fault.line);
     let examples = examples
@@ -204,33 +208,6 @@ impl Reader {
             self.faults.push(Fault { line, message });
         }
     }
-}
-
-/// The fault of an indented line directly under a link reference definition that ends at byte
-/// `end`. markdown-it ends the definition at its line, so the site shows that line as a code
-/// block, and pulldown-cmark reads it as text of a paragraph. The hooks strip blanks at a line
-/// end, so the line is not blank.
-// shortcut: sees only the first definition of a label, outside block quotes and list items;
-// check every definition's line when a page uses reference links.
-fn indented_after(text: &str, line_starts: &[usize], end: usize) -> Option<Fault> {
-    // The index of the line after the definition's last line is that last line's number.
-    let next = line_starts.partition_point(|&start| start < end);
-    let column = text[*line_starts.get(next)?..]
-        .bytes()
-        .take_while(|&byte| byte == b' ' || byte == b'\t')
-        .fold(0, |column, byte| {
-            if byte == b'\t' {
-                column / 4 * 4 + 4
-            } else {
-                column + 1
-            }
-        });
-    (column >= 4).then(|| Fault {
-        line: next + 1,
-        message: "an indented line directly under a link reference definition is a code block on \
-                  the site; put a blank line before it"
-            .to_string(),
-    })
 }
 
 /// The example of the `sisu` fence on Markdown `line`, with the info words after `sisu` and the

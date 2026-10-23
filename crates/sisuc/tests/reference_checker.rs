@@ -762,20 +762,23 @@ fn main() {
     );
 }
 
-/// GIVEN a page with a link reference definition on line 1
-/// AND code indented with four spaces, or with a tab, directly under it on line 2
+/// GIVEN a page with a link reference definition with an indented line under it, on line 1
+/// AND a page with the label `x` defined on lines 3 and 4
+/// AND a page with a definition in a block quote, on line 1
+/// AND a page with a definition in a list item and indented prose under it, on line 1
 /// WHEN the checker checks each page
-/// THEN each fails and names line 2
+/// THEN each fails and names only the line of its first definition
 #[test]
-fn indented_code_after_a_link_definition_should_be_a_fault() {
-    // markdown-it shows the indented lines as a code block, and pulldown-cmark reads them as
-    // text of the definition's paragraph.
-    for indent in ["    ", "\t"] {
-        let page = format!(
-            "[link]: https://example.com\n{indent}fn main() {{\n{indent}    print(42) // 43\n\
-             {indent}}}\n\n```sisu\nfn main() {{}}\n```\n"
-        );
-        assert_eq!(faults(&page), [2], "{page}");
+fn link_reference_definition_should_be_a_fault() {
+    // markdown-it and pulldown-cmark do not agree on where a definition ends, so pages use
+    // inline links.
+    for (page, line) in [
+        ("[x]: /target\n    fn main() {}\n", 1),
+        ("# Page\n\n[x]: /first\n[x]: /second\n    fn main() {}\n", 3),
+        ("> [x]: /target\n>     fn main() {}\n", 1),
+        ("- [x]: /target\n    This is prose, not code.\n", 1),
+    ] {
+        assert_eq!(faults(page), [line], "{page}");
     }
 }
 
