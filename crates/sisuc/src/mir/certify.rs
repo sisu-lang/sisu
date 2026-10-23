@@ -1796,14 +1796,15 @@ impl Region<'_> {
             .map_or(&[][..], |root| by_block(&root.events, block));
         let events = &self.events[s.from[block]..s.to[block]];
         // The kills up to the first event's statement all meet the entry set, so one test
-        // stands for them, and a region walks only the kills inside its own events.
+        // stands for them. After that, one test per gap between events finds out whether a kill
+        // lies in the gap, and a region never walks the kills one by one.
         let skip = events
             .first()
             .map_or(0, |first| kills.partition_point(|kill| kill.at <= first.at));
         if skip > 0 && states & BORROWED != 0 {
             return Err(self.violation(block, Rule::Borrow));
         }
-        let mut kills = kills[skip..].iter().peekable();
+        let mut kills = &kills[skip..];
         // Whether a clobber lies in statements `from..to`, one test per gap between events.
         let prefix = self.clobbers.map(|clobbers| &clobbers.prefix[block]);
         let clobbered = |from: usize, to: usize| {
@@ -1816,12 +1817,12 @@ impl Region<'_> {
         for event in events {
             // The root's kills in a statement come before the statement's own effects, and its
             // clobber after them: a call reads its arguments first.
-            while kills.next_if(|kill| kill.at <= event.at).is_some() {
-                count(1);
-                if states & BORROWED != 0 {
-                    return Err(self.violation(block, Rule::Borrow));
-                }
+            count(1);
+            let gap = kills.partition_point(|kill| kill.at <= event.at);
+            if gap > 0 && states & BORROWED != 0 {
+                return Err(self.violation(block, Rule::Borrow));
             }
+            kills = &kills[gap..];
             if clobbered(previous, event.at) && states & BORROWED != 0 {
                 return Err(self.violation(block, Rule::Borrow));
             }
@@ -1830,7 +1831,7 @@ impl Region<'_> {
             states = self.apply(block, event.effect, states)?;
         }
         let end = self.function.blocks[block].stmts.len();
-        if (kills.next().is_some() || clobbered(previous, end)) && states & BORROWED != 0 {
+        if (!kills.is_empty() || clobbered(previous, end)) && states & BORROWED != 0 {
             return Err(self.violation(block, Rule::Borrow));
         }
         if let Terminator::Return(_) = self.function.blocks[block].term {

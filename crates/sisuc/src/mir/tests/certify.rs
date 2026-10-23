@@ -1279,6 +1279,74 @@ fn borrow_through_a_field_is_ended_by_make_unique() {
     rejects(&b.finish(), 0, x, Rule::Borrow);
 }
 
+/// `n` borrows of `xs` start and end, then `n` writes to `xs` follow, then the same locals
+/// borrow `xs` again. No borrow is live across a write, and each region tests the writes with
+/// one query per gap between its events, so the reads grow near linearly with `n`.
+#[test]
+fn certify_should_read_root_kills_across_ended_borrows_linearly() {
+    let reads = |n: usize| {
+        let mut b = Builder::new("f");
+        let xs = b.param("xs", Type::array(Type::I64));
+        let locals: Vec<_> = (0..n)
+            .map(|i| {
+                let x = b.local(&format!("b_{i}"), Type::array(Type::I64));
+                b.owner(x, xs);
+                x
+            })
+            .collect();
+        let mut stmts = Vec::new();
+        for &x in &locals {
+            stmts.extend([assign(x, Rvalue::Borrow(whole(xs))), Statement::End(x)]);
+        }
+        stmts.extend((0..n).map(|_| Statement::MakeUnique(whole(xs))));
+        for &x in &locals {
+            stmts.extend([assign(x, Rvalue::Borrow(whole(xs))), Statement::End(x)]);
+        }
+        stmts.push(Statement::Release(xs));
+        b.block(stmts, ret());
+        READS.set(0);
+        assert_eq!(certify(&b.finish()), Ok(()));
+        READS.get()
+    };
+    assert_near_linear(reads(100), reads(200), reads(300));
+}
+
+/// `b = borrow xs`, `make_unique xs`, `show b`: the write to the root lies between two events
+/// of the region, so the query for that gap finds it.
+#[test]
+fn certify_should_reject_a_root_write_between_two_events_of_a_borrow() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::I64));
+    let x = b.local("b", Type::array(Type::I64));
+    b.owner(x, xs);
+    b.block(
+        vec![
+            assign(x, Rvalue::Borrow(whole(xs))),
+            Statement::MakeUnique(whole(xs)),
+            show(read(x)),
+            Statement::End(x),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, x, Rule::Borrow);
+}
+
+/// `b = borrow xs`, then `release xs` as the last statement: the write lies after the
+/// region's last event, so the test after the loop finds it.
+#[test]
+fn certify_should_reject_a_root_write_after_the_last_event_of_a_borrow() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::I64));
+    let x = b.local("b", Type::array(Type::I64));
+    b.owner(x, xs);
+    b.block(
+        vec![assign(x, Rvalue::Borrow(whole(xs))), Statement::Release(xs)],
+        ret(),
+    );
+    rejects(&b.finish(), 0, x, Rule::Borrow);
+}
+
 /// `u = borrow t` with `t = borrow xs[0]`: `u` reads the element too, so a call after `t` ends
 /// still ends `u`.
 #[test]
