@@ -13,7 +13,8 @@ from pathlib import Path
 INLINE = re.compile(r'\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)')
 REF_DEF = re.compile(r'^\s*\[[^\]]+\]:\s+<?(\S+?)>?(?:\s+"[^"]*")?\s*$', re.M)
 ATTR = re.compile(r'\b(src|href|srcset)="([^"]+)"')
-FENCE = re.compile(r'^(```|~~~).*?^\1[^\n]*$', re.M | re.S)
+# A fence closes only on a line of at least its own length, so a ```` fence can show a ``` one.
+FENCE = re.compile(r'^(`{3,}|~{3,}).*?^\1[^\n]*$', re.M | re.S)
 # A code span naming a path under one of the repository's top-level directories. Placeholders
 # such as `<name>` and globs such as `*.md` do not match, so they are not checked.
 REPO_PATH = re.compile(r'`((?:crates|docs|scripts|\.agents|\.cargo|\.config|\.github)/[\w./-]*)`')

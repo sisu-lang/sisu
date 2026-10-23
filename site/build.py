@@ -19,6 +19,7 @@ import inspect
 import json
 import posixpath
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -35,9 +36,11 @@ from itertools import accumulate, groupby
 from pathlib import Path
 
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 SITE = Path(__file__).resolve().parent
 ROOT = SITE.parent
+REFERENCE = ROOT / 'docs/reference'
 
 _spec = importlib.util.spec_from_file_location('check_links', ROOT / '.agents/skills/update-docs/scripts/check_links.py')
 check_links = importlib.util.module_from_spec(_spec)
@@ -212,6 +215,8 @@ def status_tables() -> str:
 
 def code_fence(renderer, tokens, idx, options, env) -> str:
     token = tokens[idx]
+    if 'html' in token.meta:  # an example of the language reference, or one of its companion blocks
+        return token.meta['html']
     return f'<figure class="code"><pre data-lang="{html.escape(token.info.strip())}">{escape(token.content)}</pre></figure>\n'
 
 
@@ -347,6 +352,160 @@ def code_page(code: str) -> str:
     }
     return assemble(read('_code.html'), title=f'{code}: {plain(MD.parseInline(name)[0])}', description=plain(rule),
                     page='diagnostics.html', depth=1, context=context)
+
+
+def reference_list() -> list[dict]:
+    """The pages of data/reference.toml, in sidebar order, each with its file and description."""
+    try:
+        pages = tomllib.loads(read('data/reference.toml'))['page']
+    except (tomllib.TOMLDecodeError, KeyError) as e:
+        raise BuildError(f'data/reference.toml: {e!r}') from e
+    for i, page in enumerate(pages, 1):
+        if missing := {'file', 'description'} - page.keys():
+            raise BuildError(f'data/reference.toml: page {page.get("file", i)!r} lacks {sorted(missing)}')
+    return pages
+
+
+def reference_list_problems(listed: list[str], files: list[str]) -> list[str]:
+    """Each listed page has a file in docs/reference/, and each file there is listed."""
+    return ([f'data/reference.toml lists {name!r}, which has no docs/reference/{name}.md' for name in listed if name not in files]
+            + [f'docs/reference/{name}.md is not in data/reference.toml' for name in files if name not in listed])
+
+
+REF_PAGE_LINK = re.compile(r'([\w-]+)\.md(#.*)?')
+REF_CODE_LINK = re.compile(r'\.\./diagnostics/([EW]\d{4})\.md(#.*)?')
+COMPANIONS = ('output', 'input', 'stderr')
+DIAG_MARKER = re.compile(r'(error\[(E\d{4})\]|warning\[(W\d{4})\])')
+IN_DEVELOPMENT = ' <span class="soon">In development</span>'
+
+
+def reference_link(href: str) -> str:
+    """Where a link in docs/reference/ goes on the site: a language reference page, a diagnostic, or the file on GitHub."""
+    if m := REF_PAGE_LINK.fullmatch(href):
+        return f'{"index" if m[1] == "README" else m[1]}.html{m[2] or ""}'
+    if m := REF_CODE_LINK.fullmatch(href):
+        return f'../diagnostics/{m[1]}.html{m[2] or ""}'
+    if SCHEME.match(href) or href.startswith(('#', '/')):
+        return href
+    path, hash_, anchor = href.partition('#')
+    return BLOB + posixpath.normpath(f'docs/reference/{path}') + hash_ + anchor
+
+
+def markers(source: str) -> list[str]:
+    """The `error[Ennnn]` and `warning[Wnnnn]` trailing comments of an example, in order."""
+    found = []
+    for line in source.splitlines():
+        code, slashes, comment = line.rpartition('//')
+        if slashes and code.strip() and (m := DIAG_MARKER.fullmatch(comment.removeprefix(' '))):
+            found.append(m[2] or m[3])
+    return found
+
+
+def example_html(token, companions) -> str:
+    """An example as one figure: its caption, the program and a panel for each companion block,
+    then a line for each diagnostic marker that links its page."""
+    words = shlex.split(token.info)
+    args = next((word.removeprefix('args=') for word in words if word.startswith('args=')), None)
+    caption = 'In development' if 'pending' in words else None if args is None else ' '.join(['./example', *args.split()])
+    cap = f'<figcaption class="cap">{escape(caption)}</figcaption>' if caption else ''
+    panels = ''.join(f'<figure class="panel"><figcaption class="cap">{c.info.strip()}</figcaption><pre data-lang="out">{escape(c.content)}</pre></figure>'
+                     for c in companions)
+    # A pending example's markers are not checked, so they link no page.
+    notes = [] if 'pending' in words else markers(token.content)
+    lines = ''.join(f'<p class="marker"><a href="../diagnostics/{code}.html">{code}</a>: what this {"error" if code[0] == "E" else "warning"} means</p>\n'
+                    for code in notes)
+    return f'<figure class="code">{cap}<pre data-lang="sisu">{escape(token.content)}</pre>{panels}</figure>\n{lines}'
+
+
+def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str, str, bool]], bool]:
+    """A language reference page without its `#` title; its `##` and `###` headings as (level, id,
+    inline HTML, tagged); and whether the page is tagged "In development".
+    A heading is tagged when its own text holds a pending example; the page, when it has examples
+    and all are pending. The page grammar is the one the reference test checks."""
+    tokens = MD.parse(markdown)
+    slugs = list(check_links.anchors(path))
+    opens = [t for t in tokens if t.type == 'heading_open']
+    if len(slugs) != len(opens):
+        raise BuildError(f'check_links.anchors finds {len(slugs)} headings and markdown-it {len(opens)}')
+    for token, slug in zip(opens, slugs):
+        token.attrSet('id', slug)
+    headings, current, kinds = [], None, []
+    for i, token in enumerate(tokens):
+        for child in token.children or []:
+            if child.type == 'link_open':
+                child.attrSet('href', reference_link(str(child.attrGet('href'))))
+        if token.type == 'heading_open':
+            current = None
+            if token.tag in ('h2', 'h3'):
+                current = len(headings)
+                headings.append([int(token.tag[1]), token.attrGet('id'), tokens[i + 1], False])
+        elif token.type == 'table_open':
+            token.attrSet('class', 'tbl')
+        elif token.type == 'fence' and token.info.split()[:1] == ['sisu']:
+            companions = []
+            for after in tokens[i + 1:]:
+                if after.type != 'fence' or after.info.strip() not in COMPANIONS:
+                    break
+                after.meta['html'] = ''
+                companions.append(after)
+            token.meta['html'] = example_html(token, companions)
+            pending = 'pending' in shlex.split(token.info)
+            kinds.append(pending)
+            if pending and current is not None:
+                headings[current][3] = True
+    for heading in headings:
+        if heading[3]:
+            heading[2].children.append(Token('html_inline', '', 0, content=IN_DEVELOPMENT))
+    if tokens and tokens[0].tag == 'h1':
+        tokens = tokens[3:]
+    found = [(level, slug, MD.renderer.renderInline(inline.children, MD.options, {}), tagged) for level, slug, inline, tagged in headings]
+    return MD.renderer.render(tokens, MD.options, {}), found, bool(kinds) and all(kinds)
+
+
+def reference_title(markdown: str) -> str:
+    """The inline Markdown of the page's `#` title."""
+    heading = markdown.partition('\n')[0]
+    if not heading.startswith('# '):
+        raise BuildError('does not start with a "# " heading')
+    return heading.removeprefix('# ')
+
+
+def reference_page(index: int, pages: list[dict]) -> str:
+    """The page reference/<file>.html of pages[index]: the sidebar of all pages, the page, Previous
+    and Next, and its "On this page" list. The Overview, pages[0], also has a card for each page."""
+    def href(i):
+        return 'index.html' if pages[i]['file'] == 'README' else f'{pages[i]["file"]}.html'
+
+    titles, rendered = [], []
+    for page in pages:
+        path = REFERENCE / f'{page["file"]}.md'
+        try:
+            text = path.read_text(encoding='utf-8')
+            titles.append(reference_title(text))
+            rendered.append(reference_html(text, path))
+        except (OSError, BuildError) as e:
+            raise BuildError(f'docs/reference/{page["file"]}.md: {e}') from e
+    body, headings, _ = rendered[index]
+    tagged = [page_tagged for _, _, page_tagged in rendered]
+    side = ''.join(f'<li><a href="{href(i)}"{" aria-current=\"page\"" if i == index else ""}>{MD.renderInline(t)}{IN_DEVELOPMENT if tag else ""}</a></li>'
+                   for i, (t, tag) in enumerate(zip(titles, tagged)))
+    toc = ''.join(f'<li class="h{level}"><a href="#{slug}">{text}</a></li>' for level, slug, text, _ in headings)
+    pager = ''.join(f'<a href="{href(i)}" rel="{rel}"><span>{label}</span>{MD.renderInline(titles[i])}</a>'
+                    for i, rel, label in ((index - 1, 'prev', 'Previous'), (index + 1, 'next', 'Next')) if 0 <= i < len(pages))
+    cards = '' if index else '<ul class="cards">' + ''.join(
+        f'<li><a href="{href(i)}"><b>{MD.renderInline(t)}</b><span>{escape(page["description"])}</span></a></li>'
+        for i, (t, page) in enumerate(zip(titles, pages))) + '</ul>\n'
+    name = plain(MD.parseInline(titles[index])[0])
+    context = {
+        'sidebar': side,
+        'crumb': 'Reference' if not index else f'<a href="index.html">Reference</a> / {MD.renderInline(titles[index])}',
+        'heading': MD.renderInline(titles[index]),
+        'body': body + cards,
+        'pager': f'<nav class="pager" aria-label="Previous and next page">{pager}</nav>' if pager else '',
+        'toc': f'<nav class="ref-toc" aria-label="On this page"><p class="ref-h">On this page</p><ol>{toc}</ol></nav>' if toc else '',
+    }
+    return assemble(read('_reference.html'), title=name, description=pages[index]['description'],
+                    page='reference/index.html', depth=1, context=context)
 
 
 BENCHMARKS = 'docs/benchmarks.md'
@@ -582,12 +741,26 @@ def build(out: Path) -> None:
         except BuildError as e:
             raise BuildError(f'docs/diagnostics/{code}.md: {e}') from e
         (out / 'diagnostics' / f'{code}.html').write_text(page, encoding='utf-8')
+    pages = reference_list()
+    if found := reference_list_problems([page['file'] for page in pages], sorted(p.stem for p in REFERENCE.glob('*.md'))):
+        raise BuildError('\n'.join(found))
+    (out / 'reference').mkdir()
+    for i, page in enumerate(pages):
+        name = 'index.html' if page['file'] == 'README' else f'{page["file"]}.html'
+        (out / 'reference' / name).write_text(reference_page(i, pages), encoding='utf-8')
 
 
 SCHEME = re.compile(r'[a-z][a-z0-9+.-]*:|//')
 FOREIGN = re.compile(r'(?:https?:)?//', re.I)
 CSS_URL = re.compile(r'url\(\s*([\'"]?)(.*?)\1\s*\)|@import\s+([\'"])(.*?)\3')
 HEADING = re.compile(r'<h([1-6])\b')
+MILESTONE_ID = re.compile(r'\bM\d+\b')
+HIDDEN = re.compile(r'<(pre|code|script|style)\b.*?</\1>|<[^>]*>', re.S)
+
+
+def visible(text: str) -> str:
+    """The page's text outside tags and outside <pre>, <code>, <script> and <style>."""
+    return HIDDEN.sub(' ', text)
 # A <pre> with no data-lang holds diag_html output, which shows what sisu prints.
 UNTAGGED_PRE = re.compile(r'<pre\b(?![^>]*\bdata-lang=)[^>]*>.*?</pre>', re.S)
 
@@ -664,7 +837,7 @@ def page_problems(out: Path, page: Path, text: str, tags: Tags, ids: dict[Path, 
             yield f'<h{level}> after <h{before}> skips a level' if before else f'starts with <h{level}>, not <h1>'
     if '<!--' in text:
         yield 'holds a <!-- comment'
-    if re.search('milestone', UNTAGGED_PRE.sub('', text), re.I):
+    if re.search('milestone', UNTAGGED_PRE.sub('', text), re.I) or MILESTONE_ID.search(visible(text)):
         yield 'names a milestone'
     if re.search('kotlin', text, re.I):
         yield 'names Kotlin'

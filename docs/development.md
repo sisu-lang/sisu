@@ -591,6 +591,14 @@ $ make site   # tests the build, then builds site/_site
 CI runs the same target. The `Pages` workflow deploys the site to GitHub Pages
 and runs only when you start it by hand.
 
+The language reference is in `docs/reference/`, one Markdown page for each
+construct. `site/data/reference.toml` gives the order of the pages and a
+description for each. The build fails when a page is not in that file or the
+file names a page that does not exist. The test binary `reference`
+(`crates/sisuc/tests/reference.rs`) makes one test for each example on a page:
+it compiles the example, runs it, and compares its output and diagnostics with
+the page. `make test` runs these tests.
+
 ## Look inside the compiler
 
 These flags run the pipeline up to one stage and stop there.
