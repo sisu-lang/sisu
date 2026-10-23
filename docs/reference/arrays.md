@@ -54,8 +54,8 @@ The rules:
 
 - The program calculates `value` once, then `length`.
 - `length` is an `i64` ([E0032](../diagnostics/E0032.md)). A length of 0 gives an empty array.
-- At run time, a negative length stops the program with a panic.
-- When `value` is an object, or an optional that holds one, every element would be the same object. This is an error ([E0067](../diagnostics/E0067.md)). `[None; length]` is valid.
+- At run time, a negative length stops the program with a panic. A length so large that the array cannot fit in memory also stops the program with a panic.
+- When `value` is an object, or an optional that holds one, every element would be the same object. This is an error ([E0067](../diagnostics/E0067.md)). `[None; length]` is valid where the context gives its type, such as `let slots: [Box?] = [None; 3]`. Else it is an error ([E0050](../diagnostics/E0050.md)).
 - When `value` holds objects, such as an array of objects, every element holds the same objects.
 
 ```sisu panics
@@ -190,7 +190,7 @@ The rules:
 
 - An array that the program reads out of another array, or out of a field, is a value too. A write to it does not change the original.
 - A copy of an array holds the same objects as the original. A change to a `mut` field of such an object shows in both arrays.
-- A function cannot change the array of its caller. A function that makes a changed array returns it, and the caller writes `xs = change(xs)`.
+- A function cannot change an array that it gets as an argument. A function that makes a changed array returns it, and the caller writes `xs = change(xs)`.
 
 ```sisu
 fn doubled(xs: [i64]) -> [i64] {
