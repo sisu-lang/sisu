@@ -59,7 +59,7 @@ fn main() {
 
 The program calculates the operands of a binary operator from left to right, then applies the operator. `&&`, `||` and `??` can skip their right operand, as their sections tell.
 
-A `..` or `..=` range is not an operator. It is part of a `for` loop or a pattern, and is an error in other places ([E0023](../diagnostics/E0023.md)).
+A `..` or `..=` range is not an operator. It is part of a [`for` loop](statements.md#for) or a pattern, and is an error in other places ([E0023](../diagnostics/E0023.md)).
 
 ## Arithmetic
 
@@ -174,7 +174,7 @@ fn main() {
 
 ### Arithmetic in a constant
 
-The program calculates a constant when it builds. So an integer overflow or an integer division by zero in a constant is an error, not a panic ([E0088](../diagnostics/E0088.md)).
+The program calculates a [constant](statements.md#constants) when it builds. So an integer overflow or an integer division by zero in a constant is an error, not a panic ([E0088](../diagnostics/E0088.md)).
 
 ```sisu
 const LIMIT = 9223372036854775807 + 1    // error[E0088]

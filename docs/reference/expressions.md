@@ -85,7 +85,7 @@ The rules:
 
 - A name that a statement in the block declares is in scope only to the end of the block.
 - A block that does not end in an expression has no value ([E0043](../diagnostics/E0043.md)).
-- A block that reaches a `return`, `break` or `continue` has the type `never` ([Types](types.md#never)).
+- A block that reaches a [`return`](statements.md#return), [`break` or `continue`](statements.md#break-and-continue) has the type `never` ([Types](types.md#never)).
 - A statement cannot start with `{` ([E0081](../diagnostics/E0081.md)).
 
 ```sisu
@@ -142,7 +142,7 @@ fn main() {
 
 ## loop
 
-A `loop` is an expression. `break` with a value ends the loop, and that value is the value of the loop.
+A `loop` is an expression. `break` with a value ends the loop, and that value is the value of the loop. [Statements](statements.md#loop) tells how a loop runs, and how a loop label names it.
 
 ```sisu
 fn main() {

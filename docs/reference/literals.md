@@ -135,7 +135,7 @@ The rules, in order:
 These places give an expected type:
 
 - the declared type of a `let` or a `const`
-- the place of an assignment, also with `+=` and the other compound operators
+- the place of an [assignment](statements.md#assignment), also with `+=` and the other [compound operators](statements.md#compound-assignment)
 - a parameter of a function or a method, also a built-in method such as `max`
 - a field of a class constructor, or a value of an enum variant
 - the return type, for a `return` value and for the last expression of a function body

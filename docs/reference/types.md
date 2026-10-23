@@ -77,7 +77,7 @@ fn main() {
 
 The rules:
 
-- When the result of integer arithmetic is outside the range of its type, the program stops with a panic ([Operators](operators.md#overflow)). In a constant, this is an error when the program builds ([E0088](../diagnostics/E0088.md)).
+- When the result of integer arithmetic is outside the range of its type, the program stops with a panic ([Operators](operators.md#overflow)). In a [constant](statements.md#constants), this is an error when the program builds ([E0088](../diagnostics/E0088.md)).
 - A `u8` cannot be negative, so a unary `-` on a `u8` is an error ([E0042](../diagnostics/E0042.md)).
 - An `i64` and a `u8` do not mix in one operation. Convert one of them first ([Conversions](#conversions)).
 
@@ -302,7 +302,7 @@ fn main() {
 - A block that reaches a `return`, `break` or `continue` statement, or another expression of the type `never`.
 - An `if` or a `match` whose branches are all of the type `never`.
 - A `loop` with no `break` that ends it, or whose `break`s all have a value of the type `never`.
-- A `while` whose condition is the literal `true`, with no `break` that ends it.
+- A [`while`](statements.md#reachability) whose condition is the literal `true`, with no `break` that ends it.
 - A string literal with an interpolation part of the type `never`.
 
 A program cannot write `never` as a type name. A `never` branch of an `if` or a `match` takes the type of the other branches. So does a `never` `break` value of a `loop`. The right side of `??` can be `never`.
@@ -325,7 +325,7 @@ The rules:
 
 - An expression of the type `never` has no value, so a `let` cannot bind it ([E0043](../diagnostics/E0043.md)), and `print` cannot take it ([E0061](../diagnostics/E0061.md)).
 - Code after an expression of the type `never` cannot run, and the program builds with a warning ([W0001](../diagnostics/W0001.md)).
-- A function body that ends in an expression of the type `never` needs no value at its end.
+- A function body that ends in an expression of the type `never` needs no value at its end ([Statements](statements.md#the-end-of-a-function)).
 
 ```sisu
 fn first_even(xs: [i64]) -> i64 {

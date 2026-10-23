@@ -21,3 +21,7 @@ description = "Each operator, its precedence, comparison chains, overflow and di
 [[page]]
 file = "expressions"
 description = "Blocks, if, match and loop as expressions, calls, fields, indexes and the order of evaluation."
+
+[[page]]
+file = "statements"
+description = "Bindings, assignment, constants, loops, loop labels, break, continue, return and reachability."
