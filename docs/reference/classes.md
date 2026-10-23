@@ -51,13 +51,13 @@ fn main() {
 The rules:
 
 - A field is `name: Type`, or `mut name: Type` for a field that can change. It has no `let` ([E0016](../diagnostics/E0016.md)).
-- Each field is on a line of its own. A `;` can separate two fields on one line, but a `,` cannot ([E0015](../diagnostics/E0015.md)).
+- A line break separates two fields. A `;` can separate them too, but a `,` cannot ([E0015](../diagnostics/E0015.md)). So `class A { v: i64 }` is valid.
 - A class is declared at the top level. Its name follows the rules of a function name ([Functions](functions.md#declarations)).
 - Two fields, two methods, or a field and a method of one class cannot have the same name ([E0034](../diagnostics/E0034.md)).
 - A class cannot extend another class. Sisu has no inheritance.
 - A generic class also has type parameters after its name, such as `class Stack<T>`.
 
-A field cannot need an object of its own class, directly or through other classes, because no first object could exist ([E0027](../diagnostics/E0027.md)). An optional field, such as `next: Node?`, or an array field, such as `children: [Node]`, can be empty, so it is valid.
+A field cannot need an object of its own class, directly or through other classes or enums, because no first object could exist ([E0027](../diagnostics/E0027.md)). An optional field, such as `next: Node?`, or an array field, such as `children: [Node]`, can be empty, so it is valid.
 
 ```sisu
 class Node {
@@ -191,7 +191,7 @@ The rules:
 - `self` is the first parameter of each method ([E0017](../diagnostics/E0017.md), [E0020](../diagnostics/E0020.md)). It is `self`, never `mut self` ([E0018](../diagnostics/E0018.md)).
 - `self` is valid only in a method ([E0041](../diagnostics/E0041.md)). An assignment to `self` is an error ([E0073](../diagnostics/E0073.md)).
 - A method can write the `mut` fields of `self`. The change shows through every reference to the object.
-- In a method, use `self` to reach the fields and the other methods: `self.x` and `self.m()`. A bare `x` or `m()` is an error ([E0033](../diagnostics/E0033.md), [E0052](../diagnostics/E0052.md)).
+- In a method, use `self` to reach the fields and the other methods: `self.x` and `self.m()`. A bare `x` or `m()` does not find a field or a method. It finds a binding, a constant or a function with that name, or else it is an error ([E0033](../diagnostics/E0033.md), [E0052](../diagnostics/E0052.md)).
 - A method can call a method that is declared below it, and it can call itself.
 - A method can take the name of a function, such as `len` or `print`. A call `x.print()` finds the method, and `print(...)` finds the function.
 - A method is not a function. A call `name(x)` does not find the method `name` ([E0052](../diagnostics/E0052.md)). A call on the class, such as `Account.show()`, is an error ([E0105](../diagnostics/E0105.md)).
