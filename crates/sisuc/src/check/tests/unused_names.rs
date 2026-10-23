@@ -107,6 +107,23 @@ fn enum_should_warn_when_nothing_builds_a_variant() {
 }
 
 #[test]
+fn items_should_cite_their_own_dead_uses_when_they_are_not_the_first_of_their_kind() {
+    judge_unused();
+    // `B` is the second class, `Light` comes after the classes and `LIMIT` is the second constant.
+    let src = "class A {\n    x: i64\n}\nclass B {\n    y: i64\n}\nenum Light {\n    Red\n}\nconst ONE = 1\nconst LIMIT = 10\nfn old_report() {\n    print(B(y: LIMIT).y)\n    print(Light.Red == Light.Red)\n}\nfn main() {\n    print(ONE)\n}";
+    assert_eq!(
+        found(src),
+        [
+            (W0012, (1, 7), vec![]),
+            (W0012, (4, 7), vec![(13, 11)]),
+            (W0012, (7, 6), vec![(14, 11), (14, 24)]),
+            (W0012, (11, 7), vec![(13, 16)]),
+            (W0012, (12, 4), vec![]),
+        ]
+    );
+}
+
+#[test]
 fn constant_should_warn_when_nothing_names_it() {
     judge_unused();
     diagnostic(
