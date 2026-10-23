@@ -62,7 +62,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
       <h3>Lexer</h3>
       <p class="files"><code>crates/sisuc/src/lexer/</code>, <code>symbol.rs</code></p>
       <p>A line break that can end a statement becomes a <code>Newline</code> token: statements end at newlines. A <code>;</code> between two statements on one line becomes a <code>Newline</code> too, and an unnecessary one, such as a <code>;</code> at the end of a line, is dropped with W0007 (ADR 0028). Escapes in a string or <code>char</code> literal are decoded here, so later stages never see them. A string with <code>{expr}</code> parts becomes a run of tokens around the expression's own tokens. A <code>&gt;</code> at the end of a line ends the statement when it closes a type, as in <code>b: Box&lt;i64&gt;</code>; after a comparison it does not.</p>
-      <p>Each name is interned into a <code>Symbol</code>, so the parser and checker compare and hash names as integers. After most errors the lexer skips the bad text and goes on, so it records every error. An unclosed or mismatched bracket is the exception: the run reports one diagnostic and stops.</p>
+      <p>Each name is interned into a <code>Symbol</code>, so the parser and checker compare and hash names as integers. After most errors the lexer skips the bad text and goes on, so it records every error. An unclosed or mismatched bracket is the exception: the run reports one diagnostic and stops. A literal that is not closed can eat the closers after it on its line, so after one, a closer also closes the brackets above its opener that were opened before the literal, and the run goes on.</p>
 
       <h3>Parser</h3>
       <p class="files"><code>crates/sisuc/src/parser.rs</code>, <code>ast.rs</code></p>
