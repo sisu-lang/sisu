@@ -1061,7 +1061,7 @@ These do not make code nicer to write, so they wait:
   come:
   - a class with no `mut` field that nothing compares with `is`, suggesting
     `record` (ADR 0011);
-  - an unused variable or import;
+  - an unused variable, parameter, function or import;
   - a name starting with `_`, such as `_score`, is exempt from the unused
     variable lint, as in Rust and Gleam;
   - `.0` or `.1` on a tuple outside a short closure, suggesting element

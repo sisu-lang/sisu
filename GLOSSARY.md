@@ -35,6 +35,10 @@ The value of an expression statement that nothing uses. The compiler warns
 about one; `let _ = e` discards a value on purpose.
 _Avoid_: dropped value (dropping is what a reference count does)
 
+**Unconditional recursion**:
+A function that calls itself on every path, so it can never return; the
+compiler warns about it.
+
 **Loop label**:
 The name written before a loop (`outer: for ...`) that a `break` or
 `continue` names to leave or restart that loop instead of the innermost one.
