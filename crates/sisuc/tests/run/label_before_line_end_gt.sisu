@@ -1,0 +1,16 @@
+// GIVEN a labelled `while` whose condition, `a < b && c > d`, breaks the line after a `>`
+// WHEN the program runs
+// THEN the `>` compares and the condition goes on, so the loop runs and `break outer` leaves it
+fn count(a: i64, b: i64, c: i64, d: i64) -> i64 {
+    let mut n = 0
+    outer: while a < b && c >
+        d {
+        n += 1
+        if n == 3 { break outer }
+    }
+    n
+}
+
+fn main() {
+    print(count(1, 2, 5, 0))
+}

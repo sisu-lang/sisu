@@ -638,8 +638,8 @@ impl Statements {
     /// The innermost statement after reading the tokens before `end`.
     fn read(&mut self, tokens: &[Token], end: usize) -> Statement {
         use TokenKind::{
-            Arrow, Colon, Eq, Ge, Gt, LBrace, LBracket, LParen, Lt, Newline, RBrace, RBracket,
-            RParen, Semicolon, StrHead, StrTail,
+            Arrow, Colon, Eq, Ge, Gt, LBrace, LBracket, LParen, Loop, Lt, Newline, RBrace,
+            RBracket, RParen, Semicolon, StrHead, StrTail,
         };
         for t in &tokens[self.read..end] {
             #[cfg(test)]
@@ -665,8 +665,9 @@ impl Statements {
                 }
                 Newline | Semicolon => *s = Statement::default(),
                 Colon | Arrow => s.annotation = Some(0),
-                // A `>=` after a type annotation closes it and starts its value.
-                Eq | Ge => s.annotation = None,
+                // A `>=` after a type annotation closes it and starts its value. So does a loop
+                // keyword: it follows a loop label's `:`, which is no annotation.
+                Eq | Ge | TokenKind::While | TokenKind::For | Loop => s.annotation = None,
                 Gt => s.annotation = s.annotation.map(|a| a + 1),
                 Lt => s.annotation = s.annotation.map(|a| a - 1),
                 _ => {}
@@ -2833,6 +2834,21 @@ mod tests {
         assert_eq!(newlines("class D {\n    b: Box<[i64]>\n    n: i64\n}"), 3);
         assert_eq!(newlines("class D {\n    b: Box<i64>;\n    n: i64\n}"), 3);
         assert_eq!(newlines("fn f() -> bool {\n    x < y >\n        z\n}"), 2);
+    }
+
+    /// A loop label's `:` does not start a type annotation, so a `>` at a line's end after it still
+    /// compares and the condition goes on.
+    #[test]
+    fn a_loop_label_should_not_start_a_type_annotation() {
+        let newlines = |src: &str| {
+            all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count()
+        };
+        let src =
+            "fn f() {\n    outer: while a < b && c >\n        d {\n        break outer\n    }\n}";
+        assert_eq!(newlines(src), 3);
     }
 
     /// An interpolated string is one bracket to the statement around it: after it closes, a `{`
