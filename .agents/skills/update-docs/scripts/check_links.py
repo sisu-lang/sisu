@@ -13,7 +13,7 @@ from pathlib import Path
 INLINE = re.compile(r'\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)')
 REF_DEF = re.compile(r'^\s*\[[^\]]+\]:\s+<?(\S+?)>?(?:\s+"[^"]*")?\s*$', re.M)
 ATTR = re.compile(r'\b(src|href|srcset)="([^"]+)"')
-FENCE = re.compile(r'^(```|~~~).*?^\1[^\n]*$', re.M | re.S)
+FENCE = re.compile(r'`{3,}|~{3,}')
 # A code span naming a path under one of the repository's top-level directories. Placeholders
 # such as `<name>` and globs such as `*.md` do not match, so they are not checked.
 REPO_PATH = re.compile(r'`((?:crates|docs|scripts|\.agents|\.cargo|\.config|\.github)/[\w./-]*)`')
@@ -40,9 +40,25 @@ def in_repo(path):
     return path.rstrip('/') in TRACKED or git('check-ignore', '-q', path).returncode == 0
 
 
+def fence_after(line, fence):
+    """The fence that is open after `line`, when `fence` is open before it (None: no fence). A fence
+    closes only on a line of its character, at least as long, with only spaces or tabs after it,
+    so a ```` fence can show a ``` one."""
+    run = FENCE.match(line)
+    if fence is None:
+        return run and run[0]
+    closes = run and run[0][0] == fence[0] and len(run[0]) >= len(fence) and not line[run.end():].strip(' \t')
+    return None if closes else fence
+
+
 def prose(path):
-    """The file's text with fenced code blocks removed."""
-    return FENCE.sub('', path.read_text())
+    """The file's text with fenced code blocks removed, each line read once."""
+    kept, fence = [], None
+    for line in path.read_text().split('\n'):
+        before, fence = fence, fence_after(line, fence)
+        if before is None and fence is None:
+            kept.append(line)
+    return '\n'.join(kept)
 
 
 def anchors(path):

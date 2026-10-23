@@ -132,6 +132,7 @@ def fake_site(test, pages, repo=None):
         (site / name).write_text('', encoding='utf-8')
     (site / 'data').mkdir()
     (site / 'data/categories.toml').write_text('category = []\n', encoding='utf-8')
+    (site / 'data/reference.toml').write_text('page = []\n', encoding='utf-8')
     for name, text in pages.items():
         (site / 'src' / name).write_text(text, encoding='utf-8')
     for name, text in (repo or {}).items():
@@ -139,6 +140,7 @@ def fake_site(test, pages, repo=None):
         (site.parent / name).write_text(text, encoding='utf-8')
     test.enterContext(mock.patch.object(build, 'ROOT', site.parent))
     test.enterContext(mock.patch.object(build, 'SITE', site))
+    test.enterContext(mock.patch.object(build, 'REFERENCE', site.parent / 'docs/reference'))
     return site
 
 
@@ -156,6 +158,112 @@ def problems(test, files, **kwargs):
         (out / name).parent.mkdir(parents=True, exist_ok=True)
         (out / name).write_text(text, encoding='utf-8')
     return build.check_site(out, **kwargs)
+
+
+# Three made-up language reference pages that hold every feature the build reads: `##` and `###`
+# headings, a marker, each companion block, a `pending` example and an `args` example.
+FENCE = '```'
+REF_PAGES = {
+    'README': f"""# Language reference
+
+The language reference says what each construct means. See [the escapes](literals.md#escapes).
+
+{FENCE}sisu
+fn main() {{
+    print(1) // 1
+}}
+{FENCE}
+""",
+    'literals': f"""# Literals
+
+A *literal* is a value written in the source.
+
+## Integers
+
+{FENCE}sisu
+fn main() {{
+    // a note // error[E9999]
+    print(1000_) // error[E0008]
+}}
+{FENCE}
+
+### Escapes
+
+{FENCE}sisu args="a b"
+fn main() {{
+    print(read_line() ?? "none")
+}}
+{FENCE}
+{FENCE}input
+hi
+{FENCE}
+{FENCE}output
+hi
+{FENCE}
+{FENCE}stderr
+note
+{FENCE}
+
+## Planned
+
+{FENCE}sisu pending
+fn main() {{
+    let x = weak 1
+}}
+{FENCE}
+""",
+    'later': f"""# Later
+
+## Soon
+
+{FENCE}sisu pending
+fn main() {{
+    soon()
+}}
+{FENCE}
+""",
+}
+
+
+def reference_dir(test, pages, listed=None):
+    """docs/reference holding `pages`, {stem: Markdown}; reference.toml lists `listed` (default: the stems)."""
+    tmp = tempfile.TemporaryDirectory()
+    test.addCleanup(tmp.cleanup)
+    folder = Path(tmp.name)
+    for stem, text in pages.items():
+        (folder / f'{stem}.md').write_text(text, encoding='utf-8')
+    entries = [{'file': stem, 'description': f'About {stem}.'} for stem in (listed or pages)]
+    test.enterContext(mock.patch.object(build, 'REFERENCE', folder))
+    test.enterContext(mock.patch.object(build, 'reference_list', lambda: entries))
+    return entries
+
+
+def built_site(test, pages, listed=None):
+    """The real site built with `pages` as its language reference."""
+    reference_dir(test, pages, listed)
+    tmp = tempfile.TemporaryDirectory()
+    test.addCleanup(tmp.cleanup)
+    out = Path(tmp.name) / 'site'
+    build.build(out)
+    return out
+
+
+def ref_html(test, markdown):
+    """reference_html of `markdown`, read from a file as a page is."""
+    return build.reference_html(markdown, temp_file(test, markdown))
+
+
+def companion_blocks(markdown):
+    """The `output`, `input` and `stderr` fences of a page, read line by line apart from markdown-it."""
+    count, fence = 0, None
+    for line in markdown.splitlines():
+        ticks = len(line) - len(line.lstrip('`'))
+        if fence is None and ticks >= 3:
+            fence = ticks
+            count += line[ticks:].strip() in ('output', 'input', 'stderr')
+        elif fence is not None and ticks >= fence and not line[ticks:].strip():
+            fence = None
+    return count
 
 
 class Build(unittest.TestCase):
@@ -603,6 +711,137 @@ class Build(unittest.TestCase):
         self.assertIn('<td><code>fib</code></td>', build.expand('{{bench-table}}', {}))
         self.assertIn('Commit abc1234', build.expand('{{bench-results-note}}', {}))
 
+    def test_reference_page_should_have_its_navigation(self):
+        entries = build.reference_pages(reference_dir(self, REF_PAGES))
+        page = build.reference_page(1, entries)
+        side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
+        self.assertEqual(re.findall(r'<a href="([^"]*)"( aria-current="page")?>', side),
+                         [('index.html', ''), ('literals.html', ' aria-current="page"'), ('later.html', '')])
+        toc = re.search(r'<nav class="ref-toc".*?</nav>', page, re.S)[0]
+        self.assertEqual(re.findall(r'<li class="h(\d)"><a href="#([^"]*)">(.*?)</a>', toc),
+                         [('2', 'integers', 'Integers'), ('3', 'escapes', 'Escapes'), ('2', 'planned', 'Planned <span class="soon">In development</span>')])
+        pager = re.search(r'<nav class="pager".*?</nav>', page, re.S)[0]
+        self.assertEqual(re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
+                         [('index.html', 'Previous', 'Language reference'), ('later.html', 'Next', 'Later')])
+        link = '<p class="marker"><a href="../diagnostics/E0008.html">E0008</a>: what this error means</p>'
+        self.assertEqual(re.findall(r'<p class="marker">.*?</p>', page), [link])  # not the full-line comment's E9999
+        self.assertIn('</pre></figure>\n' + link, page)
+        for pre in re.findall(r'<pre\b.*?</pre>', page, re.S):
+            self.assertNotIn('<a ', pre)
+        first, last = build.reference_page(0, entries), build.reference_page(2, entries)
+        self.assertEqual(re.findall(r'<span>(\w+)</span>', re.search(r'<nav class="pager".*?</nav>', first, re.S)[0]), ['Next'])
+        self.assertEqual(re.findall(r'<span>(\w+)</span>', re.search(r'<nav class="pager".*?</nav>', last, re.S)[0]), ['Previous'])
+        self.assertIn('<a href="../reference/index.html" aria-current="page">', page)
+
+    def test_in_development_tag_should_follow_pending_examples(self):
+        working, pending = f'{FENCE}sisu\nfn main() {{}}\n{FENCE}\n', f'{FENCE}sisu pending\nfn main() {{ soon() }}\n{FENCE}\n'
+        cases = [
+            ('a pending ## and a working ##', f'# T\n\n## A\n\n{pending}\n## B\n\n{working}', [True, False], False),
+            ('a working ## over a pending ###', f'# T\n\n## A\n\n{working}\n### B\n\n{pending}', [False, True], False),
+            ('only pending examples', f'# T\n\n{pending}\n## A\n\n{pending}', [True], True),
+            ('no example', '# T\n\n## A\n\nText.\n', [False], False),
+            ('a pending example under a #### heading', f'# T\n\n## A\n\n{working}\n#### D\n\n{pending}', [False], False),
+        ]
+        for name, markdown, headings, tagged in cases:
+            with self.subTest(name):
+                _, found, page_tagged = ref_html(self, markdown)
+                self.assertEqual([h[3] for h in found], headings)
+                self.assertEqual(page_tagged, tagged)
+                entries = build.reference_pages(reference_dir(self, {'README': '# Language reference\n', 'one': markdown}))
+                page = build.reference_page(1, entries)
+                side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
+                self.assertEqual('In development' in side, tagged)
+                self.assertNotIn('In development', re.search(r'<h1 id="t">.*?</h1>', page)[0])
+                shown = [bool(re.search(r'In development</span></h\d>', h)) for h in re.findall(r'<h[23] id=.*?</h[23]>', page)]
+                self.assertEqual(shown, headings)
+
+    def test_page_list_should_match_the_files(self):
+        found = build.reference_list_problems(['README', 'gone'], ['README', 'extra'])
+        self.assertEqual(len(found), 2, found)
+        self.assertTrue(any('gone' in p for p in found) and any('extra' in p for p in found), found)
+        self.assertEqual(build.reference_list_problems(['README'], ['README']), [])
+        with self.assertRaisesRegex(build.BuildError, r'(?s)gone.*extra|extra.*gone'):
+            built_site(self, {'README': '# Language reference\n', 'extra': '# Extra\n'}, ['README', 'gone'])
+
+    def test_milestone_check_should_fail_a_page_that_names_one(self):
+        self.assertEqual(check := build.check_site(built_site(self, REF_PAGES)), [], check)
+        for prose in ('M8', 'M**8**'):
+            with self.subTest(prose):
+                named = REF_PAGES | {'later': REF_PAGES['later'].replace('## Soon\n', f'## Soon\n\nThis comes in {prose}.\n')}
+                self.assertEqual(build.check_site(built_site(self, named)), ['reference/later.html: names a milestone'])
+
+    def test_milestone_check_should_ignore_attributes_and_code(self):
+        quiet = '<svg><path d="M10 3a7 7"/></svg><p>Use <code>M8</code>.</p><pre data-lang="sisu">let M8 = 1</pre>'
+        self.assertEqual(problems(self, {'tour.html': PAGE.format(quiet)}), [])
+        for prose in ('<p>It lands in M8.</p>', '<p>It lands in M<strong>8</strong>.</p>'):
+            with self.subTest(prose):
+                self.assert_fails('tour.html', problems(self, {'tour.html': PAGE.format(prose)}))
+        self.assertEqual(problems(self, {'tour.html': PAGE.format('<ul><li>M</li><li>8</li></ul>')}), [])
+
+    def test_heading_ids_should_match_github_slugs(self):
+        markdown = '# T\n\n## The `??` operator\n\n## Examples\n\nSee [the second](#examples-1) and [the top](#t).\n\n## Examples\n\nText.\n'
+        body, headings, _ = ref_html(self, markdown)
+        self.assertEqual([h[1] for h in headings], ['the--operator', 'examples', 'examples-1'])
+        self.assertIn('<h2 id="the--operator">The <code>??</code> operator</h2>', body)
+        out = built_site(self, {'README': '# Language reference\n\nSee [T](ops.md#t).\n', 'ops': markdown})
+        self.assertEqual(build.check_site(out), [])
+        self.assertIn('<h1 id="t">T</h1>', (out / 'reference/ops.html').read_text(encoding='utf-8'))
+
+    def test_heading_count_mismatch_should_fail_the_build(self):
+        nested = f'# T\n\n````text\n{FENCE}\n````\n\n## Next\n\n{FENCE}text\nx\n{FENCE}\n'
+        self.assertEqual([h[:2] for h in ref_html(self, nested)[1]], [(2, 'next')])
+        # A line with text after its backticks does not close a fence.
+        still_open = f'# T\n\n{FENCE}text\n{FENCE} text\n## Hidden\n{FENCE}\n\n## Next\n'
+        self.assertEqual([h[:2] for h in ref_html(self, still_open)[1]], [(2, 'next')])
+        with self.assertRaisesRegex(build.BuildError, 'heading'):
+            ref_html(self, '# T\n\nSetext\n------\n')
+        # The pages are read and rendered once, and the fault names the page that holds it.
+        entries = reference_dir(self, {'README': '# Language reference\n', 'bad': '# T\n\nSetext\n------\n'})
+        with self.assertRaisesRegex(build.BuildError, r'^docs/reference/bad\.md: .*heading'):
+            build.reference_pages(entries)
+
+    def test_anchors_should_read_each_line_once(self):
+        # An unclosed fence, then many lines that look like fences but do not close it.
+        text = '# T\n\n' + '`' * 2000 + '\n' + '``` x\n' * 2000
+        step = self.enterContext(mock.patch.object(build.check_links, 'fence_after', wraps=build.check_links.fence_after))
+        self.assertEqual(list(build.check_links.anchors(temp_file(self, text))), ['t'])
+        self.assertEqual(step.call_count, len(text.split('\n')))
+
+    def test_markers_should_split_lines_as_the_reference_test_does(self):
+        # Rust's str::lines splits only at a newline and drops a carriage return before it.
+        self.assertEqual(build.markers('    print("a // error[E0008]\u2028b")\n'), [])
+        self.assertEqual(build.markers('    print(1000_) // error[E0008]\r\n'), ['E0008'])
+
+    def test_example_caption_should_read_the_info_string_as_the_test_does(self):
+        cases = [('sisu args="a b"', './example a b'), ('sisu args="  a  b "', './example a b'), ('sisu args=""', './example'),
+                 ('sisu  pending', 'In development')]
+        for info, caption in cases:
+            with self.subTest(info):
+                body = ref_html(self, f'# T\n\n{FENCE}{info}\nfn main() {{}}\n{FENCE}\n')[0]
+                self.assertEqual(re.findall(r'<figcaption class="cap">(.*?)</figcaption>', body), [caption])
+
+    def test_build_should_render_each_reference_page_once(self):
+        render = self.enterContext(mock.patch.object(build, 'reference_html', wraps=build.reference_html))
+        built_site(self, REF_PAGES)
+        self.assertEqual(sorted(call.args[1].stem for call in render.call_args_list), sorted(REF_PAGES))
+
+    def test_reference_links_should_become_site_links(self):
+        cases = [('literals.md#escapes', 'literals.html#escapes'), ('../diagnostics/E0008.md', '../diagnostics/E0008.html'),
+                 ('README.md', 'index.html'), ('../adr/0004-x.md#why', build.BLOB + 'docs/adr/0004-x.md#why'),
+                 ('#escapes', '#escapes'), ('https://example.org/', 'https://example.org/')]
+        for href, want in cases:
+            with self.subTest(href):
+                body = ref_html(self, f'# T\n\nSee [it]({href}).\n')[0]
+                self.assertEqual(re.findall(r'<a href="([^"]*)">it</a>', body), [want])
+
+    def test_overview_should_have_a_card_for_each_other_page(self):
+        entries = build.reference_pages(reference_dir(self, REF_PAGES))
+        page = build.reference_page(0, entries)
+        cards = re.search(r'<ul class="cards">.*?</ul>', page, re.S)[0]
+        self.assertEqual(re.findall(r'<li><a href="([^"]*)"><b>(.*?)</b><span>(.*?)</span></a></li>', cards),
+                         [('literals.html', 'Literals', 'About literals.'), ('later.html', 'Later', 'About later.')])
+        self.assertNotIn('class="cards"', build.reference_page(1, entries))
+
 
 class Pages(unittest.TestCase):
     """The real site, built once."""
@@ -677,6 +916,22 @@ class Pages(unittest.TestCase):
                 title = re.search('<title>(.*?)</title>', page)[1]
                 self.assertEqual(title, f'{code}: {plain}')
                 self.assertNotIn('`', title + heading)
+
+    def test_example_panels_should_match_companion_blocks(self):
+        made_up = built_site(self, REF_PAGES)
+        real = sorted((build.ROOT / 'docs/reference').glob('*.md'))
+        self.assertTrue(real)
+        for markdown, built in [*((p.read_text(encoding='utf-8'), self.out / 'reference' / ('index' if p.stem == 'README' else p.stem)) for p in real),
+                                *((text, made_up / 'reference' / ('index' if stem == 'README' else stem)) for stem, text in REF_PAGES.items())]:
+            with self.subTest(built.name):
+                page = built.with_suffix('.html').read_text(encoding='utf-8')
+                self.assertEqual(page.count('<figure class="panel">'), companion_blocks(markdown))
+        literals = (made_up / 'reference/literals.html').read_text(encoding='utf-8')
+        self.assertEqual(companion_blocks(REF_PAGES['literals']), 3)
+        self.assertIn('<figcaption class="cap">In development</figcaption><pre data-lang="sisu">', literals)
+        self.assertIn('<figcaption class="cap">./example a b</figcaption><pre data-lang="sisu">', literals)
+        for kind in ('input', 'output', 'stderr'):
+            self.assertIn(f'<figure class="panel"><figcaption class="cap">{kind}</figcaption><pre data-lang="out">', literals)
 
 
 class Metas(HTMLParser):
