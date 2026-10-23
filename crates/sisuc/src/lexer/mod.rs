@@ -461,9 +461,15 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
             Judgement::Redundant => i,
             Judgement::Kept => i + 1,
         };
+        // Only blanks before the run: removing a `;` there must not widen the indentation.
+        let line_start = source.as_bytes()[..start]
+            .iter()
+            .rev()
+            .take_while(|&&b| b != b'\n')
+            .all(|&b| b == b' ' || b == b'\t');
         warnings.extend(
             (tokens[redundant..end].iter().enumerate())
-                .map(|(k, t)| redundant_semicolon(source, t.span, k == 0)),
+                .map(|(k, t)| redundant_semicolon(source, t.span, k == 0, line_start)),
         );
         indices.start = end;
     }
@@ -523,8 +529,10 @@ fn judge(source: &str, tokens: &[Token], run: Range<usize>, between_items: bool)
 /// The W0007 of the redundant `;` at `at`, the `first` of its run to be removed. Its fix leaves
 /// a space when the `;`s it touches, with it, touch code on each side, so that removing them all
 /// joins no two tokens. Of `;`s that touch, only the first removed leaves the space, so removing
-/// them all leaves one.
-fn redundant_semicolon(source: &str, at: Span, first: bool) -> Diagnostic {
+/// them all leaves one. When `line_start`, only blanks come before its run on the line. Then each
+/// `;` of the run also takes the blanks after it: each owns the blanks that follow it, so the edits
+/// never overlap, and the line keeps its indentation, whichever fixes apply.
+fn redundant_semicolon(source: &str, at: Span, first: bool, line_start: bool) -> Diagnostic {
     let solid = |b: Option<&u8>| b.is_some_and(|b| !b.is_ascii_whitespace());
     let bytes = source.as_bytes();
     let before = at.start().checked_sub(1).and_then(|b| bytes.get(b));
@@ -533,7 +541,15 @@ fn redundant_semicolon(source: &str, at: Span, first: bool) -> Diagnostic {
     let space = (first || before != Some(&b';'))
         && solid(before)
         && solid(bytes[at.end()..].iter().find(|&&b| b != b';'));
-    DiagnosticKind::RedundantSemicolon { at, space }.into()
+    let blanks = if line_start {
+        (bytes[at.end()..].iter())
+            .take_while(|&&b| b == b' ' || b == b'\t')
+            .count()
+    } else {
+        0
+    };
+    let remove = Span::new(at.start(), at.end() + blanks);
+    DiagnosticKind::RedundantSemicolon { at, remove, space }.into()
 }
 
 /// An open interpolation of a string literal.
@@ -3144,6 +3160,38 @@ mod tests {
         Gone(usize, usize),
         /// A `Semicolon`, for the parser to report.
         Kept,
+    }
+
+    /// A `;` that starts its line takes the blanks after it, so the line keeps its indentation,
+    /// whether one fix applies or all do; with code before it, the fix removes the `;` alone.
+    #[test]
+    fn redundant_semicolon_at_line_start_should_keep_indentation() {
+        for (src, alone, all) in [
+            ("x\n    ; y", vec!["x\n    y"], "x\n    y"),
+            ("x\n\t; y", vec!["x\n\ty"], "x\n\ty"),
+            ("x\n    ;y", vec!["x\n    y"], "x\n    y"),
+            ("x\n    ;   \ny", vec!["x\n    \ny"], "x\n    \ny"),
+            ("x\n    ;; y", vec!["x\n    ; y", "x\n    ;y"], "x\n    y"),
+            ("x\n    ; ; y", vec!["x\n    ; y", "x\n    ; y"], "x\n    y"),
+            ("x\n    ;;y", vec!["x\n    ;y", "x\n    ;y"], "x\n    y"),
+            // Code before the `;` on its line: the fix removes the `;` alone.
+            ("x\n    y;\n", vec!["x\n    y\n"], "x\n    y\n"),
+        ] {
+            let lexed = lex(src).expect("the lexer recovers");
+            let ws: Vec<&Diagnostic> = (lexed.warnings.iter())
+                .filter(|d| d.code() == Code::RedundantSemicolon)
+                .collect();
+            let each: Vec<String> = ws.iter().map(|d| apply_fix(src, d)).collect();
+            assert_eq!(each, alone, "{src:?}");
+            let edits: Vec<_> = (ws.iter())
+                .flat_map(|d| d.fixes().iter().flat_map(crate::diagnostic::Fix::edits))
+                .collect();
+            assert_eq!(
+                crate::diagnostic::explanations::apply(src, &edits),
+                all,
+                "{src:?}"
+            );
+        }
     }
 
     #[test]

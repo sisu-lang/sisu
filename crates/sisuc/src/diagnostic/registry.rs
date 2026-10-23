@@ -814,7 +814,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// A `;` at `at` that separates nothing. `space` when it touches a token on each side, so
     /// that removing it would join them.
-    RedundantSemicolon { at: Span, space: bool },
+    RedundantSemicolon {
+        at: Span,
+        /// What the fix removes: the `;`, and the blanks after it at the start of a line.
+        remove: Span,
+        space: bool,
+    },
     /// The pattern at `at` of `keyword`, which every value of its enum matches.
     AlwaysMatches { keyword: Unwrap, at: Span },
     /// A range written another language's way, with its operator at `at`.
@@ -2847,10 +2852,10 @@ impl From<DiagnosticKind> for Diagnostic {
                 }
                 .with_fix(unsafe_fix(&format!("remove the {what}"), remove, ""))
             }
-            DiagnosticKind::RedundantSemicolon { at, space } => {
+            DiagnosticKind::RedundantSemicolon { at, remove, space } => {
                 Diagnostic::coded(code, at, "unnecessary `;`").with_fix(safe_fix(
                     "remove the `;`",
-                    at,
+                    remove,
                     if space { " " } else { "" },
                 ))
             }
