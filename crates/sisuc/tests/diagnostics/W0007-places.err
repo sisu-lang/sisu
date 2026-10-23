@@ -31,7 +31,7 @@ warning[W0007]: unnecessary `;`
 help: remove the `;`
   |
 7 -     ; print(p.x + 1)
-7 +      print(p.x + 1)
+7 +     print(p.x + 1)
   |
 
 warning[W0007]: unnecessary `;`

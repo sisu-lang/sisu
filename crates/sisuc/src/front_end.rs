@@ -699,8 +699,8 @@ fn main() {
     }
 
     /// Applying one W0007 fix alone leaves every other diagnostic of the lexer and of the front
-    /// end where it was, up to the `;`'s own length. The lexer's list catches what the front end
-    /// hides when an item is broken.
+    /// end where it was, up to the length the fix removes. The lexer's list catches what the front
+    /// end hides when an item is broken.
     #[test]
     fn redundant_semicolon_fix_changes_nothing_else() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics");
@@ -755,7 +755,8 @@ fn main() {
                     (pairs.into_iter())
                         .map(|(c, at)| {
                             let at = if at > semicolon {
-                                at - 1 + edit.replacement().len()
+                                at - (edit.span().end() - edit.span().start())
+                                    + edit.replacement().len()
                             } else {
                                 at
                             };

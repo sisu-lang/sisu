@@ -1,0 +1,14 @@
+warning[W0007]: unnecessary `;`
+ --> W0007-line-start.sisu:3:5
+  |
+3 |     ; print(x + 1)
+  |     ^
+  |
+help: remove the `;`
+  |
+3 -     ; print(x + 1)
+3 +     print(x + 1)
+  |
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0007
