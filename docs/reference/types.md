@@ -64,7 +64,7 @@ fn main() {
 
 ## Integers
 
-An `i64` is a signed 64-bit integer. A `u8` is an unsigned 8-bit integer, a byte. An integer literal is an `i64`, unless its context expects a `u8` or an `f64` ([Literals](literals.md#the-type-of-an-integer-literal)).
+An `i64` is a signed 64-bit integer. A `u8` is an unsigned 8-bit integer, a byte. An integer literal is an `i64`, unless its context makes it a `u8` or an `f64` ([Literals](literals.md#the-type-of-an-integer-literal)).
 
 ```sisu
 fn main() {
@@ -77,7 +77,7 @@ fn main() {
 
 The rules:
 
-- Arithmetic on integers stops the program with a panic when the result is outside the range of its type ([Operators](operators.md#overflow)).
+- When the result of integer arithmetic is outside the range of its type, the program stops with a panic ([Operators](operators.md#overflow)). In a constant, this is an error when the program builds ([E0088](../diagnostics/E0088.md)).
 - A `u8` cannot be negative, so a unary `-` on a `u8` is an error ([E0042](../diagnostics/E0042.md)).
 - An `i64` and a `u8` do not mix in one operation. Convert one of them first ([Conversions](#conversions)).
 
@@ -106,7 +106,7 @@ fn main() {
 
 The rules:
 
-- NaN is not equal to any value, also not to itself. To test for NaN, use `x.is_nan()`. A comparison with `f64.nan` is always false, and the program builds with a warning ([W0005](../diagnostics/W0005.md)).
+- NaN is not equal to any value, also not to itself. To test for NaN, use `x.is_nan()`. `x == f64.nan` is always false, and `x != f64.nan` is always true. Both build with a warning ([W0005](../diagnostics/W0005.md)). `<`, `<=`, `>` and `>=` with NaN are always false.
 - `-0.0 == 0.0` is true, but `print` shows the sign: `-0.0`.
 - An `f64` and an integer do not mix in one operation. Convert one of them first ([Conversions](#conversions)).
 
@@ -264,9 +264,9 @@ fn main() {
 
 The rules:
 
-- Where an optional `T?` is expected, a `T` becomes a `T?` that holds it. This applies to a `let` with a type, an argument, a `return` value, a field, an array element, the other side of an `==` or `!=`, and the other branches of an `if` or a `match`.
+- Where an optional `T?` is expected, a `T` becomes a `T?` that holds it. Some examples are a `let` with a type, an assignment, an argument and a `return` value. Others are a field, an array element, the other side of an `==` or `!=`, and the other branches of an `if` or a `match`.
 - `None` needs an expected optional type. Where the context expects a type that is not optional, `None` is an error ([E0032](../diagnostics/E0032.md)).
-- An optional is not its value. An operator, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or `if let`.
+- An optional is not its value. An arithmetic operator, a comparison, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or `if let`.
 - `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
 - An optional of an optional, such as `i64??`, is not a type ([E0014](../diagnostics/E0014.md)).
 - `print` and interpolation do not take an optional ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)).
@@ -301,7 +301,9 @@ fn main() {
 - A call of `panic`, and `todo`.
 - A block that reaches a `return`, `break` or `continue` statement, or another expression of the type `never`.
 - An `if` or a `match` whose branches are all of the type `never`.
-- A `loop` with no `break` that ends it, and a `while` whose condition is the literal `true`, with no `break` that ends it.
+- A `loop` with no `break` that ends it, or whose `break` values are all of the type `never`.
+- A `while` whose condition is the literal `true`, with no `break` that ends it.
+- A string literal with an interpolation part of the type `never`.
 
 A program cannot write `never` as a type name. A `never` branch of an `if` or a `match` takes the type of the other branches, and the right side of `??` can be `never`.
 
@@ -379,7 +381,8 @@ fn main() {
 The rules:
 
 - A conversion takes only the types in its row of the table. A `u8` converts to an `f64` or a `char` through an `i64`, such as `f64(i64(b))`.
-- The argument of a conversion has no expected type, so an integer literal in it is an `i64`: `f64(3)` is `3.0`, and `u8(300)` is `None`.
+- The argument of `f64`, `i64`, `u8` or `char` has no expected type. So an integer literal in it is an `i64`: `f64(3)` is `3.0`, and `u8(300)` is `None`.
+- The argument of `string` expects a `[char]`, so `string([])` is the empty string.
 - `i64(-0.0)` is `0`.
 - A conversion to the type that the value already has is an error ([E0054](../diagnostics/E0054.md)).
 - In a constant, a conversion that can fail is an error ([E0100](../diagnostics/E0100.md)).
