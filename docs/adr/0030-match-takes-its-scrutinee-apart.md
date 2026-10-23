@@ -77,9 +77,13 @@ Checked with GitHits.
   or freed exactly once on every path (rule 1).
 - A token made before a loop is not used inside or after it. The pass loses
   that reuse, never soundness.
-- Part 4's inference keeps a parameter owned when its `match` would reuse a
-  box. [ADR 0029](0029-parameters-are-borrowed-unless-consumed.md) borrows a
+- Part 4's inference makes a parameter owned for a reused box only when its
+  `match` would reuse the box, holds the parameter's last mention, and is in no
+  loop.
+  [ADR 0029](0029-parameters-are-borrowed-unless-consumed.md) borrows a
   parameter that is only read, and a borrowed scrutinee is never taken apart.
-  It does so even when the `match` is not the parameter's last use: the
-  scrutinee is then a copy, its box is shared, nothing is reused, and the
-  caller pays a retain where it used to lend the value.
+  Otherwise the scrutinee is a copy and shares the box, so the parameter stays
+  borrowed. The inference loses the reuse of a `match` in a loop whose arms all
+  leave the loop with a `return` or a `break`, never soundness. The rule
+  changed with #145: before it, a `match` that was not the last use also kept
+  the parameter owned, and the caller paid a retain for nothing.

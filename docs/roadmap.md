@@ -1099,8 +1099,10 @@ These do not make code nicer to write, so they wait:
   sees identity. The arm's commit moves the fields out of a box with count 1
   and keeps the block as a reuse token, which an arm that builds nothing frees
   on every exit; a shared box gives no token. A parameter whose `match` would
-  reuse its box stays owned in part 4's inference, which is what lets
-  `tree_rewrite` allocate nothing after its first tree. Two cases are deferred.
+  reuse its box stays owned in part 4's inference when that `match` holds the
+  parameter's last mention and is in no loop (narrowed in #145), which is what
+  lets `tree_rewrite` allocate nothing after its first tree. Two cases are
+  deferred.
   An arm whose `|` alternative binds a counted name or tests a box keeps the
   copying commit. A boxed `F?` binding is copied before the take-apart, so its
   box is never reused, and the rest of its arm still moves.

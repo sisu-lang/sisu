@@ -423,6 +423,46 @@ fn match_on_a_field_is_not_seeded() {
     );
 }
 
+/// The `match` rebuilds a box, but `rebuilt` reads `e` after it, so the `match` is not its last
+/// use: nothing is reused and `e` stays borrowed, and `main` lends `t` in place.
+#[test]
+fn parameter_read_after_the_match_should_stay_borrowed() {
+    let printed = built(&format!(
+        "{EXPR}\nfn size(e: Expr) -> i64 {{\n    match e {{\n        Num(_) => 1\n        \
+         Add(l, r) => size(l) + size(r) + 1\n        Mul(l, r) => size(l) + size(r) + 1\n    }}\n}}\n\
+         fn rebuilt(e: Expr) -> i64 {{\n    let x = {REBUILT}\n    size(x) + size(e)\n}}\n\
+         fn main() {{\n    let t = Expr.Add(Expr.Num(1), Expr.Num(2))\n    \
+         print(rebuilt(t) + size(t))\n}}"
+    ));
+    signature(&printed, "rebuilt", "fn rebuilt(e#0: borrow Expr)");
+    has(&printed, "main", &["call rebuilt(t#0)"]);
+}
+
+/// A guard and another arm read `e` after the scrutinee, so each keeps `e` borrowed.
+#[test]
+fn parameter_read_in_a_guard_or_another_arm_should_stay_borrowed() {
+    let size = "fn size(e: Expr) -> i64 {\n    match e {\n        Num(_) => 1\n        \
+                Add(l, r) => size(l) + size(r) + 1\n        Mul(l, r) => size(l) + size(r) + 1\n    }\n}";
+    let guard = REBUILT.replace("Add(l, r) =>", "Add(l, r) if size(e) > 1 =>");
+    let other = REBUILT.replace("_ => Expr.Num(0)", "_ => Expr.Num(size(e))");
+    for arms in [guard, other] {
+        let printed = built(&format!(
+            "{EXPR}\n{size}\nfn rebuilt(e: Expr) -> Expr {{\n    {arms}\n}}"
+        ));
+        signature(&printed, "rebuilt", "fn rebuilt(e#0: borrow Expr)");
+    }
+}
+
+/// The loop runs the `match` on `e` again, so the `match` is not the last use of `e`.
+#[test]
+fn parameter_matched_in_a_loop_should_stay_borrowed() {
+    let printed = built(&format!(
+        "{EXPR}\nfn rebuilt(e: Expr) -> Expr {{\n    let mut acc = Expr.Num(0)\n    \
+         for _ in 0..3 {{\n        acc = {REBUILT}\n    }}\n    acc\n}}"
+    ));
+    signature(&printed, "rebuilt", "fn rebuilt(e#0: borrow Expr)");
+}
+
 /// Lowers `f` of `src` with every parameter borrowed: `SEEDED`, `DEDUPED`, `COUNTERS` and the
 /// parameters marked in `reuses`.
 fn seed_counts(src: &str) -> (usize, usize, usize, Vec<bool>) {
