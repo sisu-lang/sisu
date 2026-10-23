@@ -537,7 +537,7 @@ fn diagnostics(example: &Example, sisu: &Path, dir: &Path, error: bool) -> Resul
     let list = |pairs: &[(&str, u64)]| {
         pairs
             .iter()
-            .map(|(code, line)| format!("{code} on line {line}"))
+            .map(|(code, line)| format!("{code} on program line {line}"))
             .collect::<Vec<_>>()
             .join(", ")
     };

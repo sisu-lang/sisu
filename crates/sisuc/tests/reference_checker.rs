@@ -276,7 +276,7 @@ fn main() {
     fails_with(
         "wrong_code_should_fail",
         page,
-        "the markers give [E0009 on line 2], and sisu check reports [E0008 on line 2]",
+        "the markers give [E0009 on program line 2], and sisu check reports [E0008 on program line 2]",
     );
 }
 
@@ -296,7 +296,7 @@ fn main() {
     fails_with(
         "marker_on_the_wrong_line_should_fail",
         page,
-        "the markers give [E0008 on line 3], and sisu check reports [E0008 on line 2]",
+        "the markers give [E0008 on program line 3], and sisu check reports [E0008 on program line 2]",
     );
 }
 
@@ -337,7 +337,7 @@ fn main() {
     fails_with(
         "unmarked_diagnostic_should_fail",
         page,
-        "sisu check reports [E0008 on line 6, E0009 on line 2]",
+        "sisu check reports [E0008 on program line 6, E0009 on program line 2]",
     );
 }
 

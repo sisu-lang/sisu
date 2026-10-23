@@ -27,6 +27,10 @@ fn main() {
         .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
         .collect();
     pages.sort();
+    assert!(
+        !pages.is_empty(),
+        "docs/reference should hold at least one page"
+    );
     let mut trials = Vec::new();
     for path in pages {
         let stem = path
