@@ -8,20 +8,85 @@ use std::process::{Command, Output, Stdio};
 
 mod scratch_path;
 
-/// GIVEN a file that holds `fn main() {}`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output starts with the `Fn` token at 1:1 and the `Ident` token at 1:4
-#[test]
-fn emit_tokens_should_print_each_token_with_its_line_and_column() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens.sisu"), "fn main() {}\n").expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("1:1 Fn fn\n1:4 Ident main\n"));
+/// Builds `source`, saved as `<name>.sisu`, with `--emit tokens`. Returns stdout when the exit code
+/// is 0.
+fn emit_tokens(name: &str, source: &str) -> String {
+    let out = run_on(name, source, &["build", "--emit", "tokens"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// One test for each case, so nextest runs them in parallel. `exact` compares all of stdout and
+/// `prefix` compares only its start. The source file is named after the test.
+macro_rules! emit_tokens_cases {
+    (@check exact $stdout:expr, $expected:expr) => {
+        assert_eq!($stdout, $expected);
+    };
+    (@check prefix $stdout:expr, $expected:expr) => {
+        assert!($stdout.starts_with($expected), "{}", $stdout);
+    };
+    ($($(#[$meta:meta])* $name:ident($source:expr) $kind:ident $expected:expr;)*) => {
+        $(
+            $(#[$meta])*
+            #[test]
+            fn $name() {
+                let stdout = emit_tokens(stringify!($name), $source);
+                emit_tokens_cases!(@check $kind stdout, $expected);
+            }
+        )*
+    };
+}
+
+emit_tokens_cases! {
+    /// GIVEN a file that holds `fn main() {}`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output starts with the `Fn` token at 1:1 and the `Ident` token at 1:4
+    emit_tokens_should_print_each_token_with_its_line_and_column("fn main() {}\n")
+        prefix "1:1 Fn fn\n1:4 Ident main\n";
+    /// GIVEN a source with the character literals `'ä'` and `'\n'`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output starts with two `Char` tokens, at 1:1 and at 1:5, that show each literal
+    emit_tokens_should_print_a_char_token_for_each_character_literal("'ä' '\\n'\n")
+        prefix "1:1 Char 'ä'\n1:5 Char '\\n'\n";
+    /// GIVEN a source that holds only the literal `1.5e3`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output is one `Float` token, then `Newline` and `Eof` at 1:6
+    emit_tokens_should_print_a_float_token_for_a_literal_with_an_exponent("1.5e3\n")
+        exact "1:1 Float 1.5e3\n1:6 Newline\n1:6 Eof\n";
+    /// GIVEN a source that holds `x ** 2`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output has one `StarStar` token between the `Ident` and the `Int` tokens
+    emit_tokens_should_print_a_star_star_token_for_the_power_operator("x ** 2\n")
+        exact "1:1 Ident x\n1:3 StarStar **\n1:6 Int 2\n1:7 Newline\n1:7 Eof\n";
+    /// GIVEN a source that holds only `todo`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output is a `Todo` token, then `Newline` and `Eof`
+    emit_tokens_should_print_a_todo_token_for_the_todo_keyword("todo\n")
+        exact "1:1 Todo todo\n1:5 Newline\n1:5 Eof\n";
+    /// GIVEN a source that prints the string `"{x:>8.2}"`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output has the tokens `StrHead`, `Ident`, `FormatSpec` with `:>8.2`, and `StrTail`
+    emit_tokens_should_print_a_format_spec_token_inside_an_interpolated_string("print(\"{x:>8.2}\")\n")
+        exact "1:1 Ident print\n1:6 LParen (\n1:7 StrHead \"{\n1:9 Ident x\n1:10 FormatSpec :>8.2\n1:15 StrTail }\"\n1:17 RParen )\n1:18 Newline\n1:18 Eof\n";
+    /// GIVEN a source that holds only `enum`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output is an `Enum` token and then `Eof`
+    emit_tokens_should_print_an_enum_token_for_the_enum_keyword("enum\n")
+        exact "1:1 Enum enum\n1:5 Eof\n";
+    /// GIVEN a source that holds `match =>`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output is a `Match` token, a `FatArrow` token and `Eof`
+    emit_tokens_should_print_match_and_fat_arrow_tokens("match =>\n")
+        exact "1:1 Match match\n1:7 FatArrow =>\n1:9 Eof\n";
+    /// GIVEN a source that holds `| ..= ||`
+    /// WHEN it is built with `--emit tokens`
+    /// THEN the output is the tokens `Pipe`, `DotDotEq` and `OrOr`, then `Eof`
+    emit_tokens_should_print_pipe_inclusive_range_and_or_or_tokens("| ..= ||\n")
+        exact "1:1 Pipe |\n1:3 DotDotEq ..=\n1:7 OrOr ||\n1:9 Eof\n";
 }
 
 /// GIVEN a source with `class`, `None`, `is`, `self`, `.`, `?`, `?.`, `??` and `_`
@@ -60,83 +125,6 @@ fn emit_tokens_should_name_the_class_none_and_optional_chaining_tokens() {
             "QuestionQuestion",
             "Underscore"
         ]
-    );
-}
-
-/// GIVEN a source with the character literals `'ä'` and `'\n'`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output starts with two `Char` tokens, at 1:1 and at 1:5, that show each literal
-#[test]
-fn emit_tokens_should_print_a_char_token_for_each_character_literal() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_char.sisu"), "'ä' '\\n'\n").expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens_char.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.starts_with("1:1 Char 'ä'\n1:5 Char '\\n'\n"),
-        "{stdout}"
-    );
-}
-
-/// GIVEN a source that holds only the literal `1.5e3`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output is one `Float` token, then `Newline` and `Eof` at 1:6
-#[test]
-fn emit_tokens_should_print_a_float_token_for_a_literal_with_an_exponent() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_float.sisu"), "1.5e3\n").expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens_float.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "1:1 Float 1.5e3\n1:6 Newline\n1:6 Eof\n"
-    );
-}
-
-/// GIVEN a source that holds `x ** 2`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output has one `StarStar` token between the `Ident` and the `Int` tokens
-#[test]
-fn emit_tokens_should_print_a_star_star_token_for_the_power_operator() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_star_star.sisu"), "x ** 2\n").expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens_star_star.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "1:1 Ident x\n1:3 StarStar **\n1:6 Int 2\n1:7 Newline\n1:7 Eof\n"
-    );
-}
-
-/// GIVEN a source that holds only `todo`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output is a `Todo` token, then `Newline` and `Eof`
-#[test]
-fn emit_tokens_should_print_a_todo_token_for_the_todo_keyword() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_todo.sisu"), "todo\n").expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens_todo.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "1:1 Todo todo\n1:5 Newline\n1:5 Eof\n"
     );
 }
 
@@ -1654,86 +1642,6 @@ fn check_should_print_text_diagnostics_when_the_format_flag_is_absent() {
         String::from_utf8_lossy(&text.stderr)
     );
     assert_eq!(text.stderr, plain.stderr);
-}
-
-/// GIVEN a source that prints the string `"{x:>8.2}"`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output has the tokens `StrHead`, `Ident`, `FormatSpec` with `:>8.2`, and `StrTail`
-#[test]
-fn emit_tokens_should_print_a_format_spec_token_inside_an_interpolated_string() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(
-        dir.join("emit_tokens_format_spec.sisu"),
-        "print(\"{x:>8.2}\")\n",
-    )
-    .expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens_format_spec.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "1:1 Ident print\n1:6 LParen (\n1:7 StrHead \"{\n1:9 Ident x\n1:10 FormatSpec :>8.2\n1:15 StrTail }\"\n1:17 RParen )\n1:18 Newline\n1:18 Eof\n"
-    );
-}
-
-/// GIVEN a source that holds only `enum`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output is an `Enum` token and then `Eof`
-#[test]
-fn emit_tokens_should_print_an_enum_token_for_the_enum_keyword() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_enum.sisu"), "enum\n").expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens_enum.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "1:1 Enum enum\n1:5 Eof\n"
-    );
-}
-
-/// GIVEN a source that holds `match =>`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output is a `Match` token, a `FatArrow` token and `Eof`
-#[test]
-fn emit_tokens_should_print_match_and_fat_arrow_tokens() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_match.sisu"), "match =>\n").expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens_match.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "1:1 Match match\n1:7 FatArrow =>\n1:9 Eof\n"
-    );
-}
-
-/// GIVEN a source that holds `| ..= ||`
-/// WHEN it is built with `--emit tokens`
-/// THEN the output is the tokens `Pipe`, `DotDotEq` and `OrOr`, then `Eof`
-#[test]
-fn emit_tokens_should_print_pipe_inclusive_range_and_or_or_tokens() {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_pipe.sisu"), "| ..= ||\n").expect("writes");
-    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
-        .current_dir(dir)
-        .args(["build", "--emit", "tokens", "emit_tokens_pipe.sisu"])
-        .output()
-        .expect("sisu starts");
-    assert!(out.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        "1:1 Pipe |\n1:3 DotDotEq ..=\n1:7 OrOr ||\n1:9 Eof\n"
-    );
 }
 
 /// GIVEN enums declared before the enums they hold, an enum with no fields and an enum with 257
