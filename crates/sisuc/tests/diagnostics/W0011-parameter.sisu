@@ -1,0 +1,9 @@
+fn wait(n: i64) {
+    while n > 0 {
+        print(n)
+    }
+}
+
+fn main() {
+    wait(3)
+}

@@ -202,6 +202,7 @@ codes! {
     UnusedLabel = "W0008",
     WhileTrue = "W0009",
     UnconditionalRecursion = "W0010",
+    UnchangedLoopCondition = "W0011",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -888,6 +889,13 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         calls: Vec<Span>,
+    },
+    /// The `while` condition at `at`, which nothing in the loop changes; `names` are the locals
+    /// it reads and `lets` the `let` bindings among them, both in source order.
+    UnchangedLoopCondition {
+        at: Span,
+        names: Vec<String>,
+        lets: Vec<String>,
     },
     /// The comparison at `at`, `!=` when `negated`, one side of which is `f64.nan`, which no
     /// number equals; `fix` is its `is_nan` test, when the other side is an `f64`.
@@ -3065,6 +3073,25 @@ impl From<DiagnosticKind> for Diagnostic {
                 calls
                     .into_iter()
                     .fold(d, |d, call| d.with_secondary(call, "calls itself here"))
+            }
+            DiagnosticKind::UnchangedLoopCondition { at, names, lets } => {
+                // The other names can never be written, so only a `let` is worth changing.
+                let leave = if lets.is_empty() {
+                    format!(
+                        "{} can't change, so leave the loop with `break`",
+                        listed(&names, "and")
+                    )
+                } else {
+                    format!("change {} in the loop or leave it with `break`", listed(&lets, "or"))
+                };
+                Diagnostic::coded(code, at, "the condition of this `while` never changes")
+                    .with_label(format!(
+                        "nothing in the loop changes {}",
+                        listed(&names, "or")
+                    ))
+                    .with_help(format!(
+                        "{leave}; write `if` to run the body once, or `loop` to run it forever"
+                    ))
             }
             DiagnosticKind::NanComparison { at, negated, fix } => {
                 let always = if negated { "true" } else { "false" };

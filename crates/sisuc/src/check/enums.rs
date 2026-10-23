@@ -498,4 +498,104 @@ impl Checker<'_> {
         }
         chain
     }
+
+    /// What a value of each enum and class may hold. The nodes are the enums, then the classes;
+    /// a field holds the node its array and optional wrappers end at. A field of the poison type
+    /// marks its node poison; a class field marks an enum `class`. Each fact then spreads to every
+    /// node that holds a marked one: `class` through enums only, `poison` through every node.
+    pub(super) fn holds_table(&self) -> HoldsTable {
+        let enums = self.enums.len();
+        let mut poison = vec![false; enums + self.classes.len()];
+        let mut class = vec![false; enums];
+        // Who holds each node.
+        let mut holders = vec![Vec::new(); poison.len()];
+        let enum_fields = self.enums.iter().enumerate().flat_map(|(i, e)| {
+            e.variants
+                .iter()
+                .flat_map(move |v| v.fields.iter().map(move |&ty| (i, ty)))
+        });
+        let class_fields = self
+            .classes
+            .iter()
+            .enumerate()
+            .flat_map(|(i, c)| c.fields.iter().map(move |f| (enums + i, f.ty)));
+        for (holder, ty) in enum_fields.chain(class_fields) {
+            let Some(ty) = ty else {
+                poison[holder] = true;
+                continue;
+            };
+            match unwrapped(ty).kind() {
+                TypeKind::Class(id) => {
+                    if let Some(c) = class.get_mut(holder) {
+                        *c = true;
+                    }
+                    holders[enums + id.0].push(holder);
+                }
+                TypeKind::Enum(id) => holders[id.0].push(holder),
+                _ => {}
+            }
+        }
+        spread(&mut poison, &holders);
+        spread(&mut class, &holders);
+        HoldsTable {
+            enums: (0..enums)
+                .map(|i| Holds {
+                    class: class[i],
+                    poison: poison[i],
+                })
+                .collect(),
+            classes: poison.split_off(enums),
+        }
+    }
+
+    /// What a value of `ty` may hold.
+    pub(super) fn holds(&self, ty: Type) -> Holds {
+        match unwrapped(ty).kind() {
+            TypeKind::Enum(id) => self.holds_table.enums[id.0],
+            TypeKind::Class(id) => Holds {
+                class: true,
+                poison: self.holds_table.classes[id.0],
+            },
+            _ => Holds::default(),
+        }
+    }
+}
+
+/// What a value may hold: a class object, or the poison type.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Holds {
+    pub(super) class: bool,
+    pub(super) poison: bool,
+}
+
+/// `Holds` for each enum, by `EnumId`, and whether each class, by `ClassId`, holds the poison
+/// type.
+#[derive(Default)]
+pub(super) struct HoldsTable {
+    enums: Vec<Holds>,
+    classes: Vec<bool>,
+}
+
+/// `ty` without its array and optional wrappers.
+fn unwrapped(mut ty: Type) -> Type {
+    while let TypeKind::Array(inner) | TypeKind::Optional(inner) = ty.kind() {
+        ty = inner;
+    }
+    ty
+}
+
+/// Marks every node that holds a marked one, through `holders`; a holder past the end of
+/// `marked` is not a node of its fact.
+fn spread(marked: &mut [bool], holders: &[Vec<usize>]) {
+    let mut work: Vec<usize> = (0..marked.len()).filter(|&i| marked[i]).collect();
+    while let Some(held) = work.pop() {
+        for &holder in &holders[held] {
+            if let Some(m) = marked.get_mut(holder)
+                && !*m
+            {
+                *m = true;
+                work.push(holder);
+            }
+        }
+    }
 }

@@ -257,9 +257,41 @@ impl Checker<'_> {
         })
     }
 
+    /// Counts a write, and gives the stamp to put on what it writes.
+    fn write_stamp(&mut self) -> u32 {
+        self.body.writes += 1;
+        self.body.writes
+    }
+
+    /// Stamps the binding, or `self`, at the root of the written place `base`. A root that is
+    /// neither stamps nothing.
+    fn stamp_root(&mut self, mut base: &ast::Expr) {
+        loop {
+            match &base.kind {
+                ast::ExprKind::Field { base: inner, .. }
+                | ast::ExprKind::Index { base: inner, .. } => {
+                    base = inner;
+                }
+                &ast::ExprKind::Name(name) => {
+                    let stamp = self.write_stamp();
+                    if let Some(b) = self.lookup(name) {
+                        b.written = stamp;
+                    }
+                    return;
+                }
+                ast::ExprKind::SelfValue => {
+                    self.body.self_written = self.write_stamp();
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
+
     /// The place `target` names, which `span` assigns. `element` when it is the base of an
     /// index, so the write replaces an element of it.
     fn place(&mut self, span: Span, target: &ast::Expr, element: bool) -> CheckedPlace {
+        self.stamp_root(target);
         match &target.kind {
             &ast::ExprKind::Name(name) => {
                 let Some(b) = self.lookup(name) else {

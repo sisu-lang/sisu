@@ -57,7 +57,7 @@ fn unused_value_warns() {
             "if c { if d { 1 } else { 2 } } else { None }",
             &[(19, "1"), (30, "2"), (43, "None")],
         ),
-        ("while c { f() }", &[(15, "f()")]),
+        ("while f() > 0 { f() }", &[(21, "f()")]),
         ("while let v = o { v }", &[(23, "v")]),
         ("for x in xs { x }", &[(19, "x")]),
         // A block is not the value either: its tail is.
@@ -82,7 +82,7 @@ fn unused_value_clean() {
         "a?.m()",
         "if c { g() } else { h() }",
         "if let v = o { g() }",
-        "while c { g() }",
+        "while f() > 0 { g() }",
         "while let v = o { g() }",
         "for x in xs { g() }",
         // `never` in a branch tail that nothing uses.
@@ -150,8 +150,8 @@ fn unused_value_fix_drops_every_branch() {
         ("if c { 1 } else { 2 }", &[(10, 12, "1"), (10, 23, "2")]),
         // A loop body's tail is a root of its own, `discard_tail`.
         (
-            "while c { if d { 1 } else { 2 } }",
-            &[(10, 22, "1"), (10, 33, "2")],
+            "while f() > 0 { if d { 1 } else { 2 } }",
+            &[(10, 28, "1"), (10, 39, "2")],
         ),
         (
             "if let v = o { v } else { 0 }",

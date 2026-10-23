@@ -1,0 +1,26 @@
+warning[W0011]: the condition of this `while` never changes
+  --> W0011-pattern.sisu:10:15
+   |
+10 |         while self == other {
+   |               ^^^^^^^^^^^^^ nothing in the loop changes `self` or `other`
+   |
+   = help: `self` and `other` can't change, so leave the loop with `break`; write `if` to run the body once, or `loop` to run it forever
+
+warning[W0011]: the condition of this `while` never changes
+  --> W0011-pattern.sisu:20:19
+   |
+20 |             while x < n {
+   |                   ^^^^^ nothing in the loop changes `x` or `n`
+   |
+   = help: `x` and `n` can't change, so leave the loop with `break`; write `if` to run the body once, or `loop` to run it forever
+
+warning[W0011]: the condition of this `while` never changes
+  --> W0011-pattern.sisu:29:15
+   |
+29 |         while k > 0 {
+   |               ^^^^^ nothing in the loop changes `k`
+   |
+   = help: `k` can't change, so leave the loop with `break`; write `if` to run the body once, or `loop` to run it forever
+
+sisu: 3 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0011

@@ -1055,10 +1055,11 @@ These do not make code nicer to write, so they wait:
   conforms.
 - More lint checks as compiler warnings, as in Go's `vet` and `rustc`'s
   built-in lints, with no separate tool and no configuration file. The
-  checker already warns about code after `return`, `break` or `continue`, and
-  about a `let mut` (`var` before milestone 4) that is never reassigned, and
-  comparing a value that is not optional with `None` is an error. Still to
-  come:
+  checker already warns about code after `return`, `break` or `continue`,
+  about a `let mut` (`var` before milestone 4) that is never reassigned, about
+  a function that calls itself on every path, and about a `while` whose
+  condition nothing in the loop changes. Comparing a value that is not
+  optional with `None` is an error. Still to come:
   - a class with no `mut` field that nothing compares with `is`, suggesting
     `record` (ADR 0011);
   - an unused variable, parameter, function or import;

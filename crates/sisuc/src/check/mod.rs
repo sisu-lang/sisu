@@ -29,7 +29,7 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
 use constant::{ConstInfo, ConstantSite};
-use enums::EnumInfo;
+use enums::{EnumInfo, HoldsTable};
 use prelude::PRELUDE;
 
 /// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when
@@ -133,6 +133,10 @@ struct Binding {
     reassigned: bool,
     /// Whether the binding visible where it was declared, in any scope, is a `let mut`.
     shadows_mut: bool,
+    /// `Body::writes` at the last write rooted at the binding; 0 for none.
+    written: u32,
+    /// Whether W0011 names the binding, which then gets no W0002: its fix would keep the loop.
+    loop_named: bool,
 }
 
 /// Which part of a loop the code being checked is in.
@@ -280,9 +284,68 @@ struct Checker<'src> {
     lowered_enums: Vec<tir::Enum>,
     /// The first constant of each name, and every broken one.
     constants: FxHashMap<Symbol, Declared<ConstInfo>>,
-    diagnostics: Vec<Diagnostic>,
+    /// What a value of each enum and class may hold, for W0011.
+    holds_table: HoldsTable,
+    diagnostics: Diagnostics,
     /// The body being checked.
     body: Body,
+}
+
+/// The checker's diagnostics, and how many errors were added to them. The count never goes
+/// down, so a diagnostic that is cut or added again counts more than once: that can only stop a
+/// W0011 warning, never cause one.
+#[derive(Default)]
+struct Diagnostics {
+    list: Vec<Diagnostic>,
+    errors: u32,
+}
+
+impl Diagnostics {
+    fn push(&mut self, d: Diagnostic) {
+        self.errors += u32::from(d.severity() == Severity::Error);
+        self.list.push(d);
+    }
+
+    fn extend(&mut self, ds: impl IntoIterator<Item = Diagnostic>) {
+        for d in ds {
+            self.push(d);
+        }
+    }
+
+    fn insert(&mut self, at: usize, d: Diagnostic) {
+        self.errors += u32::from(d.severity() == Severity::Error);
+        self.list.insert(at, d);
+    }
+
+    fn append(&mut self, ds: &mut Vec<Diagnostic>) {
+        self.extend(ds.drain(..));
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.list.truncate(len);
+    }
+
+    fn drain(&mut self, range: std::ops::RangeFrom<usize>) -> std::vec::Drain<'_, Diagnostic> {
+        self.list.drain(range)
+    }
+
+    fn into_vec(self) -> Vec<Diagnostic> {
+        self.list
+    }
+}
+
+impl std::ops::Deref for Diagnostics {
+    type Target = [Diagnostic];
+
+    fn deref(&self) -> &[Diagnostic] {
+        &self.list
+    }
+}
+
+impl std::ops::DerefMut for Diagnostics {
+    fn deref_mut(&mut self) -> &mut [Diagnostic] {
+        &mut self.list
+    }
 }
 
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
@@ -319,6 +382,12 @@ struct Body {
     /// Each `+` found to join a `string` under an expected `u8`, which a later check of it
     /// checks with no expected type.
     joins: FxHashSet<Span>,
+    /// How many writes the body has checked; a binding's `written` is this count at its last.
+    writes: u32,
+    /// `writes` at the last write rooted at `self`; 0 for none.
+    self_written: u32,
+    /// How many `break`, `continue`, `return`, `panic` and `todo` the body has checked.
+    exits: u32,
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error. `parsed`
@@ -334,6 +403,7 @@ pub(crate) fn check<'src>(
     checker.fold_constants(program);
     let cyclic = checker.never_constructed();
     checker.lowered_enums = checker.lower_enums(&cyclic);
+    checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
     let functions: Vec<_> = declared
@@ -342,7 +412,7 @@ pub(crate) fn check<'src>(
         .map(|(i, &(f, owner))| checker.function(f, tir::FuncId(i), owner))
         .collect();
     let classes = checker.classes.iter().map(lower_class).collect();
-    let mut diagnostics = checker.diagnostics;
+    let mut diagnostics = checker.diagnostics.into_vec();
     diagnostics.sort_by_key(|d| d.span().start());
     // A function with an error of its own is skipped, so that its errors stand alone.
     let warnings: Vec<Diagnostic> = functions
@@ -462,7 +532,8 @@ impl<'src> Checker<'src> {
             enum_ids: FxHashMap::default(),
             lowered_enums: Vec::new(),
             constants: FxHashMap::default(),
-            diagnostics: Vec::new(),
+            holds_table: HoldsTable::default(),
+            diagnostics: Diagnostics::default(),
             body: Body::default(),
         }
     }

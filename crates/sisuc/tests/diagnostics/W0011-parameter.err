@@ -1,0 +1,10 @@
+warning[W0011]: the condition of this `while` never changes
+ --> W0011-parameter.sisu:2:11
+  |
+2 |     while n > 0 {
+  |           ^^^^^ nothing in the loop changes `n`
+  |
+  = help: `n` can't change, so leave the loop with `break`; write `if` to run the body once, or `loop` to run it forever
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0011

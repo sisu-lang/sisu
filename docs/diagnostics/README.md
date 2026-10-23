@@ -159,6 +159,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [W0008](W0008.md) | warning | loop label that is never used |
 | [W0009](W0009.md) | warning | `while` with the condition `true` |
 | [W0010](W0010.md) | warning | function that calls itself on every path |
+| [W0011](W0011.md) | warning | `while` condition that nothing in the loop changes |
 
 ## Explanations
 

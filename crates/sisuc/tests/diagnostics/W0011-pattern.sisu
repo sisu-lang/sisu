@@ -1,0 +1,35 @@
+enum T {
+    Leaf
+    Node(i64)
+}
+
+enum Color {
+    Red
+    Blue
+    fn wait(self, other: Color) {
+        while self == other {
+            print(1)
+        }
+    }
+}
+
+fn f(t: T, n: i64) {
+    match t {
+        Leaf => print(0)
+        Node(x) => {
+            while x < n {
+                print(x)
+            }
+        }
+    }
+}
+
+fn g() {
+    for k in 0..3 {
+        while k > 0 {
+            print(k)
+        }
+    }
+}
+
+fn main() {}

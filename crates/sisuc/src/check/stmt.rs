@@ -304,6 +304,8 @@ impl Checker<'_> {
             } => {
                 // Only the literal: the AST has no parenthesis node, so `(true)` is it too.
                 let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
+                // W0011 reads what changed from here to the end of the body.
+                let before = (self.diagnostics.errors, self.body.writes, self.body.exits);
                 let cond = self.in_header(*keyword, label.clone(), |c| {
                     c.expect(cond_ast, Some(Type::BOOL))
                 });
@@ -342,6 +344,7 @@ impl Checker<'_> {
                         span: stmt.span,
                     }));
                 }
+                self.unchanged_condition(cond_ast.span, &cond, before);
                 Ok(tir::Stmt::Expr(lower_loop(
                     body,
                     stmt.span,
@@ -665,6 +668,7 @@ impl Checker<'_> {
         span: Span,
         value: Option<&ast::Expr>,
     ) -> Result<tir::Stmt, Poisoned> {
+        self.body.exits += 1;
         let never = || Poisoned::typed(Type::NEVER);
         let value = match value {
             None => match self.body.ret {
@@ -866,6 +870,7 @@ impl Checker<'_> {
         label: Option<&ast::Ident>,
         value: Option<&ast::Expr>,
     ) -> Result<tir::Stmt, Poisoned> {
+        self.body.exits += 1;
         let (target, depth) = self.target(span, keyword, label)?;
         if let Some(label) = label
             && let Some((kind, declared)) = self.in_scope(label.name)
@@ -1248,6 +1253,8 @@ impl Checker<'_> {
             keyword,
             reassigned: false,
             shadows_mut,
+            written: 0,
+            loop_named: false,
         };
         if kind == BindingKind::Param
             && let Some(first) = scope.get(&name.name)
@@ -1292,6 +1299,7 @@ impl Checker<'_> {
     fn never_reassigned(&mut self, name: Symbol, b: &Binding) {
         if let Some(keyword) = b.keyword
             && !b.reassigned
+            && !b.loop_named
         {
             self.report(DiagnosticKind::NeverReassigned {
                 name: name.to_string(),
@@ -1299,6 +1307,105 @@ impl Checker<'_> {
                 keyword,
             });
         }
+    }
+
+    /// Reports W0011 for the checked condition `cond` at `at` of a `while` whose body checked,
+    /// when it reads a local, nothing since `before` (the error, write and exit counts at the
+    /// start of the condition) wrote one, and nothing left the loop or reported an error.
+    fn unchanged_condition(&mut self, at: Span, cond: &tir::Expr, before: (u32, u32, u32)) {
+        let (errors, writes, exits) = before;
+        if self.diagnostics.errors != errors || self.body.exits != exits {
+            return;
+        }
+        let Some(locals) = self.condition_locals(cond).filter(|l| !l.is_empty()) else {
+            return;
+        };
+        if !locals.iter().all(|&id| self.unchanged(id, writes)) {
+            return;
+        }
+        let mut names = Vec::with_capacity(locals.len());
+        let mut lets = Vec::new();
+        for id in locals {
+            let name = self.local_name(id);
+            // `self` has no binding.
+            if let Some(b) = self.lookup(name) {
+                b.loop_named = true;
+                if matches!(b.kind, BindingKind::Let | BindingKind::Var) {
+                    lets.push(name.to_string());
+                }
+            }
+            names.push(name.to_string());
+        }
+        self.report(DiagnosticKind::UnchangedLoopCondition { at, names, lets });
+    }
+
+    /// The locals `cond` reads, each once, in source order; `None` when it holds a node that
+    /// can see a change the body makes through an object or a function (W0011's rule 1).
+    fn condition_locals(&self, cond: &tir::Expr) -> Option<Vec<tir::LocalId>> {
+        let mut locals = Vec::new();
+        self.read_locals(cond, &mut locals).then_some(locals)
+    }
+
+    /// Adds the locals `e` reads to `locals`; false at a node rule 1 does not allow.
+    fn read_locals(&self, e: &tir::Expr, locals: &mut Vec<tir::LocalId>) -> bool {
+        match &e.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::None => true,
+            &ExprKind::Local(id) => {
+                if !locals.contains(&id) {
+                    locals.push(id);
+                }
+                true
+            }
+            ExprKind::Wrap(operand) | ExprKind::Unary { operand, .. } | ExprKind::Len(operand) => {
+                self.read_locals(operand, locals)
+            }
+            ExprKind::Equal { lhs, rhs, .. } => {
+                // `==` on a class compares fields, which can change with no write of a local.
+                let none = matches!(lhs.kind, ExprKind::None) || matches!(rhs.kind, ExprKind::None);
+                (none || !(self.holds(lhs.ty).class || self.holds(rhs.ty).class))
+                    && self.read_locals(lhs, locals)
+                    && self.read_locals(rhs, locals)
+            }
+            ExprKind::Binary { lhs, rhs, .. }
+            | ExprKind::Concat { lhs, rhs }
+            | ExprKind::Is { lhs, rhs }
+            | ExprKind::Index {
+                base: lhs,
+                index: rhs,
+            } => self.read_locals(lhs, locals) && self.read_locals(rhs, locals),
+            ExprKind::Compare { operands, .. } => operands
+                .iter()
+                .all(|operand| self.read_locals(operand, locals)),
+            _ => false,
+        }
+    }
+
+    /// Whether the condition local `id` can be named by W0011: its type holds no poison, it is
+    /// `self` or has a binding, and nothing wrote it after the write count `writes`.
+    fn unchanged(&mut self, id: tir::LocalId, writes: u32) -> bool {
+        if self.holds(self.body.locals[id.0].ty).poison {
+            return false;
+        }
+        if id.0 == 0 && self.body.self_type.is_some() {
+            return self.body.self_written <= writes;
+        }
+        // A local with no binding of its name is a checker temporary.
+        let Some(name) = self.body.locals[id.0].name.as_deref() else {
+            return false;
+        };
+        self.lookup(Symbol::intern(name))
+            .is_some_and(|b| b.local == id && b.written <= writes)
+    }
+
+    /// The name of the local `id`, which `unchanged` accepted.
+    fn local_name(&self, id: tir::LocalId) -> Symbol {
+        let name = self.body.locals[id.0].name.as_deref();
+        Symbol::intern(name.expect("a local that `unchanged` accepts should have a name"))
     }
 
     pub(super) fn lookup(&mut self, name: Symbol) -> Option<&mut Binding> {

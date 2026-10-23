@@ -11,6 +11,7 @@ mod constants;
 mod enums;
 mod floats;
 mod for_loops;
+mod loop_condition;
 mod patterns;
 mod places;
 mod prelude;
@@ -577,7 +578,7 @@ fn continue_outside_loop() {
 #[test]
 fn break_after_loop() {
     codes(
-        "fn f(c: bool) {\n    while c {}\n    break\n}\nfn main() {}",
+        "fn f(c: bool) {\n    while c { break }\n    break\n}\nfn main() {}",
         &[(Code::JumpOutsideLoop, (3, 5))],
     );
 }
@@ -1028,7 +1029,7 @@ fn loop_label_reuse_and_unused() {
         "fn f(c: bool) {\n    a: while c { break a }\n    a: while c { continue a }\n}\nfn main() {}",
         &[],
     );
-    let src = "fn f(c: bool) {\n    outer: while c { }\n}\nfn main() {}";
+    let src = "fn f(c: bool) {\n    outer: while c { break }\n}\nfn main() {}";
     codes(src, &[(Code::UnusedLabel, (2, 5))]);
     fix_removes_its_code(src, &diags(src)[0]);
     // A loop's label is open in a nested loop's header too.
