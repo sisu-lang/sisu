@@ -835,8 +835,22 @@ impl Gen<'_> {
             && let Some(value) = self.jumps.loops[at].value.take()
         {
             self.w.text(" ");
-            self.synth = value.synth;
-            let size = self.expr(&value.ty, value.max).size;
+            // The two readings of `break x -1`, without the parentheses `expr` writes: a label
+            // and the value `-1`, or, with no label, the value `x - 1`.
+            let size = if value.ty == Ty::I64
+                && self.pick(3) == 2
+                && (named || self.has_name(&Ty::I64, 0))
+            {
+                if !named {
+                    self.name(&Ty::I64, 0);
+                    self.w.text(" ");
+                }
+                self.w.text("-1");
+                0
+            } else {
+                self.synth = value.synth;
+                self.expr(&value.ty, value.max).size
+            };
             let target = &mut self.jumps.loops[at];
             target.size = target.size.max(size);
             target.value = Some(value);

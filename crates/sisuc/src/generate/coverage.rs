@@ -76,7 +76,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 33] = [
+const REACH: [&str; 35] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -110,6 +110,8 @@ const REACH: [&str; 33] = [
     "reach: a `continue` names a loop label",
     "reach: a labeled `break` gives a value",
     "reach: a labeled jump leaves an inner loop",
+    "reach: `break l -1` is a label and `-1`",
+    "reach: `break x -1` is `x - 1`",
 ];
 
 /// Whether a program's text holds a form.
@@ -790,6 +792,37 @@ impl Walk {
         }
     }
 
+    /// Marks a `break` spelled `break l -1` that reads as the label `l` and the value `-1`, or
+    /// spelled `break x -1` that reads as no label and the value `x - 1`.
+    fn break_reading(&mut self, stmt: &ast::Stmt, label: Option<&ast::Ident>, value: &ast::Expr) {
+        let text = &self.source[stmt.span.range()];
+        match (label, &value.kind) {
+            (
+                Some(label),
+                ast::ExprKind::Unary {
+                    op: ast::UnaryOp::Neg,
+                    operand,
+                },
+            ) if int(operand) == Some(1) && text == format!("break {} -1", label.name) => {
+                self.mark("reach: `break l -1` is a label and `-1`");
+            }
+            (
+                None,
+                ast::ExprKind::Binary {
+                    op: ast::BinaryOp::Sub,
+                    lhs,
+                    rhs,
+                    ..
+                },
+            ) if int(rhs) == Some(1)
+                && name(lhs).is_some_and(|x| text == format!("break {x} -1")) =>
+            {
+                self.mark("reach: `break x -1` is `x - 1`");
+            }
+            _ => {}
+        }
+    }
+
     fn ast_for(&mut self, source: &ast::ForSource, body: &ast::Block) {
         self.mark("ast::StmtKind::For");
         match source {
@@ -896,6 +929,7 @@ impl Walk {
                     if label.is_some() {
                         self.mark("reach: a labeled `break` gives a value");
                     }
+                    self.break_reading(stmt, label.as_ref(), value);
                     self.ast_expr(value);
                 }
             }
@@ -2413,6 +2447,39 @@ fn every_loop_is_bounded() {
 fn every_index_is_in_bounds_or_meant_to_panic() {
     let out_of_bounds = walk().out_of_bounds;
     assert!(out_of_bounds.is_empty(), "{out_of_bounds:?}");
+}
+
+#[test]
+fn the_walker_marks_both_readings_of_break_x_minus_1_by_spelling() {
+    // `break l -1` and `break v -1` are the two readings; with parentheses, neither is.
+    let marks = |breaks: [&str; 2]| {
+        let mut walk = Walk::default();
+        walk.program(&format!(
+            "fn main() {{
+    let v = 2
+    let mut c = 1
+    let _ = l: loop {{
+        if c == 0 {{ {} }}
+        c -= 1
+    }}
+    let mut d = 1
+    let _ = loop {{
+        if d == 0 {{ {} }}
+        d -= 1
+    }}
+}}
+",
+            breaks[0], breaks[1]
+        ));
+        [
+            "reach: `break l -1` is a label and `-1`",
+            "reach: `break x -1` is `x - 1`",
+        ]
+        .map(|key| walk.seen.contains(key))
+    };
+    assert_eq!(marks(["break l -1", "break v -1"]), [true, true]);
+    assert_eq!(marks(["break l (-1)", "break (v - 1)"]), [false, false]);
+    assert_eq!(marks(["break l -2", "break v -2"]), [false, false]);
 }
 
 #[test]

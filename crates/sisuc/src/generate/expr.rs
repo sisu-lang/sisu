@@ -894,11 +894,11 @@ impl Gen<'_> {
         }
     }
 
-    fn has_name(&self, ty: &Ty, max: u64) -> bool {
+    pub(crate) fn has_name(&self, ty: &Ty, max: u64) -> bool {
         names(&self.scope, ty, max).next().is_some()
     }
 
-    fn name(&mut self, ty: &Ty, max: u64) -> Info {
+    pub(crate) fn name(&mut self, ty: &Ty, max: u64) -> Info {
         let pick = self.pick(names(&self.scope, ty, max).count());
         let (name, info) = names(&self.scope, ty, max)
             .nth(pick)
