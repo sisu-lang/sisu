@@ -143,7 +143,7 @@ mod tests {
     /// `checked` stops before `mono`, which `front_end` runs: `sisu check` names no
     /// instantiation.
     #[test]
-    fn only_the_front_end_instantiates() {
+    fn only_the_front_end_should_instantiate() {
         let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(1))\n}";
         let names = |program: Option<tir::Program>| -> Vec<String> {
             let program = program.expect("the program should check");

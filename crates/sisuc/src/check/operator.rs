@@ -199,7 +199,7 @@ impl Checker<'_> {
     /// index, and makes the type `Error`.
     #[expect(
         clippy::too_many_lines,
-        reason = "every rule shares the operand loop's state, so the rules read in one place"
+        reason = "one pass over the operands, so the rules that depend on each other read in one place"
     )]
     fn integers(
         &mut self,

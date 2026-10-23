@@ -2536,7 +2536,7 @@ fn take_apart_of_swap_retains_nothing() {
 /// An instantiation's symbol names its type arguments, which LLVM quotes, and each
 /// instantiation is defined once however many calls reach it.
 #[test]
-fn instantiation_symbols_name_their_arguments() {
+fn instantiation_symbols_should_name_their_arguments() {
     let context = Context::create();
     let ir = compiled(
         &context,

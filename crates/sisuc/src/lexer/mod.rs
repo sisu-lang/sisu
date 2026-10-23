@@ -2823,7 +2823,7 @@ mod tests {
     /// A line-end `>` ends the statement only where it closes a type annotation, and the scan
     /// back for the annotation steps over brackets, stops at its block's `{` and skips the `;`s.
     #[test]
-    fn a_line_end_gt_ends_only_a_type_annotation() {
+    fn a_line_end_gt_should_end_only_a_type_annotation() {
         let newlines = |src: &str| {
             all_kinds(src)
                 .iter()
@@ -2839,7 +2839,7 @@ mod tests {
     /// that starts a line after a `>` asks that statement, not the one outside it nor the one in
     /// the bracket the string stood in.
     #[test]
-    fn an_interpolated_string_closes_like_a_bracket() {
+    fn an_interpolated_string_should_close_like_a_bracket() {
         let braces = |src: &str| {
             let lexed = lex(src).expect("the source should lex");
             lexed
@@ -3971,7 +3971,7 @@ mod tests {
     /// block operands with comparisons of their own, bare and in parentheses (an inner block's
     /// `>` must not cost the outer statement its place).
     #[test]
-    fn continued_comparisons_are_judged_linearly() {
+    fn continued_comparisons_should_be_judged_linearly() {
         for operand in ["a", "{ a }", "{ a >\n a }", "({ a >\n a })"] {
             let judged = |n: usize| {
                 let chain = vec![operand; n].join(" >\n");

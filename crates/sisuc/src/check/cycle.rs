@@ -393,7 +393,7 @@ mod tests {
     /// A type that shares its arguments, `2^20` paths to `T` in 21 types, is looked at once per
     /// type, not per path.
     #[test]
-    fn shared_type_arguments_are_walked_once() {
+    fn shared_type_arguments_should_be_walked_once() {
         let mut ty = param(0);
         for _ in 0..20 {
             ty = pair(ty, ty);
@@ -415,7 +415,7 @@ mod tests {
     /// two edges per `Pair` once, and one edge at each further site: never a copy of what each
     /// part mentions.
     #[test]
-    fn arguments_mentioning_many_parameters_stay_linear() {
+    fn arguments_mentioning_many_parameters_should_stay_linear() {
         for n in [16_u32, 256] {
             let mut ty = param(0);
             for i in 1..=n {
@@ -433,7 +433,7 @@ mod tests {
     /// A type nested deeper than a 64 KiB stack allows recursing into is walked with a stack
     /// of its own, as an argument and as a field's type.
     #[test]
-    fn deep_types_are_walked_without_recursion() {
+    fn deep_types_should_be_walked_without_recursion() {
         let levels = 10_000;
         std::thread::Builder::new()
             .stack_size(64 * 1024)
@@ -460,7 +460,7 @@ mod tests {
 
     /// A parameter has no parts: its node is its own, never one made of parts.
     #[test]
-    fn a_parameter_has_no_parts() {
+    fn a_parameter_should_have_no_parts() {
         assert_eq!(parts(param(0)).count(), 0);
     }
 }

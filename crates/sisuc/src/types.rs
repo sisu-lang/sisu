@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn type_args_are_interned_lists() {
+    fn type_args_should_be_interned_lists() {
         let pair = TypeArgs::intern(&[Type::I64, Type::STRING]);
         assert_eq!(pair, TypeArgs::intern(&[Type::I64, Type::STRING]));
         assert_ne!(pair, TypeArgs::intern(&[Type::STRING, Type::I64]));
@@ -317,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn subst_replaces_each_param_by_index() {
+    fn subst_should_replace_each_param_by_index() {
         let t = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
         let u = Type::intern(TypeKind::Param(Symbol::intern("U"), 1));
         let class =

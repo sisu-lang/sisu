@@ -137,7 +137,7 @@ fn inline_field_takes_no_token() {
 /// taking a `Pair(Both(a, b))` apart gives one token, from that box, which the new `Pair`
 /// takes. `Both`'s fields are inline, so they move out as bindings and give none.
 #[test]
-fn generic_instantiation_box_gives_a_token() {
+fn generic_instantiation_box_should_give_a_token() {
     let printed = built(
         "enum Two<T> {\n    Both(T, T)\n}\nenum Expr {\n    Lit(i64)\n    Pair(Two<Expr>)\n}\n\
          fn swap(e: Expr) -> Expr {\n    match e {\n        Expr.Pair(Two.Both(a, b)) => \
