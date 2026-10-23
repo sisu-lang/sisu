@@ -122,7 +122,7 @@ An assignment `place = value` stores a value in a place. These are the places:
 
 - a binding of a `let mut`
 - a `mut` field of an object ([Classes](classes.md#fields))
-- an element of an array in one of these places, such as `xs[i]` or `grid[i][j]`
+- an element of an array in one of these places, such as `xs[i]` or `grid[i][j]` ([Arrays](arrays.md#indexes))
 
 ```sisu
 class Counter {
@@ -284,7 +284,7 @@ fn main() {
 
 ## for
 
-A `for` loop runs its body once for each element of an array, or for each integer of a range. On each pass, its name holds the next element.
+A `for` loop runs its body once for each element of an [array](arrays.md), or for each integer of a range. On each pass, its name holds the next element.
 
 ```sisu
 fn main() {

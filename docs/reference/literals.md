@@ -128,7 +128,7 @@ The rules, in order:
 - In a group of operands, the operands that are not integer literals decide the type of its integer literals. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
   - the two operands of an [arithmetic operator](operators.md#arithmetic) or a comparison, such as `+`, `<` or `==`
   - the operands of a [comparison chain](operators.md#comparison-chains)
-  - the elements of an array literal
+  - the elements of an [array literal](arrays.md#array-literals)
   - the branches of an `if` or an `if let`, or the arms of a `match`
 - When a literal has no expected type and is not in a group, it is an `i64`.
 
@@ -137,7 +137,7 @@ These places give an expected type:
 - the declared type of a `let` or a `const`
 - the place of an [assignment](statements.md#assignment), also with `+=` and the other [compound operators](statements.md#compound-assignment)
 - a parameter of a function or a method, also a built-in method such as `max`
-- a field of a class constructor, or a value of an enum variant
+- a field of a [class constructor](classes.md#constructors), or a value of an enum variant
 - the return type, for a `return` value and for the last expression of a function body
 - the element type, for each element of an array literal
 - the type of the value in the left operand of `??`, for the right operand

@@ -130,7 +130,7 @@ The rules:
 - The object can come from any expression, such as a parameter, an element of an array, a field of another object, or `self`.
 - An assignment cannot go through `?.` ([E0022](../diagnostics/E0022.md)).
 - A `let mut` binding of an object must change by an assignment to the binding itself. A change to a field of its object does not count ([W0002](../diagnostics/W0002.md)).
-- To write an element of an array in a field, the field must be `mut` ([E0001](../diagnostics/E0001.md)).
+- To write an element of an array in a field, the field must be `mut` ([E0001](../diagnostics/E0001.md), [Arrays](arrays.md#indexes)).
 - For an optional object, read a field with `?.` ([Optional chaining](operators.md#optional-chaining)).
 
 ```sisu

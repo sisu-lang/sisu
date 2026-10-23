@@ -245,7 +245,7 @@ fn main() {
 
 ## Indexes
 
-`xs[i]` reads the element at the index `i` of the array `xs`. The first element has the index 0. The index must be an `i64` ([E0032](../diagnostics/E0032.md)).
+`xs[i]` reads the element at the index `i` of the array `xs` ([Arrays](arrays.md#indexes)). The first element has the index 0. The index must be an `i64` ([E0032](../diagnostics/E0032.md)).
 
 ```sisu
 fn main() {

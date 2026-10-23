@@ -33,3 +33,7 @@ description = "Declarations, parameters, return types, recursion, main, panic an
 [[page]]
 file = "classes"
 description = "Fields, mut fields, constructors, methods, self and object identity."
+
+[[page]]
+file = "arrays"
+description = "Array literals, filled arrays, indexes, for, methods, equality and copy-on-write."
