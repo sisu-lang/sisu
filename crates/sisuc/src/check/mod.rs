@@ -388,6 +388,8 @@ struct Body {
     self_written: u32,
     /// How many `break`, `continue`, `return`, `panic` and `todo` the body has checked.
     exits: u32,
+    /// How many W0005 (a comparison with `f64.nan`) the body has reported.
+    nans: u32,
 }
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error. `parsed`

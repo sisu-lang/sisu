@@ -281,6 +281,7 @@ impl Checker<'_> {
             _ => return,
         };
         let at = lhs.0.span.to(rhs.0.span);
+        self.body.nans += 1;
         self.diagnostics
             .push(DiagnosticKind::NanComparison { at, negated, fix }.into());
     }

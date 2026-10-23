@@ -306,9 +306,12 @@ impl Checker<'_> {
                 let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
                 // W0011 reads what changed from here to the end of the body.
                 let before = (self.diagnostics.errors, self.body.writes, self.body.exits);
+                let nans = self.body.nans;
                 let cond = self.in_header(*keyword, label.clone(), |c| {
                     c.expect(cond_ast, Some(Type::BOOL))
                 });
+                // W0005 reports a comparison with `nan` in it, and its fix changes the condition.
+                let nan = self.body.nans != nans;
                 let frame = LoopFrame::new(LoopKind::While, *keyword, label.clone(), None);
                 let (checked, frame) = self.loop_body(frame, |c| c.block(body, None));
                 let broken = frame.broken;
@@ -344,7 +347,9 @@ impl Checker<'_> {
                         span: stmt.span,
                     }));
                 }
-                self.unchanged_condition(cond_ast.span, &cond, before);
+                if !nan {
+                    self.unchanged_condition(cond_ast.span, &cond, before);
+                }
                 Ok(tir::Stmt::Expr(lower_loop(
                     body,
                     stmt.span,
@@ -1369,11 +1374,7 @@ impl Checker<'_> {
                 // `==` on a class compares fields, which can change with no write of a local.
                 // Both sides have one type, up to an optional, so `lhs` tells for both.
                 let none = matches!(lhs.kind, ExprKind::None) || matches!(rhs.kind, ExprKind::None);
-                // W0005 reports a comparison with `nan`, and its fix changes the condition.
-                let nan = [lhs, rhs]
-                    .iter()
-                    .any(|side| matches!(side.kind, ExprKind::Float(x) if x.is_nan()));
-                !nan && (none || !self.holds(lhs.ty).class)
+                (none || !self.holds(lhs.ty).class)
                     && self.read_locals(lhs, locals)
                     && self.read_locals(rhs, locals)
             }

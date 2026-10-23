@@ -461,3 +461,48 @@ fn while_should_not_warn_when_its_condition_compares_with_nan() {
         &[(Code::NanComparison, (3, 11))],
     );
 }
+
+/// The checker wraps the optional's `nan` in `Wrap`, and W0005 still reports it.
+#[test]
+fn while_should_not_warn_when_an_optional_compares_with_nan() {
+    let rows = [
+        ("o != f64.nan", 11),
+        ("f64.nan != o", 11),
+        ("(o != f64.nan)", 12),
+        ("b && o != f64.nan", 16),
+    ];
+    for (cond, col) in rows {
+        let src = with_main(&format!(
+            "fn f(o: f64?, b: bool) {{\n    while {cond} {{ print(1) }}\n}}"
+        ));
+        codes(&src, &[(Code::NanComparison, (2, col))]);
+    }
+}
+
+/// W0005 names only `f64.nan` itself, so a constant or a negation of it is no W0005.
+#[test]
+fn while_should_warn_when_it_compares_with_a_nan_that_w0005_does_not_name() {
+    warns(
+        &with_main("const NAN = f64.nan\nfn f(n: f64) {\n    while n != NAN { print(n) }\n}"),
+        (3, 11, "n != NAN"),
+    );
+    warns(
+        &with_main("fn f(n: f64) {\n    while n != -f64.nan { print(n) }\n}"),
+        (2, 11, "n != -f64.nan"),
+    );
+}
+
+#[test]
+fn while_should_warn_when_only_its_body_compares_with_nan() {
+    codes(
+        &f(&[
+            "let x = 0.5",
+            "let i = 0",
+            "while i < n { print(x == f64.nan) }",
+        ]),
+        &[
+            (Code::UnchangedLoopCondition, (4, 11)),
+            (Code::NanComparison, (4, 25)),
+        ],
+    );
+}
