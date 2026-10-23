@@ -2601,14 +2601,15 @@ impl From<DiagnosticKind> for Diagnostic {
                 labelled,
                 at,
             } => {
-                // Inserting the enum's name is certain only when one enum has the variant.
+                // The whole span is replaced, so parentheses around the name go. The fix is certain
+                // only when one enum has the variant.
                 let safe = enums.len() == 1;
                 let qualify = |e: &String| Fix {
                     message: format!("write `{e}.{name}`"),
                     safe,
                     edits: vec![Edit {
-                        span: Span::new(at.start(), at.start()),
-                        replacement: format!("{e}."),
+                        span: at,
+                        replacement: format!("{e}.{name}"),
                     }],
                 };
                 let d = match enums.as_slice() {
