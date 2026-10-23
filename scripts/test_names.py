@@ -24,19 +24,34 @@ def tests(lines: list[str]) -> list[tuple[int, str, list[str]]]:
     for i, line in enumerate(lines):
         if line.strip() != "#[test]":
             continue
-        j = i
-        while j < len(lines) and not FN.search(lines[j]):
+        # The first line after the attributes, comments and blank lines is the function.
+        j, depth = i + 1, 0
+        while j < len(lines):
+            text = lines[j].strip()
+            if depth > 0 or text.startswith("#["):
+                depth += text.count("[") - text.count("]")
+            elif text and not text.startswith("//"):
+                break
             j += 1
-        if j == len(lines):
+        fn = FN.search(lines[j]) if j < len(lines) else None
+        if fn is None:  # a test a macro writes, such as `fn $name()`: its name is not in the file
             continue
         top = i
-        while top > 0 and lines[top - 1].strip().startswith("#["):
-            top -= 1
+        while top > 0:
+            text = lines[top - 1].strip()
+            if text.startswith("#["):
+                top -= 1
+            elif text.endswith("]") and not text.startswith("//"):  # the end of a long attribute
+                top -= 1
+                while top > 0 and not lines[top].strip().startswith("#["):
+                    top -= 1
+            else:
+                break
         comment = []
         while top > 0 and lines[top - 1].strip().startswith("///"):
             top -= 1
             comment.insert(0, lines[top].strip()[3:].strip())
-        found.append((j + 1, FN.search(lines[j]).group(1), comment))
+        found.append((j + 1, fn.group(1), comment))
     return found
 
 

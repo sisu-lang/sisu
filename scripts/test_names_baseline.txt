@@ -1796,7 +1796,6 @@ crates/sisuc/tests/programs.rs::read_line_from_a_directory_panics
 crates/sisuc/tests/programs.rs::read_line_refills_its_buffer
 crates/sisuc/tests/programs.rs::right_skewed_tree_frees_in_constant_stack
 crates/sisuc/tests/programs.rs::run_err_lifecycle
-crates/sisuc/tests/programs.rs::run_in_small_stack
 crates/sisuc/tests/programs.rs::same_name_in_two_modes
 crates/sisuc/tests/programs.rs::stdin_larger_than_a_pipe
 crates/sisuc/tests/programs.rs::stray_file_type_fails
@@ -1807,4 +1806,3 @@ crates/sisuc/tests/programs.rs::two_args_markers_fail
 crates/sisuc/tests/programs.rs::valgrind_reports_a_cycle
 crates/sisuc/tests/programs.rs::valgrind_runs_refuse_a_mimalloc_build
 crates/sisuc/tests/programs.rs::words_is_linear
-crates/sisuc/tests/programs.rs::write_bounds_case

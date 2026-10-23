@@ -89,6 +89,16 @@ class TestNames(unittest.TestCase):
                 '#[test]\nfn ir_should_verify() {}\n')
         self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs')[0], 1)
 
+    def test_a_macro_test_should_not_take_the_name_of_the_next_function(self):
+        text = ('macro_rules! m {\n    () => {\n        #[test]\n        fn $name() {}\n    };\n}\n'
+                'fn setup() {}\n')
+        self.assertEqual(run_test_names(text), (0, ''))
+
+    def test_doc_lines_above_a_long_attribute_should_count(self):
+        text = (GWT + '#[cfg_attr(\n    any(),\n    ignore = "slow"\n)]\n'
+                '#[test]\nfn ir_should_verify() {}\n')
+        self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs'), (0, ''))
+
     def test_a_name_in_the_baseline_should_pass(self):
         text = '#[test]\nfn emit_ir() {}\n'
         self.assertEqual(run_test_names(text, baseline='# old\nPATH::emit_ir\n'), (0, ''))
