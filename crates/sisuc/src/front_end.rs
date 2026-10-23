@@ -853,6 +853,33 @@ fn main() {
     }
 
     #[test]
+    fn constant_with_dangling_operator_should_not_swallow_the_next_function() {
+        let src = "const A = 1 +\nfn main() {\n    let x: i64 = \"s\"\n}\n";
+        assert_eq!(
+            codes(src),
+            [(Code::Expected, (2, 1)), (Code::Mismatch, (3, 18))]
+        );
+    }
+
+    #[test]
+    fn header_with_dangling_arrow_should_end_at_the_next_function() {
+        let src = "fn f() ->\nfn main() {\n    let x: i64 = \"s\"\n}\n";
+        assert_eq!(
+            codes(src),
+            [(Code::Expected, (2, 1)), (Code::Mismatch, (3, 18))]
+        );
+    }
+
+    #[test]
+    fn method_with_dangling_arrow_should_not_swallow_the_next_method() {
+        let src = "class C {\n    fn a() ->\n    fn b(self) {}\n}\nfn main() {\n    let c = C()\n    c.b(1)\n}\n";
+        assert_eq!(
+            codes(src),
+            [(Code::Expected, (3, 5)), (Code::ArgumentCount, (7, 5))]
+        );
+    }
+
+    #[test]
     fn line_break_ends_an_item_without_a_body() {
         assert_eq!(codes("fn f()\nfn main() {}\n"), [(Code::Expected, (1, 7))]);
         assert_eq!(
