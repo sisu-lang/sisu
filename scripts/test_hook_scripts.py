@@ -72,6 +72,23 @@ class TestNames(unittest.TestCase):
     def test_a_name_with_should_should_pass(self):
         self.assertEqual(run_test_names('#[test]\nfn ir_should_verify() {}\n'), (0, ''))
 
+    def test_fn_in_an_attribute_should_not_be_the_name(self):
+        text = '#[test]\n#[should_panic(expected = "fn f_should_x")]\nfn emit_ir() {}\n'
+        code, out = run_test_names(text)
+        self.assertEqual(code, 1)
+        self.assertIn(':3: test name `emit_ir`', out)
+
+    def test_a_reused_baseline_name_should_fail_at_its_second_use(self):
+        text = '#[test]\nfn emit_ir() {}\nmod m {\n#[test]\nfn emit_ir() {}\n}\n'
+        code, out = run_test_names(text, baseline='PATH::emit_ir\n')
+        self.assertEqual(code, 1)
+        self.assertIn(':5: test name `emit_ir`', out)
+
+    def test_an_end_to_end_test_should_fail_with_plain_comments(self):
+        text = ('// GIVEN a file\n// WHEN sisu builds it\n// THEN it prints 1\n'
+                '#[test]\nfn ir_should_verify() {}\n')
+        self.assertEqual(run_test_names(text, path='crates/sisuc/tests/cli.rs')[0], 1)
+
     def test_a_name_in_the_baseline_should_pass(self):
         text = '#[test]\nfn emit_ir() {}\n'
         self.assertEqual(run_test_names(text, baseline='# old\nPATH::emit_ir\n'), (0, ''))

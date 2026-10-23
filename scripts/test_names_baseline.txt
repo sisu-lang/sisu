@@ -1177,7 +1177,6 @@ crates/sisuc/src/mir/tests/certify.rs::ended_binding_comes_back_to_a_scope_relea
 crates/sisuc/src/mir/tests/certify.rs::ended_binding_leaves_and_never_comes_back
 crates/sisuc/src/mir/tests/certify.rs::escape_names_the_block_that_leaves
 crates/sisuc/src/mir/tests/certify.rs::exit_from_a_block_that_skips_the_release
-crates/sisuc/src/mir/tests/certify.rs::f
 crates/sisuc/src/mir/tests/certify.rs::free_after_reuse_is_accepted
 crates/sisuc/src/mir/tests/certify.rs::free_of_a_freed_token_is_rejected
 crates/sisuc/src/mir/tests/certify.rs::free_of_a_local_that_is_not_a_token_is_rejected
@@ -1254,6 +1253,7 @@ crates/sisuc/src/mir/tests/certify.rs::unmentioned_local_is_ignored
 crates/sisuc/src/mir/tests/certify.rs::unmentioned_parameter_reaches_a_return
 crates/sisuc/src/mir/tests/certify.rs::unreachable_code_certifies
 crates/sisuc/src/mir/tests/certify.rs::use_after_the_ownership_pass_panics
+crates/sisuc/src/mir/tests/certify.rs::violation_message_names_where_and_what
 crates/sisuc/src/mir/tests/certify.rs::write_into_a_borrowed_array_is_rejected
 crates/sisuc/src/mir/tests/elaborate.rs::each_exit_edge_is_elaborated_on_its_own
 crates/sisuc/src/mir/tests/elaborate.rs::free_after_reuse_is_removed
@@ -1765,7 +1765,6 @@ crates/sisuc/tests/programs.rs::largest_array_reaches_the_allocator
 crates/sisuc/tests/programs.rs::linker_lld_links_with_lld
 crates/sisuc/tests/programs.rs::linker_off_path_links_when_cc_finds_it
 crates/sisuc/tests/programs.rs::longlist_frees_in_constant_stack
-crates/sisuc/tests/programs.rs::main
 crates/sisuc/tests/programs.rs::mutual_enums_compare_and_free_in_constant_stack
 crates/sisuc/tests/programs.rs::o2_calls_marker_counts_inside_the_caller
 crates/sisuc/tests/programs.rs::o2_calls_marker_fails_on_an_inlined_call
@@ -1808,3 +1807,4 @@ crates/sisuc/tests/programs.rs::two_args_markers_fail
 crates/sisuc/tests/programs.rs::valgrind_reports_a_cycle
 crates/sisuc/tests/programs.rs::valgrind_runs_refuse_a_mimalloc_build
 crates/sisuc/tests/programs.rs::words_is_linear
+crates/sisuc/tests/programs.rs::write_bounds_case

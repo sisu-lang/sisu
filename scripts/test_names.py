@@ -5,18 +5,21 @@ test_names_baseline.txt were named before the rule and are skipped.
 Usage: python3 test_names.py FILE...
 """
 
+import collections
 import os
 import re
 import sys
 
 BASELINE = os.path.join(os.path.dirname(__file__), "test_names_baseline.txt")
 END_TO_END = re.compile(r"(^|/)crates/[^/]+/tests/")
-FN = re.compile(r"\bfn\s+(\w+)")
+# At the start of a line, so `fn` inside an attribute such as `#[should_panic(expected = "fn f")]`
+# is not the test's name. rustfmt puts `#[test]` and `fn` on lines of their own.
+FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe)\s+)*fn\s+(\w+)")
 
 
 def tests(lines: list[str]) -> list[tuple[int, str, list[str]]]:
-    """(line, name, comment lines) of each `#[test]` function. The comment is the run of `//`
-    lines above the function's attributes."""
+    """(line, name, doc lines) of each `#[test]` function. The doc is the run of `///` lines above
+    the function's attributes."""
     found = []
     for i, line in enumerate(lines):
         if line.strip() != "#[test]":
@@ -30,9 +33,9 @@ def tests(lines: list[str]) -> list[tuple[int, str, list[str]]]:
         while top > 0 and lines[top - 1].strip().startswith("#["):
             top -= 1
         comment = []
-        while top > 0 and lines[top - 1].strip().startswith("//"):
+        while top > 0 and lines[top - 1].strip().startswith("///"):
             top -= 1
-            comment.insert(0, lines[top].strip().lstrip("/").strip())
+            comment.insert(0, lines[top].strip()[3:].strip())
         found.append((j + 1, FN.search(lines[j]).group(1), comment))
     return found
 
@@ -44,14 +47,16 @@ def has_given_when_then(comment: list[str]) -> bool:
 
 
 def main(paths: list[str], baseline: str = BASELINE) -> int:
+    # A count, so a new test that reuses an old name in another module of the file is checked.
     with open(baseline, encoding="utf-8") as f:
-        old = {line.strip() for line in f if line.strip() and not line.startswith("#")}
+        old = collections.Counter(l.strip() for l in f if l.strip() and not l.startswith("#"))
     bad = 0
     for path in paths:
         with open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()
         for n, name, comment in tests(lines):
-            if f"{path}::{name}" in old:
+            if old[f"{path}::{name}"] > 0:
+                old[f"{path}::{name}"] -= 1
                 continue
             if "_should_" not in name:
                 print(f"{path}:{n}: test name `{name}` should say what should hold: "
