@@ -5,4 +5,9 @@ test_tool = "nextest"
 # LLVM_SYS_231_PREFIX.
 gitignore = true
 # Each `|` in `Region::apply` joins disjoint one-bit states, where `^` gives the same value.
-exclude_re = ["replace \\| with \\^ in Region<'_>::apply"]
+exclude_re = [
+    "replace \\| with \\^ in Region<'_>::apply",
+    # `after > b` in `starts_item_line`: a break is `\n`, which never starts a keyword, so `>=` gives
+    # the same count.
+    "replace > with >= in Parser<'a>::starts_item_line",
+]

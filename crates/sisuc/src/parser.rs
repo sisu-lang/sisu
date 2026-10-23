@@ -588,8 +588,10 @@ impl<'a> Parser<'a> {
 
     /// The end, exclusive, of the item or member that starts at `start`: past the `}` that
     /// brings the depth back to where it started, or at a line break at that depth, which comes
-    /// before any `{`. A closer below that depth (a class's `}`) or `Eof` ends it first. A
-    /// constant is one line, as a statement is, so a `}` in its value does not end it.
+    /// before any `{`. A closer below that depth (a class's `}`) or `Eof` ends it first. So does
+    /// an `fn`, `class`, `const` or `enum` that starts a line at that depth, also after a token
+    /// that cannot end a line. A constant is one line, as a statement is, so a `}` in its value
+    /// does not end it.
     fn item_end(&self, start: usize) -> usize {
         let line = self.tokens[start].kind == TokenKind::Const;
         let mut depth = 0usize;
@@ -606,6 +608,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TokenKind::Newline if depth == 0 => return i,
+                _ if depth == 0 && i > start && self.starts_item_line(i) => return i,
                 TokenKind::Eof => return i,
                 _ => {}
             }
@@ -613,21 +616,27 @@ impl<'a> Parser<'a> {
         unreachable!("the tokens should end with `Eof`")
     }
 
+    /// Whether token `i` is `fn`, `class`, `const` or `enum` and the first token on its line.
+    /// These words only start an item or a member, so one at the start of a line starts the next
+    /// one, also when a token that cannot end a line, such as `+`, leaves no `Newline` before it.
+    fn starts_item_line(&self, i: usize) -> bool {
+        let (before, after) = (self.tokens[i - 1].span.end(), self.tokens[i].span.start());
+        matches!(
+            self.tokens[i].kind,
+            TokenKind::Fn | TokenKind::Class | TokenKind::Const | TokenKind::Enum
+        ) && self.breaks.partition_point(|&b| b < before)
+            < self.breaks.partition_point(|&b| after > b)
+    }
+
     /// The end, exclusive, of the unnamed item that starts at `start`: the next line whose first
     /// token is `fn`, `class`, `const` or `enum` outside brackets, or `Eof`.
-    // shortcut: a line break after a token that cannot end a statement (`:`) leaves no `Newline`,
-    // so a `fn` after one is not found; the item only runs longer, and the checker is off anyway.
     fn next_line_item(&self, start: usize) -> usize {
         let mut depth = 0usize;
         for (i, token) in self.tokens.iter().enumerate().skip(start) {
             match token.kind {
                 TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
                 TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => depth -= 1,
-                TokenKind::Fn | TokenKind::Class | TokenKind::Const | TokenKind::Enum
-                    if i > start && depth == 0 && self.tokens[i - 1].kind == TokenKind::Newline =>
-                {
-                    return i;
-                }
+                _ if i > start && depth == 0 && self.starts_item_line(i) => return i,
                 TokenKind::Eof => return i,
                 _ => {}
             }
@@ -3894,6 +3903,14 @@ mod tests {
         assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
         assert!(!parsed.checkable);
         assert_eq!(parsed.program.to_string(), "(enum E A)");
+    }
+
+    #[test]
+    fn unnamed_item_with_dangling_operator_should_end_at_the_next_function() {
+        let parsed = parsed("let y = 1 +\nfn main() {\n}");
+        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(!parsed.checkable);
+        assert_eq!(parsed.program.to_string(), "(fn main () unit (block))");
     }
 
     #[test]
