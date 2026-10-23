@@ -160,8 +160,26 @@ fn main() {
 The rules:
 
 - The values of all the `break`s of a loop must have one type ([E0032](../diagnostics/E0032.md)).
-- When all the `break` values are of the type `never`, the loop is of the type `never` ([Types](types.md#never)).
-- A loop whose `break`s have no value has no value ([E0043](../diagnostics/E0043.md)).
+- A `break` value of the type `never` takes the type of the other `break` values, as a branch of an `if` does.
+- The loop has the type `never` only when it has no `break`, or when each `break` has a value of the type `never` ([Types](types.md#never)).
+- A loop whose `break`s have no value has no value ([E0043](../diagnostics/E0043.md)). This applies also when the other `break`s have values of the type `never`.
+- A loop that has a `break` with no value and a `break` with a value is an error ([E0043](../diagnostics/E0043.md)).
+
+```sisu
+fn wait(ready: bool) {
+    loop {
+        if ready {
+            break
+        }
+        break panic("not ready")
+    }
+    print("finished")
+}
+
+fn main() {
+    wait(true)                   // finished
+}
+```
 
 ## Calls
 

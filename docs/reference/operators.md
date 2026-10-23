@@ -174,13 +174,25 @@ fn main() {
 
 ### Arithmetic in a constant
 
-The program calculates a constant when it builds. So an overflow or a division by zero in a constant is an error, not a panic ([E0088](../diagnostics/E0088.md)).
+The program calculates a constant when it builds. So an integer overflow or an integer division by zero in a constant is an error, not a panic ([E0088](../diagnostics/E0088.md)).
 
 ```sisu
 const LIMIT = 9223372036854775807 + 1    // error[E0088]
 
 fn main() {
     print(LIMIT)
+}
+```
+
+Floating-point arithmetic in a constant follows the rules that it has at run time. A division by zero gives an infinity or NaN, and is not an error.
+
+```sisu
+const INFINITY = 1.0 / 0.0
+const NAN = 0.0 / 0.0
+
+fn main() {
+    print(INFINITY)              // inf
+    print(NAN)                   // nan
 }
 ```
 
@@ -226,7 +238,7 @@ The rules:
 
 ### Comparison chains
 
-A *comparison chain* such as `a < b < c` is true when each comparison in it is true, here `a < b` and `b < c`. The program calculates each operand at most once, and stops at the first comparison that is false.
+A *comparison chain* such as `a < b < c` is true when each comparison in it is true. Here, these are `a < b` and `b < c`. The program calculates each operand at most once, and stops at the first comparison that is false.
 
 ```sisu
 fn main() {

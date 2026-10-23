@@ -301,11 +301,11 @@ fn main() {
 - A call of `panic`, and `todo`.
 - A block that reaches a `return`, `break` or `continue` statement, or another expression of the type `never`.
 - An `if` or a `match` whose branches are all of the type `never`.
-- A `loop` with no `break` that ends it, or whose `break` values are all of the type `never`.
+- A `loop` with no `break` that ends it, or whose `break`s all have a value of the type `never`.
 - A `while` whose condition is the literal `true`, with no `break` that ends it.
 - A string literal with an interpolation part of the type `never`.
 
-A program cannot write `never` as a type name. A `never` branch of an `if` or a `match` takes the type of the other branches, and the right side of `??` can be `never`.
+A program cannot write `never` as a type name. A `never` branch of an `if` or a `match` takes the type of the other branches. So does a `never` `break` value of a `loop`. The right side of `??` can be `never`.
 
 ```sisu
 fn parse(text: string) -> i64 {
