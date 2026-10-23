@@ -402,12 +402,7 @@ pub(crate) fn check<'src>(
     parsed: &[Diagnostic],
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let mut checker = Checker::new(program, source);
-    checker.parse_errors = parsed
-        .iter()
-        .filter(|d| d.severity() == Severity::Error)
-        .map(Diagnostic::span)
-        .filter(|span| span.start() < span.end())
-        .collect();
+    checker.parse_errors = error_spans(parsed);
     checker.collect_names(program);
     let declared = checker.collect_signatures(program);
     checker.fold_constants(program);
@@ -424,6 +419,7 @@ pub(crate) fn check<'src>(
     let classes = checker.classes.iter().map(lower_class).collect();
     let mut diagnostics = checker.diagnostics.into_vec();
     diagnostics.sort_by_key(|d| d.span().start());
+    let errors = error_spans(&diagnostics);
     // A function with an error of its own is skipped, so that its errors stand alone.
     let warnings: Vec<Diagnostic> = functions
         .iter()
@@ -431,7 +427,7 @@ pub(crate) fn check<'src>(
         .filter_map(|(i, function)| {
             let (f, owner) = declared[i];
             let function = function.as_ref()?;
-            if has_error_in(&diagnostics, f.span) || starts_in(&checker.parse_errors, f.span) {
+            if starts_in(&errors, f.span) || starts_in(&checker.parse_errors, f.span) {
                 return None;
             }
             let calls = recursion::unconditional(function, tir::FuncId(i))?;
@@ -479,14 +475,14 @@ pub(crate) fn check<'src>(
     (program, diagnostics)
 }
 
-/// Whether an error with a non-empty span starts inside `span`. `diagnostics` is sorted by span
-/// start. `NoMain`'s empty span at offset 0 is not inside the function that starts the file.
-fn has_error_in(diagnostics: &[Diagnostic], span: Span) -> bool {
-    let first = diagnostics.partition_point(|d| d.span().start() < span.start());
-    diagnostics[first..]
+/// The non-empty spans of the errors in `diagnostics`, in order. `NoMain`'s empty span at offset
+/// 0 is then not inside the function that starts the file.
+fn error_spans(diagnostics: &[Diagnostic]) -> Vec<Span> {
+    let errors = diagnostics
         .iter()
-        .take_while(|d| d.span().start() < span.end())
-        .any(|d| d.severity() == Severity::Error && d.span().start() < d.span().end())
+        .filter(|d| d.severity() == Severity::Error);
+    let spans = errors.map(Diagnostic::span);
+    spans.filter(|span| span.start() < span.end()).collect()
 }
 
 /// Whether a span of `spans`, which is sorted by start, starts inside `span`.

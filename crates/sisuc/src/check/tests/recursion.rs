@@ -426,6 +426,12 @@ fn arm_should_not_count_when_an_earlier_arm_covers_its_pattern() {
     }
 }
 
+/// The guard may be false, so a path goes on to the base case after it.
+#[test]
+fn guard_should_not_end_later_paths_when_it_does_not_call_itself() {
+    clean(&guarded(&["_ if n > 0 => f(n)", "_ => false"]));
+}
+
 /// A pattern that may not match lets a path skip its guard.
 #[test]
 fn guard_should_not_end_later_paths_after_a_pattern_that_may_not_match() {

@@ -166,7 +166,8 @@ impl Walk {
                 let first = self.walk(scrutinee, open, calls);
                 let open = open && !first.recurses;
                 // The arms are tried in order. `called`: every path that goes on to the next arm
-                // has called the function, or no path goes on.
+                // has called the function in a guard. W0006 marks each arm that no path reaches,
+                // such as every arm after `_`, and an `if let` that always matches is an error.
                 let mut called = false;
                 let arms = arms.iter().filter(|arm| arm.reachable).map(|arm| {
                     let reached = if called { Flow::RECURSE } else { Flow::PASS };
@@ -176,10 +177,8 @@ impl Walk {
                         .as_ref()
                         .map_or(Flow::PASS, |guard| self.walk(guard, open, calls));
                     let body = self.block(&arm.body, open && !guard.recurses, calls);
-                    // A path that a pattern can miss goes on as it came.
-                    if always_matches(&arm.pattern) {
-                        called = called || arm.guard.is_none() || guard.recurses;
-                    }
+                    // A path that a pattern can miss skips the guard.
+                    called |= guard.recurses && always_matches(&arm.pattern);
                     reached.then(guard).then(body)
                 });
                 first.then(arms.reduce(Flow::or).unwrap_or(Flow::PASS))

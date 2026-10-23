@@ -229,6 +229,14 @@ fn while_should_not_warn_when_its_body_writes_an_unknown_name() {
 }
 
 #[test]
+fn while_should_not_warn_when_its_body_writes_a_field_of_an_unknown_name() {
+    codes(
+        &f(&["while n > 0 { q.x = 1 }"]),
+        &[(Code::BindingNotFound, (2, 19))],
+    );
+}
+
+#[test]
 fn while_should_not_warn_when_its_condition_calls_a_user_len() {
     clean(&with_main(
         "class Q {\n    n: i64\n    fn len(self) -> i64 { self.n }\n    fn pop(self) { print(1) }\n}\nfn f(q: Q) {\n    while q.len() > 0 { q.pop() }\n}",
