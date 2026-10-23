@@ -1366,8 +1366,9 @@ impl Checker<'_> {
             }
             ExprKind::Equal { lhs, rhs, .. } => {
                 // `==` on a class compares fields, which can change with no write of a local.
+                // Both sides have one type, up to an optional, so `lhs` tells for both.
                 let none = matches!(lhs.kind, ExprKind::None) || matches!(rhs.kind, ExprKind::None);
-                (none || !(self.holds(lhs.ty).class || self.holds(rhs.ty).class))
+                (none || !self.holds(lhs.ty).class)
                     && self.read_locals(lhs, locals)
                     && self.read_locals(rhs, locals)
             }
@@ -1394,11 +1395,9 @@ impl Checker<'_> {
         if id.0 == 0 && self.body.self_type.is_some() {
             return self.body.self_written <= writes;
         }
-        // A local with no binding of its name is a checker temporary.
-        let Some(name) = self.body.locals[id.0].name.as_deref() else {
-            return false;
-        };
-        self.lookup(Symbol::intern(name))
+        // A local with no name is a checker temporary, so it has no binding.
+        let name = self.body.locals[id.0].name.as_deref().map(Symbol::intern);
+        name.and_then(|name| self.lookup(name))
             .is_some_and(|b| b.local == id && b.written <= writes)
     }
 

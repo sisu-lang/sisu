@@ -395,3 +395,60 @@ fn never_reassigned_should_skip_a_named_binding_when_a_later_let_shadows_it() {
         &[(Code::UnchangedLoopCondition, (3, 11))],
     );
 }
+
+#[test]
+fn while_should_warn_when_its_condition_concatenates_strings() {
+    warns(
+        &with_main(
+            "fn f(t: string) {\n    let s = \"a\"\n    while s + \"b\" != t { print(s) }\n}",
+        ),
+        (3, 11, "s + \"b\" != t"),
+    );
+}
+
+#[test]
+fn while_should_warn_when_its_condition_adds_to_an_element() {
+    warns(
+        &f(&[
+            "let xs = [n]",
+            "let i = 0",
+            "while xs[i] + 1 != n { print(i) }",
+        ]),
+        (4, 11, "xs[i] + 1 != n"),
+    );
+}
+
+#[test]
+fn while_should_not_warn_when_an_operand_calls_a_function() {
+    clean(&with_main(
+        "fn g() -> i64 { 1 }\nfn f(n: i64) {\n    let i = 0\n    while i + g() < n { print(i) }\n}",
+    ));
+}
+
+#[test]
+fn while_should_not_warn_when_its_enum_holds_an_enum_that_holds_a_class() {
+    clean(&with_main(
+        "class Node {\n    v: i64\n}\nenum Inner {\n    Holds(Node)\n}\nenum Outer {\n    Wraps(Inner)\n}\nfn f(a: Outer, b: Outer) {\n    while a != b { print(1) }\n}",
+    ));
+}
+
+/// The class with the unknown type is not the first one, so its node is not node 0.
+#[test]
+fn while_should_not_warn_when_its_second_class_has_a_field_of_an_unknown_type() {
+    codes(
+        &with_main(
+            "class Other {\n    v: i64\n}\nclass Node {\n    value: Fooo\n}\nfn f(node: Node?) {\n    while node != None { print(1) }\n}",
+        ),
+        &[(Code::UnknownType, (5, 12))],
+    );
+}
+
+/// Every `insert` today comes with a failed expression, which fails the loop body, so no
+/// program reaches the count.
+#[test]
+fn diagnostics_should_count_an_inserted_error() {
+    let mut diagnostics = Diagnostics::default();
+    let at = Span::new(0, 0);
+    diagnostics.insert(0, DiagnosticKind::IsTestsNone { tested: None, at }.into());
+    assert_eq!(diagnostics.errors, 1);
+}
