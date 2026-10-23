@@ -1,6 +1,6 @@
 //! Tests of the generic rules.
 
-use super::{Body, GField, GFunc, GTy, GVariant, Generic, Shape, unify};
+use super::{Body, GField, GFunc, GTy, GVariant, Generic, MAX_SOLVE, Shape, unify};
 use crate::generate::scope::Ty;
 use crate::generate::{BUDGET, FUEL, Gen, MAX_NESTING, MAX_SIZE, STATEMENT_MOST, generate};
 use crate::tir::Rank;
@@ -871,10 +871,7 @@ fn a_generic_enum_value_should_end_in_a_variant_that_holds_no_enum() {
         variant("V1", Vec::new(), false),
         variant("V2", vec![GTy::Applied(0, vec![param(0)])], true),
     ];
-    for (nesting, start) in [
-        (super::MAX_SOLVE - 1, "G0<i64>.V1"),
-        (super::MAX_SOLVE - 2, "G0.V2("),
-    ] {
+    for (nesting, start) in [(MAX_SOLVE - 1, "G0<i64>.V1"), (MAX_SOLVE - 2, "G0.V2(")] {
         let mut g = Gen::new(&[1]);
         declare(
             &mut g,
@@ -941,7 +938,7 @@ fn a_body_should_offer_a_call_and_a_match_only_above_the_depth_that_ends_it() {
     };
     // At the depth limit, only the argument itself remains.
     for byte in 0..3 {
-        assert_eq!(solved(byte, super::MAX_SOLVE), "d");
+        assert_eq!(solved(byte, MAX_SOLVE), "d");
     }
     // Above it, a byte picks the argument, the call or the `match`.
     assert_eq!(solved(0, 0), "d");
@@ -1168,6 +1165,165 @@ fn a_value_of_a_recursive_enum_should_take_the_recursive_variant_only_while_fuel
         g.variant(&ty, 10, None);
         assert!(g.w.out.program.starts_with(start), "{}", g.w.out.program);
     }
+}
+
+#[test]
+fn generics_should_name_each_instance_once_among_the_types() {
+    let mut instances = 0;
+    for state in 0..64 {
+        let data = crate::generate::coverage::seed(state);
+        let mut g = Gen::new(&data);
+        g.generics();
+        let types = &g.scope.generic_types;
+        instances += types.len();
+        for (i, ty) in types.iter().enumerate() {
+            assert!(!types[..i].contains(ty), "{ty} twice");
+            assert!(ty.to_string().starts_with('G'), "{ty}");
+        }
+    }
+    assert!(instances > 0, "no seed names an instance");
+}
+
+#[test]
+fn a_generic_class_field_should_be_mutable_by_the_second_choice_only() {
+    let mutable = |data: &[u8]| {
+        let mut g = Gen::new(data);
+        g.generic_class();
+        let Body::Class(fields) = &g.scope.generics[0].body else {
+            panic!("a class")
+        };
+        fields.iter().filter(|f| f.mutable).count()
+    };
+    assert_eq!(mutable(&[]), 0);
+    assert!(mutable(&[1; 16]) > 0);
+}
+
+#[test]
+fn a_signature_type_should_nest_as_deep_as_it_may_and_no_deeper() {
+    // The same byte at every level picks an array or an optional at every level it may.
+    let depth = |ty: &GTy| {
+        let mut depth = 0;
+        let mut at = ty;
+        while let GTy::Array(inner) | GTy::Optional(inner) = at {
+            depth += 1;
+            at = inner;
+        }
+        depth
+    };
+    let mut deepest = [0; 3];
+    for byte in 0..=u8::MAX {
+        for nesting in 0..3 {
+            let data = [byte; 8];
+            let ty = Gen::new(&data).gsig(2, nesting);
+            let d = depth(&ty);
+            assert!(d <= nesting as usize, "{ty} at {nesting}");
+            deepest[nesting as usize] = deepest[nesting as usize].max(d);
+        }
+    }
+    assert_eq!(deepest, [0, 1, 2]);
+}
+
+#[test]
+fn a_nested_value_should_be_one_level_deeper_than_the_value_around_it() {
+    // At the depth limit's last level, the value inside an array, an optional, a class field or
+    // a `match` has no call to offer; the byte that would pick one then changes nothing.
+    let at = MAX_SOLVE - 1;
+    let setup = |g: &mut Gen| {
+        declare(g, vec![wrapper()]);
+        g.scope.generics.push(Generic {
+            params: 1,
+            body: Body::Class(vec![field("g1", param(0), false)]),
+        });
+        g.scope.gfuncs.push(identity(1));
+    };
+    let env = || {
+        vec![
+            ("o".to_string(), GTy::Applied(0, vec![param(0)]), false),
+            ("a".to_string(), param(0), false),
+        ]
+    };
+    let data = [0, 1];
+    let mut g = Gen::new(&data);
+    setup(&mut g);
+    assert_eq!(
+        g.build(&array(param(0)), &mut env(), at).unwrap().text,
+        "[a]"
+    );
+    let mut g = Gen::new(&data);
+    setup(&mut g);
+    assert_eq!(
+        g.build(&optional(param(0)), &mut env(), at).unwrap().text,
+        "(if true { a } else { None })"
+    );
+    let data = [1];
+    let mut g = Gen::new(&data);
+    setup(&mut g);
+    let class = g.construct(1, &[param(0)], &mut env(), at).unwrap();
+    assert_eq!(class.text, "G1<T>(g1: a)");
+    let mut g = Gen::new(&data);
+    setup(&mut g);
+    let matched = g.destructure(&param(0), &mut env(), at).unwrap();
+    assert_eq!(matched.text, "(match o { G0.V2(p) => p; _ => a })");
+    let mut g = Gen::new(&data);
+    setup(&mut g);
+    let call = g.gcall_in(&param(0), &mut env(), at).unwrap();
+    assert_eq!(call.text, "h1<T>(a)");
+}
+
+#[test]
+fn a_call_in_a_body_should_add_its_nodes_to_those_of_its_arguments() {
+    let mut g = Gen::new(&[]);
+    g.scope.gfuncs.push(GFunc {
+        args: vec![array(param(0))],
+        extra: 2,
+        ..identity(4)
+    });
+    let mut env = vec![("a".to_string(), param(0), false)];
+    let solved = g.gcall_in(&param(0), &mut env, 0).unwrap();
+    // `h1([a])`: the 2 of the function, and the 1 of the array.
+    assert_eq!(solved.text, "h1([a])");
+    assert_eq!((solved.extra, solved.cost), (3, 4));
+}
+
+#[test]
+fn an_argument_of_a_call_should_have_room_beyond_its_floor() {
+    // With no fuel, a `string` is a literal of at most `GARG` chars; some byte makes it long.
+    let literal = |byte: u8| {
+        let data = [byte; 4];
+        let mut g = Gen::new(&data);
+        g.fuel = 0;
+        g.scope.gfuncs.push(identity(1));
+        g.gcall(&Ty::String, MAX_SIZE);
+        let text = g.w.out.program;
+        let (_, inner) = text.split_once("(\"").expect("a string argument");
+        inner
+            .strip_suffix("\")")
+            .expect("a closed call")
+            .to_string()
+    };
+    let literals: Vec<String> = (0..=u8::MAX).map(literal).collect();
+    assert!(literals.iter().any(|text| !text.is_empty()), "{literals:?}");
+}
+
+#[test]
+fn an_optional_in_a_signature_should_hold_a_type_one_level_shallower() {
+    // The first byte picks an optional, and the others an array at every level they may.
+    let pick = |want: usize| (0..=u8::MAX).find(|&b| Gen::new(&[b]).pick(5) == want);
+    let (optional_byte, array_byte) = (pick(4).unwrap(), pick(3).unwrap());
+    let mut data = vec![optional_byte];
+    data.extend([array_byte; 8]);
+    // At one level of nesting, `T?` is all there is below the optional.
+    let ty = Gen::new(&data).gsig(2, 1);
+    assert!(
+        matches!(ty, GTy::Optional(ref inner) if !matches!(**inner, GTy::Array(_))),
+        "{ty}"
+    );
+    // At two, an array may sit in it.
+    let ty = Gen::new(&data).gsig(2, 2);
+    assert!(
+        matches!(ty, GTy::Optional(ref inner) if matches!(**inner, GTy::Array(_))),
+        "{ty}"
+    );
 }
 
 #[test]
