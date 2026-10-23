@@ -19,7 +19,6 @@ import inspect
 import json
 import posixpath
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -32,10 +31,11 @@ from collections.abc import Callable
 from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from html.parser import HTMLParser
-from itertools import accumulate, groupby
+from itertools import accumulate, groupby, islice, takewhile
 from pathlib import Path
 
 from markdown_it import MarkdownIt
+from markdown_it.common.utils import unescapeAll
 from markdown_it.token import Token
 
 SITE = Path(__file__).resolve().parent
@@ -395,18 +395,32 @@ def markers(source: str) -> list[str]:
     """The `error[Ennnn]` and `warning[Wnnnn]` trailing comments of an example, in order."""
     found = []
     for line in source.splitlines():
-        code, slashes, comment = line.rpartition('//')
-        if slashes and code.strip() and (m := DIAG_MARKER.fullmatch(comment.removeprefix(' '))):
+        _, slashes, comment = line.rpartition('//')
+        if slashes and not line.lstrip().startswith('//') and (m := DIAG_MARKER.fullmatch(comment.removeprefix(' '))):
             found.append(m[2] or m[3])
     return found
 
 
-def example_html(token, companions) -> str:
+def example_info(info: str) -> tuple[list[str], list[str] | None]:
+    """The words of a fence's info string and its `args="..."` list, read as the reference test
+    reads them: with Markdown's escapes decoded, words split at spaces. The test reports faults."""
+    words, args = [], None
+    rest = unescapeAll(info).strip()
+    while rest:
+        if rest.startswith('args="'):
+            value, _, rest = rest.removeprefix('args="').partition('"')
+            args = [arg for arg in value.split(' ') if arg]
+        else:
+            word, _, rest = rest.partition(' ')
+            words.append(word)
+        rest = rest.lstrip()
+    return words, args
+
+
+def example_html(token, words, args, companions) -> str:
     """An example as one figure: its caption, the program and a panel for each companion block,
-    then a line for each diagnostic marker that links its page."""
-    words = shlex.split(token.info)
-    args = next((word.removeprefix('args=') for word in words if word.startswith('args=')), None)
-    caption = 'In development' if 'pending' in words else None if args is None else ' '.join(['./example', *args.split()])
+    then a line for each diagnostic marker that links its page. `words` and `args` are its info."""
+    caption = 'In development' if 'pending' in words else None if args is None else ' '.join(['./example', *args])
     cap = f'<figcaption class="cap">{escape(caption)}</figcaption>' if caption else ''
     panels = ''.join(f'<figure class="panel"><figcaption class="cap">{c.info.strip()}</figcaption><pre data-lang="out">{escape(c.content)}</pre></figure>'
                      for c in companions)
@@ -441,15 +455,12 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
                 headings.append([int(token.tag[1]), token.attrGet('id'), tokens[i + 1], False])
         elif token.type == 'table_open':
             token.attrSet('class', 'tbl')
-        elif token.type == 'fence' and token.info.split()[:1] == ['sisu']:
-            companions = []
-            for after in tokens[i + 1:]:
-                if after.type != 'fence' or after.info.strip() not in COMPANIONS:
-                    break
+        elif token.type == 'fence' and (info := example_info(token.info))[0][:1] == ['sisu']:
+            companions = list(takewhile(lambda after: after.type == 'fence' and after.info.strip() in COMPANIONS, islice(tokens, i + 1, None)))
+            for after in companions:
                 after.meta['html'] = ''
-                companions.append(after)
-            token.meta['html'] = example_html(token, companions)
-            pending = 'pending' in shlex.split(token.info)
+            token.meta['html'] = example_html(token, *info, companions)
+            pending = 'pending' in info[0]
             kinds.append(pending)
             if pending and current is not None:
                 headings[current][3] = True
@@ -470,43 +481,49 @@ def reference_title(markdown: str) -> str:
     return heading.removeprefix('# ')
 
 
-def reference_page(index: int, pages: list[dict]) -> str:
-    """The page reference/<file>.html of pages[index]: the sidebar of all pages, the page, Previous
-    and Next, and its "On this page" list. The Overview, pages[0], also has a card for each page."""
-    def href(i):
-        return 'index.html' if pages[i]['file'] == 'README' else f'{pages[i]["file"]}.html'
-
-    titles, rendered = [], []
+def reference_pages(pages: list[dict]) -> list[dict]:
+    """Each page of `pages` read from docs/reference/ and rendered once: its entry with its title,
+    the title's id, its body, its headings and its tag."""
+    prepared = []
     for page in pages:
         path = REFERENCE / f'{page["file"]}.md'
         try:
             text = path.read_text(encoding='utf-8')
-            titles.append(reference_title(text))
-            rendered.append(reference_html(text, path))
+            title = reference_title(text)
+            body, headings, tagged = reference_html(text, path)
         except (OSError, BuildError) as e:
             raise BuildError(f'docs/reference/{page["file"]}.md: {e}') from e
-    body, headings, _ = rendered[index]
-    tagged = [page_tagged for _, _, page_tagged in rendered]
-    side = ''.join(f'<li><a href="{href(i)}"{" aria-current=\"page\"" if i == index else ""}>{MD.renderInline(t)}{IN_DEVELOPMENT if tag else ""}</a></li>'
-                   for i, (t, tag) in enumerate(zip(titles, tagged)))
-    toc = ''.join(f'<li class="h{level}"><a href="#{slug}">{text}</a></li>' for level, slug, text, _ in headings)
-    pager = ''.join(f'<a href="{href(i)}" rel="{rel}"><span>{label}</span>{MD.renderInline(titles[i])}</a>'
+        prepared.append(page | {'title': title, 'id': next(check_links.anchors(path)), 'body': body, 'headings': headings, 'tagged': tagged})
+    return prepared
+
+
+def reference_page(index: int, pages: list[dict]) -> str:
+    """The page reference/<file>.html of pages[index], from reference_pages: the sidebar of all
+    pages, the page, Previous and Next, and its "On this page" list. The Overview, pages[0], also
+    has a card for each other page."""
+    def href(i):
+        return 'index.html' if pages[i]['file'] == 'README' else f'{pages[i]["file"]}.html'
+
+    page = pages[index]
+    side = ''.join(f'<li><a href="{href(i)}"{" aria-current=\"page\"" if i == index else ""}>{MD.renderInline(p["title"])}{IN_DEVELOPMENT if p["tagged"] else ""}</a></li>'
+                   for i, p in enumerate(pages))
+    toc = ''.join(f'<li class="h{level}"><a href="#{slug}">{text}</a></li>' for level, slug, text, _ in page['headings'])
+    pager = ''.join(f'<a href="{href(i)}" rel="{rel}"><span>{label}</span>{MD.renderInline(pages[i]["title"])}</a>'
                     for i, rel, label in ((index - 1, 'prev', 'Previous'), (index + 1, 'next', 'Next')) if 0 <= i < len(pages))
     cards = '' if index else '<ul class="cards">' + ''.join(
-        f'<li><a href="{href(i)}"><b>{MD.renderInline(t)}</b><span>{escape(page["description"])}</span></a></li>'
-        for i, (t, page) in enumerate(zip(titles, pages))) + '</ul>\n'
-    name = plain(MD.parseInline(titles[index])[0])
+        f'<li><a href="{href(i)}"><b>{MD.renderInline(p["title"])}</b><span>{escape(p["description"])}</span></a></li>'
+        for i, p in enumerate(pages) if i) + '</ul>\n'
     context = {
         'sidebar': side,
-        'crumb': 'Reference' if not index else f'<a href="index.html">Reference</a> / {MD.renderInline(titles[index])}',
-        'heading': MD.renderInline(titles[index]),
-        'body': body + cards,
+        'crumb': 'Reference' if not index else f'<a href="index.html">Reference</a> / {MD.renderInline(page["title"])}',
+        'id': page['id'],
+        'heading': MD.renderInline(page['title']),
+        'body': page['body'] + cards,
         'pager': f'<nav class="pager" aria-label="Previous and next page">{pager}</nav>' if pager else '',
         'toc': f'<nav class="ref-toc" aria-label="On this page"><p class="ref-h">On this page</p><ol>{toc}</ol></nav>' if toc else '',
     }
-    return assemble(read('_reference.html'), title=name, description=pages[index]['description'],
+    return assemble(read('_reference.html'), title=plain(MD.parseInline(page['title'])[0]), description=page['description'],
                     page='reference/index.html', depth=1, context=context)
-
 
 BENCHMARKS = 'docs/benchmarks.md'
 BENCH_HEADER = ['Language', 'Wall (s)', 'CPU (s)', 'Peak RSS (MiB)', 'Binary (KiB)', 'Build (s)']
@@ -745,6 +762,7 @@ def build(out: Path) -> None:
     if found := reference_list_problems([page['file'] for page in pages], sorted(p.stem for p in REFERENCE.glob('*.md'))):
         raise BuildError('\n'.join(found))
     (out / 'reference').mkdir()
+    pages = reference_pages(pages)
     for i, page in enumerate(pages):
         name = 'index.html' if page['file'] == 'README' else f'{page["file"]}.html'
         (out / 'reference' / name).write_text(reference_page(i, pages), encoding='utf-8')
@@ -755,14 +773,16 @@ FOREIGN = re.compile(r'(?:https?:)?//', re.I)
 CSS_URL = re.compile(r'url\(\s*([\'"]?)(.*?)\1\s*\)|@import\s+([\'"])(.*?)\3')
 HEADING = re.compile(r'<h([1-6])\b')
 MILESTONE_ID = re.compile(r'\bM\d+\b')
-HIDDEN = re.compile(r'<(pre|code|script|style)\b.*?</\1>|<[^>]*>', re.S)
+HIDDEN = re.compile(r'<(pre|code|script|style)\b.*?</\1>', re.S)
+# Inline tags join their text: `M<strong>8</strong>` reads "M8". Any other tag separates text.
+INLINE_TAG = re.compile(r'</?(?:a|abbr|b|cite|del|em|i|ins|mark|q|s|small|span|strong|sub|sup|u)\b[^>]*>')
+# A <pre> with no data-lang holds diag_html output, which shows what sisu prints.
+UNTAGGED_PRE = re.compile(r'<pre\b(?![^>]*\bdata-lang=)[^>]*>.*?</pre>', re.S)
 
 
 def visible(text: str) -> str:
     """The page's text outside tags and outside <pre>, <code>, <script> and <style>."""
-    return HIDDEN.sub(' ', text)
-# A <pre> with no data-lang holds diag_html output, which shows what sisu prints.
-UNTAGGED_PRE = re.compile(r'<pre\b(?![^>]*\bdata-lang=)[^>]*>.*?</pre>', re.S)
+    return re.sub(r'<[^>]*>', ' ', INLINE_TAG.sub('', HIDDEN.sub(' ', text)))
 
 
 class Tags(HTMLParser):

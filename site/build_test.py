@@ -182,6 +182,7 @@ A *literal* is a value written in the source.
 
 {FENCE}sisu
 fn main() {{
+    // a note // error[E9999]
     print(1000_) // error[E0008]
 }}
 {FENCE}
@@ -711,7 +712,7 @@ class Build(unittest.TestCase):
         self.assertIn('Commit abc1234', build.expand('{{bench-results-note}}', {}))
 
     def test_reference_page_should_have_its_navigation(self):
-        entries = reference_dir(self, REF_PAGES)
+        entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(1, entries)
         side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
         self.assertEqual(re.findall(r'<a href="([^"]*)"( aria-current="page")?>', side),
@@ -723,6 +724,7 @@ class Build(unittest.TestCase):
         self.assertEqual(re.findall(r'<a href="([^"]*)" rel="\w+"><span>(\w+)</span>(.*?)</a>', pager),
                          [('index.html', 'Previous', 'Language reference'), ('later.html', 'Next', 'Later')])
         link = '<p class="marker"><a href="../diagnostics/E0008.html">E0008</a>: what this error means</p>'
+        self.assertEqual(re.findall(r'<p class="marker">.*?</p>', page), [link])  # not the full-line comment's E9999
         self.assertIn('</pre></figure>\n' + link, page)
         for pre in re.findall(r'<pre\b.*?</pre>', page, re.S):
             self.assertNotIn('<a ', pre)
@@ -745,11 +747,11 @@ class Build(unittest.TestCase):
                 _, found, page_tagged = ref_html(self, markdown)
                 self.assertEqual([h[3] for h in found], headings)
                 self.assertEqual(page_tagged, tagged)
-                entries = reference_dir(self, {'README': '# Language reference\n', 'one': markdown})
+                entries = build.reference_pages(reference_dir(self, {'README': '# Language reference\n', 'one': markdown}))
                 page = build.reference_page(1, entries)
                 side = re.search(r'<nav class="ref-nav".*?</nav>', page, re.S)[0]
                 self.assertEqual('In development' in side, tagged)
-                self.assertNotIn('In development', re.search(r'<h1>.*?</h1>', page)[0])
+                self.assertNotIn('In development', re.search(r'<h1 id="t">.*?</h1>', page)[0])
                 shown = [bool(re.search(r'In development</span></h\d>', h)) for h in re.findall(r'<h[23] id=.*?</h[23]>', page)]
                 self.assertEqual(shown, headings)
 
@@ -763,30 +765,45 @@ class Build(unittest.TestCase):
 
     def test_milestone_check_should_fail_a_page_that_names_one(self):
         self.assertEqual(check := build.check_site(built_site(self, REF_PAGES)), [], check)
-        named = REF_PAGES | {'later': REF_PAGES['later'].replace('## Soon\n', '## Soon\n\nThis comes in M8.\n')}
-        self.assertEqual(build.check_site(built_site(self, named)), ['reference/later.html: names a milestone'])
+        for prose in ('M8', 'M**8**'):
+            with self.subTest(prose):
+                named = REF_PAGES | {'later': REF_PAGES['later'].replace('## Soon\n', f'## Soon\n\nThis comes in {prose}.\n')}
+                self.assertEqual(build.check_site(built_site(self, named)), ['reference/later.html: names a milestone'])
 
     def test_milestone_check_should_ignore_attributes_and_code(self):
         quiet = '<svg><path d="M10 3a7 7"/></svg><p>Use <code>M8</code>.</p><pre data-lang="sisu">let M8 = 1</pre>'
         self.assertEqual(problems(self, {'tour.html': PAGE.format(quiet)}), [])
-        self.assert_fails('tour.html', problems(self, {'tour.html': PAGE.format('<p>It lands in M8.</p>')}))
+        for prose in ('<p>It lands in M8.</p>', '<p>It lands in M<strong>8</strong>.</p>'):
+            with self.subTest(prose):
+                self.assert_fails('tour.html', problems(self, {'tour.html': PAGE.format(prose)}))
+        self.assertEqual(problems(self, {'tour.html': PAGE.format('<ul><li>M</li><li>8</li></ul>')}), [])
 
     def test_heading_ids_should_match_github_slugs(self):
-        markdown = '# T\n\n## The `??` operator\n\n## Examples\n\nSee [the second](#examples-1).\n\n## Examples\n\nText.\n'
+        markdown = '# T\n\n## The `??` operator\n\n## Examples\n\nSee [the second](#examples-1) and [the top](#t).\n\n## Examples\n\nText.\n'
         body, headings, _ = ref_html(self, markdown)
         self.assertEqual([h[1] for h in headings], ['the--operator', 'examples', 'examples-1'])
         self.assertIn('<h2 id="the--operator">The <code>??</code> operator</h2>', body)
-        self.assertEqual(build.check_site(built_site(self, {'README': '# Language reference\n', 'ops': markdown})), [])
+        out = built_site(self, {'README': '# Language reference\n\nSee [T](ops.md#t).\n', 'ops': markdown})
+        self.assertEqual(build.check_site(out), [])
+        self.assertIn('<h1 id="t">T</h1>', (out / 'reference/ops.html').read_text(encoding='utf-8'))
 
     def test_heading_count_mismatch_should_fail_the_build(self):
         nested = f'# T\n\n````text\n{FENCE}\n````\n\n## Next\n\n{FENCE}text\nx\n{FENCE}\n'
         self.assertEqual([h[:2] for h in ref_html(self, nested)[1]], [(2, 'next')])
         with self.assertRaisesRegex(build.BuildError, 'heading'):
             ref_html(self, '# T\n\nSetext\n------\n')
-        # The Overview reads every page for its sidebar, and the fault names the page that holds it.
+        # The pages are read and rendered once, and the fault names the page that holds it.
         entries = reference_dir(self, {'README': '# Language reference\n', 'bad': '# T\n\nSetext\n------\n'})
         with self.assertRaisesRegex(build.BuildError, r'^docs/reference/bad\.md: .*heading'):
-            build.reference_page(0, entries)
+            build.reference_pages(entries)
+
+    def test_example_caption_should_read_the_info_string_as_the_test_does(self):
+        cases = [('sisu args="a b"', './example a b'), ('sisu args="a\\*b"', './example a*b'), ('sisu args="\\"', './example'),
+                 ('sisu  pending', 'In development')]
+        for info, caption in cases:
+            with self.subTest(info):
+                body = ref_html(self, f'# T\n\n{FENCE}{info}\nfn main() {{}}\n{FENCE}\n')[0]
+                self.assertEqual(re.findall(r'<figcaption class="cap">(.*?)</figcaption>', body), [caption])
 
     def test_reference_links_should_become_site_links(self):
         cases = [('literals.md#escapes', 'literals.html#escapes'), ('../diagnostics/E0008.md', '../diagnostics/E0008.html'),
@@ -797,13 +814,12 @@ class Build(unittest.TestCase):
                 body = ref_html(self, f'# T\n\nSee [it]({href}).\n')[0]
                 self.assertEqual(re.findall(r'<a href="([^"]*)">it</a>', body), [want])
 
-    def test_overview_should_have_a_card_for_each_page(self):
-        entries = reference_dir(self, REF_PAGES)
+    def test_overview_should_have_a_card_for_each_other_page(self):
+        entries = build.reference_pages(reference_dir(self, REF_PAGES))
         page = build.reference_page(0, entries)
         cards = re.search(r'<ul class="cards">.*?</ul>', page, re.S)[0]
         self.assertEqual(re.findall(r'<li><a href="([^"]*)"><b>(.*?)</b><span>(.*?)</span></a></li>', cards),
-                         [('index.html', 'Language reference', 'About README.'), ('literals.html', 'Literals', 'About literals.'),
-                          ('later.html', 'Later', 'About later.')])
+                         [('literals.html', 'Literals', 'About literals.'), ('later.html', 'Later', 'About later.')])
         self.assertNotIn('class="cards"', build.reference_page(1, entries))
 
 
