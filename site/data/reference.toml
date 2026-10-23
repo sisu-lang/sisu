@@ -5,3 +5,7 @@ description = "How the language reference is organized and how to read it."
 [[page]]
 file = "lexical"
 description = "Source text, comments, names, keywords, line breaks and semicolons."
+
+[[page]]
+file = "literals"
+description = "Integer, float, character, string and boolean literals, and their escapes."
