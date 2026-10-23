@@ -176,10 +176,13 @@ fn splitmix64(state: &mut u64) -> u64 {
 /// The program's syntax tree and typed tree, after asserting it checks without an error.
 fn checked(source: &str) -> (ast::Program, tir::Program) {
     let (program, diagnostics) = front_end(source);
-    // An unused loop label would be a label no rule meant to write.
+    // An unused loop label would be a label no rule meant to write, and every generated
+    // function returns, so none may call itself on every path.
     let errors: Vec<String> = diagnostics
         .iter()
-        .filter(|d| d.severity() == Severity::Error || d.code().as_str() == "W0008")
+        .filter(|d| {
+            d.severity() == Severity::Error || matches!(d.code().as_str(), "W0008" | "W0010")
+        })
         .map(|d| {
             let before = &source[..d.span().start()];
             let line = 1 + before.matches('\n').count();

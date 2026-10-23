@@ -14,6 +14,7 @@ mod operator;
 mod pattern;
 mod place;
 mod prelude;
+mod recursion;
 mod stmt;
 mod string;
 
@@ -334,12 +335,41 @@ pub(crate) fn check<'src>(
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
     let functions: Vec<_> = declared
-        .into_iter()
+        .iter()
         .enumerate()
-        .map(|(i, (f, owner))| checker.function(f, tir::FuncId(i), owner))
+        .map(|(i, &(f, owner))| checker.function(f, tir::FuncId(i), owner))
         .collect();
     let classes = checker.classes.iter().map(lower_class).collect();
     let mut diagnostics = checker.diagnostics;
+    diagnostics.sort_by_key(|d| d.span().start());
+    // A function with an error of its own is skipped, so that its errors stand alone.
+    let warnings: Vec<Diagnostic> = functions
+        .iter()
+        .enumerate()
+        .filter_map(|(i, function)| {
+            let (f, owner) = declared[i];
+            let function = function.as_ref()?;
+            if has_error_in(&diagnostics, f.span) {
+                return None;
+            }
+            let calls = recursion::unconditional(function, tir::FuncId(i))?;
+            let kind = if owner.is_some() {
+                Definition::Method
+            } else {
+                Definition::Function
+            };
+            Some(
+                DiagnosticKind::UnconditionalRecursion {
+                    kind,
+                    name: f.name.name.to_string(),
+                    at: f.name.span,
+                    calls,
+                }
+                .into(),
+            )
+        })
+        .collect();
+    diagnostics.extend(warnings);
     diagnostics.sort_by_key(|d| d.span().start());
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
     let broken = !program.broken.is_empty()
@@ -365,6 +395,16 @@ pub(crate) fn check<'src>(
         "a missing program implies an error diagnostic or a broken item or method"
     );
     (program, diagnostics)
+}
+
+/// Whether an error with a non-empty span starts inside `span`. `diagnostics` is sorted by span
+/// start. `NoMain`'s empty span at offset 0 is not inside the function that starts the file.
+fn has_error_in(diagnostics: &[Diagnostic], span: Span) -> bool {
+    let first = diagnostics.partition_point(|d| d.span().start() < span.start());
+    diagnostics[first..]
+        .iter()
+        .take_while(|d| d.span().start() < span.end())
+        .any(|d| d.severity() == Severity::Error && d.span().start() < d.span().end())
 }
 
 /// The class, unless a field's type is `Error`.

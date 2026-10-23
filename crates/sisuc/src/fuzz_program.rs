@@ -263,23 +263,27 @@ fn judge_source(
     }
 }
 
-/// Properties 1 and 2: `source` checks with no error, and its MIR certifies and its module
-/// verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
+/// Properties 1 and 2: `source` checks with no error and no W0010, and its MIR certifies and its
+/// module verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
 fn checked(name: &str, source: &str) -> Result<Program, Failure> {
     let (program, diagnostics) = front_end::front_end(source);
-    let Some(program) = program else {
+    let failure = |what: String| {
         let mut out = Vec::new();
         let mut reporter = Reporter::new(&mut out, Format::Text, false);
         reporter.diagnostics(&format!("{name}.sisu"), source, &diagnostics);
         reporter.finish();
-        return Err(Failure {
+        Failure {
             property: 1,
-            detail: format!(
-                "the checker rejects the {name}\n{}",
-                String::from_utf8_lossy(&out)
-            ),
-        });
+            detail: format!("{what}\n{}", String::from_utf8_lossy(&out)),
+        }
     };
+    let Some(program) = program else {
+        return Err(failure(format!("the checker rejects the {name}")));
+    };
+    // Every generated function returns, so none may call itself on every path.
+    if diagnostics.iter().any(|d| d.code().as_str() == "W0010") {
+        return Err(failure(format!("the checker reports W0010 on the {name}")));
+    }
     fuzz::assert_compiles(&program, source);
     Ok(program)
 }

@@ -158,6 +158,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [W0007](W0007.md) | warning | unnecessary `;` |
 | [W0008](W0008.md) | warning | loop label that is never used |
 | [W0009](W0009.md) | warning | `while` with the condition `true` |
+| [W0010](W0010.md) | warning | function that calls itself on every path |
 
 ## Explanations
 

@@ -14,6 +14,7 @@ mod for_loops;
 mod patterns;
 mod places;
 mod prelude;
+mod recursion;
 mod shadowing;
 mod strings;
 mod u8;
@@ -2656,7 +2657,7 @@ fn may_be_none_in_an_assignment_target_has_no_fix() {
 /// `n.next` keeps the `?.` unsafe fix. Each row is a statement where `n` is an `N`; the last is an
 /// argument inside an index.
 #[test]
-fn may_be_none_in_an_operand_of_an_assignment_target_keeps_its_fix() {
+fn may_be_none_should_keep_its_fix_in_an_argument_or_index_of_an_assignment_target() {
     for stmt in [
         "n.at(n.next.v).v = 1",
         "xs[n.next.v].v = 1",
@@ -2664,7 +2665,7 @@ fn may_be_none_in_an_operand_of_an_assignment_target_keeps_its_fix() {
         "xs[n.at(n.next.v).v].v = 1",
     ] {
         let src = format!(
-            "class N {{\n    mut v: i64\n    next: N?\n    fn at(self, i: i64) -> N {{\n        self\n    }}\n}}\nfn g(i: i64) -> N {{ g(i) }}\nfn f(n: N, xs: [N]) {{\n    {stmt}\n}}\nfn main() {{}}"
+            "class N {{\n    mut v: i64\n    next: N?\n    fn at(self, i: i64) -> N {{\n        self\n    }}\n}}\nfn g(i: i64) -> N {{ N(v: i, next: None) }}\nfn f(n: N, xs: [N]) {{\n    {stmt}\n}}\nfn main() {{}}"
         );
         let col = 5 + stmt.find("n.next").expect("each row reads `n.next`");
         let d = diagnostic(&src, Code::MayBeNone, (10, col, "n.next"), &[]);
