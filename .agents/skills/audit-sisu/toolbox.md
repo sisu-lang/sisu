@@ -161,5 +161,5 @@ A reference implementation (Python or Rust) used as an oracle must keep
 Sisu's semantics: `i64` and `u8` arithmetic that panics on overflow,
 division and remainder that panic on 0 and on `i64::MIN / -1`, bounds
 checks, and left-to-right evaluation. On a panic it prints the same stdout
-first and exits 101. `generated_arithmetic_matches_rust` in
+first and exits 101. `generated_arithmetic_should_print_what_rust_computes` in
 `crates/sisuc/tests/programs.rs` does this with `checked_*` operations.

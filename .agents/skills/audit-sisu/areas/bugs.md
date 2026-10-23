@@ -14,7 +14,7 @@ correct.
 ## Oracles
 
 - **Differential.** Plain and `-O2` builds print the same bytes and exit with the same code. Two builds of one file give byte-identical `--emit ir-raw` text and executables.
-- **Reference.** The same computation in Python or Rust, with Sisu's semantics as the toolbox's "Program generation" requires. `generated_arithmetic_matches_rust` in `crates/sisuc/tests/programs.rs` does this for arithmetic; extend it to control flow, arrays, objects and optionals.
+- **Reference.** The same computation in Python or Rust, with Sisu's semantics as the toolbox's "Program generation" requires. `generated_arithmetic_should_print_what_rust_computes` in `crates/sisuc/tests/programs.rs` does this for arithmetic; extend it to control flow, arrays, objects and optionals.
 - **Rewrites.** Two programs that must print the same: a `for` written as a `while`, an expression moved into a function, a `let` added for a value used once. A rewrite must keep the number, order and scope of evaluations, and every `break`, `continue` and `return` target. Swap the operands of `==` only when both are free of effects and panics.
 
 ## Probes

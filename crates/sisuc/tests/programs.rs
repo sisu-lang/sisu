@@ -60,10 +60,11 @@ const SMALL_STACK: [&str; 10] = [
     "tailpass",
 ];
 
-/// `tests/programs` holds exactly the `SMALL_STACK` programs; every other program is a case in
-/// `tests/run` or `tests/run-fail`.
+/// GIVEN the `tests/programs` directory
+/// WHEN its files are listed
+/// THEN they are exactly the `.sisu` files of the `SMALL_STACK` programs
 #[test]
-fn programs_dir_holds_only_small_stack_programs() {
+fn programs_directory_should_hold_only_the_small_stack_programs() {
     let mut files: Vec<String> = fs::read_dir(PROGRAMS)
         .expect("tests/programs should be readable")
         .map(|entry| entry.expect("a directory entry should be readable").path())
@@ -143,15 +144,21 @@ fn extra_allocs(name: &str, o2: bool) -> (String, String, i64) {
     (stdout, base_stdout, extra)
 }
 
+/// GIVEN a Valgrind summary line `total heap usage: 1,004 allocs`
+/// WHEN `allocs_in` reads it
+/// THEN it returns 1004
 #[test]
-fn allocs_in_reads_grouped_counts() {
+fn allocs_in_should_read_a_count_with_thousands_separators() {
     let stderr = "==1== total heap usage: 1,004 allocs, 1,004 frees, 9 bytes allocated";
     assert_eq!(allocs_in(stderr), 1004);
 }
 
+/// GIVEN Valgrind output that has no `total heap usage` line
+/// WHEN `allocs_in` reads it
+/// THEN it panics and names the missing line
 #[test]
 #[should_panic(expected = "no `total heap usage` line")]
-fn allocs_in_panics_without_the_summary_line() {
+fn allocs_in_should_panic_when_the_summary_line_is_missing() {
     allocs_in("==1== All heap blocks were freed -- no leaks are possible");
 }
 
@@ -251,19 +258,29 @@ fn assert_small_stack_prints(name: &str, expected: &str) {
     assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
 }
 
+/// GIVEN the `longlist` program, which builds a list of 1 000 000 nodes
+/// WHEN it runs under a 256 KiB stack
+/// THEN it exits 0 and prints 1000000
 #[test]
-fn longlist_frees_in_constant_stack() {
+fn longlist_should_free_a_million_nodes_in_a_small_stack() {
     assert_small_stack_prints("longlist", "1000000\n");
 }
 
+/// GIVEN the `rightskew` program, which builds a right-skewed tree of 1 000 000 nodes
+/// WHEN it runs under a 256 KiB stack
+/// THEN it exits 0 and prints 1000000
 #[test]
-fn right_skewed_tree_frees_in_constant_stack() {
+fn rightskew_should_free_a_million_node_tree_in_a_small_stack() {
     assert_small_stack_prints("rightskew", "1000000\n");
 }
 
+/// GIVEN the `eqlist` program, which compares two lists of 1 000 000 nodes
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `true` twice
+///
 /// `==` on two lists of 1 000 000 nodes, with the chain field last and first, at both levels.
 #[test]
-fn equal_long_lists_compare_in_constant_stack() {
+fn equal_long_lists_should_compare_in_a_small_stack() {
     for o2 in [false, true] {
         let out = run_in_small_stack_at("eqlist", o2);
         assert_eq!(out.status.code(), Some(0), "-O2 {o2}: {:?}", out.status);
@@ -280,34 +297,54 @@ fn assert_small_stack_prints_at_both(name: &str, expected: &str) {
     }
 }
 
+/// GIVEN the `enumlist` program, which builds a right-deep enum list of 1 000 000 cells
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints 1000000
+///
 /// A right-deep enum list of 1 000 000 cells frees its boxes from the pending list.
 #[test]
-fn enum_list_frees_in_constant_stack() {
+fn enum_list_should_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("enumlist", "1000000\n");
 }
 
+/// GIVEN the `enumfold` program, which builds a left-deep fold of 1 000 000 `Add`s
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints 1000000
+///
 /// A left-deep fold of 1 000 000 `Add`s frees its boxes from the pending list.
 #[test]
-fn enum_fold_frees_in_constant_stack() {
+fn enum_fold_should_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("enumfold", "1000000\n");
 }
 
+/// GIVEN the `enummutual` program, which holds two chains through two enums that hold each other
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints 1000000 and `true`
+///
 /// Two chains through two enums that hold each other compare with `==` and free in one frame.
 #[test]
-fn mutual_enums_compare_and_free_in_constant_stack() {
+fn mutual_enums_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("enummutual", "1000000\ntrue\n");
 }
 
+/// GIVEN the `enumeq` program, which compares two pairs of enum lists of 1 000 000 cells
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `true` and `false`
+///
 /// `==` on two pairs of 1 000 000-cell enum lists loops on the tail.
 #[test]
-fn equal_enum_lists_compare_in_constant_stack() {
+fn equal_enum_lists_should_compare_in_a_small_stack() {
     assert_small_stack_prints_at_both("enumeq", "true\nfalse\n");
 }
 
-/// The control for `longlist_frees_in_constant_stack`: a drop that recurses once per object
-/// overflows the same stack, so the limit is in force.
+/// GIVEN the `deepchain` program, whose drop recurses once per object
+/// WHEN it runs under a 256 KiB stack
+/// THEN it dies by signal 11 and prints nothing
+///
+/// The control for `longlist_should_free_a_million_nodes_in_a_small_stack`: a drop that
+/// recurses once per object overflows the same stack, so the limit is in force.
 #[test]
-fn deepchain_overflows_the_same_stack() {
+fn deepchain_should_overflow_the_small_stack() {
     let out = run_in_small_stack("deepchain");
     assert_eq!(out.status.signal(), Some(11), "{:?}", out.status);
     // It dies in the drop, after `print`, but stdout is a pipe and so block-buffered: the
@@ -324,23 +361,35 @@ fn assert_small_stack_prints_at_o2(name: &str, expected: &str) {
     assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
 }
 
+/// GIVEN the `tailfresh` program, with 100 000 tail calls that each pass a fresh string
+/// WHEN it is built with `-O2` and runs under a 256 KiB stack
+/// THEN it exits 0 and prints 100000
+///
 /// The tail rule: `walk` owns the fresh string it hands itself, so the caller releases nothing
 /// after the call, and `-O2` makes 100 000 tail calls a loop.
 #[test]
-fn tail_call_with_a_fresh_string_runs_in_a_small_stack() {
+fn tail_call_with_a_fresh_string_should_run_in_a_small_stack() {
     assert_small_stack_prints_at_o2("tailfresh", "100000\n");
 }
 
+/// GIVEN the `tailpass` program, whose tail call passes a borrowed string on
+/// WHEN it is built with `-O2` and runs under a 256 KiB stack
+/// THEN it exits 0 and prints 2
+///
 /// `walk` passes its borrowed string on as it is, so its tail call stays a tail call.
 #[test]
-fn tail_call_passing_a_borrowed_string_runs_in_a_small_stack() {
+fn tail_call_with_a_borrowed_string_should_run_in_a_small_stack() {
     assert_small_stack_prints_at_o2("tailpass", "2\n");
 }
 
+/// GIVEN the `tailpass` program with 100 000 nested calls
+/// WHEN it is built without `-O2` and runs under a 256 KiB stack
+/// THEN it dies by signal 11 and prints nothing
+///
 /// The control for the two tail-call tests: without `-O2`, no call is a tail call, and 100 000
 /// frames overflow the same stack.
 #[test]
-fn tail_calls_overflow_the_same_stack_without_optimization() {
+fn tail_calls_should_overflow_the_small_stack_without_optimization() {
     let out = run_in_small_stack("tailpass");
     assert_eq!(out.status.signal(), Some(11), "{:?}", out.status);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "");
@@ -433,7 +482,7 @@ panic_cases! {
     // 16 + 9_223_372_036_854_775_791 bytes is exactly `i64::MAX`, above the largest
     // size that rounds up to the alignment of 8 within it.
     length_too_large => fill_case("false", "9_223_372_036_854_775_791", 22),
-    // The smallest length past `largest_array_reaches_the_allocator`'s: 16 +
+    // The smallest length past `largest_array_should_reach_the_allocator_and_abort`'s: 16 +
     // 9_223_372_036_854_775_785 is `i64::MAX - 6`, which rounds up to 2^63.
     one_too_large => fill_case("false", "9_223_372_036_854_775_785", 22),
     // 2^62 * 8 bytes overflows the multiply.
@@ -488,13 +537,18 @@ fn fill_case(value: &str, len: &str, col: usize) -> (String, String) {
     )
 }
 
+/// GIVEN a program that makes the largest array that the size checks allow
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it dies by signal 6 and its first stderr line says that the allocation of
+/// 9223372036854775800 bytes failed
+///
 /// The largest block the size checks allow, `i64::MAX` rounded down to the alignment of 8,
 /// passes them and reaches the allocator, which cannot provide it: `sisu_alloc` calls
 /// `handle_alloc_error` rather than aborting on an invalid layout, which prints nothing. The
 /// program loops over the elements: LLVM cannot work out the loads from the fill, so the allocation
 /// stays at `-O2`, while a single `xs[0]` read lets it vanish.
 #[test]
-fn largest_array_reaches_the_allocator() {
+fn largest_array_should_reach_the_allocator_and_abort() {
     // 16 + 9_223_372_036_854_775_784 bytes is 9_223_372_036_854_775_800.
     let source = "fn main() {\n    let xs = [false; 9_223_372_036_854_775_784]\n    let mut k = 0\n    for x in xs { if x { k += 1 } }\n    print(k)\n}\n";
     for o2 in [false, true] {
@@ -512,11 +566,12 @@ fn largest_array_reaches_the_allocator() {
     }
 }
 
-/// `sisu build` links the runtime `--allocator` names: mimalloc by default, which writes
-/// `mimalloc:` lines to stderr under `MIMALLOC_VERBOSE=1`, and with `system` a runtime that
-/// holds no mimalloc.
+/// GIVEN a program built by default and a program built with `--allocator system`
+/// WHEN each runs with `MIMALLOC_VERBOSE=1`
+/// THEN both exit 0 and print 1
+/// AND only the default build writes `mimalloc:` lines to stderr
 #[test]
-fn allocator_flag_picks_the_archive() {
+fn allocator_flag_should_pick_the_runtime_archive() {
     let source = "fn main() {\n    print(1)\n}\n";
     let default = compile_tmp("allocator_default", source, false);
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
@@ -553,14 +608,16 @@ fn allocator_flag_picks_the_archive() {
 const STDOUT_WRITE_PANIC: &str =
     "sisu: panic: standard output could not be written: No space left on device (os error 28)\n";
 
-/// A failed write in `print` of an `i64` or a `bool` is a Sisu panic: one stderr line, exit
-/// code 101, no Rust panic text and no abort.
+/// GIVEN a program that prints an `i64` or a `bool`
+/// AND standard output is `/dev/full`
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 101 and writes only the Sisu panic line about standard output to stderr
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "writes to /dev/full, which only Linux has"
 )]
-fn print_to_a_full_stdout_panics_with_exit_101() {
+fn print_should_panic_with_exit_101_when_stdout_is_full() {
     for (name, arg) in [("print_full_int", "1"), ("print_full_bool", "true")] {
         let source = format!("fn main() {{\n    print({arg})\n}}\n");
         for o2 in [false, true] {
@@ -585,11 +642,16 @@ fn broken_pipe() -> std::io::PipeWriter {
     writer
 }
 
+/// GIVEN a program that panics on an index out of bounds
+/// AND standard error is a pipe with no reader
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 101
+///
 /// A Sisu panic whose stderr has no reader still exits 101: the runtime ignores SIGPIPE
 /// before it writes the panic line. This runs a compiled program, because the libtest child
 /// of a runtime unit test starts with SIGPIPE ignored already.
 #[test]
-fn panic_exits_101_when_stderr_is_a_closed_pipe() {
+fn panic_should_exit_101_when_stderr_is_a_closed_pipe() {
     let source = "fn main() {\n    let xs = [1, 2]\n    let i = 2\n    print(xs[i])\n}\n";
     for o2 in [false, true] {
         let status = Command::new(compile_tmp("panic_closed_stderr", source, o2))
@@ -600,10 +662,15 @@ fn panic_exits_101_when_stderr_is_a_closed_pipe() {
     }
 }
 
+/// GIVEN a program that prints 1
+/// AND standard output is a pipe with no reader
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it dies by signal 13
+///
 /// Standard output with no reader keeps the default SIGPIPE action: the program dies by
 /// signal 13, as a C program does.
 #[test]
-fn print_into_a_closed_stdout_pipe_dies_by_sigpipe() {
+fn print_should_die_by_sigpipe_when_stdout_is_a_closed_pipe() {
     let source = "fn main() {\n    print(1)\n}\n";
     for o2 in [false, true] {
         let status = Command::new(compile_tmp("print_closed_stdout", source, o2))
@@ -631,9 +698,14 @@ fn run_with_merged_output(exe: &Path) -> (std::process::ExitStatus, String) {
     (child.wait().expect("the program ends"), merged)
 }
 
+/// GIVEN a program that prints 1 and `true`, then reads an array past its end
+/// WHEN it runs with standard output and standard error on one pipe, with and without `-O2`
+/// THEN it exits 101
+/// AND the pipe holds `1`, `true` and then the panic line, in that order
+///
 /// Buffered `print` lines come out before the panic line, in order.
 #[test]
-fn prints_then_a_panic_flush_stdout_before_the_panic_line() {
+fn panic_should_flush_printed_lines_before_the_panic_line() {
     let source = "fn main() {\n    let xs = [1, 2]\n    let i = 2\n    print(1)\n    print(true)\n    print(xs[i])\n}\n";
     for o2 in [false, true] {
         let (status, merged) =
@@ -652,10 +724,15 @@ fn prints_then_a_panic_flush_stdout_before_the_panic_line() {
     }
 }
 
+/// GIVEN a program that prints 1 and `true`, then calls `panic("x")`
+/// WHEN it runs with standard output and standard error on one pipe, with and without `-O2`
+/// THEN it exits 101
+/// AND the pipe holds `1`, `true` and then the panic line, in that order
+///
 /// A `panic` call flushes the buffered `print` lines before its panic line, as a run-time
 /// panic does.
 #[test]
-fn prints_then_panic_call_flushes_stdout_first() {
+fn panic_call_should_flush_printed_lines_before_the_panic_line() {
     let source = "fn main() {\n    print(1)\n    print(true)\n    panic(\"x\")\n}\n";
     for o2 in [false, true] {
         let (status, merged) =
@@ -668,6 +745,11 @@ fn prints_then_panic_call_flushes_stdout_first() {
     }
 }
 
+/// GIVEN a program that prints three values and ends normally
+/// AND standard output is `/dev/full`
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 101 and writes only one panic line to stderr
+///
 /// Output is buffered: only the final flush at the end of `main` fails, and it ends the
 /// program with the one panic line, not a second error when the process exits.
 #[test]
@@ -675,7 +757,7 @@ fn prints_then_panic_call_flushes_stdout_first() {
     not(target_os = "linux"),
     ignore = "writes to /dev/full, which only Linux has"
 )]
-fn prints_then_a_normal_exit_into_a_full_stdout_panics_once() {
+fn final_flush_should_panic_once_when_stdout_is_full() {
     let source = "fn main() {\n    print(1)\n    print(false)\n    print(3)\n}\n";
     for o2 in [false, true] {
         let full = File::options()
@@ -691,10 +773,15 @@ fn prints_then_a_normal_exit_into_a_full_stdout_panics_once() {
     }
 }
 
+/// GIVEN a program that prints 1
+/// AND standard output is closed
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 0 and writes nothing to stderr
+///
 /// A closed standard output drops what `print` writes and the program exits 0, as with
 /// `println!`.
 #[test]
-fn print_to_a_closed_stdout_is_dropped() {
+fn print_should_be_dropped_when_stdout_is_closed() {
     let source = "fn main() {\n    print(1)\n}\n";
     for o2 in [false, true] {
         let out = Command::new("sh")
@@ -707,9 +794,14 @@ fn print_to_a_closed_stdout_is_dropped() {
     }
 }
 
+/// GIVEN a program that prints 1, calls `eprint(2)` and prints 3
+/// AND standard error is closed
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 0 and prints 1 and 3 to stdout
+///
 /// A closed standard error drops what `eprint` writes and the program exits 0.
 #[test]
-fn eprint_to_a_closed_stderr_is_dropped() {
+fn eprint_should_be_dropped_when_stderr_is_closed() {
     let source = "fn main() {\n    print(1)\n    eprint(2)\n    print(3)\n}\n";
     for o2 in [false, true] {
         let out = Command::new("sh")
@@ -722,9 +814,14 @@ fn eprint_to_a_closed_stderr_is_dropped() {
     }
 }
 
+/// GIVEN a program that prints 1 and then calls `panic("x")`
+/// AND standard error is closed
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 101 and prints 1 to stdout
+///
 /// A `panic` with a closed standard error still flushes standard output and exits 101.
 #[test]
-fn panic_with_a_closed_stderr_exits_101() {
+fn panic_should_flush_stdout_and_exit_101_when_stderr_is_closed() {
     let source = "fn main() {\n    print(1)\n    panic(\"x\")\n}\n";
     for o2 in [false, true] {
         let out = Command::new("sh")
@@ -737,10 +834,15 @@ fn panic_with_a_closed_stderr_exits_101() {
     }
 }
 
+/// GIVEN a program that calls `eprint(1)`
+/// AND standard error is a pipe with no reader
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it dies by signal 13
+///
 /// Standard error with no reader keeps the default SIGPIPE action: the program dies by
 /// signal 13, as it does for `print` on standard output.
 #[test]
-fn eprint_into_a_closed_stderr_pipe_dies_by_sigpipe() {
+fn eprint_should_die_by_sigpipe_when_stderr_is_a_closed_pipe() {
     let source = "fn main() {\n    eprint(1)\n}\n";
     for o2 in [false, true] {
         let status = Command::new(compile_tmp("eprint_closed_pipe", source, o2))
@@ -751,13 +853,18 @@ fn eprint_into_a_closed_stderr_pipe_dies_by_sigpipe() {
     }
 }
 
+/// GIVEN a program that calls `eprint(1)` and prints 2
+/// AND standard error is `/dev/full`
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 0 and prints 2 to stdout
+///
 /// A failed write to standard error (`ENOSPC`) is ignored: the program goes on and exits 0.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "writes to /dev/full, which only Linux has"
 )]
-fn eprint_to_a_full_stderr_exits_0() {
+fn eprint_should_be_ignored_when_stderr_is_full() {
     let source = "fn main() {\n    eprint(1)\n    print(2)\n}\n";
     for o2 in [false, true] {
         let full = File::options()
@@ -773,10 +880,14 @@ fn eprint_to_a_full_stderr_exits_0() {
     }
 }
 
+/// GIVEN a program that prints 1 and then calls `eprint(2)`
+/// WHEN it runs with standard output and standard error on one pipe, with and without `-O2`
+/// THEN it exits 0 and the pipe holds `2` before `1`
+///
 /// `eprint` does not flush standard output first: on one pipe the `eprint` line comes before an
 /// earlier `print` line, which waits for the exit.
 #[test]
-fn eprint_is_not_held_behind_stdout() {
+fn eprint_should_not_wait_for_earlier_print_lines() {
     let source = "fn main() {\n    print(1)\n    eprint(2)\n}\n";
     for o2 in [false, true] {
         let (status, merged) = run_with_merged_output(&compile_tmp("eprint_order", source, o2));
@@ -806,10 +917,14 @@ fn generated_lines(total: usize) -> Vec<u8> {
 const ECHO_ARGS: &str =
     "fn main(args: [string]) {\n    for a in args {\n        print(a)\n    }\n}\n";
 
+/// GIVEN a line of input and an argument that each hold an invalid UTF-8 byte
+/// WHEN programs that echo them are built and run, with and without `-O2`
+/// THEN both exit 0 and print the three bytes of `U+FFFD` for the invalid byte
+///
 /// An invalid byte in a line of input, or in an argument, comes back as the three bytes of
 /// `U+FFFD`, which a `.out` file, read through `from_utf8_lossy`, cannot tell from the raw byte.
 #[test]
-fn invalid_utf8_is_repaired_byte_for_byte() {
+fn invalid_utf8_should_become_the_replacement_character_in_input_and_arguments() {
     for o2 in [false, true] {
         let exe = compile_tmp("echo_repair", ECHO, o2);
         let out = support::Invocation::new(b"a\xFFb\n".to_vec(), Vec::new()).run(&exe, false);
@@ -823,9 +938,14 @@ fn invalid_utf8_is_repaired_byte_for_byte() {
     }
 }
 
+/// GIVEN a program that prints each of its arguments
+/// AND the argument `two words`
+/// WHEN it runs with that argument, with and without `-O2`
+/// THEN it exits 0 and prints `two words` as one line
+///
 /// An argument holding a space, which a `// args:` line cannot pass, stays one argument.
 #[test]
-fn args_keep_spaces() {
+fn argument_with_a_space_should_stay_one_argument() {
     for o2 in [false, true] {
         let exe = compile_tmp("echo_args_spaces", ECHO_ARGS, o2);
         let out = support::Invocation::new(Vec::new(), vec!["two words".into()]).run(&exe, false);
@@ -834,11 +954,16 @@ fn args_keep_spaces() {
     }
 }
 
+/// GIVEN a program that echoes its input
+/// AND input of several buffers, with a line longer than one buffer
+/// WHEN it runs under Valgrind, with and without `-O2`
+/// THEN it exits 0 and prints the input unchanged
+///
 /// A line longer than the runtime's 8 KiB input buffer, input of several buffers, and a `€`
 /// at bytes 8191..8194 (across the first buffer's end when the first read fills it) all come
 /// back whole, with no memory error. The `Lines` unit tests force the split itself.
 #[test]
-fn read_line_refills_its_buffer() {
+fn read_line_should_return_long_lines_whole_across_buffer_refills() {
     let mut first = "a".repeat(8191) + "€";
     first += &"b".repeat(20_000 - first.len());
     let mut input = first.into_bytes();
@@ -854,12 +979,17 @@ fn read_line_refills_its_buffer() {
     }
 }
 
+/// GIVEN a line of 2 MiB that holds a million words
+/// WHEN two programs read it, one that keeps `line.words()` in a local and one that counts it, with
+/// and without `-O2`
+/// THEN both exit 0 and print 1048576
+///
 /// A line of 2 MiB holds a million words, each found from where the last one ended. A split
 /// that rescanned from the start of the line would take far longer than the test's timeout.
 /// Both forms run: a `[string]` kept in a local is built word by word, and
 /// `line.words().len()` only counts.
 #[test]
-fn words_is_linear() {
+fn words_should_count_a_million_words_in_a_two_mebibyte_line() {
     let built = "fn main() {\n    if let line = read_line() {\n        let ws = line.words()\n        print(ws.len())\n    }\n}\n";
     let counted = "fn main() {\n    if let line = read_line() {\n        print(line.words().len())\n    }\n}\n";
     let input = "a ".repeat(1 << 20).into_bytes();
@@ -873,10 +1003,15 @@ fn words_is_linear() {
     }
 }
 
+/// GIVEN a program that echoes its input
+/// AND 1 MiB of input, which is more than a pipe holds
+/// WHEN it runs, with and without `-O2`
+/// THEN it exits 0 and prints the input unchanged
+///
 /// More input than a pipe holds reaches the program while the harness reads its output, so
 /// neither side waits on the other.
 #[test]
-fn stdin_larger_than_a_pipe() {
+fn stdin_larger_than_a_pipe_should_come_back_whole() {
     let input = generated_lines(1 << 20);
     for o2 in [false, true] {
         let exe = compile_tmp("echo_large", ECHO, o2);
@@ -886,10 +1021,15 @@ fn stdin_larger_than_a_pipe() {
     }
 }
 
+/// GIVEN a program that reads one line and ends
+/// AND 1 MiB of input
+/// WHEN it runs, with and without `-O2`
+/// THEN it exits 0 and prints the first line
+///
 /// A program that exits before it reads all its input ends normally; the harness ignores
 /// the failed write of the rest.
 #[test]
-fn program_exiting_before_its_input_ends() {
+fn program_exiting_before_its_input_ends_should_exit_normally() {
     let source = "fn main() {\n    print(read_line() ?? \"none\")\n}\n";
     let input = generated_lines(1 << 20);
     for o2 in [false, true] {
@@ -900,9 +1040,14 @@ fn program_exiting_before_its_input_ends() {
     }
 }
 
+/// GIVEN a program that calls `read_line`
+/// AND standard input is a directory
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 101 and writes only a panic line that has no location
+///
 /// A failed read (`EISDIR`) is a panic with no location.
 #[test]
-fn read_line_from_a_directory_panics() {
+fn read_line_should_panic_without_a_location_when_stdin_is_a_directory() {
     let source = "fn main() {\n    print(read_line() ?? \"none\")\n}\n";
     for o2 in [false, true] {
         let dir = File::open(env!("CARGO_TARGET_TMPDIR")).expect("opens the directory");
@@ -918,9 +1063,14 @@ fn read_line_from_a_directory_panics() {
     }
 }
 
+/// GIVEN a program that prints `read_line() ?? "none"`
+/// AND standard input is closed
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 0 and prints `none`
+///
 /// A closed standard input is the end of input.
 #[test]
-fn read_line_from_a_closed_stdin_is_none() {
+fn read_line_should_return_none_when_stdin_is_closed() {
     let source = "fn main() {\n    print(read_line() ?? \"none\")\n}\n";
     for o2 in [false, true] {
         let out = Command::new("sh")
@@ -933,9 +1083,14 @@ fn read_line_from_a_closed_stdin_is_none() {
     }
 }
 
+/// GIVEN a program that prints 1 and leaks a cycle
+/// AND it is built with `--rc-checks`
+/// WHEN it runs with standard output and standard error on one pipe
+/// THEN it exits 102 and the pipe holds `1` and then the live-object line
+///
 /// An `--rc-checks` program that leaks exits 102 and still delivers what it printed.
 #[test]
-fn rc_checks_exit_flushes_stdout() {
+fn rc_checks_exit_should_flush_stdout() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("rc_flush.sisu"), LEAKS_A_CYCLE).expect("writes");
     let exe = dir.join("rc_flush");
@@ -945,10 +1100,16 @@ fn rc_checks_exit_flushes_stdout() {
     assert_eq!(merged, "1\nsisu: rc check: live objects at exit: 1\n");
 }
 
+/// GIVEN a program that prints 3000 lines and then dies by a stack overflow
+/// AND standard output is a pipe
+/// WHEN it runs
+/// THEN it dies by signal 11 and the pipe holds whole lines, in order, of at least 8192 bytes but
+/// not all
+///
 /// Output goes out in blocks while the program runs: a program that prints 3000 lines and
 /// then dies by a stack overflow leaves whole blocks on a pipe and loses only the tail.
 #[test]
-fn full_blocks_of_output_survive_a_crash() {
+fn full_blocks_of_output_should_survive_a_stack_overflow() {
     let source = "fn dive(n: i64) -> i64 {\n    dive(n + 1) + 1\n}\nfn main() {\n    let mut i = 0\n    while i < 3000 {\n        print(i)\n        i += 1\n    }\n    print(dive(0))\n}\n";
     let exe = compile_tmp("blocks_then_crash", source, false);
     let out = Command::new("sh")
@@ -965,13 +1126,17 @@ fn full_blocks_of_output_survive_a_crash() {
     assert!(stdout.ends_with('\n'), "{stdout:?}");
 }
 
+/// GIVEN two programs that print 1 line and 20 000 lines
+/// WHEN each runs under Valgrind
+/// THEN both make the same number of allocations
+///
 /// `print` collects its output in one buffer, however much the program prints.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
 )]
-fn print_allocates_one_buffer() {
+fn print_should_allocate_one_buffer_however_much_it_prints() {
     let program = |limit: u32| {
         format!(
             "fn main() {{\n    let mut i = 0\n    while i < {limit} {{\n        print(i)\n        i += 1\n    }}\n}}\n"
@@ -990,9 +1155,14 @@ fn print_allocates_one_buffer() {
     assert_eq!(many, one);
 }
 
+/// GIVEN a program that prints 100 000 numbers
+/// AND standard output is a file
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 0 and the file holds every number, in order
+///
 /// Enough output to fill the buffer many times arrives whole and in order.
 #[test]
-fn a_long_output_to_a_file_is_complete() {
+fn long_output_to_a_file_should_arrive_whole_and_in_order() {
     let source = "fn main() {\n    let mut i = 0\n    while i < 100_000 {\n        print(i)\n        i += 1\n    }\n}\n";
     let numbers: Vec<String> = (0..100_000).map(|i| i.to_string()).collect();
     let expected = numbers.join("\n") + "\n";
@@ -1022,13 +1192,18 @@ fn bounds_case(index: &str, message: &str) -> (String, String) {
 /// the cycle in a callee keeps the pointer out of `main`'s registers.
 const LEAKS_A_CYCLE: &str = "class Node {\n    mut next: Node?\n}\n\nfn leak() {\n    let a = Node(next: None)\n    a.next = a\n}\n\nfn main() {\n    leak()\n    print(1)\n}\n";
 
+/// GIVEN a program that leaks a cycle and prints 1
+/// WHEN it runs plain and then under Valgrind
+/// THEN the plain run exits 0 and prints 1
+/// AND Valgrind exits 1 and reports a lost block
+///
 /// Proves the harness catches a leak.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
 )]
-fn valgrind_reports_a_cycle() {
+fn valgrind_run_should_report_a_leaked_cycle() {
     let exe = compile_tmp_for_valgrind("cycle", LEAKS_A_CYCLE, false);
     let out = Command::new(&exe).output().expect("the program starts");
     assert_eq!(out.status.code(), Some(0));
@@ -1043,6 +1218,11 @@ fn valgrind_reports_a_cycle() {
     );
 }
 
+/// GIVEN a build that links mimalloc, a stripped build and a system build
+/// WHEN each runs under Valgrind
+/// THEN the first two panic with a message that names the cause
+/// AND the system build exits 0 and prints the symbol name
+///
 /// The Valgrind runs refuse a build that links mimalloc, whose blocks Valgrind cannot see, and a
 /// stripped build, whose allocator they cannot tell. The guard reads symbols, not bytes: the
 /// program prints the name of the symbol it looks for, and its system build is accepted.
@@ -1051,7 +1231,7 @@ fn valgrind_reports_a_cycle() {
     not(target_os = "linux"),
     ignore = "the guard runs with Valgrind, and Valgrind runs only on Linux"
 )]
-fn valgrind_runs_refuse_a_mimalloc_build() {
+fn valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build() {
     const PROGRAM: &str = "fn main() {\n    print(\"mi_malloc_aligned\")\n}\n";
     // Every build before any `panic_message`, so a failed compile is not taken for the guard.
     let default = compile_tmp("refuse_default", PROGRAM, false);
@@ -1096,10 +1276,15 @@ fn run_rc_checked(name: &str, source: &str, o2: bool) -> Output {
     Command::new(exe).output().expect("the program starts")
 }
 
+/// GIVEN a program that leaks a cycle and prints 1
+/// AND it is built with `--rc-checks`
+/// WHEN it runs, with and without `-O2`
+/// THEN it exits 102, prints 1, and reports one live object at exit
+///
 /// The cycle Valgrind reports, `--rc-checks` reports too, with or without `-O2`: one object is
 /// live at exit.
 #[test]
-fn rc_checks_report_a_cycle() {
+fn rc_checks_should_report_a_leaked_cycle() {
     for o2 in [false, true] {
         let out = run_rc_checked("rc_cycle", LEAKS_A_CYCLE, o2);
         assert_eq!(out.status.code(), Some(102), "o2: {o2}");
@@ -1111,9 +1296,14 @@ fn rc_checks_report_a_cycle() {
     }
 }
 
+/// GIVEN a program that holds an object and then divides by zero
+/// AND it is built with `--rc-checks`
+/// WHEN it runs
+/// THEN it exits 101 with the panic line and no live-object report
+///
 /// A panic exits 101 without releasing, so the object `b` still holds is no leak to report.
 #[test]
-fn rc_checks_ignore_a_panic() {
+fn rc_checks_should_not_report_a_leak_when_the_program_panics() {
     let out = run_rc_checked(
         "rc_panic",
         "class Box {\n    v: i64\n}\n\nfn main() {\n    let b = Box(v: 1)\n    let z = 0\n    print(1 / z)\n    print(b.v)\n}\n",
@@ -1126,12 +1316,16 @@ fn rc_checks_ignore_a_panic() {
     );
 }
 
+/// GIVEN a program that divides by zero
+/// AND standard error is `/dev/full`
+/// WHEN it is built and run
+/// THEN it exits 101
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "writes to /dev/full, which only Linux has"
 )]
-fn panic_exits_101_when_stderr_write_fails() {
+fn panic_should_exit_101_when_stderr_is_full() {
     // Writes to /dev/full fail with ENOSPC, so the runtime's panic line cannot be written.
     let full = File::options()
         .write(true)
@@ -1149,8 +1343,12 @@ fn panic_exits_101_when_stderr_write_fails() {
     assert_eq!(status.code(), Some(101));
 }
 
+/// GIVEN a source file `overwrite_input.sisu`
+/// WHEN `sisu build` gets that file, or `./overwrite_input.sisu`, as the output path
+/// THEN it exits 1 and says the output would overwrite the input
+/// AND the source file is unchanged
 #[test]
-fn output_naming_the_input_is_refused() {
+fn build_should_refuse_an_output_that_names_the_input() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let source = "fn main() {\n    print(1)\n}\n";
     let input = dir.join("overwrite_input.sisu");
@@ -1168,10 +1366,15 @@ fn output_naming_the_input_is_refused() {
     }
 }
 
+/// GIVEN a file `my prog` that has no extension, and a file `my prog.sisu`
+/// WHEN `sisu build` runs on each without `-o`
+/// THEN the first build exits 1 and leaves the file as it was
+/// AND the second build makes the executable `my prog`, which prints 1
+///
 /// Without `-o`, a file with no extension would be built over itself, and a stem with a space
 /// names the executable whole.
 #[test]
-fn build_names_the_executable_after_the_whole_stem() {
+fn build_should_name_the_executable_after_the_whole_file_stem() {
     let dir = empty_dir("build_whole_stem");
     let source = "fn main() {\n    print(1)\n}\n";
     let build = |input: &str| {
@@ -1235,8 +1438,11 @@ fn build_loops(exe: &str, flags: &[&str], path: &OsStr) -> Vec<u8> {
     fs::read(&exe).expect("reads the executable")
 }
 
+/// GIVEN the `loops` case of `tests/run`
+/// WHEN it is built with `-O3` and run
+/// THEN it exits 0 and prints the contents of `loops.out`
 #[test]
-fn o3_builds_a_program_that_runs() {
+fn o3_build_should_make_a_program_that_runs() {
     build_loops(
         "loops-O3",
         &["-O3"],
@@ -1244,6 +1450,10 @@ fn o3_builds_a_program_that_runs() {
     );
 }
 
+/// GIVEN the `loops` case of `tests/run` and `ld.lld` on `PATH`
+/// WHEN it is built with `--linker lld` and with `--linker bfd`
+/// THEN only the first executable records `Linker: LLD`
+///
 /// `--linker lld` links with LLVM's `ld.lld`, which records itself in the `.comment` section;
 /// GNU ld, which `--linker bfd` picks, does not. `cc`'s default linker varies by host, so the
 /// test names both.
@@ -1252,7 +1462,7 @@ fn o3_builds_a_program_that_runs() {
     not(target_os = "linux"),
     ignore = "reads the ELF `.comment` section and GNU ld"
 )]
-fn linker_lld_links_with_lld() {
+fn linker_flag_should_pick_the_named_linker() {
     let bin = Path::new(env!("LLVM_SYS_231_PREFIX")).join("bin");
     let path = std::env::var_os("PATH").unwrap_or_default();
     let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&path)))
@@ -1263,13 +1473,18 @@ fn linker_lld_links_with_lld() {
     assert!(!bfd.windows(11).any(|w| w == b"Linker: LLD"));
 }
 
+/// GIVEN the `loops` case of `tests/run`
+/// AND `PATH` holds only `cc` and `COMPILER_PATH` holds `ld.lld`
+/// WHEN it is built with `--linker lld`
+/// THEN it exits 0 and the executable records `Linker: LLD`
+///
 /// gcc finds a linker in `COMPILER_PATH` too, so `--linker` does not require it on `PATH`.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "links with `--linker lld`, and Apple's clang looks for `ld64.lld`, which `.llvm/23` lacks"
 )]
-fn linker_off_path_links_when_cc_finds_it() {
+fn linker_flag_should_work_when_the_linker_is_only_in_compiler_path() {
     let exe = Path::new(env!("CARGO_TARGET_TMPDIR")).join("loops-compiler-path");
     let out = support::sisu(Path::new(RUN), "loops.sisu", &exe, &["--linker", "lld"])
         .env("PATH", only_cc("only_cc_compiler_path"))
@@ -1289,10 +1504,16 @@ fn linker_off_path_links_when_cc_finds_it() {
     assert!(executable.windows(11).any(|w| w == b"Linker: LLD"));
 }
 
+/// GIVEN the `loops` case of `tests/run`
+/// AND `PATH` holds only `cc`
+/// WHEN it is built with `--linker mold`
+/// THEN it exits 1 and the first stderr line names the linker
+/// AND the output directory stays empty
+///
 /// With only `cc` on `PATH`, `cc` runs and fails to find `ld.mold` (`ld64.mold` on macOS);
 /// `sisu` names it.
 #[test]
-fn a_missing_linker_is_named() {
+fn build_should_name_a_linker_that_is_missing_from_path() {
     let empty = empty_dir("no_linker_on_path");
     let exe = empty.join("loops");
     let out = support::sisu(Path::new(RUN), "loops.sisu", &exe, &["--linker", "mold"])
@@ -1321,8 +1542,12 @@ fn assert_empty(dir: &Path) {
     assert!(left.is_empty(), "sisu left {left:?}");
 }
 
+/// GIVEN a source file and an object file of the same stem in the same directory
+/// WHEN `sisu build` runs with an empty `TMPDIR`
+/// THEN it exits 0 and the object file is unchanged
+/// AND `TMPDIR` is empty afterwards
 #[test]
-fn existing_object_file_survives_a_build() {
+fn build_should_keep_an_existing_object_file_next_to_the_source() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("keep_object.sisu"), "fn main() {}\n").expect("writes");
     fs::write(dir.join("keep_object.o"), "not sisu's").expect("writes");
@@ -1344,8 +1569,13 @@ fn existing_object_file_survives_a_build() {
     assert_empty(&tmp);
 }
 
+/// GIVEN a source file
+/// AND a linker that `cc` cannot find
+/// WHEN `sisu build` runs with an empty `TMPDIR`
+/// THEN it exits 1 and says that `cc` failed
+/// AND no object file is left in `TMPDIR` or next to the source
 #[test]
-fn failed_link_leaves_no_object_file() {
+fn failed_link_should_leave_no_object_file() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(dir.join("link_fails.sisu"), "fn main() {}\n").expect("writes");
     // With only `cc` on `PATH`, `cc` fails to find `ld.mold`, for any user.
@@ -1378,8 +1608,12 @@ fn build_tmp(name: &str, source: &str) -> (Output, PathBuf) {
     (out, exe)
 }
 
+/// GIVEN a program that assigns to an immutable binding
+/// WHEN `sisu build` runs on it
+/// THEN it exits 1 and reports error `E0001`
+/// AND no executable exists
 #[test]
-fn build_error_makes_no_executable() {
+fn build_error_should_make_no_executable() {
     let (out, exe) = build_tmp(
         "build_error_makes_no_executable",
         "fn main() {\n    let n = 0\n    n = 1\n}\n",
@@ -1389,8 +1623,12 @@ fn build_error_makes_no_executable() {
     assert!(!exe.exists());
 }
 
+/// GIVEN a program that has a `mut` binding that is never reassigned
+/// WHEN `sisu build` runs on it
+/// THEN it exits 0 and reports warning `W0002`
+/// AND the executable runs and prints 0
 #[test]
-fn build_warning_still_makes_the_executable() {
+fn build_warning_should_still_make_the_executable() {
     let (out, exe) = build_tmp(
         "build_warning_still_makes_the_executable",
         "fn main() {\n    let mut count = 0\n    print(count)\n}\n",
@@ -1438,8 +1676,12 @@ fn panic_message(f: impl FnOnce()) -> String {
         .expect("a panic message should be a string")
 }
 
+/// GIVEN a `run` case that has no `.out` file
+/// WHEN the harness runs it in bless mode
+/// THEN it panics and says to create the file empty
+/// AND it creates no `.out` file
 #[test]
-fn bless_refuses_to_create_a_missing_out() {
+fn bless_should_refuse_to_create_a_missing_out_file() {
     let dir = fixture(
         "bless_refuses_to_create_a_missing_out",
         &[("a.sisu", PRINTS_1)],
@@ -1449,8 +1691,12 @@ fn bless_refuses_to_create_a_missing_out() {
     assert!(!dir.join("a.out").exists());
 }
 
+/// GIVEN a `run` case that panics, with an empty `.out` file
+/// WHEN the harness runs it in bless mode
+/// THEN it panics and names the exit code 101
+/// AND the `.out` file stays empty
 #[test]
-fn bless_never_writes_after_a_wrong_exit() {
+fn bless_should_not_write_after_a_wrong_exit_code() {
     let dir = fixture(
         "bless_never_writes_after_a_wrong_exit",
         &[("a.sisu", PRINTS_1_THEN_PANICS), ("a.out", "")],
@@ -1463,9 +1709,13 @@ fn bless_never_writes_after_a_wrong_exit() {
     );
 }
 
+/// GIVEN a case with the marker `o2-calls: main one 1`, where `-O2` inlines `one`
+/// WHEN the harness runs it
+/// THEN it panics and says that `-O2` keeps 0 calls to `one` in `main`
+///
 /// An `o2-calls` marker fails the case when the inliner folds the call away.
 #[test]
-fn o2_calls_marker_fails_on_an_inlined_call() {
+fn o2_calls_marker_should_fail_when_the_inliner_folds_the_call_away() {
     let dir = fixture(
         "o2_calls_marker_fails_on_an_inlined_call",
         &[
@@ -1501,10 +1751,15 @@ fn o2_case(test: &str, markers: &str, body: &str, out: &str) -> PathBuf {
     )
 }
 
+/// GIVEN a case where `main` calls `outer` twice and `outer` calls `down(5)` once
+/// WHEN the harness runs it with the marker `outer down 1` and then `outer down 2`
+/// THEN the first run passes
+/// AND the second run panics and says that `-O2` keeps 1 calls to `down` in `outer`
+///
 /// A marker counts the calls in the caller's own body: `outer` keeps one call to `down`, not
 /// the two that its inlined copies in `main` add up to.
 #[test]
-fn o2_calls_marker_counts_inside_the_caller() {
+fn o2_calls_marker_should_count_calls_in_the_callers_own_body() {
     let dir = o2_case(
         "o2_calls_marker_counts_inside_the_caller_1",
         "outer down 1",
@@ -1525,10 +1780,14 @@ fn o2_calls_marker_counts_inside_the_caller() {
     );
 }
 
+/// GIVEN a case with the markers `main outer 2` and `outer down 1`
+/// WHEN the harness runs it
+/// THEN it panics and says that `-O2` keeps 0 calls to `outer` in `main`
+///
 /// Each caller gets a build of its own. Keeping `outer` for its marker must not keep it for
 /// `main`'s: a real build inlines `outer`, so `main` keeps no call to it.
 #[test]
-fn o2_calls_marker_keeps_one_caller_at_a_time() {
+fn o2_calls_marker_should_keep_one_caller_at_a_time() {
     let dir = o2_case(
         "o2_calls_marker_keeps_one_caller_at_a_time",
         "main outer 2\n// o2-calls: outer down 1",
@@ -1542,10 +1801,14 @@ fn o2_calls_marker_keeps_one_caller_at_a_time() {
     );
 }
 
+/// GIVEN a case whose marker names a caller that takes parameters
+/// WHEN the harness runs it
+/// THEN it panics and says that the caller takes parameters
+///
 /// With `outer` kept as a function of its own, `outer(n)` holds a call to `down` that its real
 /// call sites decide away, so a caller with parameters is rejected.
 #[test]
-fn o2_calls_marker_rejects_a_caller_with_parameters() {
+fn o2_calls_marker_should_reject_a_caller_with_parameters() {
     let dir = o2_case(
         "o2_calls_marker_rejects_a_caller_with_parameters",
         "outer down 1",
@@ -1560,9 +1823,13 @@ fn o2_calls_marker_rejects_a_caller_with_parameters() {
     );
 }
 
+/// GIVEN a case with the marker `main down 0`
+/// WHEN the harness runs it
+/// THEN it panics and says that the marker proves no call boundary
+///
 /// `down(0)` folds to a constant, so a count of 0 holds and proves nothing; it is rejected.
 #[test]
-fn o2_calls_marker_rejects_a_count_of_zero() {
+fn o2_calls_marker_should_reject_a_count_of_zero() {
     let dir = o2_case(
         "o2_calls_marker_rejects_a_count_of_zero",
         "main down 0",
@@ -1573,10 +1840,14 @@ fn o2_calls_marker_rejects_a_count_of_zero() {
     assert!(message.contains("proves no call boundary"), "{message}");
 }
 
+/// GIVEN a case with two `// args:` lines
+/// WHEN the harness reads its invocation
+/// THEN it panics and says that the case has more than one `// args:` line
+///
 /// A case has one argument list, so a second `// args:` line is a mistake.
 #[test]
 #[should_panic(expected = "more than one `// args:` line")]
-fn two_args_markers_fail() {
+fn case_should_fail_when_it_has_two_args_lines() {
     let dir = fixture(
         "two_args_markers_fail",
         &[("a.sisu", "// args: a\n// args: b\nfn main() {}\n")],
@@ -1584,8 +1855,12 @@ fn two_args_markers_fail() {
     support::Invocation::of(&dir.join("a.sisu"));
 }
 
+/// GIVEN a case whose marker has a misspelled caller, and a case whose marker has a misspelled
+/// callee
+/// WHEN the harness runs each
+/// THEN each panics and says that there is no function with that name
 #[test]
-fn o2_calls_marker_names_a_missing_function() {
+fn o2_calls_marker_should_name_a_function_that_does_not_exist() {
     for (test, marker, missing) in [
         (
             "o2_calls_marker_names_a_missing_caller",
@@ -1607,8 +1882,11 @@ fn o2_calls_marker_names_a_missing_function() {
     }
 }
 
+/// GIVEN a case with the marker `o2-calls: main one`, which has no count
+/// WHEN the harness runs it
+/// THEN it panics and says that the marker is not `<caller> <callee> <count>`
 #[test]
-fn o2_calls_marker_must_name_caller_callee_and_count() {
+fn o2_calls_marker_should_be_rejected_without_a_count() {
     let dir = fixture(
         "o2_calls_marker_must_name_caller_callee_and_count",
         &[
@@ -1626,13 +1904,18 @@ fn o2_calls_marker_must_name_caller_callee_and_count() {
     );
 }
 
+/// GIVEN a `run` case that leaks a cycle, with a wrong `.out` file
+/// WHEN the harness runs it in bless mode
+/// THEN it panics with the Valgrind leak summary
+/// AND the `.out` file is unchanged
+///
 /// A run that passes natively but fails under Valgrind writes nothing.
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "reads Valgrind's output, and Valgrind runs only on Linux"
 )]
-fn bless_never_writes_after_a_valgrind_failure() {
+fn bless_should_not_write_after_a_valgrind_failure() {
     let dir = fixture(
         "bless_never_writes_after_a_valgrind_failure",
         &[("a.sisu", LEAKS_A_CYCLE), ("a.out", "wrong\n")],
@@ -1645,9 +1928,14 @@ fn bless_never_writes_after_a_valgrind_failure() {
     );
 }
 
+/// GIVEN a `run_fail` case that has an `.out` file and no `.err` file
+/// WHEN the harness runs it in bless mode
+/// THEN it panics and says that the `.err` file is missing
+/// AND the `.out` file is unchanged and no `.err` file exists
+///
 /// Bless writes a `run_fail` case's files all or nothing: a missing `.err` leaves `.out` as it was.
 #[test]
-fn bless_writes_neither_file_when_one_is_missing() {
+fn bless_should_write_neither_file_when_one_is_missing() {
     let dir = fixture(
         "bless_writes_neither_file_when_one_is_missing",
         &[("a.sisu", PRINTS_1_THEN_PANICS), ("a.out", "")],
@@ -1661,9 +1949,14 @@ fn bless_writes_neither_file_when_one_is_missing() {
     assert!(!dir.join("a.err").exists());
 }
 
+/// GIVEN a diagnostics case whose program reports no diagnostic, with an empty `.err` file
+/// WHEN the harness runs it in bless mode
+/// THEN it panics and says that the program reports no diagnostic
+/// AND the `.err` file stays empty
+///
 /// A program that reports nothing is no diagnostics case, whatever its `.err` holds.
 #[test]
-fn diagnostics_rejects_a_clean_program() {
+fn diagnostics_case_should_be_rejected_when_the_program_reports_nothing() {
     let dir = fixture(
         "diagnostics_rejects_a_clean_program",
         &[("a.sisu", "fn main() {}\n"), ("a.err", "")],
@@ -1676,10 +1969,15 @@ fn diagnostics_rejects_a_clean_program() {
     );
 }
 
+/// GIVEN a `run` case with a wrong `.out` file
+/// WHEN the harness runs it without bless and then with bless
+/// THEN the first run panics and leaves the file as it was
+/// AND the second run writes the right output, and a run without bless then passes
+///
 /// Without bless a wrong `.out` fails and stays as it was; bless rewrites it, and the run then
 /// passes without bless.
 #[test]
-fn bless_rewrites_an_existing_out() {
+fn bless_should_rewrite_a_wrong_out_file() {
     let dir = fixture(
         "bless_rewrites_an_existing_out",
         &[("a.sisu", PRINTS_1), ("a.out", "wrong\n")],
@@ -1702,10 +2000,18 @@ fn bless_rewrites_an_existing_out() {
 /// A program that prints `1` and writes `2` to standard error.
 const PRINTS_1_EPRINTS_2: &str = "fn main() {\n    print(1)\n    eprint(2)\n}\n";
 
+/// GIVEN a `run` case that writes to standard error, with a wrong `.err` file, and the same program
+/// with no `.err` file
+/// WHEN the harness runs the first without bless, with bless, and without bless again, and runs the
+/// second
+/// THEN the first run panics and leaves the file, then bless writes the right text and the next run
+/// passes
+/// AND the second case panics and says that it has no `.err` file
+///
 /// A `run` case that writes to standard error needs its `.err`: a wrong one fails and stays as it
 /// was, bless rewrites it, and the run then passes. Without one the stderr must be empty.
 #[test]
-fn run_err_lifecycle() {
+fn run_case_should_check_and_bless_its_err_file() {
     let dir = fixture(
         "run_err_lifecycle",
         &[
@@ -1733,16 +2039,22 @@ fn run_err_lifecycle() {
     assert!(message.contains("has no `.err` file"), "{message}");
 }
 
+/// GIVEN a directory with `ghost.out` and no `ghost.sisu`
+/// WHEN `orphan_check` runs on `ghost.out`
+/// THEN it panics and names `ghost.out`
 #[test]
 #[should_panic(expected = "ghost.out")]
-fn orphan_out_fails() {
+fn orphan_check_should_fail_for_an_out_file_without_a_source() {
     let dir = fixture("orphan_out_fails", &[("ghost.out", "1\n")]);
     support::orphan_check(&dir.join("ghost.out"), &["out"]);
 }
 
+/// GIVEN a `run` case with a file `notes.txt` beside it
+/// WHEN `orphan_check` runs on `notes.txt`
+/// THEN it panics and names `notes.txt`
 #[test]
 #[should_panic(expected = "notes.txt")]
-fn stray_file_type_fails() {
+fn orphan_check_should_fail_for_a_file_of_an_unknown_type() {
     let dir = fixture(
         "stray_file_type_fails",
         &[("notes.sisu", PRINTS_1), ("notes.txt", "")],
@@ -1750,10 +2062,14 @@ fn stray_file_type_fails() {
     support::orphan_check(&dir.join("notes.txt"), &support::RUN_EXPECTATIONS);
 }
 
+/// GIVEN a `run` case with a `.json` file beside it
+/// WHEN `orphan_check` runs on the `.json` file
+/// THEN it panics and names `a.json`
+///
 /// A `.json` beside a `run` case is never read, so it fails like an orphan.
 #[test]
 #[should_panic(expected = "a.json")]
-fn expectation_of_another_mode_fails() {
+fn orphan_check_should_fail_for_a_json_file_beside_a_run_case() {
     let dir = fixture(
         "expectation_of_another_mode_fails",
         &[("a.sisu", PRINTS_1), ("a.out", "1\n"), ("a.json", "")],
@@ -1761,10 +2077,14 @@ fn expectation_of_another_mode_fails() {
     support::orphan_check(&dir.join("a.json"), &support::RUN_EXPECTATIONS);
 }
 
+/// GIVEN a `run` case with a hidden file `.ghost.out` beside it
+/// WHEN `orphan_check` runs on the case
+/// THEN it panics and names `.ghost.out`
+///
 /// The harness never lists a hidden file, so the check of a listed file beside it fails.
 #[test]
 #[should_panic(expected = ".ghost.out")]
-fn hidden_file_fails() {
+fn orphan_check_should_fail_for_a_hidden_file_beside_a_case() {
     let dir = fixture(
         "hidden_file_fails",
         &[
@@ -1776,10 +2096,14 @@ fn hidden_file_fails() {
     support::orphan_check(&dir.join("a.sisu"), &["out"]);
 }
 
+/// GIVEN cases named `dup` in `run`, in `run-fail`, in `run/a_b` and in `run/a/b`
+/// WHEN the harness runs them at the same time
+/// THEN every case passes
+///
 /// Same-named cases in different directories, run at once, must not share an executable: one
 /// in each mode, and two whose paths differ only in `a_b` against `a/b`.
 #[test]
-fn same_name_in_two_modes() {
+fn same_named_cases_should_not_share_an_executable_when_run_at_once() {
     let dir = fixture(
         "same_name_in_two_modes",
         &[
@@ -1809,10 +2133,14 @@ fn same_name_in_two_modes() {
     });
 }
 
+/// GIVEN the programs `life`, `optionals` and `arrays`
+/// WHEN each is built twice with `-O2`, at two different output paths
+/// THEN the two executables of each program have the same bytes
+///
 /// Each program builds to the same bytes twice, at two different output paths. Their file names
 /// match, because macOS's linker signs each executable under its file name.
 #[test]
-fn builds_are_deterministic() {
+fn builds_should_give_the_same_bytes_at_two_output_paths() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     for name in ["life", "optionals", "arrays"] {
         let [a, b] = ["a", "b"].map(|build| {
@@ -2029,10 +2357,14 @@ mod arithmetic {
         }
     }
 
+    /// GIVEN generated `i64`, `u8` and `bool` expressions from four seeds
+    /// WHEN one program that prints them is built and run, with and without `-O2`
+    /// THEN it exits 0 and prints the line that Rust computes for each expression
+    ///
     /// Fifty expressions per seed, each regenerated until Rust can evaluate it, printed by one
     /// program, which both builds must run to exactly the lines Rust computes.
     #[test]
-    fn generated_arithmetic_matches_rust() {
+    fn generated_arithmetic_should_print_what_rust_computes() {
         for seed in 1..=4 {
             let mut rng = XorShift(seed);
             let exprs: Vec<(String, Value)> = (0..50)

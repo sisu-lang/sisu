@@ -104,19 +104,19 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 # A harness that writes all of standard input before it reads the output would fill both pipes
 # and hang on these tests instead of failing them.
 [[profile.default.overrides]]
-filter = "binary(programs) & (test(stdin_larger_than_a_pipe) | test(program_exiting_before_its_input_ends))"
+filter = "binary(programs) & (test(stdin_larger_than_a_pipe_should_come_back_whole) | test(program_exiting_before_its_input_ends_should_exit_normally))"
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # Each word once rescanned the line from its start, so a long line was quadratic and this test
 # hangs instead of failing.
 [[profile.default.overrides]]
-filter = 'binary(programs) & test(words_is_linear)'
+filter = 'binary(programs) & test(words_should_count_a_million_words_in_a_two_mebibyte_line)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # Without a size check, sisu reads the whole 1 GiB file and reports each of its NUL bytes, so
 # this test hangs instead of failing.
 [[profile.default.overrides]]
-filter = 'test(oversized_input_is_a_tool_error)'
+filter = 'test(check_should_exit_1_when_the_input_file_is_larger_than_1_gib)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # The program fuzzer's unit tests link the programs they build against target/debug's runtime.
@@ -128,10 +128,10 @@ setup = "build-runtime"
 [test-groups]
 valgrind = { max-threads = 4 }
 
-# The `bless_`, `same_name_in_two_modes` and `run_err_lifecycle` fixtures call `support::run`,
-# which runs Valgrind.
+# The `bless_` tests, `same_named_cases_should_not_share_an_executable_when_run_at_once` and
+# `run_case_should_check_and_bless_its_err_file` call `support::run`, which runs Valgrind.
 [[profile.default.overrides]]
-filter = "binary(programs) & (test(allocation_counts) | test(valgrind_reports_a_cycle) | test(valgrind_runs_refuse_a_mimalloc_build) | test(read_line_refills_its_buffer) | test(/^bless_/) | test(same_name_in_two_modes) | test(run_err_lifecycle))"
+filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(/^bless_/) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(run_case_should_check_and_bless_its_err_file))"
 test-group = "valgrind"
 
 # Each case compiles twice and runs under Valgrind; a hang is killed after three minutes. The
