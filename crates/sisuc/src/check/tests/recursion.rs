@@ -305,3 +305,64 @@ fn element_write_should_mark_the_call_that_runs_first() {
         &[(3, 8)],
     );
 }
+
+/// `g` comes first, so the search for `f`'s errors starts after `g`'s error.
+#[test]
+fn function_should_warn_when_an_earlier_function_has_an_error() {
+    codes(
+        &with_main("fn g() {\n    let i = 0\n    i = 1\n}\nfn f(n: i64) -> i64 {\n    f(n)\n}"),
+        &[
+            (Code::AssignToImmutable, (3, 5)),
+            (Code::UnconditionalRecursion, (5, 4)),
+        ],
+    );
+}
+
+/// The right side of the first `&&` runs before any self-call, and the last one only after one.
+#[test]
+fn and_should_mark_its_right_side_only_when_no_self_call_ran_before() {
+    warns(
+        &with_main(
+            "fn f(c: bool) -> bool {\n    let a = c && f(c)\n    let b = f(c)\n    c && f(c)\n}",
+        ),
+        (1, 4, "f"),
+        &[(2, 18), (3, 13)],
+    );
+}
+
+/// The third operand of the first chain runs before any self-call, and of the last one only
+/// after one.
+#[test]
+fn chain_should_mark_a_later_operand_only_when_no_self_call_ran_before() {
+    warns(
+        &f(&[
+            "let a = 0 < n < f(n)",
+            "let b = f(n)",
+            "if 0 < n < f(n) { 1 } else { 0 }",
+        ]),
+        (1, 4, "f"),
+        &[(2, 21), (3, 13)],
+    );
+}
+
+/// Every self-call after the first statement runs only after one, inside each kind of node
+/// that passes `open` on: a place, an array, `if`, a loop body, `match` and its guard.
+#[test]
+fn self_call_should_not_be_marked_after_a_self_call_on_every_path() {
+    warns(
+        &f(&[
+            "let mut xs = [0]",
+            "xs[0] = f(n)",
+            "xs[f(n)] = 1",
+            "let ys = [f(n)]",
+            "let a = if n > 0 { f(n) } else { f(n) }",
+            "for i in 0..n { let d = f(i) }",
+            "match n {",
+            "    0 if n > 1 => f(n)",
+            "    _ => 0",
+            "}",
+        ]),
+        (1, 4, "f"),
+        &[(3, 13)],
+    );
+}

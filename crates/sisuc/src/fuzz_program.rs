@@ -767,6 +767,15 @@ mod tests {
         }
     }
 
+    /// The program has no error, so only its W0010 can fail property 1.
+    #[test]
+    fn checked_should_fail_property_1_when_a_function_calls_itself_on_every_path() {
+        let Err(failure) = checked("program", "fn f() {\n    f()\n}\nfn main() {}\n") else {
+            panic!("a function that calls itself on every path should fail");
+        };
+        assert_eq!(failure.property, 1);
+    }
+
     #[test]
     fn a_signal_is_its_number() {
         let scratch = Scratch::new();

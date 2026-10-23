@@ -1937,6 +1937,12 @@ fn every_generated_program_checks_clean() {
 }
 
 #[test]
+#[should_panic(expected = "W0010 at 1:4")]
+fn checked_should_reject_a_program_that_calls_itself_on_every_path() {
+    checked("fn f() {\n    f()\n}\nfn main() {}\n");
+}
+
+#[test]
 fn every_short_input_checks_clean() {
     checked(&generate(&[]).program);
     for b in 0..=u8::MAX {
