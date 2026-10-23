@@ -110,8 +110,8 @@ pub(crate) fn read_page(text: &str) -> Page {
             Event::Start(Tag::HtmlBlock) => {
                 reader.faults.push(Fault {
                     line: line_of(range.start),
-                    message: "a raw HTML block is not allowed: the site shows a fence in it, \
-                              and the checker cannot see that fence"
+                    message: "a raw HTML block is not allowed: the site shows it as text, and a \
+                              fence in it is hidden from the checker"
                         .to_string(),
                 });
                 reader.open = Open::Nothing;
@@ -185,6 +185,12 @@ impl Reader {
                             message: "an example's info string cannot hold `\\` or `&`".to_string(),
                         });
                         None
+                    }
+                    "output" | "input" | "stderr" if fence_line.contains(['\\', '&']) => {
+                        if let Open::Example(index) = self.open {
+                            self.dropped[index] = true;
+                        }
+                        Some("a companion block's info string cannot hold `\\` or `&`".to_string())
                     }
                     "sisu" => match example(line, words, body) {
                         Ok(found) => {
@@ -523,13 +529,14 @@ fn diagnostics(example: &Example, sisu: &Path, dir: &Path, error: bool) -> Resul
         .expect("sisu should start");
     let json = String::from_utf8_lossy(&out.stderr);
     let mut found: Vec<(&str, u64)> = Vec::new();
-    let records: Vec<Value> = json
+    let records = json
         .lines()
         .map(|line| {
-            serde_json::from_str(line)
-                .expect("each stderr line of `sisu check --format json` should be JSON")
+            serde_json::from_str(line).map_err(|_| {
+                format!("`sisu check --format json` wrote a line that is not JSON: {line}")
+            })
         })
-        .collect();
+        .collect::<Result<Vec<Value>, String>>()?;
     for record in &records {
         if record["kind"] == "diagnostic" {
             found.push((

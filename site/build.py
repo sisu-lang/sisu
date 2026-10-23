@@ -393,8 +393,9 @@ def reference_link(href: str) -> str:
 def markers(source: str) -> list[str]:
     """The `error[Ennnn]` and `warning[Wnnnn]` trailing comments of an example, in order."""
     found = []
-    for line in source.splitlines():
-        _, slashes, comment = line.rpartition('//')
+    # As Rust's str::lines: split only at a newline, and drop a carriage return before it.
+    for line in source.split('\n'):
+        _, slashes, comment = line.removesuffix('\r').rpartition('//')
         if slashes and not line.lstrip().startswith('//') and (m := DIAG_MARKER.fullmatch(comment.removeprefix(' '))):
             found.append(m[2] or m[3])
     return found

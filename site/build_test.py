@@ -790,12 +790,20 @@ class Build(unittest.TestCase):
     def test_heading_count_mismatch_should_fail_the_build(self):
         nested = f'# T\n\n````text\n{FENCE}\n````\n\n## Next\n\n{FENCE}text\nx\n{FENCE}\n'
         self.assertEqual([h[:2] for h in ref_html(self, nested)[1]], [(2, 'next')])
+        # A line with text after its backticks does not close a fence.
+        still_open = f'# T\n\n{FENCE}text\n{FENCE} text\n## Hidden\n{FENCE}\n\n## Next\n'
+        self.assertEqual([h[:2] for h in ref_html(self, still_open)[1]], [(2, 'next')])
         with self.assertRaisesRegex(build.BuildError, 'heading'):
             ref_html(self, '# T\n\nSetext\n------\n')
         # The pages are read and rendered once, and the fault names the page that holds it.
         entries = reference_dir(self, {'README': '# Language reference\n', 'bad': '# T\n\nSetext\n------\n'})
         with self.assertRaisesRegex(build.BuildError, r'^docs/reference/bad\.md: .*heading'):
             build.reference_pages(entries)
+
+    def test_markers_should_split_lines_as_the_reference_test_does(self):
+        # Rust's str::lines splits only at a newline and drops a carriage return before it.
+        self.assertEqual(build.markers('    print("a // error[E0008]\u2028b")\n'), [])
+        self.assertEqual(build.markers('    print(1000_) // error[E0008]\r\n'), ['E0008'])
 
     def test_example_caption_should_read_the_info_string_as_the_test_does(self):
         cases = [('sisu args="a b"', './example a b'), ('sisu args="  a  b "', './example a b'), ('sisu args=""', './example'),

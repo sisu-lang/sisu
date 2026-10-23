@@ -559,11 +559,12 @@ fn main() {
 }
 
 /// GIVEN a page with a `sisu` fence inside a `<div>` HTML block, on line 3
-/// WHEN the checker checks the page
-/// THEN it fails and names the line of the fault
+/// AND a page with an HTML comment block on line 3
+/// WHEN the checker checks each page
+/// THEN each fails on line 3 and says that the site shows the block as text
 #[test]
 fn fence_in_html_should_be_a_fault() {
-    let page = "\
+    let div = "\
 # Page
 
 <div>
@@ -572,7 +573,17 @@ fn main() {}
 ```
 </div>
 ";
-    assert_eq!(faults(page), [3]);
+    for page in [div, "# Page\n\n<!-- a note -->\n"] {
+        let read = read_page(page);
+        let found: Vec<_> = read
+            .faults
+            .iter()
+            .map(|fault| (fault.line, fault.message.as_str()))
+            .collect();
+        let message = "a raw HTML block is not allowed: the site shows it as text, and a fence \
+                       in it is hidden from the checker";
+        assert_eq!(found, [(3, message)], "{page}");
+    }
 }
 
 /// GIVEN pages with a `~~~` fence, a repeated word, a repeated `args` and `args` without quotes,
@@ -596,27 +607,39 @@ fn malformed_fences_should_each_be_a_fault() {
 
 /// GIVEN pages whose `sisu` fence on line 3 has `\\` or `&` in its info string, which Markdown
 /// would decode
+/// AND a page whose `outp&#117;t` fence on line 6, which Markdown decodes to `output`, follows an
+/// example
 /// WHEN the checker checks each page
-/// THEN each fails on line 3 and says that the info string cannot hold them
+/// THEN each fails on the line of that fence and says that the info string cannot hold them
 #[test]
 fn escape_in_info_string_should_be_a_fault() {
-    for info in [
+    let mut pages: Vec<_> = [
         r#"args="a\*b""#,
         r#"args="\""#,
         r#"args="&#65;""#,
         "args=\"&amp;\"",
-    ] {
-        let read = read_page(&format!("# Page\n\n```sisu {info}\nfn main() {{}}\n```\n"));
+    ]
+    .map(|info| {
+        (
+            format!("# Page\n\n```sisu {info}\nfn main() {{}}\n```\n"),
+            3,
+            "an example's info string cannot hold `\\` or `&`",
+        )
+    })
+    .into();
+    pages.push((
+        "# Page\n\n```sisu\nfn main() {}\n```\n```outp&#117;t\n```\n".to_string(),
+        6,
+        "a companion block's info string cannot hold `\\` or `&`",
+    ));
+    for (page, line, message) in pages {
+        let read = read_page(&page);
         let lines: Vec<_> = read
             .faults
             .iter()
             .map(|fault| (fault.line, fault.message.as_str()))
             .collect();
-        assert_eq!(
-            lines,
-            [(3, "an example's info string cannot hold `\\` or `&`")],
-            "{info}"
-        );
+        assert_eq!(lines, [(line, message)], "{page}");
     }
 }
 
