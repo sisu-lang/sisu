@@ -18,7 +18,7 @@ On this page, the output of an example is in an output panel, so that every `//`
 
 ## Source text
 
-A source file is text in UTF-8 ([E0072](../diagnostics/E0072.md)). A line ends with a line feed, or with a carriage return and a line feed.
+A source file is text in UTF-8 ([E0072](../diagnostics/E0072.md)). A line ends with a line feed, or with a carriage return and a line feed. The last line does not need a line break.
 
 Outside comments and literals, the source uses only these characters:
 
@@ -181,6 +181,20 @@ fn main() {
 ```
 
 This rule applies only when the line break before the `-` ends a statement. After an operator, the statement continues, so a `-` on the next line is a negation.
+
+A `-` with no blank after it, at the start of a line, is a negation that starts a new statement. So in this example, `n` stays 10, and `-2` is an unused value ([W0004](../diagnostics/W0004.md)).
+
+```sisu
+fn main() {
+    let n = 10
+    -2                     // warning[W0004]
+    print(n)
+}
+```
+
+```output
+10
+```
 
 ```sisu
 fn main() {

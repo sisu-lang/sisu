@@ -90,7 +90,7 @@ fn main() {
 }
 ```
 
-The one exception is the smallest `i64`. Its magnitude, `9223372036854775808`, is a literal only directly after a unary `-`. Spaces or tabs can come between the `-` and the digits, but parentheses cannot.
+The one exception is the smallest `i64`. Its magnitude, `9223372036854775808`, is a literal only directly after a unary `-`. Blanks, a line break or a comment can come between the `-` and the digits. No other token can come between them, so parentheses cannot.
 
 ```sisu
 fn main() {
@@ -125,8 +125,8 @@ fn main() {
 The rules, in order:
 
 - When the context expects a `u8` or a `u8?`, the literal is a `u8`. When the context expects an `f64` or an `f64?`, the literal is an `f64`.
-- In a group of operands, the checker first finds the types of the operands that are not integer literals. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
-  - the two operands of an arithmetic operator, `==` or `!=`
+- In a group of operands, the types of the operands that are not integer literals come first. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
+  - the two operands of an arithmetic operator or a comparison, such as `+`, `<` or `==`
   - the operands of a comparison chain
   - the elements of an array literal
   - the branches of an `if` or an `if let`, or the arms of a `match`
@@ -144,7 +144,8 @@ These places give an expected type:
 - the expected type of an arithmetic operation or a unary `-`, for its operands
 - the type of the value that a `match` tests, for a literal in a pattern
 - the expected type of a loop, for each `break` value
-- the expected type of a block, an `if` or a `match`, for its last expression, the branches of the `if` or the arms of the `match`
+- the expected type of a block, for its last expression
+- the expected type of an `if` or a `match`, for each branch or arm
 
 ```sisu
 fn main() {
@@ -163,13 +164,22 @@ fn main() {
 
 When a loop has no expected type, its `break` values give the loop its type. Their types must agree ([E0032](../diagnostics/E0032.md)).
 
-An operand that has only integer literals, `+`, `-`, `*`, `/`, `%` and unary `-` counts as a literal in a group. So `1 + 2 + b` is a `u8` sum when `b` is a `u8`.
+An operand that has only integer literals, `+`, `-`, `*`, `/`, `%`, unary `-` and parentheses counts as a literal in a group. So `(2 + 3) * b` is a `u8` product when `b` is a `u8`.
+
+```sisu
+fn main() {
+    let b: u8 = 50
+    print((2 + 3) * b)    // 250
+}
+```
 
 A `u8` literal must be 255 or less ([E0040](../diagnostics/E0040.md)). An integer literal that becomes an `f64` must have a value that an `f64` holds exactly ([E0104](../diagnostics/E0104.md)). Every integer up to 2^53 is such a value.
 
 ```sisu
 fn main() {
     let b: u8 = 256    // error[E0040]
+    let c: u8 = 1
+    print(c < 300)     // error[E0040]
 }
 ```
 

@@ -125,7 +125,7 @@ Some examples never end, for example a program with an endless `loop`. The test 
 
 The tag "In development" marks a section about a feature that is not complete. Its examples show the planned form, and `sisu` does not build them yet.
 
-When the feature works, its examples become ordinary examples, and the tag goes away. In the list of pages, a page has the tag when all of its examples are in development.
+When the feature works, its examples become ordinary examples, and the tag goes away. In the list of pages, a page has the tag when it has examples and all of them are in development.
 
 ## The Markdown source
 
