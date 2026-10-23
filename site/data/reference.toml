@@ -37,3 +37,7 @@ description = "Fields, mut fields, constructors, methods, self and object identi
 [[page]]
 file = "arrays"
 description = "Array literals, filled arrays, indexes, for, methods, equality and copy-on-write."
+
+[[page]]
+file = "values"
+description = "What is copied and what is shared, is and ==, object lifetime and cycles."

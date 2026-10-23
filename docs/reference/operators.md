@@ -311,7 +311,7 @@ fn main() {
 }
 ```
 
-`is` on a value that is not an object, such as an `i64`, a `string`, an array or an enum value, is an error ([E0046](../diagnostics/E0046.md)). To test an optional for `None`, use `== None` ([E0045](../diagnostics/E0045.md)).
+`is` on a value that is not an object, such as an `i64`, a `string`, an array or an enum value, is an error ([E0046](../diagnostics/E0046.md)). To test an optional for `None`, use `== None` ([E0045](../diagnostics/E0045.md)). [Values and memory](values.md#identity-and-equality) compares `is` with `==`.
 
 ## Logical operators
 

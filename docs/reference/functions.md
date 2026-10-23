@@ -60,7 +60,7 @@ fn main() {
 
 ## Parameters
 
-Each parameter has a name and a type. In the body, a parameter is a binding that holds the value of its argument.
+Each parameter has a name and a type. In the body, a parameter is a binding that holds the value of its argument ([Values and memory](values.md#calls)).
 
 ```sisu
 fn describe(name: string, age: i64) -> string {

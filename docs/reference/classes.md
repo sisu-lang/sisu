@@ -24,7 +24,7 @@ fn main() {
 }
 ```
 
-An object is shared. A binding, an argument or a field that holds an object refers to that object, and does not copy it.
+An object is shared. A binding, an argument or a field that holds an object refers to that object, and does not copy it ([Values and memory](values.md)).
 
 ## Declarations
 
@@ -249,4 +249,4 @@ fn main() {
 }
 ```
 
-An object stays in memory while a reference to it exists.
+An object stays in memory while a reference to it exists. [Values and memory](values.md#object-lifetime) tells when Sisu frees it.

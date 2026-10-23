@@ -174,7 +174,7 @@ fn main() {
 
 ## Arrays are values
 
-When the program binds an array, passes it or stores it, the array behaves as a copy. A change to one holder does not change the other holders.
+When the program binds an array, passes it or stores it, the array behaves as a copy. A change to one holder does not change the other holders ([Values and memory](values.md)).
 
 ```sisu
 fn main() {
