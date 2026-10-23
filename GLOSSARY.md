@@ -76,6 +76,11 @@ or array local whose reference was moved out, and no object still allocated
 at a normal exit. A failed check prints `sisu: rc check: <what>` on stderr and
 exits with code 102.
 
+**Language reference**:
+The pages that state what each construct of Sisu means and its rules, with
+checked examples.
+_Avoid_: spec, manual
+
 ## Arrays
 
 **Array**:
