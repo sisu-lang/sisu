@@ -800,7 +800,7 @@ mod tests {
     #[should_panic(expected = "mono should leave no generic type in id")]
     fn a_type_parameter_left_behind_should_be_caught() {
         let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(1))\n}";
-        let (program, diagnostics) = check(&parse_ok(src), src);
+        let (program, diagnostics) = check(&parse_ok(src), src, &[]);
         assert_concrete(&program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     }
 
@@ -847,6 +847,7 @@ mod tests {
             bindings: Vec::new(),
             guard: None,
             body: block(param),
+            reachable: true,
         };
         for (case, kind) in [
             (
@@ -900,7 +901,7 @@ mod tests {
                    enum E {\n    A(P)\n    B\n}\n\
                    fn f(e: E) -> i64 {\n    match e {\n        E.A(p) => p.get()\n        E.B => 0\n    }\n}\n\
                    fn main() {\n    print(f(E.A(P(x: 1))))\n}";
-        let (program, diagnostics) = check(&parse_ok(src), src);
+        let (program, diagnostics) = check(&parse_ok(src), src, &[]);
         let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
         let (text, count) = (program.to_string(), program.functions.len());
         let program = instantiate(program);

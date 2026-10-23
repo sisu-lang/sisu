@@ -40,7 +40,7 @@ fn warns(src: &str, expected: &[(usize, usize, &str)]) {
 }
 
 #[test]
-fn unused_value_warns() {
+fn unused_value_should_warn_when_a_statement_drops_it() {
     warns(
         "fn main() {\n    let n = 1\n    u8(n)\n}",
         &[(3, 5, "u8(n)")],
@@ -57,7 +57,7 @@ fn unused_value_warns() {
             "if c { if d { 1 } else { 2 } } else { None }",
             &[(19, "1"), (30, "2"), (43, "None")],
         ),
-        ("while c { f() }", &[(15, "f()")]),
+        ("while f() > 0 { f() }", &[(21, "f()")]),
         ("while let v = o { v }", &[(23, "v")]),
         ("for x in xs { x }", &[(19, "x")]),
         // A block is not the value either: its tail is.
@@ -76,13 +76,13 @@ fn unused_value_warns() {
 }
 
 #[test]
-fn unused_value_clean() {
+fn unused_value_should_not_warn_when_nothing_drops_a_value() {
     for body in [
         "let _ = u8(n)",
         "a?.m()",
         "if c { g() } else { h() }",
         "if let v = o { g() }",
-        "while c { g() }",
+        "while f() > 0 { g() }",
         "while let v = o { g() }",
         "for x in xs { g() }",
         // `never` in a branch tail that nothing uses.
@@ -144,14 +144,14 @@ fn unused_value_fix() {
 /// Every warning of one statement carries the fix that drops all of the statement's values, so
 /// applying any one of them leaves no branch without a value beside one with a value.
 #[test]
-fn unused_value_fix_drops_every_branch() {
+fn unused_value_fix_should_drop_every_branch_of_the_statement() {
     type Warned<'a> = (usize, usize, &'a str);
     let rows: &[(&str, &[Warned])] = &[
         ("if c { 1 } else { 2 }", &[(10, 12, "1"), (10, 23, "2")]),
         // A loop body's tail is a root of its own, `discard_tail`.
         (
-            "while c { if d { 1 } else { 2 } }",
-            &[(10, 22, "1"), (10, 33, "2")],
+            "while f() > 0 { if d { 1 } else { 2 } }",
+            &[(10, 28, "1"), (10, 39, "2")],
         ),
         (
             "if let v = o { v } else { 0 }",

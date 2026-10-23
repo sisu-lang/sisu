@@ -1,0 +1,12 @@
+warning[W0010]: function `count` calls itself on every path
+ --> W0010.sisu:1:4
+  |
+1 | fn count(n: i64) -> i64 {
+  |    ^^^^^ cannot return without calling itself
+2 |     1 + count(n - 1)
+  |         ------------ calls itself here
+  |
+  = help: give `count` a path that returns without calling itself, such as a base case; to repeat forever, write a `loop` in its body
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0010

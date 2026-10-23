@@ -12,16 +12,18 @@ mod enums;
 mod floats;
 mod for_loops;
 mod generics;
+mod loop_condition;
 mod patterns;
 mod places;
 mod prelude;
+mod recursion;
 mod shadowing;
 mod strings;
 mod u8;
 mod unused;
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    check(&parse_ok(src), src)
+    check(&parse_ok(src), src, &[])
 }
 
 fn diags(src: &str) -> Vec<Diagnostic> {
@@ -575,9 +577,9 @@ fn continue_outside_loop() {
 }
 
 #[test]
-fn break_after_loop() {
+fn break_should_be_an_error_after_its_loop_ends() {
     codes(
-        "fn f(c: bool) {\n    while c {}\n    break\n}\nfn main() {}",
+        "fn f(c: bool) {\n    while c { break }\n    break\n}\nfn main() {}",
         &[(Code::JumpOutsideLoop, (3, 5))],
     );
 }
@@ -1023,12 +1025,12 @@ fn labeled_continue_outside_loop() {
 /// Loops side by side may share a loop label; a labeled loop that no jump names is W0008, whose
 /// safe fix deletes the loop label.
 #[test]
-fn loop_label_reuse_and_unused() {
+fn loop_label_should_be_reusable_beside_its_loop_and_warn_when_no_jump_names_it() {
     codes(
         "fn f(c: bool) {\n    a: while c { break a }\n    a: while c { continue a }\n}\nfn main() {}",
         &[],
     );
-    let src = "fn f(c: bool) {\n    outer: while c { }\n}\nfn main() {}";
+    let src = "fn f(c: bool) {\n    outer: while c { break }\n}\nfn main() {}";
     codes(src, &[(Code::UnusedLabel, (2, 5))]);
     fix_removes_its_code(src, &diags(src)[0]);
     // A loop's label is open in a nested loop's header too.
@@ -2657,7 +2659,7 @@ fn may_be_none_in_an_assignment_target_has_no_fix() {
 /// `n.next` keeps the `?.` unsafe fix. Each row is a statement where `n` is an `N`; the last is an
 /// argument inside an index.
 #[test]
-fn may_be_none_in_an_operand_of_an_assignment_target_keeps_its_fix() {
+fn may_be_none_should_keep_its_fix_in_an_argument_or_index_of_an_assignment_target() {
     for stmt in [
         "n.at(n.next.v).v = 1",
         "xs[n.next.v].v = 1",
@@ -2665,7 +2667,7 @@ fn may_be_none_in_an_operand_of_an_assignment_target_keeps_its_fix() {
         "xs[n.at(n.next.v).v].v = 1",
     ] {
         let src = format!(
-            "class N {{\n    mut v: i64\n    next: N?\n    fn at(self, i: i64) -> N {{\n        self\n    }}\n}}\nfn g(i: i64) -> N {{ g(i) }}\nfn f(n: N, xs: [N]) {{\n    {stmt}\n}}\nfn main() {{}}"
+            "class N {{\n    mut v: i64\n    next: N?\n    fn at(self, i: i64) -> N {{\n        self\n    }}\n}}\nfn g(i: i64) -> N {{ N(v: i, next: None) }}\nfn f(n: N, xs: [N]) {{\n    {stmt}\n}}\nfn main() {{}}"
         );
         let col = 5 + stmt.find("n.next").expect("each row reads `n.next`");
         let d = diagnostic(&src, Code::MayBeNone, (10, col, "n.next"), &[]);

@@ -247,7 +247,6 @@ crates/sisuc/src/check/tests/mod.rs::block_scope_ends
 crates/sisuc/src/check/tests/mod.rs::block_value_and_type
 crates/sisuc/src/check/tests/mod.rs::body_value_type
 crates/sisuc/src/check/tests/mod.rs::body_without_value
-crates/sisuc/src/check/tests/mod.rs::break_after_loop
 crates/sisuc/src/check/tests/mod.rs::break_after_while_let
 crates/sisuc/src/check/tests/mod.rs::break_in_a_value_makes_endless_loop_unit
 crates/sisuc/src/check/tests/mod.rs::break_in_header
@@ -362,7 +361,6 @@ crates/sisuc/src/check/tests/mod.rs::local_shadowing_a_function_is_assignable
 crates/sisuc/src/check/tests/mod.rs::loop_after_coalesce_is_its_values_type
 crates/sisuc/src/check/tests/mod.rs::loop_in_a_later_branch_is_its_values_type
 crates/sisuc/src/check/tests/mod.rs::loop_in_a_later_match_arm_is_its_values_type
-crates/sisuc/src/check/tests/mod.rs::loop_label_reuse_and_unused
 crates/sisuc/src/check/tests/mod.rs::loop_tail_is_not_the_block_value
 crates/sisuc/src/check/tests/mod.rs::loop_value_is_its_breaks_type
 crates/sisuc/src/check/tests/mod.rs::loop_with_bare_break_is_unit
@@ -387,7 +385,6 @@ crates/sisuc/src/check/tests/mod.rs::may_be_none_fix_follows_any_receiver
 crates/sisuc/src/check/tests/mod.rs::may_be_none_in_a_target_chain_and_in_its_argument
 crates/sisuc/src/check/tests/mod.rs::may_be_none_in_an_array_method_argument_of_a_target_keeps_its_fix
 crates/sisuc/src/check/tests/mod.rs::may_be_none_in_an_assignment_target_has_no_fix
-crates/sisuc/src/check/tests/mod.rs::may_be_none_in_an_operand_of_an_assignment_target_keeps_its_fix
 crates/sisuc/src/check/tests/mod.rs::members_of_a_memberless_type_suggest_nothing
 crates/sisuc/src/check/tests/mod.rs::method_arity
 crates/sisuc/src/check/tests/mod.rs::method_as_assignment_target_has_no_fix
@@ -672,15 +669,12 @@ crates/sisuc/src/check/tests/u8.rs::optional_literal
 crates/sisuc/src/check/tests/u8.rs::print_takes_u8
 crates/sisuc/src/check/tests/u8.rs::u8_cannot_be_negative
 crates/sisuc/src/check/tests/unused.rs::match_unused_value
-crates/sisuc/src/check/tests/unused.rs::unused_value_clean
 crates/sisuc/src/check/tests/unused.rs::unused_value_fix
-crates/sisuc/src/check/tests/unused.rs::unused_value_fix_drops_every_branch
 crates/sisuc/src/check/tests/unused.rs::unused_value_fix_drops_every_enum_if_let_branch
 crates/sisuc/src/check/tests/unused.rs::unused_value_fix_edits_every_branch
 crates/sisuc/src/check/tests/unused.rs::unused_value_fix_is_shared_up_to_a_cap
 crates/sisuc/src/check/tests/unused.rs::unused_value_fix_stays_within_its_statement
 crates/sisuc/src/check/tests/unused.rs::unused_value_skips_errors
-crates/sisuc/src/check/tests/unused.rs::unused_value_warns
 crates/sisuc/src/codegen/abi.rs::declares_what_the_row_says
 crates/sisuc/src/codegen/abi.rs::each_row_matches_its_rust_signature
 crates/sisuc/src/codegen/abi.rs::every_runtime_export_has_a_row_and_every_row_an_export

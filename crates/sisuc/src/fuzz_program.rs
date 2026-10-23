@@ -263,23 +263,32 @@ fn judge_source(
     }
 }
 
-/// Properties 1 and 2: `source` checks with no error, and its MIR certifies and its module
-/// verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
+/// Properties 1 and 2: `source` checks with no error, W0010 or W0011, and its MIR certifies and its
+/// module verifies, without and with `--rc-checks` (`fuzz::assert_compiles` panics if not).
 fn checked(name: &str, source: &str) -> Result<Program, Failure> {
     let (program, diagnostics) = front_end::front_end(source);
-    let Some(program) = program else {
+    let failure = |what: String| {
         let mut out = Vec::new();
         let mut reporter = Reporter::new(&mut out, Format::Text, false);
         reporter.diagnostics(&format!("{name}.sisu"), source, &diagnostics);
         reporter.finish();
-        return Err(Failure {
+        Failure {
             property: 1,
-            detail: format!(
-                "the checker rejects the {name}\n{}",
-                String::from_utf8_lossy(&out)
-            ),
-        });
+            detail: format!("{what}\n{}", String::from_utf8_lossy(&out)),
+        }
     };
+    let Some(program) = program else {
+        return Err(failure(format!("the checker rejects the {name}")));
+    };
+    // Every generated function returns and every generated loop ends, so none may call itself
+    // on every path, and no loop condition may stay unchanged.
+    if let Some(d) = diagnostics
+        .iter()
+        .find(|d| matches!(d.code().as_str(), "W0010" | "W0011"))
+    {
+        let code = d.code().as_str();
+        return Err(failure(format!("the checker reports {code} on the {name}")));
+    }
     fuzz::assert_compiles(&program, source);
     Ok(program)
 }
@@ -761,6 +770,25 @@ mod tests {
                 judge(&g, &runtime(), &scratch.0).expect_err("an unknown name should fail");
             assert_eq!((failure.property, builds.as_str()), (1, ""), "{rewritten}");
         }
+    }
+
+    /// The program has no error, so only its W0010 can fail property 1.
+    #[test]
+    fn checked_should_fail_property_1_when_a_function_calls_itself_on_every_path() {
+        let Err(failure) = checked("program", "fn f() {\n    f()\n}\nfn main() {}\n") else {
+            panic!("a function that calls itself on every path should fail");
+        };
+        assert_eq!(failure.property, 1);
+    }
+
+    /// The program has no error, so only its W0011 can fail property 1.
+    #[test]
+    fn checked_should_fail_property_1_when_a_loop_condition_never_changes() {
+        let source = "fn f(n: i64) {\n    while n > 0 { print(n) }\n}\nfn main() {}\n";
+        let Err(failure) = checked("program", source) else {
+            panic!("a loop whose condition never changes should fail");
+        };
+        assert_eq!(failure.property, 1);
     }
 
     #[test]

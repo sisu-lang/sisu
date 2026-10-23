@@ -1,0 +1,7 @@
+fn count(n: i64) -> i64 {
+    1 + count(n - 1)
+}
+
+fn main() {
+    print(count(3))
+}

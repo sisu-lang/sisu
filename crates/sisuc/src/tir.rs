@@ -454,6 +454,8 @@ pub(crate) struct Arm {
     pub(crate) bindings: Vec<LocalId>,
     pub(crate) guard: Option<Expr>,
     pub(crate) body: Block,
+    /// False when earlier arms take every value the pattern matches (W0006).
+    pub(crate) reachable: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1710,6 +1712,7 @@ mod tests {
                 value: Some(Box::new(value)),
                 ty: Type::I64,
             },
+            reachable: true,
         };
         let arms = vec![
             arm(
@@ -2455,6 +2458,7 @@ mod tests {
             bindings: Vec::new(),
             guard,
             body: valued(k),
+            reachable: true,
         };
         let place = Place::Index {
             base: Box::new(Place::Field {

@@ -41,7 +41,7 @@ pub(crate) fn checked(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     if !parsed.checkable {
         return (None, parsed.diagnostics);
     }
-    let (program, checked) = check::check(&parsed.program, source);
+    let (program, checked) = check::check(&parsed.program, source, &parsed.diagnostics);
     let mut diagnostics = parsed.diagnostics;
     diagnostics.extend(checked);
     diagnostics.sort_by_key(|d| d.span().start());

@@ -1,0 +1,8 @@
+class Node {
+    n: i64
+    fn size(self) -> i64 { self.size() }
+}
+
+fn main() {
+    print(Node(n: 1).size())
+}

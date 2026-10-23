@@ -96,6 +96,7 @@ impl Checker<'_> {
 
     /// `panic(message)`, which never finishes.
     fn panic(&mut self, span: Span, args: &[ast::Arg]) -> Checked {
+        self.body.exits += 1;
         let labeled = self.labels(args);
         let [arg] = args else {
             return self.argument_count("panic", 1, span, args);
@@ -108,6 +109,7 @@ impl Checker<'_> {
     /// does, with Rust's `todo!` messages, and always gets the warning that it is left in the
     /// program.
     pub(super) fn todo(&mut self, span: Span, keyword: Span, args: &[ast::Arg]) -> Checked {
+        self.body.exits += 1;
         self.report(DiagnosticKind::TodoLeft { at: keyword });
         let labeled = self.labels(args);
         let text = |text: &str| tir::Expr {

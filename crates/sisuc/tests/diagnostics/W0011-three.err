@@ -1,0 +1,10 @@
+warning[W0011]: the condition of this `while` never changes
+ --> W0011-three.sisu:5:11
+  |
+5 |     while a < b < c {
+  |           ^^^^^^^^^ nothing in the loop changes `a`, `b` or `c`
+  |
+  = help: change `a`, `b` or `c` in the loop or leave it with `break`; write `if` to run the body once, or `loop` to run it forever
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0011

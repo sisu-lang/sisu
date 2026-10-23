@@ -205,6 +205,8 @@ codes! {
     RedundantSemicolon = "W0007",
     UnusedLabel = "W0008",
     WhileTrue = "W0009",
+    UnconditionalRecursion = "W0010",
+    UnchangedLoopCondition = "W0011",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -902,6 +904,21 @@ pub(crate) enum DiagnosticKind {
     /// `fix` is `loop` in its place, unless a jump or loop label in the loop failed (a `break`
     /// with a value, E0141, for one), as the rewrite could remove that error.
     WhileTrue { at: Span, fix: bool },
+    /// The function or method `name`, whose name in its declaration is at `at`, which calls
+    /// itself on every path; `calls` are the self-calls that end a path, in source order.
+    UnconditionalRecursion {
+        kind: Definition,
+        name: String,
+        at: Span,
+        calls: Vec<Span>,
+    },
+    /// The `while` condition at `at`, which nothing in the loop changes; `names` are the locals
+    /// it reads and `lets` the `let` bindings among them, both in source order.
+    UnchangedLoopCondition {
+        at: Span,
+        names: Vec<String>,
+        lets: Vec<String>,
+    },
     /// The comparison at `at`, `!=` when `negated`, one side of which is `f64.nan`, which no
     /// number equals; `fix` is its `is_nan` test, when the other side is an `f64`.
     NanComparison {
@@ -1107,6 +1124,18 @@ impl Unwrap {
             Unwrap::WhileLet => "while let",
         }
     }
+}
+
+/// `names` in backticks, with `last` before the last one: "`a`", "`a` or `b`", "`a`, `b` or `c`".
+fn listed(names: &[String], last: &str) -> String {
+    let (end, rest) = names
+        .split_last()
+        .expect("a list should hold at least one name");
+    if rest.is_empty() {
+        return format!("`{end}`");
+    }
+    let rest: Vec<_> = rest.iter().map(|name| format!("`{name}`")).collect();
+    format!("{} {last} `{end}`", rest.join(", "))
 }
 
 /// What a name is defined as.
@@ -1763,14 +1792,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 fix,
                 conversion,
             } => {
-                let mut want: Vec<_> = want.iter().map(|ty| format!("`{ty}`")).collect();
-                // `a`, `b` or `c`.
-                let last = want.pop().expect("a mismatch should want at least one type");
-                let want = if want.is_empty() {
-                    last
-                } else {
-                    format!("{} or {last}", want.join(", "))
-                };
+                let want = listed(&want, "or");
                 let mut d =
                     Diagnostic::coded(code, at, format!("expected {want}, found `{got}`"));
                 match source {
@@ -3164,6 +3186,44 @@ impl From<DiagnosticKind> for Diagnostic {
                 } else {
                     d
                 }
+            }
+            DiagnosticKind::UnconditionalRecursion {
+                kind,
+                name,
+                at,
+                calls,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("{} `{name}` calls itself on every path", kind.word()),
+                )
+                .with_label("cannot return without calling itself")
+                .with_help(format!(
+                    "give `{name}` a path that returns without calling itself, such as a base case; to repeat forever, write a `loop` in its body"
+                ));
+                calls
+                    .into_iter()
+                    .fold(d, |d, call| d.with_secondary(call, "calls itself here"))
+            }
+            DiagnosticKind::UnchangedLoopCondition { at, names, lets } => {
+                // The other names can never be written, so only a `let` is worth changing.
+                let leave = if lets.is_empty() {
+                    format!(
+                        "{} can't change, so leave the loop with `break`",
+                        listed(&names, "and")
+                    )
+                } else {
+                    format!("change {} in the loop or leave it with `break`", listed(&lets, "or"))
+                };
+                Diagnostic::coded(code, at, "the condition of this `while` never changes")
+                    .with_label(format!(
+                        "nothing in the loop changes {}",
+                        listed(&names, "or")
+                    ))
+                    .with_help(format!(
+                        "{leave}; write `if` to run the body once, or `loop` to run it forever"
+                    ))
             }
             DiagnosticKind::TypeArguments { name, at, form } => match form {
                 ArgumentsForm::Count { want, found } => {

@@ -194,10 +194,14 @@ fn splitmix64(state: &mut u64) -> u64 {
 /// type parameters (`types::TypeKind::Param`).
 fn checked(source: &str) -> (ast::Program, tir::Program) {
     let (program, diagnostics) = crate::front_end::checked(source);
-    // An unused loop label would be a label no rule meant to write.
+    // An unused loop label would be a label no rule meant to write. Every generated function
+    // returns and every generated loop ends, so W0010 and W0011 may not appear.
     let errors: Vec<String> = diagnostics
         .iter()
-        .filter(|d| d.severity() == Severity::Error || d.code().as_str() == "W0008")
+        .filter(|d| {
+            d.severity() == Severity::Error
+                || matches!(d.code().as_str(), "W0008" | "W0010" | "W0011")
+        })
         .map(|d| {
             let before = &source[..d.span().start()];
             let line = 1 + before.matches('\n').count();
@@ -2059,6 +2063,18 @@ fn every_generated_program_checks_clean() {
         // In a debug build, `mono` asserts that no type parameter is left in what it gives.
         crate::mono::instantiate(program);
     }
+}
+
+#[test]
+#[should_panic(expected = "W0010 at 1:4")]
+fn checked_should_reject_a_program_that_calls_itself_on_every_path() {
+    checked("fn f() {\n    f()\n}\nfn main() {}\n");
+}
+
+#[test]
+#[should_panic(expected = "W0011 at 2:11")]
+fn checked_should_reject_a_loop_whose_condition_never_changes() {
+    checked("fn f(n: i64) {\n    while n > 0 { print(n) }\n}\nfn main() {}\n");
 }
 
 #[test]

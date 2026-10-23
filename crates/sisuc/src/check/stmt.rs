@@ -1,6 +1,6 @@
 //! Statements, blocks and scopes.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::array::optional_array;
 use super::expr::{fits, local};
@@ -9,7 +9,7 @@ use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, tail, type_of, wrap,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of, wrap,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ClashForm, ClashKind, DiagnosticKind, MismatchSource, Unwrap, closest};
@@ -365,9 +365,14 @@ impl Checker<'_> {
             } => {
                 // Only the literal: the AST has no parenthesis node, so `(true)` is it too.
                 let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
+                // W0011 reads what changed from here to the end of the body.
+                let before = (self.diagnostics.errors, self.body.writes, self.body.exits);
+                let nans = self.body.nans;
                 let cond = self.in_header(*keyword, label.clone(), |c| {
                     c.expect(cond_ast, Some(Type::BOOL))
                 });
+                // W0005 reports a comparison with `nan` in it, and its fix changes the condition.
+                let nan = self.body.nans != nans;
                 let frame = LoopFrame::new(LoopKind::While, *keyword, label.clone(), None);
                 let (checked, frame) = self.loop_body(frame, |c| c.block(body, None));
                 let broken = frame.broken;
@@ -402,6 +407,10 @@ impl Checker<'_> {
                         ty,
                         span: stmt.span,
                     }));
+                }
+                // The checker does not see a parser error that the parser kept the loop with.
+                if !nan && !starts_in(&self.parse_errors, cond_ast.span.to(stmt.span)) {
+                    self.unchanged_condition(cond_ast.span, &cond, before);
                 }
                 Ok(tir::Stmt::Expr(lower_loop(
                     body,
@@ -726,6 +735,7 @@ impl Checker<'_> {
         span: Span,
         value: Option<&ast::Expr>,
     ) -> Result<tir::Stmt, Poisoned> {
+        self.body.exits += 1;
         let never = || Poisoned::typed(Type::NEVER);
         let value = match value {
             None => match self.body.ret {
@@ -927,6 +937,7 @@ impl Checker<'_> {
         label: Option<&ast::Ident>,
         value: Option<&ast::Expr>,
     ) -> Result<tir::Stmt, Poisoned> {
+        self.body.exits += 1;
         let (target, depth) = self.target(span, keyword, label)?;
         if let Some(label) = label
             && let Some((kind, declared)) = self.in_scope(label.name)
@@ -1309,6 +1320,8 @@ impl Checker<'_> {
             keyword,
             reassigned: false,
             shadows_mut,
+            written: 0,
+            loop_named: false,
         };
         if kind == BindingKind::Param
             && let Some(first) = scope.get(&name.name)
@@ -1353,6 +1366,7 @@ impl Checker<'_> {
     fn never_reassigned(&mut self, name: Symbol, b: &Binding) {
         if let Some(keyword) = b.keyword
             && !b.reassigned
+            && !b.loop_named
         {
             self.report(DiagnosticKind::NeverReassigned {
                 name: name.to_string(),
@@ -1360,6 +1374,105 @@ impl Checker<'_> {
                 keyword,
             });
         }
+    }
+
+    /// Reports W0011 for the checked condition `cond` at `at` of a `while` whose body checked,
+    /// when it reads a local, nothing since `before` (the error, write and exit counts at the
+    /// start of the condition) wrote one, and nothing left the loop or reported an error.
+    fn unchanged_condition(&mut self, at: Span, cond: &tir::Expr, before: (u32, u32, u32)) {
+        let (errors, writes, exits) = before;
+        if self.diagnostics.errors != errors || self.body.exits != exits {
+            return;
+        }
+        let Some(locals) = self.condition_locals(cond).filter(|l| !l.is_empty()) else {
+            return;
+        };
+        if !locals.iter().all(|&id| self.unchanged(id, writes)) {
+            return;
+        }
+        let mut names = Vec::with_capacity(locals.len());
+        let mut lets = Vec::new();
+        for id in locals {
+            let name = self.local_name(id);
+            // `self` has no binding.
+            if let Some(b) = self.lookup(name) {
+                b.loop_named = true;
+                if matches!(b.kind, BindingKind::Let | BindingKind::Var) {
+                    lets.push(name.to_string());
+                }
+            }
+            names.push(name.to_string());
+        }
+        self.report(DiagnosticKind::UnchangedLoopCondition { at, names, lets });
+    }
+
+    /// The locals `cond` reads, each once, in source order; `None` when it holds a node that
+    /// can see a change the body makes through an object or a function (W0011's rule 1).
+    fn condition_locals(&self, cond: &tir::Expr) -> Option<Vec<tir::LocalId>> {
+        let mut locals = (Vec::new(), FxHashSet::default());
+        self.read_locals(cond, &mut locals).then_some(locals.0)
+    }
+
+    /// Adds the locals `e` reads to `locals`, in order and with the set of those already in it;
+    /// false at a node rule 1 does not allow.
+    fn read_locals(&self, e: &tir::Expr, locals: &mut Locals) -> bool {
+        match &e.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::None => true,
+            &ExprKind::Local(id) => {
+                if locals.1.insert(id) {
+                    locals.0.push(id);
+                }
+                true
+            }
+            ExprKind::Wrap(operand) | ExprKind::Unary { operand, .. } | ExprKind::Len(operand) => {
+                self.read_locals(operand, locals)
+            }
+            ExprKind::Equal { lhs, rhs, .. } => {
+                // `==` on a class compares fields, which can change with no write of a local.
+                // Both sides have one type, up to an optional, so `lhs` tells for both.
+                let none = matches!(lhs.kind, ExprKind::None) || matches!(rhs.kind, ExprKind::None);
+                (none || !self.holds(lhs.ty).class)
+                    && self.read_locals(lhs, locals)
+                    && self.read_locals(rhs, locals)
+            }
+            ExprKind::Binary { lhs, rhs, .. }
+            | ExprKind::Concat { lhs, rhs }
+            | ExprKind::Is { lhs, rhs }
+            | ExprKind::Index {
+                base: lhs,
+                index: rhs,
+            } => self.read_locals(lhs, locals) && self.read_locals(rhs, locals),
+            ExprKind::Compare { operands, .. } => operands
+                .iter()
+                .all(|operand| self.read_locals(operand, locals)),
+            _ => false,
+        }
+    }
+
+    /// Whether the condition local `id` can be named by W0011: its type holds no poison, it is
+    /// `self` or has a binding, and nothing wrote it after the write count `writes`.
+    fn unchanged(&mut self, id: tir::LocalId, writes: u32) -> bool {
+        if self.holds(self.body.locals[id.0].ty).poison {
+            return false;
+        }
+        if id.0 == 0 && self.body.self_type.is_some() {
+            return self.body.self_written <= writes;
+        }
+        // A local with no name is a checker temporary, so it has no binding.
+        let name = self.body.locals[id.0].name.as_deref().map(Symbol::intern);
+        name.and_then(|name| self.lookup(name))
+            .is_some_and(|b| b.local == id && b.written <= writes)
+    }
+
+    /// The name of the local `id`, which `unchanged` accepted.
+    fn local_name(&self, id: tir::LocalId) -> Symbol {
+        let name = self.body.locals[id.0].name.as_deref();
+        Symbol::intern(name.expect("a local that `unchanged` accepts should have a name"))
     }
 
     pub(super) fn lookup(&mut self, name: Symbol) -> Option<&mut Binding> {
@@ -1370,6 +1483,9 @@ impl Checker<'_> {
             .find_map(|scope| scope.get_mut(&name))
     }
 }
+
+/// The locals a condition reads, in source order, and the set of them.
+type Locals = (Vec<tir::LocalId>, FxHashSet<tir::LocalId>);
 
 /// What a `for` binds before its `Loop`: `stmts` bind the source and the counter, which runs
 /// to `limit`, and `item` is the value of the loop variable for the current counter. Over

@@ -257,11 +257,43 @@ impl Checker<'_> {
         })
     }
 
+    /// Counts a write, and gives the stamp to put on what it writes.
+    fn write_stamp(&mut self) -> u32 {
+        self.body.writes += 1;
+        self.body.writes
+    }
+
+    /// Stamps the binding, or `self`, at the root of `base`, the base of a written field, which
+    /// this follows to its root once. A root that is neither stamps nothing.
+    fn stamp_root(&mut self, mut base: &ast::Expr) {
+        loop {
+            match &base.kind {
+                ast::ExprKind::Field { base: inner, .. }
+                | ast::ExprKind::Index { base: inner, .. } => {
+                    base = inner;
+                }
+                &ast::ExprKind::Name(name) => {
+                    let stamp = self.write_stamp();
+                    if let Some(b) = self.lookup(name) {
+                        b.written = stamp;
+                    }
+                    return;
+                }
+                ast::ExprKind::SelfValue => {
+                    self.body.self_written = self.write_stamp();
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
+
     /// The place `target` names, which `span` assigns. `element` when it is the base of an
     /// index, so the write replaces an element of it.
     fn place(&mut self, span: Span, target: &ast::Expr, element: bool) -> CheckedPlace {
         match &target.kind {
             &ast::ExprKind::Name(name) => {
+                let stamp = self.write_stamp();
                 let Some(b) = self.lookup(name) else {
                     if let Some(place) = self.constant_place(span, name, element) {
                         return place;
@@ -275,21 +307,20 @@ impl Checker<'_> {
                         self.diagnostics.push(d);
                         // The name may have meant any open binding; none of them warns as
                         // unassigned.
-                        let scopes = &mut self.body.scopes;
-                        for b in scopes.iter_mut().flat_map(|scope| scope.values_mut()) {
+                        for b in self.body.scopes.iter_mut().flat_map(|s| s.values_mut()) {
                             b.reassigned = true;
                         }
                     }
                     return CheckedPlace::failed();
                 };
+                b.written = stamp;
                 b.reassigned |= b.kind == BindingKind::Var;
                 let (local, ty, kind, declared) = (b.local, b.ty, b.kind, b.span);
-                let redeclared = b.shadows_mut;
                 let cause = match kind {
                     BindingKind::Var => None,
                     BindingKind::Let => Some(Immutable::Let {
                         declared,
-                        redeclared,
+                        redeclared: b.shadows_mut,
                     }),
                     BindingKind::Param => Some(Immutable::Param { declared }),
                     BindingKind::Unwrapped(keyword) => {
@@ -314,6 +345,7 @@ impl Checker<'_> {
                 }
             }
             ast::ExprKind::Field { base, name, .. } => {
+                self.stamp_root(base);
                 // A `?.` anywhere in the target's chain would not parse.
                 let outer = std::mem::replace(&mut self.body.in_target, true);
                 let checked = self.value(base, None);

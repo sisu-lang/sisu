@@ -1824,7 +1824,7 @@ fn growing_instantiation_cycles_should_be_one_error_each() {
         "enum Tree<T> { Leaf\n Node(Tree<T>, T, Tree<T>) }",
         "fn f<T>(x: T) { g([x]) }\nfn g<T>(x: T) {}",
         "class C<T> { v: T\n fn up(self) -> C<[T]> { C(v: [self.v]) } }\nfn g() -> C<[i64]> { C(v: 1).up() }",
-        "fn f<T, U>(x: T, y: U) { f(y, x) }",
+        "fn f<T, U>(x: T, y: U, n: i64) { if n > 0 { f(y, x, n - 1) } }",
     ] {
         clean(&format!("{src}\nfn main() {{}}"));
     }

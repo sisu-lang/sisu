@@ -1,0 +1,9 @@
+fn wait(n: f64) {
+    while n != f64.nan {
+        print(n)
+    }
+}
+
+fn main() {
+    wait(0.5)
+}

@@ -113,11 +113,14 @@ declares the names it binds. `if let` on an enum becomes a `match` whose `_`
 arm is the `else`, and `while let` on one a loop around a `match` whose `_` arm
 breaks. A `break` or `continue` names its loop in `tir` by depth, the number of
 loops out from the innermost, and a `break` may carry a value; the loop's type
-comes from its `break`s, and `while true` gets W0009. `check/exhaust.rs` runs Maranget's usefulness algorithm over each
+comes from its `break`s, and `while true` gets W0009. A `while` whose
+condition nothing in the loop changes gets W0011. `check/exhaust.rs` runs
+Maranget's usefulness algorithm over each
 `match`'s arms: a `match` that misses a value is an error that names one it
 misses as a pattern, such as `Mul(_, _)`, and an arm that no value reaches is
 a warning. The same check rejects an `if let` or `while let` whose pattern
-always matches. `check/operator.rs` checks operators (arithmetic, comparison,
+always matches. `check/recursion.rs` walks the `tir` of each function and gives
+W0010 when the function calls itself on every path. `check/operator.rs` checks operators (arithmetic, comparison,
 equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
 their branch types, `check/call.rs` calls, method calls and constructors, and
 `check/member.rs` fields and methods found through `.` and `?.`.
