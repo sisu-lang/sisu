@@ -709,10 +709,13 @@ pub(crate) enum DiagnosticKind {
     /// A local, parameter or binding at `at` named `name`, which names an enum.
     EnumNamedLocal { name: String, at: Span },
     /// The variant `name`, at `at`, written without its enum where no item or binding takes the
-    /// name; `enums` are the enums that have such a variant, in declaration order.
+    /// name; `enums` are the enums that have such a variant, in declaration order. `labelled`
+    /// are those of `enums` whose name is an open loop label that `at` would follow as the
+    /// start of an unlabeled `break`'s value: they get no fix.
     BareVariant {
         name: String,
         enums: Vec<String>,
+        labelled: Vec<String>,
         at: Span,
     },
     /// The variant `name`, at `at`, which the enum `enum_name` does not have; `suggestion` is its
@@ -2592,7 +2595,12 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::EnumNamedLocal { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` names an enum"))
             }
-            DiagnosticKind::BareVariant { name, enums, at } => {
+            DiagnosticKind::BareVariant {
+                name,
+                enums,
+                labelled,
+                at,
+            } => {
                 // The whole span is replaced, so parentheses around the name go. The fix is certain
                 // only when one enum has the variant.
                 let safe = enums.len() == 1;
@@ -2621,7 +2629,11 @@ impl From<DiagnosticKind> for Diagnostic {
                         .with_help(format!("write one of {}", paths.join(", ")))
                     }
                 };
-                enums.iter().fold(d, |d, e| d.with_fix(qualify(e)))
+                // A fix that writes a loop label's name after `break` does not parse.
+                enums
+                    .iter()
+                    .filter(|e| !labelled.contains(e))
+                    .fold(d, |d, e| d.with_fix(qualify(e)))
             }
             DiagnosticKind::UnknownVariant {
                 enum_name,
