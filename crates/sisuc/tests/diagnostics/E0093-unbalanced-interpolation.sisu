@@ -1,0 +1,6 @@
+fn main() {
+    print("a
+}
+fn f() {
+    print("{g(x}")
+}

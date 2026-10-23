@@ -311,6 +311,9 @@ pub(crate) fn lex_clean(source: &str) -> Result<Vec<Token>, Diagnostic> {
 
 /// Lexes `source`, reporting every error it can continue after. `Err` holds the one diagnostic a
 /// bracket error leaves: the first recoverable diagnostic, or the bracket error when there is none.
+/// A bracket error after a literal that is not closed does not stop the lexer, because the
+/// literal ate the closers: a closer pops down to the opener it matches, a stray closer is
+/// dropped, and a bracket still open at the end of the file is left to the parser.
 /// A `;` that separates statements becomes a `Newline`, and a redundant one is dropped with a
 /// warning (`separate`).
 pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
@@ -399,14 +402,16 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
             diagnostics.extend(brackets.line_start(source, &mut tokens, (&kind, span), skipped));
             first_on_line = separator;
         }
-        if let Err(d) = track_bracket(&mut brackets.open, &kind, span) {
-            return Err(first_or(diagnostics, d));
+        match track_closer(&mut brackets, &kind, span, &diagnostics, &mut tokens) {
+            Err(d) => return Err(first_or(diagnostics, d)),
+            Ok(false) => continue,
+            Ok(true) => {}
         }
         brackets.note(&kind, start, separator);
         tokens.push(Token { kind, span });
     }
     brackets.end_line(source.len(), true, &mut tokens, &mut diagnostics);
-    if let Some(&(bracket, at)) = brackets.open.last() {
+    if let Some((bracket, at)) = unclosed_at_end(&brackets.open, &diagnostics) {
         let unclosed = DiagnosticKind::UnclosedBracket { bracket, at };
         return Err(first_or(diagnostics, unclosed.into()));
     }
@@ -553,6 +558,8 @@ struct Frame {
 #[derive(Default)]
 struct Brackets {
     open: Vec<Open>,
+    /// Whether a `LiteralNotClosed` is among the diagnostics, once `track_closer` has found it.
+    literal_seen: bool,
     frames: Vec<Frame>,
     /// How many `;`s that separate statements end the tokens, as `in_block` says. A cut that
     /// shortens the tokens resets it.
@@ -804,8 +811,8 @@ fn eof(tokens: &[Token]) -> Token {
     }
 }
 
-/// The diagnostic a bracket error leaves: the first of `diagnostics`, since a skip may have
-/// caused the bracket error (`print("abc) }` skips both closers), or else `bracket`.
+/// The diagnostic a bracket error leaves, when no literal was left open before it: the first of
+/// `diagnostics`, since a skip may have caused the bracket error, or else `bracket`.
 fn first_or(diagnostics: Vec<Diagnostic>, bracket: Diagnostic) -> Diagnostic {
     diagnostics.into_iter().next().unwrap_or(bracket)
 }
@@ -1042,8 +1049,68 @@ fn header_awaits_brace(line: &[Token]) -> bool {
         .unwrap_or(false)
 }
 
-/// Pushes an opening bracket onto `open`, or checks that a closing one matches the top.
-fn track_bracket(open: &mut Vec<Open>, kind: &TokenKind, span: Span) -> Result<(), Diagnostic> {
+/// The innermost bracket still open at the end of the file, unless a literal was not closed: it
+/// may be one whose closer the literal ate, and its error is already reported.
+fn unclosed_at_end(open: &[Open], diagnostics: &[Diagnostic]) -> Option<Open> {
+    open.last()
+        .copied()
+        .filter(|_| !after_unclosed_literal(diagnostics))
+}
+
+/// Whether a literal was not closed, as `diagnostics` say.
+fn after_unclosed_literal(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics
+        .iter()
+        .any(|d| d.code() == Code::LiteralNotClosed)
+}
+
+/// Tracks the bracket `kind` at `span` (`track_bracket`), and returns whether its token stays.
+/// After a literal that is not closed, a closer pops down to its opener, and the brackets it pops
+/// get a closer of no width before it, so that the tokens stay balanced. No closer pops past the
+/// innermost interpolation's `{`.
+fn track_closer(
+    brackets: &mut Brackets,
+    kind: &TokenKind,
+    span: Span,
+    diagnostics: &[Diagnostic],
+    tokens: &mut Vec<Token>,
+) -> Result<bool, Diagnostic> {
+    let floor = brackets.frames.last().map_or(0, |f| f.brace + 1);
+    let seen = &mut brackets.literal_seen;
+    // Read only for a closer that does not match, so that a source with many errors is not
+    // scanned once per token. A `LiteralNotClosed` is never removed from `diagnostics` (`unclosed`
+    // drops two other codes only), so a `true` found once stays true.
+    let recover = || {
+        *seen = *seen || after_unclosed_literal(diagnostics);
+        seen.then_some(floor)
+    };
+    let Some(left) = track_bracket(&mut brackets.open, kind, span, recover)? else {
+        return Ok(false);
+    };
+    for (bracket, _) in left.into_iter().rev() {
+        let kind = match bracket {
+            '(' => TokenKind::RParen,
+            '[' => TokenKind::RBracket,
+            _ => TokenKind::RBrace,
+        };
+        let at = Span::new(span.start(), span.start());
+        tokens.push(Token { kind, span: at });
+    }
+    Ok(true)
+}
+
+/// Pushes an opening bracket onto `open`, or checks that a closing one matches the top. Returns
+/// `None` when the token is dropped, else the brackets to close before it. When a closer does not
+/// match and `recover` gives the lowest index of `open` that a closer may pop to, the closer pops
+/// down to the nearest opener it matches, and returns the openers above it, since a literal that
+/// is not closed ate their closers. A closer with no such opener is a stray: it is dropped, and
+/// the error was already reported.
+fn track_bracket(
+    open: &mut Vec<Open>,
+    kind: &TokenKind,
+    span: Span,
+    recover: impl FnOnce() -> Option<usize>,
+) -> Result<Option<Vec<Open>>, Diagnostic> {
     let (closes, c) = match kind {
         TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => {
             let c = match kind {
@@ -1052,22 +1119,32 @@ fn track_bracket(open: &mut Vec<Open>, kind: &TokenKind, span: Span) -> Result<(
                 _ => '{',
             };
             open.push((c, span));
-            return Ok(());
+            return Ok(Some(Vec::new()));
         }
         TokenKind::RParen => ('(', ')'),
         TokenKind::RBracket => ('[', ']'),
         TokenKind::RBrace => ('{', '}'),
-        _ => return Ok(()),
+        _ => return Ok(Some(Vec::new())),
     };
-    match open.pop() {
-        Some((o, _)) if o == closes => Ok(()),
-        opened => Err(DiagnosticKind::UnexpectedClosingBracket {
-            bracket: c,
-            at: span,
-            opened,
-        }
-        .into()),
+    if let Some((o, _)) = open.last()
+        && *o == closes
+    {
+        open.pop();
+        return Ok(Some(Vec::new()));
     }
+    if let Some(floor) = recover() {
+        let found = open
+            .iter()
+            .rposition(|&(o, _)| o == closes)
+            .filter(|&i| i >= floor);
+        return Ok(found.map(|i| open.split_off(i).split_off(1)));
+    }
+    Err(DiagnosticKind::UnexpectedClosingBracket {
+        bracket: c,
+        at: span,
+        opened: open.pop(),
+    }
+    .into())
 }
 
 /// One token per line, `line:col Kind text`; `Newline` and `Eof` print without text.
@@ -3382,9 +3459,76 @@ mod tests {
     }
 
     #[test]
-    fn unclosed_string_that_unbalances_reports_the_string() {
+    fn unclosed_string_that_unbalances_should_recover() {
         let src = "fn main() { print(\"abc) }";
-        assert_eq!(at(src, &fatal(src)), (Code::LiteralNotClosed, 1, 19));
+        assert_eq!(at(src, &only(src)), (Code::LiteralNotClosed, 1, 19));
+    }
+
+    /// The literal ate the `)`, so the `}` pops the `(` too.
+    #[test]
+    fn closer_after_unclosed_string_should_pop_to_its_opener() {
+        let src = "{ f(\"a\n}\n";
+        assert_eq!(at(src, &only(src)), (Code::LiteralNotClosed, 1, 5));
+        assert!(lex(src).is_ok_and(|l| l.tokens.iter().any(|t| t.kind == TokenKind::RBrace)));
+    }
+
+    #[test]
+    fn stray_closer_after_unclosed_string_should_be_dropped() {
+        let src = "\"a\n)\n";
+        assert_eq!(at(src, &only(src)), (Code::LiteralNotClosed, 1, 1));
+        assert!(lex(src).is_ok_and(|l| l.tokens.iter().all(|t| t.kind != TokenKind::RParen)));
+    }
+
+    /// The `)` is text of the interpolation to pop to, not the `(` below its `{`.
+    #[test]
+    fn closer_in_interpolation_after_unclosed_string_should_not_pop_below_the_frame() {
+        let src = "f(\"a\n\"{x)}\"\n";
+        assert_eq!(at(src, &only(src)), (Code::LiteralNotClosed, 1, 3));
+        assert!(lex(src).is_ok_and(|l| l.tokens.iter().all(|t| t.kind != TokenKind::RParen)));
+    }
+
+    /// The closers of the popped brackets, innermost first, have no width and sit at the closer.
+    #[test]
+    fn popped_brackets_should_get_closers_of_no_width_in_order() {
+        use TokenKind::{RBrace, RBracket, RParen};
+        for (src, closer, added) in [
+            ("f({[ \"a\n)\n", RParen, [RBracket, RBrace]),
+            ("[({ \"a\n]\n", RBracket, [RBrace, RParen]),
+            ("{[( \"a\n}\n", RBrace, [RParen, RBracket]),
+        ] {
+            let at = src.find(['\n']).expect("a line end") + 1;
+            let tokens = lex(src).expect("the lexer recovers").tokens;
+            let after: Vec<_> = tokens.iter().filter(|t| t.span.start() >= at).collect();
+            let [first, second, last, ..] = after.as_slice() else {
+                panic!("expected the closers and a closer in {src:?}");
+            };
+            assert_eq!(
+                (&first.kind, &second.kind, &last.kind),
+                (&added[0], &added[1], &closer)
+            );
+            assert!(first.span.range().is_empty() && second.span.range().is_empty());
+            assert_eq!((first.span.start(), second.span.start()), (at, at));
+        }
+    }
+
+    /// The `}` finds the interpolation's own `{` only at the frame's brace, which it must not pop.
+    #[test]
+    fn closer_of_the_interpolation_after_unclosed_string_should_be_dropped() {
+        let src = "\"a\n\"{g(x}\"\n";
+        let ds = recovered(src);
+        let codes: Vec<_> = ds.iter().map(|d| at(src, d)).collect();
+        assert_eq!(
+            codes,
+            [
+                (Code::LiteralNotClosed, 1, 1),
+                (Code::LiteralNotClosed, 2, 7)
+            ]
+        );
+    }
+
+    #[test]
+    fn plain_bracket_error_should_stay_fatal_in_a_longer_source() {
+        assert_eq!(fatal("f(]").code(), Code::UnexpectedClosingBracket);
     }
 
     #[test]
