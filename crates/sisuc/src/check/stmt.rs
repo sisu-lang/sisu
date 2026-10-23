@@ -1,6 +1,6 @@
 //! Statements, blocks and scopes.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::array::optional_array;
 use super::expr::{fits, local};
@@ -1342,12 +1342,13 @@ impl Checker<'_> {
     /// The locals `cond` reads, each once, in source order; `None` when it holds a node that
     /// can see a change the body makes through an object or a function (W0011's rule 1).
     fn condition_locals(&self, cond: &tir::Expr) -> Option<Vec<tir::LocalId>> {
-        let mut locals = Vec::new();
-        self.read_locals(cond, &mut locals).then_some(locals)
+        let mut locals = (Vec::new(), FxHashSet::default());
+        self.read_locals(cond, &mut locals).then_some(locals.0)
     }
 
-    /// Adds the locals `e` reads to `locals`; false at a node rule 1 does not allow.
-    fn read_locals(&self, e: &tir::Expr, locals: &mut Vec<tir::LocalId>) -> bool {
+    /// Adds the locals `e` reads to `locals`, in order and with the set of those already in it;
+    /// false at a node rule 1 does not allow.
+    fn read_locals(&self, e: &tir::Expr, locals: &mut Locals) -> bool {
         match &e.kind {
             ExprKind::Int(_)
             | ExprKind::Float(_)
@@ -1356,8 +1357,8 @@ impl Checker<'_> {
             | ExprKind::Str(_)
             | ExprKind::None => true,
             &ExprKind::Local(id) => {
-                if !locals.contains(&id) {
-                    locals.push(id);
+                if locals.1.insert(id) {
+                    locals.0.push(id);
                 }
                 true
             }
@@ -1368,7 +1369,11 @@ impl Checker<'_> {
                 // `==` on a class compares fields, which can change with no write of a local.
                 // Both sides have one type, up to an optional, so `lhs` tells for both.
                 let none = matches!(lhs.kind, ExprKind::None) || matches!(rhs.kind, ExprKind::None);
-                (none || !self.holds(lhs.ty).class)
+                // W0005 reports a comparison with `nan`, and its fix changes the condition.
+                let nan = [lhs, rhs]
+                    .iter()
+                    .any(|side| matches!(side.kind, ExprKind::Float(x) if x.is_nan()));
+                !nan && (none || !self.holds(lhs.ty).class)
                     && self.read_locals(lhs, locals)
                     && self.read_locals(rhs, locals)
             }
@@ -1415,6 +1420,9 @@ impl Checker<'_> {
             .find_map(|scope| scope.get_mut(&name))
     }
 }
+
+/// The locals a condition reads, in source order, and the set of them.
+type Locals = (Vec<tir::LocalId>, FxHashSet<tir::LocalId>);
 
 /// What a `for` binds before its `Loop`: `stmts` bind the source and the counter, which runs
 /// to `limit`, and `item` is the value of the loop variable for the current counter. Over

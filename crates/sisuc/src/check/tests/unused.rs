@@ -40,7 +40,7 @@ fn warns(src: &str, expected: &[(usize, usize, &str)]) {
 }
 
 #[test]
-fn unused_value_warns() {
+fn unused_value_should_warn_when_a_statement_drops_it() {
     warns(
         "fn main() {\n    let n = 1\n    u8(n)\n}",
         &[(3, 5, "u8(n)")],
@@ -76,7 +76,7 @@ fn unused_value_warns() {
 }
 
 #[test]
-fn unused_value_clean() {
+fn unused_value_should_not_warn_when_nothing_drops_a_value() {
     for body in [
         "let _ = u8(n)",
         "a?.m()",
@@ -144,7 +144,7 @@ fn unused_value_fix() {
 /// Every warning of one statement carries the fix that drops all of the statement's values, so
 /// applying any one of them leaves no branch without a value beside one with a value.
 #[test]
-fn unused_value_fix_drops_every_branch() {
+fn unused_value_fix_should_drop_every_branch_of_the_statement() {
     type Warned<'a> = (usize, usize, &'a str);
     let rows: &[(&str, &[Warned])] = &[
         ("if c { 1 } else { 2 }", &[(10, 12, "1"), (10, 23, "2")]),

@@ -576,7 +576,7 @@ fn continue_outside_loop() {
 }
 
 #[test]
-fn break_after_loop() {
+fn break_should_be_an_error_after_its_loop_ends() {
     codes(
         "fn f(c: bool) {\n    while c { break }\n    break\n}\nfn main() {}",
         &[(Code::JumpOutsideLoop, (3, 5))],
@@ -1024,7 +1024,7 @@ fn labeled_continue_outside_loop() {
 /// Loops side by side may share a loop label; a labeled loop that no jump names is W0008, whose
 /// safe fix deletes the loop label.
 #[test]
-fn loop_label_reuse_and_unused() {
+fn loop_label_should_be_reusable_beside_its_loop_and_warn_when_no_jump_names_it() {
     codes(
         "fn f(c: bool) {\n    a: while c { break a }\n    a: while c { continue a }\n}\nfn main() {}",
         &[],

@@ -263,8 +263,8 @@ impl Checker<'_> {
         self.body.writes
     }
 
-    /// Stamps the binding, or `self`, at the root of the written place `base`. A root that is
-    /// neither stamps nothing.
+    /// Stamps the binding, or `self`, at the root of `base`, a written name or the base of a
+    /// written field, which this follows to its root once. A root that is neither stamps nothing.
     fn stamp_root(&mut self, mut base: &ast::Expr) {
         loop {
             match &base.kind {
@@ -291,9 +291,9 @@ impl Checker<'_> {
     /// The place `target` names, which `span` assigns. `element` when it is the base of an
     /// index, so the write replaces an element of it.
     fn place(&mut self, span: Span, target: &ast::Expr, element: bool) -> CheckedPlace {
-        self.stamp_root(target);
         match &target.kind {
             &ast::ExprKind::Name(name) => {
+                self.stamp_root(target);
                 let Some(b) = self.lookup(name) else {
                     if let Some(place) = self.constant_place(span, name, element) {
                         return place;
@@ -316,12 +316,11 @@ impl Checker<'_> {
                 };
                 b.reassigned |= b.kind == BindingKind::Var;
                 let (local, ty, kind, declared) = (b.local, b.ty, b.kind, b.span);
-                let redeclared = b.shadows_mut;
                 let cause = match kind {
                     BindingKind::Var => None,
                     BindingKind::Let => Some(Immutable::Let {
                         declared,
-                        redeclared,
+                        redeclared: b.shadows_mut,
                     }),
                     BindingKind::Param => Some(Immutable::Param { declared }),
                     BindingKind::Unwrapped(keyword) => {
@@ -346,6 +345,7 @@ impl Checker<'_> {
                 }
             }
             ast::ExprKind::Field { base, name, .. } => {
+                self.stamp_root(base);
                 // A `?.` anywhere in the target's chain would not parse.
                 let outer = std::mem::replace(&mut self.body.in_target, true);
                 let checked = self.value(base, None);

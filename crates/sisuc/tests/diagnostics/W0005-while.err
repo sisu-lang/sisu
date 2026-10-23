@@ -1,0 +1,15 @@
+warning[W0005]: comparison with `f64.nan` is always true
+ --> W0005-while.sisu:2:11
+  |
+2 |     while n != f64.nan {
+  |           ^^^^^^^^^^^^
+  |
+  = help: `nan` is not equal to any number, itself included; test for it with `is_nan()`
+help: test it with `is_nan()`
+  |
+2 -     while n != f64.nan {
+2 +     while !n.is_nan() {
+  |
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0005
