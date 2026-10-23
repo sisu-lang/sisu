@@ -124,6 +124,28 @@ fn items_should_cite_their_own_dead_uses_when_they_are_not_the_first_of_their_ki
 }
 
 #[test]
+fn chained_calls_should_be_cited_in_check_order_when_they_start_at_one_place() {
+    judge_unused();
+    // Each call of the chain starts at `node`, and the innermost call is checked first.
+    let src = "class Node {\n    n: i64\n    fn next(self) -> Node {\n        self\n    }\n}\nfn old_report(node: Node) {\n    print(node.next().next().next().next().n)\n}\nfn main() {\n    print(Node(n: 1).n)\n}";
+    let (_, ds) = checked(src);
+    let cited: Vec<Vec<&str>> = (ds.iter())
+        .map(|d| d.secondary().iter().map(|(s, _)| &src[s.range()]).collect())
+        .collect();
+    assert_eq!(
+        cited,
+        [
+            vec![
+                "node.next()",
+                "node.next().next()",
+                "node.next().next().next()"
+            ],
+            vec![],
+        ]
+    );
+}
+
+#[test]
 fn constant_should_warn_when_nothing_names_it() {
     judge_unused();
     diagnostic(
