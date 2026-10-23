@@ -31,6 +31,7 @@ fuzz = ["dep:arbitrary"]
 [dev-dependencies]
 arbitrary = "1.5.0"
 datatest-stable = "0.3.3"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 syn = { version = "3.0.6", default-features = false, features = ["full", "parsing"] }
 
 [[bin]]
