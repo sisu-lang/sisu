@@ -1,3 +1,7 @@
 [[page]]
 file = "README"
 description = "How the language reference is organized and how to read it."
+
+[[page]]
+file = "lexical"
+description = "Source text, comments, names, keywords, line breaks and semicolons."
