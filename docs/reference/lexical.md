@@ -24,9 +24,13 @@ Outside comments and literals, the source uses only these characters:
 
 - The ASCII letters, the digits and `_`.
 - The characters of the operators and punctuation, such as `+`, `(` and `"`.
-- Spaces and tabs, which separate tokens and have no other meaning.
+- Spaces, tabs and carriage returns. They separate tokens and have no other meaning.
 
-Any other character is an error ([E0010](../diagnostics/E0010.md)). This includes a letter that is not ASCII, such as `é`, and a lone `&`. It also includes a no-break space, and a byte order mark, also at the start of the file. Comments, character literals and string literals can hold any character.
+A carriage return without a line feed does not end a line. So two statements with only a carriage return between them are an error ([E0011](../diagnostics/E0011.md)).
+
+Any other character is an error ([E0010](../diagnostics/E0010.md)). This includes a letter that is not ASCII, such as `é`, and a lone `&`.
+
+A no-break space and a byte order mark are errors too, also at the start of the file. Comments, character literals and string literals can hold any character.
 
 ```sisu
 fn main() {
@@ -165,9 +169,33 @@ fn main() {
 
 ### Layout rules
 
-Because a line break can end a statement, some forms must stay on one line:
+Because a line break can end a statement, some forms must stay on one line.
 
-- Outside `(` and `[`, a binary operator ends a line. It cannot start the next line. A line that starts with `-` and a space is an error ([E0002](../diagnostics/E0002.md)), because the `-` could also be a negation.
+Outside `(` and `[`, a binary operator ends a line, and cannot start the next line. A `-` at the start of a line, followed by a space or a tab, is an error ([E0002](../diagnostics/E0002.md)). The `-` could be a subtraction or a negation.
+
+```sisu
+fn main() {
+    let n = 10
+    - 2                    // error[E0002]
+}
+```
+
+This rule applies only when the line break before the `-` ends a statement. After an operator, the statement continues, so a `-` on the next line is a negation.
+
+```sisu
+fn main() {
+    let n = 10 +
+        - 2
+    print(n)
+}
+```
+
+```output
+8
+```
+
+The other layout rules:
+
 - The `{` of a `fn`, `class`, `enum`, `if`, `else`, `match`, `while`, `for` or `loop` is on the line of its header ([E0004](../diagnostics/E0004.md)).
 - An `else` is on the line of the `}` before it: `} else {` ([E0006](../diagnostics/E0006.md)).
 - Inside `(` or `[`, a `[` cannot start a line after an expression ([E0005](../diagnostics/E0005.md)). Outside brackets, a `[` at the start of a line starts a new statement. It never indexes the line above.
@@ -193,7 +221,12 @@ fn main() {
 42
 ```
 
-A `;` that separates nothing is unnecessary, and the program builds with a warning ([W0007](../diagnostics/W0007.md)). This is true at the end of a line, at the start of a line, after `{`, before `}` or `else`, for each extra `;` in `;;`, and after a top-level `fn`, `class` or `enum`.
+A `;` that separates nothing is unnecessary, and the program builds with a warning ([W0007](../diagnostics/W0007.md)). These are the unnecessary places:
+
+- the end or the start of a line
+- after `{`, or before `}` or `else`
+- each extra `;` in `;;`
+- after a top-level `fn`, `class` or `enum`
 
 ```sisu
 fn main() {
