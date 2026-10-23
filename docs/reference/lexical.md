@@ -182,7 +182,19 @@ fn main() {
 
 This rule applies only when the line break before the `-` ends a statement. After an operator, the statement continues, so a `-` on the next line is a negation.
 
-A `-` with no blank after it, at the start of a line, is a negation that starts a new statement. So in this example, `n` stays 10, and `-2` is an unused value ([W0004](../diagnostics/W0004.md)).
+```sisu
+fn main() {
+    let n = 10 +
+        - 2
+    print(n)
+}
+```
+
+```output
+8
+```
+
+When the line break before it ends a statement, a `-` with no space or tab after it is a negation that starts a new statement. So in this example, `n` stays 10, and `-2` is an unused value ([W0004](../diagnostics/W0004.md)).
 
 ```sisu
 fn main() {
@@ -194,18 +206,6 @@ fn main() {
 
 ```output
 10
-```
-
-```sisu
-fn main() {
-    let n = 10 +
-        - 2
-    print(n)
-}
-```
-
-```output
-8
 ```
 
 The other layout rules:

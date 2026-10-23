@@ -90,7 +90,7 @@ fn main() {
 }
 ```
 
-The one exception is the smallest `i64`. Its magnitude, `9223372036854775808`, is a literal only directly after a unary `-`. Blanks, a line break or a comment can come between the `-` and the digits. No other token can come between them, so parentheses cannot.
+The one exception is the smallest `i64`. Its magnitude, `9223372036854775808`, is a literal only directly after a unary `-`. Spaces, tabs, line breaks and comments can come between the `-` and the digits. No other token can come between them, so parentheses cannot.
 
 ```sisu
 fn main() {
@@ -125,7 +125,7 @@ fn main() {
 The rules, in order:
 
 - When the context expects a `u8` or a `u8?`, the literal is a `u8`. When the context expects an `f64` or an `f64?`, the literal is an `f64`.
-- In a group of operands, the types of the operands that are not integer literals come first. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
+- In a group of operands, the operands that are not integer literals decide the type of its integer literals. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
   - the two operands of an arithmetic operator or a comparison, such as `+`, `<` or `==`
   - the operands of a comparison chain
   - the elements of an array literal
