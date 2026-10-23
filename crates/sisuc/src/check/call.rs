@@ -90,7 +90,7 @@ impl Checker<'_> {
                         at: callee.span,
                         receiver: first.value.span,
                         next,
-                        wrap: !postfix(&first.value),
+                        wrap: !postfix(&first.value) || self.label_starts_receiver(callee, first),
                         safe,
                     });
                     return Err(Poisoned::error());
@@ -99,14 +99,16 @@ impl Checker<'_> {
             }
             _ => args,
         };
+        let at_start = self.starts_break_value(callee.span);
         let functions = self
             .function_ids
             .keys()
             .map(|function| function.as_str())
             .chain(PRELUDE)
             .chain(["i64", "u8", "f64", "char", "string"])
+            .filter(|function| !(at_start && self.is_open_label(function)))
             .map(|function| (function, Definition::Function));
-        let suggestion = match alias(name) {
+        let suggestion = match alias(name).filter(|p| !(at_start && self.is_open_label(p))) {
             Some(prelude) => Some(Suggestion {
                 kind: Definition::Function,
                 name: prelude.to_string(),
@@ -121,6 +123,17 @@ impl Checker<'_> {
         // No `labels`: the name may have meant a class, whose constructor takes them.
         self.stray(rest);
         Err(Poisoned::error())
+    }
+
+    /// Whether the receiver `first` of the idiom call `callee(first, ...)` starts with an open
+    /// loop label, and the call starts the value of an unlabeled `break`: the fix then writes
+    /// the label there, unless it wraps the receiver in parentheses.
+    fn label_starts_receiver(&self, callee: &ast::Ident, first: &ast::Arg) -> bool {
+        let text = &self.source.text[first.value.span.start()..];
+        let end = text
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(text.len());
+        self.starts_break_value(callee.span) && self.is_open_label(&text[..end])
     }
 
     /// Checks the arguments after the receiver of an idiom call of the method `name`, each once.
