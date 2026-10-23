@@ -116,7 +116,10 @@ fn main() {
 
 ### Overflow
 
-When the result of `+`, `-` or `*` on integers is outside the range of its type, the program stops with a panic. Sisu never wraps a result. The same applies to a unary `-` on the smallest `i64`, and to `/` and `%` when the left operand is the smallest `i64` and the right operand is `-1`.
+At run time, an integer `+`, `-` or `*` whose result is outside the range of its type stops the program with a panic. Sisu never wraps a result. These operations also panic with an overflow:
+
+- a unary `-` on the smallest `i64`
+- `/` and `%` when the left operand is the smallest `i64` and the right operand is `-1`
 
 ```sisu panics
 fn main() {
@@ -147,7 +150,7 @@ sisu: panic at example.sisu:4:11: integer overflow
 
 ### Division by zero
 
-`/` or `%` on integers with a right operand of zero stops the program with a panic.
+At run time, `/` or `%` on integers with a right operand of zero stops the program with a panic.
 
 ```sisu panics
 fn main() {
@@ -166,6 +169,18 @@ On `f64`, a division by zero does not panic. It gives an infinity or NaN.
 fn main() {
     print(7.0 / 0.0)             // inf
     print(7.0 % 0.0)             // nan
+}
+```
+
+### Arithmetic in a constant
+
+The program calculates a constant when it builds. So an overflow or a division by zero in a constant is an error, not a panic ([E0088](../diagnostics/E0088.md)).
+
+```sisu
+const LIMIT = 9223372036854775807 + 1    // error[E0088]
+
+fn main() {
+    print(LIMIT)
 }
 ```
 
@@ -204,14 +219,14 @@ fn main() {
 
 The rules:
 
-- A `char` compares by its code point. A `string` compares byte by byte, which is the order of the code points. So upper case letters come before lower case letters, and a prefix comes before the longer string.
+- A `char` compares by its code point. A `string` compares byte by byte, which is the order of the code points. So the ASCII upper case letters come before the ASCII lower case letters, and a prefix comes before the longer string.
 - An `f64` comparison follows IEEE 754: a comparison with NaN is false.
 - A `bool`, an optional, an array, a class or an enum cannot be compared with `<` ([E0032](../diagnostics/E0032.md)).
 - The two operands must have one type ([E0032](../diagnostics/E0032.md)).
 
 ### Comparison chains
 
-A *comparison chain* such as `a < b < c` is true when each comparison in it is true: `a < b` and `b < c`. The program calculates each operand at most once, and stops at the first comparison that is false.
+A *comparison chain* such as `a < b < c` is true when each comparison in it is true, here `a < b` and `b < c`. The program calculates each operand at most once, and stops at the first comparison that is false.
 
 ```sisu
 fn main() {
@@ -264,7 +279,7 @@ fn main() {
 
 ### `is`
 
-`a is b` is true when `a` and `b` refer to the same object. It applies to classes, and to optionals of classes.
+`a is b` is true when `a` and `b` refer to the same object. It applies to classes, and to optionals of classes. When two optionals are both `None`, `a is b` is true. An object and `None` are not the same.
 
 ```sisu
 class Sauna {
@@ -277,6 +292,10 @@ fn main() {
     let c = a
     print(a is c)                // true
     print(a is b)                // false
+    let x: Sauna? = None
+    let y: Sauna? = None
+    print(x is y)                // true
+    print(x is a)                // false
 }
 ```
 
@@ -347,7 +366,7 @@ fn main() {
 
 ## Optional chaining
 
-`a?.name` reads the field `name` of the optional `a`, and `a?.name(...)` calls its method. When `a` is `None`, the result is `None`, and the arguments of the method do not run.
+`a?.name` reads the field `name` of the optional `a`, and `a?.name(...)` calls its method. When `a` is `None`, the result is `None`. Then the method and its arguments do not run.
 
 ```sisu
 class Room {
@@ -365,6 +384,35 @@ fn main() {
 The rules:
 
 - The result is an optional of the type of the field or the method's result. When that type is already an optional, the result is that optional, not an optional of an optional. So a chain such as `a?.b?.c` gives one optional.
+- `a?.b.c` is an error when `b` is not optional, because `a?.b` is an optional ([E0062](../diagnostics/E0062.md)). Write `a?.b?.c`.
+- A method that returns no value has no value through `?.` too ([E0043](../diagnostics/E0043.md)). When `a` is `None`, the method and its arguments do not run.
 - `?.` on a value that is not optional is an error ([E0049](../diagnostics/E0049.md)). Use `.`.
 - An assignment cannot go through `?.` ([E0022](../diagnostics/E0022.md)).
 - A line that starts with `?.` continues the line above it ([Lexical structure](lexical.md#line-continuation)).
+
+```sisu
+class Sauna {
+    heat: i64
+
+    fn show(self, label: string) {
+        print("{label}: {self.heat}")
+    }
+}
+
+fn label() -> string {
+    print("label")
+    return "heat"
+}
+
+fn main() {
+    let on: Sauna? = Sauna(heat: 80)
+    let off: Sauna? = None
+    on?.show(label())
+    off?.show(label())
+}
+```
+
+```output
+label
+heat: 80
+```
