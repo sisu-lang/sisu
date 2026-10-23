@@ -10,7 +10,7 @@ fn main() {
 
 Each page is about one part of the language. A section gives the everyday form first, then the exact rules and the edge cases. You can stop after its first paragraph.
 
-A page states a rule only when `sisu` follows it today. A test builds and runs every example, and compares its output with the page.
+A page states a rule only when `sisu` follows it today. A test checks every example. When an example runs, the test compares its output with the page.
 
 ## How to read an example
 
@@ -123,7 +123,9 @@ Some examples never end, for example a program with an endless `loop`. The test 
 
 ### In development
 
-The tag "In development" marks a section about a feature that is not complete. Its examples show the planned form, and `sisu` does not build them yet. When the feature works, its examples become ordinary examples, and the tag goes away. In the list of pages, a page has the tag when all of its examples are in development.
+The tag "In development" marks a section about a feature that is not complete. Its examples show the planned form, and `sisu` does not build them yet.
+
+When the feature works, its examples become ordinary examples, and the tag goes away. In the list of pages, a page has the tag when all of its examples are in development.
 
 ## The Markdown source
 
