@@ -31,11 +31,10 @@ from collections.abc import Callable
 from decimal import ROUND_HALF_UP, Decimal
 from functools import cache
 from html.parser import HTMLParser
-from itertools import accumulate, groupby, islice, takewhile
+from itertools import accumulate, groupby
 from pathlib import Path
 
 from markdown_it import MarkdownIt
-from markdown_it.common.utils import unescapeAll
 from markdown_it.token import Token
 
 SITE = Path(__file__).resolve().parent
@@ -403,9 +402,10 @@ def markers(source: str) -> list[str]:
 
 def example_info(info: str) -> tuple[list[str], list[str] | None]:
     """The words of a fence's info string and its `args="..."` list, read as the reference test
-    reads them: with Markdown's escapes decoded, words split at spaces. The test reports faults."""
+    reads them: words split at spaces. The test reports faults, and it faults a `\\` or `&` in
+    an example's info string, so the string has nothing to decode."""
     words, args = [], None
-    rest = unescapeAll(info).strip()
+    rest = info.strip()
     while rest:
         if rest.startswith('args="'):
             value, _, rest = rest.removeprefix('args="').partition('"')
@@ -456,9 +456,11 @@ def reference_html(markdown: str, path: Path) -> tuple[str, list[tuple[int, str,
         elif token.type == 'table_open':
             token.attrSet('class', 'tbl')
         elif token.type == 'fence' and (info := example_info(token.info))[0][:1] == ['sisu']:
-            companions = list(takewhile(lambda after: after.type == 'fence' and after.info.strip() in COMPANIONS, islice(tokens, i + 1, None)))
-            for after in companions:
-                after.meta['html'] = ''
+            companions, j = [], i + 1
+            while j < len(tokens) and tokens[j].type == 'fence' and tokens[j].info.strip() in COMPANIONS:
+                tokens[j].meta['html'] = ''
+                companions.append(tokens[j])
+                j += 1
             token.meta['html'] = example_html(token, *info, companions)
             pending = 'pending' in info[0]
             kinds.append(pending)
@@ -524,6 +526,7 @@ def reference_page(index: int, pages: list[dict]) -> str:
     }
     return assemble(read('_reference.html'), title=plain(MD.parseInline(page['title'])[0]), description=page['description'],
                     page='reference/index.html', depth=1, context=context)
+
 
 BENCHMARKS = 'docs/benchmarks.md'
 BENCH_HEADER = ['Language', 'Wall (s)', 'CPU (s)', 'Peak RSS (MiB)', 'Binary (KiB)', 'Build (s)']

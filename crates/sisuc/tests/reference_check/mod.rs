@@ -103,7 +103,8 @@ pub(crate) fn read_page(text: &str) -> Page {
                     .expect("a code block should end after it starts");
                 let line = line_of(start);
                 let at_column_0 = line_starts[line - 1] == start && text.as_bytes()[start] == b'`';
-                reader.code_block(line, at_column_0, &kind, body);
+                let fence_line = text[start..].lines().next().unwrap_or_default();
+                reader.code_block(line, at_column_0, fence_line, &kind, body);
             }
             // Any other block comes between an example and a companion block.
             Event::Start(Tag::HtmlBlock) => {
@@ -154,8 +155,15 @@ struct Reader {
 
 impl Reader {
     /// Reads the code block of `kind` with `body` on Markdown `line`. `at_column_0` says that it
-    /// starts with a backtick at column 0.
-    fn code_block(&mut self, line: usize, at_column_0: bool, kind: &CodeBlockKind, body: String) {
+    /// starts with a backtick at column 0, and `fence_line` is its first line as the page has it.
+    fn code_block(
+        &mut self,
+        line: usize,
+        at_column_0: bool,
+        fence_line: &str,
+        kind: &CodeBlockKind,
+        body: String,
+    ) {
         let fault = match kind {
             CodeBlockKind::Indented => {
                 Some("an indented code block is not checked; use a ``` fence".to_string())
@@ -168,6 +176,16 @@ impl Reader {
             CodeBlockKind::Fenced(info) => {
                 let (name, words) = info.split_once(' ').unwrap_or((info, ""));
                 match name {
+                    // Markdown decodes escapes and entities in an info string, and the site's
+                    // parser decodes some of them in a different way.
+                    "sisu" if fence_line.contains(['\\', '&']) => {
+                        self.open = Open::Faulted;
+                        self.faults.push(Fault {
+                            line,
+                            message: "an example's info string cannot hold `\\` or `&`".to_string(),
+                        });
+                        None
+                    }
                     "sisu" => match example(line, words, body) {
                         Ok(found) => {
                             self.examples.push(found);

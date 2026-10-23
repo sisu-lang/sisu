@@ -798,12 +798,17 @@ class Build(unittest.TestCase):
             build.reference_pages(entries)
 
     def test_example_caption_should_read_the_info_string_as_the_test_does(self):
-        cases = [('sisu args="a b"', './example a b'), ('sisu args="a\\*b"', './example a*b'), ('sisu args="\\"', './example'),
+        cases = [('sisu args="a b"', './example a b'), ('sisu args="  a  b "', './example a b'), ('sisu args=""', './example'),
                  ('sisu  pending', 'In development')]
         for info, caption in cases:
             with self.subTest(info):
                 body = ref_html(self, f'# T\n\n{FENCE}{info}\nfn main() {{}}\n{FENCE}\n')[0]
                 self.assertEqual(re.findall(r'<figcaption class="cap">(.*?)</figcaption>', body), [caption])
+
+    def test_build_should_render_each_reference_page_once(self):
+        render = self.enterContext(mock.patch.object(build, 'reference_html', wraps=build.reference_html))
+        built_site(self, REF_PAGES)
+        self.assertEqual(sorted(call.args[1].stem for call in render.call_args_list), sorted(REF_PAGES))
 
     def test_reference_links_should_become_site_links(self):
         cases = [('literals.md#escapes', 'literals.html#escapes'), ('../diagnostics/E0008.md', '../diagnostics/E0008.html'),

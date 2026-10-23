@@ -594,6 +594,32 @@ fn malformed_fences_should_each_be_a_fault() {
     assert_eq!(faults(second), [8]);
 }
 
+/// GIVEN pages whose `sisu` fence on line 3 has `\\` or `&` in its info string, which Markdown
+/// would decode
+/// WHEN the checker checks each page
+/// THEN each fails on line 3 and says that the info string cannot hold them
+#[test]
+fn escape_in_info_string_should_be_a_fault() {
+    for info in [
+        r#"args="a\*b""#,
+        r#"args="\""#,
+        r#"args="&#65;""#,
+        "args=\"&amp;\"",
+    ] {
+        let read = read_page(&format!("# Page\n\n```sisu {info}\nfn main() {{}}\n```\n"));
+        let lines: Vec<_> = read
+            .faults
+            .iter()
+            .map(|fault| (fault.line, fault.message.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            [(3, "an example's info string cannot hold `\\` or `&`")],
+            "{info}"
+        );
+    }
+}
+
 /// GIVEN a `sisu check` of a pending example that cannot read its file and exits 1
 /// AND one that has no exit code
 /// WHEN the checker judges each result
