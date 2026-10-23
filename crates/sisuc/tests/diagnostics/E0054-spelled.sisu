@@ -1,0 +1,5 @@
+fn main() {
+    print(string("\u{61}"))
+    print(string(("\u{61}")))
+    print(string("a{1}b"))
+}

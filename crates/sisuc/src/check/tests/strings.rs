@@ -682,6 +682,18 @@ fn string_call() {
     }
 }
 
+/// A literal in parentheses is still already a `string`: E0054 at the parentheses, and the same
+/// fix as for any other value.
+#[test]
+fn string_of_a_parenthesized_literal_should_be_already_converted() {
+    let src = with_items(&body("", "print(string((\"a\")))"));
+    let d = diagnostic(&src, Code::AlreadyConverted, (2, 18, "(\"a\")"), &[]);
+    let found = fixes(&src, &d);
+    assert_eq!(found.len(), 1, "{src}");
+    assert!(found[0].0, "{src}");
+    assert_eq!(applied(&src, &d), with_items(&body("", "print((\"a\"))")));
+}
+
 /// `string` takes exactly one argument, and a label on it is E0055 as for `u8(x)`.
 #[test]
 fn string_call_arguments() {
