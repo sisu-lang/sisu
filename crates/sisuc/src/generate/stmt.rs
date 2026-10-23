@@ -6,18 +6,40 @@ use super::scope::{Ty, Var};
 use super::writer::{Rewrite, Site, allowed};
 use super::{Gen, MAX_BOUND, MAX_LOOPS, MAX_SIZE};
 
+/// What each `break` of a `loop` value gives: a value of `ty` of at most `max`, written with
+/// `synth` (`Gen::expr`).
+struct Value {
+    ty: Ty,
+    max: u64,
+    synth: bool,
+}
+
+/// A loop whose body holds the point being written, which a `break` or `continue` there may
+/// leave.
+struct Target {
+    /// Its loop label, if it has one.
+    label: Option<String>,
+    /// Whether a jump names the label, so it is used (W0008).
+    used: bool,
+    /// For a `loop` value, what its `break`s give.
+    value: Option<Value>,
+    /// The most size a `break` gave.
+    size: u64,
+}
+
 /// The most statements in a block, before its jump.
 const MAX_STATEMENTS: usize = 8;
 /// The most blocks nest, statements' and values' alike.
 pub(crate) const MAX_BLOCKS: u32 = 4;
 
 /// The jumps a statement may make at the point being written.
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 pub(crate) struct Jumps {
     /// `return`: in a statement block of a function or `main`, outside every value block.
     pub(crate) ret: bool,
-    /// `break` and `continue`: in a loop's body, outside every value block in it.
-    pub(crate) in_loop: bool,
+    /// `break` and `continue`: the loops whose body holds the point, innermost last, outside
+    /// every value block in them.
+    loops: Vec<Target>,
 }
 
 #[derive(Clone, Copy)]
@@ -35,6 +57,7 @@ enum Rule {
     If,
     While,
     WhileLet,
+    Loop,
     For,
     ForArray,
     Call,
@@ -49,8 +72,16 @@ impl Gen<'_> {
             self.stmt();
             count += 1;
         }
+        // A loop label that no jump names yet gets one here, so it is used (W0008).
+        let innermost = self.jumps.loops.len().checked_sub(1);
+        if jump && let Some(at) = innermost.filter(|&at| self.unused(at)) {
+            self.w.line();
+            self.cost.statement();
+            let kind = ["continue", "break"][self.pick(2)];
+            return self.loop_jump(kind, at, true);
+        }
         // Where only a panic can jump, as in a value block, a block ends in one only now and then.
-        let other = self.jumps.ret || self.jumps.in_loop;
+        let other = self.jumps.ret || innermost.is_some();
         if jump && self.pick(4) == 3 && (other || self.pick(32) == 31) && self.spend(1) {
             self.w.line();
             if self.blocks < MAX_BLOCKS && self.pick(2) == 1 {
@@ -119,9 +150,10 @@ impl Gen<'_> {
             rules.push(Rule::If);
             if self.cost.depth() < MAX_LOOPS {
                 rules.extend([Rule::For, Rule::ForArray]);
-                // A `while` is three statements: its counter, itself and the step.
+                // A `while` is three statements: its counter, itself and the step; a `loop`, four,
+                // with its guard.
                 if self.fuel >= 2 {
-                    rules.extend([Rule::While, Rule::WhileLet]);
+                    rules.extend([Rule::While, Rule::WhileLet, Rule::Loop]);
                 }
             }
         }
@@ -209,6 +241,9 @@ impl Gen<'_> {
             Rule::If => self.if_stmt(false),
             Rule::While => self.while_stmt(),
             Rule::WhileLet => self.while_let(),
+            Rule::Loop => {
+                self.loop_stmt(None);
+            }
             Rule::For => self.for_stmt(),
             Rule::ForArray => self.for_array(),
             Rule::Call => self.call_stmt(),
@@ -439,6 +474,7 @@ impl Gen<'_> {
         self.w.text(&format!("let mut {counter} = {bound}"));
         self.w.line();
         self.cost.statement();
+        let label = self.label();
         self.w.text(&format!("while {counter} > 0"));
         let var = counter_var(counter.clone(), Ty::I64, 0, self.cost.depth());
         self.scope.vars.push(var);
@@ -452,9 +488,77 @@ impl Gen<'_> {
             }
             g.w.text(" ");
             g.cost.enter_loop(bound);
-            g.loop_body(&format!("{counter} -= 1"), None);
+            g.loop_body(label, &format!("{counter} -= 1"), None);
             g.cost.exit_loop();
         });
+    }
+
+    /// `let mut c = n` and `loop { if c == 0 { break [v] } c -= 1 ... }`: `while_stmt`'s
+    /// bounds, with the guard as the `while`'s condition. With `value`, the `loop` is a value
+    /// whose `break`s each give one; gives the most size they gave.
+    fn loop_stmt(&mut self, value: Option<Value>) -> u64 {
+        self.spend(2);
+        let bound = self.upto(MAX_BOUND);
+        let counter = self.scope.fresh("v");
+        self.w.text(&format!("let mut {counter} = {bound}"));
+        self.w.line();
+        self.cost.statement();
+        let label = self.label();
+        self.w.text("loop ");
+        let var = counter_var(counter.clone(), Ty::I64, 0, self.cost.depth());
+        self.scope.vars.push(var);
+        self.conditionally(|g| {
+            g.open_loop(label, value);
+            g.w.line();
+            g.cost.enter_condition(bound);
+            g.cost.statement();
+            g.w.text(&format!("if {counter} == 0 {{ "));
+            let at = g.jumps.loops.len() - 1;
+            g.loop_jump("break", at, false);
+            g.w.text(" }");
+            g.cost.exit_loop();
+            g.cost.enter_loop(bound);
+            g.w.line();
+            g.cost.statement();
+            g.w.text(&format!("{counter} -= 1"));
+            g.stmts(true);
+            g.cost.exit_loop();
+            g.close_loop()
+        })
+    }
+
+    /// `({ let mut c = n loop { ... } })`, a `loop` value of type `ty` (`loop_stmt`), at most
+    /// `max`: no jump leaves it but its own `break`s.
+    pub(crate) fn loop_value(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
+        let jumps = std::mem::take(&mut self.jumps);
+        self.w.text("(");
+        self.open_block();
+        self.w.line();
+        let size = self.loop_stmt(Some(Value {
+            ty: ty.clone(),
+            max,
+            synth,
+        }));
+        self.close_block();
+        self.w.text(")");
+        self.jumps = jumps;
+        Info {
+            size,
+            pure: false,
+            len: 0,
+            folds: false,
+            value: None,
+        }
+    }
+
+    /// Now and then a fresh loop label, written before the loop's keyword.
+    fn label(&mut self) -> Option<String> {
+        if self.pick(4) != 3 {
+            return None;
+        }
+        let label = self.scope.fresh("l");
+        self.w.text(&format!("{label}: "));
+        Some(label)
     }
 
     /// `let mut c = n` and `while let x = (if c > 0 { e } else { None }) { c -= 1 ... }`:
@@ -482,6 +586,7 @@ impl Gen<'_> {
             Some(self.scope.fresh("v"))
         };
         let pattern = name.as_deref().unwrap_or("_");
+        let label = self.label();
         self.w
             .text(&format!("while let {pattern} = (if {counter} > 0 {{ "));
         let var = counter_var(counter.clone(), Ty::I64, 0, self.cost.depth());
@@ -496,7 +601,7 @@ impl Gen<'_> {
             let loops = g.cost.depth() + 1;
             let binding = name.map(|name| Var::new(name, payload, false, value.size, 0, loops));
             g.cost.enter_loop(bound);
-            g.loop_body(&format!("{counter} -= 1"), binding);
+            g.loop_body(label, &format!("{counter} -= 1"), binding);
             g.cost.exit_loop();
         });
     }
@@ -560,6 +665,7 @@ impl Gen<'_> {
         } else {
             format!("{ty}.")
         };
+        let label = self.label();
         self.w.text(&format!(
             "while let {qualifier}{name}({}) = {chain} ",
             parts.join(", ")
@@ -568,7 +674,7 @@ impl Gen<'_> {
         self.scope.vars.push(var);
         self.conditionally(|g| {
             g.cost.enter_loop(nodes);
-            g.loop_body(&format!("{chain} = {rest}"), vars);
+            g.loop_body(label, &format!("{chain} = {rest}"), vars);
             g.cost.exit_loop();
         });
     }
@@ -626,12 +732,13 @@ impl Gen<'_> {
         };
         let name = self.scope.fresh("v");
         let dots = if inclusive { "..=" } else { ".." };
+        let label = self.label();
         self.w
             .text(&format!("for {name} in {start}{dots}{} ", start + span));
         let var = Var::new(name, Ty::I64, false, 0, 0, self.cost.depth() + 1);
         self.conditionally(|g| {
             g.cost.enter_loop(count);
-            g.loop_body("", Some(var));
+            g.loop_body(label, "", Some(var));
             g.cost.exit_loop();
         });
     }
@@ -640,6 +747,7 @@ impl Gen<'_> {
     fn for_array(&mut self) {
         let element = self.any_type();
         let name = self.scope.fresh("v");
+        let label = self.label();
         self.w.text(&format!("for {name} in "));
         // The source has no expected type.
         let array = if self.pick(2) == 0 || element.shared() {
@@ -653,17 +761,20 @@ impl Gen<'_> {
         let var = Var::new(name, element, false, size, 0, self.cost.depth() + 1);
         self.conditionally(|g| {
             g.cost.enter_loop(array.len);
-            g.loop_body("", Some(var));
+            g.loop_body(label, "", Some(var));
             g.cost.exit_loop();
         });
     }
 
-    /// A loop's body: `first`, if any, then statements, which may `break` and `continue`, with
-    /// `var` in scope.
-    fn loop_body(&mut self, first: &str, var: impl IntoIterator<Item = Var>) {
-        let jumps = self.jumps;
-        self.jumps.in_loop = true;
-        self.open_block();
+    /// The body of a loop labeled `label`, if any: `first`, if any, then statements, which may
+    /// `break` and `continue`, with `var` in scope.
+    fn loop_body(
+        &mut self,
+        label: Option<String>,
+        first: &str,
+        var: impl IntoIterator<Item = Var>,
+    ) {
+        self.open_loop(label, None);
         self.scope.vars.extend(var);
         if !first.is_empty() {
             self.w.line();
@@ -671,8 +782,65 @@ impl Gen<'_> {
             self.w.text(first);
         }
         self.stmts(true);
+        self.close_loop();
+    }
+
+    /// Opens the body of a loop labeled `label`, if any, whose `break`s give `value`, if any.
+    fn open_loop(&mut self, label: Option<String>, value: Option<Value>) {
+        self.jumps.loops.push(Target {
+            label,
+            used: false,
+            value,
+            size: 0,
+        });
+        self.open_block();
+    }
+
+    /// Closes the innermost loop's body, and gives the most size its `break`s gave.
+    fn close_loop(&mut self) -> u64 {
         self.close_block();
-        self.jumps = jumps;
+        let target = self
+            .jumps
+            .loops
+            .pop()
+            .expect("a loop's body should close as it opened");
+        debug_assert!(
+            target.label.is_none() || target.used,
+            "a loop's body should name its loop label"
+        );
+        target.size
+    }
+
+    /// Whether the loop `at` has a loop label that no jump names yet.
+    fn unused(&self, at: usize) -> bool {
+        let target = &self.jumps.loops[at];
+        target.label.is_some() && !target.used
+    }
+
+    /// `kind`, `break` or `continue`, of the loop `at`, naming its label if `named`; a `break`
+    /// of a `loop` value gives a value.
+    fn loop_jump(&mut self, kind: &str, at: usize, named: bool) {
+        self.w.text(kind);
+        let target = &mut self.jumps.loops[at];
+        if named {
+            target.used = true;
+            let label = target
+                .label
+                .as_deref()
+                .expect("a named loop should have a label");
+            self.w.text(&format!(" {label}"));
+        }
+        // No jump in the value reaches this loop, so the value is out of it while it is written.
+        if kind == "break"
+            && let Some(value) = self.jumps.loops[at].value.take()
+        {
+            self.w.text(" ");
+            self.synth = value.synth;
+            let size = self.expr(&value.ty, value.max).size;
+            let target = &mut self.jumps.loops[at];
+            target.size = target.size.max(size);
+            target.value = Some(value);
+        }
     }
 
     /// `{ statements }`, which may end in a jump if `jump`.
@@ -732,7 +900,7 @@ impl Gen<'_> {
         if self.jumps.ret {
             jumps.push("return");
         }
-        if self.jumps.in_loop {
+        if !self.jumps.loops.is_empty() {
             jumps.extend(["break", "continue"]);
         }
         // A panic ends the run, so it comes about once in 32 where another jump can.
@@ -765,7 +933,16 @@ impl Gen<'_> {
                     self.expr(&ty, max);
                 }
             }
-            jump => self.w.text(jump),
+            kind => {
+                // The innermost loop, plain, or a loop with a label, named.
+                let labeled: Vec<usize> = (0..self.jumps.loops.len())
+                    .filter(|&at| self.jumps.loops[at].label.is_some())
+                    .collect();
+                match self.pick(labeled.len() + 1) {
+                    0 => self.loop_jump(kind, self.jumps.loops.len() - 1, false),
+                    pick => self.loop_jump(kind, labeled[pick - 1], true),
+                }
+            }
         }
     }
 }

@@ -212,10 +212,8 @@ impl Gen<'_> {
     /// Opens the body of a function or `main`, which counts its own cost.
     fn open_body(&mut self) {
         self.cost = Cost::default();
-        self.jumps = Jumps {
-            ret: true,
-            in_loop: false,
-        };
+        self.jumps = Jumps::default();
+        self.jumps.ret = true;
         self.w.open();
     }
 

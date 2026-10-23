@@ -6,7 +6,7 @@ use std::ops::Range;
 use super::scope::{Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Mark, Rewrite, Site, allowed};
-use super::{Gen, LINE, MAX_BOUND, MAX_NESTING, MAX_SIZE};
+use super::{Gen, LINE, MAX_BOUND, MAX_LOOPS, MAX_NESTING, MAX_SIZE};
 
 /// What a rule wrote.
 #[derive(Clone, Copy)]
@@ -119,6 +119,8 @@ enum Rule {
     Call,
     If,
     Block,
+    /// `({ let mut c = n loop { ... } })`, a `loop` value.
+    Loop,
     /// A `T` where a `T?` is wanted.
     Wrap,
     /// `read_line()`, or `u8(e)`, `char(e)` or `i64(e)`, as the optional they give.
@@ -395,6 +397,10 @@ impl Gen<'_> {
         rules.push(Rule::If);
         if !self.one_line && self.blocks < MAX_BLOCKS {
             rules.push(Rule::Block);
+            // A `break` value must have one (E0043), and the `loop` counts toward `MAX_LOOPS`.
+            if *ty != Ty::Unit && self.cost.depth() < MAX_LOOPS && self.fuel >= 2 {
+                rules.push(Rule::Loop);
+            }
             // A `match` near the top only: its arms would otherwise take most of the fuel.
             if self.nesting < 3 {
                 rules.push(Rule::Match);
@@ -479,6 +485,7 @@ impl Gen<'_> {
                 self.w.text(")");
                 info
             }
+            Rule::Loop => self.loop_value(ty, max, synth),
             Rule::Wrap => self.wrap(ty, max),
             Rule::Raw => self.raw(ty),
             Rule::Coalesce => self.coalesce(ty, max),

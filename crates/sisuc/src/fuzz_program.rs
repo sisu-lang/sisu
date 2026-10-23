@@ -905,16 +905,14 @@ mod tests {
         assert_eq!(known(&ran(0, "@\n@k0 42\n@k1 7\n", ""), &sites), 5);
     }
 
-    /// The `n`th seed of the coverage test.
-    fn seed(n: usize) -> Vec<u8> {
-        coverage::seeds()
-            .nth(n)
-            .expect("the coverage test should have at least four seeds")
+    /// The `n`th seed of the coverage test's series, which walks the first 64.
+    fn seed(n: u64) -> Vec<u8> {
+        coverage::seed(n)
     }
 
     /// The `n`th seed's program, or its rewritten copy, passes properties 1 to 3 through the
     /// path `judge` takes. One test per source keeps each to three builds.
-    fn seed_passes(n: usize, rewritten: bool) {
+    fn seed_passes(n: u64, rewritten: bool) {
         let g = generate(&seed(n));
         let (name, source) = if rewritten {
             ("rewritten", &g.rewritten)
@@ -973,16 +971,16 @@ mod tests {
     }
 
     /// `program` end to end, all six builds and properties 1 to 5: it passes and leaves no
-    /// directory behind. Seed 44 is the smallest seed with rewrites, a value site and a panic
-    /// site.
+    /// directory behind. Seed 179 is the smallest seed with rewrites, a value site and a panic
+    /// site that its run reaches.
     #[test]
     fn program_passes_and_cleans_up() {
         let tmp = Scratch::new();
-        let data = seed(44);
+        let data = seed(179);
         let g = generate(&data);
         assert!(
             g.rewritten != g.program && panic_sites(&g) == 1 && g.known.len() > 1,
-            "seed 44 should have rewrites, a value site and a panic site"
+            "seed 179 should have rewrites, a value site and a panic site"
         );
         on_stack(|| program_in(&data, &runtime(), &tmp.0));
         let left = fs::read_dir(&tmp.0)
@@ -991,18 +989,18 @@ mod tests {
         assert_eq!(left, 0, "`program` should remove its directory");
     }
 
-    /// Seed 44's one panic site is the last thing its O0 run prints, as the marker `item.rs`
+    /// Seed 179's one panic site is the last thing its O0 run prints, as the marker `item.rs`
     /// writes. `judge_known` takes a run without that line for an earlier panic, so with it
     /// property 5 judged this panic site.
     #[test]
-    fn seed_44_reaches_its_panic_marker() {
-        let g = generate(&seed(44));
-        assert_eq!(panic_sites(&g), 1, "seed 44 should have one panic site");
+    fn seed_179_reaches_its_panic_marker() {
+        let g = generate(&seed(179));
+        assert_eq!(panic_sites(&g), 1, "seed 179 should have one panic site");
         let marker = g
             .known
             .iter()
             .find_map(|known| matches!(known.answer, Answer::Panic(_)).then_some(&known.marker))
-            .expect("seed 44 should have a panic site");
+            .expect("seed 179 should have a panic site");
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(101), "{}", g.program);
         assert_eq!(
@@ -1046,10 +1044,12 @@ mod tests {
     /// assertion on time.
     #[test]
     fn a_budget_program_is_fast() {
-        // Byte by byte: no types, no items, a statement of `main`, a `while` of bound 8, twice
-        // more inside it, and in the innermost a `print` of a literal; then every choice is the
-        // first.
-        let g = generate(&[0, 0, 1, 7, 8, 0, 1, 7, 8, 0, 1, 7, 8, 0, 1, 0, 0, 0, 0]);
+        // Byte by byte: no types, no items, a statement of `main`, a `while` of bound 8 and no
+        // loop label, twice more inside it, and in the innermost a `print` of a literal; then
+        // every choice is the first.
+        let g = generate(&[
+            0, 0, 1, 7, 8, 0, 0, 1, 7, 8, 0, 0, 1, 7, 8, 0, 0, 1, 0, 0, 0, 0,
+        ]);
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
         // One line from each pass of the innermost loop: every loop ran to its bound.

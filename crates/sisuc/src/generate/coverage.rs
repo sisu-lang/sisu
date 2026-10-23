@@ -15,6 +15,7 @@ use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
 use crate::diagnostic::Severity;
 use crate::front_end::front_end;
+use crate::symbol::Symbol;
 use crate::types::{Type, TypeKind};
 use crate::{ast, lexer, parser, tir};
 
@@ -75,7 +76,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 23] = [
+const REACH: [&str; 33] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -99,6 +100,16 @@ const REACH: [&str; 23] = [
     "reach: `f64` arithmetic or `op=` takes a right operand that is not a literal",
     "reach: `i64` arithmetic or `op=` takes a right operand that is not a literal",
     "reach: `i64` or `u8` arithmetic takes a left operand that is not a literal",
+    "reach: a `loop` is a statement",
+    "reach: a `loop` gives a value",
+    "reach: a `while` has a loop label",
+    "reach: a `while let` has a loop label",
+    "reach: a `for` has a loop label",
+    "reach: a `loop` has a loop label",
+    "reach: a `break` names a loop label",
+    "reach: a `continue` names a loop label",
+    "reach: a labeled `break` gives a value",
+    "reach: a labeled jump leaves an inner loop",
 ];
 
 /// Whether a program's text holds a form.
@@ -145,7 +156,7 @@ pub(crate) fn seeds() -> impl Iterator<Item = Vec<u8>> {
 }
 
 /// The data of seed `n`.
-fn seed(n: u64) -> Vec<u8> {
+pub(crate) fn seed(n: u64) -> Vec<u8> {
     let mut state = n;
     (0..SEED_LEN / 8)
         .flat_map(|_| splitmix64(&mut state).to_le_bytes())
@@ -163,9 +174,10 @@ fn splitmix64(state: &mut u64) -> u64 {
 /// The program's syntax tree and typed tree, after asserting it checks without an error.
 fn checked(source: &str) -> (ast::Program, tir::Program) {
     let (program, diagnostics) = front_end(source);
+    // An unused loop label would be a label no rule meant to write.
     let errors: Vec<String> = diagnostics
         .iter()
-        .filter(|d| d.severity() == Severity::Error)
+        .filter(|d| d.severity() == Severity::Error || d.code().as_str() == "W0008")
         .map(|d| {
             let before = &source[..d.span().start()];
             let line = 1 + before.matches('\n').count();
@@ -358,6 +370,10 @@ struct Walk {
     misplaced: Vec<String>,
     /// The literal messages of `panic` and `todo`.
     messages: Vec<String>,
+    /// The loop labels of the loops around the point walked, innermost last.
+    labels: Vec<Option<Symbol>>,
+    /// Where each `loop` that counts down starts.
+    counted: FxHashSet<usize>,
 }
 
 impl Walk {
@@ -379,6 +395,7 @@ impl Walk {
         self.assigns.clear();
         self.arithmetic.clear();
         self.compounds.clear();
+        self.counted.clear();
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -516,6 +533,11 @@ impl Walk {
             } = &stmt.kind
             {
                 self.while_let_bound(before, pattern, value, body);
+            }
+            if let ast::StmtKind::Expr(e) = &stmt.kind
+                && let ast::ExprKind::Loop { body, .. } = &e.kind
+            {
+                self.loop_bound(before, e, body);
             }
             self.ast_stmt(stmt);
         }
@@ -688,28 +710,8 @@ impl Walk {
         } else {
             None
         };
-        let bound = before.and_then(|stmt| {
-            if let ast::StmtKind::Let {
-                mutable: Some(_),
-                name: let_name,
-                init,
-                ..
-            } = &stmt.kind
-                && Some(let_name.name.as_str()) == counted
-            {
-                int(init)
-            } else {
-                None
-            }
-        });
-        let steps = body.stmts.first().is_some_and(|stmt| {
-            matches!(&stmt.kind, ast::StmtKind::CompoundAssign {
-                op: ast::BinaryOp::Sub,
-                target,
-                value,
-                ..
-            } if counted.is_some() && name(target) == counted && int(value) == Some(1))
-        });
+        let bound = counter(before, counted);
+        let steps = steps(body.stmts.first(), counted);
         match bound {
             Some(n) if steps && (0..=i128::from(MAX_BOUND)).contains(&n) => {
                 if n > 0 {
@@ -721,6 +723,69 @@ impl Walk {
                 self.unbounded
                     .push(format!("a `while` at byte {}", cond.span.start()));
                 0
+            }
+        }
+    }
+
+    /// Checks that a `loop` counts down as a `while` does: `let mut c = n` before it, with `n`
+    /// at most `MAX_BOUND`, `if c == 0 { break [v] }` first in its body and `c -= 1` next.
+    fn loop_bound(&mut self, before: Option<&ast::Stmt>, e: &ast::Expr, body: &ast::Block) {
+        let guard = body.stmts.first().and_then(|stmt| {
+            if let ast::StmtKind::Expr(guard) = &stmt.kind
+                && let ast::ExprKind::If {
+                    cond,
+                    then_block,
+                    else_block: None,
+                } = &guard.kind
+                && let ast::ExprKind::Binary {
+                    op: ast::BinaryOp::Eq,
+                    lhs,
+                    rhs,
+                    ..
+                } = &cond.kind
+                && int(rhs) == Some(0)
+                && let [jump] = &then_block.stmts[..]
+                && let ast::StmtKind::Break { label: None, value } = &jump.kind
+            {
+                Some((name(lhs)?, value.is_some()))
+            } else {
+                None
+            }
+        });
+        let counted = guard.map(|(counted, _)| counted);
+        let steps = steps(body.stmts.get(1), counted);
+        match (counter(before, counted), guard) {
+            (Some(n), Some((_, value))) if steps && (0..=i128::from(MAX_BOUND)).contains(&n) => {
+                if n > 0 {
+                    self.mark("reach: a loop runs its body");
+                }
+                self.mark(if value {
+                    "reach: a `loop` gives a value"
+                } else {
+                    "reach: a `loop` is a statement"
+                });
+                self.counted.insert(e.span.start());
+            }
+            _ => {}
+        }
+    }
+
+    /// Walks a `kind` loop labeled `label`, if any, by `walk`, with its label open.
+    fn ast_loop(&mut self, kind: &str, label: Option<&ast::Ident>, walk: impl FnOnce(&mut Self)) {
+        if label.is_some() {
+            self.mark(&format!("reach: a `{kind}` has a loop label"));
+        }
+        self.labels.push(label.map(|label| label.name));
+        walk(self);
+        self.labels.pop();
+    }
+
+    /// Records a `kind` jump, `break` or `continue`, that names `label`, if any.
+    fn jump_label(&mut self, kind: &str, label: Option<&ast::Ident>) {
+        if let Some(label) = label {
+            self.mark(&format!("reach: a `{kind}` names a loop label"));
+            if self.labels.last() != Some(&Some(label.name)) {
+                self.mark("reach: a labeled jump leaves an inner loop");
             }
         }
     }
@@ -793,36 +858,51 @@ impl Walk {
                 name,
                 mutable,
             } => self.ast_let(mutable.is_some(), name.name.as_str(), ty.as_ref(), init),
-            ast::StmtKind::While { cond, body, .. } => {
-                self.mark("ast::StmtKind::While");
-                self.ast_expr(cond);
-                self.ast_block(body);
-            }
+            ast::StmtKind::While {
+                label, cond, body, ..
+            } => self.ast_loop("while", label.as_ref(), |walk| {
+                walk.mark("ast::StmtKind::While");
+                walk.ast_expr(cond);
+                walk.ast_block(body);
+            }),
             ast::StmtKind::WhileLet {
+                label,
                 pattern,
                 value,
                 body,
                 ..
-            } => {
-                self.mark("ast::StmtKind::WhileLet");
-                self.ast_pattern(pattern);
-                self.ast_expr(value);
-                self.ast_block(body);
-            }
-            ast::StmtKind::For { source, body, .. } => self.ast_for(source, body),
+            } => self.ast_loop("while let", label.as_ref(), |walk| {
+                walk.mark("ast::StmtKind::WhileLet");
+                walk.ast_pattern(pattern);
+                walk.ast_expr(value);
+                walk.ast_block(body);
+            }),
+            ast::StmtKind::For {
+                label,
+                source,
+                body,
+                ..
+            } => self.ast_loop("for", label.as_ref(), |walk| walk.ast_for(source, body)),
             ast::StmtKind::Return(value) => {
                 self.mark("ast::StmtKind::Return");
                 if let Some(value) = value {
                     self.ast_expr(value);
                 }
             }
-            ast::StmtKind::Break { value, .. } => {
+            ast::StmtKind::Break { label, value } => {
                 self.mark("ast::StmtKind::Break");
+                self.jump_label("break", label.as_ref());
                 if let Some(value) = value {
+                    if label.is_some() {
+                        self.mark("reach: a labeled `break` gives a value");
+                    }
                     self.ast_expr(value);
                 }
             }
-            ast::StmtKind::Continue { .. } => self.mark("ast::StmtKind::Continue"),
+            ast::StmtKind::Continue { label } => {
+                self.mark("ast::StmtKind::Continue");
+                self.jump_label("continue", label.as_ref());
+            }
             ast::StmtKind::Assign { target, value } => {
                 self.mark("ast::StmtKind::Assign");
                 if name(target).is_some() {
@@ -1123,9 +1203,13 @@ impl Walk {
                     self.ast_expr(&arm.body);
                 }
             }
-            ast::ExprKind::Loop { body, .. } => {
+            ast::ExprKind::Loop { label, body, .. } => {
                 self.mark("ast::ExprKind::Loop");
-                self.ast_block(body);
+                if !self.counted.contains(&e.span.start()) {
+                    self.unbounded
+                        .push(format!("a `loop` at byte {}", e.span.start()));
+                }
+                self.ast_loop("loop", label.as_ref(), |walk| walk.ast_block(body));
             }
             ast::ExprKind::Block(block) => {
                 self.mark("ast::ExprKind::Block");
@@ -1686,6 +1770,34 @@ fn name(e: &ast::Expr) -> Option<&str> {
     }
 }
 
+/// The `n` of `let mut c = n`, if `before` is that, of the counter `counted`.
+fn counter(before: Option<&ast::Stmt>, counted: Option<&str>) -> Option<i128> {
+    if let Some(ast::StmtKind::Let {
+        mutable: Some(_),
+        name: let_name,
+        init,
+        ..
+    }) = before.map(|stmt| &stmt.kind)
+        && Some(let_name.name.as_str()) == counted
+    {
+        int(init)
+    } else {
+        None
+    }
+}
+
+/// Whether `stmt` is `c -= 1` of the counter `counted`.
+fn steps(stmt: Option<&ast::Stmt>, counted: Option<&str>) -> bool {
+    stmt.is_some_and(|stmt| {
+        matches!(&stmt.kind, ast::StmtKind::CompoundAssign {
+            op: ast::BinaryOp::Sub,
+            target,
+            value,
+            ..
+        } if counted.is_some() && name(target) == counted && int(value) == Some(1))
+    })
+}
+
 /// Whether `stmt` never finishes: a jump, or an `if` whose every branch ends in one.
 fn jumps(stmt: &ast::Stmt) -> bool {
     let ends = |block: &ast::Block| block.stmts.last().is_some_and(jumps);
@@ -1882,7 +1994,9 @@ fn a_generated_panic_is_rare() {
         for line in g.program.lines().map(str::trim) {
             if line.starts_with("panic(") || line.starts_with("todo") {
                 panics += 1;
-            } else if line.starts_with("return") && !guard || line == "break" || line == "continue"
+            } else if line.starts_with("return") && !guard
+                || line.starts_with("break")
+                || line.starts_with("continue")
             {
                 jumps += 1;
             }
@@ -2327,6 +2441,11 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
     for v in [1, 2, 3, 4, 5, 6, 7, 8, 9] {
         print(v)
     }
+    let mut d = 9
+    loop {
+        if d == 0 { break }
+        d -= 1
+    }
 }
 ";
     let mut walk = Walk::default();
@@ -2352,7 +2471,10 @@ fn the_walker_reports_unbounded_loops_and_stray_indexes() {
         .iter()
         .filter_map(|loop_| Some(loop_.split_once(" at byte")?.0))
         .collect();
-    assert_eq!(unbounded, ["a `while`", "a `while let`", "a `for`"]);
+    assert_eq!(
+        unbounded,
+        ["a `while`", "a `while let`", "a `for`", "a `loop`"]
+    );
 }
 
 /// What `expr` writes for `ty` within `max`, nested `nesting` deep, the size it counts and the
@@ -3406,9 +3528,13 @@ fn declared_types_keep_their_sizes() {
     // A class's size is a node and its fields' caps, within `MOST`, and each cap holds its
     // field's least value, or the least value of the type an optional field holds. An enum's
     // least is its first variant's, which holds no value of the enum, and it holds a class
-    // where a field of a variant may.
+    // where a field of a variant may. Past the first 512 seeds, the walk goes on only until a
+    // class holds a class optional and an enum a class, as a class optional is rare.
     let (mut optional_classes, mut enum_classes) = (0, 0);
-    for seed in 0..512 {
+    for seed in 0..4_096 {
+        if seed >= 512 && optional_classes > 0 && enum_classes > 0 {
+            break;
+        }
         let mut state = seed;
         let data: Vec<u8> = (0..SEED_LEN / 8)
             .flat_map(|_| splitmix64(&mut state).to_le_bytes())
