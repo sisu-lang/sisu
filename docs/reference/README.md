@@ -106,7 +106,7 @@ fn main() {
 
 ### Panics
 
-A stderr panel shows what the program writes to standard error. When the program panics, this is the panic message, and the program stops with exit code 101.
+A stderr panel shows what the program writes to standard error. When the program panics, this is the panic message, and the program stops with exit code 101. The example below panics on an [integer overflow](operators.md#overflow).
 
 ```sisu panics
 fn main() {

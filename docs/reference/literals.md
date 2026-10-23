@@ -31,7 +31,7 @@ fn main() {
 }
 ```
 
-A `-` before a literal is the unary minus operator. It is not part of the literal.
+A `-` before a literal is the [unary minus operator](operators.md#unary-operators). It is not part of the literal.
 
 ### Bases
 
@@ -106,7 +106,7 @@ fn main() {
 
 The same rule applies in other bases, such as `-0x8000000000000000`.
 
-A `.`, `?.` or `[` after the literal applies before the `-` does. So `-9223372036854775808.max(0)` is an error.
+A `.`, `?.` or `[` after the literal applies before the `-` does ([Precedence](operators.md#precedence)). So `-9223372036854775808.max(0)` is an error.
 
 ### The type of an integer literal
 
@@ -126,8 +126,8 @@ The rules, in order:
 
 - When the context expects a `u8` or a `u8?`, the literal is a `u8`. When the context expects an `f64` or an `f64?`, the literal is an `f64`.
 - In a group of operands, the operands that are not integer literals decide the type of its integer literals. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
-  - the two operands of an arithmetic operator or a comparison, such as `+`, `<` or `==`
-  - the operands of a comparison chain
+  - the two operands of an [arithmetic operator](operators.md#arithmetic) or a comparison, such as `+`, `<` or `==`
+  - the operands of a [comparison chain](operators.md#comparison-chains)
   - the elements of an array literal
   - the branches of an `if` or an `if let`, or the arms of a `match`
 - When a literal has no expected type and is not in a group, it is an `i64`.

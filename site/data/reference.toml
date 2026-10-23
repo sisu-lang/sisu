@@ -13,3 +13,7 @@ description = "Integer, float, character, string and boolean literals, and their
 [[page]]
 file = "types"
 description = "The built-in types, optionals, never and the conversions between types."
+
+[[page]]
+file = "operators"
+description = "Each operator, its precedence, comparison chains, overflow and division by zero."

@@ -23,7 +23,7 @@ A source file is text in UTF-8 ([E0072](../diagnostics/E0072.md)). A line ends w
 Outside comments and literals, the source uses only these characters:
 
 - The ASCII letters, the digits and `_`.
-- The characters of the operators and punctuation, such as `+`, `(` and `"`.
+- The characters of the [operators](operators.md) and punctuation, such as `+`, `(` and `"`.
 - Spaces, tabs and carriage returns. They separate tokens and have no other meaning.
 
 A carriage return without a line feed does not end a line. So two statements with only a carriage return between them are an error ([E0011](../diagnostics/E0011.md)).

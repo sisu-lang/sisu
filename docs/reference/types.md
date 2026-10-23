@@ -77,7 +77,7 @@ fn main() {
 
 The rules:
 
-- Arithmetic on integers stops the program with a panic when the result is outside the range of its type.
+- Arithmetic on integers stops the program with a panic when the result is outside the range of its type ([Operators](operators.md#overflow)).
 - A `u8` cannot be negative, so a unary `-` on a `u8` is an error ([E0042](../diagnostics/E0042.md)).
 - An `i64` and a `u8` do not mix in one operation. Convert one of them first ([Conversions](#conversions)).
 
@@ -266,7 +266,7 @@ The rules:
 
 - Where an optional `T?` is expected, a `T` becomes a `T?` that holds it. This applies to a `let` with a type, an argument, a `return` value, a field, an array element, the other side of an `==` or `!=`, and the other branches of an `if` or a `match`.
 - `None` needs an expected optional type. Where the context expects a type that is not optional, `None` is an error ([E0032](../diagnostics/E0032.md)).
-- An optional is not its value. An operator, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` or `if let`.
+- An optional is not its value. An operator, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or `if let`.
 - `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
 - An optional of an optional, such as `i64??`, is not a type ([E0014](../diagnostics/E0014.md)).
 - `print` and interpolation do not take an optional ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)).
