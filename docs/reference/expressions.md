@@ -1,6 +1,6 @@
 # Expressions
 
-An *expression* is code that gives a value: a literal, a name, an operation, a call, or a block, `if`, `match` or `loop`.
+An *expression* is code that the program calculates: a literal, a name, an operation, a call, or a block, `if`, `match` or `loop`. Most expressions give a value.
 
 ```sisu
 fn square(n: i64) -> i64 {
@@ -17,7 +17,13 @@ fn main() {
 
 ## Order of evaluation
 
-The program calculates the parts of an expression from left to right, then uses them. This applies to the operands of an operator, the arguments of a call, the receiver of a method before its arguments, the elements of an array literal and the parts of an interpolation. Precedence decides how the parts group, not when they run.
+The program calculates the parts of an expression from left to right, then uses them. Precedence decides how the parts group, not when they run. These are the parts:
+
+- the operands of an operator
+- the arguments of a call
+- the receiver of a method, before its arguments
+- the elements of an array literal
+- the parts of an interpolation
 
 ```sisu
 fn show(n: i64) -> i64 {
@@ -45,7 +51,7 @@ part 5
 9
 ```
 
-The program calculates each part once. `&&`, `||`, `??`, `?.` and a comparison chain can skip a part ([Operators](operators.md#logical-operators)).
+The program calculates each part once. `&&`, `||`, `??`, `?.` and a comparison chain can skip a part ([Logical operators](operators.md#logical-operators), [Default values](operators.md#default-values), [Optional chaining](operators.md#optional-chaining), [Comparison chains](operators.md#comparison-chains)).
 
 ## Names and parentheses
 
@@ -80,7 +86,7 @@ The rules:
 - A name that a statement in the block declares is in scope only to the end of the block.
 - A block that does not end in an expression has no value ([E0043](../diagnostics/E0043.md)).
 - A block that reaches a `return`, `break` or `continue` has the type `never` ([Types](types.md#never)).
-- A block cannot stand alone as a statement ([E0081](../diagnostics/E0081.md)). It is the body of a function, a branch or a loop, or the value of an expression, as above.
+- A statement cannot start with `{` ([E0081](../diagnostics/E0081.md)).
 
 ```sisu
 fn main() {
@@ -151,7 +157,11 @@ fn main() {
 }
 ```
 
-The values of all the `break`s of a loop must have one type ([E0032](../diagnostics/E0032.md)).
+The rules:
+
+- The values of all the `break`s of a loop must have one type ([E0032](../diagnostics/E0032.md)).
+- When all the `break` values are of the type `never`, the loop is of the type `never` ([Types](types.md#never)).
+- A loop whose `break`s have no value has no value ([E0043](../diagnostics/E0043.md)).
 
 ## Calls
 
@@ -259,6 +269,7 @@ An expression that has no value cannot be used as a value: as the value of a `le
 - a call of a function that has no return type, such as `print(1)`
 - an `if` without an `else`
 - a block that does not end in an expression
+- a `loop` whose `break`s have no value
 - an expression of the type `never` ([Types](types.md#never))
 
 ```sisu
