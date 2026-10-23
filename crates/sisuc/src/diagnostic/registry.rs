@@ -207,6 +207,7 @@ codes! {
     WhileTrue = "W0009",
     UnconditionalRecursion = "W0010",
     UnchangedLoopCondition = "W0011",
+    UnusedItem = "W0012",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -919,6 +920,15 @@ pub(crate) enum DiagnosticKind {
         names: Vec<String>,
         lets: Vec<String>,
     },
+    /// The function, method, class, enum or constant `name` (its `kind`), whose name in its
+    /// declaration is at `at`, which no live code uses; `uses` are up to three uses in dead code,
+    /// each with the kind and name of its dead user.
+    UnusedItem {
+        kind: Definition,
+        name: String,
+        at: Span,
+        uses: Vec<(Span, Definition, String)>,
+    },
     /// The comparison at `at`, `!=` when `negated`, one side of which is `f64.nan`, which no
     /// number equals; `fix` is its `is_nan` test, when the other side is an `f64`.
     NanComparison {
@@ -1174,6 +1184,19 @@ impl Definition {
             Definition::Enum => "enum",
             Definition::Variant => "variant",
             Definition::LoopLabel => "loop label",
+        }
+    }
+
+    /// The verb of "is never ..." for an unused item or member of this kind.
+    fn unused_verb(self) -> &'static str {
+        match self {
+            Definition::Function | Definition::Method => "called",
+            Definition::Class | Definition::Enum | Definition::Variant => "built",
+            Definition::Field => "read",
+            Definition::Constant
+            | Definition::Binding
+            | Definition::Type
+            | Definition::LoopLabel => "used",
         }
     }
 }
@@ -3224,6 +3247,29 @@ impl From<DiagnosticKind> for Diagnostic {
                     .with_help(format!(
                         "{leave}; write `if` to run the body once, or `loop` to run it forever"
                     ))
+            }
+            DiagnosticKind::UnusedItem {
+                kind,
+                name,
+                at,
+                uses,
+            } => {
+                let verb = kind.unused_verb();
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("{} `{name}` is never {verb}", kind.word()),
+                )
+                .with_label(format!("never {verb}"))
+                .with_help(format!(
+                    "delete it, or name it `_{name}` if it is kept on purpose"
+                ));
+                uses.into_iter().fold(d, |d, (at, user, name)| {
+                    d.with_secondary(
+                        at,
+                        format!("used here, in `{name}`, which is never {}", user.unused_verb()),
+                    )
+                })
             }
             DiagnosticKind::TypeArguments { name, at, form } => match form {
                 ArgumentsForm::Count { want, found } => {

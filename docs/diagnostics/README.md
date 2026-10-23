@@ -164,6 +164,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [W0009](W0009.md) | warning | `while` with the condition `true` |
 | [W0010](W0010.md) | warning | function that calls itself on every path |
 | [W0011](W0011.md) | warning | `while` condition that nothing in the loop changes |
+| [W0012](W0012.md) | warning | function, method, class, enum or constant that no live code uses |
 
 ## Explanations
 

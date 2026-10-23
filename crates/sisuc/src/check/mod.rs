@@ -19,6 +19,7 @@ mod prelude;
 mod recursion;
 mod stmt;
 mod string;
+mod unused_names;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -33,6 +34,7 @@ use crate::tir::{self, Type, TypeArgs, TypeKind};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use prelude::PRELUDE;
+use unused_names::{Owner, Use};
 
 /// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when
 /// still known (an `if` with one failed branch takes the other's), else it is the poison
@@ -298,6 +300,8 @@ struct Checker<'src> {
     parse_errors: Vec<Span>,
     /// The body being checked.
     body: Body,
+    /// Each use of an item that a function, method or constant has, in check order.
+    uses: Vec<Use>,
 }
 
 /// The checker's diagnostics, and how many errors were added to them. The count never goes
@@ -360,6 +364,8 @@ impl std::ops::DerefMut for Diagnostics {
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
+    /// The function, method or constant whose body this is; `None` for none, such as a signature.
+    owner: Option<Owner>,
     /// The type parameters in scope, which `resolve` finds before any other type.
     type_params: Vec<Symbol>,
     /// Where in `type_params` each name first is, so a lookup does not scan them.
@@ -461,7 +467,7 @@ pub(crate) fn check<'src>(
         .collect();
     checker.instantiation_cycles(&functions, &unbuilt);
     let classes = checker.classes.iter().map(lower_class).collect();
-    let mut diagnostics = checker.diagnostics.into_vec();
+    let mut diagnostics = std::mem::take(&mut checker.diagnostics).into_vec();
     diagnostics.sort_by_key(|d| d.span().start());
     let errors = error_spans(&diagnostics);
     // A function with an error of its own is skipped, so that its errors stand alone.
@@ -494,6 +500,12 @@ pub(crate) fn check<'src>(
     diagnostics.extend(warnings);
     diagnostics.sort_by_key(|d| d.span().start());
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
+    // A use in a failed expression may not be recorded, so an error stops the pass. Only the
+    // parser sees an item that fails to parse.
+    if !failed && !parsed.iter().any(|d| d.severity() == Severity::Error) {
+        diagnostics.extend(checker.unused());
+        diagnostics.sort_by_key(|d| d.span().start());
+    }
     let broken = !program.broken.is_empty()
         || program.items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
@@ -593,6 +605,7 @@ impl<'src> Checker<'src> {
             diagnostics: Diagnostics::default(),
             parse_errors: Vec::new(),
             body: Body::default(),
+            uses: Vec::new(),
         }
     }
 
@@ -1066,6 +1079,7 @@ impl Checker<'_> {
             _ => 0,
         };
         let mut fresh = Body {
+            owner: Some(Owner::Func(id)),
             ret,
             self_type: owner,
             ..Body::default()

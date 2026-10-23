@@ -6,6 +6,7 @@ use std::fmt;
 use super::expr::{no_member, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::prelude::PRELUDE;
+use super::unused_names::Used;
 use super::{
     Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, built_in_type, own_args, type_of,
 };
@@ -307,6 +308,7 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
+        self.record(Used::Func(func), span);
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
@@ -426,6 +428,7 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
+        self.record(Used::Class(class), span);
         let info = &self.classes[class.0];
         let name = info.name.name.as_str();
         let fields: Vec<(Symbol, Option<Type>)> =

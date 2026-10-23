@@ -1,0 +1,7 @@
+fn format_row() {
+    print(1)
+}
+fn old_report() {
+    format_row()
+}
+fn main() {}

@@ -1,7 +1,7 @@
 error[E0116]: `Shape` names an enum
  --> E0116.sisu:6:9
   |
-6 |     let Shape = 1
+6 |     let Shape = Shape.Dot
   |         ^^^^^
 
 sisu: 1 error

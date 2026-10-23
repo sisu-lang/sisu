@@ -59,15 +59,15 @@ help: remove the `;`
   |
 
 warning[W0007]: unnecessary `;`
-  --> W0007-places.sisu:11:15
+  --> W0007-places.sisu:11:16
    |
-11 | fn helper() {}; fn main() {
-   |               ^
+11 | fn _helper() {}; fn main() {
+   |                ^
    |
 help: remove the `;`
    |
-11 - fn helper() {}; fn main() {
-11 + fn helper() {} fn main() {
+11 - fn _helper() {}; fn main() {
+11 + fn _helper() {} fn main() {
    |
 
 warning[W0007]: unnecessary `;`

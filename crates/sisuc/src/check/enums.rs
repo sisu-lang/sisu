@@ -6,6 +6,7 @@ use std::{fmt, mem};
 use rustc_hash::FxHashMap;
 
 use super::generic::{GenericSig, Site, mismatched};
+use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, own_args};
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
@@ -216,6 +217,9 @@ impl Checker<'_> {
             self.stray(call.map_or(&[], |(args, _)| args));
             return Err(Poisoned::error());
         };
+        self.record(Used::Variant(id, variant), span);
+        let info = &self.enums[id.0];
+        let enum_name = info.name.name.as_str();
         // Built only for a diagnostic.
         let path = format_args!("{enum_name}.{}", member.name);
         let v = &info.variants[variant];

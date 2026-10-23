@@ -11,7 +11,8 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-/// Classes and functions that the generated programs call.
+/// Classes and functions that the generated programs call. Each program uses only some of them,
+/// so the root `_prelude` uses each one, and no program warns that it is never used.
 const PRELUDE: &str = "\
 class N {
     next: N?
@@ -33,6 +34,11 @@ fn some(x: i64) -> i64? {
 enum R {
     A(R)
     Z
+}
+
+fn _prelude() {
+    print(id(some(N(next: None, v: 1).me().v) ?? 0))
+    let _ = R.Z
 }
 
 ";

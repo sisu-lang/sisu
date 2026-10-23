@@ -1,0 +1,10 @@
+warning[W0012]: function `old_report` is never called
+ --> W0012.sisu:1:4
+  |
+1 | fn old_report() {
+  |    ^^^^^^^^^^ never called
+  |
+  = help: delete it, or name it `_old_report` if it is kept on purpose
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0012

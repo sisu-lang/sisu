@@ -281,6 +281,16 @@ fn main() {
         );
     }
 
+    /// Only the parser sees the error in `broken`, so the checker's own list holds no error.
+    #[test]
+    fn front_end_should_not_warn_about_unused_names_when_an_item_fails_to_parse() {
+        let src = "fn helper() {\n    print(1)\n}\nfn broken() {\n    let = 1\n}\nfn main() {\n    let mut m = 1\n    print(m)\n}\n";
+        assert_eq!(
+            codes(src),
+            [(Code::Expected, (5, 9)), (Code::NeverReassigned, (8, 13))]
+        );
+    }
+
     /// The unnamed `const enum` starts where its line does, inside the unnamed `1` before it;
     /// the `$` between them is reported once.
     #[test]
