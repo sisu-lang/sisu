@@ -1,0 +1,10 @@
+error[E0050]: cannot infer the type of `[]`
+ --> E0050-break-array.sisu:4:22
+  |
+4 |         if c { break [] }
+  |                      ^^
+  |
+  = help: write the type: `let xs: [i64] = []`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

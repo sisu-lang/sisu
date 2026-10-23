@@ -1,0 +1,14 @@
+error[E0033]: cannot find binding `missing`
+ --> recovery-break-failed-value.sisu:5:13
+  |
+5 |             missing
+  |             ^^^^^^^
+
+error[E0033]: cannot find binding `missing`
+  --> recovery-break-failed-value.sisu:16:13
+   |
+16 |             missing
+   |             ^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033

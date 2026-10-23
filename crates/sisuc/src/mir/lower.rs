@@ -121,13 +121,14 @@ struct Lowering<'a> {
     targets: Vec<pattern::Lazy>,
 }
 
-/// A loop being lowered: where `continue` goes, where `break` goes once one has, and the
-/// heights of the scope stack and of the guard bindings outside it.
+/// A loop being lowered: where `continue` goes, where `break` goes once one has, the heights
+/// of the scope stack and of the guard bindings outside it, and the local a `break` value goes to.
 struct Frame {
     header: BlockId,
     exit: Option<BlockId>,
     mark: usize,
     guards: usize,
+    dest: Option<LocalId>,
 }
 
 /// Whether a local of type `ty` holds anything: `unit` and `never` do not.
@@ -815,28 +816,25 @@ impl<'a> Lowering<'a> {
                 temp,
                 arms,
             } => return self.match_expr(scrutinee, *temp, arms, e.ty, dest),
-            ExprKind::Loop(body) => return self.loop_expr(body),
-            ExprKind::Break => {
-                let frame = self
-                    .frames
-                    .last()
-                    .expect("the checker should reject `break` outside a loop");
+            ExprKind::Loop(body) => return self.loop_expr(body, e.ty, dest),
+            ExprKind::Break { depth, value } => {
+                let at = self.jump_target(*depth);
+                // A value that never completes leaves no edge to the exit.
+                if let Some(value) = value {
+                    let dest = self.frames[at].dest;
+                    self.into(value, dest)?;
+                }
+                let frame = &self.frames[at];
                 let (exit, mark, guards) = (frame.exit, frame.mark, frame.guards);
                 let exit = exit.unwrap_or_else(|| self.new_block());
-                self.frames
-                    .last_mut()
-                    .expect("the loop's frame should still be there")
-                    .exit = Some(exit);
+                self.frames[at].exit = Some(exit);
                 self.end_guards(guards);
                 self.release_scope(mark);
                 self.goto(exit);
                 return None;
             }
-            ExprKind::Continue => {
-                let frame = self
-                    .frames
-                    .last()
-                    .expect("the checker should reject `continue` outside a loop");
+            ExprKind::Continue { depth } => {
+                let frame = &self.frames[self.jump_target(*depth)];
                 let (header, mark, guards) = (frame.header, frame.mark, frame.guards);
                 self.end_guards(guards);
                 self.release_scope(mark);
@@ -1048,9 +1046,19 @@ impl<'a> Lowering<'a> {
         self.scope.truncate(mark);
     }
 
+    /// The index in `frames` of the loop `depth` loops out from the innermost one.
+    fn jump_target(&self, depth: usize) -> usize {
+        self.frames
+            .len()
+            .checked_sub(depth + 1)
+            .expect("the checker should reject a jump outside a loop")
+    }
+
     /// `loop`: the current block enters the header, the body runs and jumps back to it, and
-    /// `break` jumps to an exit block that exists only once a `break` does.
-    fn loop_expr(&mut self, body: &Block) -> Lowered {
+    /// `break` jumps to an exit block that exists only once a `break` does. A loop of type `ty`,
+    /// whose `break`s write its value to `dest`, or to a fresh local.
+    fn loop_expr(&mut self, body: &Block, ty: Type, dest: Option<LocalId>) -> Lowered {
+        let dest = valued(ty).then(|| dest.unwrap_or_else(|| self.temp(ty)));
         let pre_header = self.here();
         let header = self.new_block();
         self.goto(header);
@@ -1066,6 +1074,7 @@ impl<'a> Lowering<'a> {
             exit: None,
             mark: self.scope.len(),
             guards: self.guard.len(),
+            dest,
         });
         if let Some(value) = self.block(body, None) {
             self.discard(value);
@@ -1076,12 +1085,19 @@ impl<'a> Lowering<'a> {
             .pop()
             .expect("the loop's frame should still be there")
             .exit;
+        // A labeled `break` in the body makes an outer loop's exit, which lies outside this loop.
+        let outer_exits: Vec<BlockId> = self
+            .frames
+            .iter()
+            .filter_map(|frame| frame.exit)
+            .filter(|block| block.0 >= header.0)
+            .collect();
         self.loops[index].blocks = (header.0..self.blocks.len())
             .map(BlockId)
-            .filter(|&block| Some(block) != exit)
+            .filter(|block| Some(*block) != exit && !outer_exits.contains(block))
             .collect();
         self.current = exit;
-        exit.map(|_| None)
+        exit.map(|_| dest)
     }
 
     /// `base.index = value`. A source local base is a borrow site when the value leaves every
@@ -1248,8 +1264,8 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::IfSome { .. }
         | ExprKind::Match { .. }
         | ExprKind::Loop(_)
-        | ExprKind::Break
-        | ExprKind::Continue
+        | ExprKind::Break { .. }
+        | ExprKind::Continue { .. }
         | ExprKind::Return(_)
         | ExprKind::Block(_) => false,
     }
@@ -1351,8 +1367,8 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::ReadLine
-        | ExprKind::Break
-        | ExprKind::Continue
+        | ExprKind::Break { value: None, .. }
+        | ExprKind::Continue { .. }
         | ExprKind::Return(None) => {}
         ExprKind::Local(local) => found.found.push(local.0),
         ExprKind::Call { args, .. }
@@ -1378,6 +1394,10 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Print { operand, .. }
         | ExprKind::Unary { operand, .. }
         | ExprKind::Panic(operand)
+        | ExprKind::Break {
+            value: Some(operand),
+            ..
+        }
         | ExprKind::Return(Some(operand)) => mentions(operand, found),
         ExprKind::Binary { lhs, rhs, .. }
         | ExprKind::Concat { lhs, rhs }

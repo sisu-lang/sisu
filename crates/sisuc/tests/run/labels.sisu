@@ -1,0 +1,151 @@
+// Loop labels: `break` and `continue` name an outer loop. A label is open from its `name:` to
+// the end of its loop's body, so after `break` a name reads as the label only while it is open;
+// sibling loops can share one; and an argument label stays apart from a loop label.
+class Box {
+    outer: i64
+}
+
+class Item {
+    name: string
+    weight: i64
+}
+
+// With the label `outer` open, `break outer -1` gives `-1`.
+fn minus_label() -> i64 {
+    outer: loop {
+        break outer -1
+    }
+}
+
+// With no label `outer`, `break outer -1` gives the value `outer - 1`.
+fn minus_var() -> i64 {
+    let outer = 5
+    loop {
+        break outer -1
+    }
+}
+
+// The inner loop's `break` is the outer `break`'s value, unless `break rows 1` leaves both.
+fn pick(c: bool) -> i64 {
+    rows: loop {
+        break loop {
+            if c { break rows 1 }
+            break 2
+        }
+    }
+}
+
+// An array of counted strings, made in the inner loop's body, leaves both loops.
+fn names(n: i64) -> [string] {
+    rows: loop {
+        for i in 0..5 {
+            let s = "n" + "{i}"
+            if i == n { break rows [s, s + "!"] }
+        }
+        break rows ["none"]
+    }
+}
+
+fn make() -> string {
+    "m" + "k"
+}
+
+fn g(a: string, b: string) {
+    print(a + b)
+}
+
+// `break outer` leaves a call whose first argument is made: the jump releases it.
+fn half() {
+    outer: for i in 0..3 {
+        for j in 0..2 {
+            g(make(), {
+                if i == 1 { break outer }
+                make()
+            })
+        }
+    }
+}
+
+// `keep` shares `a` from the outer body, and the write after the outer loop, reached by
+// `break outer`'s exit, copies `a` first. Were that exit in the inner loop, which hoists `a`'s
+// copy out, the write would show through `keep`: this printed 9 before.
+fn hoist(xs: [i64]) -> i64 {
+    let mut a = xs
+    let mut keep = [0]
+    outer: for i in 0..2 {
+        for j in 0..2 {
+            a[j] = i + 1
+            if j == 5 { break outer }
+        }
+        keep = a
+    }
+    a[0] = 9
+    if keep[1] > 0 {
+        return keep[0]
+    }
+    0
+}
+
+fn main() {
+    print(minus_label())                                // -1
+    print(minus_var())                                  // 4
+    let a = Box(outer: rows: loop { break rows 3 })
+    let b = Box(outer: loop { break 4 })
+    print("{a.outer} {b.outer}")                        // 3 4
+    // Sibling loops share the label `outer`.
+    outer: for i in 0..2 {
+        print("first {i}")                              // first 0
+        break outer
+    }
+    outer: for i in 0..3 {
+        if i == 1 { continue outer }
+        print("second {i}")                             // second 0, second 2
+    }
+    // The header's `loop` takes `break true`; `break outer` leaves the `while`.
+    let mut n = 0
+    outer: while loop { break true } {
+        n += 1
+        if n == 3 { break outer }
+    }
+    print(n)                                            // 3
+    // A label on its own line.
+    outer:
+    for i in 0..3 {
+        if i == 2 { break outer }
+        print("own line {i}")                           // own line 0, own line 1
+    }
+    let x = 6
+    let p = outer: loop { break outer (x) }
+    let q = outer: loop { break outer [1, 2] }
+    print("{p} {q[0]} {q[1]}")                          // 6 1 2
+    print("{(rows: loop { break rows 7 }):>5}")         // "    7"
+    print((found: loop { break found 3 }))              // 3
+    outer: for i in 0..3 {
+        for j in 0..3 {
+            if i * j == 2 {
+                print("found {i} {j}")                  // found 1 2
+                break outer
+            }
+        }
+    }
+    outer: for i in 0..3 {
+        for j in 0..3 {
+            if j == 1 { continue outer }
+            print("pair {i}{j}")                        // pair 00, pair 10, pair 20
+        }
+    }
+    let ns = names(2)
+    print("{ns[0]} {ns[1]} {ns.len()}")                 // n2 n2! 2
+    print(names(7)[0])                                  // none
+    let it = outer: loop {
+        for w in [1, 5, 9] {
+            let obj = Item(name: "w" + "{w}", weight: w)
+            if w > 3 { break outer obj }
+        }
+    }
+    print("{it.name} {it.weight}")                      // w5 5
+    print(pick(true))                                   // 1
+    print(pick(false))                                  // 2
+    half()                                              // mkmk, mkmk
+    print(hoist([5, 5]))                                // 2
+}

@@ -1,0 +1,12 @@
+error[E0142]: `outer` is a loop label here, so `[` cannot index it
+ --> E0142-index.sisu:4:15
+  |
+3 |     outer: loop {
+  |     ----- loop label declared here
+4 |         break outer[0]
+  |               ^^^^^^
+  |
+  = help: to give an array as the value, put a space after the loop label: `break outer [0]`; if `outer` also names an array, rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

@@ -94,7 +94,7 @@ fn verifies_one_returning_branch() {
 fn verifies_loop_body_ending_in_return() {
     compiled(
         &Context::create(),
-        "fn f() -> i64 {\n    while true { return 1 }\n    2\n}\nfn main() { print(f()) }",
+        "fn f() -> i64 {\n    loop { return 1 }\n    2\n}\nfn main() { print(f()) }",
     );
 }
 

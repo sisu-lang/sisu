@@ -1,0 +1,8 @@
+fn main() {
+    let x = outer: loop {
+        outer: for y in [1, 2] {
+            break outer
+        }
+    }
+    print(x == true)
+}

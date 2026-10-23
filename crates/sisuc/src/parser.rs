@@ -9,8 +9,8 @@ use crate::ast::{
     UnaryOp, Variant,
 };
 use crate::diagnostic::{
-    self, BuiltIn, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange, Join, LetField,
-    MatchIdiomForm, Owner, PowerFix,
+    self, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange, Join,
+    LetField, MatchIdiomForm, Owner, PowerFix,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::Span;
@@ -55,6 +55,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         breaks: &breaks,
         specs: Vec::new(),
         warnings,
+        labels: Vec::new(),
     }
     .program()
 }
@@ -275,6 +276,9 @@ struct Parser<'a> {
     specs: Vec<Diagnostic>,
     /// The lexer's warnings, which `program` reports whether or not their item is broken.
     warnings: Vec<Diagnostic>,
+    /// The loop labels open around the next token, innermost last: from each one's `name:` to the
+    /// end of its loop's body.
+    labels: Vec<Ident>,
 }
 
 impl<'a> Parser<'a> {
@@ -984,6 +988,7 @@ impl<'a> Parser<'a> {
             breaks: self.breaks,
             specs: Vec::new(),
             warnings: Vec::new(),
+            labels: Vec::new(),
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -1129,16 +1134,35 @@ impl<'a> Parser<'a> {
     }
 
     fn stmt(&mut self) -> Result<Stmt, Diagnostic> {
+        let open = self.labels.len();
+        let stmt = self.stmt_opening_labels();
+        // A loop label closes with its loop's body, also when the loop fails to parse.
+        self.labels.truncate(open);
+        stmt
+    }
+
+    /// A statement, with the loop label it opens still open.
+    fn stmt_opening_labels(&mut self) -> Result<Stmt, Diagnostic> {
         let start = self.peek().span;
         let base = self.depth;
         let mut reach = base;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
+        // A labeled `loop` is an expression, which `primary` reads with its loop label.
+        let label = match self.after_label() {
+            Some((_, TokenKind::Loop)) => None,
+            _ => self.loop_label(),
+        };
         let kind = match self.peek().kind {
             TokenKind::Let => self.let_stmt()?,
             TokenKind::Const => return Err(self.local_const()),
             TokenKind::While => {
-                self.bump();
+                let keyword = self.bump().span;
                 if let Some((pattern, value)) = self.child(base, &mut reach, Self::let_binding)? {
                     StmtKind::WhileLet {
+                        label,
+                        keyword,
                         pattern,
                         value,
                         body: self.child(base, &mut reach, Self::block)?,
@@ -1146,13 +1170,15 @@ impl<'a> Parser<'a> {
                 } else {
                     let cond = self.child(base, &mut reach, Self::expr)?;
                     StmtKind::While {
+                        label,
+                        keyword,
                         cond,
                         body: self.child(base, &mut reach, Self::block)?,
                     }
                 }
             }
             TokenKind::For => {
-                self.bump();
+                let keyword = self.bump().span;
                 let name = self.binding()?;
                 self.expect(&TokenKind::In)?;
                 // A range is only valid here, so the header reads its two sides itself, counted
@@ -1176,6 +1202,8 @@ impl<'a> Parser<'a> {
                     },
                 };
                 StmtKind::For {
+                    label,
+                    keyword,
                     name,
                     source,
                     body: self.child(base, &mut reach, Self::block)?,
@@ -1191,11 +1219,22 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Break => {
                 self.bump();
-                StmtKind::Break
+                let label = self.jump_label(false);
+                if let Some(error) = label.as_ref().and_then(|label| self.label_clash(label)) {
+                    return Err(error);
+                }
+                let value = if self.jump_ends() {
+                    None
+                } else {
+                    Some(self.child(base, &mut reach, Self::expr)?)
+                };
+                StmtKind::Break { label, value }
             }
             TokenKind::Continue => {
                 self.bump();
-                StmtKind::Continue
+                StmtKind::Continue {
+                    label: self.jump_label(true),
+                }
             }
             TokenKind::LBrace => return Err(DiagnosticKind::BlockAsStatement { at: start }.into()),
             _ => self.expr_or_assign()?,
@@ -1206,6 +1245,175 @@ impl<'a> Parser<'a> {
             kind,
             span: start.to(self.last_span()),
         })
+    }
+
+    /// The name and the token after it when the next tokens are `name:`, as before a loop label.
+    fn after_label(&self) -> Option<(Symbol, &'a TokenKind)> {
+        let [first, colon, next, ..] = &self.tokens[self.pos..] else {
+            return None;
+        };
+        match first.kind {
+            TokenKind::Ident(name) if colon.kind == TokenKind::Colon => Some((name, &next.kind)),
+            _ => None,
+        }
+    }
+
+    /// The loop label `name:` at the next token when `loop`, `while` or `for` follows it,
+    /// consumed and opened, so that a jump in the loop's header or body can name it.
+    fn loop_label(&mut self) -> Option<Ident> {
+        let (name, TokenKind::Loop | TokenKind::While | TokenKind::For) = self.after_label()?
+        else {
+            return None;
+        };
+        let span = self.bump().span;
+        self.bump();
+        let label = Ident { name, span };
+        self.labels.push(label.clone());
+        Some(label)
+    }
+
+    /// The error of a `name:` before `if`, `match` or `{`, or of a `_:` before a loop, where a
+    /// loop with its loop label could stand: at the start of a statement, after the `=` of a
+    /// `let` or an assignment, and after an argument label. Any other `name:` is no loop label.
+    fn label_not_on_loop(&self) -> Option<Diagnostic> {
+        let [first, colon, next, ..] = &self.tokens[self.pos..] else {
+            return None;
+        };
+        if colon.kind != TokenKind::Colon {
+            return None;
+        }
+        let at = first.span.to(colon.span);
+        // `{ a: { b: 1 } }` is an object literal to its writer: a block that opens with a
+        // `name:` before no loop is an object's value, so `a:` keeps E0011.
+        let mut inside = self.tokens[self.pos + 3..]
+            .iter()
+            .filter(|t| t.kind != TokenKind::Newline);
+        let key = next.kind == TokenKind::LBrace
+            && matches!(
+                (inside.next(), inside.next(), inside.next()),
+                (Some(name), Some(colon), Some(after))
+                    if matches!(name.kind, TokenKind::Ident(_))
+                        && colon.kind == TokenKind::Colon
+                        && !matches!(after.kind, TokenKind::Loop | TokenKind::While | TokenKind::For)
+            );
+        match (&first.kind, &next.kind) {
+            (TokenKind::Ident(_), TokenKind::If | TokenKind::Match | TokenKind::LBrace) if !key => {
+                Some(
+                    DiagnosticKind::LabelNotOnLoop {
+                        at,
+                        next: next.span,
+                    }
+                    .into(),
+                )
+            }
+            (TokenKind::Underscore, TokenKind::Loop | TokenKind::While | TokenKind::For) => Some(
+                DiagnosticKind::UnnamedLabel {
+                    at,
+                    remove: Span::new(at.start(), next.span.start()),
+                }
+                .into(),
+            ),
+            _ => None,
+        }
+    }
+
+    /// The error of the loop label `label` after `break` when the next token would make it more
+    /// than a loop label: a `(` or `[` that touches it, or a token that can only continue an
+    /// expression.
+    fn label_clash(&self, label: &Ident) -> Option<Diagnostic> {
+        let next = self.peek();
+        let touches = next.span.start() == label.span.end();
+        let form = match next.kind {
+            TokenKind::LParen if touches => ClashForm::Call {
+                bracket: next.span,
+                text: self.bracketed(&TokenKind::LParen, &TokenKind::RParen),
+            },
+            TokenKind::LBracket if touches => ClashForm::Index {
+                bracket: next.span,
+                text: self.bracketed(&TokenKind::LBracket, &TokenKind::RBracket),
+            },
+            TokenKind::Plus
+            | TokenKind::Star
+            | TokenKind::StarStar
+            | TokenKind::Slash
+            | TokenKind::Percent
+            | TokenKind::EqEq
+            | TokenKind::NotEq
+            | TokenKind::Lt
+            | TokenKind::Le
+            | TokenKind::Gt
+            | TokenKind::Ge
+            | TokenKind::AndAnd
+            | TokenKind::OrOr
+            | TokenKind::Is
+            | TokenKind::QuestionQuestion
+            | TokenKind::Dot
+            | TokenKind::QuestionDot => ClashForm::Operator { next: next.span },
+            _ => return None,
+        };
+        let declared = self
+            .labels
+            .iter()
+            .rev()
+            .find(|open| open.name == label.name)
+            .expect("a `break` label should be an open loop label")
+            .span;
+        Some(
+            DiagnosticKind::LabelClash {
+                name: label.name.to_string(),
+                at: label.span,
+                declared,
+                form,
+            }
+            .into(),
+        )
+    }
+
+    /// The source text from the `open` bracket at the next token through its matching `close`,
+    /// or of the bracket alone when the lexer found none.
+    fn bracketed(&self, open: &TokenKind, close: &TokenKind) -> String {
+        let start = self.peek().span;
+        let mut depth = 0usize;
+        let end = self.tokens[self.pos..]
+            .iter()
+            .find(|token| {
+                if token.kind == *open {
+                    depth += 1;
+                } else if token.kind == *close {
+                    depth -= 1;
+                }
+                depth == 0
+            })
+            .map_or(start, |token| token.span);
+        self.source[start.to(end).range()].to_string()
+    }
+
+    /// The loop label after `break` or `continue`: a name, when it is an open loop label or
+    /// `any` is set.
+    fn jump_label(&mut self, any: bool) -> Option<Ident> {
+        let TokenKind::Ident(name) = self.peek().kind else {
+            return None;
+        };
+        (any || self.labels.iter().any(|label| label.name == name)).then(|| Ident {
+            name,
+            span: self.bump().span,
+        })
+    }
+
+    /// Whether the next token ends a `break` or `continue`, which then takes no value: only a
+    /// token that can start an expression continues one.
+    fn jump_ends(&self) -> bool {
+        matches!(
+            self.peek().kind,
+            TokenKind::Newline
+                | TokenKind::Semicolon
+                | TokenKind::RBrace
+                | TokenKind::Comma
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::FatArrow
+                | TokenKind::Eof
+        )
     }
 
     /// The `else` that starts a line, after `previous`, the statement before it. The `else` can
@@ -1868,6 +2076,9 @@ impl<'a> Parser<'a> {
             None => None,
         };
         self.expect(&TokenKind::Eq)?;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
         let init = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
         // Reported last, and only where the statement ends, so that the fix leaves a `let` that
@@ -1931,6 +2142,9 @@ impl<'a> Parser<'a> {
             return Err(DiagnosticKind::AssignThroughSafeAccess { at: target.span }.into());
         }
         let op_span = self.bump().span;
+        if let Some(error) = self.label_not_on_loop() {
+            return Err(error);
+        }
         let value = self.child(base, &mut reach, Self::expr)?;
         self.depth = reach;
         Ok(match op {
@@ -2299,6 +2513,10 @@ impl<'a> Parser<'a> {
                 self.bump();
                 ExprKind::NoneLit
             }
+            TokenKind::Ident(_) if matches!(self.after_label(), Some((_, TokenKind::Loop))) => {
+                let label = self.loop_label();
+                return self.loop_expr(label);
+            }
             TokenKind::Ident(name) => {
                 self.bump();
                 if let Some(error) = self.path_idiom(token.span) {
@@ -2335,6 +2553,7 @@ impl<'a> Parser<'a> {
                 return self.array(token.span);
             }
             TokenKind::If => return self.if_expr(),
+            TokenKind::Loop => return self.loop_expr(None),
             TokenKind::Match => return self.match_expr(),
             TokenKind::LBrace => {
                 let block = self.block()?;
@@ -2489,6 +2708,9 @@ impl<'a> Parser<'a> {
         let label = if labeled {
             let label = self.ident("a label")?;
             self.bump();
+            if let Some(error) = self.label_not_on_loop() {
+                return Err(error);
+            }
             Some(label)
         } else {
             None
@@ -2548,6 +2770,29 @@ impl<'a> Parser<'a> {
         Ok(Expr {
             span: start.to(end),
             kind,
+        })
+    }
+
+    /// `loop { body }`, after its loop label when it has one.
+    fn loop_expr(&mut self, label: Option<Ident>) -> Result<Expr, Diagnostic> {
+        let keyword = self.expect(&TokenKind::Loop)?.span;
+        let base = self.depth;
+        let mut reach = base;
+        let body = self.child(base, &mut reach, Self::block);
+        // The loop label closes with the body, also when the body fails to parse.
+        if label.is_some() {
+            self.labels.pop();
+        }
+        let body = body?;
+        self.depth = reach;
+        let start = label.as_ref().map_or(keyword, |l| l.span);
+        Ok(Expr {
+            span: start.to(body.span),
+            kind: ExprKind::Loop {
+                label,
+                keyword,
+                body,
+            },
         })
     }
 }
@@ -2922,6 +3167,154 @@ mod tests {
     }
 
     #[test]
+    fn loop_is_an_expression() {
+        assert_eq!(expr("loop { }"), "(loop (block))");
+        assert_eq!(expr("let x = loop { }"), "(let x (loop (block)))");
+    }
+
+    /// `break` takes a value only when the next token can start one.
+    #[test]
+    fn break_value_ends_where_a_jump_ends() {
+        for (src, printed) in [
+            ("break 1", "(break 1)"),
+            ("break -1", "(break (- 1))"),
+            ("break\n f()", "(break)"),
+            ("break; f()", "(break)"),
+            ("break", "(break)"),
+        ] {
+            assert_eq!(expr(src), printed, "{src}");
+        }
+        // `,` ends the jump too, so the arm list, not a value, reports it; `E0011-break-arrow`
+        // pins `=>`.
+        assert_eq!(
+            expr_err("match o { 1 => break, _ => x }"),
+            (Code::FieldComma, 1, 33)
+        );
+        // Anything else starts a value, and a value that does not parse is the error.
+        assert_eq!(expr_err("break 1 +"), (Code::Expected, 1, 23));
+        // No `)` or `]` rows: one right after `break` would close a bracket opened outside the
+        // enclosing `{`, which the lexer rejects before parsing.
+    }
+
+    #[test]
+    fn continue_takes_no_value() {
+        assert_eq!(expr_err("continue 1"), (Code::Expected, 1, 22));
+    }
+
+    /// A loop label prints after its loop's keyword, on each kind of loop and as a value.
+    #[test]
+    fn loop_labels() {
+        for (src, printed) in [
+            ("outer: for x in xs { }", "(for :outer x xs (block))"),
+            ("outer: while c { }", "(while :outer c (block))"),
+            (
+                "outer: while let y = o { }",
+                "(while-let :outer y o (block))",
+            ),
+            ("rows: loop { }", "(loop :rows (block))"),
+            ("let v = rows: loop { }", "(let v (loop :rows (block)))"),
+            // The argument label comes first, so the second name labels the loop.
+            (
+                "Box(outer: rows: loop { })",
+                "(call Box (: outer (loop :rows (block))))",
+            ),
+            (
+                "match x { x => outer: loop { break outer } }",
+                "(match x (arm x (loop :outer (block (break :outer)))))",
+            ),
+        ] {
+            assert_eq!(expr(src), printed, "{src}");
+        }
+        // The lexer joins the line after `:`, so the label and its loop are one statement.
+        assert_eq!(
+            body("fn main() {\n    outer:\n    for x in xs { }\n}"),
+            "(block (for :outer x xs (block)))"
+        );
+        // Before anything but `loop`, `while` or `for`, `name:` is no label, and the `:` is the
+        // error it was before labels.
+        assert_eq!(
+            parse_err("fn main() {\n    x: i64 = 1\n}"),
+            (Code::Expected, 2, 6)
+        );
+    }
+
+    /// `name:` before `if`, `match` or `{` is E0145 wherever a labeled loop could stand: a
+    /// statement, the value of a `let` or an assignment, and an argument after its label. `_:`
+    /// before a loop is E0145 too, and its safe fix deletes it.
+    #[test]
+    fn labels_not_on_loops() {
+        for (src, at) in [
+            (
+                "fn main() {\n    x = outer: if c { 1 } else { 2 }\n}",
+                (2, 9),
+            ),
+            (
+                "fn main() {\n    x += outer: match c { _ => 1 }\n}",
+                (2, 10),
+            ),
+            ("fn main() {\n    f(n: outer: { 1 })\n}", (2, 10)),
+        ] {
+            assert_eq!(parse_err(src), (Code::LabelNotOnLoop, at.0, at.1), "{src}");
+        }
+        assert_eq!(
+            fixed("fn main() {\n    _: while c { }\n}"),
+            "fn main() {\n    while c { }\n}"
+        );
+        assert_eq!(
+            parse_err("fn main() {\n    _: loop { }\n}"),
+            (Code::LabelNotOnLoop, 2, 5)
+        );
+        // A `=` with no value after it is the missing value, not a loop label.
+        assert_eq!(
+            parse_err("fn main() {\n    let x =\n}"),
+            (Code::Expected, 3, 1)
+        );
+    }
+
+    /// After `break`, a name is the loop label only while a loop with that label is open around
+    /// the jump, its own header included; after `continue`, any name is.
+    #[test]
+    fn jump_labels() {
+        for (src, printed) in [
+            (
+                "outer: for x in xs { break outer -1 }",
+                "(for :outer x xs (block (break :outer (- 1))))",
+            ),
+            (
+                "for x in xs { break outer -1 }",
+                "(for x xs (block (break (- outer 1))))",
+            ),
+            (
+                "outer: for x in xs { continue outer }",
+                "(for :outer x xs (block (continue :outer)))",
+            ),
+            (
+                "for x in xs { continue outer }",
+                "(for x xs (block (continue :outer)))",
+            ),
+            (
+                "outer: while ok(loop { break outer - 1 }) { }",
+                "(while :outer (call ok (loop (block (break :outer (- 1))))) (block))",
+            ),
+        ] {
+            assert_eq!(expr(src), printed, "{src}");
+        }
+        // A label closes with its loop's body, so a sibling may take it again, and a jump after
+        // both reads the name as a value.
+        assert_eq!(
+            body(
+                "fn main() {\n    outer: loop { break outer }\n    outer: loop { break outer }\n    loop { break outer }\n}"
+            ),
+            "(block (loop :outer (block (break :outer))) (loop :outer (block (break :outer))) (loop (block (break outer))))"
+        );
+        // A `while` or `for` label, which a statement opens, closes after its body too.
+        assert_eq!(
+            body("fn main() {\n    outer: for x in xs { }\n    loop { break outer -1 }\n}"),
+            "(block (for :outer x xs (block)) (loop (block (break (- outer 1)))))"
+        );
+    }
+
+    #[test]
     fn while_loop() {
         assert_eq!(
             body("fn main() {\n    while c { f() }\n}"),
@@ -3272,6 +3665,8 @@ mod tests {
                 "const C = if true { 1 } else { 2 }",
                 "(const C (if true (block 1) (block 2)))",
             ),
+            // A name as the last token is no loop label: no `:` and loop keyword follow it.
+            ("const D = C", "(const D C)"),
         ] {
             assert_eq!(program(src), want, "{src}");
         }

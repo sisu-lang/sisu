@@ -70,7 +70,11 @@ reports a malformed or unsupported one without breaking its item. An `enum` item
 an optional payload of labeled or unlabeled fields, and its methods. A `match`
 parses into its scrutinee and its arms, one per line, each a pattern, an
 optional `if` guard, `=>` and a body; a pattern is one or more alternatives
-joined by `|`. `if let` and `while let` take a pattern too. It rejects an item that nests deeper than
+joined by `|`. `if let` and `while let` take a pattern too. A `name:` before
+`loop`, `while`, `while let` or `for` is a loop label, which stays open to the end of
+that loop's body; after `break` or `continue`, a name is the loop label when a
+loop around the jump has it, and otherwise begins the value
+([ADR 0034](adr/0034-loop-and-loop-labels.md)). It rejects an item that nests deeper than
 256 levels, because every later stage walks the tree recursively.
 
 **Front end** (`front_end.rs`). Runs the lexer, parser and checker in order and
@@ -97,7 +101,9 @@ counted part. Building a variant, `Expr.Num(2)`, becomes a `Variant` node
 `check/pattern.rs` checks each pattern against the type at its position and
 declares the names it binds. `if let` on an enum becomes a `match` whose `_`
 arm is the `else`, and `while let` on one a loop around a `match` whose `_` arm
-breaks. `check/exhaust.rs` runs Maranget's usefulness algorithm over each
+breaks. A `break` or `continue` names its loop in `tir` by depth, the number of
+loops out from the innermost, and a `break` may carry a value; the loop's type
+comes from its `break`s, and `while true` gets W0009. `check/exhaust.rs` runs Maranget's usefulness algorithm over each
 `match`'s arms: a `match` that misses a value is an error that names one it
 misses as a pattern, such as `Mul(_, _)`, and an arm that no value reaches is
 a warning. The same check rejects an `if let` or `while let` whose pattern

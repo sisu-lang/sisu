@@ -1,0 +1,9 @@
+enum Shape {
+    Dot(i64, i64)
+}
+
+fn main() {
+    let found = Shape: loop {
+        break Shape.Dot(1, 2)
+    }
+}

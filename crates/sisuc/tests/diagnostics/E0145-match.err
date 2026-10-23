@@ -1,0 +1,10 @@
+error[E0145]: only a loop can take a loop label
+ --> E0145-match.sisu:3:5
+  |
+3 |     outer: match x {
+  |     ^^^^^^ ----- this is not `loop`, `while` or `for`
+  |
+  = help: write the loop label before a loop, or delete it
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0145

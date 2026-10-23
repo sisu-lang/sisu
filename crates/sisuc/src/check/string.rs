@@ -503,6 +503,7 @@ fn single_term(e: &ast::Expr) -> bool {
         ExprKind::Is { .. } | ExprKind::Compare { .. } => false,
         ExprKind::Unary { operand, .. } => e.span.end() != operand.span.end(),
         ExprKind::Block(block) => e.span != block.span,
+        ExprKind::Loop { body, .. } => e.span.end() != body.span.end(),
         // The keyword starts it, unless parentheses do.
         ExprKind::Match { keyword, .. } => e.span.start() != keyword.start(),
         ExprKind::If {

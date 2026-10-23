@@ -1,0 +1,7 @@
+fn main() {
+    let n = 1
+    let x = n: loop {
+        break n 2
+    }
+    print(x == true)
+}

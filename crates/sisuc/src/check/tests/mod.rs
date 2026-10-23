@@ -662,7 +662,7 @@ fn break_in_header() {
         ),
         // The inner loop is the one whose header holds the jump.
         (
-            "fn main() {\n    while true {\n        for x in { continue\n [1] } { }\n    }\n}",
+            "fn main() {\n    loop {\n        for x in { continue\n [1] } { }\n    }\n}",
             (3, 20, "continue"),
             (3, 9, "for"),
         ),
@@ -675,42 +675,54 @@ fn break_in_header() {
 
 #[test]
 fn break_in_loop_inside_header() {
-    clean("fn main() {\n    while { while true { break }\n true } { break }\n}");
+    clean("fn main() {\n    while { loop { break }\n true } { break }\n}");
 }
 
 #[test]
 fn statement_after_break() {
     codes(
-        "fn main() {\n    while true {\n        break\n        print(1)\n    }\n}",
+        "fn main() {\n    loop {\n        break\n        print(1)\n    }\n}",
         &[(Code::UnreachableCode, (4, 9))],
     );
 }
 
 #[test]
 fn while_true_without_break_is_never() {
-    clean("fn f() -> i64 {\n    while true {}\n}\nfn main() {}");
+    codes(
+        "fn f() -> i64 {\n    while true {}\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5))],
+    );
 }
 
 #[test]
 fn parenthesized_true_is_endless() {
-    clean("fn f() -> i64 {\n    while (true) {}\n}\nfn main() {}");
+    codes(
+        "fn f() -> i64 {\n    while (true) {}\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5))],
+    );
 }
 
 #[test]
 fn code_after_endless_loop_is_unreachable() {
     codes(
         "fn main() {\n    while true {}\n    print(1)\n}",
-        &[(Code::UnreachableCode, (3, 5))],
+        &[(Code::WhileTrue, (2, 5)), (Code::UnreachableCode, (3, 5))],
     );
 }
 
 #[test]
 fn return_from_endless_loop() {
-    for src in [
-        "fn first_zero(xs: [i64]) -> i64 {\n    let mut i = 0\n    while true {\n        if xs[i] == 0 {\n            return i\n        }\n        i += 1\n    }\n}\nfn main() {}",
-        "fn f() -> i64 {\n    while true { panic(\"x\") }\n}\nfn main() {}",
+    for (src, line) in [
+        (
+            "fn first_zero(xs: [i64]) -> i64 {\n    let mut i = 0\n    while true {\n        if xs[i] == 0 {\n            return i\n        }\n        i += 1\n    }\n}\nfn main() {}",
+            3,
+        ),
+        (
+            "fn f() -> i64 {\n    while true { panic(\"x\") }\n}\nfn main() {}",
+            2,
+        ),
     ] {
-        clean(src);
+        codes(src, &[(Code::WhileTrue, (line, 5))]);
     }
 }
 
@@ -718,19 +730,23 @@ fn return_from_endless_loop() {
 fn todo_in_endless_loop() {
     codes(
         "fn f() -> i64 {\n    while true { todo }\n}\nfn main() {}",
-        &[(Code::TodoLeft, (2, 18))],
+        &[(Code::WhileTrue, (2, 5)), (Code::TodoLeft, (2, 18))],
     );
 }
 
 #[test]
 fn continue_in_endless_loop() {
-    clean("fn f() -> i64 {\n    while true { continue }\n}\nfn main() {}");
+    codes(
+        "fn f() -> i64 {\n    while true { continue }\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5))],
+    );
 }
 
 #[test]
 fn inner_break_leaves_only_the_inner_loop() {
-    clean(
+    codes(
         "fn f(c: bool, xs: [i64], o: i64?) -> i64 {\n    while true {\n        while c { break }\n        while let y = o { break }\n        for x in xs { break }\n    }\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5))],
     );
 }
 
@@ -739,7 +755,7 @@ fn inner_break_leaves_only_the_inner_loop() {
 fn break_makes_endless_loop_unit() {
     codes(
         "fn f(c: bool) -> i64 {\n    while true {\n        if c { break }\n    }\n}\nfn main() {}",
-        &[(Code::BodyHasNoValue, (5, 1))],
+        &[(Code::WhileTrue, (2, 5)), (Code::BodyHasNoValue, (5, 1))],
     );
 }
 
@@ -748,7 +764,7 @@ fn break_makes_endless_loop_unit() {
 fn break_in_a_value_makes_endless_loop_unit() {
     codes(
         "fn f(c: bool) -> i64 {\n    while true {\n        let x = if c { break } else { 1 }\n    }\n}\nfn main() {}",
-        &[(Code::BodyHasNoValue, (5, 1))],
+        &[(Code::WhileTrue, (2, 5)), (Code::BodyHasNoValue, (5, 1))],
     );
 }
 
@@ -758,6 +774,7 @@ fn unreachable_break_still_counts() {
     codes(
         "fn f() -> i64 {\n    while true {\n        return 1\n        break\n    }\n}\nfn main() {}",
         &[
+            (Code::WhileTrue, (2, 5)),
             (Code::UnreachableCode, (4, 9)),
             (Code::BodyHasNoValue, (6, 1)),
         ],
@@ -777,10 +794,10 @@ fn only_the_literal_is_endless() {
 }
 
 #[test]
-fn failed_endless_body_reports_only_its_error() {
+fn failed_endless_body_reports_no_missing_value() {
     codes(
         "fn f() -> i64 {\n    while true { missing }\n}\nfn main() {}",
-        &[(Code::BindingNotFound, (2, 18))],
+        &[(Code::WhileTrue, (2, 5)), (Code::BindingNotFound, (2, 18))],
     );
 }
 
@@ -790,6 +807,7 @@ fn failed_body_with_break_stays_unit() {
     codes(
         "fn f() -> i64 {\n    while true {\n        missing\n        break\n    }\n}\nfn main() {}",
         &[
+            (Code::WhileTrue, (2, 5)),
             (Code::BindingNotFound, (3, 9)),
             (Code::BodyHasNoValue, (6, 1)),
         ],
@@ -800,6 +818,265 @@ fn failed_body_with_break_stays_unit() {
 fn break_in_inner_header_does_not_count() {
     codes(
         "fn f() -> i64 {\n    while true {\n        while { break\n true } {}\n    }\n}\nfn main() {}",
+        &[(Code::WhileTrue, (2, 5)), (Code::JumpInLoopHeader, (3, 17))],
+    );
+}
+
+#[test]
+fn loop_without_break_is_never() {
+    clean("fn f() -> i64 {\n    loop {}\n}\nfn main() {}");
+}
+
+#[test]
+fn loop_with_bare_break_is_unit() {
+    let src = "fn f(c: bool) {\n    loop {\n        if c { break }\n    }\n}\nfn main() {}";
+    assert_eq!(loop_type(src), Type::UNIT);
+}
+
+/// The type of the `loop` that is the value of `f`'s body in `src`, which checks clean.
+fn loop_type(src: &str) -> Type {
+    let (program, ds) = checked(src);
+    assert!(ds.is_empty(), "{ds:?}");
+    let program = program.expect("no errors");
+    let f = program
+        .functions
+        .iter()
+        .find(|f| f.name == "f")
+        .expect("the source should define `f`");
+    let lp = f
+        .body
+        .value
+        .as_ref()
+        .expect("the `loop` should be the body's value");
+    assert!(matches!(lp.kind, tir::ExprKind::Loop(_)), "{program}");
+    lp.ty
+}
+
+#[test]
+fn loop_value_is_its_breaks_type() {
+    clean("fn f(c: bool) -> i64 {\n    loop {\n        if c { break 1 }\n    }\n}\nfn main() {}");
+}
+
+#[test]
+fn expected_type_checks_every_break() {
+    clean(
+        "fn f(c: bool) -> i64? {\n    loop {\n        if c { break None }\n        break 5\n    }\n}\nfn main() {}",
+    );
+}
+
+/// A `T?` expected after a `T` value widens the loop, as an `if`'s branches join.
+#[test]
+fn optional_value_after_payload_widens_the_loop() {
+    let src = "fn f(c: bool) -> i64? {\n    loop {\n        if c { break 5 }\n        break None\n    }\n}\nfn main() {}";
+    assert_eq!(loop_type(src), Type::optional(Type::I64));
+}
+
+/// A widened loop wraps its `T` values but not a `never` one, which has no value to wrap.
+#[test]
+fn widening_leaves_a_never_value_unwrapped() {
+    let src = "fn f(c: bool) -> i64? {\n    loop {\n        if c { break panic(\"x\") }\n        if c { break 5 }\n        break None\n    }\n}\nfn main() {}";
+    let printed = lowered(src);
+    assert!(printed.contains("(wrap 5)"), "{printed}");
+    assert!(!printed.contains("(wrap (panic"), "{printed}");
+}
+
+/// The walk that wraps a widened loop's values enters a nested loop only when a `break` in
+/// one targets the widened loop: `break loop { ... }` at every level stays linear.
+#[test]
+fn widening_walk_enters_only_crossed_loops() {
+    let entered = |label: &str, inner: &str| {
+        let src = format!(
+            "fn f(c: bool) -> i64? {{\n    {label}loop {{\n        if c {{ break 1 }}\n        break loop {{\n            {inner}\n            break None\n        }}\n    }}\n}}\nfn main() {{}}"
+        );
+        WRAP_LOOPS.set(0);
+        lowered(&src);
+        WRAP_LOOPS.get()
+    };
+    assert_eq!(entered("", "if c { break 2 }"), 0);
+    assert_eq!(entered("outer: ", "if c { break outer None }"), 1);
+}
+
+/// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
+#[test]
+fn loop_after_coalesce_is_its_values_type() {
+    clean(
+        "fn opt() -> i64? { None }\nfn main() {\n    let x: i64 = opt() ?? loop { break 7 }\n    print(x)\n}",
+    );
+}
+
+/// A later branch expects the first's type made optional, which a loop does not take on.
+#[test]
+fn loop_in_a_later_branch_is_its_values_type() {
+    clean(
+        "fn main() {\n    let c = true\n    let q = if c { loop { break 1 } } else { loop { break 2 } }\n    print(q + 1)\n}",
+    );
+}
+
+#[test]
+fn string_loop_in_a_later_branch_is_not_optional() {
+    clean(
+        "fn main() {\n    let c = true\n    let s = if c { \"a\" } else { loop { break \"b\" } }\n    print(s.len())\n}",
+    );
+}
+
+#[test]
+fn loop_in_a_later_match_arm_is_its_values_type() {
+    clean(
+        "fn main() {\n    let c = true\n    let m = match c {\n        true => loop { break 3 }\n        false => loop { break 4 }\n    }\n    print(m + 1)\n}",
+    );
+}
+
+/// The loop is `never`, so the `1` after it is unreachable.
+#[test]
+fn never_values_make_loop_never() {
+    codes(
+        "fn f() -> i64 {\n    loop { break panic(\"x\") }\n    1\n}\nfn main() {}",
+        &[(Code::UnreachableCode, (3, 5))],
+    );
+}
+
+/// A `never` value is no `NoValue`.
+#[test]
+fn break_never_value_is_allowed() {
+    clean(
+        "fn f(c: bool) -> i64 {\n    loop {\n        if c { break panic(\"x\") }\n        break 1\n    }\n}\nfn main() {}",
+    );
+}
+
+#[test]
+fn never_value_beside_bare_break_is_unit() {
+    let src = "fn f(c: bool) {\n    loop {\n        if c { break }\n        break panic(\"x\")\n    }\n}\nfn main() {}";
+    assert_eq!(loop_type(src), Type::UNIT);
+}
+
+#[test]
+fn failed_value_reports_once() {
+    codes(
+        "fn f() -> i64 {\n    loop { break missing }\n}\nfn main() {}",
+        &[(Code::BindingNotFound, (2, 18))],
+    );
+}
+
+/// An unknown return type reports once: no `break` value is checked against it.
+#[test]
+fn unknown_return_type_checks_no_break() {
+    codes(
+        "fn f(c: bool) -> Missing {\n    loop {\n        if c { break 1 }\n        break \"x\"\n    }\n}\nfn main() {}",
+        &[(Code::UnknownType, (1, 18))],
+    );
+}
+
+/// A labeled jump names its target by the loops between them: one, the inner `for`.
+#[test]
+fn labeled_break_targets_outer_loop() {
+    contains(
+        "fn f(xs: [i64]) {\n    outer: for x in xs {\n        for y in xs { break outer }\n    }\n}\nfn main() {}",
+        &["(break ^1)"],
+    );
+}
+
+#[test]
+fn labeled_continue_depth() {
+    contains(
+        "fn f(xs: [i64]) {\n    outer: for x in xs {\n        for y in xs { continue outer }\n    }\n}\nfn main() {}",
+        &["(continue ^1)"],
+    );
+}
+
+/// The value of a labeled `break` from an inner loop gives the outer `loop` its type.
+#[test]
+fn labeled_break_value_from_inner_loop() {
+    let src = "fn f(xs: [i64]) {\n    let v = rows: loop {\n        for x in xs {\n            if x > 0 { break rows x }\n        }\n    }\n    let w: i64 = v\n}\nfn main() {}";
+    clean(src);
+    contains(src, &["(break ^1 x#"]);
+}
+
+/// `break outer` from the inner loop makes the outer loop finish, so it is `unit`, not `never`.
+#[test]
+fn labeled_break_counts_for_outer_never() {
+    codes(
+        "fn f(xs: [i64]) -> i64 {\n    outer: loop {\n        for x in xs { break outer }\n    }\n}\nfn main() {}",
+        &[(Code::BodyHasNoValue, (5, 1))],
+    );
+}
+
+/// `continue nope` in a header, where no loop label `nope` is open, leaves no loop header, so it
+/// is the missing loop label, not E0082, and the header it poisons reports nothing more.
+#[test]
+fn continue_to_missing_label_in_header_is_missing_label() {
+    codes(
+        "fn main() {\n    while { continue nope; true } { }\n}",
+        &[(Code::MissingLabel, (2, 22))],
+    );
+}
+
+/// `continue name` outside every loop is the jump outside a loop, not a missing loop label.
+#[test]
+fn labeled_continue_outside_loop() {
+    codes(
+        "fn main() {\n    continue nope\n}",
+        &[(Code::JumpOutsideLoop, (2, 5))],
+    );
+}
+
+/// Loops side by side may share a loop label; a labeled loop that no jump names is W0008, whose
+/// safe fix deletes the loop label.
+#[test]
+fn loop_label_reuse_and_unused() {
+    codes(
+        "fn f(c: bool) {\n    a: while c { break a }\n    a: while c { continue a }\n}\nfn main() {}",
+        &[],
+    );
+    let src = "fn f(c: bool) {\n    outer: while c { }\n}\nfn main() {}";
+    codes(src, &[(Code::UnusedLabel, (2, 5))]);
+    fix_removes_its_code(src, &diags(src)[0]);
+    // A loop's label is open in a nested loop's header too.
+    codes(
+        "fn f(c: bool) {\n    a: while c {\n        a: while { break a; true } { }\n    }\n}\nfn main() {}",
+        &[
+            (Code::LabelReused, (3, 9)),
+            (Code::JumpInLoopHeader, (3, 20)),
+        ],
+    );
+}
+
+/// `break name` in a `for` is a misspelled loop label only when `name` is close to an open loop
+/// label and names nothing in scope; otherwise it is the value the `for` cannot take.
+#[test]
+fn break_name_is_a_label_only_near_one() {
+    codes(
+        "fn f() {\n    outer: for x in [1] {\n        break nope\n    }\n}\nfn main() {}",
+        &[(Code::BreakValueNotLoop, (3, 15))],
+    );
+    codes(
+        "fn f() {\n    let outr = 1\n    outer: for x in [1] {\n        break outr\n    }\n}\nfn main() {}",
+        &[(Code::BreakValueNotLoop, (4, 15))],
+    );
+}
+
+/// A labeled jump out of a header leaves the endless loop it is in untyped, not `never`, so the
+/// header reports neither a missing value nor unreachable code; `E0082-through-loop` covers a
+/// `loop`. The failed `while true` still warns, with no fix: writing `loop` could remove the
+/// error rather than fix it.
+#[test]
+fn failed_labeled_jump_leaves_no_never_loop() {
+    let src = "fn main() {\n    outer: for r in [1] {\n        while { while true { break outer }; true } { }\n    }\n}";
+    codes(
+        src,
+        &[
+            (Code::WhileTrue, (3, 17)),
+            (Code::JumpInLoopHeader, (3, 30)),
+        ],
+    );
+    assert_eq!(diags(src)[0].fixes(), []);
+}
+
+/// A `break` in a header would leave the loop around the header, so that loop has no type and
+/// the code after it is not unreachable; `E0082-leaves-target` covers a labeled `break`.
+#[test]
+fn header_jump_leaves_target_untyped() {
+    codes(
+        "fn main() {\n    loop {\n        while { break; true } { }\n    }\n    print(1)\n}",
         &[(Code::JumpInLoopHeader, (3, 17))],
     );
 }
@@ -2017,7 +2294,7 @@ fn spills_constructor_argument() {
 fn spills_field_assignment_base() {
     assert_eq!(
         printed_g(
-            "fn g(c: bool, p: P) {\n    while true {\n        p.b = if c { break } else { make() }\n    }\n}"
+            "fn g(c: bool, p: P) {\n    loop {\n        p.b = if c { break } else { make() }\n    }\n}"
         ),
         "(fn g ((c#0 bool) (p#1 P)) unit (block (loop (block (block (let #2 p#1) (let #3 (if c#0 (block (break)) (block (call make)))) (= (. #2 b) #3))))))"
     );
@@ -2042,7 +2319,7 @@ fn no_spill_without_earlier_reference() {
 #[test]
 fn nested_loop_break_still_spills() {
     assert_eq!(
-        printed_g("fn g() {\n    f(make(), if true { while true { break }\n 1 } else { 1 })\n}"),
+        printed_g("fn g() {\n    f(make(), if true { loop { break }\n 1 } else { 1 })\n}"),
         "(fn g () unit (block (block (let #0 (call make)) (let #1 (if true (block (loop (block (break))) 1) (block 1))) (call f #0 #1))))"
     );
 }
@@ -2063,7 +2340,7 @@ fn spills_method_receiver() {
 fn spills_compound_field_assignment_base() {
     assert_eq!(
         printed_g(
-            "class Q {\n    mut k: i64\n}\nfn g(c: bool, q: Q) {\n    while true {\n        q.k += if c { break } else { 1 }\n    }\n}"
+            "class Q {\n    mut k: i64\n}\nfn g(c: bool, q: Q) {\n    loop {\n        q.k += if c { break } else { 1 }\n    }\n}"
         ),
         "(fn g ((c#0 bool) (q#1 Q)) unit (block (loop (block (block (block (let #2 q#1) (let #3 (+ (. q#1 k) (if c#0 (block (break)) (block 1)))) (= (. #2 k) #3)))))))"
     );

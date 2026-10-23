@@ -396,8 +396,15 @@ pub(crate) enum ExprKind {
         arms: Vec<Arm>,
     },
     Loop(Block),
-    Break,
-    Continue,
+    /// Leaves the loop `depth` loops out from the innermost one around it, giving it `value`.
+    Break {
+        depth: usize,
+        value: Option<Box<Expr>>,
+    },
+    /// Starts the next pass of the loop `depth` loops out from the innermost one.
+    Continue {
+        depth: usize,
+    },
     Return(Option<Box<Expr>>),
     Block(Block),
 }
@@ -475,7 +482,7 @@ impl Expr {
             | ExprKind::None
             | ExprKind::ReadLine
             | ExprKind::Local(_) => false,
-            ExprKind::Break | ExprKind::Continue | ExprKind::Return(_) => true,
+            ExprKind::Break { .. } | ExprKind::Continue { .. } | ExprKind::Return(_) => true,
             ExprKind::Call { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. } => args.iter().any(Expr::exits),
@@ -540,6 +547,128 @@ impl Expr {
                         .any(|arm| arm.guard.as_ref().is_some_and(Expr::exits) || arm.body.exits())
             }
             ExprKind::Loop(block) | ExprKind::Block(block) => block.exits(),
+        }
+    }
+}
+
+impl Expr {
+    /// Calls `f` on each expression directly inside this one, through its blocks and places.
+    pub(crate) fn each_child_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
+        match &mut self.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::None
+            | ExprKind::ReadLine
+            | ExprKind::Local(_)
+            | ExprKind::Continue { .. }
+            | ExprKind::Break { value: None, .. }
+            | ExprKind::Return(None) => {}
+            ExprKind::Call { args, .. }
+            | ExprKind::New { args, .. }
+            | ExprKind::Variant { args, .. }
+            | ExprKind::Compare { operands: args, .. }
+            | ExprKind::Math { operands: args, .. }
+            | ExprKind::ArrayLit(args)
+            | ExprKind::Interpolate { parts: args, .. } => args.iter_mut().for_each(f),
+            ExprKind::Field { base: operand, .. }
+            | ExprKind::Len(operand)
+            | ExprKind::Chars(operand)
+            | ExprKind::Bytes(operand)
+            | ExprKind::Words(operand)
+            | ExprKind::FromChars(operand)
+            | ExprKind::Sum(operand)
+            | ExprKind::Wrap(operand)
+            | ExprKind::Convert(operand)
+            | ExprKind::Print { operand, .. }
+            | ExprKind::Panic(operand)
+            | ExprKind::Unary { operand, .. }
+            | ExprKind::Break {
+                value: Some(operand),
+                ..
+            }
+            | ExprKind::Return(Some(operand)) => f(operand),
+            ExprKind::Binary { lhs, rhs, .. }
+            | ExprKind::Concat { lhs, rhs }
+            | ExprKind::Equal { lhs, rhs, .. }
+            | ExprKind::Is { lhs, rhs }
+            | ExprKind::ArrayFill {
+                value: lhs,
+                len: rhs,
+            }
+            | ExprKind::Index {
+                base: lhs,
+                index: rhs,
+            }
+            | ExprKind::Contains {
+                base: lhs,
+                value: rhs,
+            } => {
+                f(lhs);
+                f(rhs);
+            }
+            ExprKind::If {
+                cond: scrutinee,
+                then_block,
+                else_block,
+            }
+            | ExprKind::IfSome {
+                scrutinee,
+                then_block,
+                else_block,
+                ..
+            } => {
+                f(scrutinee);
+                then_block.each_expr_mut(f);
+                if let Some(block) = else_block {
+                    block.each_expr_mut(f);
+                }
+            }
+            ExprKind::Match {
+                scrutinee, arms, ..
+            } => {
+                f(scrutinee);
+                for arm in arms {
+                    if let Some(guard) = &mut arm.guard {
+                        f(guard);
+                    }
+                    arm.body.each_expr_mut(f);
+                }
+            }
+            ExprKind::Loop(block) | ExprKind::Block(block) => block.each_expr_mut(f),
+        }
+    }
+}
+
+impl Block {
+    /// Calls `f` on each expression directly in the block's statements, places and value.
+    pub(crate) fn each_expr_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
+        for stmt in &mut self.stmts {
+            match stmt {
+                Stmt::Let { init: e, .. } | Stmt::Expr(e) => f(e),
+                Stmt::Assign { place, value } | Stmt::Append { place, value } => {
+                    place.each_expr_mut(f);
+                    f(value);
+                }
+            }
+        }
+        if let Some(value) = &mut self.value {
+            f(value);
+        }
+    }
+}
+
+impl Place {
+    fn each_expr_mut(&mut self, f: &mut impl FnMut(&mut Expr)) {
+        match self {
+            Place::Local(_) => {}
+            Place::Field { base, .. } => f(base),
+            Place::Index { base, index } => {
+                base.each_expr_mut(f);
+                f(index);
+            }
         }
     }
 }
@@ -765,8 +894,20 @@ impl Printer<'_> {
                 self.block(f, body)?;
                 f.write_str(")")
             }
-            ExprKind::Break => f.write_str("(break)"),
-            ExprKind::Continue => f.write_str("(continue)"),
+            ExprKind::Break { depth, value } => {
+                f.write_str("(break")?;
+                jump_depth(f, *depth)?;
+                if let Some(value) = value {
+                    f.write_str(" ")?;
+                    self.expr(f, value)?;
+                }
+                f.write_str(")")
+            }
+            ExprKind::Continue { depth } => {
+                f.write_str("(continue")?;
+                jump_depth(f, *depth)?;
+                f.write_str(")")
+            }
             ExprKind::Return(None) => f.write_str("(return)"),
             ExprKind::Return(Some(value)) => self.unary(f, "return", value),
             ExprKind::Block(block) => self.block(f, block),
@@ -1028,6 +1169,14 @@ impl fmt::Display for Program {
     }
 }
 
+/// ` ^depth` for a jump to an outer loop; nothing for the innermost one.
+fn jump_depth(f: &mut fmt::Formatter<'_>, depth: usize) -> fmt::Result {
+    if depth > 0 {
+        write!(f, " ^{depth}")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1067,6 +1216,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn jumps_print_their_depth_and_value() {
+        let jump = |kind| Stmt::Expr(expr(kind, Type::NEVER));
+        let inner = block(vec![
+            jump(ExprKind::Break {
+                depth: 1,
+                value: Some(Box::new(int(1))),
+            }),
+            jump(ExprKind::Continue { depth: 1 }),
+        ]);
+        let outer = block(vec![
+            Stmt::Expr(expr(ExprKind::Loop(inner), Type::NEVER)),
+            jump(ExprKind::Break {
+                depth: 0,
+                value: Some(Box::new(int(2))),
+            }),
+        ]);
+        let program = Program {
+            classes: vec![],
+            enums: vec![],
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                body: Block {
+                    stmts: vec![],
+                    value: Some(Box::new(expr(ExprKind::Loop(outer), Type::I64))),
+                    ty: Type::I64,
+                },
+            }],
+        };
+        assert_eq!(
+            program.to_string(),
+            "(fn f () i64 (block (loop (block (loop (block (break ^1 1) (continue ^1))) (break 2)))))"
+        );
+    }
+
     /// `(if (!= x#1 2) (block (print (< 1 n#0 <= 9))))` and
     /// `(loop (block (if true (block (break)) (block))))`.
     fn if_and_loop() -> (Expr, Expr) {
@@ -1094,7 +1281,13 @@ mod tests {
             },
             Type::UNIT,
         );
-        let brk = expr(ExprKind::Break, Type::NEVER);
+        let brk = expr(
+            ExprKind::Break {
+                depth: 0,
+                value: None,
+            },
+            Type::NEVER,
+        );
         let inner_if = expr(
             ExprKind::If {
                 cond: Box::new(expr(ExprKind::Bool(true), Type::BOOL)),
@@ -1785,7 +1978,7 @@ mod tests {
         let (_, looped) = if_and_loop();
         assert!(block_expr(vec![], Some(looped)).exits());
         // A `continue` in a `let` initializer, and a `return` in an argument of a call.
-        let cont = expr(ExprKind::Continue, Type::NEVER);
+        let cont = expr(ExprKind::Continue { depth: 0 }, Type::NEVER);
         let let_cont = Stmt::Let {
             local: LocalId(0),
             init: block_expr(vec![Stmt::Expr(cont)], None),
@@ -1821,5 +2014,245 @@ mod tests {
         // An `if`, a comparison chain and a print with no jump in them.
         assert!(!if_stmt.exits());
         assert!(!block_expr(vec![Stmt::Expr(if_stmt)], Some(int(1))).exits());
+    }
+
+    /// `each_child_mut` reaches each expression directly inside every kind, in order: through
+    /// its blocks, statements and places, and no further.
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one row per node kind, so the table reads in one place"
+    )]
+    fn each_child_mut_reaches_every_direct_child() {
+        let n = |k| Box::new(int(k));
+        let ints = |ks: [i64; 2]| ks.map(int).into();
+        let valued = |k| Block {
+            stmts: Vec::new(),
+            value: Some(n(k)),
+            ty: Type::I64,
+        };
+        let arm = |guard, k| Arm {
+            pattern: Pattern {
+                kind: PatternKind::Wild,
+                span: Span::new(0, 0),
+            },
+            bindings: Vec::new(),
+            guard,
+            body: valued(k),
+        };
+        let place = Place::Index {
+            base: Box::new(Place::Field {
+                base: int(3),
+                index: 0,
+            }),
+            index: int(4),
+        };
+        let body = Block {
+            stmts: vec![
+                Stmt::Let {
+                    local: LocalId(0),
+                    init: int(1),
+                },
+                Stmt::Expr(int(2)),
+                Stmt::Assign {
+                    place,
+                    value: int(5),
+                },
+                Stmt::Append {
+                    place: Place::Local(LocalId(0)),
+                    value: int(6),
+                },
+            ],
+            value: Some(n(7)),
+            ty: Type::I64,
+        };
+        let cases = [
+            (ExprKind::Return(None), 0),
+            (
+                ExprKind::Call {
+                    func: FuncId(0),
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
+            (
+                ExprKind::New {
+                    class: ClassId(0),
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
+            (
+                ExprKind::Variant {
+                    id: EnumId(0),
+                    variant: 0,
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
+            (
+                ExprKind::Compare {
+                    operands: ints([1, 2]),
+                    ops: vec![CompareOp::Lt],
+                },
+                2,
+            ),
+            (
+                ExprKind::Math {
+                    op: MathOp::Abs,
+                    operands: ints([1, 2]),
+                },
+                2,
+            ),
+            (ExprKind::ArrayLit(ints([1, 2])), 2),
+            (
+                ExprKind::Interpolate {
+                    parts: ints([1, 2]),
+                    formats: Vec::new(),
+                },
+                2,
+            ),
+            (
+                ExprKind::Field {
+                    base: n(1),
+                    index: 0,
+                },
+                1,
+            ),
+            (ExprKind::Len(n(1)), 1),
+            (ExprKind::Chars(n(1)), 1),
+            (ExprKind::Bytes(n(1)), 1),
+            (ExprKind::Words(n(1)), 1),
+            (ExprKind::FromChars(n(1)), 1),
+            (ExprKind::Sum(n(1)), 1),
+            (ExprKind::Wrap(n(1)), 1),
+            (ExprKind::Convert(n(1)), 1),
+            (
+                ExprKind::Print {
+                    stream: Stream::Stdout,
+                    operand: n(1),
+                },
+                1,
+            ),
+            (ExprKind::Panic(n(1)), 1),
+            (
+                ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    operand: n(1),
+                },
+                1,
+            ),
+            (
+                ExprKind::Break {
+                    depth: 0,
+                    value: Some(n(1)),
+                },
+                1,
+            ),
+            (ExprKind::Return(Some(n(1))), 1),
+            (
+                ExprKind::Binary {
+                    op: BinaryOp::Add,
+                    lhs: n(1),
+                    rhs: n(2),
+                },
+                2,
+            ),
+            // `2` is a grandchild, under the `-`, which `f` would have to reach itself.
+            (
+                ExprKind::Binary {
+                    op: BinaryOp::Add,
+                    lhs: n(1),
+                    rhs: Box::new(expr(
+                        ExprKind::Unary {
+                            op: UnaryOp::Neg,
+                            operand: n(2),
+                        },
+                        Type::I64,
+                    )),
+                },
+                1,
+            ),
+            (
+                ExprKind::Concat {
+                    lhs: n(1),
+                    rhs: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Equal {
+                    negated: false,
+                    lhs: n(1),
+                    rhs: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Is {
+                    lhs: n(1),
+                    rhs: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::ArrayFill {
+                    value: n(1),
+                    len: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Index {
+                    base: n(1),
+                    index: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::Contains {
+                    base: n(1),
+                    value: n(2),
+                },
+                2,
+            ),
+            (
+                ExprKind::If {
+                    cond: n(1),
+                    then_block: valued(2),
+                    else_block: Some(valued(3)),
+                },
+                3,
+            ),
+            (
+                ExprKind::IfSome {
+                    bind: LocalId(0),
+                    scrutinee: n(1),
+                    then_block: valued(2),
+                    else_block: Some(valued(3)),
+                },
+                3,
+            ),
+            (
+                ExprKind::Match {
+                    scrutinee: n(1),
+                    temp: LocalId(0),
+                    arms: vec![arm(Some(int(2)), 3), arm(None, 4)],
+                },
+                4,
+            ),
+            (ExprKind::Loop(body), 7),
+            (ExprKind::Block(valued(1)), 1),
+        ];
+        for (kind, children) in cases {
+            let mut e = expr(kind, Type::I64);
+            let mut seen = Vec::new();
+            e.each_child_mut(&mut |child| {
+                if let ExprKind::Int(k) = child.kind {
+                    seen.push(k);
+                }
+            });
+            assert_eq!(seen, (1..=children).collect::<Vec<_>>(), "{:?}", e.kind);
+        }
     }
 }

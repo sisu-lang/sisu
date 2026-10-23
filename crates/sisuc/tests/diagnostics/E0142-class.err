@@ -1,0 +1,15 @@
+error[E0142]: loop label `Box` has the same name as the class `Box`
+ --> E0142-class.sisu:5:15
+  |
+1 | class Box {}
+  |       --- the class is declared here
+...
+4 |     Box: loop {
+  |     --- loop label declared here
+5 |         break Box
+  |               ^^^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

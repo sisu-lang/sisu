@@ -1,0 +1,8 @@
+error[E0011]: expected a binding name, found `loop`
+ --> E0011-loop-name.sisu:2:9
+  |
+2 |     let loop = 1
+  |         ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

@@ -1,0 +1,14 @@
+error[E0142]: loop label `n` has the same name as the binding `n`
+ --> E0142-parameter.sisu:3:15
+  |
+1 | fn count(n: i64) {
+  |          - the binding is declared here
+2 |     n: loop {
+  |     - loop label declared here
+3 |         break n
+  |               ^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

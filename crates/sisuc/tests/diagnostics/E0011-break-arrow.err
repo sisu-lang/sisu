@@ -1,0 +1,8 @@
+error[E0011]: expected end of line or `;`, found `=>`
+ --> E0011-break-arrow.sisu:4:30
+  |
+4 |         match o { 1 => break => 2 }
+  |                              ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

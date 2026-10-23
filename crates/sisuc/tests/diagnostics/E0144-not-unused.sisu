@@ -1,0 +1,7 @@
+fn ok(go: bool) -> bool {
+    go
+}
+
+fn main() {
+    outer: while ok({ continue outr; true }) { }
+}

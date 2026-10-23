@@ -1,0 +1,7 @@
+const limit = 3
+
+fn main() {
+    limit: loop {
+        break limit
+    }
+}

@@ -1,0 +1,28 @@
+warning[W0004]: unused value of type `i64`
+ --> W0004-loop-arm.sisu:4:14
+  |
+4 |         1 => loop { break 1 }
+  |              ^^^^
+  |
+  = help: use it, or write `{ let _ = ... }` to drop it on purpose
+help: drop it on purpose
+  |
+4 ~         1 => { let _ = loop { break 1 } }
+5 ~         _ => { let _ = n }
+  |
+
+warning[W0004]: unused value of type `i64`
+ --> W0004-loop-arm.sisu:5:14
+  |
+5 |         _ => n
+  |              ^
+  |
+  = help: use it, or write `{ let _ = ... }` to drop it on purpose
+help: drop it on purpose
+  |
+4 ~         1 => { let _ = loop { break 1 } }
+5 ~         _ => { let _ = n }
+  |
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0004

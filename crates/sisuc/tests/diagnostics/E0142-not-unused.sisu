@@ -1,0 +1,10 @@
+fn main() {
+    let outer = 2
+    outer: for x in [1, 2] {
+        for y in [3, 4] {
+            if x + y > outer {
+                continue outer
+            }
+        }
+    }
+}

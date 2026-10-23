@@ -11,9 +11,9 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit 7d4d6d0</p>
+    <p class="meta">{{adr-count}} records · at commit 2c22efd</p>
   </div></section>
-  <!-- source: docs/adr/ (33 files, 0001 to 0033), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (34 files, 0001 to 0034), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -90,9 +90,10 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md"><span class="num">0018</span><b>A conversion that can fail returns an optional</b><span><code>u8(n)</code>, <code>char(n)</code> and <code>i64(x)</code> of an <code>f64</code> return an optional, and no conversion panics.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md"><span class="num">0023</span><b>Generics are monomorphized and checked at the definition</b><span>Each list of type arguments gets its own compiled copy, and a generic body is checked once, against its bounds.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0024-optionals-nest.md"><span class="num">0024</span><b>Optionals nest <span class="soon">planned</span></b><span><code>i64??</code> is its own type, and <code>??</code> and <code>if let</code> peel one layer.</span></a></li>
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0032-while-true-without-break-is-never.md"><span class="num">0032</span><b><code>while true</code> with no <code>break</code> is <code>never</code></b><span>A function can return from inside an endless loop with no dead tail after it, and code after the loop warns as unreachable.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0032-while-true-without-break-is-never.md"><span class="num">0032</span><b><code>while true</code> with no <code>break</code> is <code>never</code><small>amended by 0034</small></b><span>A function can return from inside an endless loop with no dead tail after it, and code after the loop warns as unreachable.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0034-loop-and-loop-labels.md"><span class="num">0034</span><b><code>loop</code>, <code>break</code> with a value, and loop labels</b><span>A <code>loop</code> gives the value of its <code>break</code>, <code>outer: for ...</code> lets <code>break outer</code> leave an outer loop, and <code>while true</code> warns and points at <code>loop</code>.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0014-strings-are-utf-8-values.md, docs/adr/0017-floats-follow-ieee-754.md, docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md, docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md, docs/adr/0024-optionals-nest.md, docs/adr/0032-while-true-without-break-is-never.md -->
+      <!-- source: docs/adr/0014-strings-are-utf-8-values.md, docs/adr/0017-floats-follow-ieee-754.md, docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md, docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md, docs/adr/0024-optionals-nest.md, docs/adr/0032-while-true-without-break-is-never.md, docs/adr/0034-loop-and-loop-labels.md -->
 
       <h2 id="errors">Errors and diagnostics</h2>
       <ul class="rows">

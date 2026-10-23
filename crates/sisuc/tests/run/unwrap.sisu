@@ -94,7 +94,7 @@ fn continue_in_while_let(nodes: Node?) {
 fn exits_in_if_let(nodes: Node?) {
     let a = E()
     let mut i = 0
-    while true {
+    loop {
         let b = E()
         i += 1
         if let n = nodes {

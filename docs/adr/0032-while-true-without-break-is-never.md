@@ -1,6 +1,6 @@
 # `while true` with no `break` is `never`
 
-Status: accepted, 2026-10-22.
+Status: accepted, 2026-10-22; amended by [ADR 0034](0034-loop-and-loop-labels.md).
 
 A `while` whose condition is the literal `true` has type `never` unless a
 `break` targets it. Otherwise it has type `unit`, as before.
@@ -8,6 +8,7 @@ A `while` whose condition is the literal `true` has type `never` unless a
 - Sisu has no labelled `break`, so a `break` targets the innermost loop around
   it. A `break` inside a nested `while`, `while let` or `for` ends that loop
   and does not count.
+  ADR 0034 adds loop labels; a labeled `break` counts for the loop it names.
 - `return`, `panic`, `todo` and `continue` do not count: none of them reaches
   the statement after the loop.
 - Every `break` the checker meets counts, even one that can never run:

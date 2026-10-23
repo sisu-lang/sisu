@@ -39,7 +39,7 @@ fn never_writes() {
 fn dead_write(a: [i64]) -> i64 {
     let mut b = a
     let c = b
-    while true {
+    loop {
         return c.len()
         b[0] = 1
     }

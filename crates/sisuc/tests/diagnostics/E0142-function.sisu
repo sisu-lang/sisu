@@ -1,0 +1,9 @@
+fn search() {
+}
+
+fn main() {
+    search: loop {
+        break search
+    }
+    search()
+}

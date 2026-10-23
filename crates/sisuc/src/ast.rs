@@ -158,25 +158,39 @@ pub(crate) enum StmtKind {
         ty: Option<TypeExpr>,
         init: Expr,
     },
+    /// `while cond { body }`; `keyword` is the `while` token's span. Each loop's `label` is its
+    /// loop label.
     While {
+        label: Option<Ident>,
+        keyword: Span,
         cond: Expr,
         body: Block,
     },
     /// `while let pattern = value { body }`.
     WhileLet {
+        label: Option<Ident>,
+        keyword: Span,
         pattern: Pattern,
         value: Expr,
         body: Block,
     },
     /// `for name in source { body }`.
     For {
+        label: Option<Ident>,
+        keyword: Span,
         name: Ident,
         source: ForSource,
         body: Block,
     },
     Return(Option<Expr>),
-    Break,
-    Continue,
+    /// `break`, or `break value`, which only a `loop` takes.
+    Break {
+        label: Option<Ident>,
+        value: Option<Expr>,
+    },
+    Continue {
+        label: Option<Ident>,
+    },
     /// `target` is a `Name` or a `Field`.
     Assign {
         target: Expr,
@@ -317,6 +331,12 @@ pub(crate) enum ExprKind {
         scrutinee: Box<Expr>,
         arms: Vec<Arm>,
         close: Span,
+    },
+    /// `loop { body }`; `keyword` is the `loop` token's span.
+    Loop {
+        label: Option<Ident>,
+        keyword: Span,
+        body: Block,
     },
     /// `{ ... }` where an expression belongs: its value is its last expression.
     Block(Block),
@@ -738,27 +758,44 @@ impl fmt::Display for Stmt {
                 }
                 write!(f, " {init})")
             }
-            StmtKind::While { cond, body } => write!(f, "(while {cond} {body})"),
+            StmtKind::While {
+                label, cond, body, ..
+            } => write!(f, "(while{} {cond} {body})", Label(label)),
             StmtKind::WhileLet {
+                label,
                 pattern,
                 value,
                 body,
-            } => write!(f, "(while-let {pattern} {value} {body})"),
-            StmtKind::For { name, source, body } => match source {
-                ForSource::Array(e) => write!(f, "(for {} {e} {body})", name.name),
-                ForSource::Range {
-                    start,
-                    end,
-                    inclusive,
-                } => {
-                    let op = if *inclusive { "..=" } else { ".." };
-                    write!(f, "(for {} ({op} {start} {end}) {body})", name.name)
+                ..
+            } => write!(f, "(while-let{} {pattern} {value} {body})", Label(label)),
+            StmtKind::For {
+                label,
+                name,
+                source,
+                body,
+                ..
+            } => {
+                write!(f, "(for{} {} ", Label(label), name.name)?;
+                match source {
+                    ForSource::Array(e) => write!(f, "{e} {body})"),
+                    ForSource::Range {
+                        start,
+                        end,
+                        inclusive,
+                    } => {
+                        let op = if *inclusive { "..=" } else { ".." };
+                        write!(f, "({op} {start} {end}) {body})")
+                    }
                 }
-            },
+            }
             StmtKind::Return(None) => f.write_str("(return)"),
             StmtKind::Return(Some(e)) => write!(f, "(return {e})"),
-            StmtKind::Break => f.write_str("(break)"),
-            StmtKind::Continue => f.write_str("(continue)"),
+            StmtKind::Break { label, value: None } => write!(f, "(break{})", Label(label)),
+            StmtKind::Break {
+                label,
+                value: Some(value),
+            } => write!(f, "(break{} {value})", Label(label)),
+            StmtKind::Continue { label } => write!(f, "(continue{})", Label(label)),
             StmtKind::Assign { target, value } => write!(f, "(= {target} {value})"),
             StmtKind::CompoundAssign {
                 op, target, value, ..
@@ -766,6 +803,18 @@ impl fmt::Display for Stmt {
                 write!(f, "({op}= {target} {value})")
             }
             StmtKind::Expr(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// A loop label as the tree prints it after its loop's keyword or its jump's: ` :name`.
+struct Label<'a>(&'a Option<Ident>);
+
+impl fmt::Display for Label<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(label) => write!(f, " :{}", label.name),
+            None => Ok(()),
         }
     }
 }
@@ -864,6 +913,7 @@ impl fmt::Display for Expr {
                 spaced(f, arms)?;
                 f.write_str(")")
             }
+            ExprKind::Loop { label, body, .. } => write!(f, "(loop{} {body})", Label(label)),
             ExprKind::Block(block) => write!(f, "{block}"),
         }
     }
@@ -995,6 +1045,8 @@ mod tests {
                     }),
                 }),
                 stmt(StmtKind::While {
+                    label: None,
+                    keyword: sp(),
                     cond: cmp.clone(),
                     body: block(vec![]),
                 }),

@@ -32,6 +32,11 @@ enums with `match`.
 - `if` as an expression, `while`, `break`, `continue` and `return`; a
   `while true` with no `break` has type `never`
   ([ADR 0032](adr/0032-while-true-without-break-is-never.md))
+- `loop`, which runs until a `break`, and gives the value of `break v`; a
+  loop label before a `loop`, `while`, `while let` or `for`
+  (`outer: for ...`) lets `break outer` and `continue outer` reach that loop;
+  `while true` warns (`W0009`) and points at `loop`
+  ([ADR 0034](adr/0034-loop-and-loop-labels.md))
 - comparison chains such as `0 <= i < n`, and short-circuit `&&` and `||`
 - integer arithmetic that panics on overflow and division by zero instead of
   wrapping

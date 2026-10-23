@@ -47,6 +47,7 @@ pub(crate) enum TokenKind {
     Else,
     While,
     For,
+    Loop,
     In,
     Return,
     Break,
@@ -137,6 +138,7 @@ impl TokenKind {
             TokenKind::Else => "Else",
             TokenKind::While => "While",
             TokenKind::For => "For",
+            TokenKind::Loop => "Loop",
             TokenKind::In => "In",
             TokenKind::Return => "Return",
             TokenKind::Break => "Break",
@@ -215,6 +217,7 @@ impl TokenKind {
             TokenKind::Else => "else",
             TokenKind::While => "while",
             TokenKind::For => "for",
+            TokenKind::Loop => "loop",
             TokenKind::In => "in",
             TokenKind::Return => "return",
             TokenKind::Break => "break",
@@ -906,11 +909,23 @@ fn check_line_start(
             let in_block = open.last().is_none_or(|&(c, _)| c == '{');
             let code = last_code(tokens, in_block);
             match code {
-                Some(code) if can_end_statement(Some(code)) || code.kind == TokenKind::Else => {
+                Some(code)
+                    if can_end_statement(Some(code))
+                        || matches!(code.kind, TokenKind::Else | TokenKind::Loop) =>
+                {
                     // Only a header takes the `{`: joining it to another statement almost never
                     // gives a valid one (`print(1) {`, `let x = 1 {`, `} {`). Inside `(` or `[`
                     // the moved `{` would still sit in the unclosed bracket.
-                    let statement = last_statement(tokens);
+                    let statement = match last_statement(tokens) {
+                        // A loop label: the header starts after it.
+                        [label, colon, header @ ..]
+                            if matches!(label.kind, TokenKind::Ident(_))
+                                && colon.kind == TokenKind::Colon =>
+                        {
+                            header
+                        }
+                        statement => statement,
+                    };
                     let join = (in_block
                         && statement.first().is_some_and(is_header)
                         && header_awaits_brace(statement))
@@ -996,6 +1011,7 @@ fn is_header(t: &Token) -> bool {
             | TokenKind::Else
             | TokenKind::While
             | TokenKind::For
+            | TokenKind::Loop
     )
 }
 
@@ -1102,6 +1118,7 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "else" => TokenKind::Else,
         "while" => TokenKind::While,
         "for" => TokenKind::For,
+        "loop" => TokenKind::Loop,
         "in" => TokenKind::In,
         "return" => TokenKind::Return,
         "break" => TokenKind::Break,
@@ -3320,10 +3337,10 @@ mod tests {
 
     #[test]
     fn dump_format() {
-        let src = "fn main() {}\n";
+        let src = "fn main() { loop {} }\n";
         assert_eq!(
             dump(src, &tokens(src)),
-            "1:1 Fn fn\n1:4 Ident main\n1:8 LParen (\n1:9 RParen )\n1:11 LBrace {\n1:12 RBrace }\n1:13 Newline\n1:13 Eof\n"
+            "1:1 Fn fn\n1:4 Ident main\n1:8 LParen (\n1:9 RParen )\n1:11 LBrace {\n1:13 Loop loop\n1:18 LBrace {\n1:19 RBrace }\n1:21 RBrace }\n1:22 Newline\n1:22 Eof\n"
         );
     }
 

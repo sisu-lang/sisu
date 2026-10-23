@@ -97,7 +97,7 @@ codes! {
     IntegerDoesNotFit = "E0040",
     SelfOutsideMethod = "E0041",
     NegatedU8 = "E0042",
-    NoValue = "E0043",
+    NoValue | BareBreak = "E0043",
     NeverNone = "E0044",
     IsTestsNone = "E0045",
     IsNeedsObjects = "E0046",
@@ -191,9 +191,16 @@ codes! {
     InterpolatedPattern = "E0134",
     BadRange = "E0135",
     AlternativeBindings = "E0136",
+    BreakValueNotLoop = "E0141",
+    LabelClash = "E0142",
+    LabelReused = "E0143",
+    MissingLabel = "E0144",
+    LabelNotOnLoop | UnnamedLabel = "E0145",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
+    UnusedLabel = "W0008",
+    WhileTrue = "W0009",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -400,6 +407,9 @@ pub(crate) enum DiagnosticKind {
     /// An expression at `at` that has no value: it is `unit`, or, with `never`, it never
     /// finishes.
     NoValue { at: Span, never: bool },
+    /// The first bare `break` at `at` of a `loop` whose first `break` with a value whose type is
+    /// not `never` is at `valued`.
+    BareBreak { at: Span, valued: Span },
     /// A comparison at `at` of a value that is not optional with `None`. `value` is that value's
     /// path as written, when it has one.
     NeverNone { value: Option<String>, at: Span },
@@ -821,6 +831,47 @@ pub(crate) enum DiagnosticKind {
     /// The alternative at `at`, which does not bind `name`, though another alternative of the
     /// same `|` does.
     AlternativeBindings { name: String, at: Span },
+    /// The value at `at` of a `break` whose target, a loop of keyword `keyword` (`for`, `while`
+    /// or `while let`) at `loop_at`, has no value.
+    BreakValueNotLoop {
+        keyword: &'static str,
+        at: Span,
+        loop_at: Span,
+    },
+    /// The loop label `name` at `at`, after `break` or `continue`, declared at `declared`, which
+    /// `form` says reads as more than a loop label.
+    LabelClash {
+        name: String,
+        at: Span,
+        declared: Span,
+        form: ClashForm,
+    },
+    /// The loop label `name` at `at`, which the enclosing loop whose loop label is at `outer`
+    /// already takes.
+    LabelReused { name: String, at: Span, outer: Span },
+    /// The name `name` at `at` after `keyword` (`break` or `continue`), which names no open loop
+    /// label; `suggestion` is the open loop label closest to it, which a `break` always has.
+    MissingLabel {
+        name: String,
+        keyword: &'static str,
+        at: Span,
+        suggestion: Option<String>,
+    },
+    /// The loop label `name:` at `at`, before the token at `next`, which starts no loop.
+    LabelNotOnLoop { at: Span, next: Span },
+    /// The `_:` at `at` before a loop; `remove` runs from it to the loop's keyword.
+    UnnamedLabel { at: Span, remove: Span },
+    /// The loop label `name` at `at`, which no jump names; `remove` runs from it to its loop's
+    /// keyword.
+    UnusedLabel {
+        name: String,
+        at: Span,
+        remove: Span,
+    },
+    /// The `while` at `at`, from the keyword through its condition `true`, parentheses included;
+    /// `fix` is `loop` in its place, unless a jump or loop label in the loop failed (a `break`
+    /// with a value, E0141, for one), as the rewrite could remove that error.
+    WhileTrue { at: Span, fix: bool },
     /// The comparison at `at`, `!=` when `negated`, one side of which is `f64.nan`, which no
     /// number equals; `fix` is its `is_nan` test, when the other side is an `f64`.
     NanComparison {
@@ -828,6 +879,45 @@ pub(crate) enum DiagnosticKind {
         negated: bool,
         fix: Option<NanFix>,
     },
+}
+
+/// How a loop label at a jump also reads as something else.
+pub(crate) enum ClashForm {
+    /// A name in scope of the same spelling, a `kind` declared at `declared` when it has a span.
+    Name {
+        kind: ClashKind,
+        declared: Option<Span>,
+    },
+    /// A token at `next` that can only continue an expression.
+    Operator { next: Span },
+    /// A `(` at `bracket` that touches the loop label; `text` runs from it through its `)`.
+    Call { bracket: Span, text: String },
+    /// A `[` at `bracket` that touches the loop label; `text` runs from it through its `]`.
+    Index { bracket: Span, text: String },
+}
+
+/// What a name that a loop label clashes with is.
+#[derive(Clone, Copy)]
+pub(crate) enum ClashKind {
+    Binding,
+    Function,
+    Constant,
+    Class,
+    Enum,
+    BuiltInType,
+}
+
+impl ClashKind {
+    fn word(self) -> &'static str {
+        match self {
+            ClashKind::Binding => "binding",
+            ClashKind::Function => "function",
+            ClashKind::Constant => "constant",
+            ClashKind::Class => "class",
+            ClashKind::Enum => "enum",
+            ClashKind::BuiltInType => "built-in type",
+        }
+    }
 }
 
 /// The other side of a comparison with `f64.nan`, at `other`, and whether it needs parentheses to
@@ -944,6 +1034,7 @@ pub(crate) enum Definition {
     Constant,
     Enum,
     Variant,
+    LoopLabel,
 }
 
 impl Definition {
@@ -966,6 +1057,7 @@ impl Definition {
             Definition::Constant => "constant",
             Definition::Enum => "enum",
             Definition::Variant => "variant",
+            Definition::LoopLabel => "loop label",
         }
     }
 }
@@ -998,6 +1090,8 @@ pub(crate) enum MismatchSource {
     Concat(Span),
     /// The earlier alternative's binding of `name`, at `at`, which gave it the type wanted.
     Binding { name: String, at: Span },
+    /// The `break` at the span, the first of its `loop` whose value set the loop's type.
+    Break(Span),
 }
 
 /// A rewrite that would give a mismatched value the type expected.
@@ -1259,7 +1353,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    "`{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while` or `for`",
+                    "`{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while`, `for` or `loop`",
                 );
                 match join {
                     Some(join) => d.with_fix(join_fix(
@@ -1581,6 +1675,9 @@ impl From<DiagnosticKind> for Diagnostic {
                     Some(MismatchSource::Binding { name, at }) => {
                         d = d.with_secondary(at, format!("`{name}` is {want} here"));
                     }
+                    Some(MismatchSource::Break(at)) => {
+                        d = d.with_secondary(at, format!("this `break` gave the loop the type {want}"));
+                    }
                     None => {}
                 }
                 if conversion {
@@ -1764,6 +1861,13 @@ impl From<DiagnosticKind> for Diagnostic {
                     d
                 }
             }
+            DiagnosticKind::BareBreak { at, valued } => Diagnostic::coded(
+                code,
+                at,
+                "`break` has no value, but this `loop` gives one",
+            )
+            .with_secondary(valued, "this `break` gives the loop a value")
+            .with_help("give every `break` of this `loop` a value, or none"),
             DiagnosticKind::NeverNone { value, at } => Diagnostic::coded(
                 code,
                 at,
@@ -2800,6 +2904,117 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("`{name}` is bound in one alternative but not the other"),
             ),
+            DiagnosticKind::BreakValueNotLoop {
+                keyword,
+                at,
+                loop_at,
+            } => Diagnostic::coded(code, at, format!("`break` with a value in a `{keyword}`"))
+                .with_secondary(loop_at, format!("this `{keyword}` has no value"))
+                .with_help(
+                    "only `loop` gives a value through `break`; assign to a variable declared before the loop instead",
+                ),
+            DiagnosticKind::LabelClash {
+                name,
+                at,
+                declared,
+                form,
+            } => {
+                let (message, span, help) = match form {
+                    ClashForm::Name { kind, .. } => (
+                        format!(
+                            "loop label `{name}` has the same name as the {} `{name}`",
+                            kind.word()
+                        ),
+                        at,
+                        "rename the loop label".to_string(),
+                    ),
+                    ClashForm::Operator { next } => (
+                        format!("`{name}` is a loop label here, so it cannot start a value"),
+                        at.to(next),
+                        format!(
+                            "the value of `break {name}` comes after the loop label; if `{name}` also names a value, rename the loop label"
+                        ),
+                    ),
+                    ClashForm::Call { bracket, ref text } => (
+                        format!("`{name}` is a loop label here, so `(` cannot call it"),
+                        at.to(bracket),
+                        format!(
+                            "to give a value in parentheses, put a space after the loop label: `break {name} {text}`; if `{name}` also names a function, rename the loop label"
+                        ),
+                    ),
+                    ClashForm::Index { bracket, ref text } => (
+                        format!("`{name}` is a loop label here, so `[` cannot index it"),
+                        at.to(bracket),
+                        format!(
+                            "to give an array as the value, put a space after the loop label: `break {name} {text}`; if `{name}` also names an array, rename the loop label"
+                        ),
+                    ),
+                };
+                let d = Diagnostic::coded(code, span, message)
+                    .with_secondary(declared, "loop label declared here");
+                match form {
+                    ClashForm::Name {
+                        kind,
+                        declared: Some(at),
+                    } => d.with_secondary(at, format!("the {} is declared here", kind.word())),
+                    _ => d,
+                }
+                .with_help(help)
+            }
+            DiagnosticKind::LabelReused { name, at, outer } => Diagnostic::coded(
+                code,
+                at,
+                format!("loop label `{name}` is already used by an enclosing loop"),
+            )
+            .with_secondary(outer, "the enclosing loop's label")
+            .with_help("rename one of the loop labels"),
+            DiagnosticKind::MissingLabel {
+                name,
+                keyword,
+                at,
+                suggestion,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("no loop label `{name}` around this `{keyword}`"),
+                );
+                match suggestion {
+                    Some(name) => similar(
+                        d,
+                        at,
+                        Some(Suggestion {
+                            kind: Definition::LoopLabel,
+                            name,
+                        }),
+                    ),
+                    None => d.with_help("`continue` takes no value"),
+                }
+            }
+            DiagnosticKind::LabelNotOnLoop { at, next } => {
+                Diagnostic::coded(code, at, "only a loop can take a loop label")
+                    .with_secondary(next, "this is not `loop`, `while` or `for`")
+                    .with_help("write the loop label before a loop, or delete it")
+            }
+            DiagnosticKind::UnnamedLabel { at, remove } => {
+                Diagnostic::coded(code, at, "a loop label needs a name")
+                    .with_fix(safe_fix("delete `_: `", remove, ""))
+            }
+            DiagnosticKind::UnusedLabel { name, at, remove } => {
+                Diagnostic::coded(code, at, format!("loop label `{name}` is never used"))
+                    .with_help("delete the loop label, or name it in a `break` or `continue`")
+                    .with_fix(safe_fix("delete the loop label", remove, ""))
+            }
+            DiagnosticKind::WhileTrue { at, fix } => {
+                let d = Diagnostic::coded(code, at, "this `while` has the condition `true`")
+                    .with_label("the condition never ends the loop")
+                    .with_help("write an endless loop as `loop`");
+                if fix {
+                    d.with_fix(safe_fix("write `loop`", at, "loop"))
+                } else {
+                    d
+                }
+            }
             DiagnosticKind::NanComparison { at, negated, fix } => {
                 let always = if negated { "true" } else { "false" };
                 let d = Diagnostic::coded(

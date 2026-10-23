@@ -1,0 +1,6 @@
+fn main() {
+    let o: i64? = 1
+    while let x = o {
+        break x
+    }
+}

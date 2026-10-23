@@ -1,0 +1,10 @@
+fn main() {
+    let n = 1
+    let x = match n {
+        1 => {
+            total: { 1 }
+        }
+        _ => 0
+    }
+    print(x)
+}

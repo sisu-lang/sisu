@@ -95,7 +95,7 @@ const CASES: &[(&str, &str, &[&[&str]])] = &[
     ),
     (
         "write_after_return",
-        "fn f(a: [i64]) -> i64 {\n    let mut b = a\n    let c = b\n    while true {\n        return c.len()\n        b[0] = 1\n    }\n    return 0\n}",
+        "fn f(a: [i64]) -> i64 {\n    let mut b = a\n    let c = b\n    loop {\n        return c.len()\n        b[0] = 1\n    }\n    return 0\n}",
         &[&[]],
     ),
     (
@@ -258,7 +258,7 @@ fn row(name: &str) -> &'static str {
 #[test]
 fn endless_loop_hoists_into_its_pre_header() {
     let (pre_header, in_loop) = pre_header_and_loop(
-        "fn f(xs: [i64]) -> i64 {\n    let mut b = xs\n    let mut i = 0\n    let mut s = 0\n    while true {\n        if i == b.len() {\n            return s\n        }\n        b[i] = i\n        s += b[i]\n        i += 1\n    }\n}",
+        "fn f(xs: [i64]) -> i64 {\n    let mut b = xs\n    let mut i = 0\n    let mut s = 0\n    loop {\n        if i == b.len() {\n            return s\n        }\n        b[i] = i\n        s += b[i]\n        i += 1\n    }\n}",
     );
     assert!(pre_header.contains("make_unique b#"), "{pre_header}");
     assert_eq!(in_loop.matches("make_unique").count(), 0, "{in_loop}");
@@ -631,4 +631,29 @@ fn roots_stop_at_different_ancestors_of_a_tree() {
     }
     // Each `make_unique` has left the loops.
     assert_eq!(level_0_uniques(&f).iter().sum::<usize>(), 7);
+}
+
+/// The `break outer` in the inner loop makes the outer loop's exit, which holds the write after
+/// the outer loop. `tests/run/labels.sisu` runs this `f`: were that exit one of the inner
+/// loop's blocks, the inner loop would hoist the write's `make_unique` too, and the write would
+/// reach `keep`, which shares `a` from the outer body.
+const LABELED_BREAK: &str = "fn f(xs: [i64]) -> i64 {\n    let mut a = xs\n    let mut keep = [0]\n    outer: for i in 0..2 {\n        for j in 0..2 {\n            a[j] = i + 1\n            if j == 5 { break outer }\n        }\n        keep = a\n    }\n    a[0] = 9\n    if keep[1] > 0 {\n        return keep[0]\n    }\n    0\n}";
+
+#[test]
+fn labeled_break_keeps_outer_exit_out_of_inner_loop() {
+    let f = placed_f(LABELED_BREAK);
+    let [outer, inner] = f.loops.as_slice() else {
+        panic!("the case should have two loops: {:?}", f.loops.len());
+    };
+    let outside: Vec<_> = inner
+        .blocks
+        .iter()
+        .filter(|block| !outer.blocks.contains(block))
+        .collect();
+    assert_eq!(outside, Vec::<&BlockId>::new());
+    // The inner loop still hoists `a`, so the case reaches the miscompile it guards.
+    assert_eq!(
+        loops(LABELED_BREAK),
+        [Vec::<String>::new(), vec!["a".to_owned()]]
+    );
 }

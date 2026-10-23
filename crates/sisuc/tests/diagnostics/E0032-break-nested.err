@@ -1,0 +1,13 @@
+error[E0032]: expected `string`, found `i64`
+ --> E0032-break-nested.sisu:4:15
+  |
+4 |           break loop {
+  |  _______________^
+5 | |             if c { break rows "s" }
+  | |                    -------------- this `break` gave the loop the type `string`
+6 | |             break 2
+7 | |         }
+  | |_________^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

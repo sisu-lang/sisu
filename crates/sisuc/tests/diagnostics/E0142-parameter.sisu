@@ -1,0 +1,10 @@
+fn count(n: i64) {
+    n: loop {
+        break n
+    }
+    print(n)
+}
+
+fn main() {
+    count(1)
+}

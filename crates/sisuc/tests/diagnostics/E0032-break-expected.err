@@ -1,0 +1,8 @@
+error[E0032]: expected `i64`, found `string`
+ --> E0032-break-expected.sisu:3:15
+  |
+3 |         break "s"
+  |               ^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

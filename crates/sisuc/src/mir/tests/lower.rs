@@ -672,6 +672,147 @@ fn loop_exits_release_the_body_locals() {
     );
 }
 
+/// A value `loop`'s `break`s each write the one local that its exit block returns.
+#[test]
+fn value_loop_writes_one_destination() {
+    let printed = lowered(
+        "fn f(c: bool, s: string) -> string {\n    loop {\n        if c { break s }\n        break \"x\"\n    }\n}",
+    );
+    let start = printed.find("fn f(").expect("the source should define `f`");
+    let f = &printed[start..];
+    let f = &f[..f.find("\n}").map_or(f.len(), |end| end + 2)];
+    let returns: Vec<_> = f.match_indices("return move ").map(|(at, _)| at).collect();
+    assert_eq!(returns.len(), 1, "{f}");
+    let returned = f[returns[0]..]
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("return move "))
+        .expect("the return should move a local");
+    let writes: Vec<_> = f
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix(&format!("{returned} = ")))
+        .collect();
+    assert_eq!(writes, ["use s#1", "copy \"x\""], "{f}");
+    // Both `break`s go to the block that returns.
+    let exit = f[..returns[0]]
+        .rfind("  bb")
+        .map(|at| &f[at + 2..])
+        .and_then(|rest| rest.split(':').next())
+        .expect("the return should sit in a block");
+    assert_eq!(f.matches(&format!("goto {exit}\n")).count(), 2, "{f}");
+}
+
+/// `break outer` and `continue outer` from the inner loop each scope-release the inner body's
+/// `t` and the outer body's `s`, once, then jump out of the outer loop or to its header.
+#[test]
+fn labeled_jumps_release_each_scope_once() {
+    let program = lowered_program(
+        "fn f(c: bool) {\n    outer: while c {\n        let s = \"a\"\n        while c {\n            let t = \"b\"\n            if c { break outer } else { continue outer }\n        }\n    }\n}",
+    );
+    let f = program
+        .functions
+        .iter()
+        .find(|f| f.name == "f")
+        .expect("the source should define `f`");
+    let named = |name: &str| {
+        f.locals
+            .iter()
+            .position(|local| local.name.as_deref() == Some(name))
+            .map_or_else(|| panic!("no local {name}"), LocalId)
+    };
+    let (s, t) = (named("s"), named("t"));
+    // The blocks that release `t` and then `s`, and nothing else, and where each jumps.
+    let edges: Vec<BlockId> = f
+        .blocks
+        .iter()
+        .filter(|block| {
+            matches!(block.stmts.as_slice(),
+                [Statement::ScopeRelease(first), Statement::ScopeRelease(second)]
+                    if *first == t && *second == s)
+        })
+        .map(|block| match block.term {
+            Terminator::Goto(to) => to,
+            ref term => panic!("a jump should end in a goto, not {term:?}"),
+        })
+        .collect();
+    let outer = &f.loops[0];
+    let [exit, header] = edges[..] else {
+        panic!("two edges should release both scopes: {edges:?}");
+    };
+    assert!(
+        !outer.blocks.contains(&exit),
+        "{exit:?} in {:?}",
+        outer.blocks
+    );
+    assert_eq!(header, outer.header);
+    // No other block releases either local but the end of its own body.
+    let releases = |local| {
+        f.blocks
+            .iter()
+            .flat_map(|block| &block.stmts)
+            .filter(|stmt| matches!(stmt, Statement::ScopeRelease(l) if *l == local))
+            .count()
+    };
+    assert_eq!((releases(s), releases(t)), (3, 2));
+}
+
+/// The outer `break`'s operand is an inner `loop` whose `break rows 1` leaves for the outer
+/// exit, and whose `break 2` completes the operand: both write the outer loop's destination,
+/// and both paths reach the outer exit, the first directly and the second through the inner one.
+#[test]
+fn value_operand_jumps_to_another_loop() {
+    let printed = lowered(
+        "fn f(c: bool) -> i64 {\n    rows: loop {\n        break loop {\n            if c { break rows 1 }\n            break 2\n        }\n    }\n}",
+    );
+    let start = printed.find("fn f(").expect("the source should define `f`");
+    let f = &printed[start..];
+    let f = &f[..f.find("\n}").map_or(f.len(), |end| end + 2)];
+    let returns: Vec<_> = f.match_indices("return ").map(|(at, _)| at).collect();
+    assert_eq!(returns.len(), 1, "{f}");
+    let returned = f[returns[0]..]
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("return "))
+        .expect("the return should give a local");
+    let writes: Vec<_> = f
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix(&format!("{returned} = ")))
+        .collect();
+    assert_eq!(writes, ["1", "2"], "{f}");
+    let exit = f[..returns[0]]
+        .rfind("  bb")
+        .map(|at| &f[at + 2..])
+        .and_then(|rest| rest.split(':').next())
+        .expect("the return should sit in a block");
+    assert_eq!(f.matches(&format!("goto {exit}\n")).count(), 2, "{f}");
+}
+
+/// A `break` whose value never completes makes no exit: these loops leave only by a panic, an
+/// endless inner loop or a `return`, so the function returns at most where `return` stands, and
+/// every block is reachable.
+#[test]
+fn break_without_a_value_edge_makes_no_exit() {
+    for (name, body, returns) in [
+        ("break_panic", "loop { break panic(\"x\") }", 0),
+        ("break_endless_loop", "loop { break loop {} }", 0),
+        ("break_after_return", "loop { return 1; break 2 }", 1),
+    ] {
+        let program = lowered_program(&format!("fn f() -> i64 {{\n    {body}\n}}"));
+        let f = program
+            .functions
+            .iter()
+            .find(|f| f.name == "f")
+            .expect("the source should define `f`");
+        let found = f
+            .blocks
+            .iter()
+            .filter(|b| matches!(b.term, Terminator::Return(_)))
+            .count();
+        assert_eq!(found, returns, "{name}");
+        assert_eq!(unreachable_blocks(f), [], "{name}");
+    }
+}
+
 /// Each part of an interpolation prints with its own format, in part order.
 #[test]
 fn interpolation_prints_each_format_with_its_part() {

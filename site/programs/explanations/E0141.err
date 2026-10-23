@@ -1,0 +1,13 @@
+error[E0141]: `break` with a value in a `for`
+ --> E0141.sisu:5:19
+  |
+3 |     for w in words {
+  |     --- this `for` has no value
+4 |         if w.len() > 1 {
+5 |             break w
+  |                   ^
+  |
+  = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0141

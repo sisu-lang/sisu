@@ -1,0 +1,7 @@
+fn main() {
+    let n = 3
+    n: loop {
+        break n
+    }
+    print(n)
+}

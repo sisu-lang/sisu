@@ -47,7 +47,7 @@ impl Checker<'_> {
             self.diagnostics.push(d);
             return Ok((want, (Err(Poisoned::error()), true)));
         }
-        let checked = self.against(operand, checked, Some(want));
+        let checked = self.against(operand, checked, Some(want), None);
         Ok((want, checked))
     }
 

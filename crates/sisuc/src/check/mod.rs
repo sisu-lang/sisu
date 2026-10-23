@@ -21,8 +21,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
 use crate::diagnostic::{
-    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MismatchFix, Severity,
-    Unbuilt, suggestion,
+    BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MismatchFix,
+    MismatchSource, Severity, Unbuilt, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -81,6 +81,8 @@ struct Signature {
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
     ret: Option<Type>,
+    /// The name's span.
+    span: Span,
 }
 
 /// What a function, class, constant or method name stands for: the first intact item of that
@@ -133,14 +135,108 @@ struct Binding {
 }
 
 /// Which part of a loop the code being checked is in.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum LoopContext {
-    /// The body, where `break` and `continue` act on the loop. `broken` is whether a `break`
-    /// has targeted it.
-    Body { broken: bool },
-    /// A `while` condition or a `for` source, which is not part of the body. The span is the
-    /// loop's keyword.
-    Header(Span),
+    /// The body, where `break` and `continue` act on the loop.
+    Body(LoopFrame),
+    /// A `while` condition or a `for` source, which is not part of the body.
+    Header {
+        keyword: Span,
+        label: Option<ast::Ident>,
+    },
+}
+
+/// The kind of a loop: only a `loop` gives a value through `break`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoopKind {
+    Loop,
+    While,
+    WhileLet,
+    For,
+}
+
+impl LoopKind {
+    /// The keyword that starts the loop, as a diagnostic names it.
+    fn keyword(self) -> &'static str {
+        match self {
+            LoopKind::Loop => "loop",
+            LoopKind::While => "while",
+            LoopKind::WhileLet => "while let",
+            LoopKind::For => "for",
+        }
+    }
+}
+
+/// A loop whose body is being checked, and what the `break`s that target it have given.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact, set by a different jump or value"
+)]
+struct LoopFrame {
+    kind: LoopKind,
+    keyword: Span,
+    label: Option<ast::Ident>,
+    /// Whether a jump has named `label`.
+    label_used: bool,
+    /// Whether a `break` has targeted it.
+    broken: bool,
+    /// The type the position around a `loop` expects, each value's hint; `UNKNOWN` for an
+    /// `Error` one.
+    expected: Option<Type>,
+    /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
+    /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
+    first: Option<(Type, Span)>,
+    /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
+    widened: bool,
+    /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
+    crossed: bool,
+    /// The first bare `break`.
+    bare: Option<Span>,
+    /// The first `break` whose value's type is not `never`.
+    valued: Option<Span>,
+    /// Whether the loop failed: a failed jump, loop label or `break` value in it. It then has
+    /// no type.
+    failed: bool,
+}
+
+impl LoopFrame {
+    fn new(
+        kind: LoopKind,
+        keyword: Span,
+        label: Option<ast::Ident>,
+        expected: Option<Type>,
+    ) -> Self {
+        Self {
+            kind,
+            keyword,
+            label,
+            label_used: false,
+            broken: false,
+            expected,
+            first: None,
+            bare: None,
+            valued: None,
+            failed: false,
+            widened: false,
+            crossed: false,
+        }
+    }
+
+    /// The type of a `loop` whose body has been checked: `never` with no `break`, or with only
+    /// `never` values; `unit` with bare ones; else its values'. `None` is `Error`.
+    fn loop_type(&self) -> Option<Type> {
+        if self.failed {
+            return None;
+        }
+        if self.valued.is_none() {
+            return Some(if self.bare.is_some() {
+                Type::UNIT
+            } else {
+                Type::NEVER
+            });
+        }
+        // Under an `Error` expectation no value sets `first`.
+        self.first.map(|(ty, _)| ty)
+    }
 }
 
 /// The program's text and the positions the lexer and parser found in it; never changes.
@@ -159,6 +255,8 @@ struct Source<'src> {
 thread_local! {
     /// How many class fields the class-cycle search has read on this thread.
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many nested loops the walk that wraps a widened loop's values has entered.
+    pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -197,8 +295,17 @@ struct Body {
     self_type: Option<Type>,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
+    /// The value of the `break` being checked, and the earlier `break` whose value gave the
+    /// loop the type that value expects.
+    break_hint: Option<(Span, Span)>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
+    /// Where each loop label is declared that a failed jump or a reused loop label names, which
+    /// is not reported unused: its own error is.
+    failed_labels: FxHashSet<Span>,
+    /// The bare name right after an unlabeled `break`, which may be a misspelled loop label:
+    /// only there does E0033 offer the open loop labels.
+    label_typo: Option<Span>,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
@@ -562,7 +669,12 @@ impl Checker<'_> {
             .ret
             .as_ref()
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
-        self.signatures.push(Signature { name, params, ret });
+        self.signatures.push(Signature {
+            name,
+            params,
+            ret,
+            span: f.name.span,
+        });
     }
 
     /// Reports each strongly connected component of non-optional class fields once
@@ -804,10 +916,10 @@ impl Checker<'_> {
         })
     }
 
-    /// "cannot find binding `name`", offering the closest binding of any open scope. A type's
-    /// name, built in or a class's or an enum's, is in scope, but as a type: that is reported
-    /// instead.
-    fn not_found(&self, name: Symbol, span: Span) -> Diagnostic {
+    /// "cannot find binding `name`", offering the closest binding of any open scope, and of any
+    /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
+    /// an enum's, is in scope, but as a type: that is reported instead.
+    fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
         if built_in_type(name.as_str()).is_some()
             || self.class_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
@@ -824,10 +936,22 @@ impl Checker<'_> {
             .iter()
             .flat_map(|scope| scope.keys())
             .map(|binding| (binding.as_str(), Definition::Binding));
+        let labels = self
+            .open_labels()
+            .filter(|_| self.body.label_typo == Some(span))
+            .map(|label| (label.name.as_str(), Definition::LoopLabel));
+        let suggestion = suggestion(name.as_str(), bindings.chain(labels));
+        if let Some(found) = &suggestion
+            && found.kind == Definition::LoopLabel
+        {
+            // Only a bare name after `break` offers a loop label: a misspelled loop label is one
+            // mistake, which neither the loop label's warning nor its loop's type reports again.
+            self.break_meant(&found.name);
+        }
         DiagnosticKind::BindingNotFound {
             name: name.to_string(),
             at: span,
-            suggestion: suggestion(name.as_str(), bindings),
+            suggestion,
         }
         .into()
     }
@@ -853,6 +977,27 @@ impl Checker<'_> {
         want: Type,
         got: Type,
     ) -> Diagnostic {
+        self.mismatch_from(span, source, want, got, None)
+    }
+
+    /// Where the type that the value at `span` expects came from: an earlier `break`, when it
+    /// is a `break` value checked against the loop's type.
+    fn expected_from(&self, span: Span) -> Option<MismatchSource> {
+        self.body
+            .break_hint
+            .filter(|&(at, _)| at == span)
+            .map(|(_, first)| MismatchSource::Break(first))
+    }
+
+    /// `mismatch`, where `want` came from `from`.
+    fn mismatch_from(
+        &self,
+        span: Span,
+        source: Option<&ast::Expr>,
+        want: Type,
+        got: Type,
+        from: Option<MismatchSource>,
+    ) -> Diagnostic {
         let optional = matches!(want.kind(), TypeKind::Optional(_));
         // `u8` and `char` convert into each other through `i64`, and into `f64` through it.
         let (to, through) = match (payload(want), got) {
@@ -871,7 +1016,7 @@ impl Checker<'_> {
             want: vec![self.type_name(want)],
             got: self.type_name(got),
             at: span,
-            source: None,
+            source: from,
             fix: to
                 .zip(source.filter(|e| {
                     !matches!(

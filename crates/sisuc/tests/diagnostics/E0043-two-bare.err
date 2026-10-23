@@ -1,0 +1,13 @@
+error[E0043]: `break` has no value, but this `loop` gives one
+ --> E0043-two-bare.sisu:4:16
+  |
+4 |         if c { break }
+  |                ^^^^^
+5 |         if c { break }
+6 |         break 5
+  |         ------- this `break` gives the loop a value
+  |
+  = help: give every `break` of this `loop` a value, or none
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0043

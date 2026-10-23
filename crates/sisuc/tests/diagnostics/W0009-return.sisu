@@ -1,0 +1,13 @@
+fn first_zero(xs: [i64]) -> i64 {
+    let mut i = 0
+    while true {
+        if xs[i] == 0 {
+            return i
+        }
+        i += 1
+    }
+}
+
+fn main() {
+    print(first_zero([1, 0]))
+}

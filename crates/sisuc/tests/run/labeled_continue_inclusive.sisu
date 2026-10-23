@@ -1,0 +1,13 @@
+// `continue outer` from an inner loop goes to the outer `for`'s step, which ends an inclusive
+// range at its last value, here the largest `i64`, instead of overflowing past it: each `i`
+// prints once.
+fn main() {
+    outer: for i in 9223372036854775805..=9223372036854775807 {
+        print(i)                    // 9223372036854775805, ...806, ...807
+        for j in 0..2 {
+            if j == 0 { continue outer }
+            print("never")
+        }
+    }
+    print("done")                   // done
+}

@@ -1,0 +1,8 @@
+fn search(n i64) {
+}
+
+fn main() {
+    search: loop {
+        break search
+    }
+}

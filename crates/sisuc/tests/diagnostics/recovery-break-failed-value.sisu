@@ -1,0 +1,26 @@
+fn bare(c: bool) {
+    let x = loop {
+        if c { break }
+        break {
+            missing
+            1
+        }
+    }
+    print(x)
+}
+
+fn typed(c: bool) {
+    let x = loop {
+        if c { break 1 }
+        break {
+            missing
+            "s"
+        }
+    }
+    print(x)
+}
+
+fn main() {
+    bare(true)
+    typed(true)
+}

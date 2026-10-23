@@ -12,7 +12,7 @@ fn fannkuch(n: i64) {
     let mut checksum = 0
     let mut perm_count = 0
     let mut r = n
-    while true {
+    loop {
         while r != 1 {
             count[r - 1] = r
             r -= 1
@@ -45,7 +45,7 @@ fn fannkuch(n: i64) {
         }
         // The next permutation: rotate perm1[0] to perm1[r] left by one, and
         // once count[r] runs out, rotate a prefix one longer.
-        while true {
+        loop {
             if r == n {
                 print(checksum)
                 print("Pfannkuchen({n}) = {max_flips}")

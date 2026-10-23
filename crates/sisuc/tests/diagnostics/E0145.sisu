@@ -1,0 +1,6 @@
+fn main() {
+    let c = true
+    outer: if c {
+        print(1)
+    }
+}

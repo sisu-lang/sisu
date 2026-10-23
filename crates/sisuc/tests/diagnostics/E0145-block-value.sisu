@@ -1,0 +1,7 @@
+fn main() {
+    let x = {
+        outer: { print(1) }
+        2
+    }
+    print(x)
+}

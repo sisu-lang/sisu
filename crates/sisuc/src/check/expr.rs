@@ -4,7 +4,9 @@ use std::ops::Range;
 
 use super::{Binding, Checked, Checker, Poisoned, UNKNOWN, payload, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal, suggestion};
+use crate::diagnostic::{
+    Definition, Diagnostic, DiagnosticKind, Literal, MismatchSource, suggestion,
+};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
@@ -174,6 +176,11 @@ impl Checker<'_> {
                 arms,
                 close,
             } => self.match_expr(e.span, *keyword, *close, scrutinee, arms, expected),
+            ExprKind::Loop {
+                label,
+                keyword,
+                body,
+            } => self.loop_expr(e.span, (*keyword, label.as_ref()), body, expected),
             ExprKind::Block(block) => self.block(block, expected).map(|block| {
                 let ty = block.ty;
                 tir::Expr {
@@ -246,15 +253,16 @@ impl Checker<'_> {
         if matches!(checked, Err(Poisoned { mismatch: true, .. })) {
             return (checked, true);
         }
-        self.against(e, checked, want)
+        self.against(e, checked, want, None)
     }
 
-    /// `operand` for `e`, already checked.
+    /// `operand` for `e`, already checked; `source` is where `want` came from, for a mismatch.
     pub(super) fn against(
         &mut self,
         e: &ast::Expr,
         checked: Checked,
         want: Option<Type>,
+        source: Option<MismatchSource>,
     ) -> (Checked, bool) {
         if let (Some(want), Some(got)) = (want, type_of(&checked))
             && want != got
@@ -268,7 +276,7 @@ impl Checker<'_> {
                 };
                 return (wrapped, false);
             }
-            let d = self.mismatch(e.span, Some(e), want, got);
+            let d = self.mismatch_from(e.span, Some(e), want, got, source);
             self.diagnostics.push(d);
             return (Err(Poisoned::error()), true);
         }
@@ -291,7 +299,7 @@ impl Checker<'_> {
                     want: vec![self.type_name(ty)],
                     got: "None".to_string(),
                     at: span,
-                    source: None,
+                    source: self.expected_from(span),
                     fix: None,
                     conversion: false,
                 },

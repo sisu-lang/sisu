@@ -1,5 +1,5 @@
 fn f() -> i64 {
-    while true { return 1 }
+    loop { return 1 }
 }
 
 fn main() {

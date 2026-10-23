@@ -35,6 +35,11 @@ The value of an expression statement that nothing uses. The compiler warns
 about one; `let _ = e` discards a value on purpose.
 _Avoid_: dropped value (dropping is what a reference count does)
 
+**Loop label**:
+The name written before a loop (`outer: for ...`) that a `break` or
+`continue` names to leave or restart that loop instead of the innermost one.
+_Avoid_: label (alone), tag
+
 **Comparison chain**:
 Two or more comparisons in one direction written together, such as
 `a < b <= c`, meaning each adjacent pair holds.
@@ -44,8 +49,8 @@ The type of an expression that produces no value.
 _Avoid_: void
 
 **`never`**:
-The type of an expression that does not finish, such as `return` or a
-`while true` with no `break`; it matches any type.
+The type of an expression that does not finish, such as `return`, or a
+`loop` or `while true` with no `break`; it matches any type.
 
 **Conversion**:
 A call written with a type's name, `T(x)`, that turns a value into an

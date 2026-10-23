@@ -1,0 +1,14 @@
+error[E0033]: cannot find binding `rows`
+ --> E0109-interpolated-label.sisu:2:13
+  |
+2 |     print("{rows: loop { break rows 1 }}")
+  |             ^^^^
+
+error[E0109]: Sisu's format specs take only alignment, width and precision
+ --> E0109-interpolated-label.sisu:2:17
+  |
+2 |     print("{rows: loop { break rows 1 }}")
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033, E0109

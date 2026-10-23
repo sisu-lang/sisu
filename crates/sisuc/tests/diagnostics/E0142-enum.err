@@ -1,0 +1,15 @@
+error[E0142]: loop label `Shape` has the same name as the enum `Shape`
+ --> E0142-enum.sisu:7:15
+  |
+1 | enum Shape {
+  |      ----- the enum is declared here
+...
+6 |     Shape: loop {
+  |     ----- loop label declared here
+7 |         break Shape
+  |               ^^^^^
+  |
+  = help: rename the loop label
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0142

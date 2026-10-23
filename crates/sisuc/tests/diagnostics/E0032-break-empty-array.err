@@ -1,0 +1,10 @@
+error[E0032]: expected `i64`, found `[]`
+ --> E0032-break-empty-array.sisu:5:15
+  |
+4 |         if c { break 1 }
+  |                ------- this `break` gave the loop the type `i64`
+5 |         break []
+  |               ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

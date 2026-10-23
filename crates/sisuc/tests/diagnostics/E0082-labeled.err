@@ -1,0 +1,10 @@
+error[E0082]: `break` cannot appear in a loop header
+ --> E0082-labeled.sisu:7:19
+  |
+7 |         while f({ break outer; true }) {}
+  |         -----     ^^^^^^^^^^^
+  |         |
+  |         the header of this loop
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0082

@@ -1,0 +1,8 @@
+error[E0011]: expected end of line or `;`, found `:`
+ --> E0011-object.sisu:2:16
+  |
+2 |     let p = { x: 1, y: 2 }
+  |                ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

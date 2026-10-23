@@ -1,0 +1,12 @@
+error[E0141]: `break` with a value in a `while let`
+ --> E0141-while-let.sisu:4:15
+  |
+3 |     while let x = o {
+  |     ----- this `while let` has no value
+4 |         break x
+  |               ^
+  |
+  = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0141

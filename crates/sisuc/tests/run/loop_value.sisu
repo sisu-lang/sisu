@@ -1,0 +1,92 @@
+// `loop` gives a value through `break v`. A counted string and a class instance, each made in
+// the loop's body, leave it by `break`; a `break` in a `match` arm gives an array; a store's
+// index runs before its value, here a `loop` that moves the index; an expected type checks
+// every `break`, and a `None` after a `5` and a `6` makes the loop optional and wraps both,
+// the `6` given from an inner loop; and a `loop` with no `break` can be a whole function body
+// that leaves by `return`.
+class Item {
+    name: string
+    weight: i64
+}
+
+fn first_longer(words: [string], n: i64) -> string {
+    let mut i = 0
+    loop {
+        let s = words[i] + "!"
+        if s.len() > n { break s }
+        i += 1
+    }
+}
+
+fn heavy(items: [Item], min: i64) -> Item {
+    let mut i = 0
+    loop {
+        let it = Item(name: items[i].name + "?", weight: items[i].weight)
+        if it.weight >= min { break it }
+        i += 1
+    }
+}
+
+fn root(n: i64) -> [i64] {
+    let mut k = 0
+    loop {
+        match k * k >= n {
+            true => break [k, k * k]
+            false => k += 1
+        }
+    }
+}
+
+fn pick(c: bool) -> i64? {
+    let x: i64? = loop {
+        if c { break None }
+        break 5
+    }
+    x
+}
+
+fn widen(n: i64) -> i64? {
+    let x: i64? = outer: loop {
+        if n == 1 { break 5 }
+        loop {
+            if n == 2 { break outer 6 }
+            break
+        }
+        break None
+    }
+    x
+}
+
+fn count_to(n: i64) -> i64 {
+    let mut i = 0
+    loop {
+        if i == n { return i * 10 }
+        i += 1
+    }
+}
+
+fn main() {
+    let words = ["a", "bb", "ccc"]
+    print(first_longer(words, 2))       // bb!
+    print(words[1])                     // bb
+    let items = [Item(name: "pen", weight: 1), Item(name: "book", weight: 5)]
+    let it = heavy(items, 3)
+    print("{it.name} {it.weight}")      // book? 5
+    print(items[1].name)                // book
+    let r = root(10)
+    print("{r[0]} {r[1]} {r.len()}")    // 4 16 2
+    let mut xs = [0, 0, 0]
+    let mut i = 0
+    xs[i] = loop {
+        i += 1
+        break i
+    }
+    print("{xs[0]} {xs[1]} {xs[2]}")    // 1 0 0
+    print(i)                            // 1
+    print(pick(true) ?? -1)             // -1
+    print(pick(false) ?? -1)            // 5
+    print(widen(1) ?? -1)               // 5
+    print(widen(2) ?? -1)               // 6
+    print(widen(3) ?? -1)               // -1
+    print(count_to(3))                  // 30
+}

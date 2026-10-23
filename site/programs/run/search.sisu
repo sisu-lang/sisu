@@ -1,0 +1,16 @@
+fn main() {
+    let mut n = 1
+    let first = loop {
+        n *= 2
+        if n > 100 { break n }
+    }
+    print(first)
+    outer: for i in 1..10 {
+        for j in 1..10 {
+            if i * j == 12 {
+                print("{i} x {j}")
+                break outer
+            }
+        }
+    }
+}

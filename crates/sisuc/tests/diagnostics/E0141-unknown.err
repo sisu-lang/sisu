@@ -1,0 +1,12 @@
+error[E0141]: `break` with a value in a `for`
+ --> E0141-unknown.sisu:3:15
+  |
+2 |     for x in [1, 2] {
+  |     --- this `for` has no value
+3 |         break outerr
+  |               ^^^^^^
+  |
+  = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0141

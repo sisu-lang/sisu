@@ -1,0 +1,21 @@
+warning[W0008]: loop label `outer` is never used
+ --> E0033-not-after-break.sisu:2:5
+  |
+2 |     outer: for x in [1, 2] {
+  |     ^^^^^
+  |
+  = help: delete the loop label, or name it in a `break` or `continue`
+help: delete the loop label
+  |
+2 -     outer: for x in [1, 2] {
+2 +     for x in [1, 2] {
+  |
+
+error[E0033]: cannot find binding `outr`
+ --> E0033-not-after-break.sisu:3:15
+  |
+3 |         print(outr)
+  |               ^^^^
+
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0033, W0008

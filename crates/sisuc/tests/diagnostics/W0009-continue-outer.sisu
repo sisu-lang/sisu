@@ -1,0 +1,8 @@
+fn main() {
+    outer: for i in 0..3 {
+        while true {
+            print(i)
+            continue outer
+        }
+    }
+}

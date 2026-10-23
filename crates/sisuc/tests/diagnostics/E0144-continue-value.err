@@ -1,0 +1,10 @@
+error[E0144]: no loop label `count` around this `continue`
+ --> E0144-continue-value.sisu:5:22
+  |
+5 |             continue count
+  |                      ^^^^^
+  |
+  = help: `continue` takes no value
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0144

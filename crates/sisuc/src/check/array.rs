@@ -31,7 +31,7 @@ impl Checker<'_> {
                         want: vec![self.type_name(ty)],
                         got: "[]".to_string(),
                         at: span,
-                        source: None,
+                        source: self.expected_from(span),
                         fix: None,
                         conversion: false,
                     },
@@ -168,7 +168,7 @@ impl Checker<'_> {
             });
         }
         let (checked, mismatched) = match element {
-            Some(element) => self.against(value, checked, Some(element)),
+            Some(element) => self.against(value, checked, Some(element), None),
             None => (checked, false),
         };
         let (len, len_mismatched) = self.operand(len, Some(Type::I64));

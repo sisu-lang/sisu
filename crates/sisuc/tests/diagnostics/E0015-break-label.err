@@ -1,0 +1,15 @@
+error[E0015]: arms are separated by a line break or `;`, not `,`
+ --> E0015-break-label.sisu:7:29
+  |
+7 |             1 => break outer, _ => x = 2
+  |                             ^
+  |
+  = help: put each arm on its own line
+help: replace the `,` with `;`
+  |
+7 -             1 => break outer, _ => x = 2
+7 +             1 => break outer; _ => x = 2
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0015

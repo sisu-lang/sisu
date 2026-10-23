@@ -1,0 +1,15 @@
+warning[W0009]: this `while` has the condition `true`
+ --> W0009.sisu:3:5
+  |
+3 |     while true {
+  |     ^^^^^^^^^^ the condition never ends the loop
+  |
+  = help: write an endless loop as `loop`
+help: write `loop`
+  |
+3 -     while true {
+3 +     loop {
+  |
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0009
