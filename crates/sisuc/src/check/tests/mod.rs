@@ -1054,6 +1054,178 @@ fn break_name_is_a_label_only_near_one() {
     );
 }
 
+/// The sources that the fixes of the first diagnostic with `code` give. Each keeps the syntax.
+fn fixed_sources(src: &str, code: Code) -> Vec<String> {
+    let ds = diags(src);
+    let d = ds.iter().find(|d| d.code() == code).expect("the code");
+    d.fixes()
+        .iter()
+        .map(|fix| {
+            let fixed = fix.apply(src);
+            assert!(
+                crate::front_end::syntax_errors(&fixed) <= crate::front_end::syntax_errors(src),
+                "{fixed}"
+            );
+            fixed
+        })
+        .collect()
+}
+
+/// After an unlabeled `break`, the parser reads an open loop label as the `break`'s label, so
+/// E0033 does not offer a binding of that name.
+#[test]
+fn unknown_name_after_break_should_not_offer_a_label_name() {
+    let head = "fn main() {\n    let n = \"abc\"\n";
+    let fixes = fixed_sources(
+        &format!("{head}    n: loop {{ break l.len() }}\n}}"),
+        Code::BindingNotFound,
+    );
+    assert_eq!(fixes, Vec::<String>::new());
+    // The fix replaces a parenthesized name with its parentheses, so it starts the value too.
+    let fixes = fixed_sources(
+        &format!("{head}    n: loop {{ break (l).len() }}\n}}"),
+        Code::BindingNotFound,
+    );
+    assert_eq!(fixes, Vec::<String>::new());
+    // Another binding is offered in its place.
+    let fixes = fixed_sources(
+        &format!("{head}    let m = \"abc\"\n    n: loop {{ break l.len() }}\n}}"),
+        Code::BindingNotFound,
+    );
+    assert_eq!(fixes.len(), 1);
+    assert!(fixes[0].contains("break m.len()"), "{fixes:?}");
+}
+
+/// A labeled `break` and a parenthesized value read no loop label, so a name that is not a
+/// label stays offered.
+#[test]
+fn unknown_name_after_break_should_offer_a_name_the_parser_does_not_read_as_a_label() {
+    let head = "fn main() {\n    let n = \"abc\"\n    m: loop { ";
+    for value in ["break m l.len()", "break (l).len()"] {
+        let fixes = fixed_sources(&format!("{head}{value} }}\n}}"), Code::BindingNotFound);
+        assert_eq!(fixes.len(), 1, "{value}");
+    }
+    // A name that is not a label stays offered.
+    let src = "fn main() {\n    let n = \"abc\"\n    loop { break l.len() }\n}";
+    assert_eq!(fixed_sources(src, Code::BindingNotFound).len(), 1);
+}
+
+/// A `break` inside the receiver is checked before E0070 is reported, and the outer `break`'s
+/// value start is back by then.
+#[test]
+fn method_as_function_after_break_should_survive_a_nested_break() {
+    let src =
+        "fn main() {\n    let n = [[1]]\n    let v = n: loop { break len(n[loop { break 0 }]) }\n}";
+    let fixes = fixed_sources(src, Code::MethodAsFunction);
+    assert_eq!(fixes.len(), 1);
+    assert!(
+        fixes[0].contains("break (n[loop { break 0 }]).len()"),
+        "{fixes:?}"
+    );
+}
+
+/// E0052 leaves out a function that is an open loop label after an unlabeled `break`.
+#[test]
+fn unknown_function_after_break_should_not_offer_a_label_name() {
+    let src = "fn foo(x: i64) -> i64 { x }\nfn main() {\n    let v = foo: loop { break fop(1) }\n}";
+    assert_eq!(
+        fixed_sources(src, Code::FunctionNotFound),
+        Vec::<String>::new()
+    );
+    let src =
+        "fn foo(x: i64) -> i64 { x }\nfn main() {\n    let v = bar: loop { break bar fop(1) }\n}";
+    assert_eq!(fixed_sources(src, Code::FunctionNotFound).len(), 1);
+}
+
+/// E0052 gives the prelude name for an alias, unless a loop label has it after a bare `break`.
+#[test]
+fn alias_after_break_should_not_offer_a_label_name() {
+    let src = "fn main() {\n    let v = read_line: loop { break readln() }\n}";
+    assert_eq!(
+        fixed_sources(src, Code::FunctionNotFound),
+        Vec::<String>::new()
+    );
+}
+
+/// A loop label is excluded only for a bare name at the start of an unlabeled `break`'s value:
+/// not elsewhere in the value, not for another name, and not for a labeled `break`.
+#[test]
+fn fixes_after_break_should_exclude_only_a_label_name_at_the_value_start() {
+    let n = "fn main() {\n    let n = \"abc\"\n";
+    let enum_ = "enum E {\n    Red\n    Blue\n}\nfn main() {\n";
+    let foo = "fn foo(x: i64) -> i64 { x }\nfn main() {\n";
+    for (src, code) in [
+        // A label name later in the value, and a labeled `break`.
+        (
+            format!("{n}    n: loop {{ break 0 * l.len() }}\n}}"),
+            Code::BindingNotFound,
+        ),
+        (
+            format!("{n}    n: loop {{ m: loop {{ break m l.len() }} }}\n}}"),
+            Code::BindingNotFound,
+        ),
+        (
+            format!("{enum_}    let v = E: loop {{ break 1 + Red }}\n}}"),
+            Code::BareVariant,
+        ),
+        (
+            format!("{enum_}    let v = F: loop {{ break Red }}\n}}"),
+            Code::BareVariant,
+        ),
+        (
+            format!("{foo}    let v = foo: loop {{ break 1 + fop(1) }}\n}}"),
+            Code::FunctionNotFound,
+        ),
+        (
+            format!("{foo}    let v = bar: loop {{ break fop(1) }}\n}}"),
+            Code::FunctionNotFound,
+        ),
+        (
+            "fn main() {\n    let v = read_line: loop { break 1 + readln() }\n}".into(),
+            Code::FunctionNotFound,
+        ),
+        (
+            "fn main() {\n    let v = m: loop { break readln() }\n}".into(),
+            Code::FunctionNotFound,
+        ),
+    ] {
+        assert_eq!(fixed_sources(&src, code).len(), 1, "{src}");
+    }
+}
+
+/// E0070 wraps a receiver that is an open loop label after an unlabeled `break`.
+#[test]
+fn method_as_function_after_break_should_wrap_a_label_receiver() {
+    let head = "fn main() {\n    let n = [1, 2]\n    let v = n: loop { ";
+    let fixes = fixed_sources(
+        &format!("{head}break len(n) }}\n}}"),
+        Code::MethodAsFunction,
+    );
+    assert_eq!(fixes.len(), 1);
+    assert!(fixes[0].contains("break (n).len()"), "{fixes:?}");
+    // A labeled `break` needs no parentheses, nor a receiver that is not a label.
+    for (label, value) in [("m", "break m len(n)"), ("m", "break len(n)")] {
+        let src = format!("{head}{value} }}\n}}").replace("v = n:", &format!("v = {label}:"));
+        let fixes = fixed_sources(&src, Code::MethodAsFunction);
+        assert!(
+            fixes[0].contains(&value.replace("len(n)", "n.len()")),
+            "{fixes:?}"
+        );
+    }
+}
+
+/// E0117 offers no fix that writes an enum named like an open loop label after an unlabeled
+/// `break`; the diagnostic stays.
+#[test]
+fn bare_variant_after_break_should_not_offer_a_label_named_enum() {
+    let head = "enum E {\n    Red\n    Blue\n}\nfn main() {\n    let v = ";
+    let src = format!("{head}E: loop {{ break Red }}\n}}");
+    assert!(diags(&src).iter().any(|d| d.code() == Code::BareVariant));
+    assert_eq!(fixed_sources(&src, Code::BareVariant), Vec::<String>::new());
+    let src = format!("{head}F: loop {{ break F Red }}\n}}");
+    assert_eq!(fixed_sources(&src, Code::BareVariant).len(), 1);
+}
+
 /// A labeled jump out of a header leaves the endless loop it is in untyped, not `never`, so the
 /// header reports neither a missing value nor unreachable code; `E0082-through-loop` covers a
 /// `loop`. The failed `while true` still warns, with no fix: writing `loop` could remove the

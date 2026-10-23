@@ -306,6 +306,9 @@ struct Body {
     /// The bare name right after an unlabeled `break`, which may be a misspelled loop label:
     /// only there does E0033 offer the open loop labels.
     label_typo: Option<Span>,
+    /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
+    /// loop label there as the `break`'s label, so a fix must not write one there.
+    break_start: Option<usize>,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
@@ -906,14 +909,33 @@ impl Checker<'_> {
             || self.enum_ids.contains_key(&name)
             || self.constants.contains_key(&name);
         let enums = self.variant_of(name);
+        let at_start = self.starts_break_value(span);
+        let labelled = enums
+            .iter()
+            .filter(|e| at_start && self.is_open_label(e))
+            .cloned()
+            .collect();
         (!item && !enums.is_empty()).then(|| {
             DiagnosticKind::BareVariant {
                 name: name.to_string(),
                 enums,
+                labelled,
                 at: span,
             }
             .into()
         })
+    }
+
+    /// Whether `at` starts the value of an unlabeled `break`. A fix that writes a name from `at`
+    /// on, a parenthesized name's span included, must not write an open loop label there.
+    pub(super) fn starts_break_value(&self, at: Span) -> bool {
+        self.body.break_start == Some(at.start())
+    }
+
+    /// Whether `name` is an open loop label. After an unlabeled `break`, the parser reads it as
+    /// the `break`'s label, so a fix does not write it where the value starts.
+    pub(super) fn is_open_label(&self, name: &str) -> bool {
+        self.open_labels().any(|l| l.name.as_str() == name)
     }
 
     /// "cannot find binding `name`", offering the closest binding of any open scope, and of any
@@ -930,12 +952,14 @@ impl Checker<'_> {
             }
             .into();
         }
+        let at_start = self.starts_break_value(span);
         let bindings = self
             .body
             .scopes
             .iter()
             .flat_map(|scope| scope.keys())
-            .map(|binding| (binding.as_str(), Definition::Binding));
+            .map(|binding| (binding.as_str(), Definition::Binding))
+            .filter(|(binding, _)| !(at_start && self.is_open_label(binding)));
         let labels = self
             .open_labels()
             .filter(|_| self.body.label_typo == Some(span))

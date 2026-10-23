@@ -875,8 +875,11 @@ impl Checker<'_> {
         });
         let value = value
             .map(|v| {
-                self.break_value(span, target, v, typo.as_ref())
-                    .map(Box::new)
+                let start = label.is_none().then(|| v.span.start());
+                let outer = std::mem::replace(&mut self.body.break_start, start);
+                let checked = self.break_value(span, target, v, typo.as_ref());
+                self.body.break_start = outer;
+                checked.map(Box::new)
             })
             .transpose()?;
         let frame = self.frame(target);
