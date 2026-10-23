@@ -407,6 +407,25 @@ fn unreachable_arm_should_not_be_marked() {
     );
 }
 
+/// W0006 proves the second `0` arm unreachable, so its body is no path: a self-call there is not
+/// marked, and a base case there does not hide the warning.
+#[test]
+fn arm_should_not_count_when_an_earlier_arm_covers_its_pattern() {
+    for body in ["f(1)", "0"] {
+        let src = with_main(&format!(
+            "fn f(n: i64) -> i64 {{\n    match n {{\n        0 => f(0)\n        0 => {body}\n        _ => f(2)\n    }}\n}}"
+        ));
+        assert_eq!(
+            found(&src),
+            [
+                (Code::UnconditionalRecursion, (1, 4), vec![(3, 14), (5, 14)]),
+                (Code::UnreachableArm, (4, 9), vec![(3, 9)]),
+            ],
+            "{body}"
+        );
+    }
+}
+
 /// A pattern that may not match lets a path skip its guard.
 #[test]
 fn guard_should_not_end_later_paths_after_a_pattern_that_may_not_match() {

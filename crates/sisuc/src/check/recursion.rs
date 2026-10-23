@@ -168,7 +168,7 @@ impl Walk {
                 // The arms are tried in order. `called`: every path that goes on to the next arm
                 // has called the function, or no path goes on.
                 let mut called = false;
-                let arms = arms.iter().map(|arm| {
+                let arms = arms.iter().filter(|arm| arm.reachable).map(|arm| {
                     let reached = if called { Flow::RECURSE } else { Flow::PASS };
                     let open = open && !called;
                     let guard = arm

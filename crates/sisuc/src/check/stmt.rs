@@ -8,7 +8,7 @@ use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
-    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, tail, type_of, wrap,
+    LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of, wrap,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ClashForm, ClashKind, DiagnosticKind, MismatchSource, Unwrap, closest};
@@ -347,7 +347,8 @@ impl Checker<'_> {
                         span: stmt.span,
                     }));
                 }
-                if !nan {
+                // The checker does not see a parser error that the parser kept the loop with.
+                if !nan && !starts_in(&self.parse_errors, cond_ast.span.to(stmt.span)) {
                     self.unchanged_condition(cond_ast.span, &cond, before);
                 }
                 Ok(tir::Stmt::Expr(lower_loop(

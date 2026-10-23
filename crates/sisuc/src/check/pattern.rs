@@ -153,6 +153,7 @@ impl Checker<'_> {
             }
             ty => ty,
         };
+        let mut reachable = vec![true; arms.len()];
         if let Some(ty) = position {
             let rows: Option<Vec<_>> = patterns
                 .iter()
@@ -166,14 +167,15 @@ impl Checker<'_> {
                 .collect();
             if let Some(rows) = rows {
                 let report = exhaust::check(&self.lowered_enums, ty, &rows);
-                self.report_coverage(keyword, close, arms, report);
+                self.report_coverage(keyword, close, arms, report, &mut reachable);
             }
         }
         let arms: Option<Vec<_>> = patterns
             .into_iter()
             .zip(guards)
             .zip(blocks)
-            .map(|((pattern, guard), body)| {
+            .zip(reachable)
+            .map(|(((pattern, guard), body), reachable)| {
                 let (pattern, bindings) = pattern?;
                 let guard = match guard {
                     Some(guard) => Some(guard.ok()?),
@@ -184,6 +186,7 @@ impl Checker<'_> {
                     bindings,
                     guard,
                     body: body.ok()?,
+                    reachable,
                 })
             })
             .collect();
@@ -202,8 +205,15 @@ impl Checker<'_> {
     }
 
     /// Reports what `report` found on the `arms` of the `match` whose keyword is at `keyword`
-    /// and `}` at `close`.
-    fn report_coverage(&mut self, keyword: Span, close: Span, arms: &[ast::Arm], report: Report) {
+    /// and `}` at `close`, and clears `reachable` for each arm that no value reaches.
+    fn report_coverage(
+        &mut self,
+        keyword: Span,
+        close: Span,
+        arms: &[ast::Arm],
+        report: Report,
+        reachable: &mut [bool],
+    ) {
         let source = self.source.text;
         let line_start = |at: usize| source[..at].rfind('\n').map_or(0, |n| n + 1);
         // Each entry is an arm's pattern or an alternative in it, in arm order.
@@ -220,6 +230,7 @@ impl Checker<'_> {
             let Some((index, arm)) = current else {
                 break;
             };
+            reachable[index] &= found.alternative.is_some();
             let remove = found.alternative.unwrap_or_else(|| {
                 // Arms are separated by a line break or a `;` (ADR 0028), so an arm may share
                 // its line. The first arm is always reached, so a previous arm exists.
@@ -1068,12 +1079,14 @@ impl Checker<'_> {
                     bindings,
                     guard: None,
                     body: then_block,
+                    reachable: true,
                 },
                 tir::Arm {
                     pattern: other,
                     bindings: Vec::new(),
                     guard: None,
                     body: else_block.unwrap_or_else(empty_block),
+                    reachable: true,
                 },
             ],
         }

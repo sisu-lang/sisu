@@ -287,6 +287,8 @@ struct Checker<'src> {
     /// What a value of each enum and class may hold, for W0011.
     holds_table: HoldsTable,
     diagnostics: Diagnostics,
+    /// The non-empty spans of the parser's errors, sorted by start.
+    parse_errors: Vec<Span>,
     /// The body being checked.
     body: Body,
 }
@@ -400,6 +402,12 @@ pub(crate) fn check<'src>(
     parsed: &[Diagnostic],
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let mut checker = Checker::new(program, source);
+    checker.parse_errors = parsed
+        .iter()
+        .filter(|d| d.severity() == Severity::Error)
+        .map(Diagnostic::span)
+        .filter(|span| span.start() < span.end())
+        .collect();
     checker.collect_names(program);
     let declared = checker.collect_signatures(program);
     checker.fold_constants(program);
@@ -423,7 +431,7 @@ pub(crate) fn check<'src>(
         .filter_map(|(i, function)| {
             let (f, owner) = declared[i];
             let function = function.as_ref()?;
-            if has_error_in(&diagnostics, f.span) || has_error_in(parsed, f.span) {
+            if has_error_in(&diagnostics, f.span) || starts_in(&checker.parse_errors, f.span) {
                 return None;
             }
             let calls = recursion::unconditional(function, tir::FuncId(i))?;
@@ -481,6 +489,12 @@ fn has_error_in(diagnostics: &[Diagnostic], span: Span) -> bool {
         .any(|d| d.severity() == Severity::Error && d.span().start() < d.span().end())
 }
 
+/// Whether a span of `spans`, which is sorted by start, starts inside `span`.
+fn starts_in(spans: &[Span], span: Span) -> bool {
+    let first = spans.partition_point(|s| s.start() < span.start());
+    spans.get(first).is_some_and(|s| s.start() < span.end())
+}
+
 /// The class, unless a field's type is `Error`.
 fn lower_class(class: &ClassInfo) -> Option<tir::Class> {
     let fields = class
@@ -536,6 +550,7 @@ impl<'src> Checker<'src> {
             constants: FxHashMap::default(),
             holds_table: HoldsTable::default(),
             diagnostics: Diagnostics::default(),
+            parse_errors: Vec::new(),
             body: Body::default(),
         }
     }

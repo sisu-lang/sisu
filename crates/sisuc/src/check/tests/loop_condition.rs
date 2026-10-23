@@ -446,7 +446,7 @@ fn while_should_not_warn_when_its_second_class_has_a_field_of_an_unknown_type() 
 /// Every `insert` today comes with a failed expression, which fails the loop body, so no
 /// program reaches the count.
 #[test]
-fn diagnostics_should_count_an_inserted_error() {
+fn diagnostics_should_count_every_error_it_holds() {
     let mut diagnostics = Diagnostics::default();
     let at = Span::new(0, 0);
     diagnostics.insert(0, DiagnosticKind::IsTestsNone { tested: None, at }.into());
@@ -504,5 +504,28 @@ fn while_should_warn_when_only_its_body_compares_with_nan() {
             (Code::UnchangedLoopCondition, (4, 11)),
             (Code::NanComparison, (4, 25)),
         ],
+    );
+}
+
+/// The parser keeps the loop with the format-spec error, and the checker sees only the parser's
+/// list of it. The second loop has no error and still warns.
+#[test]
+fn while_should_not_warn_when_the_parser_reports_an_error_in_it() {
+    let src = f(&[
+        "while n > 0 {",
+        "    print(\"{n:zz}\")",
+        "}",
+        "while n > 0 {",
+        "    print(n)",
+        "}",
+    ]);
+    let ds = crate::front_end::front_end(&src).1;
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
+    assert_eq!(
+        found,
+        [
+            (Code::UnsupportedFormatSpec, (3, 18)),
+            (Code::UnchangedLoopCondition, (5, 11)),
+        ]
     );
 }

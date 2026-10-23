@@ -263,8 +263,8 @@ impl Checker<'_> {
         self.body.writes
     }
 
-    /// Stamps the binding, or `self`, at the root of `base`, a written name or the base of a
-    /// written field, which this follows to its root once. A root that is neither stamps nothing.
+    /// Stamps the binding, or `self`, at the root of `base`, the base of a written field, which
+    /// this follows to its root once. A root that is neither stamps nothing.
     fn stamp_root(&mut self, mut base: &ast::Expr) {
         loop {
             match &base.kind {
@@ -293,7 +293,7 @@ impl Checker<'_> {
     fn place(&mut self, span: Span, target: &ast::Expr, element: bool) -> CheckedPlace {
         match &target.kind {
             &ast::ExprKind::Name(name) => {
-                self.stamp_root(target);
+                let stamp = self.write_stamp();
                 let Some(b) = self.lookup(name) else {
                     if let Some(place) = self.constant_place(span, name, element) {
                         return place;
@@ -307,13 +307,13 @@ impl Checker<'_> {
                         self.diagnostics.push(d);
                         // The name may have meant any open binding; none of them warns as
                         // unassigned.
-                        let scopes = &mut self.body.scopes;
-                        for b in scopes.iter_mut().flat_map(|scope| scope.values_mut()) {
+                        for b in self.body.scopes.iter_mut().flat_map(|s| s.values_mut()) {
                             b.reassigned = true;
                         }
                     }
                     return CheckedPlace::failed();
                 };
+                b.written = stamp;
                 b.reassigned |= b.kind == BindingKind::Var;
                 let (local, ty, kind, declared) = (b.local, b.ty, b.kind, b.span);
                 let cause = match kind {
