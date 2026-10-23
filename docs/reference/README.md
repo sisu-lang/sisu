@@ -14,7 +14,7 @@ A page states a rule only when `sisu` follows it today. A test checks every exam
 
 ## How to read an example
 
-Every example is a full program with a `main` function.
+Every example is a full program with a [`main` function](functions.md#main), except the example of the error for a program without `main`.
 
 ### Output comments
 

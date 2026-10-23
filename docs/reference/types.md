@@ -298,7 +298,7 @@ fn main() {
 
 `never` is the type of an expression that never finishes. These expressions have the type `never`:
 
-- A call of `panic`, and `todo`.
+- A call of [`panic`](functions.md#panic), and [`todo`](functions.md#todo).
 - A block that reaches a `return`, `break` or `continue` statement, or another expression of the type `never`.
 - An `if` or a `match` whose branches are all of the type `never`.
 - A `loop` with no `break` that ends it, or whose `break`s all have a value of the type `never`.

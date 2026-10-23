@@ -458,14 +458,14 @@ The rules:
 
 - In a function with a return type, each `return` has a value of that type ([E0036](../diagnostics/E0036.md), [E0032](../diagnostics/E0032.md)). Where the type is a `T?`, a `T` becomes a `T?`.
 - In a function without a return type, a `return` has no value ([E0037](../diagnostics/E0037.md)).
-- A `return` in `main` ends the program.
+- A `return` in `main` ends the program ([Functions](functions.md#main)).
 
 ## Reachability
 
 Some statements never finish, so the code after them cannot run. A statement never finishes when its type is `never`, and [Types](types.md#never) lists these expressions. These are the statements of the type `never`:
 
 - `return`, `break` and `continue`
-- an expression of the type `never`, such as a call of `panic` or `todo`, or a `loop` that no `break` ends
+- an expression of the type `never`, such as a call of `panic` or `todo` ([Functions](functions.md#panic)), or a `loop` that no `break` ends
 - a `while` whose condition is the literal `true`, with no `break` that ends it
 
 A block with such a statement never finishes either. A statement after it cannot run, and the program builds with a warning at the first one ([W0001](../diagnostics/W0001.md)).

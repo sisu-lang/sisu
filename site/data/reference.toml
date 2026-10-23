@@ -25,3 +25,7 @@ description = "Blocks, if, match and loop as expressions, calls, fields, indexes
 [[page]]
 file = "statements"
 description = "Bindings, assignment, constants, loops, loop labels, break, continue, return and reachability."
+
+[[page]]
+file = "functions"
+description = "Declarations, parameters, return types, recursion, main, panic and todo."
