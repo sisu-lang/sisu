@@ -29,8 +29,9 @@ pub(crate) fn sisu(dir: &Path, input: &str, output: &Path, flags: &[&str]) -> Co
     command
 }
 
-/// Compiles `<dir>/<name>.sisu`, run from `dir`, into `exe`, passing `flags` to `sisu`.
-pub(crate) fn compile(dir: &Path, name: &str, exe: &Path, flags: &[&str]) {
+/// Compiles `<dir>/<name>.sisu`, run from `dir`, into `exe`, passing `flags` to `sisu`, and
+/// returns `sisu`'s stderr, which holds its warnings.
+pub(crate) fn compile(dir: &Path, name: &str, exe: &Path, flags: &[&str]) -> Vec<u8> {
     let out = sisu(dir, &format!("{name}.sisu"), exe, flags)
         .output()
         .expect("sisu starts");
@@ -40,7 +41,11 @@ pub(crate) fn compile(dir: &Path, name: &str, exe: &Path, flags: &[&str]) {
         "sisu failed on {name}.sisu:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    out.stderr
 }
+
+/// The unused-name warnings that no case may get. A case can keep other warnings.
+const UNUSED: [&str; 3] = ["warning[W0012]", "warning[W0013]", "warning[W0014]"];
 
 /// The marker line that gives a case's arguments: `// args: <arg> <arg> ...`.
 const ARGS: &str = "// args:";
@@ -446,6 +451,7 @@ const VALGRIND_O2: Build = (
 );
 
 /// Compiles `path` once for each of `builds` into its `case_dir`, and returns the executables.
+/// A build with an `UNUSED` warning fails the case.
 fn build<const N: usize>(path: &Path, builds: [Build; N]) -> [PathBuf; N] {
     let dir = path.parent().expect("a case should sit in a directory");
     let name = path
@@ -455,7 +461,13 @@ fn build<const N: usize>(path: &Path, builds: [Build; N]) -> [PathBuf; N] {
     let out = case_dir(path);
     builds.map(|(file, flags)| {
         let exe = out.join(file);
-        compile(dir, name, &exe, flags);
+        let stderr = compile(dir, name, &exe, flags);
+        let stderr = String::from_utf8_lossy(&stderr);
+        assert!(
+            !UNUSED.iter().any(|code| stderr.contains(code)),
+            "{}: an unused name, which the case must not have:\n{stderr}",
+            path.display()
+        );
         exe
     })
 }
