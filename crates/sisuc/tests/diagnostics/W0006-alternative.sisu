@@ -14,4 +14,6 @@ fn stop(l: Light) -> bool {
 
 fn main() {
     print(stop(Light.Amber))
+    print(stop(Light.Red))
+    print(stop(Light.Green))
 }

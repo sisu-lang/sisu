@@ -1,0 +1,14 @@
+warning[W0014]: variable `i` is never read
+ --> W0014.sisu:2:9
+  |
+2 |     for i in 0..3 {
+  |         ^ never read
+  |
+help: replace `i` with `_`
+  |
+2 -     for i in 0..3 {
+2 +     for _ in 0..3 {
+  |
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0014

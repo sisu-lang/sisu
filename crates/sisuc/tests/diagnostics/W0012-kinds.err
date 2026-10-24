@@ -1,0 +1,44 @@
+warning[W0012]: method `reset` is never called
+ --> W0012-kinds.sisu:3:8
+  |
+3 |     fn reset(self) {
+  |        ^^^^^ never called
+  |
+  = help: delete it, or name it `_reset` if it is kept on purpose
+
+warning[W0012]: class `Q` is never built
+ --> W0012-kinds.sisu:8:7
+  |
+8 | class Q {
+  |       ^ never built
+  |
+  = help: delete it, or name it `_Q` if it is kept on purpose
+
+warning[W0012]: enum `Step` is never built
+  --> W0012-kinds.sisu:12:6
+   |
+12 | enum Step {
+   |      ^^^^ never built
+   |
+   = help: delete it, or name it `_Step` if it is kept on purpose
+
+warning[W0012]: constant `LIMIT` is never used
+  --> W0012-kinds.sisu:17:7
+   |
+17 | const LIMIT = 10
+   |       ^^^^^ never used
+18 | const OTHER = LIMIT + 1
+   |               ----- used here, in `OTHER`, which is never used
+   |
+   = help: delete it, or name it `_LIMIT` if it is kept on purpose
+
+warning[W0012]: constant `OTHER` is never used
+  --> W0012-kinds.sisu:18:7
+   |
+18 | const OTHER = LIMIT + 1
+   |       ^^^^^ never used
+   |
+   = help: delete it, or name it `_OTHER` if it is kept on purpose
+
+sisu: 5 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012

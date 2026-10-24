@@ -5,7 +5,7 @@ fn iterations() -> i64 { 1000 }
 // to the capacities 4, 8, ..., 1024.
 fn main() {
     let mut s = "a"
-    for i in 0..iterations() {
+    for _ in 0..iterations() {
         s += "x"
     }
     print(s.len())                   // 1001 (1 with no iterations)

@@ -1,7 +1,7 @@
 // Empty arrays: `[]` and `[v; 0]` have length 0, a `for` over one runs no times, and two
 // empty arrays are equal. `sum()` of one is 0 and `contains` finds nothing. `[[1]; 0]`
 // releases `[1]` once.
-class Node {}
+class _Node {}
 
 fn main() {
     let a: [i64] = []
@@ -13,7 +13,7 @@ fn main() {
     print(a.sum())          // 0
     print(a.contains(1))    // false
 
-    let b: [[Node]] = []
+    let b: [[_Node]] = []
     print(b.len())          // 0
     for x in b {
         print(x.len())

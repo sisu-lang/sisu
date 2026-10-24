@@ -42,6 +42,7 @@ The rules:
 - A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic` or `read_line` ([E0034](../diagnostics/E0034.md)). [Input and output](io.md) tells these functions. The sections [dbg](io.md#dbg) and [Files](errors.md#files) are in development, and they change this rule.
 - A function cannot be named `_` ([E0080](../diagnostics/E0080.md)).
 - A function cannot be declared in the body of another function.
+- A function that no live code calls builds with a warning ([W0012](../diagnostics/W0012.md)). Live code is `main`, each function, method and constant whose name starts with `_`, and all the code that live code calls or names.
 - A binding or a parameter can take the name of a function or a class. A call still finds the function or the class, because a binding is never called ([Shadowing](statements.md#shadowing)).
 
 ```sisu
@@ -77,6 +78,7 @@ The rules:
 - A parameter cannot change. An assignment to it is an error ([E0001](../diagnostics/E0001.md)), and a parameter cannot be `mut` ([E0019](../diagnostics/E0019.md)).
 - To change the value, copy it into a `let mut` binding. A `let` can shadow a parameter ([Shadowing](statements.md#shadowing)).
 - Two parameters of one function cannot have the same name ([E0039](../diagnostics/E0039.md)).
+- A parameter of live code that the body never reads builds with a warning ([W0014](../diagnostics/W0014.md)). A parameter named `_`, or with a name that starts with `_`, gets no warning.
 - As a binding cannot, a parameter cannot take the name `Option`, `Result`, `Some`, `Ok`, `Err` or the name of an enum ([Shadowing](statements.md#shadowing)).
 - An argument must have the type of its parameter. Where the parameter is a `T?`, a `T` becomes a `T?` ([Calls](expressions.md#calls)).
 

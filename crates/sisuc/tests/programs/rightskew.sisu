@@ -1,10 +1,10 @@
 // A right-skewed tree of 1 000 000 nodes, run under a 256 KiB stack. Its drop recurses on
-// `left`, which is always None here, and follows `right`, the chain field, in a loop. A drop
-// that loops on `left` instead recurses on `right` once per node and overflows that stack.
+// `_left`, which is always None here, and follows `right`, the chain field, in a loop. A drop
+// that loops on `_left` instead recurses on `right` once per node and overflows that stack.
 class Tree {
-    left: Tree?
+    _left: Tree?
     right: Tree?
-    v: i64
+    _v: i64
 }
 
 fn main() {
@@ -12,7 +12,7 @@ fn main() {
     let mut i = 0
     while i < 1_000_000 {
         i += 1
-        root = Tree(left: None, right: root, v: i)
+        root = Tree(_left: None, right: root, _v: i)
     }
     let mut depth = 0
     let mut node = root

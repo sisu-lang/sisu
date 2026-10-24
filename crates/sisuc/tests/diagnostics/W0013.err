@@ -1,0 +1,10 @@
+warning[W0013]: field `y` is never read
+ --> W0013.sisu:3:5
+  |
+3 |     y: i64
+  |     ^ never read
+  |
+  = help: delete it, or name it `_y` if it is kept on purpose
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0013

@@ -76,6 +76,7 @@ fn reassigned(k: i64) {
 }
 
 fn main() {
+    let _ = E.W                                     // builds the variant that no other code builds
     across_call(SBox(s: name(5)), 7)                // n5, then new7
     print(arr([1, 2]))                              // 6
     let o = ABox(xs: [1, 2])

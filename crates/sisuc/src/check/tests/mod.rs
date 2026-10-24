@@ -21,9 +21,30 @@ mod shadowing;
 mod strings;
 mod u8;
 mod unused;
+mod unused_names;
+
+thread_local! {
+    /// Whether this test judges unused names; `judge_unused` sets it.
+    static UNUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keeps the unused-names warnings for the rest of this test, which `checked` drops otherwise:
+/// most test programs have helpers that `main` never calls.
+fn judge_unused() {
+    UNUSED.set(true);
+}
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    check(&parse_ok(src), src, &[])
+    let (program, mut ds) = check(&parse_ok(src), src, &[]);
+    if !UNUSED.get() {
+        ds.retain(|d| {
+            !matches!(
+                d.code(),
+                Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable
+            )
+        });
+    }
+    (program, ds)
 }
 
 fn diags(src: &str) -> Vec<Diagnostic> {

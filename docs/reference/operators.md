@@ -304,6 +304,7 @@ fn main() {
     let c = a
     print(a is c)                // true
     print(a is b)                // false
+    print(a.heat == b.heat)      // true
     let x: Sauna? = None
     let y: Sauna? = None
     print(x is y)                // true

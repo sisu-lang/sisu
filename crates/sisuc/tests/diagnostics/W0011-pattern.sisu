@@ -1,19 +1,19 @@
-enum T {
+enum _T {
     Leaf
     Node(i64)
 }
 
-enum Color {
+enum _Color {
     Red
     Blue
-    fn wait(self, other: Color) {
+    fn wait(self, other: _Color) {
         while self == other {
             print(1)
         }
     }
 }
 
-fn f(t: T, n: i64) {
+fn _f(t: _T, n: i64) {
     match t {
         Leaf => print(0)
         Node(x) => {
@@ -24,7 +24,7 @@ fn f(t: T, n: i64) {
     }
 }
 
-fn g() {
+fn _g() {
     for k in 0..3 {
         while k > 0 {
             print(k)

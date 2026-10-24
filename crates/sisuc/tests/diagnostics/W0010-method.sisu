@@ -5,4 +5,5 @@ class Node {
 
 fn main() {
     print(Node(n: 1).size())
+    print(Node(n: 2).n)
 }

@@ -1,6 +1,7 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
 use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
+use super::unused_names::Used;
 use super::{Checked, Checker, Poisoned, UNKNOWN, optional_of, payload, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
@@ -282,6 +283,10 @@ impl Checker<'_> {
             }
             _ => {
                 let labeled = self.labels(args);
+                // A class compares field by field, as `==` does; a `None` reads no field.
+                if !none_literal(&args[0].value) {
+                    self.record(Used::Equal(element), span);
+                }
                 let (value, mismatched) = self.operand(&args[0].value, Some(element));
                 match (receiver, value) {
                     (Ok(base), Ok(value)) if !labeled => {

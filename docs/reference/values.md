@@ -12,6 +12,7 @@ fn main() {
     let mut b = a
     b[0] = 9
     print(a[0])                  // 1
+    print(b[0])                  // 9
     let x = Box(value: 1)
     let y = x
     y.value = 9
@@ -75,6 +76,7 @@ fn change(b: Box, xs: [i64]) {
     b.value = 10
     let mut mine = xs
     mine[0] = 10
+    print(mine[0])               // 10
 }
 
 fn main() {
@@ -105,6 +107,7 @@ fn main() {
     let c = a
     print(a is c)                // true
     print(a is b)                // false
+    print(a.heat == b.heat)      // true
     print([1, 2] == [1, 2])      // true
 }
 ```

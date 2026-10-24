@@ -1,0 +1,23 @@
+class P {
+    x: i64
+    fn reset(self) {
+        print(1)
+    }
+}
+
+class Q {
+    y: i64
+}
+
+enum Step {
+    Start
+    Stop
+}
+
+const LIMIT = 10
+const OTHER = LIMIT + 1
+
+fn main() {
+    let p = P(x: 1)
+    print(p.x)
+}

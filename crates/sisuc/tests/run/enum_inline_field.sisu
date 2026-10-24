@@ -10,6 +10,7 @@ enum Tree {
     Node(Tree, Inner)
 }
 fn main() {
+    let _ = Inner.Q  // builds the variant that no other code builds
     let t = Tree.Node(Tree.Leaf, Inner.P("a" + "b"))
     let copy = t
     print(copy == t) // true: `t` stays live past the copy

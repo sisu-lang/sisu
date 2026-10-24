@@ -57,6 +57,8 @@ fn main() {
 
 A `let mut` binding must change somewhere in its scope. When no assignment changes it or one of its elements, the program builds with a warning ([W0002](../diagnostics/W0002.md)).
 
+A binding in live code that no expression reads builds with a warning ([W0014](../diagnostics/W0014.md)). For a `let mut` that nothing reads, this warning takes the place of W0002. A name that starts with `_` gets no warning.
+
 ### let _
 
 `let _ = value` calculates the value and then drops it. It declares no binding. Use it to drop a value on purpose, with no warning ([W0004](../diagnostics/W0004.md)).
@@ -101,6 +103,7 @@ A binding can also take the name of a function, such as `print`, or of a class. 
 const LIMIT = 3
 
 fn main() {
+    print(LIMIT)                 // 3
     let LIMIT = 4
     let print = LIMIT * 2
     print(print)                 // 8
@@ -159,6 +162,7 @@ fn tell(n: i64) -> i64 {
 fn main() {
     let mut xs = [0, 0]
     xs[5] = tell(3)              // value 3
+    print(xs[0])
 }
 ```
 

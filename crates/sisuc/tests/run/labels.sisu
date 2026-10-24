@@ -57,7 +57,7 @@ fn g(a: string, b: string) {
 // `break outer` leaves a call whose first argument is made: the jump releases it.
 fn half() {
     outer: for i in 0..3 {
-        for j in 0..2 {
+        for _ in 0..2 {
             g(make(), {
                 if i == 1 { break outer }
                 make()

@@ -6,7 +6,7 @@ fn id<T>(x: T) -> T {
     x
 }
 
-fn take<T>(a: T, b: i64) -> T {
+fn take<T>(a: T, _b: i64) -> T {
     a
 }
 

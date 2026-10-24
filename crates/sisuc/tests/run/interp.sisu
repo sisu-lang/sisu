@@ -8,7 +8,7 @@ fn main() {
     let c = 'ä'
     let b = true
     let mut last = "-"
-    for i in 0..iterations() {
+    for _ in 0..iterations() {
         last = "{s}{n}{c}{b}"
     }
     print(last.len())                // 9: `ab7ätrue` (1 with no iterations)

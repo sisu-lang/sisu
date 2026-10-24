@@ -39,6 +39,11 @@ _Avoid_: dropped value (dropping is what a reference count does)
 A function that calls itself on every path, so it can never return; the
 compiler warns about it.
 
+**Live code**:
+Code that `main`, or a function, method or constant whose name starts with `_`,
+can reach through calls and constant names. Only a use in live code counts as a
+use for the unused-name warnings.
+
 **Loop label**:
 The name written before a loop (`outer: for ...`) that a `break` or
 `continue` names to leave or restart that loop instead of the innermost one.

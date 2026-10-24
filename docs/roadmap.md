@@ -1066,14 +1066,15 @@ These do not make code nicer to write, so they wait:
   built-in lints, with no separate tool and no configuration file. The
   checker already warns about code after `return`, `break` or `continue`,
   about a `let mut` (`var` before milestone 4) that is never reassigned, about
-  a function that calls itself on every path, and about a `while` whose
-  condition nothing in the loop changes. Comparing a value that is not
+  a function that calls itself on every path, about a `while` whose
+  condition nothing in the loop changes, and about unused variables,
+  parameters, functions, methods, classes, enums, constants, fields and
+  variants. A name starting with `_`, such as `_score`, is exempt from the
+  unused-name warnings, as in Rust and Gleam. Comparing a value that is not
   optional with `None` is an error. Still to come:
   - a class with no `mut` field that nothing compares with `is`, suggesting
     `record` (ADR 0011);
-  - an unused variable, parameter, function or import;
-  - a name starting with `_`, such as `_score`, is exempt from the unused
-    variable lint, as in Rust and Gleam;
+  - an unused import, which waits for milestone 11;
   - `.0` or `.1` on a tuple outside a short closure, suggesting element
     names or `let (a, b) = ...`;
   - a cycle shape, suggesting `weak` (ADR 0008): two classes whose fields

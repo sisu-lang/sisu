@@ -15,14 +15,14 @@ class E {}
 
 class T {
     mut count: i64
-    mut e: E
+    mut _e: E
 
     fn me(self) -> T {
         self
     }
 
     fn reset(self) {
-        self.e = E()
+        self._e = E()
     }
 }
 
@@ -43,7 +43,7 @@ fn fields_and_methods() {
 
 // Review Focus 2: a method that returns `self`, chained and discarded.
 fn returns_self() {
-    let t = T(count: 3, e: E())
+    let t = T(count: 3, _e: E())
     print(t.me().me().count)
     let _ = t.me()
     print(t.count)
@@ -59,8 +59,8 @@ fn ends_in_object() {
 // `ends_in_object` does.
 fn discarded(c: bool) {
     let _ = E()
-    let _ = T(count: 1, e: E())
-    let _ = T(count: 2, e: E()).me()
+    let _ = T(count: 1, _e: E())
+    let _ = T(count: 2, _e: E()).me()
     ends_in_object()
     if c { E() }
     let mut i = 0
@@ -76,7 +76,7 @@ fn in_a_loop() {
     let mut i = 0
     let mut sum = 0
     while i < 5 {
-        let t = T(count: i, e: E())
+        let t = T(count: i, _e: E())
         sum += t.count
         i += 1
     }
@@ -85,7 +85,7 @@ fn in_a_loop() {
 
 // A field assigned through `self` releases its old object on each call.
 fn reset_twice() {
-    let t = T(count: 4, e: E())
+    let t = T(count: 4, _e: E())
     t.reset()
     t.reset()
     print(t.count)

@@ -5,7 +5,7 @@ fn iterations() -> i64 { 1000 }
 fn main() {
     let mut s = "a"
     let mut saved = s
-    for i in 0..iterations() {
+    for _ in 0..iterations() {
         saved = s
         s += "x"
     }

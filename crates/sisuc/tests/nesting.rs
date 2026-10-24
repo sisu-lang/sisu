@@ -11,7 +11,8 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-/// Classes and functions that the generated programs call.
+/// Classes and functions that the generated programs call. Each program uses only some of them,
+/// so the root `_prelude` uses each one, and no program warns that it is never used.
 const PRELUDE: &str = "\
 class N {
     next: N?
@@ -33,6 +34,12 @@ fn some(x: i64) -> i64? {
 enum R {
     A(R)
     Z
+}
+
+fn _prelude() {
+    print(id(some(N(next: None, v: 1).me().v) ?? 0))
+    print(N(next: None, v: 2).next == None)
+    let _ = R.A(R.Z)
 }
 
 ";
@@ -71,7 +78,7 @@ fn call(n: usize) -> Generated {
 }
 
 fn array(n: usize) -> Generated {
-    in_main(&wrapped("let a = ", "[", "1", "]", "", n), 12 + n)
+    in_main(&wrapped("let _ = ", "[", "1", "]", "", n), 12 + n)
 }
 
 /// The last `-`: a unary operator fails at itself, before it is consumed.
@@ -106,21 +113,21 @@ fn coalesce(n: usize) -> Generated {
 /// The `n`th `[`.
 fn index(n: usize) -> Generated {
     let first = wrapped("let a = ", "[", "1", "]", "", n);
-    let line = format!("{first}    let b = a{}\n", "[0]".repeat(n));
+    let line = format!("{first}    let _ = a{}\n", "[0]".repeat(n));
     in_main(&line, first.len() + 13 + 3 * (n - 1))
 }
 
 /// The `n`th `.`.
 fn method_chain(n: usize) -> Generated {
     let first = "    let n = N(next: None, v: 1)\n";
-    let line = format!("{first}    let m = n{}\n", ".me()".repeat(n));
+    let line = format!("{first}    let _ = n{}\n", ".me()".repeat(n));
     in_main(&line, first.len() + 13 + 5 * (n - 1))
 }
 
 /// The `n`th `?.`.
 fn safe_chain(n: usize) -> Generated {
     let first = "    let n: N? = None\n";
-    let line = format!("{first}    let m = n{}\n", "?.next".repeat(n));
+    let line = format!("{first}    let _ = n{}\n", "?.next".repeat(n));
     in_main(&line, first.len() + 13 + 6 * (n - 1))
 }
 
@@ -136,7 +143,7 @@ fn nested_if(n: usize) -> Generated {
 }
 
 fn nested_if_let(n: usize) -> Generated {
-    blocks("if let y = some(1)", n)
+    blocks("if let _ = some(1)", n)
 }
 
 fn nested_while(n: usize) -> Generated {
@@ -144,7 +151,7 @@ fn nested_while(n: usize) -> Generated {
 }
 
 fn nested_for(n: usize) -> Generated {
-    blocks("for i in 0..1", n)
+    blocks("for _ in 0..1", n)
 }
 
 /// `loop {` nested `n` times around `print(1)`, each level ended by a `break`.
@@ -164,7 +171,7 @@ fn else_if(n: usize) -> Generated {
 
 /// The element type `n` brackets deep; fails at its name.
 fn array_type(n: usize) -> Generated {
-    in_main(&wrapped("let a: ", "[", "i64", "]", " = []", n), 11 + n)
+    in_main(&wrapped("let _: ", "[", "i64", "]", " = []", n), 11 + n)
 }
 
 /// `match` nested `n` times in its arm's body, then `1`; fails at the last `match`'s scrutinee.
@@ -631,7 +638,7 @@ fn sibling_statements_should_not_add_up_to_the_nesting_limit() {
     print(id(1) == 1)
     let a{i} = [1, 2]
     print(a{i}[0])
-    let t{i}: [[i64]] = []
+    let _: [[i64]] = []
     if true {{
         print(1)
     }} else if false {{
@@ -639,7 +646,7 @@ fn sibling_statements_should_not_add_up_to_the_nesting_limit() {
     }}
     while false {{
     }}
-    for i{i} in 0..1 {{
+    for _ in 0..1 {{
     }}
     print(some(1) ?? 2)
     print(1 < 2)
