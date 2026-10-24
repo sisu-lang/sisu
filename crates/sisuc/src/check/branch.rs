@@ -1,6 +1,7 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
 use super::expr::{fits, rank};
+use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::{
     Checked, CheckedBlock, Checker, Poisoned, UNKNOWN, block_type, optional_of, tail, value_span,
@@ -58,10 +59,14 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
         expected: Option<Type>,
     ) -> Checked {
-        let (scrutinee, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
+        // Ranking the `if let` for context may have checked its value (see `waits`).
+        let (scrutinee, form, mismatched) = match self.kept(value.span, false) {
+            Some((_, Ahead::Let(checked, form, mismatched))) => (checked, form, mismatched),
+            _ => self.let_value(Unwrap::IfLet, pattern, value),
+        };
         let mut checked = None;
         let (then, other, ty) = self.branches(then_block, else_block, expected, |c, expected| {
-            let (bound, block) = c.let_block(Unwrap::IfLet, form, pattern, then_block, expected);
+            let (bound, block) = c.let_block(Unwrap::IfLet, &form, pattern, then_block, expected);
             checked = Some(bound);
             block
         });

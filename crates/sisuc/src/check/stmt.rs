@@ -74,7 +74,7 @@ impl Checker<'_> {
     }
 
     /// `scoped_block`, its statements before `so_far.done` checked already.
-    fn resume_block(
+    pub(super) fn resume_block(
         &mut self,
         block: &ast::Block,
         expected: Option<Type>,
@@ -434,7 +434,7 @@ impl Checker<'_> {
                 });
                 let frame = LoopFrame::new(LoopKind::WhileLet, *keyword, label.clone(), None);
                 let ((bound, checked), _) = self.loop_body(frame, |c| {
-                    c.let_block(Unwrap::WhileLet, form, pattern, body, None)
+                    c.let_block(Unwrap::WhileLet, &form, pattern, body, None)
                 });
                 if let Ok(checked) = &checked {
                     self.discard_tail(body, checked);
@@ -1211,12 +1211,23 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> (tir::LocalId, CheckedBlock) {
         self.body.scopes.push(FxHashMap::default());
-        let bind = if name.name.as_str() == "_" {
+        let bind = self.bind_unwrapped(keyword, name, ty);
+        (bind, self.scoped_block(block, expected))
+    }
+
+    /// `name` bound to a `ty` in the innermost scope, as `keyword` binds it, and its local.
+    /// A `_` binds a fresh unnamed local and declares no name.
+    pub(super) fn bind_unwrapped(
+        &mut self,
+        keyword: &'static str,
+        name: &ast::Ident,
+        ty: Option<Type>,
+    ) -> tir::LocalId {
+        if name.name.as_str() == "_" {
             self.fresh(ty.unwrap_or(Type::UNIT))
         } else {
             self.declare(name, ty, BindingKind::Unwrapped(keyword), None)
-        };
-        (bind, self.scoped_block(block, expected))
+        }
     }
 
     /// A new local with no source name, for a value the lowering binds.

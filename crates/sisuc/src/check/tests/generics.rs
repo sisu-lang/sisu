@@ -1038,6 +1038,110 @@ fn generic_methods_should_wait_for_context() {
     );
 }
 
+/// An `if let` and a `match` wait as an `if` does, each branch ranked in the scope that holds
+/// what its pattern binds.
+#[test]
+fn if_let_and_match_should_wait_for_context() {
+    infers(&[
+        (
+            "fn g(b: Box<i64>, o: i64?) {\n    let xs: [i64] = id(if let n = o { b.make() } else { [] })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "fn g(o: Box<i64>?) {\n    let xs: [i64] = id(if let n = o { n.make() } else { [] })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "fn g(o: Box<i64>?) {\n    let xs: [i64] = id(id(if let n = o { n.make() } else { [] }))\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nfn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) => []\n        Empty => b.make()\n    })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nfn g(e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) => x.make()\n        Empty => []\n    })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nfn g(e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) => {\n            let y = 1\n            x.make()\n        }\n        Empty => []\n    })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nfn g(e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) if x.v > 0 => x.make()\n        _ => []\n    })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+    ]);
+    // A guard sees the pattern's `x`, not the `x` its body declares after it.
+    let arm = "Has(x) if x.v > 0 => {\n            let x = 1\n            [x]\n        }";
+    let missing = "Has(x) if y > 0 => {\n            let y = 1\n            [y]\n        }";
+    for (open, close) in [("id(", ")"), ("id(id(", "))")] {
+        let src = |arm: &str| {
+            format!(
+                "enum Slot {{\n    Has(Box<i64>)\n    Empty\n}}\nfn g(e: Slot) {{\n    let xs: [i64] = {open}match e {{\n        {arm}\n        _ => []\n    }}{close}\n}}"
+            )
+        };
+        clean(&with_generics(&src(arm)));
+        codes(
+            &with_generics(&src(missing)),
+            &[(Code::BindingNotFound, (7, 19))],
+        );
+    }
+}
+
+/// Ranking an `if let` or a `match` checks its value and binds each ranked branch's pattern
+/// once: what the pattern reports, it reports once, and each name it binds is one local.
+#[test]
+fn ranked_patterns_should_report_and_bind_once() {
+    const SLOT: &str =
+        "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nenum One { Only(Box<i64>) }\n";
+    for (body, expected) in [
+        (
+            "fn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(if let Slot.Nope(x) = e { b.make() } else { [] })\n}",
+            vec![(Code::UnknownVariant, (7, 36))],
+        ),
+        (
+            "fn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(match e {\n        Nope(x) => b.make()\n        _ => []\n    })\n}",
+            vec![(Code::UnknownVariant, (8, 9))],
+        ),
+        (
+            "fn g(e: One) {\n    let xs: [i64] = id(if let Only(x) = e { x.make() } else { [] })\n}",
+            vec![(Code::AlwaysMatches, (7, 31))],
+        ),
+    ] {
+        codes(&with_generics(&format!("{SLOT}{body}")), &expected);
+    }
+    for (body, name) in [
+        (
+            "fn g(o: Box<i64>?) {\n    let xs: [i64] = id(if let n = o { n.make() } else { [] })\n}",
+            "n",
+        ),
+        (
+            "fn g(o: Box<i64>?) {\n    let xs: [i64] = id(id(if let n = o { n.make() } else { [] }))\n}",
+            "n",
+        ),
+        (
+            "fn g(e: Slot) {\n    let xs: [i64] = id(id(match e {\n        Has(x) if x.v > 0 => x.make()\n        _ => []\n    }))\n}",
+            "x",
+        ),
+    ] {
+        let (program, ds) = checked(&with_generics(&format!("{SLOT}{body}")));
+        assert!(ds.is_empty(), "{body}: {ds:?}");
+        let program = program.expect("a program without diagnostics should have a tir");
+        let g = program.functions.iter().find(|f| f.name == "g");
+        let g = g.expect("the program should hold `g`");
+        let bound = g.locals.iter().filter(|l| l.name.as_deref() == Some(name));
+        assert_eq!(bound.count(), 1, "{body}");
+    }
+}
+
 /// Each binding is checked once, and a failed one undoes only what it bound, so inference's
 /// work grows with a call's type parameters, not with their square.
 #[test]

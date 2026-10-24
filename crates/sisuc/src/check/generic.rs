@@ -7,6 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
 use super::expr::{int_literal, rank};
+use super::pattern::{LetPattern, LetValue, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
@@ -14,7 +15,7 @@ use super::{
     built_in_type, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ArgumentsForm, MainForm};
+use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -218,12 +219,40 @@ fn fits(
 }
 
 /// Work that ranking an argument did ahead of its turn (see `needs_context`), kept in
-/// `body.ahead` by the span it was done for until checking reaches it: a method's checked
-/// receiver, or a block's scope and its statements before its value. It lives no longer than
+/// `body.ahead` by the span it was done for until checking reaches it. It lives no longer than
 /// the generic call that ranked it, nor than the diagnostics and locals it made.
 pub(super) enum Ahead {
+    /// A method's checked receiver, or a `match`'s scrutinee.
     Receiver(Checked),
+    /// An `if let`'s value, as `let_value` gives it.
+    Let(Checked, LetValue, bool),
+    /// A block's scope, and its statements before its value.
     Block(FxHashMap<Symbol, Binding>, BlockSoFar),
+    /// A branch with a pattern, an `if let`'s first block or a `match` arm: what the pattern
+    /// bound, the arm's checked guard, the scope that holds the pattern's names and the
+    /// branch's statements, and its statements before its value (none for an arm whose body
+    /// is not a block).
+    Bound(
+        LetPattern,
+        Option<Checked>,
+        FxHashMap<Symbol, Binding>,
+        BlockSoFar,
+    ),
+}
+
+/// Whether one of `branches` has a value, and each that has one needs context: each is `None`
+/// when its branch ends in an exit, else whether its value needs context. It stops at the first
+/// value that does not, so the branches after it are not ranked.
+fn branches_wait(branches: impl IntoIterator<Item = Option<bool>>) -> bool {
+    let mut any = false;
+    for waits in branches {
+        match waits {
+            None => {}
+            Some(true) => any = true,
+            Some(false) => return false,
+        }
+    }
+    any
 }
 
 /// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
@@ -532,12 +561,13 @@ impl Checker<'_> {
     }
 
     /// Whether `e`'s type cannot come from itself: a bare `[]` or `None`; a payload-free
-    /// variant of a generic enum; an array literal whose elements all need context; an `if` or
-    /// a block whose every value branch does; or a call of a generic function or method, or a
-    /// construction of a generic class or variant, its type arguments not written, whose
-    /// arguments fit its declaration and all need context. A name resolves as the checker
-    /// resolves it: a call's callee by its declaration, whatever local takes it. A method's
-    /// receiver is checked here, ahead of its call, and kept for it (see `receiver_ahead`).
+    /// variant of a generic enum; an array literal whose elements all need context; an `if`, an
+    /// `if let` or a `match` whose every value branch does, or a block whose value does; or a
+    /// call of a generic function or method, or a construction of a generic class or variant,
+    /// its type arguments not written, whose arguments fit its declaration and all need
+    /// context. A name resolves as the checker resolves it: a call's callee by its declaration,
+    /// whatever local takes it. A method's receiver, an `if let`'s value and a `match`'s
+    /// scrutinee are checked here, ahead of their turn, and kept for it (see `Ahead`).
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
     pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
@@ -594,8 +624,32 @@ impl Checker<'_> {
                 then_block,
                 else_block: Some(else_block),
                 ..
-            } => return self.branches_wait(&[then_block, else_block], fit),
-            K::Block(block) => return self.branches_wait(&[block], fit),
+            } => {
+                let blocks = [then_block, else_block];
+                return branches_wait(blocks.map(|b| self.block_waits(b, fit, |_| None)));
+            }
+            K::IfLet {
+                pattern,
+                value,
+                then_block,
+                else_block: Some(else_block),
+            } => return self.if_let_waits(pattern, value, then_block, else_block, fit),
+            K::Match {
+                scrutinee, arms, ..
+            } => {
+                let form = LetValue::Match {
+                    ty: self.value_ahead(scrutinee).filter(|&ty| matchable(ty)),
+                };
+                return branches_wait(arms.iter().map(|arm| {
+                    let bind =
+                        |c: &mut Self| Some(c.bind_pattern(None, &form, &arm.pattern, Some(arm)));
+                    match &arm.body.kind {
+                        K::Block(block) => self.block_waits(block, fit, bind),
+                        _ => Some(self.tail_waits(arm.body.span, None, &arm.body, fit, bind)),
+                    }
+                }));
+            }
+            K::Block(block) => return self.block_waits(block, fit, |_| None) == Some(true),
             _ => return false,
         };
         let waits = generic && args.iter().all(|arg| self.waits(&arg.value, fit));
@@ -603,45 +657,100 @@ impl Checker<'_> {
         waits
     }
 
-    /// Whether one of `blocks` ends in a value, and each that does needs context; one that
-    /// ends in an exit has none.
-    fn branches_wait(&mut self, blocks: &[&ast::Block], fit: &mut bool) -> bool {
-        let mut any = false;
-        for block in blocks {
-            match block.stmts.last().map(|stmt| &stmt.kind) {
-                Some(StmtKind::Return(_) | StmtKind::Break { .. } | StmtKind::Continue { .. }) => {}
-                Some(StmtKind::Expr(tail)) if self.tail_waits(block, tail, fit) => any = true,
-                _ => return false,
-            }
-        }
-        any
+    /// Whether the `if let pattern = value { then_block } else { else_block }` waits, as
+    /// `branches_wait` decides. Its value is checked once, and kept for it (see `Ahead::Let`).
+    fn if_let_waits(
+        &mut self,
+        pattern: &ast::Pattern,
+        value: &ast::Expr,
+        then_block: &ast::Block,
+        else_block: &ast::Block,
+        fit: &mut bool,
+    ) -> bool {
+        // Ranked before: its value comes back to bind the first block, and goes back after.
+        let kept = self.kept(value.span, false);
+        let (index, checked, form, mismatched) =
+            if let Some((index, Ahead::Let(checked, form, mismatched))) = kept {
+                (index, checked, form, mismatched)
+            } else {
+                // An argument is not part of an assignment target's chain.
+                let target = std::mem::take(&mut self.body.in_target);
+                let (checked, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
+                self.body.in_target = target;
+                let index = self.keep((value.span, false), None);
+                (index, checked, form, mismatched)
+            };
+        let then = self.block_waits(then_block, fit, |c| {
+            Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None))
+        });
+        self.body.ahead[index].1 = Some(Ahead::Let(checked, form, mismatched));
+        let other = iter::once_with(|| self.block_waits(else_block, fit, |_| None));
+        branches_wait(iter::once(then).chain(other))
     }
 
-    /// Whether `tail`, the value of `block`, needs context, in the block's scope: the
-    /// statements before it are checked here, once, and kept with that scope for `block`.
-    fn tail_waits(&mut self, block: &ast::Block, tail: &ast::Expr, fit: &mut bool) -> bool {
+    /// Whether `block` ends in a value that needs context (see `tail_waits`, which `bind` binds
+    /// for); `None` when it ends in an exit, which leaves no value.
+    fn block_waits(
+        &mut self,
+        block: &ast::Block,
+        fit: &mut bool,
+        bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
+    ) -> Option<bool> {
+        match block.stmts.last().map(|stmt| &stmt.kind) {
+            Some(StmtKind::Return(_) | StmtKind::Break { .. } | StmtKind::Continue { .. }) => None,
+            Some(StmtKind::Expr(tail)) => {
+                Some(self.tail_waits(block.span, Some(block), tail, fit, bind))
+            }
+            _ => Some(false),
+        }
+    }
+
+    /// Whether `tail`, the value of the branch at `key`, needs context, in the branch's scope:
+    /// what `bind` binds there, if anything, and the statements of `block` before `tail` are
+    /// checked here, once, and kept with that scope for the branch (see `Ahead`). `block` is
+    /// `None` for a `match` arm whose body is `tail`.
+    fn tail_waits(
+        &mut self,
+        key: Span,
+        block: Option<&ast::Block>,
+        tail: &ast::Expr,
+        fit: &mut bool,
+        bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
+    ) -> bool {
         // Ranked before: its scope comes back for the value, and goes back after.
-        let (index, so_far) =
-            if let Some((index, Ahead::Block(scope, so_far))) = self.kept(block.span, true) {
-                self.body.scopes.push(scope);
-                (index, so_far)
-            } else {
-                self.body.scopes.push(FxHashMap::default());
-                let mut so_far = BlockSoFar::default();
-                // A statement is not part of an assignment target's chain.
-                let target = std::mem::take(&mut self.body.in_target);
+        let kept = match self.kept(key, true) {
+            Some((index, Ahead::Block(scope, so_far))) => Some((index, None, scope, so_far)),
+            Some((index, Ahead::Bound(bound, guard, scope, so_far))) => {
+                Some((index, Some((bound, guard)), scope, so_far))
+            }
+            _ => None,
+        };
+        let (index, bound, so_far) = if let Some((index, bound, scope, so_far)) = kept {
+            self.body.scopes.push(scope);
+            (index, bound, so_far)
+        } else {
+            self.body.scopes.push(FxHashMap::default());
+            // Neither a pattern's guard nor a statement is part of an assignment target's chain.
+            let target = std::mem::take(&mut self.body.in_target);
+            let bound = bind(self);
+            let mut so_far = BlockSoFar::default();
+            if let Some(block) = block {
                 self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
-                self.body.in_target = target;
-                // Its place, held before the value's ranking keeps work of its own.
-                (self.keep((block.span, true), None), so_far)
-            };
+            }
+            self.body.in_target = target;
+            // Its place, held before the value's ranking keeps work of its own.
+            (self.keep((key, true), None), bound, so_far)
+        };
         let waits = self.waits(tail, fit);
         let scope = self
             .body
             .scopes
             .pop()
-            .expect("the block's scope should be open while its value is ranked");
-        self.body.ahead[index].1 = Some(Ahead::Block(scope, so_far));
+            .expect("the branch's scope should be open while its value is ranked");
+        self.body.ahead[index].1 = Some(match bound {
+            Some((bound, guard)) => Ahead::Bound(bound, guard, scope, so_far),
+            None => Ahead::Block(scope, so_far),
+        });
         waits
     }
 
@@ -728,24 +837,34 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        let kept = self
-            .body
-            .ahead_at
-            .get(&(receiver.span, false))
-            .and_then(|&index| {
-                #[cfg(test)]
-                INSPECTED.set(INSPECTED.get() + 1);
-                self.body.ahead[index].1.as_ref()
-            });
+        self.value_ahead(receiver)
+    }
+
+    /// `e` checked as a value: as ranking checked it ahead, a method's receiver or a `match`'s
+    /// scrutinee (see `value_ahead`), else now.
+    pub(super) fn value_kept(&mut self, e: &ast::Expr) -> Checked {
+        match self.kept(e.span, false) {
+            Some((_, Ahead::Receiver(checked))) => checked,
+            _ => self.value(e, None),
+        }
+    }
+
+    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`.
+    fn value_ahead(&mut self, e: &ast::Expr) -> Option<Type> {
+        let kept = self.body.ahead_at.get(&(e.span, false)).and_then(|&index| {
+            #[cfg(test)]
+            INSPECTED.set(INSPECTED.get() + 1);
+            self.body.ahead[index].1.as_ref()
+        });
         if let Some(Ahead::Receiver(checked)) = kept {
             return type_of(checked);
         }
         // An argument is not part of an assignment target's chain.
         let target = std::mem::take(&mut self.body.in_target);
-        let checked = self.value(receiver, None);
+        let checked = self.value(e, None);
         self.body.in_target = target;
         let ty = type_of(&checked);
-        self.keep((receiver.span, false), Some(Ahead::Receiver(checked)));
+        self.keep((e.span, false), Some(Ahead::Receiver(checked)));
         ty
     }
 
