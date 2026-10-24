@@ -888,8 +888,8 @@ impl Checker<'_> {
     }
 
     /// Marks `span`, an `a<b, c>(d)` whose type arguments `types` took a comma, as misread when
-    /// it does not check: the comma may be its argument list's, whose count is then not
-    /// reported (see `misread_in`).
+    /// it does not check and the first and last of `types` name no type: the comma may be its
+    /// argument list's, whose count is then not reported (see `misread_in`).
     pub(super) fn misread_unless_checked(
         &mut self,
         span: Span,

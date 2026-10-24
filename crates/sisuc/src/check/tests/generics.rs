@@ -266,9 +266,9 @@ fn a_failed_list_with_a_comma_should_hide_the_count() {
     }
 }
 
-/// A list that no comparison could be, such as `<i64, bool>`, was accepted as type arguments, so
-/// the errors of its own call stand and the call around it reports its own too. A list whose
-/// ends name no type could be comparisons, and keeps the outer call's errors hidden.
+/// Lists such as `<i64, bool>` cannot be comparisons. Their inner errors do not hide the errors
+/// of the outer call. A list whose ends name no type could be comparisons, and it keeps the
+/// outer errors hidden.
 #[test]
 fn accepted_type_arguments_should_keep_outer_errors() {
     let decls = "fn h(a: bool, b: bool) -> bool { a }\nfn two<T, U>(t: T, u: U) -> bool { true }\nfn three<T, U, V>(t: T, u: U, v: V) -> bool { true }\nclass C {\n    v: i64\n}\nclass Box<T> {\n    v: T\n    fn two<U, V>(self, u: U, v: V) -> bool { true }\n}\nfn main() {}";
@@ -293,6 +293,14 @@ fn accepted_type_arguments_should_keep_outer_errors() {
             vec![
                 (Code::ArgumentCount, (1, 27)),
                 (Code::ArgumentCount, (1, 29)),
+            ],
+        ),
+        // An array type is no name, so it cannot join a comparison.
+        (
+            "fn f() { h(two<[i64], [bool]>([1])) }",
+            vec![
+                (Code::ArgumentCount, (1, 10)),
+                (Code::ArgumentCount, (1, 12)),
             ],
         ),
         // A name that is a class names a type, even when a local takes its spelling.
