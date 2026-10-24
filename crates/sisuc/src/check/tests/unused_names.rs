@@ -461,3 +461,30 @@ fn field_should_cite_a_dead_comparison_only_when_it_has_fewer_than_three_reads()
         ]
     );
 }
+
+#[test]
+fn variant_should_cite_a_dead_build_of_a_later_variant() {
+    judge_unused();
+    let src = format!(
+        "{LIGHT}fn old_report() -> Light {{\n    Light.Green\n}}\nfn main() {{\n    let l = Light.Red\n    print(l == Light.Red)\n}}"
+    );
+    assert_eq!(
+        found(&src),
+        [(W0013, (3, 5), vec![(6, 5)]), (W0012, (5, 4), vec![])]
+    );
+}
+
+#[test]
+fn field_should_cite_each_dead_comparison_when_two_start_at_one_place() {
+    judge_unused();
+    // The `contains` call and the `==` around it start at one place.
+    let src = "class P {\n    x: i64\n}\nclass Q {\n    y: i64\n}\nfn old_report(p: P, q: Q) {\n    print([p].contains(p) == [q].contains(q))\n}\nfn main() {\n    let _ = P(x: 1)\n    let _ = Q(y: 2)\n}";
+    assert_eq!(
+        found(src),
+        [
+            (W0013, (2, 5), vec![(8, 11)]),
+            (W0013, (5, 5), vec![(8, 30)]),
+            (W0012, (7, 4), vec![]),
+        ]
+    );
+}

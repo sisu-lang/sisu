@@ -250,7 +250,7 @@ impl Checker<'_> {
                 Used::Equal(_) => {}
             }
         }
-        for (c, first) in self.dead_comparisons(&reached.live).into_iter().enumerate() {
+        for (c, first) in self.dead_comparisons().into_iter().enumerate() {
             let Some(i) = first else { continue };
             let fields = slots.fields[c]..slots.fields[c] + self.classes[c].fields.len();
             for list in &mut cited[fields] {
@@ -272,17 +272,17 @@ impl Checker<'_> {
         first.truncate(3);
     }
 
-    /// By class, the first comparison in dead code, in source order, that reads the class's
-    /// fields. The walks share one set of types, so the dead comparisons together cost time linear
-    /// in their types.
-    fn dead_comparisons(&self, live: &[bool]) -> Vec<Option<usize>> {
-        let functions = self.signatures.len();
+    /// By class, the first comparison, in source order, that reads the class's fields. For a
+    /// class that a field is reported in, no live comparison reads the fields, so that comparison
+    /// is in dead code. The walks share one set of types, so the comparisons together cost time
+    /// linear in their types.
+    fn dead_comparisons(&self) -> Vec<Option<usize>> {
         let dead = self
             .uses
             .iter()
             .enumerate()
             .filter_map(|(i, u)| match u.to {
-                Used::Equal(ty) if !live[u.from.index(functions)] => Some((u.at.start(), (i, ty))),
+                Used::Equal(ty) => Some((u.at.start(), (i, ty))),
                 _ => None,
             });
         let mut first = vec![None; self.classes.len()];
