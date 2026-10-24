@@ -2420,3 +2420,15 @@ mod arithmetic {
         }
     }
 }
+
+/// GIVEN the stderr of a build whose source quotes `warning[W0012]` in a string, under a W0002
+/// AND the stderr of a build with a real W0012
+/// WHEN the run harness looks for an unused-name warning in each
+/// THEN it finds none in the first and one in the second
+#[test]
+fn unused_warning_should_match_only_a_diagnostic_first_line() {
+    let quoted = "warning[W0002]: `n` is never reassigned\n --> fib.sisu:6:13\n  |\n6 |     let mut n = 30; let _ = \"warning[W0012]\"\n  |             ^\n  |\nhelp: declare it with `let`\n  |\n6 -     let mut n = 30; let _ = \"warning[W0012]\"\n6 +     let n = 30; let _ = \"warning[W0012]\"\n  |\n\nsisu: 1 warning\nsisu: for more on a code, run `sisu explain <code>`: W0002\n";
+    let real = "warning[W0012]: function `probe` is never called\n --> fib.sisu:4:4\n  |\n4 | fn probe() {}\n  |    ^^^^^ never called\n  |\n\nsisu: 1 warning\nsisu: for more on a code, run `sisu explain <code>`: W0012\n";
+    assert!(!support::has_unused_warning(quoted));
+    assert!(support::has_unused_warning(real));
+}

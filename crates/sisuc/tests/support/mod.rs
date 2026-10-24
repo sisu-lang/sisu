@@ -47,6 +47,14 @@ pub(crate) fn compile(dir: &Path, name: &str, exe: &Path, flags: &[&str]) -> Vec
 /// The unused-name warnings that no case may get. A case can keep other warnings.
 const UNUSED: [&str; 3] = ["warning[W0012]", "warning[W0013]", "warning[W0014]"];
 
+/// Whether `stderr` holds an `UNUSED` warning: a line that starts with one, as a diagnostic's
+/// first line does. A source line in an excerpt starts with its line number, so it does not count.
+pub(crate) fn has_unused_warning(stderr: &str) -> bool {
+    stderr
+        .lines()
+        .any(|line| UNUSED.iter().any(|code| line.starts_with(code)))
+}
+
 /// The marker line that gives a case's arguments: `// args: <arg> <arg> ...`.
 const ARGS: &str = "// args:";
 
@@ -464,7 +472,7 @@ fn build<const N: usize>(path: &Path, builds: [Build; N]) -> [PathBuf; N] {
         let stderr = compile(dir, name, &exe, flags);
         let stderr = String::from_utf8_lossy(&stderr);
         assert!(
-            !UNUSED.iter().any(|code| stderr.contains(code)),
+            !has_unused_warning(&stderr),
             "{}: an unused name, which the case must not have:\n{stderr}",
             path.display()
         );
