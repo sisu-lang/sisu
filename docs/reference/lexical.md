@@ -194,7 +194,7 @@ fn main() {
 8
 ```
 
-When the line break before it ends a statement, a `-` with no space or tab after it is a negation that starts a new statement. So in this example, `n` stays 10, and `-2` is an unused value ([W0004](../diagnostics/W0004.md)).
+When the line break before it ends a statement, a `-` with no space or tab after it is a negation. The negation starts a new statement. So in this example, `n` stays 10, and `-2` is an unused value ([W0004](../diagnostics/W0004.md)).
 
 ```sisu
 fn main() {
