@@ -9,3 +9,59 @@ description = "Source text, comments, names, keywords, line breaks and semicolon
 [[page]]
 file = "literals"
 description = "Integer, float, character, string and boolean literals, and their escapes."
+
+[[page]]
+file = "types"
+description = "The built-in types, optionals, never and the conversions between types."
+
+[[page]]
+file = "operators"
+description = "Each operator, its precedence, comparison chains, overflow and division by zero."
+
+[[page]]
+file = "expressions"
+description = "Blocks, if, match and loop as expressions, calls, fields, indexes and the order of evaluation."
+
+[[page]]
+file = "statements"
+description = "Bindings, assignment, constants, loops, loop labels, break, continue, return and reachability."
+
+[[page]]
+file = "functions"
+description = "Declarations, parameters, return types, recursion, main, panic and todo."
+
+[[page]]
+file = "classes"
+description = "Fields, mut fields, constructors, methods, self and object identity."
+
+[[page]]
+file = "enums"
+description = "Enums, variants, match, every pattern form, guards, coverage, if let and while let."
+
+[[page]]
+file = "arrays"
+description = "Array literals, filled arrays, indexes, for, methods, equality and copy-on-write."
+
+[[page]]
+file = "values"
+description = "What is copied and what is shared, is and ==, object lifetime and cycles."
+
+[[page]]
+file = "strings"
+description = "Strings and bytes, the methods of a string, how a value becomes text, and format specs."
+
+[[page]]
+file = "io"
+description = "print, eprint, read_line, program arguments and the exit code."
+
+[[page]]
+file = "generics"
+description = "Type parameters and arguments, inference, what a generic body can do, bounds, interfaces, type aliases and interface values."
+
+[[page]]
+file = "closures"
+description = "Function types, closures, captures, weak captures, iterators and the iterator methods."
+
+[[page]]
+file = "errors"
+description = "Results written T | E, fail, the ? operator, handling a failure, unused results, a main that fails and files."

@@ -23,7 +23,7 @@ A source file is text in UTF-8 ([E0072](../diagnostics/E0072.md)). A line ends w
 Outside comments and literals, the source uses only these characters:
 
 - The ASCII letters, the digits and `_`.
-- The characters of the operators and punctuation, such as `+`, `(` and `"`.
+- The characters of the [operators](operators.md) and punctuation, such as `+`, `(` and `"`.
 - Spaces, tabs and carriage returns. They separate tokens and have no other meaning.
 
 A carriage return without a line feed does not end a line. So two statements with only a carriage return between them are an error ([E0011](../diagnostics/E0011.md)).
@@ -88,8 +88,8 @@ fn main() {
 The rules:
 
 - A name cannot be a keyword or a reserved word.
-- `_` alone is not a name. It is a keyword that `let`, `for` and `match` use to bind nothing.
-- The built-in functions and types, such as `print`, `i64` and `string`, are names, not keywords.
+- `_` alone is not a name. It is a keyword that `let`, `for` and [`match`](enums.md#patterns) use to bind nothing.
+- The built-in functions and [types](types.md), such as `print`, `i64` and `string`, are names, not keywords.
 
 ## Keywords
 
@@ -194,7 +194,7 @@ fn main() {
 8
 ```
 
-When the line break before it ends a statement, a `-` with no space or tab after it is a negation that starts a new statement. So in this example, `n` stays 10, and `-2` is an unused value ([W0004](../diagnostics/W0004.md)).
+When the line break before it ends a statement, a `-` with no space or tab after it is a negation. The negation starts a new statement. So in this example, `n` stays 10, and `-2` is an unused value ([W0004](../diagnostics/W0004.md)).
 
 ```sisu
 fn main() {
@@ -255,7 +255,7 @@ fn main() {
 The rules:
 
 - After a top-level `const`, a `;` separates it from an item after it on the same line: `const X = 1; fn main() {}`.
-- Inside `(` and `[`, a `;` is an error ([E0011](../diagnostics/E0011.md)). The `;` in `[value; length]` is part of the array syntax.
+- Inside `(` and `[`, a `;` is an error ([E0011](../diagnostics/E0011.md)). The `;` in `[value; length]` is part of the [array syntax](arrays.md#filled-arrays).
 - When removing a `;` would join two lines into a different statement, the `;` is an error, not a warning ([E0011](../diagnostics/E0011.md)).
 
 ## Line continuation
