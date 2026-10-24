@@ -14,6 +14,8 @@ from typing import Callable, NamedTuple
 TEST_DIR = re.compile(r'^crates/[^/]+/(?:tests/|src/(?:.+/)?tests(?:\.rs$|/))')
 # A panic that states an invariant, which no test should reach.
 INVARIANT = re.compile(r'\b(?:unreachable|panic)!\(')
+# An assert's message arguments run only when it fails, so on a line that ran they stay at zero.
+ASSERT = re.compile(r'\b(?:debug_)?assert(?:_eq|_ne)?!\(')
 HUNK = re.compile(r'^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
 
 
@@ -131,6 +133,8 @@ def report(export: dict, lcov: str, diff: str, root: str,
             else:
                 text = f'{path}:{r.start}:{r.start_col}-{r.end}:{r.end_col}: {source}'
             hit = any(n in changed[path] for n in range(r.start, r.end + 1)) and not INVARIANT.search(line)
+            if not r.never_run and ASSERT.search(line) and hits.get(path, {}).get(r.start, 0) > 0:
+                hit = False
             (touching if hit else other).append(text)
     return (f'{head}\n\nUncovered regions touching changed code:\n' + '\n'.join(touching or ['(none)'])
             + '\n\nOther uncovered regions in changed files (advisory):\n' + '\n'.join(other or ['(none)']))
