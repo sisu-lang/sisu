@@ -398,6 +398,30 @@ fn main() {
 }
 ```
 
+## unit
+
+`unit` is the type of an expression that gives no value, such as a call of `print`. It is an ordinary type. A program can write it, for example in `-> unit`.
+
+```sisu pending
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let u = print("x")                 // x
+    let v = id(u)
+    print(u == v)                      // true
+    print(u)                           // ()
+}
+```
+
+The rules:
+
+- `unit` can be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`. This lifts the rule in [Type arguments](generics.md#type-arguments).
+- `unit` has no literal. A `unit` value comes from a call, such as `print(...)`.
+- A program can bind, pass, store, return and compare a `unit` value. All `unit` values are equal.
+- A `unit` value prints as `()`.
+
 ## Conversions
 
 A *conversion* is a call written with the name of a type, such as `f64(n)`. Sisu never converts a value to another type without one, except an integer literal ([Literals](literals.md#the-type-of-an-integer-literal)) and a `T` that becomes a `T?`.

@@ -167,6 +167,21 @@ fn main() {
 }
 ```
 
+### A call without a value
+
+A function without a return type has the return type `unit`. A call of it is a `unit` value, which a program can bind and compare ([unit](types.md#unit)).
+
+```sisu pending
+fn log(text: string) {
+    print(text)
+}
+
+fn main() {
+    let u = log("hi")
+    print(u == log("hi"))
+}
+```
+
 ## Recursion
 
 A function can call itself, and two functions can call each other.
