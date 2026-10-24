@@ -551,6 +551,49 @@ fn generic_enums_should_be_built_only_from_arguments_that_can_be() {
     }
 }
 
+/// A key that `needs` or the chain asks for after `run` ends is built as `run` would build it,
+/// so the classes that need it are reported as the others are.
+#[test]
+fn generic_keys_found_after_the_fixed_point_should_be_built_before_they_are_read() {
+    for (src, expected) in [
+        // `needs` adds the key `C<X, N>` after `run`, with `X` built late. That key is built.
+        // So the chain skips `N.c`, reports `N` through `N.w`, and does not stop at `C`.
+        (
+            "class Y {\n}\nclass X {\n    y: Y\n}\nclass C<A, B> {\n    y: Y\n}\nclass W<T> {\n    t: T\n}\nclass N {\n    c: C<X, N>\n    w: W<N>\n}",
+            vec![(Code::NeverConstructed, (12, 7))],
+        ),
+        // The flags of this key changed after its field was found buildable. The chain asks
+        // for `C<X, N>` with `X` built, but `run` interned only `C<X, N>` with `X` not built.
+        (
+            "class Y {\n}\nclass X {\n    y: Y\n}\nclass C<A, B> {\n}\nclass W<T> {\n    c: C<X, T>\n    t: T\n}\nclass N {\n    w: W<N>\n}",
+            vec![(Code::NeverConstructed, (12, 7))],
+        ),
+        // `U` needs nothing but itself once `C<X, Bad>` is known to be built. A late key that
+        // stays unbuilt makes `U` seem to need `Bad`, and then `U` is not reported.
+        (
+            "class Y {\n}\nclass X {\n    y: Y\n}\nclass C<A, B> {\n    y: Y\n}\nclass W<T> {\n    t: T\n}\nclass Bad {\n    w: W<Bad>\n}\nclass U {\n    c: C<X, Bad>\n    w: W<U>\n}",
+            vec![
+                (Code::NeverConstructed, (12, 7)),
+                (Code::NeverConstructed, (15, 7)),
+            ],
+        ),
+        // The two programs of issue 178, in which only `K3` and only `K5` cannot be built.
+        (
+            "class P {\n}\nclass Q {\n}\nclass K0<T0> {\n    f1: K2<K1<P, Q>, K2<[T0], T0>>\n}\nclass K1<T0, T1> {\n}\nclass K2<T0, T1> {\n}\nclass K3<T0, T1> {\n    f1: K4<K3<T1, K0<T0>>, K1<Q, [T0]>>\n}\nclass K4<T0, T1> {\n    f0: K1<K1<K3<T1, P>, K0<Q>>, K3<T1, T1>>\n    f1: T0\n}",
+            vec![(Code::NeverConstructed, (12, 7))],
+        ),
+        (
+            "class P {\n}\nclass Q {\n}\nclass K0 {\n}\nclass K1<T0, T1, T2> {\n}\nclass K2<T0, T1, T2> {\n    f0: K1<K3<[T1], T2>, K1<K1<T2, T2, T0>, i64, T0>, [K3<T1, T0>]>\n}\nenum K3<T0, T1> {\n}\nclass K4<T0, T1> {\n    f0: T0\n}\nclass K5<T0> {\n    f0: K2<K4<K1<P, P, T0>, K0>, K5<i64>, K1<[Q], [i64], [Q]>>\n    f1: K4<K5<K0>, K1<K3<T0, T0>, [P], K0>>\n}",
+            vec![
+                (Code::EmptyEnum, (12, 6)),
+                (Code::NeverConstructed, (17, 7)),
+            ],
+        ),
+    ] {
+        codes(&format!("{src}\nfn main() {{}}"), &expected);
+    }
+}
+
 /// A field that cannot be built yet is scanned again only once a key it consulted is built, so
 /// an enum of `n` fields, each of an enum built later or of a class wrapping one, costs a few
 /// scans per field.

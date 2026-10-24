@@ -3,7 +3,7 @@
 
 use std::{fmt, mem};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::generic::{GenericSig, Site, mismatched};
 use super::unused_names::Used;
@@ -525,7 +525,7 @@ impl Checker<'_> {
                 continue;
             }
             reported[component[n]] = true;
-            let chain = self.chain(n, &fix);
+            let chain = self.chain(n, &mut fix);
             let name = if n < classes {
                 &self.classes[n].name
             } else {
@@ -546,7 +546,7 @@ impl Checker<'_> {
     /// can be built by `fix`: each link's holder (`E.V` or `K.f`) and the type held, with the
     /// arguments the chain gives it. At an enum it takes the first variant's first such field,
     /// at a class the first such field, and it ends at the first type it meets again.
-    fn chain(&self, start: usize, fix: &Buildable) -> Vec<(String, String)> {
+    fn chain(&self, start: usize, fix: &mut Buildable) -> Vec<(String, String)> {
         let classes = self.classes.len();
         let params = if start < classes {
             &self.classes[start].type_params
@@ -555,7 +555,7 @@ impl Checker<'_> {
         };
         // A field named `name` of type `ty`, if that type cannot be built: its name, its type's
         // name, and its node and arguments.
-        let unbuilt = |(name, ty): (&str, Type)| {
+        let mut unbuilt = |(name, ty): (&str, Type)| {
             let (n, args) = match ty.kind() {
                 TypeKind::Class(id, args) => (id.0, args),
                 TypeKind::Enum(id, args) => (classes + id.0, args),
@@ -565,10 +565,11 @@ impl Checker<'_> {
             (!fix.built[key]).then(|| (name.to_string(), self.type_name(ty), (n, args), key))
         };
         let mut chain = Vec::new();
-        let mut on_chain = vec![false; fix.keys.len()];
+        // Asking for a key's flags can add keys to `fix`, so this is a set.
+        let mut on_chain = FxHashSet::default();
         let (mut at, mut args) = (start, own_args(params));
         let mut key = start;
-        while !mem::replace(&mut on_chain[key], true) {
+        while on_chain.insert(key) {
             let with = args.get();
             let held = |ty: &Option<Type>| ty.map(|ty| ty.subst(with));
             let (holder, field) = if at < classes {
@@ -577,7 +578,7 @@ impl Checker<'_> {
                     .fields
                     .iter()
                     .filter_map(|f| Some((f.name.name.as_str(), held(&f.ty)?)));
-                (&class.name, fields.find_map(unbuilt))
+                (&class.name, fields.find_map(&mut unbuilt))
             } else {
                 let e = &self.enums[at - classes];
                 let mut fields = e.variants.first().into_iter().flat_map(|v| {
@@ -586,7 +587,7 @@ impl Checker<'_> {
                         .iter()
                         .filter_map(move |ty| Some((name, held(ty)?)))
                 });
-                (&e.name, fields.find_map(unbuilt))
+                (&e.name, fields.find_map(&mut unbuilt))
             };
             let (name, ty, next, next_key) =
                 field.expect("a type no value can be built of should need another such type");
@@ -744,6 +745,8 @@ struct Buildable {
     waiting: Vec<Vec<(usize, usize, usize, usize)>>,
     /// How many fields have been scanned.
     scans: usize,
+    /// Whether `run` is scanning.
+    scanning: bool,
     /// Fields of keys to try: a key, the index of one of its node's slots, and a field's.
     queue: Vec<(usize, usize, usize)>,
 }
@@ -799,6 +802,7 @@ impl Buildable {
             pending: Vec::new(),
             waiting: Vec::new(),
             scans: 0,
+            scanning: false,
             queue: Vec::new(),
         };
         for (n, &p) in params.iter().enumerate() {
@@ -811,7 +815,8 @@ impl Buildable {
         fix
     }
 
-    /// The key of `node` with `flags`, interned, its slots queued, when it is new.
+    /// The key of `node` with `flags`, interned when it is new. Outside `run`, a new key is
+    /// run at once, so every key is final. No earlier key waits for it, so it changes none.
     fn key(&mut self, node: usize, flags: Vec<bool>) -> usize {
         if flags.iter().all(|&f| f) {
             return node;
@@ -823,6 +828,9 @@ impl Buildable {
         let (node, flags) = id;
         let key = self.push(node, flags.clone());
         self.ids.insert((node, flags), key);
+        if !self.scanning {
+            self.run();
+        }
         key
     }
 
@@ -855,24 +863,22 @@ impl Buildable {
         key
     }
 
-    /// The key `node` has when given `args`, which `run` interned if a field holds it. A
-    /// type parameter in `args` is a chain's start's, whose arguments are all buildable.
-    fn key_of(&self, node: usize, args: TypeArgs) -> usize {
-        let flags: Vec<bool> = args.get().iter().map(|&arg| self.reached(arg)).collect();
-        if flags.iter().all(|&f| f) {
-            return node;
-        }
-        self.ids[&(node, flags)]
+    /// The key `node` has when given `args`. A type parameter in `args` is a chain's start's,
+    /// whose arguments are all buildable.
+    fn key_of(&mut self, node: usize, args: TypeArgs) -> usize {
+        let flags = args.get().iter().map(|&arg| self.reached(arg)).collect();
+        self.key(node, flags)
     }
 
-    /// Whether `ty` was found buildable, a type parameter's argument always.
-    fn reached(&self, ty: Type) -> bool {
+    /// Whether `ty` can be built, a type parameter's argument always.
+    fn reached(&mut self, ty: Type) -> bool {
         let (node, args) = match ty.kind() {
             TypeKind::Class(id, args) => (id.0, args),
             TypeKind::Enum(id, args) => (self.classes + id.0, args),
             _ => return true,
         };
-        self.built[self.key_of(node, args)]
+        let key = self.key_of(node, args);
+        self.built[key]
     }
 
     /// The declarations no value can be built of that the slots of `key` need, once the fixed
@@ -927,6 +933,7 @@ impl Buildable {
     /// holds. The first of them built queues it once more, so a field is scanned at most once
     /// for each key built that it consulted.
     fn run(&mut self) {
+        self.scanning = true;
         while let Some((key, s, f)) = self.queue.pop() {
             if self.built[key] {
                 continue;
@@ -952,6 +959,7 @@ impl Buildable {
                 }
             }
         }
+        self.scanning = false;
     }
 
     /// Marks `key` built, and queues each field waiting for it whose wait is live.
