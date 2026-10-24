@@ -134,6 +134,8 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
         "[if true { loop { break [] } } else { [1] }]",
         "[{ [] }]",
         "[match true { _ => None }]",
+        // The `else` block's value is a parenthesized `if`, which shares its span.
+        "[if true { [] } else { (if false { id([]) } else { [] }) }]",
     ];
     for literal in quiet {
         let src = format!(
