@@ -330,6 +330,36 @@ fn equal_should_read_the_fields_of_a_type_argument() {
 }
 
 #[test]
+fn equal_should_read_the_fields_of_each_argument_of_a_generic_class() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}class Q {{\n    y: i64\n}}\nclass Box<T> {{\n    v: T\n}}\nfn main() {{\n    let p = Box(v: P(x: 1))\n    let q = Box(v: Q(y: 2))\n    print(p == p)\n    print(q == q)\n}}"
+    ));
+}
+
+#[test]
+fn equal_should_read_no_field_of_an_argument_that_no_field_holds() {
+    judge_unused();
+    diagnostic(
+        &format!(
+            "{P_X}class Tag<T> {{\n    n: i64\n}}\nclass Outer<T> {{\n    tag: Tag<T>\n}}\nfn main() {{\n    let _ = P(x: 1)\n    let o = Outer(tag: Tag<P>(n: 1))\n    print(o == o)\n}}"
+        ),
+        W0013,
+        (2, 5, "x"),
+        &[],
+    );
+}
+
+#[test]
+fn equal_should_read_an_argument_held_through_a_class_declared_before_or_after() {
+    judge_unused();
+    // `Top` names `Box` before its declaration, and `Outer` names it after.
+    clean(&format!(
+        "{P_X}class Q {{\n    y: i64\n}}\nclass Top<T> {{\n    b: Box<T>?\n}}\nclass Box<T> {{\n    v: T\n}}\nclass Outer<T> {{\n    b: Box<[T]>\n}}\nfn main() {{\n    let p = Outer(b: Box(v: [P(x: 1)]))\n    let q = Top(b: Box(v: Q(y: 2)))\n    print(p == p)\n    print(q == q)\n}}"
+    ));
+}
+
+#[test]
 fn equal_should_read_the_fields_of_a_payload_type_argument() {
     judge_unused();
     clean(&format!(
