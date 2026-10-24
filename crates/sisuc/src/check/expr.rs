@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use super::generic::Site;
-use super::{Binding, Checked, Checker, Poisoned, UNKNOWN, payload, type_of, wrap};
+use super::{Binding, Checked, Checker, Poisoned, UNKNOWN, payload, tail, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
     Definition, Diagnostic, DiagnosticKind, Literal, MismatchSource, suggestion,
@@ -221,14 +221,19 @@ impl Checker<'_> {
                 keyword,
                 body,
             } => self.loop_expr(e.span, (*keyword, label.as_ref()), body, expected),
-            ExprKind::Block(block) => self.block(block, expected).map(|block| {
-                let ty = block.ty;
-                tir::Expr {
-                    kind: tir::ExprKind::Block(block),
-                    ty,
-                    span: e.span,
-                }
-            }),
+            ExprKind::Block(block) => {
+                let outer = self.pass_quiet(e.span, tail(block).map(|v| v.span), expected);
+                let checked = self.block(block, expected);
+                self.body.quiet_at = outer;
+                checked.map(|block| {
+                    let ty = block.ty;
+                    tir::Expr {
+                        kind: tir::ExprKind::Block(block),
+                        ty,
+                        span: e.span,
+                    }
+                })
+            }
         }
     }
 
@@ -330,9 +335,31 @@ impl Checker<'_> {
         (checked, false)
     }
 
+    /// Whether the expression at `span`, which expects `expected`, is the quiet value (see
+    /// `Body::quiet_at`).
+    pub(super) fn quiet(&self, span: Span, expected: Option<Type>) -> bool {
+        expected.is_none() && self.body.quiet_at == Some(span)
+    }
+
+    /// Moves the quiet value from `from` to `to`, the part that gives its value, when `to`
+    /// expects nothing (`expected`). Returns where it was, to put back after `to` is checked.
+    pub(super) fn pass_quiet(
+        &mut self,
+        from: Span,
+        to: Option<Span>,
+        expected: Option<Type>,
+    ) -> Option<Span> {
+        let outer = self.body.quiet_at;
+        if self.quiet(from, expected) {
+            self.body.quiet_at = to;
+        }
+        outer
+    }
+
     /// A `None`, of the optional type `expected`.
     fn none(&mut self, span: Span, expected: Option<Type>) -> Checked {
         let (kind, mismatch) = match expected {
+            _ if self.quiet(span, expected) => return Err(Poisoned::error()),
             Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
                 return Ok(tir::Expr {
                     kind: tir::ExprKind::None,

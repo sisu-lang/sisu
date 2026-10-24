@@ -138,7 +138,7 @@ impl Checker<'_> {
         let mut patterns: Vec<_> = arms.iter().map(|_| None).collect();
         let mut guards: Vec<_> = arms.iter().map(|_| None).collect();
         let form = LetValue::Match { ty: position };
-        let (blocks, ty) = self.join(&sources, expected, |c, i, expected| {
+        let (blocks, ty) = self.join(span, &sources, expected, |c, i, expected| {
             let arm = &arms[i];
             let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
                 c.bind_pattern(None, &form, &arm.pattern, Some(arm))

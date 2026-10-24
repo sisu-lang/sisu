@@ -198,8 +198,7 @@ struct LoopFrame {
     first: Option<(Type, Span)>,
     /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
     widened: bool,
-    /// Whether a value before the first expects `UNKNOWN`, with no `expected` type: a loop in
-    /// a quiet element joins its values, but takes no type from the failed context.
+    /// Whether the loop is a quiet value (see `Body::quiet_at`), and so its values are too.
     quiet: bool,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
@@ -395,9 +394,11 @@ struct Body {
     /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
     /// loop label there as the `break`'s label, so a fix must not write one there.
     break_start: Option<usize>,
-    /// Whether the expression being checked is in a concrete element of a literal whose
-    /// context failed (see `joined`). A `loop` there that expects `UNKNOWN` joins its values.
-    in_quiet_element: bool,
+    /// Where the quiet value is: an expression that has no expected type only because the
+    /// context of an array literal around it failed (see `joined`). Its value parts are quiet
+    /// too, and a quiet value that cannot be inferred is not reported, as the failed context
+    /// was reported. Only the expression at this span is quiet, not its operands.
+    quiet_at: Option<Span>,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,

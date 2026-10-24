@@ -132,6 +132,8 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
         "[[make(1)]]",
         "[id([])]",
         "[if true { loop { break [] } } else { [1] }]",
+        "[{ [] }]",
+        "[match true { _ => None }]",
     ];
     for literal in quiet {
         let src = format!(
@@ -176,6 +178,59 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
         ),
     ] {
         codes(src, &expected);
+    }
+}
+
+#[test]
+fn a_part_that_fails_on_its_own_in_a_quiet_element_should_add_no_report() {
+    // GIVEN a loop whose values do not join, in a part of the element that failed first
+    let looped = "loop {\n        if true { break 1 }\n        break true\n    }";
+    for (element, at, code) in [
+        (format!("nope + {looped}"), (2, 20), Code::BindingNotFound),
+        (format!("nope ?? {looped}"), (2, 20), Code::BindingNotFound),
+        (format!("nope({looped})"), (2, 20), Code::FunctionNotFound),
+        (
+            format!("if true {{ nope }} else {{ {looped} }}"),
+            (2, 30),
+            Code::BindingNotFound,
+        ),
+    ] {
+        // WHEN the element is checked in a literal whose context failed
+        let src = format!("fn main() {{\n    let xs: Bad = [{element}]\n}}");
+        // THEN only the failed context and the first failure are reported
+        codes(&src, &[(Code::UnknownType, (2, 13)), (code, at)]);
+    }
+    codes(
+        "fn f(b: u8) {\n    let xs: Bad = [nope + loop {\n        if true { break 1 }\n        break b\n    }]\n}\nfn main() {}",
+        &[
+            (Code::UnknownType, (2, 13)),
+            (Code::BindingNotFound, (2, 20)),
+        ],
+    );
+    // A loop that is the receiver of a field keeps its own report, as with no failed context.
+    codes(
+        &format!("fn main() {{\n    let xs: Bad = [{looped}.x]\n}}"),
+        &[(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+    );
+}
+
+#[test]
+fn branches_that_do_not_join_in_a_quiet_element_should_still_be_reported() {
+    for (src, at) in [
+        (
+            "fn main() {\n    let xs: Bad = [if true { [] } else { 1 }]\n}",
+            (2, 30),
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [if true { 1 } else { [] }]\n}",
+            (2, 41),
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [match true {\n        true => []\n        false => 1\n    }]\n}",
+            (3, 17),
+        ),
+    ] {
+        codes(src, &[(Code::UnknownType, (2, 13)), (Code::Mismatch, at)]);
     }
 }
 

@@ -283,6 +283,8 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
         let mark = self.body.ahead.len();
+        // The context of the quiet value failed, as an `UNKNOWN` one did.
+        let expected = expected.or(self.quiet(span, expected).then_some(UNKNOWN));
         let call = self.infer_call(span, sig, written, args, expected);
         // A key is kept again only once its last entry is used, so an earlier entry of a key
         // truncated here, if any, is used, and dropping the key loses nothing.

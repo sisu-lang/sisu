@@ -131,11 +131,7 @@ impl Checker<'_> {
             }
             let last = i + 1 == block.stmts.len();
             let outer_jump = std::mem::take(&mut self.body.invalid_jump);
-            // Only the block's value is in a quiet element; another statement keeps its rules.
-            let quiet = self.body.in_quiet_element;
-            self.body.in_quiet_element = quiet && last && matches!(stmt.kind, StmtKind::Expr(_));
             let checked = self.stmt(stmt, expected.filter(|_| last));
-            self.body.in_quiet_element = quiet;
             let invalid_jump = self.body.invalid_jump;
             // Nested blocks leave their flag set, so an enclosing statement sees it too.
             self.body.invalid_jump |= outer_jump;
@@ -1078,10 +1074,7 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Checked {
         let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
-        if expected == Some(UNKNOWN) && self.body.in_quiet_element {
-            frame.expected = None;
-            frame.quiet = true;
-        }
+        frame.quiet = self.quiet(span, expected);
         let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
@@ -1151,19 +1144,21 @@ impl Checker<'_> {
         let hint = frame
             .expected
             .map(|ty| (ty, None))
-            .or(frame.first.map(|(ty, at)| (ty, Some(at))))
-            .or(quiet.then_some((UNKNOWN, None)));
+            .or(frame.first.map(|(ty, at)| (ty, Some(at))));
         let from = hint
             .and_then(|(_, first)| first)
             .map(|first| (v.span, first));
         let outer = std::mem::replace(&mut self.body.break_hint, from);
-        // The value of a quiet loop is in its quiet element, wherever the `break` stands.
-        let outer_quiet = std::mem::replace(&mut self.body.in_quiet_element, quiet);
+        // A value of a quiet loop that expects nothing is quiet too, wherever the `break` is.
+        let outer_quiet = self.body.quiet_at;
+        if quiet {
+            self.body.quiet_at = Some(v.span);
+        }
         self.body.label_typo = typo.map(|name| name.span);
         let checked = self.expr(v, hint.map(|(ty, _)| ty));
         self.body.label_typo = None;
         self.body.break_hint = outer;
-        self.body.in_quiet_element = outer_quiet;
+        self.body.quiet_at = outer_quiet;
         // A failed value fails the loop, and gives it no type and no second report.
         if checked.is_err() {
             self.frame(target).failed = true;

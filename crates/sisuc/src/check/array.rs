@@ -26,9 +26,10 @@ impl Checker<'_> {
                 .unzip();
             return self.array(span, element, checked, mismatched.contains(&true));
         }
+        let quiet = expected == Some(UNKNOWN) || self.quiet(span, expected);
         if elements.is_empty() {
             let (d, mismatch) = match expected {
-                Some(ty) if ty == UNKNOWN => return Err(Poisoned::error()),
+                _ if quiet => return Err(Poisoned::error()),
                 Some(ty) => (
                     DiagnosticKind::Mismatch {
                         want: vec![self.type_name(ty)],
@@ -51,28 +52,26 @@ impl Checker<'_> {
             self.report(d);
             return Err(Poisoned { ty: None, mismatch });
         }
-        self.joined(span, elements, expected == Some(UNKNOWN))
+        self.joined(span, elements, quiet)
     }
 
     /// The elements of a literal with no expected array type, joined in three waves by `rank`:
     /// the concrete elements; the integer literals, typed beside the first concrete element;
     /// then each `None` and `[]`, against the join made optional. The join runs in source
     /// order as `branches` joins, and a `None` makes the element type optional. With no typed
-    /// element, the first `None` or `[]` cannot be inferred, which `quiet` (`UNKNOWN` was
-    /// expected) leaves unreported. With `quiet`, the concrete elements expect `UNKNOWN` too,
-    /// so a part that takes its type from the context does not report what failed around it.
-    /// Every other rule types such an element as with no expected type, a `loop` too (see
-    /// `in_quiet_element`), and the elements join. An element whose type is `Error` poisons the
-    /// array.
+    /// element, the first `None` or `[]` cannot be inferred, which `quiet` (the context failed)
+    /// leaves unreported. With `quiet`, each concrete element is a quiet value too (see
+    /// `Body::quiet_at`). An element whose type is `Error` poisons the array.
     fn joined(&mut self, span: Span, elements: &[ast::Expr], quiet: bool) -> Checked {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
-        let outer = std::mem::replace(&mut self.body.in_quiet_element, quiet);
+        let outer = self.body.quiet_at;
         for (slot, e) in slots.iter_mut().zip(elements) {
             if rank(e) == 0 {
-                *slot = Some(self.value(e, quiet.then_some(UNKNOWN)));
+                self.body.quiet_at = if quiet { Some(e.span) } else { outer };
+                *slot = Some(self.value(e, None));
             }
         }
-        self.body.in_quiet_element = outer;
+        self.body.quiet_at = outer;
         let literal = literal_type(slots.iter().flatten().next().and_then(type_of));
         for (slot, e) in slots.iter_mut().zip(elements) {
             if rank(e) == 1 {
@@ -162,10 +161,12 @@ impl Checker<'_> {
     ) -> Checked {
         let element = expected_element(expected);
         // Without an element type, a `None` or `[]` cannot be inferred, unless `expected` is
-        // `UNKNOWN`.
+        // `UNKNOWN` or the literal is the quiet value, which makes `value` quiet too.
         let hint = element.or(expected.filter(|&ty| ty == UNKNOWN));
+        let outer = self.pass_quiet(span, Some(value.span), expected);
         // `operand`, split so the class rule runs between the check and the wrap.
         let checked = self.value(value, hint);
+        self.body.quiet_at = outer;
         let class = type_of(&checked).map(payload).filter(|ty| {
             matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Param(..)) && !none_literal(value)
         });
