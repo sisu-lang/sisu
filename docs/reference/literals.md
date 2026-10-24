@@ -243,7 +243,7 @@ A `'` in a character literal must be the escape `\'`. A `"` can stand as it is. 
 
 ## String literals
 
-A string literal is text between double quotes, such as `"sauna"`. Its type is [`string`](types.md#string). The text can hold any character, and the escapes below.
+A string literal is text between double quotes, such as `"sauna"`. Its type is [`string`](types.md#string). [Strings and formatting](strings.md) tells how a string works. The text can hold any character, and the escapes below.
 
 ```sisu
 fn main() {
@@ -271,7 +271,7 @@ The rules:
 - The expression can include a string literal of its own: `"{ "a" + "b" }"`.
 - The expression must be on the line of the string literal.
 - A `}` closes the interpolation only when every bracket opened in the interpolation is closed. A `{` or `}` in a string or character literal in the expression does not count, so `"{ c == '}' }"` is valid.
-- A `:` after the expression starts a format spec, such as `"{x:.2}"`.
+- A `:` after the expression starts a format spec, such as `"{x:.2}"` ([Format specs](strings.md#format-specs)).
 - An empty interpolation, `"{}"` or `"{ }"`, is an error ([E0096](../diagnostics/E0096.md)).
 - A comment cannot be in an interpolation ([E0097](../diagnostics/E0097.md)).
 - A `}` in the text, outside an interpolation, is an error ([E0095](../diagnostics/E0095.md)).

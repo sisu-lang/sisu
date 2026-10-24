@@ -45,3 +45,7 @@ description = "Array literals, filled arrays, indexes, for, methods, equality an
 [[page]]
 file = "values"
 description = "What is copied and what is shared, is and ==, object lifetime and cycles."
+
+[[page]]
+file = "strings"
+description = "Strings and bytes, the methods of a string, how a value becomes text, and format specs."

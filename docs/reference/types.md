@@ -244,7 +244,7 @@ fn main() {
 }
 ```
 
-A `string` is not an array. An index on a string is an error ([E0068](../diagnostics/E0068.md)).
+A `string` is not an array. An index on a string is an error ([E0068](../diagnostics/E0068.md)). [Strings and formatting](strings.md) tells the methods of a string and its format specs.
 
 ## Optionals
 
