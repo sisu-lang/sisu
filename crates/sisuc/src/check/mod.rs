@@ -198,6 +198,9 @@ struct LoopFrame {
     first: Option<(Type, Span)>,
     /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
     widened: bool,
+    /// Whether a value before the first expects `UNKNOWN`, with no `expected` type: a loop in
+    /// a quiet element joins its values, but takes no type from the failed context.
+    quiet: bool,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
@@ -228,6 +231,7 @@ impl LoopFrame {
             valued: None,
             failed: false,
             widened: false,
+            quiet: false,
             crossed: false,
         }
     }
@@ -391,6 +395,9 @@ struct Body {
     /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
     /// loop label there as the `break`'s label, so a fix must not write one there.
     break_start: Option<usize>,
+    /// Whether the expression being checked is in a concrete element of a literal whose
+    /// context failed (see `joined`). A `loop` there that expects `UNKNOWN` joins its values.
+    in_quiet_element: bool,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
