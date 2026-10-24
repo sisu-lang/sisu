@@ -733,7 +733,7 @@ fn main() {
     /// end where it was, up to the length the fix removes. The lexer's list catches what the front
     /// end hides when an item is broken.
     #[test]
-    fn redundant_semicolon_fix_changes_nothing_else() {
+    fn redundant_semicolon_fix_should_leave_other_diagnostics_unchanged() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics");
         let mut sources: Vec<String> = [
             "fn main() {\n    let x = 1;\n    {\n    }\n}\n",

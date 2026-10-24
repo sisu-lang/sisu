@@ -835,7 +835,6 @@ crates/sisuc/src/front_end.rs::marks_a_bracket_error
 crates/sisuc/src/front_end.rs::method_without_self_breaks_only_itself
 crates/sisuc/src/front_end.rs::one_error_per_broken_item
 crates/sisuc/src/front_end.rs::overlapping_unnamed_items
-crates/sisuc/src/front_end.rs::redundant_semicolon_fix_changes_nothing_else
 crates/sisuc/src/front_end.rs::redundant_semicolon_in_a_broken_item
 crates/sisuc/src/front_end.rs::semicolon_after_an_item
 crates/sisuc/src/front_end.rs::skip_before_an_unnamed_segment_is_its_error
