@@ -4148,6 +4148,18 @@ mod tests {
         }
     }
 
+    /// Only a name goes on with a list: a number is no name, and after a `_` that stands where
+    /// the header's name goes, the `<` opens no list.
+    #[test]
+    fn a_header_list_should_go_on_only_with_names() {
+        for src in ["fn f<T\n    1>() {}", "fn _<\n    T\n>() {}"] {
+            let kinds = all_kinds(src);
+            let t = kinds.iter().position(|k| *k == ident("T"));
+            let after = t.and_then(|t| kinds.get(t + 1));
+            assert_eq!(after, Some(&TokenKind::Newline), "{src}");
+        }
+    }
+
     /// A list continued at the start of each line, so that each line break asks about it.
     #[test]
     fn a_long_header_list_over_many_lines_should_be_judged_once_per_token() {
