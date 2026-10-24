@@ -372,9 +372,9 @@ impl Checker<'_> {
     /// of, and that `seen` does not hold. These are the classes that `ty` holds through arrays,
     /// optionals, declared field and payload types, and the arguments for held parameters
     /// (`held_params`). No type is made, and each type, class and enum is walked once for all the
-    /// calls that share `seen`. The held parameters are found only when the walk gets to a class
-    /// or an enum with type arguments, so a comparison of primitives finds none. An explicit
-    /// stack, so a long chain of classes cannot overflow the stack.
+    /// calls that share `seen`. The walk finds the held parameters only when it gets to a class
+    /// or an enum with type arguments. A comparison of primitives does not look for them. An
+    /// explicit stack, so a long chain of classes cannot overflow the stack.
     fn held_classes(
         &self,
         ty: Type,

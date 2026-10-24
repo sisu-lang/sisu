@@ -766,8 +766,8 @@ fn never_reassigned_should_warn_once_when_the_checker_checks_it_twice() {
 #[test]
 fn equal_should_walk_branching_generic_classes_linearly() {
     judge_unused();
-    // Each class holds the one before it in two ways, so a walk that put in the type arguments
-    // would walk twice the types at each class.
+    // Each class holds the one before it in two ways. A walk that puts in the type arguments
+    // walks twice as many types at each class.
     let steps = |n: usize| {
         let classes = (1..=n)
             .map(|i| {
