@@ -70,7 +70,7 @@ enum Shape$i {
 
 class C$i {
     v: i64
-    label: string
+    _label: string
 
     fn get(self) -> i64 { self.v }
 }
@@ -124,7 +124,7 @@ fn step$i(x: i64) -> i64 {
     let b = u8(spins) ?? 0
     let first = text.chars()[0]
     let zero = if shapes[2].is_dot() && first == 's' { i64(b) - spins } else { 1 }
-    let c: C$i? = C$i(v: sum - x - xs[1], label: text)
+    let c: C$i? = C$i(v: sum - x - xs[1], _label: text)
     let p = Pair$i(a: pick$i([K$i], 0), b: pick$i(["g"], ""))
     let t = Tree$i.Node(Tree$i.Leaf, p.first(), Tree$i.Leaf)
     let u = Tree$i.Node(Tree$i.Leaf, p.b, Tree$i.Node(Tree$i.Leaf, "h", Tree$i.Leaf))
