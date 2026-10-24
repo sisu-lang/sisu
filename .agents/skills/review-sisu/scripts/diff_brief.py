@@ -1,4 +1,4 @@
-"""Writes a reviewer's brief for a diff from ../brief.md: fills every slot above "# Report",
+"""Writes a reviewer's brief for a diff from origin/main's brief.md: fills every slot above "# Report",
 keeps the sections for a diff and drops the spec and plan sections. Fails, writing nothing, when
 a slot above "# Report" is left unfilled, so a template change cannot slip past it.
 
@@ -8,13 +8,17 @@ Usage: python3 diff_brief.py REPO BASE..HEAD OUT [--doc PATH]... [--focus FILE]
 REPO and each --doc are written as absolute paths: the reviewer runs in REPO, and a doc under
 the main checkout's gitignored docs/superpowers/ is not in a worktree.
   --focus  a file whose text goes under "# Focus"; without it, Focus is "none"
+The template comes from origin/main, so a branch that started before a change to the review
+criteria still gets the current ones. Without origin/main it falls back to ../brief.md.
 """
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 TEMPLATE = Path(__file__).resolve().parents[1] / 'brief.md'
+MAIN_TEMPLATE = 'origin/main:.agents/skills/review-sisu/brief.md'
 SKILLS = {
     '<test-audit SKILL.md path>': Path.home() / '.claude/skills/test-audit/SKILL.md',
     '<codebase-design SKILL.md path>': Path.home() / '.agents/skills/codebase-design/SKILL.md',
@@ -30,7 +34,13 @@ def main():
     p.add_argument('--focus')
     a = p.parse_args()
 
-    t = TEMPLATE.read_text()
+    shown = subprocess.run(['git', '-C', str(TEMPLATE.parent), 'show', MAIN_TEMPLATE],
+                           capture_output=True, text=True)
+    if shown.returncode == 0:
+        t = shown.stdout
+    else:
+        print(f'diff_brief: cannot read {MAIN_TEMPLATE}; using {TEMPLATE}', file=sys.stderr)
+        t = TEMPLATE.read_text()
     t = t.replace('a <spec | plan | diff> of Sisu', 'a diff of Sisu')
     t = t.replace('Target: <path, or base..head>.', f'Target: {a.range}.')
     t = t.replace('<repository root>', str(Path(a.repo).resolve()))
