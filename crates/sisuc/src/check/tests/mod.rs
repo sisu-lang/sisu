@@ -2388,6 +2388,190 @@ fn method_as_function_should_offer_the_method_call_for_a_class_and_an_enum() {
     );
 }
 
+/// The only diagnostic of `src` is E0070 at `pos` with one fix. Returns whether the fix is safe,
+/// and the source it gives.
+fn method_fix(src: &str, pos: (usize, usize, &str)) -> (bool, String) {
+    let d = diagnostic(src, Code::MethodAsFunction, pos, &[]);
+    assert_eq!(d.fixes().len(), 1, "{src}");
+    (d.fixes()[0].safe(), d.fixes()[0].apply(src))
+}
+
+/// A method called by its bare name in a method of its own class points to `self.name(...)`.
+/// The fix is safe only when the method call checks: `add(k: i64)` takes one `i64`.
+#[test]
+fn method_as_function_should_offer_self_for_a_method_of_the_enclosing_class() {
+    // `Name` is a class with a similar name, which E0052 offered.
+    let head = "class Name {}\nclass P {\n    fn name(self) {}\n    fn add(self, k: i64) -> i64 { k }\n    fn go(self) {\n        ";
+    let tail = "\n    }\n}\nfn main() {\n    P().go()\n}";
+    for (call, fixed, safe) in [
+        ("name()", "self.name()", true),
+        ("add(2)", "self.add(2)", true),
+        // A comment in the arguments is not deleted, so it does not make the fix unsafe.
+        (
+            "add(// c\n            2)",
+            "self.add(// c\n            2)",
+            true,
+        ),
+        ("add(true)", "self.add(true)", false),
+        ("add()", "self.add()", false),
+        ("add(1, 2)", "self.add(1, 2)", false),
+        ("add(k: 2)", "self.add(k: 2)", false),
+        // A method call takes no type arguments (E0137).
+        ("add<i64>(2)", "self.add<i64>(2)", false),
+        ("name(1)", "self.name(1)", false),
+    ] {
+        let src = format!("{head}{call}{tail}");
+        let (found, fixed_src) = method_fix(&src, (6, 9, call.split(['(', '<']).next().unwrap()));
+        assert_eq!(found, safe, "{call}");
+        assert_eq!(fixed_src, format!("{head}{fixed}{tail}"), "{call}");
+    }
+}
+
+/// The same in a method of an enum, and of a generic class, whose type argument is in the
+/// parameter types.
+#[test]
+fn method_as_function_should_offer_self_for_an_enum_and_a_generic_class() {
+    let shape = "enum S {\n    A\n    fn size(self) -> i64 { 1 }\n    fn twice(self) -> i64 {\n        size()\n    }\n}\nfn main() {}";
+    let (safe, fixed) = method_fix(shape, (5, 9, "size"));
+    assert!(safe);
+    assert_eq!(fixed, shape.replace("size()\n", "self.size()\n"));
+    let generic = "class B<T> {\n    v: T\n    fn put(self, x: T) {}\n    fn go(self, x: T) {\n        CALL\n    }\n}\nfn main() {}";
+    for (call, fixed, safe) in [
+        ("put(x)", "self.put(x)", true),
+        // `1` is no `T`.
+        ("put(1)", "self.put(1)", false),
+    ] {
+        let src = generic.replace("CALL", call);
+        let (found, fixed_src) = method_fix(&src, (5, 9, "put"));
+        assert_eq!(found, safe, "{call}");
+        assert_eq!(fixed_src, generic.replace("CALL", fixed), "{call}");
+    }
+}
+
+/// When the method of `self` takes as many arguments as the call, and the first argument fits
+/// its first parameter, the `self` form wins over the first argument's own method. The first
+/// argument is checked without that parameter's type, so no error comes from that type.
+#[test]
+fn method_as_function_should_prefer_self_when_the_first_argument_fits_its_method() {
+    let head = "class P {\n    fn pick(self, p: P?) -> i64 { 0 }\n    fn merge(self, o: P) -> i64 { 0 }\n    fn max(self, k: f64) -> f64 { k }\n    fn len(self, xs: [u8]) -> i64 { 0 }\n    fn sum(self, xs: [f64]) -> f64 { 0.0 }\n    fn go(self, other: P, p: P?, a: f64, b: f64, x: i64) {\n        print(";
+    let tail = ")\n    }\n}\nfn main() {}";
+    for (call, fixed) in [
+        // Not `other.merge()` or `p?.pick()`.
+        ("merge(other)", "self.merge(other)"),
+        ("pick(p)", "self.pick(p)"),
+        // Another count of arguments.
+        ("max(a, b)", "a.max(b)"),
+        // No `256` that does not fit in `u8`, and no `x` that is not an `f64`.
+        ("len([256])", "[256].len()"),
+        ("sum([1, x])", "[1, x].sum()"),
+    ] {
+        let src = format!("{head}{call}{tail}");
+        let name = call.split('(').next().unwrap();
+        let d = diagnostic(&src, Code::MethodAsFunction, (8, 15, name), &[]);
+        assert!(d.fixes()[0].safe(), "{call}");
+        assert_eq!(
+            d.fixes()[0].apply(&src),
+            format!("{head}{fixed}{tail}"),
+            "{call}"
+        );
+    }
+}
+
+/// A method with a type parameter of its own is never safe: its arguments are not checked
+/// against it.
+#[test]
+fn method_as_function_should_never_offer_a_safe_self_fix_for_a_generic_method() {
+    let own = "class P {\n    fn same<U>(self, u: U) -> U { u }\n    fn go(self) {\n        same(1)\n    }\n}\nfn main() {}";
+    let (safe, fixed) = method_fix(own, (4, 9, "same"));
+    assert!(!safe);
+    assert_eq!(fixed, own.replace("same(1)", "self.same(1)"));
+}
+
+/// An argument of the `self` form is checked once, the first one too, and a label does not
+/// stop the check.
+#[test]
+fn method_as_function_should_report_each_error_in_a_self_form_argument_once() {
+    let src = "class P {\n    fn add(self, k: i64) -> i64 { k }\n    fn go(self) {\n        CALL\n    }\n}\nfn main() {}";
+    for (call, column) in [
+        ("add(nope)", 13),
+        ("add(1, nope)", 16),
+        ("add(k: nope)", 16),
+    ] {
+        codes(
+            &src.replace("CALL", call),
+            &[
+                (Code::MethodAsFunction, (4, 9)),
+                (Code::BindingNotFound, (4, column)),
+            ],
+        );
+    }
+}
+
+/// An optional receiver whose payload has the method points to `?.`. The fix is never safe,
+/// even when the call would check, as `?.` skips the call on `None`.
+#[test]
+fn method_as_function_should_offer_question_dot_for_an_optional_receiver() {
+    let head = "class P {\n    fn name(self) {}\n    fn add(self, k: i64) -> i64 { k }\n}\nenum S {\n    A\n    fn size(self) -> i64 { 1 }\n}\nfn main() {\n    let p: P? = P()\n    let q: P? = None\n    let s: S? = S.A\n    let xs: [i64]? = [1]\n    let x: f64? = 4.0\n    ";
+    for (call, fixed) in [
+        ("name(p)", "p?.name()"),
+        ("add(p, 1)", "p?.add(1)"),
+        ("size(s)", "s?.size()"),
+        ("len(xs)", "xs?.len()"),
+        ("sqrt(x)", "x?.sqrt()"),
+        // The receiver needs parentheses, as a plain call's would.
+        ("name(p ?? q)", "(p ?? q)?.name()"),
+    ] {
+        let src = format!("{head}{call}\n}}");
+        let (safe, fixed_src) = method_fix(&src, (15, 5, call.split('(').next().unwrap()));
+        assert!(!safe, "{call}");
+        assert_eq!(fixed_src, format!("{head}{fixed}\n}}"), "{call}");
+    }
+    // An argument is checked once.
+    codes(
+        &format!("{head}add(p, nope)\n}}"),
+        &[
+            (Code::MethodAsFunction, (15, 5)),
+            (Code::BindingNotFound, (15, 12)),
+        ],
+    );
+    // A payload without the method has no idiom.
+    codes(
+        &format!("{head}other(p)\n}}"),
+        &[(Code::FunctionNotFound, (15, 5))],
+    );
+}
+
+/// The first argument's method comes before the `self` form, and an optional first argument's
+/// before it too.
+#[test]
+fn method_as_function_should_prefer_the_first_argument_to_self() {
+    let src = "class P {\n    fn name(self) {}\n    fn go(self, q: P, r: P?) {\n        CALL\n    }\n}\nfn main() {}";
+    for (call, fixed, safe) in [
+        ("name(q)", "q.name()", true),
+        ("name(r)", "r?.name()", false),
+    ] {
+        let (found, fixed_src) = method_fix(&src.replace("CALL", call), (4, 9, "name"));
+        assert_eq!(found, safe, "{call}");
+        assert_eq!(fixed_src, src.replace("CALL", fixed), "{call}");
+    }
+}
+
+/// E0052 stays when no method of the class that holds the call has the name: outside a method,
+/// in a method of another class, and for a name that is no method.
+#[test]
+fn unknown_function_should_stay_unknown_when_the_enclosing_class_has_no_such_method() {
+    let src = "class P {\n    fn name(self) {}\n}\nclass Q {\n    fn go(self) {\n        CALL\n    }\n}\nfn run() {\n    CALL\n}\nfn main() {}";
+    for call in ["name()", "other()"] {
+        codes(
+            &src.replace("CALL", call),
+            &[
+                (Code::FunctionNotFound, (6, 9)),
+                (Code::FunctionNotFound, (10, 5)),
+            ],
+        );
+    }
+}
+
 #[test]
 fn function_name_should_report_as_a_value_in_a_binding_and_an_argument() {
     codes(

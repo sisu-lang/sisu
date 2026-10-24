@@ -1,0 +1,24 @@
+error[E0070]: `add` is a method, not a function
+ --> E0070-self-arguments.sisu:9:15
+  |
+9 |         print(add(1, 2))
+  |               ^^^
+  |
+help: try calling `add` as a method of `self`
+  |
+9 |         print(self.add(1, 2))
+  |               +++++
+
+error[E0070]: `add` is a method, not a function
+  --> E0070-self-arguments.sisu:10:15
+   |
+10 |         print(add(true))
+   |               ^^^
+   |
+help: try calling `add` as a method of `self`
+   |
+10 |         print(self.add(true))
+   |               +++++
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0070

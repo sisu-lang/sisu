@@ -1,0 +1,13 @@
+class Name {}
+
+class Person {
+    fn name(self) {}
+
+    fn run(self) {
+        name()
+    }
+}
+
+fn main() {
+    Person().run()
+}

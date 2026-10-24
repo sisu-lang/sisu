@@ -1,0 +1,15 @@
+error[E0070]: `name` is a method, not a function
+ --> E0070-optional.sisu:7:5
+  |
+7 |     name(person)
+  |     ^^^^
+  |
+  = help: `person` may be `None`: to call `name` only when it is present, unwrap it with `if let`
+help: to skip the call when `person` is `None`, call `name` with `?.`
+  |
+7 -     name(person)
+7 +     person?.name()
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070
