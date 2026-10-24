@@ -1,9 +1,11 @@
 //! Enums at run time. An enum value is a tag and its variant's payload, held inline:
 //! `%sisu.<Name> = { tag, [n x iA] }`, with one struct per variant, `%sisu.<Name>.<Variant>`,
 //! laid over the payload storage. A field that closes a cycle holds a box instead,
-//! `%sisu.box.<F> = { i64 count, %sisu.<F> }`. This module owns the layouts, building a variant,
-//! and the bodies of the enum helpers, which `define_helpers` reaches through
-//! `define_enum_helper`.
+//! `%sisu.box.<F> = { i64 count, %sisu.<F> }`. A boxed field of type `F` with k ≥ 1 `?` layers
+//! is k − 1 flags around a box pointer that is `null` for the innermost `None`: `{ i1, ptr }`
+//! for an `F??`. When a flag is clear, the storage inside it is zero. This module owns the
+//! layouts, building a variant, and the bodies of the enum helpers, which `define_helpers`
+//! reaches through `define_enum_helper`.
 //!
 //! Boxes free from pending lists, not by recursion. Releasing a value of an enum `F` whose
 //! component has boxes keeps one list head per member of the component on its own stack.
@@ -51,6 +53,17 @@ pub(super) struct EnumLayout<'ctx> {
 fn boxed_enum(ty: Type) -> EnumId {
     ty.inline_enum()
         .expect("the checker should box only a field of an enum type or its optional")
+}
+
+/// The payload of `ty` when it is an optional of an optional: a boxed field of that type keeps a
+/// flag around the storage of its payload.
+fn nested(ty: Type) -> Option<Type> {
+    match ty.kind() {
+        TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Optional(_)) => {
+            Some(payload)
+        }
+        _ => None,
+    }
 }
 
 /// The index of `member` in a component of `members`.
@@ -121,7 +134,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .iter()
                     .map(|field| {
                         if field.boxed {
-                            ptr_type.into()
+                            self.box_storage(field.ty)
                         } else {
                             self.llvm_type(field.ty).expect(
                                 "the checker should give every payload field a value type, never `unit` or `never`",
@@ -221,9 +234,56 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect("the checker should only emit a payload field index that the variant has")
     }
 
+    /// The storage of a boxed field of type `ty`: a box pointer, inside one flag for each layer
+    /// past the first.
+    fn box_storage(&self, ty: Type) -> BasicTypeEnum<'ctx> {
+        match nested(ty) {
+            Some(payload) => {
+                let fields = [self.context.bool_type().into(), self.box_storage(payload)];
+                self.context.struct_type(&fields, false).into()
+            }
+            None => self.context.ptr_type(AddressSpace::default()).into(),
+        }
+    }
+
+    /// The address of the box pointer in the storage at `slot` of a boxed field of type `ty`,
+    /// inside its flags.
+    fn box_slot(&self, mut slot: PointerValue<'ctx>, mut ty: Type) -> PointerValue<'ctx> {
+        while let Some(payload) = nested(ty) {
+            slot = self.layer_place(ty, slot, 1);
+            ty = payload;
+        }
+        slot
+    }
+
+    /// The address of element `index` of the storage at `slot` of a boxed field of the optional
+    /// of an optional `ty`: its flag at 0, the storage of its payload at 1.
+    fn layer_place(&self, ty: Type, slot: PointerValue<'ctx>, index: u32) -> PointerValue<'ctx> {
+        self.builder
+            .build_struct_gep(
+                self.box_storage(ty).into_struct_type(),
+                slot,
+                index,
+                "layer",
+            )
+            .expect("a boxed field's layer should be a `{ flag, storage }` pair")
+    }
+
+    /// The flag of the layer at `slot` of a boxed field of the optional of an optional `ty`.
+    fn load_layer_flag(&self, ty: Type, slot: PointerValue<'ctx>) -> IntValue<'ctx> {
+        self.builder
+            .build_load(
+                self.context.bool_type(),
+                self.layer_place(ty, slot, 0),
+                "flag",
+            )
+            .expect(POSITIONED)
+            .into_int_value()
+    }
+
     /// The box pointer of boxed payload field `field` of variant `variant` in the enum `id` at
-    /// `value_addr`: `null` for a `None` of `F?`, and in the zero value that a `Move` of a
-    /// flagged local leaves.
+    /// `value_addr`: `null` for a `None` at any layer of an `F?`, `F??` and so on, and in the
+    /// zero value that a `Move` of a flagged local leaves.
     fn load_box(
         &self,
         value_addr: PointerValue<'ctx>,
@@ -231,10 +291,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         variant: usize,
         field: usize,
     ) -> PointerValue<'ctx> {
+        let ty = self.program.enums[id.0].variants[variant].fields[field].ty;
         self.builder
             .build_load(
                 self.context.ptr_type(AddressSpace::default()),
-                self.field_slot(value_addr, id, variant, field),
+                self.box_slot(self.field_slot(value_addr, id, variant, field), ty),
                 "box",
             )
             .expect(POSITIONED)
@@ -287,14 +348,35 @@ impl<'ctx> Codegen<'ctx, '_> {
         let llvm_ty = self.llvm_type(ty).expect(
             "the checker should give every payload field a value type, never `unit` or `never`",
         );
-        let (true, TypeKind::Optional(inner)) = (payload.boxed, ty.kind()) else {
+        let (true, TypeKind::Optional(_)) = (payload.boxed, ty.kind()) else {
             let place = self.payload_place(value_addr, id, variant, field);
             return self
                 .builder
                 .build_load(llvm_ty, place, "field")
                 .expect(POSITIONED);
         };
-        let boxed = self.load_box(value_addr, id, variant, field);
+        self.boxed_value(self.field_slot(value_addr, id, variant, field), ty)
+    }
+
+    /// The value of a boxed field of the optional `ty` whose storage is at `slot`, borrowed.
+    /// Each layer past the first is its flag around the value of the storage inside it.
+    fn boxed_value(&self, slot: PointerValue<'ctx>, ty: Type) -> BasicValueEnum<'ctx> {
+        if let Some(payload) = nested(ty) {
+            let flag = self.load_layer_flag(ty, slot);
+            let value = self.boxed_value(self.layer_place(ty, slot, 1), payload);
+            return self.optional(ty, flag, value);
+        }
+        let TypeKind::Optional(inner) = ty.kind() else {
+            unreachable!("only a boxed optional field should be read by its storage")
+        };
+        let llvm_ty = self.llvm_type(ty).expect(
+            "the checker should give every payload field a value type, never `unit` or `never`",
+        );
+        let boxed = self
+            .builder
+            .build_load(self.context.ptr_type(AddressSpace::default()), slot, "box")
+            .expect(POSITIONED)
+            .into_pointer_value();
         let function = self.current_function();
         let (absent, some) = (
             self.current_block(),
@@ -358,9 +440,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
-    /// Stores at `place` a new box that holds `value`, of type `F`, or of `F?` when present. With
-    /// a `token`, the box's block comes from `@sisu_rc.reuse.<F>`, and a flagged token's slot is
-    /// left `null`.
+    /// Stores at `place` a new box that holds `value`, of type `F`, or of `F?` when present. An
+    /// `F??` stores its flag, and its payload inside it when present; the zeroed slot keeps a
+    /// clear flag's storage zero. With a `token`, the box's block comes from
+    /// `@sisu_rc.reuse.<F>`, and a flagged token's slot is left `null`.
     fn store_boxed(
         &self,
         place: PointerValue<'ctx>,
@@ -368,6 +451,20 @@ impl<'ctx> Codegen<'ctx, '_> {
         ty: Type,
         token: Option<LocalId>,
     ) {
+        if let Some(payload) = nested(ty) {
+            let flag = self.has_value(ty, value, "flag");
+            self.store(self.layer_place(ty, place, 0), flag.into());
+            let function = self.current_function();
+            let some = self.context.append_basic_block(function, "layer.some");
+            let done = self.context.append_basic_block(function, "layer.done");
+            self.branch_on(flag, some, done);
+            self.builder.position_at_end(some);
+            let inner = self.optional_value(ty, value, "layer");
+            self.store_boxed(self.layer_place(ty, place, 1), inner, payload, token);
+            self.branch_to(done);
+            self.builder.position_at_end(done);
+            return;
+        }
         let (value, present) = match ty.kind() {
             TypeKind::Optional(_) => {
                 let function = self.current_function();
@@ -433,10 +530,12 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The enum of payload field `payload` of the enum `id`, whose component has boxes, when the
     /// field is an inline link: not boxed, and of an enum in that component, or its optional.
+    /// An inline `G??` is no link: it is released and compared as any counted field is.
     fn inline_link(&self, id: EnumId, payload: &Payload) -> Option<EnumId> {
         let enums = &self.program.enums;
-        (payload.ty.inline_enum())
-            .filter(|g| !payload.boxed && enums[g.0].cycle == enums[id.0].cycle)
+        (payload.ty.inline_enum()).filter(|g| {
+            !payload.boxed && nested(payload.ty).is_none() && enums[g.0].cycle == enums[id.0].cycle
+        })
     }
 
     /// The body of `@sisu_rc.<kind>.<E>`.
@@ -933,8 +1032,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         let ty = payload.ty;
         let inner = (ty.inline_enum()).expect("a link should be of an enum type or its optional");
         if payload.boxed {
-            let box_a = self.load_box(a, id, variant, field);
-            let box_b = self.load_box(b, id, variant, field);
+            let (ty, box_a, box_b) = match nested(ty) {
+                None => (
+                    ty,
+                    self.load_box(a, id, variant, field),
+                    self.load_box(b, id, variant, field),
+                ),
+                Some(_) => self.layer_boxes(ty, a, b, (id, variant, field), same, unequal),
+            };
             self.boxes_differ(ty, box_a, box_b, same, unequal);
             return (
                 inner,
@@ -967,6 +1072,50 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.optional_value_place(ty, place_a),
             self.optional_value_place(ty, place_b),
         )
+    }
+
+    /// The box pointers of boxed field `field` of variant `variant` of the enum `id` at `a` and
+    /// `b`, of the optional of an optional `ty`, after its flags, with the type of the box, `F?`:
+    /// at each layer past the first, unequal flags go to `unequal`, and two clear ones to `same`.
+    fn layer_boxes(
+        &self,
+        mut ty: Type,
+        a: PointerValue<'ctx>,
+        b: PointerValue<'ctx>,
+        (id, variant, field): (EnumId, usize, usize),
+        same: BasicBlock<'ctx>,
+        unequal: BasicBlock<'ctx>,
+    ) -> (Type, PointerValue<'ctx>, PointerValue<'ctx>) {
+        let (mut slot_a, mut slot_b) = (
+            self.field_slot(a, id, variant, field),
+            self.field_slot(b, id, variant, field),
+        );
+        while let Some(payload) = nested(ty) {
+            let (fa, fb) = (
+                self.load_layer_flag(ty, slot_a),
+                self.load_layer_flag(ty, slot_b),
+            );
+            let function = self.current_function();
+            let block = |name| self.context.append_basic_block(function, name);
+            let (flags, both) = (block("layer.flags"), block("layer.both"));
+            self.branch_on(self.int_compare(IntPredicate::EQ, fa, fb), flags, unequal);
+            self.builder.position_at_end(flags);
+            self.branch_on(fa, both, same);
+            self.builder.position_at_end(both);
+            (slot_a, slot_b) = (
+                self.layer_place(ty, slot_a, 1),
+                self.layer_place(ty, slot_b, 1),
+            );
+            ty = payload;
+        }
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let load = |slot| {
+            self.builder
+                .build_load(ptr_type, slot, "box")
+                .expect(POSITIONED)
+                .into_pointer_value()
+        };
+        (ty, load(slot_a), load(slot_b))
     }
 
     /// `compare_at_once` on the boxes `a` and `b` of a boxed field of type `ty`, `F` or `F?`,

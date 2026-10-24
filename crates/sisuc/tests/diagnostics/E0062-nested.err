@@ -1,0 +1,10 @@
+error[E0062]: `n?.` leaves a `Node?`, which may be `None`
+ --> E0062-nested.sisu:6:5
+  |
+6 |     n?.value
+  |     ^
+  |
+  = help: peel the other layer first: `(n ?? None)?.value`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0062

@@ -96,7 +96,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 43] = [
+const REACH: [&str; 47] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -140,6 +140,10 @@ const REACH: [&str; 43] = [
     "reach: a generic class is built with inferred type arguments",
     "reach: a generic variant is built with inferred type arguments",
     "reach: a generic type is a type argument",
+    "reach: an optional is a type argument",
+    "reach: a type has one `?` layer",
+    "reach: a type has two or more `?` layers",
+    "reach: `??` on an optional of an optional",
 ];
 
 /// Whether a program's text holds a form.
@@ -570,7 +574,11 @@ impl Walk {
     }
 
     fn type_expr(&mut self, ty: &ast::TypeExpr) {
-        self.mark(&format!("ast::TypeExpr.optional = {}", ty.optional));
+        match ty.optional {
+            0 => {}
+            1 => self.mark("reach: a type has one `?` layer"),
+            _ => self.mark("reach: a type has two or more `?` layers"),
+        }
         match &ty.kind {
             ast::TypeKind::Name(_) => self.mark("ast::TypeKind::Name"),
             ast::TypeKind::Applied(applied) => {
@@ -578,6 +586,9 @@ impl Walk {
                 for arg in &applied.args {
                     if matches!(arg.kind, ast::TypeKind::Applied(_)) {
                         self.mark("reach: a generic type is a type argument");
+                    }
+                    if arg.optional > 0 {
+                        self.mark("reach: an optional is a type argument");
                     }
                     self.type_expr(arg);
                 }
@@ -1619,8 +1630,15 @@ impl Walk {
             tir::ExprKind::Str(_) => self.mark("tir::ExprKind::Str"),
             tir::ExprKind::None => self.mark("tir::ExprKind::None"),
             tir::ExprKind::Local(_) => self.mark("tir::ExprKind::Local"),
-            tir::ExprKind::Call { args, .. } => {
+            tir::ExprKind::Call { types, args, .. } => {
                 self.mark("tir::ExprKind::Call");
+                if types
+                    .get()
+                    .iter()
+                    .any(|t| matches!(t.kind(), TypeKind::Optional(_)))
+                {
+                    self.mark("reach: an optional is a type argument");
+                }
                 self.tir_exprs(args);
             }
             tir::ExprKind::New { args, .. } => {
@@ -1757,6 +1775,15 @@ impl Walk {
                 ..
             } => {
                 self.mark("tir::ExprKind::IfSome");
+                // Only a `??` starts where its scrutinee does, but for the `(`s around it: an
+                // `if let` starts at `if`, and a `?.` on an optional of an optional is an error
+                // (E0062).
+                let before = &self.source[e.span.start()..scrutinee.span.start()];
+                if before.chars().all(|c| c == '(')
+                    && matches!(scrutinee.ty.kind(), TypeKind::Optional(inner) if matches!(inner.kind(), TypeKind::Optional(_)))
+                {
+                    self.mark("reach: `??` on an optional of an optional");
+                }
                 self.some_value(scrutinee);
                 self.tir_expr(scrutinee, Parent::Other);
                 self.tir_block(then_block);
@@ -4035,8 +4062,8 @@ fn declared_types_keep_their_sizes_256() {
 
 #[test]
 fn a_class_optional_field_keeps_its_size() {
-    // A class field that holds a class optional is rare: seed 698 is the first seed with one.
-    let (optional_classes, _) = check_declared_types(698);
+    // A class field that holds a class optional is rare: seed 0 has one.
+    let (optional_classes, _) = check_declared_types(0);
     assert!(
         optional_classes > 0,
         "no class should fail to hold a class optional"

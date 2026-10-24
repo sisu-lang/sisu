@@ -516,25 +516,19 @@ impl<'a> Parser<'a> {
                 (TypeKind::Name(ident.name), ident.span)
             }
         };
-        let optional = self.eat(&TokenKind::Question).is_some();
-        if optional {
-            span = span.to(self.last_span());
-        }
-        // `??` is one token, so `Tree??` and `Tree? ?` both stop here.
-        if matches!(
-            self.peek().kind,
-            TokenKind::Question | TokenKind::QuestionQuestion
-        ) {
-            let base = TypeExpr {
-                kind,
-                optional: false,
-                span,
+        // Each `?` is one layer and one level of depth; `??` is one token of two.
+        let mut optional = 0;
+        loop {
+            let layers = match self.peek().kind {
+                TokenKind::Question => 1,
+                TokenKind::QuestionQuestion => 2,
+                _ => break,
             };
-            return Err(DiagnosticKind::OptionalNests {
-                ty: base.to_string(),
-                at: start.to(self.peek().span),
+            for _ in 0..layers {
+                self.descend()?;
             }
-            .into());
+            optional += layers;
+            span = span.to(self.bump().span);
         }
         Ok(TypeExpr {
             kind,
@@ -628,7 +622,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Scans a type: a name and its list, or `[type]`, then an optional `?`.
+    /// Scans a type: a name and its list, or `[type]`, then its `?` layers, each one level deep.
     fn scan_type(&self, at: &mut usize, depth: usize) -> bool {
         if depth > MAX_DEPTH {
             return false;
@@ -649,10 +643,15 @@ impl<'a> Parser<'a> {
             }
             _ => return false,
         }
-        if *self.scanned(*at) == TokenKind::Question {
+        let mut layers = 0;
+        loop {
+            layers += match self.scanned(*at) {
+                TokenKind::Question => 1,
+                TokenKind::QuestionQuestion => 2,
+                _ => return depth + layers <= MAX_DEPTH,
+            };
             *at += 1;
         }
-        true
     }
 
     /// `<T, U>` after the name of a function, class or enum, with an optional trailing comma;
@@ -5365,23 +5364,57 @@ mod tests {
         }
     }
 
+    /// Optionals nest, a layer for each `?`: `??` is one token of two layers, so `Tree??` and
+    /// `Tree? ?` are one type. The span runs through the last `?`.
     #[test]
-    fn optionals_do_not_nest() {
-        // `Tree??` lexes as one token and `Tree? ?` as two; both name the type `Tree??`.
+    fn optional_types_should_nest() {
         let rows = [
             (
-                "fn main() { let x: Tree?? = None }",
-                Span::new(19, 25),
-                (1, 20),
+                "fn main() { let x: i64?? = None }",
+                "(block (let x i64?? None))",
             ),
-            ("fn f() -> Tree? ? {}", Span::new(10, 17), (1, 11)),
+            (
+                "fn main() { let x: Tree? ? = None }",
+                "(block (let x Tree?? None))",
+            ),
+            (
+                "fn main() { let x: Stack<i64>?? = None }",
+                "(block (let x Stack<i64>?? None))",
+            ),
+            (
+                "fn main() { let x: i64??? = None }",
+                "(block (let x i64??? None))",
+            ),
         ];
-        for (src, span, position) in rows {
-            let d = parse_diagnostic(src);
-            assert_eq!(d.code(), Code::OptionalNests, "{src}");
-            assert_eq!(d.span(), span, "{src}");
-            assert_eq!(line_col(src, d.span().start()), position, "{src}");
+        for (src, want) in rows {
+            assert_eq!(body(src), want, "{src}");
         }
+        assert_eq!(
+            program("fn f(x: [i64?]??, y: Node? ?) {}"),
+            "(fn f ((x [i64?]??) (y Node??)) unit (block))"
+        );
+        let f = first_fn("fn f() -> Tree?? {}");
+        assert_eq!(f.ret.expect("has a return type").span, Span::new(10, 16));
+        // After a value, `??` still coalesces.
+        assert_eq!(expr("a ?? b"), "(?? a b)");
+    }
+
+    /// Each `?` is a level of the tree: a type with more layers than `MAX_DEPTH` allows is too
+    /// deep, and a type argument list with them does not scan as one.
+    #[test]
+    fn optional_layers_should_count_toward_the_nesting_limit() {
+        let deep = |n: usize| format!("fn main() {{ let x: i64{} = None }}", "?".repeat(n));
+        let codes = [MAX_DEPTH - 8, MAX_DEPTH + 1].map(|n| {
+            parsed(&deep(n))
+                .diagnostics
+                .iter()
+                .map(Diagnostic::code)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(codes, [vec![], vec![Code::NestingTooDeep]]);
+        assert!(follows(&format!("f<i64{}>(x)", "?".repeat(MAX_DEPTH - 1))));
+        assert!(!follows(&format!("f<i64{}>(x)", "?".repeat(MAX_DEPTH))));
+        assert!(follows("f<i64??>(x)"));
     }
 
     #[test]
@@ -5721,14 +5754,6 @@ mod tests {
             assert!(d.help().is_none(), "{src}");
             assert_eq!(fix_edits(&d), None, "{src}");
         }
-    }
-
-    #[test]
-    fn optional_array_types_do_not_nest() {
-        assert_eq!(
-            parse_err("fn f(x: [Node]??) {}"),
-            (Code::OptionalNests, 1, 9)
-        );
     }
 
     #[test]

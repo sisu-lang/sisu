@@ -426,6 +426,47 @@ fn take_with_no_store() {
     rejects(&b.finish(), 0, a, Rule::Take);
 }
 
+/// A `None` stored into `a[0]` counts whatever its depth, and for an optional of a counted enum
+/// too: on a `[string??]` or a `[F?]`, for an `F` that holds a `string`, the store needs a `take`
+/// of the old element, which then certifies once the taken value is released.
+#[test]
+fn nested_or_enum_none_stored_should_need_a_take() {
+    let f = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
+    for element in [
+        Type::optional(Type::optional(Type::STRING)),
+        Type::optional(f),
+    ] {
+        let none = |a| Statement::Store {
+            place: first(a),
+            value: Operand::Const(Const::None {
+                ty: element,
+                counted: true,
+            }),
+        };
+        let mut b = Builder::new("f");
+        let a = b.param("a", Type::array(element));
+        b.block(vec![none(a), Statement::Release(a)], ret());
+        rejects(&b.finish(), 0, a, Rule::Take);
+        let mut b = Builder::new("f");
+        let a = b.param("a", Type::array(element));
+        let old = b.local("old", element);
+        b.function.locals[old.0].counted = true;
+        b.block(
+            vec![
+                Statement::Take {
+                    dest: old,
+                    place: first(a),
+                },
+                none(a),
+                Statement::Release(old),
+                Statement::Release(a),
+            ],
+            ret(),
+        );
+        assert_eq!(certify(&b.finish()), Ok(()), "{element:?}");
+    }
+}
+
 #[test]
 fn two_stores_after_one_take() {
     let mut b = Builder::new("f");
@@ -912,7 +953,10 @@ fn none_stored_with_no_take() {
             vec![
                 Statement::Store {
                     place: first(a),
-                    value: Operand::Const(Const::None(Type::optional(payload))),
+                    value: Operand::Const(Const::None {
+                        ty: Type::optional(payload),
+                        counted: true,
+                    }),
                 },
                 Statement::Release(a),
             ],

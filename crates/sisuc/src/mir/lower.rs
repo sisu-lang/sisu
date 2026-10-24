@@ -147,8 +147,8 @@ fn whole(local: LocalId) -> MirPlace {
     }
 }
 
-/// The constant `e` is, if it is one.
-fn constant(e: &Expr) -> Option<Const> {
+/// The constant `e` is, if it is one; `counted` tells whether a type is counted.
+fn constant(e: &Expr, counted: impl Fn(Type) -> bool) -> Option<Const> {
     if let ExprKind::Int(n) = e.kind {
         return Some(Const::Int(n, e.ty));
     }
@@ -162,7 +162,10 @@ fn constant(e: &Expr) -> Option<Const> {
         return Some(Const::Char(c));
     }
     if let ExprKind::None = e.kind {
-        return Some(Const::None(e.ty));
+        return Some(Const::None {
+            ty: e.ty,
+            counted: counted(e.ty),
+        });
     }
     None
 }
@@ -524,7 +527,7 @@ impl<'a> Lowering<'a> {
 
     /// `e` as an operand when it is a constant or a read of a source local.
     fn leaf(&self, e: &Expr) -> Option<Operand> {
-        constant(e)
+        constant(e, |ty| self.counted(ty))
             .map(Operand::Const)
             .or_else(|| local_of(e).map(|local| self.read(local)))
     }

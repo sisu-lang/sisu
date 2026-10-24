@@ -200,6 +200,7 @@ mod tests {
             value: Some("n".to_string()),
             at: Span::new(18, 19),
             access: Some(Span::new(19, 20)),
+            peel: None,
         }
         .into();
         assert_eq!(

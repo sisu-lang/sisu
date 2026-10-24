@@ -21,7 +21,6 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0010](E0010.md) | error | character that Sisu does not use |
 | [E0011](E0011.md) | error | token where something else belongs |
 | [E0013](E0013.md) | error | `var` instead of `let mut` |
-| [E0014](E0014.md) | error | optional of an optional |
 | [E0015](E0015.md) | error | `,` between fields, variants or arms |
 | [E0016](E0016.md) | error | `let` in front of a field |
 | [E0017](E0017.md) | error | method without `self` |
@@ -182,7 +181,7 @@ both, and apply every safe fix to the Broken program.
 A new code takes the next free number in its series, in the order codes land
 on `main`. A code is never reused or renumbered.
 
-E0012 is the first retired code. When the compiler stops reporting a code,
+E0012 and E0014 are the retired codes. When the compiler stops reporting a code,
 its variant leaves `DiagnosticKind` and its row leaves the table above. Its
 file stays here and gains a `Status: retired` line after its title, naming
 the ADR that retired it, and `sisu explain` serves it from `RETIRED`, the

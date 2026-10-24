@@ -1,0 +1,11 @@
+class Node {
+    value: i64
+}
+
+fn value(n: Node??) -> i64? {
+    n?.value
+}
+
+fn main() {
+    print(value(None) ?? 0)
+}

@@ -24,7 +24,6 @@ pub(crate) enum Ty {
     String,
     Unit,
     Array(Box<Ty>),
-    /// Never of an optional: `optional_of` does not nest them.
     Optional(Box<Ty>),
     /// The class `Scope::classes[id]`, each of whose objects counts `size` (decision 5).
     Class {
@@ -113,9 +112,12 @@ impl Ty {
     }
 
     /// The size of its smallest value written with no expected type: an array holds an element.
+    /// An optional of an optional has no such value, so its size is `u64::MAX`, which no `max`
+    /// holds: an `if` with `None` in a branch takes one `?` only.
     pub(crate) fn least(&self) -> u64 {
         match self {
-            Ty::Array(element) => 1 + element.least(),
+            Ty::Array(element) => element.least().saturating_add(1),
+            Ty::Optional(payload) if matches!(**payload, Ty::Optional(_)) => u64::MAX,
             Ty::Optional(payload) => payload.least(),
             Ty::Class { .. } | Ty::Enum { .. } => self.floor(),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => 0,

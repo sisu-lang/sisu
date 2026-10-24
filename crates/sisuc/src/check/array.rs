@@ -2,7 +2,7 @@
 
 use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
 use super::unused_names::Used;
-use super::{Checked, Checker, Poisoned, UNKNOWN, optional_of, payload, type_of, wrap};
+use super::{Checked, Checker, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
 use crate::source::Span;
@@ -107,7 +107,7 @@ impl Checker<'_> {
             }
             return Err(Poisoned::error());
         };
-        let want = optional_of(joined);
+        let want = as_optional(joined);
         for (slot, e) in slots.iter_mut().zip(elements) {
             if rank(e) == 2 {
                 *slot = Some(self.value(e, Some(want)));
@@ -327,6 +327,7 @@ pub(super) fn optional_array(base: &ast::Expr) -> Diagnostic {
         value: path(base),
         at: base.span,
         access: None,
+        peel: None,
     }
     .into()
 }

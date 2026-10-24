@@ -4,7 +4,7 @@ use super::expr::{fits, rank};
 use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::{
-    Checked, CheckedBlock, Checker, Poisoned, UNKNOWN, block_type, optional_of, tail, value_span,
+    Checked, CheckedBlock, Checker, Poisoned, UNKNOWN, as_optional, block_type, tail, value_span,
     wrap_block,
 };
 use crate::ast;
@@ -187,8 +187,9 @@ impl Checker<'_> {
             match joined {
                 _ if t == Type::NEVER => {}
                 None => joined = Some((i, t)),
-                Some((_, j)) if j == t || after_branch(Some(t)) == Some(j) => {}
-                Some((k, j)) if after_branch(Some(j)) == Some(t) => {
+                // The side with more layers takes the other, one layer below it.
+                Some((_, j)) if j == t || j == Type::optional(t) => {}
+                Some((k, j)) if t == Type::optional(j) => {
                     joined = Some((k, t));
                 }
                 Some((k, j)) => {
@@ -283,11 +284,12 @@ impl<'a> Branch<'a> {
 }
 
 /// What one branch of an `if` expects after the other, of type `ty`, when the `if` expects
-/// nothing: `ty` made optional; `Error` after `Error`; nothing after `unit` or `never`.
+/// nothing: `ty` made optional, unless it is one; `Error` after `Error`; nothing after `unit`
+/// or `never`.
 fn after_branch(ty: Option<Type>) -> Option<Type> {
     match ty {
         None => Some(UNKNOWN),
         Some(Type::UNIT | Type::NEVER) => None,
-        Some(ty) => Some(optional_of(ty)),
+        Some(ty) => Some(as_optional(ty)),
     }
 }

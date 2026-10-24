@@ -1,0 +1,8 @@
+error[E0032]: expected `i64??`, found `i64`
+ --> E0032-nested-optional.sisu:2:20
+  |
+2 |     let x: i64?? = 5
+  |                    ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

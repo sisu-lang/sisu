@@ -1084,10 +1084,7 @@ impl Checker<'_> {
             // Without the `?`: the type that grows is the instance, not the optional of it.
             written.push((named, Span::new(ty.span.start(), applied.angles.end())));
         }
-        if !ty.optional {
-            return Some(named);
-        }
-        Some(optional_of(named))
+        Some((0..ty.optional).fold(named, |ty, _| optional_of(ty)))
     }
 
     /// The type `name`, written in `ty` with the type arguments `args` in `angles`.
@@ -1515,12 +1512,31 @@ fn block_expr(stmts: Vec<tir::Stmt>, value: Option<tir::Expr>, ty: Type, span: S
     }
 }
 
-/// `ty?`; an optional is its own, as optionals do not nest.
+/// `ty?`: one more layer, also on an optional.
 fn optional_of(ty: Type) -> Type {
+    Type::optional(ty)
+}
+
+/// `ty` when it is an optional, else `ty?`: the type a `None` or a value beside `ty` takes.
+fn as_optional(ty: Type) -> Type {
     match ty.kind() {
         TypeKind::Optional(_) => ty,
         _ => Type::optional(ty),
     }
+}
+
+/// Whether `ty` is `inner` with two or more `?` layers added: a conversion wraps one only.
+fn beyond_one_layer(ty: Type, inner: Type) -> bool {
+    let TypeKind::Optional(mut ty) = ty.kind() else {
+        return false;
+    };
+    while let TypeKind::Optional(payload) = ty.kind() {
+        if payload == inner {
+            return true;
+        }
+        ty = payload;
+    }
+    false
 }
 
 /// `e`, of type `T`, where its optional `ty` is expected.

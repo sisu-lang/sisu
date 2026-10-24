@@ -511,8 +511,8 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
 
 /// What becomes of the first `;` of `run`, a run of `;`s among `tokens`, in statement context.
 /// `between_items` is true when the run stands between top-level items, after a `fn`, `class` or
-/// `enum`. `statements` reads `tokens` forward, to tell whether a `>` before the run closes a type
-/// annotation, which ends a statement as at a line's end.
+/// `enum`. `statements` reads `tokens` forward, to tell whether a `>` or `??` before the run
+/// closes a type annotation, which ends a statement as at a line's end.
 /// The rules, in order: a `.` after the run is a continuation unless the `;` is needed to end the
 /// statement; a `;` that joins two lines into a different statement stays; a `;` next to a line
 /// break, a `{`, a `}`, an `else` or an item that needs no separator is redundant.
@@ -523,7 +523,10 @@ fn judge(
     between_items: bool,
     statements: &mut Statements,
 ) -> Judgement {
-    use TokenKind::{Class, Const, Dot, Else, Enum, Fn, Gt, LBrace, Newline, QuestionDot, RBrace};
+    use TokenKind::{
+        Class, Const, Dot, Else, Enum, Fn, Gt, LBrace, Newline, QuestionDot, QuestionQuestion,
+        RBrace,
+    };
     let (i, end) = (run.start, run.end);
     let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
     let first = tokens[i].span;
@@ -534,9 +537,10 @@ fn judge(
     let break_after = next
         .is_none_or(|n| n.kind == Newline || source[first.start()..n.span.start()].contains('\n'));
     let next = next.map(|n| &n.kind);
-    // A `>` that closes a type annotation ends a statement, as at a line's end.
+    // A `>` or `??` that closes a type annotation ends a statement, as at a line's end.
     let ends = can_end_statement(prev)
-        || prev.is_some_and(|p| p.kind == Gt) && statements.annotates_type(&tokens[..i]);
+        || prev.is_some_and(|p| matches!(p.kind, Gt | QuestionQuestion))
+            && statements.annotates_type(&tokens[..i]);
     if matches!(next, Some(Dot | QuestionDot)) {
         // Without the `;`, the line break before the `.` would continue the line.
         if ends && !break_before {
@@ -729,8 +733,8 @@ impl Statements {
         self.current
     }
 
-    /// Whether the `>` that ends `tokens`, at a line's end, closes a type annotation: in its
-    /// statement, a `:` or `->` has no `=` after it, and every `<` after that is closed
+    /// Whether the `>` or `??` that ends `tokens`, at a line's end, closes a type annotation: in
+    /// its statement, a `:` or `->` has no `=` after it, and every `<` after that is closed
     /// (`b: Box<i64>`, `fn f() -> Box<i64>`). Anywhere else the `>` compares (`a >`), closes a
     /// header's type parameters before its `(` (`fn f<T>`), or an inner list of a type that
     /// goes on (`b: Pair<Box<i64>`), and the line goes on. This is the one place that decides
@@ -1072,13 +1076,13 @@ fn newline(span: Span) -> Token {
 /// Whether a line break here ends a statement: the token before the last `trailing` tokens, which
 /// are `;`s that separate statements, can end one, and the innermost open bracket, if any, is a
 /// block. A `;` is transparent, so `x;\n` ends a statement as `x\n` does, and `{;\n` does not.
-/// A `>` ends one too when it closes a type annotation (`annotates_type`).
+/// A `>` or `??` ends one too when it closes a type annotation (`annotates_type`): `b: i64??`.
 fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
     let trailing = brackets.trailing_semicolons;
     let last = before_semicolons(tokens, trailing);
     brackets.open.last().is_none_or(|&(c, _)| c == '{')
         && (can_end_statement(last)
-            || last.is_some_and(|t| matches!(t.kind, TokenKind::Gt))
+            || last.is_some_and(|t| matches!(t.kind, TokenKind::Gt | TokenKind::QuestionQuestion))
                 && brackets
                     .statements
                     .annotates_type(&tokens[..tokens.len() - trailing]))
@@ -2957,6 +2961,23 @@ mod tests {
         assert_eq!(newlines("class D {\n    b: Box<[i64]>\n    n: i64\n}"), 3);
         assert_eq!(newlines("class D {\n    b: Box<i64>;\n    n: i64\n}"), 3);
         assert_eq!(newlines("fn f() -> bool {\n    x < y >\n        z\n}"), 2);
+    }
+
+    /// A line-end `??` ends the statement where it closes a type annotation, and goes on to its
+    /// operand anywhere else.
+    #[test]
+    fn a_line_end_question_question_should_end_only_a_type_annotation() {
+        let newlines = |src: &str| {
+            all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count()
+        };
+        assert_eq!(newlines("class D {\n    b: i64??\n    n: i64\n}"), 3);
+        assert_eq!(
+            newlines("fn f() {\n    let r: i64?? = x ??\n        y\n}"),
+            2
+        );
     }
 
     /// A loop label's `:` does not start a type annotation, so a `>` at a line's end after it still

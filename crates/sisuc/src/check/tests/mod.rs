@@ -13,6 +13,7 @@ mod floats;
 mod for_loops;
 mod generics;
 mod loop_condition;
+mod optionals;
 mod patterns;
 mod places;
 mod prelude;

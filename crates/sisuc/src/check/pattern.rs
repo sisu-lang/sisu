@@ -947,7 +947,7 @@ impl Checker<'_> {
             Some(q) => {
                 self.resolve(&ast::TypeExpr {
                     kind: ast::TypeKind::Name(q.name),
-                    optional: false,
+                    optional: 0,
                     span: q.span,
                 })?;
                 false

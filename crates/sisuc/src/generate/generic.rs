@@ -39,7 +39,7 @@ pub(crate) enum GTy {
     Plain(Ty),
     Array(Box<GTy>),
     Optional(Box<GTy>),
-    /// The generic `Scope::generics[g]` with its type arguments. None is an optional (E0138).
+    /// The generic `Scope::generics[g]` with its type arguments.
     Applied(usize, Vec<GTy>),
 }
 
@@ -109,10 +109,9 @@ impl GTy {
 }
 
 /// Matches `pattern` against `target` and binds each parameter of `pattern` to the type it
-/// stands for. An optional is no type argument (E0138).
+/// stands for, an optional too.
 fn unify(pattern: &GTy, target: &GTy, binds: &mut [Option<GTy>]) -> bool {
     match (pattern, target) {
-        (GTy::Param(_), GTy::Optional(_)) => false,
         (GTy::Param(i), _) => {
             if let Some(bound) = &binds[*i] {
                 return bound == target;
@@ -507,8 +506,8 @@ impl Gen<'_> {
         }
     }
 
-    /// A type argument: a scalar, a declared type or an instance, or an array of a scalar. It is
-    /// never an optional (E0138). Its floor is at most `ARG_FLOOR`.
+    /// A type argument: a scalar, a declared type or an instance, or an array of a scalar. Its
+    /// floor is at most `ARG_FLOOR`.
     pub(crate) fn type_arg(&mut self) -> Ty {
         let mut pool: Vec<Ty> = Ty::VALUES.to_vec();
         let declared = self.scope.types.iter().chain(&self.scope.generic_types);
@@ -1025,20 +1024,29 @@ impl Gen<'_> {
             self.budget -= self.cost.times() * func.cost;
         }
         self.cost.generic_call(func.cost);
-        let infer = func.inferable() && self.pick(2) == 0;
+        // An argument of an optional of an optional has no value of its own type.
+        let lowered: Vec<Ty> = func
+            .args
+            .iter()
+            .map(|arg| self.lower(arg, &targs))
+            .collect();
+        let infer = func.inferable()
+            && lowered.iter().all(|arg| arg.least() != u64::MAX)
+            && self.pick(2) == 0;
         self.w.text(&func.name);
         if !infer {
             self.w.text(&angled(&targs));
         }
         self.w.text("(");
         let mut parts = Vec::new();
-        for (j, arg) in func.args.iter().enumerate() {
+        for (j, arg) in lowered.into_iter().enumerate() {
             if j > 0 {
                 self.w.text(", ");
             }
-            let arg = self.lower(arg, &targs);
+            // Without inference, an optional of an optional takes its floor.
+            let least = Some(arg.least()).filter(|&least| least != u64::MAX);
             let room = if arg.sized() {
-                arg.least().max(arg.floor()) + GARG
+                least.unwrap_or(0).max(arg.floor()) + GARG
             } else {
                 0
             };

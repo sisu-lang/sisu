@@ -82,6 +82,13 @@ pub(super) enum HeapBlock<'a, 'ctx> {
     Pending { cap: IntValue<'ctx> },
 }
 
+/// Whether the optional `ty` is one layer around a string, a class or an array: the block's
+/// pointer, `null` for `None`. Every other optional is a `{ flag, value }` pair.
+pub(super) fn is_pointer_optional(ty: Type) -> bool {
+    matches!(ty.kind(), TypeKind::Optional(payload)
+        if matches!(payload.kind(), TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_)))
+}
+
 impl<'ctx> Codegen<'ctx, '_> {
     /// The LLVM type of a value of `ty`; `None` for `unit` and `never`, which have no value.
     pub(super) fn llvm_type(&self, ty: Type) -> Option<BasicTypeEnum<'ctx>> {
@@ -100,19 +107,20 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Param(..) => {
                 panic!("mono should replace every type parameter before codegen")
             }
-            TypeKind::Optional(payload) => match self
-                .llvm_type(payload)
-                .expect("the checker should reject an optional of `unit` or `never`, so its payload has a value type")
-            {
-                // A string, class or array optional is the block's pointer, `null` for `None`.
-                ptr @ BasicTypeEnum::PointerType(_) => Some(ptr),
-                // A scalar or enum optional is `{ i1, T }`: whether it holds a value, then the
-                // value.
-                value => {
-                    let flag = self.context.bool_type().into();
-                    Some(self.context.struct_type(&[flag, value], false).into())
+            TypeKind::Optional(payload) => {
+                let value = self
+                    .llvm_type(payload)
+                    .expect("the checker should reject an optional of `unit` or `never`, so its payload has a value type");
+                if is_pointer_optional(ty) {
+                    // A string, class or array optional is the block's pointer, `null` for
+                    // `None`.
+                    return Some(value);
                 }
-            },
+                // Any other optional, an optional of an optional too, is `{ i1, T }`: whether it
+                // holds a value, then the value.
+                let flag = self.context.bool_type().into();
+                Some(self.context.struct_type(&[flag, value], false).into())
+            }
         }
     }
 

@@ -1,0 +1,175 @@
+// Optionals of optionals: each `?` is a layer of its own. A value converts through one `?`
+// only, `??`, `if let` and `?.` take one layer off, and `==` compares layer by layer. Each
+// value is made at each layer: `None`, a `None` inside (the middle state) and a value.
+class Node {
+    n: i64
+}
+
+class Holder {
+    mut i: i64??
+    mut s: string??
+    mut node: Node??
+}
+
+enum E {
+    End
+    Next(E??)
+}
+
+fn first<T>(xs: [T]) -> T? {
+    if xs.len() == 0 {
+        return None
+    }
+    xs[0]
+}
+
+fn describe(x: i64??) -> string {
+    if let y = x {
+        if let z = y {
+            return "Some(Some({z}))"
+        }
+        return "Some(None)"
+    }
+    "None"
+}
+
+fn describe_string(x: string??) -> string {
+    if let y = x {
+        if let z = y {
+            return "Some(Some({z}))"
+        }
+        return "Some(None)"
+    }
+    "None"
+}
+
+fn describe_node(x: Node??) -> string {
+    if let y = x {
+        if let z = y {
+            return "Some(Some(Node {z.n}))"
+        }
+        return "Some(None)"
+    }
+    "None"
+}
+
+fn describe_e(x: E??) -> string {
+    if let y = x {
+        if let z = y {
+            return match z {
+                End => "Some(Some(End))"
+                Next(inner) => "Some(Some(Next({describe_e(inner)})))"
+            }
+        }
+        return "Some(None)"
+    }
+    "None"
+}
+
+// A `string??` that a branch moves into a field, and that the end releases otherwise.
+fn keep_if(h: Holder, s: string??, keep: bool) {
+    let t = s
+    if keep {
+        h.s = t
+    }
+}
+
+fn main() {
+    // `first` on a `[i64?]` gives an `i64??`: its first element is `None`, a value.
+    let a: [i64?] = [None, 1]
+    print(describe(first(a)))            // Some(None)
+    print(first(a) == None)              // false
+    let peeled = first(a) ?? None
+    print(peeled == None)                // true
+    let empty: [i64?] = []
+    print(describe(first(empty)))        // None
+
+    let middle: i64? = None
+    let five: i64? = 5
+    let n0: i64?? = None
+    let n1: i64?? = middle
+    let n2: i64?? = five
+    let ns: [i64??] = [n0, n1, n2]
+    for x in ns {
+        print(describe(x))               // None, Some(None), Some(Some(5))
+        print((x ?? None) ?? 0)          // 0, 0, 5
+        print((x ?? 7) ?? 0)             // 7, 0, 5
+    }
+    print(n0 == n1)                      // false
+    print(n1 == middle)                  // true
+    print(n2 == five)                    // true
+    print(n2 == n1)                      // false
+    print(n0 == None)                    // true
+    print(n1 == None)                    // false
+    print(five == n2)                    // true
+    let with_middle: [i64??] = [n1, n2]
+    let with_none: [i64??] = [n0, n2]
+    print(with_middle.contains(None))    // false
+    print(with_middle.contains(middle))  // true
+    print(with_none.contains(None))      // true
+    print(with_none.contains(middle))    // false
+
+    let no_text: string? = None
+    let hi: string? = "h" + "i"
+    let s0: string?? = None
+    let s1: string?? = no_text
+    let s2: string?? = hi
+    let ss: [string??] = [s0, s1, s2]
+    for s in ss {
+        print(describe_string(s))        // None, Some(None), Some(Some(hi))
+        print((s ?? None) ?? "none")     // none, none, hi
+    }
+    print(s2 == s1)                      // false
+    print(s2 == hi)                      // true
+
+    let no_node: Node? = None
+    let three: Node? = Node(n: 3)
+    let o0: Node?? = None
+    let o1: Node?? = no_node
+    let o2: Node?? = three
+    let os: [Node??] = [o0, o1, o2]
+    for o in os {
+        print(describe_node(o))          // None, Some(None), Some(Some(Node 3))
+        print((o ?? None)?.n ?? 0)       // 0, 0, 3
+    }
+
+    let h = Holder(i: n1, s: s1, node: o2)
+    print(describe(h.i))                 // Some(None)
+    print(describe_string(h.s))          // Some(None)
+    print(describe_node(h.node))         // Some(Some(Node 3))
+    h.i = n2
+    h.node = None
+    print(describe(h.i))                 // Some(Some(5))
+    print(describe_node(h.node))         // None
+    keep_if(h, s2, true)
+    print(describe_string(h.s))          // Some(Some(hi))
+    let bye: string? = "b" + "ye"
+    let s3: string?? = bye
+    keep_if(h, s3, false)
+    print(describe_string(h.s))          // Some(Some(hi))
+
+    let no_e: E? = None
+    let end: E? = E.End
+    let e0 = E.Next(None)
+    let e1 = E.Next(no_e)
+    let e2 = E.Next(end)
+    let e1_again = E.Next(no_e)
+    print(e0 == e1)                      // false
+    print(e1 == e1_again)                // true
+    print(e1 == e2)                      // false
+    print(e2 == E.Next(end))             // true
+    let es = [e0, e1, e2]
+    for e in es {
+        match e {
+            End => print("End")
+            Next(inner) => print(describe_e(inner))
+        }
+    }
+    // One layer at a time: an `E` converts to `E?`, which converts to `E??`.
+    let next: E? = E.Next(no_e)
+    let deep = E.Next(next)
+    match deep {
+        End => print("End")
+        Next(inner) => print(describe_e(inner))  // Some(Some(Next(Some(None))))
+    }
+}

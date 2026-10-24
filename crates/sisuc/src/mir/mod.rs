@@ -178,7 +178,12 @@ pub(crate) enum Const {
     Float(f64),
     Bool(bool),
     Char(char),
-    None(Type),
+    /// `counted` when `ty` is counted, so a store of the `None` into a place holding a reference
+    /// needs a take before it, as a counted value does.
+    None {
+        ty: Type,
+        counted: bool,
+    },
     /// A string pattern's literal, which a test compares with in place.
     Str(String),
 }

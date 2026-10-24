@@ -788,7 +788,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .into(),
                 Type::CHAR,
             ),
-            Const::None(ty) => (self.empty(*ty), *ty),
+            Const::None { ty, .. } => (self.empty(*ty), *ty),
             Const::Str(text) => (self.string_global(text).into(), Type::STRING),
         }
     }

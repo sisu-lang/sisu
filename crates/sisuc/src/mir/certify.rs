@@ -1008,16 +1008,7 @@ pub(super) fn counted_value(function: &Function, value: &Operand) -> bool {
         Operand::Read(place) => {
             place.projections.is_empty() && function.locals[place.local.0].counted
         }
-        // shortcut: `Type::is_counted`'s kinds without its enum case, which needs the enum
-        // table the certifier does not have, so a `None` of an enum optional counts as
-        // uncounted; pass the table in if lowering ever stores one without a take.
-        Operand::Const(Const::None(ty)) => matches!(
-            ty.kind(),
-            TypeKind::Optional(payload) if matches!(
-                payload.kind(),
-                TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_)
-            )
-        ),
+        Operand::Const(Const::None { counted, .. }) => *counted,
         Operand::Const(_) | Operand::Use(_) | Operand::Guarded(_) => false,
     }
 }

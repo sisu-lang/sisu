@@ -7,7 +7,7 @@ use super::*;
 const DECLS: &str = "class Cell<T> {\n    value: T\n    next: Cell<T>?\n}\nclass Stack<T> {\n    mut top: Cell<T>?\n}\nclass Point {\n    x: i64\n}\nfn main() {}";
 
 /// `line` on line 1, then `DECLS`.
-fn with_decls(line: &str) -> String {
+pub(super) fn with_decls(line: &str) -> String {
     format!("{line}\n{DECLS}")
 }
 
@@ -93,8 +93,7 @@ fn type_arguments_that_do_not_fit_a_type_should_be_reported() {
         ("fn f(s: Stack<i64, i64>) {}", arguments((1, 14))),
         ("fn f(p: Point<i64>) {}", arguments((1, 14))),
         ("fn f(s: Stack<unit>) {}", argument.clone()),
-        ("fn f(s: Stack<never>) {}", argument.clone()),
-        ("fn f(s: Stack<i64?>) {}", argument),
+        ("fn f(s: Stack<never>) {}", argument),
         ("fn f(s: Stack<Zz>) {}", vec![(Code::UnknownType, (1, 15))]),
         ("fn f(w: Wrap) {}\nenum Wrap<T> { W(T) }", arguments((1, 9))),
         (
@@ -853,7 +852,7 @@ fn call_types(src: &str, callee: &str) -> Vec<String> {
 }
 
 /// Each row's `callee` is called with the type arguments and type after it (see `call_types`).
-fn infers(rows: &[(&str, &str, &[&str])]) {
+pub(super) fn infers(rows: &[(&str, &str, &[&str])]) {
     for &(line, callee, expected) in rows {
         assert_eq!(call_types(&with_generics(line), callee), expected, "{line}");
     }
@@ -956,8 +955,7 @@ fn arguments_should_bind_type_parameters() {
     ]);
 }
 
-/// The expected type binds what no other argument does, an optional one's payload a return
-/// type that is not optional.
+/// The expected type binds what no other argument does.
 #[test]
 fn the_expected_type_should_bind_the_rest() {
     infers(&[
@@ -972,11 +970,6 @@ fn the_expected_type_should_bind_the_rest() {
             &["string", "Tree<string>"],
         ),
         ("fn g() {\n    let x: f64 = id(1)\n}", "id", &["f64", "f64"]),
-        (
-            "fn g() {\n    let x: i64? = id(5)\n}",
-            "id",
-            &["i64", "i64"],
-        ),
         (
             "fn g() {\n    let xs: [i64] = id(make())\n}",
             "make",
@@ -1625,10 +1618,6 @@ fn a_generic_call_that_does_not_check_should_report_once() {
             "fn g() {\n    let x = Box(v: 1).map_all<f64, f64>(2.5)\n}",
             arguments((2, 30)),
         ),
-        (
-            "fn g() {\n    let x = first<i64?>([])\n}",
-            argument((2, 19)),
-        ),
         // `never` binds only what nothing else does.
         (
             "fn g() {\n    let x = id(panic(\"x\"))\n}",
@@ -1669,7 +1658,7 @@ fn a_generic_call_that_does_not_check_should_report_once() {
 }
 
 /// The new form of `CannotInfer` is at the callee's name, with a help, and so is the list on a
-/// variant; an inferred optional's `TypeArgument` is at the argument that binds it.
+/// variant.
 #[test]
 fn cannot_infer_should_be_reported_at_the_callee_name() {
     let src = with_generics("fn g() {\n    let x = first([])\n}");
@@ -1677,8 +1666,6 @@ fn cannot_infer_should_be_reported_at_the_callee_name() {
     assert!(d.help().is_some());
     let src = with_generics("fn g() {\n    let t = Tree.Leaf\n}");
     diagnostic(&src, Code::CannotInfer, (2, 13, "Tree.Leaf"), &[]);
-    let src = with_generics("fn g() {\n    let n: i64? = None\n    let x = id(n)\n}");
-    diagnostic(&src, Code::TypeArgument, (3, 16, "n"), &[]);
     let src = with_generics("fn g() -> Tree<i64> { Tree.Node<i64>(Tree.Leaf, 5, Tree.Leaf) }");
     let d = diagnostic(&src, Code::TypeArguments, (1, 32, "<i64>"), &[]);
     assert!(d.help().is_some());
@@ -2189,6 +2176,8 @@ fn generic_array_literals_should_take_optional_elements() {
         ("g4([[1]])", "g4", "i64"),
         ("g4([[None, 1]])", "g4", "i64"),
         ("g4([[], [1]])", "g4", "i64"),
+        // A parameter that is no array of optionals keeps the join.
+        ("g5([1, None])", "g5", "i64?"),
     ] {
         let found = call_types(&with_optional_elements(call), callee);
         assert_eq!(found, [expected, "i64"], "{call}");
@@ -2212,9 +2201,6 @@ fn generic_array_literals_should_report_each_mistake_once() {
             vec![(Code::Mismatch, (3, 8))],
         ),
         ("g1(ys)", vec![(Code::Mismatch, (2, 8))]),
-        // A parameter that is no array of optionals keeps the join: `T` is `i64?`, which no
-        // type argument may be.
-        ("g5([1, None])", vec![(Code::TypeArgument, (2, 8))]),
         // An element with no value, `unit` or `never`, is reported where it is, binds nothing,
         // and leaves a `None` beside it silent.
         ("g1([print(1), 2])", vec![(Code::NoValue, (2, 9))]),

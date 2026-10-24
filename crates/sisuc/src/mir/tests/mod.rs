@@ -189,13 +189,13 @@ impl Builder {
         self.function.borrowed[param.0] = true;
     }
 
-    /// A named local of `ty`, which holds no enum unless it is one: counted when `ty` is, and
-    /// never when it is an enum, which has no declaration here.
+    /// A named local of `ty`: counted when `ty` is, and never when it is an enum or an optional
+    /// of one, which has no declaration here.
     pub(crate) fn local(&mut self, name: &str, ty: Type) -> LocalId {
         self.function.locals.push(Local {
             name: Some(name.to_owned()),
             ty,
-            counted: !matches!(ty.kind(), tir::TypeKind::Enum(..)) && ty.is_counted(&[]),
+            counted: ty.inline_enum().is_none() && ty.is_counted(&[]),
             scope: BlockId(0),
             token: false,
         });

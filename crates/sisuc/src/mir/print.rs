@@ -328,7 +328,7 @@ fn constant(c: &Const) -> String {
         Const::Float(x) => format!("{x:?}"),
         Const::Bool(b) => format!("{b}"),
         Const::Char(c) => format!("{c:?}"),
-        Const::None(_) => "None".to_owned(),
+        Const::None { .. } => "None".to_owned(),
         Const::Str(text) => format!("{text:?}"),
     }
 }

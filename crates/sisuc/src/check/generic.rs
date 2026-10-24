@@ -12,7 +12,7 @@ use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN,
-    built_in_type, type_of,
+    built_in_type, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
@@ -107,7 +107,10 @@ impl Bindings {
             }
             (TypeKind::Array(p), TypeKind::Array(v))
             | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.bind(p, v),
-            (TypeKind::Optional(p), _) => self.bind(p, value),
+            // A value converts through one `?` only.
+            (TypeKind::Optional(p), _) if !matches!(p.kind(), TypeKind::Optional(_)) => {
+                self.bind(p, value)
+            }
             (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => self.bind_all(p, v),
             (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => self.bind_all(p, v),
             _ => false,
@@ -274,8 +277,8 @@ impl Checker<'_> {
     /// parameters by count and label, checked in four passes that bind its type parameters
     /// (`written` gives every one the receiver does not): (1) those that are neither
     /// literal-like nor need context, each against its parameter's type once that names no
-    /// unbound parameter and on its own before; (2) `expected` against the return type, an
-    /// optional by its payload, which a `T?` takes as it takes the optional; (3) the
+    /// unbound parameter and on its own before; (2) `expected` against the return type, whole,
+    /// or by its payload when it is an optional the return type cannot meet whole; (3) the
     /// literal-like arguments, as in (1); (4) those that need context, against their
     /// parameter's type. An argument of type `unit` or `never` binds only what none of the
     /// others does. Returns the arguments in source order, the type arguments, and the call's
@@ -344,12 +347,12 @@ impl Checker<'_> {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
         }
         if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
-            let want = match want.kind() {
-                TypeKind::Optional(payload) => payload,
-                _ => want,
-            };
-            // What of the return type cannot meet it is reported where the call's value is used.
-            call.bindings.constrain(ret, want);
+            // The return type meets `want` whole if it can: `let x: i64? = id(5)` binds
+            // `T = i64?`. Else it meets the payload of an optional `want`, and the call's value
+            // is wrapped. What of it cannot meet either is reported where the value is used.
+            if !call.bindings.unify(ret, want) {
+                call.bindings.constrain(ret, payload(want));
+            }
             self.report_fresh(&mut call, span);
         }
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 1) {
@@ -560,12 +563,10 @@ impl Checker<'_> {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
-            let optional = matches!(ty.kind(), TypeKind::Optional(_));
-            if optional || matches!(ty, Type::UNIT | Type::NEVER) {
+            if matches!(ty, Type::UNIT | Type::NEVER) {
                 self.report(DiagnosticKind::TypeArgument {
                     ty: self.type_name(ty),
                     at,
-                    optional,
                 });
                 call.failed = true;
             }
@@ -1018,8 +1019,8 @@ impl Checker<'_> {
         });
     }
 
-    /// The type of the type argument `arg`: `None`, reported, for `unit`, `never` or an
-    /// optional, which no type parameter takes.
+    /// The type of the type argument `arg`: `None`, reported, for `unit` or `never`, which no
+    /// type parameter takes.
     fn type_argument(&mut self, arg: &ast::TypeExpr) -> Option<Type> {
         if let ast::TypeKind::Name(name) = arg.kind
             && matches!(name.as_str(), "unit" | "never")
@@ -1030,20 +1031,10 @@ impl Checker<'_> {
             self.report(DiagnosticKind::TypeArgument {
                 ty: arg.to_string(),
                 at: arg.span,
-                optional: false,
             });
             return None;
         }
-        let ty = self.resolve(arg)?;
-        if arg.optional {
-            self.report(DiagnosticKind::TypeArgument {
-                ty: self.type_name(ty),
-                at: arg.span,
-                optional: true,
-            });
-            return None;
-        }
-        Some(ty)
+        self.resolve(arg)
     }
 
     /// Reports `main`, which has type parameters. The fix removes them, unless a comment is
@@ -1096,7 +1087,7 @@ impl Checker<'_> {
         let ast::TypeKind::Name(n) = arg.kind else {
             return false;
         };
-        !arg.optional && self.body.scopes.iter().any(|scope| scope.contains_key(&n))
+        arg.optional == 0 && self.body.scopes.iter().any(|scope| scope.contains_key(&n))
             || self.names_no_type(arg)
     }
 
@@ -1106,7 +1097,7 @@ impl Checker<'_> {
         let ast::TypeKind::Name(n) = arg.kind else {
             return false;
         };
-        !arg.optional
+        arg.optional == 0
             && built_in_type(n.as_str()).is_none()
             && !self.class_ids.contains_key(&n)
             && !self.enum_ids.contains_key(&n)

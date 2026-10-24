@@ -12,7 +12,7 @@ use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
 use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
-use super::layout::HeapBlock;
+use super::layout::{HeapBlock, is_pointer_optional};
 use super::{Codegen, POSITIONED};
 use crate::graph::components;
 use crate::tir::{ClassId, LocalId, Program, Type, TypeArgs, TypeKind};
@@ -114,13 +114,13 @@ pub(super) fn class_cycles(program: &Program) -> ClassCycles {
     cycles
 }
 
-/// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with any
-/// `?` removed. `None` for every other type, an enum and its optional included: those are not
-/// pointers, and a `None` of theirs is not `null`.
+/// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with
+/// one `?` removed. `None` for every other type, an enum, its optional and an optional of an
+/// optional included: those are not pointers, and a `None` of theirs is not `null`.
 pub(super) fn counted_core(ty: Type) -> Option<Type> {
     match ty.kind() {
         TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => Some(ty),
-        TypeKind::Optional(payload) => counted_core(payload),
+        TypeKind::Optional(payload) if is_pointer_optional(ty) => Some(payload),
         _ => None,
     }
 }
@@ -608,7 +608,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.has_value(ty, rhs, "part"),
         );
         let flags = self.int_compare(IntPredicate::EQ, fa, fb);
-        if let TypeKind::Enum(..) = payload.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Optional(_) = payload.kind() {
             // Equal flags decide, unless both are set: a `None`'s payload is never read.
             let function = self.current_function();
             let both = self.builder.build_and(fa, fb, "both").expect(POSITIONED);
@@ -852,8 +852,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `retain` or `release`, as `kind` says. A string, object or array is the pointer itself,
-    /// `null` for `None`; an enum goes to its helper by address; an enum optional's payload is
-    /// counted only when its flag is set.
+    /// `null` for `None`; an enum goes to its helper by address; the payload of any other
+    /// optional is counted only when its flag is set, one layer at a time.
     fn retain_or_release(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
         if let Some(core) = counted_core(ty) {
             let function = match kind {

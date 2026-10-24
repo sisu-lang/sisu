@@ -195,7 +195,7 @@ impl Gen<'_> {
             Rule::Let => self.let_stmt(),
             Rule::Discard => {
                 self.w.text("let _ = ");
-                let ty = self.any_type();
+                let ty = self.bare_type();
                 self.synth = true;
                 self.expr(&ty, MAX_SIZE);
             }
@@ -576,7 +576,7 @@ impl Gen<'_> {
         self.w.text(&format!("let mut {counter} = {bound}"));
         self.w.line();
         self.cost.statement();
-        let payload = match self.any_type() {
+        let payload = match self.bare_type() {
             Ty::Optional(payload) => *payload,
             ty => ty,
         };
@@ -742,7 +742,7 @@ impl Gen<'_> {
 
     /// `for v in [a, b, ...]` or `for v in [e; n]`, of at most `MAX_BOUND` elements.
     fn for_array(&mut self) {
-        let element = self.any_type();
+        let element = self.bare_type();
         let name = self.scope.fresh("v");
         let label = self.label();
         self.w.text(&format!("for {name} in "));

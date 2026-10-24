@@ -47,7 +47,8 @@ done
 # step0 returns its argument. stepi adds 1 through an array, a class and an
 # optional chain, and 0 through constants, an enum, f64 methods, a string built
 # with += and format specs, while let, u8 and char, a generic function,
-# class and enum, each instantiated twice, and a match on a prelude Result;
+# class and enum, each instantiated twice, a match on a prelude Result, and
+# an i64?? that two ?? peel to 0;
 # then it calls step(i-1).
 # main prints step(N-1)(0) = N-1. Not fi: f64 is a built-in type.
 large_input() {
@@ -122,6 +123,8 @@ fn step$i(x: i64) -> i64 {
         k = below$i(n)
     }
     let b = u8(spins) ?? 0
+    let nested: i64?? = k
+    let peeled = (nested ?? None) ?? 0
     let first = text.chars()[0]
     let zero = if shapes[2].is_dot() && first == 's' { i64(b) - spins } else { 1 }
     let c: C$i? = C$i(v: sum - x - xs[1], _label: text)
@@ -133,7 +136,7 @@ fn step$i(x: i64) -> i64 {
         Result.Ok(v) => v - K$i
         Result.Err(_) => 1
     }
-    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed
+    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU

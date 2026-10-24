@@ -712,14 +712,14 @@ fn explain_should_print_the_page_of_a_code_in_either_case() {
     }
 }
 
-/// GIVEN the retired code `E0012` written as `E0012` and as `e0012`
+/// GIVEN the retired codes `E0012` and `E0014`, each written in upper and in lower case
 /// WHEN `sisu explain` runs
 /// THEN it exits 0 and stdout has a line that starts with `Status: retired`
 ///
 /// A retired code's page is still served, in either case, and says it is retired.
 #[test]
 fn explain_should_print_the_page_of_a_retired_code_with_its_status() {
-    for code in ["E0012", "e0012"] {
+    for code in ["E0012", "e0012", "E0014", "e0014"] {
         let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
             .args(["explain", code])
             .output()
@@ -1062,6 +1062,35 @@ fn emit_mir_should_show_a_move_when_a_function_returns_its_parameter() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(String::from_utf8_lossy(&out.stdout).contains("= move xs#0"));
+}
+
+/// GIVEN a function that unwraps its `string??` parameter with two `if let`s
+/// WHEN it is built with `--emit mir`
+/// THEN `f` has two `as some` lines, one per layer, each a borrow, and no copy or retain
+///
+/// Each `if let` takes one layer, and a borrowed parameter's layers are borrowed, not retained.
+#[test]
+fn emit_mir_should_borrow_each_layer_of_a_nested_optional_parameter() {
+    let out = run_on(
+        "emit_mir_nested_optional",
+        "fn f(x: string??) -> i64 {\n    if let y = x {\n        if let z = y {\n            return z.len()\n        }\n    }\n    0\n}\nfn main() {\n    print(f(None))\n}\n",
+        &["build", "--emit", "mir"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let f = stdout
+        .split("\nfn ")
+        .find(|f| f.starts_with("fn f(") || f.starts_with("f("))
+        .unwrap_or_else(|| panic!("`f` should be printed: {stdout}"));
+    let layers: Vec<&str> = f.lines().filter(|l| l.contains(" as some)")).collect();
+    assert_eq!(layers.len(), 2, "{f}");
+    assert!(layers.iter().all(|l| l.contains("= borrow (")), "{f}");
+    assert!(!f.contains("copy") && !f.contains("retain"), "{f}");
 }
 
 /// GIVEN a program with an enum, a `match` and a `main`

@@ -360,15 +360,24 @@ impl Gen<'_> {
                 &[]
             }
             Ty::Optional(payload) => {
-                if !synth && payload.floor() <= max {
+                let nested = matches!(**payload, Ty::Optional(_));
+                if !synth && payload.floor() <= max && (!nested || self.has_name(payload, max)) {
                     rules.push(Rule::Wrap);
                 }
-                if !self.fields(payload, max).is_empty() {
+                if !self.fields(safe_member(ty), max).is_empty() {
                     rules.push(Rule::SafeField);
                 }
                 // Twice: a method of the payload's type is rare.
-                if self.callees(payload, max).iter().any(|&f| self.method(f)) {
+                if self
+                    .callees(safe_member(ty), max)
+                    .iter()
+                    .any(|&f| self.method(f))
+                {
                     rules.extend([Rule::SafeMethod, Rule::SafeMethod]);
+                }
+                // A name of an optional of `ty` is rare, so a `??` on it comes often.
+                if self.has_name(&Ty::Optional(Box::new(ty.clone())), max) {
+                    rules.extend([Rule::Coalesce; 4]);
                 }
                 if matches!(**payload, Ty::U8 | Ty::Char | Ty::I64)
                     || **payload == Ty::String && max >= LINE
@@ -447,7 +456,7 @@ impl Gen<'_> {
                 Info::folding(&[lhs, rhs], 0, true)
             }
             Rule::Equal => {
-                let operand = self.any_type();
+                let operand = self.bare_type();
                 self.w.text("(");
                 self.synth = true;
                 let lhs = self.expr(&operand, MAX_SIZE);
@@ -516,12 +525,10 @@ impl Gen<'_> {
         }
     }
 
-    /// `((o).g)` of a field of type `ty`, or if `safe`, `((o)?.g)` of one of its payload's.
+    /// `((o).g)` of a field of type `ty`, or if `safe`, `((o)?.g)` of one of the type
+    /// `safe_member` says.
     fn field(&mut self, ty: &Ty, max: u64, safe: bool) -> Info {
-        let wanted = match ty {
-            Ty::Optional(payload) if safe => payload,
-            _ => ty,
-        };
+        let wanted = if safe { safe_member(ty) } else { ty };
         let fields = self.fields(wanted, max);
         let (class, field) = fields[self.pick(fields.len())];
         let (name, cap) = {
@@ -537,13 +544,10 @@ impl Gen<'_> {
         Info::of(&[receiver], cap, false)
     }
 
-    /// `((o)?.m(depth, args))` of a method that returns the payload of `ty`, an optional.
+    /// `((o)?.m(depth, args))` of a method that returns the type `safe_member` says of `ty`.
     fn safe_method(&mut self, ty: &Ty, max: u64) -> Info {
-        let Ty::Optional(payload) = ty else {
-            unreachable!("only an optional is a safe call's")
-        };
         let methods: Vec<usize> = self
-            .callees(payload, max)
+            .callees(safe_member(ty), max)
             .into_iter()
             .filter(|&f| self.method(f))
             .collect();
@@ -660,7 +664,7 @@ impl Gen<'_> {
         };
         // Where the fields name every type parameter of a generic enum, the type arguments may
         // be left out; each field is then of its own type (`Gen::expr`).
-        let fits = fields.iter().map(Ty::least).sum::<u64>() < max;
+        let fits = fields.iter().map(Ty::least).fold(0, u64::saturating_add) < max;
         let infer = inferable && fits && self.pick(2) == 0;
         let enum_name = if infer { ty.bare() } else { ty.to_string() };
         self.w.text(&format!("{enum_name}.{name}"));
@@ -697,7 +701,7 @@ impl Gen<'_> {
         let receiver = if self.pick(2) == 0 {
             self.expr(&Ty::String, MAX_SIZE)
         } else {
-            let element = self.any_type();
+            let element = self.bare_type();
             self.expr(&Ty::Array(Box::new(element)), MAX_SIZE)
         };
         self.w.text(").len())");
@@ -716,7 +720,7 @@ impl Gen<'_> {
 
     /// `((a).contains(v))`.
     fn contains(&mut self) -> Info {
-        let element = self.any_type();
+        let element = self.bare_type();
         self.w.text("((");
         self.synth = true;
         let receiver = self.expr(&Ty::Array(Box::new(element.clone())), MAX_SIZE);
@@ -806,18 +810,26 @@ impl Gen<'_> {
         Info::of(&[operand], 0, true)
     }
 
-    /// `(a ?? b)`: of a `T?` `a` and a `T` `b` for a `T`, of two `T?` for a `T?`.
+    /// `(a ?? b)`: of a `T?` `a` and a `T` `b` for a `T`, of two `T?` for a `T?`, or of a
+    /// named `T??` `a` and a `T?` `b` for a `T?`: `??` takes one layer off.
     fn coalesce(&mut self, ty: &Ty, max: u64) -> Info {
         let optional = match ty {
             Ty::Optional(_) => ty.clone(),
             _ => Ty::Optional(Box::new(ty.clone())),
         };
+        let nested = Ty::Optional(Box::new(ty.clone()));
+        let named = optional == *ty && self.has_name(&nested, max);
         self.w.text("(");
-        self.synth = true;
-        let lhs = self.expr(&optional, max);
+        let lhs = if named {
+            self.name(&nested, max)
+        } else {
+            self.synth = true;
+            self.expr(&optional, max)
+        };
         self.w.text(" ?? ");
         // The `T?` the right side gives must be one: a `T` there would make the result a `T`.
-        self.synth = optional == *ty;
+        // After a `T??`, the right side has the `T?` it gives as its expected type.
+        self.synth = optional == *ty && !named;
         let rhs = self.conditionally(|g| g.expr(ty, max));
         self.w.text(")");
         Info::of(&[lhs, rhs], lhs.size.max(rhs.size), true)
@@ -889,10 +901,17 @@ impl Gen<'_> {
 
     /// A value type, an array or an optional, nested at most twice.
     pub(crate) fn any_type(&mut self) -> Ty {
-        self.type_within(2)
+        self.type_within(2, true)
     }
 
-    fn type_within(&mut self, nesting: u32) -> Ty {
+    /// A type of `any_type` with no optional of an optional in it: one that a value written
+    /// with no expected type can have (`Ty::least`).
+    pub(crate) fn bare_type(&mut self) -> Ty {
+        self.type_within(2, false)
+    }
+
+    /// With `nest`, an optional may be the payload of an optional.
+    fn type_within(&mut self, nesting: u32, nest: bool) -> Ty {
         let values = Ty::VALUES.len();
         // The declared types share one choice, so they take no more of the values' as they grow;
         // so do the instances of generic types, whose number does not crowd out the declared.
@@ -915,12 +934,11 @@ impl Gen<'_> {
         let inner = if choice == values && self.pick(2) == 0 {
             Ty::String
         } else {
-            self.type_within(nesting - 1)
+            self.type_within(nesting - 1, nest)
         };
         match (choice - values, inner) {
             (0, inner) => Ty::Array(Box::new(inner)),
-            // `optional_of` does not nest optionals.
-            (_, Ty::Optional(payload)) => Ty::Optional(payload),
+            (_, Ty::Optional(payload)) if !nest => Ty::Optional(payload),
             (_, inner) => Ty::Optional(Box::new(inner)),
         }
     }
@@ -1440,11 +1458,15 @@ impl Gen<'_> {
         Info::of(&parts, size, true)
     }
 
-    /// A `T` where a `T?` is expected.
+    /// A `T` where a `T?` is expected. A value converts through one `?` only, so a `T` that is
+    /// an optional is a name: the expected `T?` would reach into any other form of it.
     fn wrap(&mut self, ty: &Ty, max: u64) -> Info {
         let Ty::Optional(payload) = ty else {
             unreachable!("only an optional wraps")
         };
+        if matches!(**payload, Ty::Optional(_)) {
+            return self.name(payload, max);
+        }
         // A constant of an optional type does not fold.
         Info {
             folds: false,
@@ -1469,7 +1491,7 @@ impl Gen<'_> {
         if self.pick(4) != 3 || !self.spend(1) {
             return (self.expr(&Ty::Bool, 0), None);
         }
-        let payload = match self.any_type() {
+        let payload = match self.bare_type() {
             Ty::Optional(payload) => *payload,
             ty => ty,
         };
@@ -1495,12 +1517,9 @@ impl Gen<'_> {
         if self.pick(64) != 63 {
             return self.expr(ty, max);
         }
-        // The index takes half: it is the one panic that reads a value first.
+        // The index takes half: it is the one panic that reads a value first. An optional of an
+        // optional has no value of its own type to index, so `panic` takes its place.
         match self.pick(4) {
-            0 => {
-                let message = self.message();
-                self.w.text(&format!("panic({message})"));
-            }
             1 => {
                 let todo = if self.pick(2) == 0 {
                     "todo".to_string()
@@ -1508,6 +1527,10 @@ impl Gen<'_> {
                     format!("todo({})", self.message())
                 };
                 self.w.text(&todo);
+            }
+            pick if pick == 0 || ty.least() >= MAX_SIZE => {
+                let message = self.message();
+                self.w.text(&format!("panic({message})"));
             }
             _ => {
                 // `[e][1]`: index 1 out of bounds for length 1.
@@ -1832,6 +1855,15 @@ fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'
             (c.name.as_str(), Info::literal(c.size, value))
         });
     vars.chain(consts)
+}
+
+/// The type of the member that `o?.m` reads to give `ty`, an optional: its payload, or `ty`
+/// itself for an optional of an optional, since `?.` adds no layer to an optional member.
+fn safe_member(ty: &Ty) -> &Ty {
+    match ty {
+        Ty::Optional(payload) if !matches!(**payload, Ty::Optional(_)) => payload,
+        _ => ty,
+    }
 }
 
 /// Whether an index into `var` reads a `ty` of at most `max` in bounds.

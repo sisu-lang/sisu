@@ -104,14 +104,19 @@ fn unify_should_refuse_a_parameter_bound_to_two_types() {
 }
 
 #[test]
-fn unify_should_refuse_an_optional_for_a_parameter() {
-    // E0138: an optional is no type argument.
-    assert!(!unify(&param(0), &optional(plain(Ty::I64)), &mut [None]));
+fn unify_should_bind_an_optional_to_a_parameter() {
+    // An optional is a type argument like any other type.
+    let mut binds = [None];
+    assert!(unify(&param(0), &optional(plain(Ty::I64)), &mut binds));
+    assert_eq!(binds, [Some(optional(plain(Ty::I64)))]);
+    // `T?` against `i64?` takes the one layer off: `T` is `i64`.
+    let mut binds = [None];
     assert!(unify(
         &optional(param(0)),
         &optional(plain(Ty::I64)),
-        &mut [None]
+        &mut binds
     ));
+    assert_eq!(binds, [Some(plain(Ty::I64))]);
 }
 
 #[test]

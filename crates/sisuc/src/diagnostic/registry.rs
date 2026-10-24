@@ -68,7 +68,6 @@ codes! {
     UnexpectedCharacter = "E0010",
     Expected = "E0011",
     Var = "E0013",
-    OptionalNests = "E0014",
     FieldComma = "E0015",
     FieldLet = "E0016",
     MethodNeedsSelf = "E0017",
@@ -214,10 +213,16 @@ codes! {
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
 /// "Numbers"). `sisu explain` still prints them.
-pub(crate) const RETIRED: &[(&str, &str)] = &[(
-    "E0012",
-    include_str!("../../../../docs/diagnostics/E0012.md"),
-)];
+pub(crate) const RETIRED: &[(&str, &str)] = &[
+    (
+        "E0012",
+        include_str!("../../../../docs/diagnostics/E0012.md"),
+    ),
+    (
+        "E0014",
+        include_str!("../../../../docs/diagnostics/E0014.md"),
+    ),
+];
 
 impl Code {
     /// The code `text` names, in either case.
@@ -299,8 +304,6 @@ pub(crate) enum DiagnosticKind {
     },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
-    /// The type `ty`, then `?` again, from `at`.
-    OptionalNests { ty: String, at: Span },
     /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
     /// its line or comes before `}`, and `;` otherwise.
     FieldComma {
@@ -427,8 +430,14 @@ pub(crate) enum DiagnosticKind {
     /// path of the other side as written.
     IsTestsNone { tested: Option<String>, at: Span },
     /// An `is` whose operand at `at`, of type `found`, is no object. `help` when `==` may
-    /// compare it: its type names no type parameter.
-    IsNeedsObjects { found: String, at: Span, help: bool },
+    /// compare it: its type names no type parameter. `peel`, for an optional of an optional, is
+    /// the `is` with one layer of that operand taken off, as written.
+    IsNeedsObjects {
+        found: String,
+        at: Span,
+        help: bool,
+        peel: Option<String>,
+    },
     /// A comparison at `at` of a `left` with a `right`.
     CannotCompare {
         left: String,
@@ -551,6 +560,8 @@ pub(crate) enum DiagnosticKind {
         value: Option<String>,
         at: Span,
         access: Option<Span>,
+        /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
+        peel: Option<Peel>,
     },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
     NoMember {
@@ -966,13 +977,8 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         form: ArgumentsForm,
     },
-    /// The type argument at `at`, `ty`, which no parameter may take: `unit`, `never`, or, with
-    /// `optional`, an optional.
-    TypeArgument {
-        ty: String,
-        at: Span,
-        optional: bool,
-    },
+    /// The type argument at `at`, `ty`, which no parameter may take: `unit` or `never`.
+    TypeArgument { ty: String, at: Span },
     /// The operator `op` on the operand at `at`, whose type `ty` names a type parameter, which
     /// has no operators; `contains` when `op` is the `==` of a `contains` on the array at `at`,
     /// whose element type is `ty`.
@@ -1332,6 +1338,15 @@ pub(crate) struct Operand {
     pub(crate) literal: bool,
 }
 
+/// A `receiver?.member` whose receiver is an optional of an optional, so `?.` leaves `left`.
+#[derive(Clone)]
+pub(crate) struct Peel {
+    /// The receiver as written.
+    pub(crate) receiver: String,
+    pub(crate) left: String,
+    pub(crate) member: String,
+}
+
 /// Moving a token up to the code before it: the `gap` between them becomes a space.
 #[derive(Clone, Copy)]
 pub(crate) struct Join {
@@ -1681,10 +1696,6 @@ impl From<DiagnosticKind> for Diagnostic {
                 } else {
                     d.with_help("Sisu declares a variable with `let mut`")
                 }
-            }
-            DiagnosticKind::OptionalNests { ty, at } => {
-                Diagnostic::coded(code, at, format!("`{ty}??` is not a type"))
-                    .with_help("optionals do not nest")
             }
             DiagnosticKind::FieldComma {
                 at,
@@ -2102,9 +2113,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::IsNeedsObjects { found, at, help } => {
+            DiagnosticKind::IsNeedsObjects {
+                found,
+                at,
+                help,
+                peel,
+            } => {
                 let d = Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"));
-                if help {
+                if let Some(peel) = peel {
+                    d.with_help(format!("peel one layer first: `{peel}`"))
+                } else if help {
                     d.with_help("use `==` to compare values")
                 } else {
                     d
@@ -2329,7 +2347,25 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("`{function}` never runs: its argument never finishes"),
             ),
-            DiagnosticKind::MayBeNone { value, at, access } => {
+            DiagnosticKind::MayBeNone {
+                at,
+                peel: Some(Peel {
+                    receiver,
+                    left,
+                    member,
+                }),
+                ..
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!("`{receiver}?.` leaves a `{left}`, which may be `None`"),
+            )
+            .with_help(format!(
+                "peel the other layer first: `({receiver} ?? None)?.{member}`"
+            )),
+            DiagnosticKind::MayBeNone {
+                value, at, access, ..
+            } => {
                 let d = Diagnostic::coded(code, at, format!("{} may be `None`", named(value)));
                 match access {
                     Some(access) => d
@@ -3468,13 +3504,8 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                 }
             },
-            DiagnosticKind::TypeArgument { ty, at, optional } => {
-                let d = Diagnostic::coded(code, at, format!("`{ty}` cannot be a type argument"));
-                if optional {
-                    d.with_label("an optional cannot be a type argument yet")
-                } else {
-                    d
-                }
+            DiagnosticKind::TypeArgument { ty, at } => {
+                Diagnostic::coded(code, at, format!("`{ty}` cannot be a type argument"))
             }
             DiagnosticKind::ParamLacks {
                 ty,
