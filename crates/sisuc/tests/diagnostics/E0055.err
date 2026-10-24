@@ -1,8 +1,10 @@
-error[E0055]: labels on arguments come in milestone 10
+error[E0055]: this call takes no labels on its arguments
  --> E0055.sisu:6:18
   |
 6 |     print(double(n: 2))
   |                  ^
+  |
+  = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0055

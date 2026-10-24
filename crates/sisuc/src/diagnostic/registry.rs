@@ -2138,7 +2138,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 })
             }
             DiagnosticKind::LabeledArgument { at, variant: None } => {
-                Diagnostic::coded(code, at, "labels on arguments come in milestone 10")
+                Diagnostic::coded(code, at, "this call takes no labels on its arguments").with_help(
+                    "remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments",
+                )
             }
             DiagnosticKind::LabeledArgument {
                 at,
