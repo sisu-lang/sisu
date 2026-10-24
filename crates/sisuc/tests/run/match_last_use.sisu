@@ -37,6 +37,7 @@ fn first(t: Tree) -> i64 {
 }
 
 fn main() {
+    let _ = Holder.Empty  // builds the variant that no other code builds
     let n = 3
     let held = Holder.Pair(Counter(count: 1), [10; n])
     print(take(held))                          // 15

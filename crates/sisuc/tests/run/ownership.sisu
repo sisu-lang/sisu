@@ -4,7 +4,7 @@ class E {}
 
 class T {
     mut count: i64
-    mut e: E
+    mut _e: E
 
     fn add(self, n: i64) -> i64 {
         self.count + n
@@ -23,14 +23,14 @@ class C {
 
 // A counted operand before a scalar one, for the spills.
 class P {
-    e: E
+    _e: E
     x: i64
 }
 
 // A scalar operand before a counted one: nothing spills.
 class Q {
     x: i64
-    e: E
+    _e: E
 }
 
 fn make() -> C {
@@ -46,10 +46,10 @@ fn take(_e: E, n: i64) -> i64 {
 }
 
 fn return_in_loop() -> i64 {
-    let a = T(count: 1, e: E())
+    let a = T(count: 1, _e: E())
     let mut i = 0
     loop {
-        let b = T(count: 10, e: E())
+        let b = T(count: 10, _e: E())
         i += 1
         if i == 3 { return a.count + b.count + i }
         let _c = E()
@@ -60,7 +60,7 @@ fn break_in_loop() {
     let _a = E()
     let mut i = 0
     loop {
-        let _b = T(count: i, e: E())
+        let _b = T(count: i, _e: E())
         i += 1
         if i == 2 { break }
         let _c = E()
@@ -73,7 +73,7 @@ fn continue_in_loop() {
     let mut i = 0
     let mut sum = 0
     while i < 4 {
-        let b = T(count: i, e: E())
+        let b = T(count: i, _e: E())
         i += 1
         if i % 2 == 0 { continue }
         let _c = E()
@@ -82,7 +82,7 @@ fn continue_in_loop() {
     print(sum)
 }
 
-// `b` was never bound when the `return` runs, so only `a` is released there.
+// `_b` was never bound when the `return` runs, so only `_a` is released there.
 fn early_return(c: bool) {
     let _a = E()
     if c { return }
@@ -93,10 +93,10 @@ fn early_return(c: bool) {
 // A call, a constructor, a field assignment, a method's receiver and a compound field
 // assignment, each interrupted by `return` at `at`.
 fn spill_return(at: i64) -> i64 {
-    let t = T(count: 0, e: E())
+    let t = T(count: 0, _e: E())
     let a = take(E(), if at == 1 { return 1 } else { 10 })
-    let b = P(e: E(), x: if at == 2 { return 2 } else { 20 }).x
-    pick(t).e = if at == 3 { return 3 } else { E() }
+    let b = P(_e: E(), x: if at == 2 { return 2 } else { 20 }).x
+    pick(t)._e = if at == 3 { return 3 } else { E() }
     let c = t.add(if at == 4 { return 4 } else { 100 })
     t.count += if at == 5 { return 5 } else { 1000 }
     a + b + c + t.count
@@ -104,13 +104,13 @@ fn spill_return(at: i64) -> i64 {
 
 // The same spills interrupted by `break` at `at`.
 fn spill_break(at: i64) {
-    let t = T(count: 0, e: E())
+    let t = T(count: 0, _e: E())
     let mut i = 0
     while i < 2 {
         i += 1
         let a = take(E(), if at == 1 { break } else { i })
-        let b = P(e: E(), x: if at == 2 { break } else { i }).x
-        t.e = if at == 3 { break } else { E() }
+        let b = P(_e: E(), x: if at == 2 { break } else { i }).x
+        t._e = if at == 3 { break } else { E() }
         let c = t.add(if at == 4 { break } else { i })
         t.count += if at == 5 { break } else { a + b + c }
     }
@@ -119,15 +119,15 @@ fn spill_break(at: i64) {
 
 // `New` runs its arguments before `sisu_alloc`, so the `return` leaves no object behind.
 fn new_exits_first(c: bool) {
-    let q = Q(x: if c { return } else { 1 }, e: E())
+    let q = Q(x: if c { return } else { 1 }, _e: E())
     print(q.x)
 }
 
 fn reassign_field() {
-    let t = T(count: 0, e: E())
+    let t = T(count: 0, _e: E())
     let mut i = 0
     while i < 3 {
-        t.e = E()
+        t._e = E()
         i += 1
     }
     print(i)
@@ -140,33 +140,33 @@ fn field_of_call() {
 }
 
 fn assign_through_call() {
-    let t = T(count: 1, e: E())
+    let t = T(count: 1, _e: E())
     pick(t).count = 5
-    pick(t).e = E()
+    pick(t)._e = E()
     print(t.count)
 }
 
 // `a` is live whether or not the right operand runs.
 fn logic(n: i64) {
-    let a = T(count: n, e: E())
-    print(T(count: n, e: E()).count > 0 && pick(a).count > 1)
-    print(a.count > 0 || T(count: n, e: E()).count > 1)
+    let a = T(count: n, _e: E())
+    print(T(count: n, _e: E()).count > 0 && pick(a).count > 1)
+    print(a.count > 0 || T(count: n, _e: E()).count > 1)
 }
 
 // Review Focus 1: assigning a reference to itself keeps the object alive.
 fn self_assign() {
-    let mut x = T(count: 7, e: E())
+    let mut x = T(count: 7, _e: E())
     x = x
     print(x.count)
-    let h = Holder(child: T(count: 8, e: E()))
+    let h = Holder(child: T(count: 8, _e: E()))
     h.child = h.child
     print(h.child.count)
 }
 
 // Assigning a new object releases the old one and keeps the new one.
 fn reassign_local() {
-    let mut x = T(count: 7, e: E())
-    x = T(count: 9, e: E())
+    let mut x = T(count: 7, _e: E())
+    x = T(count: 9, _e: E())
     print(x.count)
 }
 
@@ -216,7 +216,7 @@ fn main() {
     logic(2)
     self_assign()
     reassign_local()
-    let p = T(count: 100, e: E())
+    let p = T(count: 100, _e: E())
     print(nested_loops(p))
     print(p.count)
 }

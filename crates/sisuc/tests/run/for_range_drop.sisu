@@ -1,6 +1,6 @@
-class Node { v: i64 }
+class Node { _v: i64 }
 
-fn make(i: i64) -> Node { Node(v: i) }
+fn make(i: i64) -> Node { Node(_v: i) }
 
 fn main() {
     let mut total = 0

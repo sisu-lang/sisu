@@ -1202,7 +1202,7 @@ fn bounds_case(index: &str, message: &str) -> (String, String) {
 
 /// Prints `1` and exits 0, but leaks: an object that refers to itself is never freed. Building
 /// the cycle in a callee keeps the pointer out of `main`'s registers.
-const LEAKS_A_CYCLE: &str = "class Node {\n    mut next: Node?\n}\n\nfn leak() {\n    let a = Node(next: None)\n    a.next = a\n}\n\nfn main() {\n    leak()\n    print(1)\n}\n";
+const LEAKS_A_CYCLE: &str = "class Node {\n    mut _next: Node?\n}\n\nfn leak() {\n    let a = Node(_next: None)\n    a._next = a\n}\n\nfn main() {\n    leak()\n    print(1)\n}\n";
 
 /// GIVEN a program that leaks a cycle and prints 1
 /// WHEN it runs plain and then under Valgrind

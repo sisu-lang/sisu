@@ -98,6 +98,7 @@ fn inner_left(e: Expr) -> Expr {
 }
 
 fn main() {
+    let _ = Chain.End  // builds the variant that no other code builds
     print(guarded(3))  // 3 named x3
     print(guarded(30))  // big x30
     print(early(4))  // 6

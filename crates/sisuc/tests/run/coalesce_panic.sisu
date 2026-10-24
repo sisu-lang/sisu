@@ -1,7 +1,7 @@
 // `??` with `panic` on the right, on both optional shapes: a scalar `i64?` pair and a `string?`
 // pointer. The payload is there, so neither panic runs, and Valgrind checks the string's release.
-// `unreached` is compiled but never called: a right side whose branches both return.
-fn unreached(x: i64?, c: bool) {
+// `_unreached` is compiled but never called: a right side whose branches both return.
+fn _unreached(x: i64?, c: bool) {
     let _ = x ?? if c { return } else { return }
 }
 

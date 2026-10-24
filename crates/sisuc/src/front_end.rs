@@ -742,7 +742,7 @@ fn main() {
             "fn main() {\n    let t = 1\n    ; - 2\n}\n",
             "fn f() -> i64 {\n;\n- 1\n}\nfn main() { print(f()) }\n",
             "fn helper();\nfn main() {}\n",
-            "class C {\n    x: i64;\n}\nfn main() {}\n",
+            "class _C {\n    x: i64;\n}\nfn main() {}\n",
             "fn main() {\n    if true { print(1) }; else { print(2) }\n}\n",
             "fn main() {\n    let x = 1 $\n    ; - 2\n}\n",
             "fn main() { return;else { } }\n",
