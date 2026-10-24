@@ -117,6 +117,24 @@ fn operands_spill_before_an_exit() {
     );
 }
 
+/// A literal whose expected type failed still types and joins its elements: only what needs
+/// context is left quiet. A `loop` takes its type from its `break` values, which must agree.
+#[test]
+fn a_literal_in_a_failed_context_should_still_join_its_elements() {
+    for (src, expected) in [
+        (
+            "fn main() {\n    let xs: Bad = [loop { break 1 }, true]\n}",
+            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 38))],
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [loop {\n        if true { break 1 }\n        break true\n    }]\n}",
+            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+        ),
+    ] {
+        codes(src, &expected);
+    }
+}
+
 #[test]
 fn empty_array_cannot_be_inferred() {
     diagnostic(

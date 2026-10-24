@@ -59,14 +59,18 @@ impl Checker<'_> {
     /// then each `None` and `[]`, against the join made optional. The join runs in source
     /// order as `branches` joins, and a `None` makes the element type optional. With no typed
     /// element, the first `None` or `[]` cannot be inferred, which `quiet` (`UNKNOWN` was
-    /// expected) leaves unreported. With `quiet`, the concrete elements expect `UNKNOWN` too,
-    /// so a nested literal or call does not report what failed around it. An element whose
-    /// type is `Error` poisons the array.
+    /// expected) leaves unreported. With `quiet`, a concrete element that needs context (see
+    /// `needs_context`) expects `UNKNOWN` too, so it does not report the failure around it. The
+    /// others still type themselves and join. An element whose type is `Error` poisons the
+    /// array.
     fn joined(&mut self, span: Span, elements: &[ast::Expr], quiet: bool) -> Checked {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
         for (slot, e) in slots.iter_mut().zip(elements) {
             if rank(e) == 0 {
-                *slot = Some(self.value(e, quiet.then_some(UNKNOWN)));
+                *slot = Some(self.ranked(|c| {
+                    let want = (quiet && c.needs_context(e)).then_some(UNKNOWN);
+                    c.value(e, want)
+                }));
             }
         }
         let literal = literal_type(slots.iter().flatten().next().and_then(type_of));

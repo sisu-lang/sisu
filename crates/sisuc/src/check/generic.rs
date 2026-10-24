@@ -220,7 +220,7 @@ fn fits(
 
 /// Work that ranking an argument did ahead of its turn (see `needs_context`), kept in
 /// `body.ahead` by the span it was done for until checking reaches it. It lives no longer than
-/// the generic call that ranked it, nor than the diagnostics and locals it made.
+/// the check that ranked it (see `ranked`), nor than the diagnostics and locals it made.
 pub(super) enum Ahead {
     /// A method's checked receiver, or a `match`'s scrutinee.
     Receiver(Checked),
@@ -282,14 +282,20 @@ impl Checker<'_> {
         args: &[ast::Arg],
         expected: Option<Type>,
     ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
+        self.ranked(|c| c.infer_call(span, sig, written, args, expected))
+    }
+
+    /// Runs `check`, which may rank expressions (see `needs_context`), and then drops what
+    /// ranking kept in it (see `Ahead`) and `check` left unused.
+    pub(super) fn ranked<R>(&mut self, check: impl FnOnce(&mut Self) -> R) -> R {
         let mark = self.body.ahead.len();
-        let call = self.infer_call(span, sig, written, args, expected);
+        let checked = check(self);
         // A key is kept again only once its last entry is used, so an earlier entry of a key
         // truncated here, if any, is used, and dropping the key loses nothing.
         for (key, _) in self.body.ahead.drain(mark..) {
             self.body.ahead_at.remove(&key);
         }
-        call
+        checked
     }
 
     /// `generic_call`, before what ranking kept is dropped.
