@@ -1,0 +1,13 @@
+error[E0029]: `main` takes no type parameters
+ --> E0029-type-params-comment.sisu:1:8
+  |
+1 |   fn main<
+  |  ________^
+2 | |     T
+3 | |     // keep this
+4 | |     , U
+5 | | >() {}
+  | |_^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0029

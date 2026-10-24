@@ -1036,19 +1036,26 @@ fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
 }
 
 /// Whether `code`, after a line break, goes on with the header's type-parameter list open before
-/// it: `code` starts with a name, `,` or `>`. A `;` before the line break ends the list's
-/// statement.
+/// it: `code` starts with a name, `,` or `>`. An open list ends in a name, so a line that ends in
+/// anything else, a `;` too, stops the check before it reads the word or the statement.
 fn continues_params(code: &str, tokens: &[Token], brackets: &mut Brackets) -> bool {
+    if !matches!(
+        tokens.last(),
+        Some(Token {
+            kind: TokenKind::Ident(_),
+            ..
+        })
+    ) {
+        return false;
+    }
     let word = &code[..code
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(code.len())];
     let listed = code.starts_with(',')
         || code.starts_with('>') && !code.starts_with(">=")
         || word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
-            && matches!(keyword_or_ident(word), TokenKind::Ident(_));
-    listed
-        && brackets.trailing_semicolons == 0
-        && brackets.statements.read(tokens, tokens.len()).params
+            && keyword(word).is_none();
+    listed && brackets.statements.read(tokens, tokens.len()).params
 }
 
 #[cfg(test)]
@@ -1379,7 +1386,12 @@ fn take_while(chars: &mut Chars, source: &str, pred: fn(char) -> bool) -> usize 
 }
 
 fn keyword_or_ident(text: &str) -> TokenKind {
-    match text {
+    keyword(text).unwrap_or_else(|| TokenKind::Ident(Symbol::intern(text)))
+}
+
+/// The keyword that `text` spells, if any. It does not intern a name.
+fn keyword(text: &str) -> Option<TokenKind> {
+    Some(match text {
         "fn" => TokenKind::Fn,
         "let" => TokenKind::Let,
         "mut" => TokenKind::Mut,
@@ -1414,8 +1426,8 @@ fn keyword_or_ident(text: &str) -> TokenKind {
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         "_" => TokenKind::Underscore,
-        _ => TokenKind::Ident(Symbol::intern(text)),
-    }
+        _ => return None,
+    })
 }
 
 /// The magnitude of `i64::MIN`, the one literal that fits `i64` only after a unary `-`.
@@ -2801,6 +2813,25 @@ mod tests {
         );
     }
 
+    /// Fix safety reads these offsets: a gap that a line goes on after keeps each of its
+    /// comments and line breaks.
+    #[test]
+    fn a_gap_before_a_continued_line_should_keep_its_comments_and_breaks() {
+        let rows = [
+            ("fn f<T\n    // c\n    , U>() {}", vec![11], vec![6, 15]),
+            ("a\n// c\n  .b", vec![2], vec![1, 6]),
+            ("a\n// c\n  ?.b", vec![2], vec![1, 6]),
+        ];
+        let lexed: Vec<_> = rows
+            .iter()
+            .map(|&(src, ..)| {
+                let lexed = lex(src).expect("source lexes");
+                (src, lexed.comments, lexed.breaks)
+            })
+            .collect();
+        assert_eq!(lexed, rows);
+    }
+
     /// `.config/nextest.toml` kills this test after 30 s, matching it by name: a rename must
     /// update the override there.
     #[test]
@@ -4174,6 +4205,20 @@ mod tests {
             "the header should hold no `Newline`"
         );
         assert!(JUDGED.get() <= tokens.len(), "{} judged", JUDGED.get());
+    }
+
+    /// Only a line that ends in a name can leave a header's type-parameter list open, and a
+    /// keyword cannot go on with one: no line break here reads the statement.
+    #[test]
+    fn a_line_break_that_cannot_go_on_with_a_header_list_should_not_read_the_statement() {
+        for src in [
+            "fn main() {\n    print(1)\n    print(1)\n}",
+            "fn main() {\n    let a = b\n    let c = a\n}",
+        ] {
+            JUDGED.set(0);
+            tokens(src);
+            assert_eq!(JUDGED.get(), 0, "{src}");
+        }
     }
 
     /// Blank lines and comments between two parameters, each of which a line break starts.
