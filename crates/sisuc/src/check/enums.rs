@@ -31,6 +31,8 @@ pub(super) struct VariantInfo {
     pub(super) fields: Vec<Option<Type>>,
     /// Where each field's type is written.
     pub(super) spans: Vec<Span>,
+    /// For each field, the class and enum types written in its type, each with its span.
+    pub(super) inner: Vec<Vec<(Type, Span)>>,
     /// The payload's labels, one for each field.
     pub(super) labels: Vec<Option<Symbol>>,
 }
@@ -135,10 +137,10 @@ impl Checker<'_> {
                 self.first_definition(&mut labels, Definition::Field, Some(owner), label);
             }
             self.body.set_type_params(&self.enums[id.0].type_params);
-            let fields = payload
+            let (fields, inner): (Vec<_>, Vec<_>) = payload
                 .iter()
-                .map(|field| self.resolve(&field.ty))
-                .collect();
+                .map(|field| self.resolve_written(&field.ty))
+                .unzip();
             self.body.set_type_params(&[]);
             if self.first_definition(&mut first, Definition::Variant, Some(owner), name) {
                 let info = &mut self.enums[id.0];
@@ -147,6 +149,7 @@ impl Checker<'_> {
                     name: name.clone(),
                     fields,
                     spans: payload.iter().map(|field| field.ty.span).collect(),
+                    inner,
                     labels: payload
                         .iter()
                         .map(|field| field.label.as_ref().map(|label| label.name))

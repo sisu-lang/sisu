@@ -125,10 +125,15 @@ impl Graph {
     }
 
     /// The edges of each generic class and enum in `ty`, written at `site` inside `holder`; a
-    /// type shared inside `ty` is walked once.
-    fn types(&mut self, holder: usize, ty: Type, site: Span) {
+    /// type shared inside `ty` is walked once. An edge sits at the span `inner` gives its
+    /// instance, else at `site`.
+    fn types(&mut self, holder: usize, ty: Type, site: Span, inner: &[(Type, Span)]) {
         if !ty.has_param() {
             return;
+        }
+        let mut spans = FxHashMap::default();
+        for &(t, span) in inner {
+            spans.entry(t).or_insert(span);
         }
         let mut stack = vec![ty];
         while let Some(ty) = stack.pop() {
@@ -144,7 +149,8 @@ impl Graph {
                 TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
                 _ => continue,
             };
-            self.args(holder, args.get(), target, site, Instance::Type(ty));
+            let at = spans.get(&ty).copied().unwrap_or(site);
+            self.args(holder, args.get(), target, at, Instance::Type(ty));
             stack.extend(args.get());
         }
     }
@@ -280,7 +286,7 @@ impl Checker<'_> {
             }
             for field in &class.fields {
                 if let Some(ty) = field.ty {
-                    graph.types(declared + c, ty, field.ty_span);
+                    graph.types(declared + c, ty, field.ty_span, &field.inner);
                 }
             }
         }
@@ -289,9 +295,14 @@ impl Checker<'_> {
                 continue;
             }
             for variant in &info.variants {
-                for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
+                let written = variant
+                    .fields
+                    .iter()
+                    .zip(&variant.spans)
+                    .zip(&variant.inner);
+                for ((ty, &span), inner) in written {
                     if let Some(ty) = *ty {
-                        graph.types(declared + self.classes.len() + e, ty, span);
+                        graph.types(declared + self.classes.len() + e, ty, span, inner);
                     }
                 }
             }
@@ -412,7 +423,7 @@ mod tests {
         // Written as a field's type: each level's `Pair` gives an edge into each of its two
         // parameters, once, from the nodes of the 19 levels below the top.
         let mut g = graph(1);
-        g.types(0, ty, site);
+        g.types(0, ty, site, &[]);
         assert_eq!(g.edges.len(), 2 * 20 + 2 * 19);
     }
 
@@ -455,7 +466,7 @@ mod tests {
                     ty = pair(ty, param(0));
                 }
                 let mut g = graph(1);
-                g.types(0, ty, Span::new(0, 1));
+                g.types(0, ty, Span::new(0, 1), &[]);
                 assert_eq!(g.walked.len(), levels + 1);
             })
             .expect("the thread should start")

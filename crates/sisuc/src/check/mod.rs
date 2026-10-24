@@ -113,6 +113,8 @@ struct FieldInfo {
     name: ast::Ident,
     /// Where the field's type is written.
     ty_span: Span,
+    /// The class and enum types written in the field's type, each with its span.
+    inner: Vec<(Type, Span)>,
     /// `None` is `Error`.
     ty: Option<Type>,
     mutable: bool,
@@ -293,6 +295,9 @@ struct Checker<'src> {
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
+    /// While a field's or payload's type resolves, the class and enum types in it and where each
+    /// is written; `None` otherwise.
+    written: Option<Vec<(Type, Span)>>,
     /// The first constant of each name, and every broken one.
     constants: FxHashMap<Symbol, Declared<ConstInfo>>,
     /// What a value of each enum and class may hold, for W0011.
@@ -597,6 +602,7 @@ impl<'src> Checker<'src> {
             enums: Vec::new(),
             enum_ids: FxHashMap::default(),
             lowered_enums: Vec::new(),
+            written: None,
             constants: FxHashMap::default(),
             holds_table: HoldsTable::default(),
             diagnostics: Diagnostics::default(),
@@ -812,7 +818,7 @@ impl Checker<'_> {
                 match member {
                     ast::Member::Field(field) => {
                         self.body.set_type_params(&owner);
-                        let ty = self.resolve(&field.ty);
+                        let (ty, inner) = self.resolve_written(&field.ty);
                         self.body.set_type_params(&[]);
                         if self.first_definition(
                             &mut first,
@@ -823,6 +829,7 @@ impl Checker<'_> {
                             self.classes[id.0].fields.push(FieldInfo {
                                 name: field.name.clone(),
                                 ty_span: field.ty.span,
+                                inner,
                                 ty,
                                 mutable: field.mutable,
                             });
@@ -972,6 +979,13 @@ impl Checker<'_> {
 
     /// `None`, reported at the name without its `?`, for an unknown type, and for type
     /// arguments that do not fit.
+    /// `resolve`, and the class and enum types written in `ty`, each with its span.
+    fn resolve_written(&mut self, ty: &ast::TypeExpr) -> (Option<Type>, Vec<(Type, Span)>) {
+        self.written = Some(Vec::new());
+        let resolved = self.resolve(ty);
+        (resolved, self.written.take().unwrap_or_default())
+    }
+
     fn resolve(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
         let named = match &ty.kind {
             ast::TypeKind::Array(element) => Type::array(self.resolve(element)?),
@@ -980,6 +994,17 @@ impl Checker<'_> {
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
         };
+        if let (Some(written), TypeKind::Class(..) | TypeKind::Enum(..)) =
+            (&mut self.written, named.kind())
+        {
+            // Without the `?`: the type that grows is the instance, not the optional of it.
+            let end = match &ty.kind {
+                ast::TypeKind::Applied(applied) => applied.angles.end(),
+                ast::TypeKind::Name(name) => ty.span.start() + name.as_str().len(),
+                ast::TypeKind::Array(_) => ty.span.end(),
+            };
+            written.push((named, Span::new(ty.span.start(), end)));
+        }
         if !ty.optional {
             return Some(named);
         }
