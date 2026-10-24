@@ -854,18 +854,26 @@ impl Checker<'_> {
         self.misread_as(name, compare)
     }
 
-    /// Whether the type argument `arg` could be a value: a name, with no `?`, that is a local
-    /// or names no type, built-in, class, enum or type parameter.
+    /// Whether the type argument `arg` could be a value: a local, or a name that names no type.
     pub(super) fn could_be_value(&self, arg: &ast::TypeExpr) -> bool {
         let ast::TypeKind::Name(n) = arg.kind else {
             return false;
         };
+        !arg.optional && self.body.scopes.iter().any(|scope| scope.contains_key(&n))
+            || self.names_no_type(arg)
+    }
+
+    /// Whether the type argument `arg` is a name, with no `?`, that is no built-in type, class,
+    /// enum or type parameter.
+    pub(super) fn names_no_type(&self, arg: &ast::TypeExpr) -> bool {
+        let ast::TypeKind::Name(n) = arg.kind else {
+            return false;
+        };
         !arg.optional
-            && (self.body.scopes.iter().any(|scope| scope.contains_key(&n))
-                || built_in_type(n.as_str()).is_none()
-                    && !self.class_ids.contains_key(&n)
-                    && !self.enum_ids.contains_key(&n)
-                    && self.body.type_param(n).is_none())
+            && built_in_type(n.as_str()).is_none()
+            && !self.class_ids.contains_key(&n)
+            && !self.enum_ids.contains_key(&n)
+            && self.body.type_param(n).is_none()
     }
 
     /// `misread` with the comparison `compare` its help writes, if any.
@@ -888,7 +896,12 @@ impl Checker<'_> {
         types: &[ast::TypeExpr],
         checked: &Checked,
     ) {
-        if types.len() > 1 && checked.is_err() {
+        // Only a list whose first and last argument name no type could join `a <` and `> (d)`.
+        if let [first, .., last] = types
+            && checked.is_err()
+            && self.names_no_type(first)
+            && self.names_no_type(last)
+        {
             self.body.misread.insert(span.start());
         }
     }

@@ -266,6 +266,57 @@ fn a_failed_list_with_a_comma_should_hide_the_count() {
     }
 }
 
+/// A list that no comparison could be, such as `<i64, bool>`, was accepted as type arguments, so
+/// the errors of its own call stand and the call around it reports its own too. A list whose
+/// ends name no type could be comparisons, and keeps the outer call's errors hidden.
+#[test]
+fn accepted_type_arguments_should_keep_outer_errors() {
+    let decls = "fn h(a: bool, b: bool) -> bool { a }\nfn two<T, U>(t: T, u: U) -> bool { true }\nfn three<T, U, V>(t: T, u: U, v: V) -> bool { true }\nclass C {\n    v: i64\n}\nclass Box<T> {\n    v: T\n    fn two<U, V>(self, u: U, v: V) -> bool { true }\n}\nfn main() {}";
+    for (line, expected) in [
+        (
+            "fn f() { print(h(two<i64, bool>(1, \"x\"))) }",
+            vec![(Code::ArgumentCount, (1, 16)), (Code::Mismatch, (1, 36))],
+        ),
+        (
+            "fn f() { print(h(two<i64, bool>(1))) }",
+            vec![
+                (Code::ArgumentCount, (1, 16)),
+                (Code::ArgumentCount, (1, 18)),
+            ],
+        ),
+        (
+            "fn f(b: Box<i64>) { print(h(b.two<i64, bool>(1, \"x\"))) }",
+            vec![(Code::ArgumentCount, (1, 27)), (Code::Mismatch, (1, 49))],
+        ),
+        (
+            "fn f(b: Box<i64>) { print(h(b.two<i64, bool>(1))) }",
+            vec![
+                (Code::ArgumentCount, (1, 27)),
+                (Code::ArgumentCount, (1, 29)),
+            ],
+        ),
+        // A name that is a class names a type, even when a local takes its spelling.
+        (
+            "fn f() {\n    let C = 0\n    h(two<C, C>(1, C))\n}",
+            vec![
+                (Code::ArgumentCount, (3, 5)),
+                (Code::Mismatch, (3, 17)),
+                (Code::Mismatch, (3, 20)),
+            ],
+        ),
+        (
+            "fn f() {\n    let C = 0\n    h(three<C, bool, C>(1, true, C))\n}",
+            vec![
+                (Code::ArgumentCount, (3, 5)),
+                (Code::Mismatch, (3, 25)),
+                (Code::Mismatch, (3, 34)),
+            ],
+        ),
+    ] {
+        codes(&format!("{line}\n{decls}"), &expected);
+    }
+}
+
 /// Comparisons misread as a call take the commas of the argument list they sit in, which then
 /// has its count of arguments not reported: a function's, a variant's, a method's or a class's,
 /// and wherever operators put the comparison in its argument. A list around that one, or around
