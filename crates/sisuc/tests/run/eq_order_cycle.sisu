@@ -1,9 +1,10 @@
 // `==` on two enum values compares depth first. In each variant it compares the fields in
-// order, except the last field of the enum's own type: it comes after the fields that follow
-// it. Both fields of `Node` are of type `E`, so `==` compares them in order. Here the mismatch
-// is in the first field. The second fields hold two distinct class objects that each point to
-// themselves. `==` on those two objects never ends. So an `==` that compared the second field
-// before it found the mismatch would hang.
+// order and stops at the first difference. Here the mismatch is in an early field. The later
+// fields hold two distinct class objects that each point to themselves. `==` on those two
+// objects never ends. So an `==` that compared such a field before it found the mismatch
+// would hang. The first pair differs in the first field of `Node`, and its second field is the
+// last link. The second pair differs in the first field of `Pair`, a link that a class field
+// follows.
 class C {
     mut next: C?
 }
@@ -12,6 +13,7 @@ enum E {
     Leaf
     Value(C)
     Node(E, E)
+    Pair(E, C)
 }
 
 fn main() {
@@ -22,6 +24,9 @@ fn main() {
     let x = E.Node(E.Node(E.Leaf, E.Leaf), E.Value(a))
     let y = E.Node(E.Node(E.Node(E.Leaf, E.Leaf), E.Leaf), E.Value(b))
     print(x == y)    // false
+    let p = E.Pair(E.Leaf, a)
+    let q = E.Pair(E.Pair(E.Leaf, a), b)
+    print(p == q)    // false
     a.next = None
     b.next = None
 }

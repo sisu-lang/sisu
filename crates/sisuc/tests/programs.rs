@@ -47,7 +47,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 14] = [
+const SMALL_STACK: [&str; 15] = [
     "longlist",
     "rightskew",
     "deepchain",
@@ -60,6 +60,7 @@ const SMALL_STACK: [&str; 14] = [
     "dropleft",
     "eqleft",
     "eqorder",
+    "eqtrail",
     "tailfresh",
     "tailpass",
 ];
@@ -382,6 +383,17 @@ fn left_deep_enums_should_compare_in_a_small_stack() {
 #[test]
 fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
     assert_small_stack_prints_at_both("eqorder", "false\n");
+}
+
+/// GIVEN the `eqtrail` program, which compares two pairs of left-deep values of 1 000 000 nodes
+/// whose links are followed by an `i64` field
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `true` and `false`
+///
+/// `==` keeps a link that has a field after it on the heap, not on the stack.
+#[test]
+fn enums_with_a_field_after_the_link_should_compare_in_a_small_stack() {
+    assert_small_stack_prints_at_both("eqtrail", "true\nfalse\n");
 }
 
 /// GIVEN the `deepchain` program, whose drop recurses once per object

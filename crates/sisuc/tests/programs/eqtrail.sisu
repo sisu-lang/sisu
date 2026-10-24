@@ -1,0 +1,31 @@
+// Left-deep values of 1 000 000 nodes, compared with `==` under a 256 KiB stack. Each `Node`
+// holds the rest of the value in its first field, a link, and an `i64` after it. `==` compares
+// the fields in order, so it keeps one pending pair on the heap for each level. A comparison
+// that kept a frame for each level would overflow that stack. The second pair differs only in
+// the `i64` at depth 500 000.
+enum E {
+    Leaf
+    Node(E, i64)
+}
+
+// `Node(Node(... Node(Leaf, 0) ..., 0), 0)`, `depth` nodes deep. The node at depth `odd` holds
+// 1, not 0; no node does when `odd` is 0.
+fn build(depth: i64, odd: i64) -> E {
+    let mut e = E.Leaf
+    let mut i = depth
+    while i > 0 {
+        if i == odd {
+            e = E.Node(e, 1)
+        } else {
+            e = E.Node(e, 0)
+        }
+        i -= 1
+    }
+    e
+}
+
+fn main() {
+    let a = build(1_000_000, 0)
+    print(a == build(1_000_000, 0))          // true
+    print(a == build(1_000_000, 500_000))    // false
+}
