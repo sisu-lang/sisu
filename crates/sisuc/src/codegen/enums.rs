@@ -22,7 +22,7 @@ use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
 use inkwell::types::{BasicTypeEnum, IntType, StructType};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue,
+    BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PhiValue, PointerValue,
 };
 
 use super::layout::HeapBlock;
@@ -993,18 +993,25 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_rc.eq_component.<F0>(kind, a, b) -> i1`: `==` on the values at `a` and `b` of
     /// member `kind` of the component whose first member is `F0`. It switches on `kind`, then
     /// compares as `eq` does, with a link, a box or an inline link (`inline_link`), compared by
-    /// the values it holds: see `link_pair`. It neither retains nor releases. Each variant
-    /// compares its last link last, by looping: `kind`, `a` and `b` become that link's enum and
-    /// its two values. Each other link pushes its pair onto a buffer of pending pairs, and a
-    /// value whose links are done pops the last pair. So it compares any depth and shape of
-    /// value in one frame. Every address it holds points into the compared values, which the
-    /// caller keeps alive.
+    /// the values it holds: see `link_pair`. It neither retains nor releases. It compares
+    /// depth first and in field order, as a recursive `==` does, so it stops at the first
+    /// mismatch that one would find. Each variant compares its last link last, by looping:
+    /// `kind`, `a` and `b` become that link's enum and its two values. Before a link that is
+    /// not the last, it pushes where the value's comparison goes on (`push_pending`), then
+    /// loops into the link; when a value is done, it pops that place and goes on there. So it
+    /// compares any depth and shape of value in one frame. Every address it holds points into
+    /// the compared values, which the caller keeps alive.
     fn define_eq_component(&self, first: EnumId, function: FunctionValue<'ctx>) {
         let members = self.component(first).expect(
             "only the first member of a component with boxes should get an `eq_component` helper",
         );
         let block = |name| self.context.append_basic_block(function, name);
-        let (entry, top, pop) = (block("entry"), block("loop"), block("pop"));
+        let (entry, top, pop, dispatch) = (
+            block("entry"),
+            block("loop"),
+            block("pop"),
+            block("dispatch"),
+        );
         let nth = |n| {
             function.get_nth_param(n).expect(
                 "the generated `eq_component` helper should be declared with three parameters",
@@ -1015,25 +1022,17 @@ impl<'ctx> Codegen<'ctx, '_> {
         let (equal, unequal) = self.pending_returns(function, &pending);
         self.builder.position_at_end(entry);
         self.branch_to(top);
-        self.builder.position_at_end(top);
-        let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let phi = |ty: BasicTypeEnum<'ctx>, name, n| {
-            let phi = self.builder.build_phi(ty, name).expect(POSITIONED);
+        let ptr_type = self.context.ptr_type(AddressSpace::default()).into();
+        let types: [BasicTypeEnum<'ctx>; 3] = [self.context.i32_type().into(), ptr_type, ptr_type];
+        let phis = |at, name| {
+            self.builder.position_at_end(at);
+            types.map(|ty| self.builder.build_phi(ty, name).expect(POSITIONED))
+        };
+        let (current, popped) = (phis(top, "current"), phis(dispatch, "popped"));
+        for (phi, n) in current.iter().zip(0..) {
             phi.add_incoming(&[(&nth(n), entry)]);
-            phi
-        };
-        let kind = phi(self.context.i32_type().into(), "kind", 0);
-        let (pa, pb) = (phi(ptr_type.into(), "a", 1), phi(ptr_type.into(), "b", 2));
-        let (a, b) = (
-            pa.as_basic_value().into_pointer_value(),
-            pb.as_basic_value().into_pointer_value(),
-        );
-        // Enters the loop from `from` with `kind`, `a` and `b` set to `values`.
-        let enter = |values: [BasicValueEnum<'ctx>; 3], from| {
-            for (phi, value) in [kind, pa, pb].into_iter().zip(values) {
-                phi.add_incoming(&[(&value, from)]);
-            }
-        };
+        }
+        self.builder.position_at_end(top);
         let starts: Vec<_> = members
             .iter()
             .map(|m| block(&self.program.enums[m.0].name))
@@ -1045,11 +1044,23 @@ impl<'ctx> Codegen<'ctx, '_> {
             .map(|(&m, &start)| (self.member_index(&members, m), start))
             .collect();
         // `kind` is always a member's index, so the first member can be the default.
+        let kind = current[0].as_basic_value().into_int_value();
         self.builder
-            .build_switch(kind.as_basic_value().into_int_value(), starts[0], &cases)
+            .build_switch(kind, starts[0], &cases)
             .expect(POSITIONED);
-        for (&id, &start) in members.iter().zip(&starts) {
+        let eq = EqLoop {
+            members,
+            top,
+            current,
+            pop,
+            unequal,
+            popped,
+        };
+        let mut resumes = Vec::new();
+        for (&id, &start) in eq.members.iter().zip(&starts) {
             self.builder.position_at_end(start);
+            let a = current[1].as_basic_value().into_pointer_value();
+            let b = current[2].as_basic_value().into_pointer_value();
             let tag = self.load_tag(id, a);
             let same = self.int_compare(IntPredicate::EQ, tag, self.load_tag(id, b));
             let fields = block("fields");
@@ -1057,49 +1068,100 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.position_at_end(fields);
             for (variant, at) in self.switch_variants(id, tag, pop, |_| true) {
                 self.builder.position_at_end(at);
-                let payloads = &self.program.enums[id.0].variants[variant].fields;
-                let link =
-                    |payload: &Payload| payload.boxed || self.inline_link(id, payload).is_some();
-                let looped = payloads.iter().rposition(link);
-                for (field, payload) in payloads.iter().enumerate() {
-                    if looped == Some(field) {
-                        continue;
-                    }
-                    let next = block("next");
-                    if link(payload) {
-                        let (inner, value_a, value_b) =
-                            self.link_pair((id, variant, field), a, b, next, unequal);
-                        let index = self.member_index(&members, inner).into();
-                        self.push_pending(&pending, [index, value_a.into(), value_b.into()]);
-                        self.branch_to(next);
-                    } else {
-                        let pair = self.equal_at(
-                            payload.ty,
-                            self.payload_place(a, id, variant, field),
-                            self.payload_place(b, id, variant, field),
-                        );
-                        self.branch_on(pair, next, unequal);
-                    }
-                    self.builder.position_at_end(next);
-                }
-                let Some(field) = looped else {
-                    self.branch_to(pop);
-                    continue;
-                };
-                let (inner, value_a, value_b) =
-                    self.link_pair((id, variant, field), a, b, pop, unequal);
-                let index = self.member_index(&members, inner).into();
-                enter(
-                    [index, value_a.into(), value_b.into()],
-                    self.current_block(),
-                );
-                self.branch_to(top);
+                self.compare_variant(&eq, &pending, &mut resumes, (id, variant));
             }
         }
         self.builder.position_at_end(pop);
-        let popped = self.pop_pending(&pending, equal);
-        enter(popped, self.current_block());
-        self.branch_to(top);
+        self.pop_pending(&pending, equal, dispatch, popped);
+        self.builder.position_at_end(dispatch);
+        let Some((&default, rest)) = resumes.split_first() else {
+            // No variant has a link before its last, so nothing is ever pushed.
+            self.builder.build_unreachable().expect(POSITIONED);
+            return;
+        };
+        let cases: Vec<_> = (1..)
+            .zip(rest)
+            .map(|(index, &at)| (self.context.i32_type().const_int(index, false), at))
+            .collect();
+        let resume = popped[0].as_basic_value().into_int_value();
+        self.builder
+            .build_switch(resume, default, &cases)
+            .expect(POSITIONED);
+    }
+
+    /// Whether payload field `payload` of the enum `id` is a link: a box, or an inline link.
+    fn is_link(&self, id: EnumId, payload: &Payload) -> bool {
+        payload.boxed || self.inline_link(id, payload).is_some()
+    }
+
+    /// Compares the fields of variant `variant` of the enum `id`, in the loop `eq`, from the
+    /// builder's block. Before each link that is not the last, it pushes the index of a new
+    /// block in `resumes`, which goes on from the next field, and loops into the link. Then the
+    /// last link loops, or with no link the value is done and goes to `pop`.
+    fn compare_variant(
+        &self,
+        eq: &EqLoop<'ctx>,
+        pending: &Pending<'ctx>,
+        resumes: &mut Vec<BasicBlock<'ctx>>,
+        (id, variant): (EnumId, usize),
+    ) {
+        let function = self.current_function();
+        let pointer = |phi: PhiValue<'ctx>| phi.as_basic_value().into_pointer_value();
+        let (mut a, mut b) = (pointer(eq.current[1]), pointer(eq.current[2]));
+        let payloads = &self.program.enums[id.0].variants[variant].fields;
+        let looped = payloads
+            .iter()
+            .rposition(|payload| self.is_link(id, payload));
+        for (field, payload) in payloads.iter().enumerate() {
+            if looped == Some(field) {
+                continue;
+            }
+            if !self.is_link(id, payload) {
+                let next = self.context.append_basic_block(function, "next");
+                let pair = self.equal_at(
+                    payload.ty,
+                    self.payload_place(a, id, variant, field),
+                    self.payload_place(b, id, variant, field),
+                );
+                self.branch_on(pair, next, eq.unequal);
+                self.builder.position_at_end(next);
+                continue;
+            }
+            let resume = self.context.append_basic_block(function, "resume");
+            let index = u64::try_from(resumes.len()).expect("a resume index should fit in a `u64`");
+            resumes.push(resume);
+            let index = self.context.i32_type().const_int(index, false).into();
+            self.push_pending(pending, [index, a.into(), b.into()]);
+            self.enter_link(eq, (id, variant, field), a, b);
+            self.builder.position_at_end(resume);
+            (a, b) = (pointer(eq.popped[1]), pointer(eq.popped[2]));
+        }
+        match looped {
+            Some(field) => self.enter_link(eq, (id, variant, field), a, b),
+            None => self.branch_to(eq.pop),
+        }
+    }
+
+    /// Loops into link `field` of variant `variant` in the values of the enum `id` at `a` and
+    /// `b`, when `link_pair` does not decide the pair at once: equal goes to `pop`.
+    fn enter_link(
+        &self,
+        eq: &EqLoop<'ctx>,
+        link: (EnumId, usize, usize),
+        a: PointerValue<'ctx>,
+        b: PointerValue<'ctx>,
+    ) {
+        let (inner, value_a, value_b) = self.link_pair(link, a, b, eq.pop, eq.unequal);
+        let from = self.current_block();
+        let values: [BasicValueEnum<'ctx>; 3] = [
+            self.member_index(&eq.members, inner).into(),
+            value_a.into(),
+            value_b.into(),
+        ];
+        for (phi, value) in eq.current.iter().zip(values) {
+            phi.add_incoming(&[(&value, from)]);
+        }
+        self.branch_to(eq.top);
     }
 
     /// The blocks of an `eq_component` helper that return `true` and `false`. Both go to one
@@ -1129,16 +1191,20 @@ impl<'ctx> Codegen<'ctx, '_> {
         (equal, unequal)
     }
 
-    /// An empty buffer of pending pairs: `null`, with capacity and length 0, so that a
-    /// comparison that pushes nothing allocates nothing.
+    /// No pending pairs: no top pair held, and a buffer that is `null`, with capacity and
+    /// length 0, so that a comparison that never holds two pairs at once allocates nothing.
     fn empty_pending(&self) -> Pending<'ctx> {
         let i64_type = self.context.i64_type();
         let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let bool_type = self.context.bool_type();
         let pending = Pending {
+            top: self.entry_alloca(self.pending_pair().into(), "pending.top"),
+            held: self.entry_alloca(bool_type.into(), "pending.held"),
             buffer: self.entry_alloca(ptr_type.into(), "pending"),
             cap: self.entry_alloca(i64_type.into(), "pending.cap"),
             len: self.entry_alloca(i64_type.into(), "pending.len"),
         };
+        self.store(pending.held, bool_type.const_zero().into());
         self.store(pending.buffer, ptr_type.const_null().into());
         self.store(pending.cap, i64_type.const_zero().into());
         self.store(pending.len, i64_type.const_zero().into());
@@ -1149,6 +1215,14 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn load_pending(&self, slot: PointerValue<'ctx>) -> IntValue<'ctx> {
         self.builder
             .build_load(self.context.i64_type(), slot, "pending")
+            .expect(POSITIONED)
+            .into_int_value()
+    }
+
+    /// Whether `pending` holds a top pair.
+    fn pending_held(&self, pending: &Pending<'ctx>) -> IntValue<'ctx> {
+        self.builder
+            .build_load(self.context.bool_type(), pending.held, "held")
             .expect(POSITIONED)
             .into_int_value()
     }
@@ -1183,9 +1257,57 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// Pushes `pair`, its `kind`, `a` and `b`, onto `pending`. A full buffer grows first: the
-    /// first push allocates room for `FIRST_PENDING` pairs, and each later one doubles it.
+    /// The `kind`, `a` and `b` of the pending pair at `at`.
+    fn load_pair(&self, at: PointerValue<'ctx>) -> [BasicValueEnum<'ctx>; 3] {
+        let pair = self.pending_pair();
+        let ptr_type = self.context.ptr_type(AddressSpace::default()).into();
+        let types: [BasicTypeEnum<'ctx>; 3] = [self.context.i32_type().into(), ptr_type, ptr_type];
+        let mut index = 0;
+        types.map(|ty| {
+            let field = self
+                .builder
+                .build_struct_gep(pair, at, index, "part")
+                .expect("a pending pair should have three elements");
+            index += 1;
+            self.builder
+                .build_load(ty, field, "part")
+                .expect(POSITIONED)
+        })
+    }
+
+    /// Stores `pair`, its `kind`, `a` and `b`, as the pending pair at `at`.
+    fn store_pair(&self, at: PointerValue<'ctx>, pair: [BasicValueEnum<'ctx>; 3]) {
+        for (index, value) in (0..).zip(pair) {
+            let field = self
+                .builder
+                .build_struct_gep(self.pending_pair(), at, index, "part")
+                .expect("a pending pair should have three elements");
+            self.store(field, value);
+        }
+    }
+
+    /// Pushes `pair` onto `pending`. It becomes the top pair, which lives in the helper's
+    /// frame; a top pair held before moves to the buffer (`push_buffer`). So the buffer
+    /// grows only when the comparison waits on two pairs at once.
     fn push_pending(&self, pending: &Pending<'ctx>, pair: [BasicValueEnum<'ctx>; 3]) {
+        let function = self.current_function();
+        let (spill, set) = (
+            self.context.append_basic_block(function, "pending.spill"),
+            self.context.append_basic_block(function, "pending.set"),
+        );
+        self.branch_on(self.pending_held(pending), spill, set);
+        self.builder.position_at_end(spill);
+        self.push_buffer(pending, self.load_pair(pending.top));
+        self.branch_to(set);
+        self.builder.position_at_end(set);
+        self.store_pair(pending.top, pair);
+        let held = self.context.bool_type().const_int(1, false);
+        self.store(pending.held, held.into());
+    }
+
+    /// Pushes `pair` onto the buffer of `pending`. A full buffer grows first: the first push
+    /// allocates room for `FIRST_PENDING` pairs, and each later one doubles it.
+    fn push_buffer(&self, pending: &Pending<'ctx>, pair: [BasicValueEnum<'ctx>; 3]) {
         let function = self.current_function();
         let block = |name| self.context.append_basic_block(function, name);
         let (grow, first, double, put) = (
@@ -1232,14 +1354,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.store(pending.cap, doubled.into());
         self.branch_to(put);
         self.builder.position_at_end(put);
-        let at = self.pending_entry(self.pending_buffer(pending), len);
-        for (index, value) in (0..).zip(pair) {
-            let field = self
-                .builder
-                .build_struct_gep(self.pending_pair(), at, index, "part")
-                .expect("a pending pair should have three elements");
-            self.store(field, value);
-        }
+        self.store_pair(self.pending_entry(self.pending_buffer(pending), len), pair);
         let one = i64_type.const_int(1, false);
         let more = self
             .builder
@@ -1248,41 +1363,47 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.store(pending.len, more.into());
     }
 
-    /// Branches to `empty` when `pending` holds no pair. Otherwise pops the last pair and
-    /// returns its `kind`, `a` and `b`, with the builder after the pop.
+    /// Pops the last pair of `pending` into the `popped` phis of block `resumed`, and branches
+    /// there: the top pair when one is held, else the buffer's last. Branches to `empty` when
+    /// `pending` holds no pair.
     fn pop_pending(
         &self,
         pending: &Pending<'ctx>,
         empty: BasicBlock<'ctx>,
-    ) -> [BasicValueEnum<'ctx>; 3] {
-        let take = self
-            .context
-            .append_basic_block(self.current_function(), "take");
+        resumed: BasicBlock<'ctx>,
+        popped: [PhiValue<'ctx>; 3],
+    ) {
+        let function = self.current_function();
+        let block = |name| self.context.append_basic_block(function, name);
+        let (from_top, check, from_buffer) =
+            (block("pop.top"), block("pop.check"), block("pop.buffer"));
+        let take = |pair: [BasicValueEnum<'ctx>; 3]| {
+            let from = self.current_block();
+            for (phi, value) in popped.iter().zip(pair) {
+                phi.add_incoming(&[(&value, from)]);
+            }
+            self.branch_to(resumed);
+        };
+        self.branch_on(self.pending_held(pending), from_top, check);
+        self.builder.position_at_end(from_top);
+        self.store(pending.held, self.context.bool_type().const_zero().into());
+        take(self.load_pair(pending.top));
+        self.builder.position_at_end(check);
         let len = self.load_pending(pending.len);
         let zero = self.context.i64_type().const_zero();
-        self.branch_on(self.int_compare(IntPredicate::EQ, len, zero), empty, take);
-        self.builder.position_at_end(take);
+        self.branch_on(
+            self.int_compare(IntPredicate::EQ, len, zero),
+            empty,
+            from_buffer,
+        );
+        self.builder.position_at_end(from_buffer);
         let one = self.context.i64_type().const_int(1, false);
         let last = self
             .builder
             .build_int_nuw_sub(len, one, "last")
             .expect(POSITIONED);
         self.store(pending.len, last.into());
-        let at = self.pending_entry(self.pending_buffer(pending), last);
-        let pair = self.pending_pair();
-        let ptr_type = self.context.ptr_type(AddressSpace::default()).into();
-        let types: [BasicTypeEnum<'ctx>; 3] = [self.context.i32_type().into(), ptr_type, ptr_type];
-        let mut index = 0;
-        types.map(|ty| {
-            let field = self
-                .builder
-                .build_struct_gep(pair, at, index, "part")
-                .expect("a pending pair should have three elements");
-            index += 1;
-            self.builder
-                .build_load(ty, field, "part")
-                .expect(POSITIONED)
-        })
+        take(self.load_pair(self.pending_entry(self.pending_buffer(pending), last)));
     }
 
     /// Frees the buffer of `pending` when a push allocated it.
@@ -1397,12 +1518,28 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 }
 
+/// The blocks and phis of an `eq_component` helper's loop that each variant's comparison uses.
+struct EqLoop<'ctx> {
+    members: Vec<EnumId>,
+    /// The loop's head, and its `kind`, `a` and `b` phis.
+    top: BasicBlock<'ctx>,
+    current: [PhiValue<'ctx>; 3],
+    /// Where a value whose fields are all compared goes.
+    pop: BasicBlock<'ctx>,
+    unequal: BasicBlock<'ctx>,
+    /// The resume index, `a` and `b` of a popped pair.
+    popped: [PhiValue<'ctx>; 3],
+}
+
 /// The first capacity of a buffer of pending pairs, in pairs.
 const FIRST_PENDING: u64 = 8;
 
 /// The slots of the pending pairs of an `eq_component` helper, in its entry block, which
-/// `mem2reg` makes phis: the buffer, `null` until the first push, its capacity and its length.
+/// `mem2reg` makes phis: the top pair and whether it is held, then the buffer of the pairs
+/// below it, `null` until the first spill, its capacity and its length.
 struct Pending<'ctx> {
+    top: PointerValue<'ctx>,
+    held: PointerValue<'ctx>,
     buffer: PointerValue<'ctx>,
     cap: PointerValue<'ctx>,
     len: PointerValue<'ctx>,

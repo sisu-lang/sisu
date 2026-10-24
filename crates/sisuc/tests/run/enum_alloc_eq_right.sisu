@@ -1,0 +1,21 @@
+fn iterations() -> i64 { 1000 }
+
+// `==` on two right-deep `Node(Leaf, ...)` values allocates nothing. Each `Leaf` pair is done
+// at once, so `==` never waits on two pairs at once and needs no buffer. Each level holds two
+// boxes, so building the two values allocates 4 boxes per level and nothing else.
+enum E {
+    Leaf
+    Node(E, E)
+}
+
+fn right(depth: i64) -> E {
+    let mut e = E.Leaf
+    for _ in 0..depth {
+        e = E.Node(E.Leaf, e)
+    }
+    e
+}
+
+fn main() {
+    print(right(iterations()) == right(iterations())) // true (true with no iterations)
+}

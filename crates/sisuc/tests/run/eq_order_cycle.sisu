@@ -1,0 +1,25 @@
+// `==` on two enum values compares depth first and in field order, so it stops at the first
+// mismatch. Here the mismatch is in the first field, and the second fields hold two distinct
+// class objects that each point to themselves. `==` on those two objects never ends, so an
+// `==` that compared the second field before it found the mismatch would hang.
+class C {
+    mut next: C?
+}
+
+enum E {
+    Leaf
+    Value(C)
+    Node(E, E)
+}
+
+fn main() {
+    let a = C(next: None)
+    let b = C(next: None)
+    a.next = a
+    b.next = b
+    let x = E.Node(E.Node(E.Leaf, E.Leaf), E.Value(a))
+    let y = E.Node(E.Node(E.Node(E.Leaf, E.Leaf), E.Leaf), E.Value(b))
+    print(x == y)    // false
+    a.next = None
+    b.next = None
+}

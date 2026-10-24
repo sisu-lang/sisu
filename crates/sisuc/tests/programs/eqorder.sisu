@@ -1,0 +1,42 @@
+// `==` on two enum values, under a 256 KiB stack, finds a mismatch in the first field before it
+// compares the second. The second fields hold two class chains of 20 000 objects. `==` on
+// those chains needs a frame per object, which overflows that stack, so an `==` that compared
+// the second field first would crash. The drop of such a chain needs a frame per object too,
+// so `cut` takes each chain apart, one object at a time, before the drop.
+class C {
+    mut left: C?
+    right: C?
+}
+
+enum E {
+    Leaf
+    Value(C)
+    Node(E, E)
+}
+
+fn chain(depth: i64) -> C {
+    let mut c = C(left: None, right: None)
+    for _ in 0..depth {
+        c = C(left: c, right: None)
+    }
+    c
+}
+
+// Sets each `left` in the chain from `c` to `None`.
+fn cut(c: C) {
+    let mut at: C? = c
+    while let n = at {
+        at = n.left
+        n.left = None
+    }
+}
+
+fn main() {
+    let a = chain(20_000)
+    let b = chain(20_000)
+    let x = E.Node(E.Node(E.Leaf, E.Leaf), E.Value(a))
+    let y = E.Node(E.Node(E.Node(E.Leaf, E.Leaf), E.Leaf), E.Value(b))
+    print(x == y)    // false
+    cut(a)
+    cut(b)
+}
