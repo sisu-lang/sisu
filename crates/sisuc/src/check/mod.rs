@@ -994,16 +994,12 @@ impl Checker<'_> {
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
         };
-        if let (Some(written), TypeKind::Class(..) | TypeKind::Enum(..)) =
-            (&mut self.written, named.kind())
+        // Only an applied name can be an instance that grows: a plain name has no arguments.
+        if let (Some(written), ast::TypeKind::Applied(applied)) = (&mut self.written, &ty.kind)
+            && matches!(named.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
         {
             // Without the `?`: the type that grows is the instance, not the optional of it.
-            let end = match &ty.kind {
-                ast::TypeKind::Applied(applied) => applied.angles.end(),
-                ast::TypeKind::Name(name) => ty.span.start() + name.as_str().len(),
-                ast::TypeKind::Array(_) => ty.span.end(),
-            };
-            written.push((named, Span::new(ty.span.start(), end)));
+            written.push((named, Span::new(ty.span.start(), applied.angles.end())));
         }
         if !ty.optional {
             return Some(named);
