@@ -1876,3 +1876,12 @@ fn long_types_should_be_cut_in_diagnostics() {
     src += "    let s: string = y20\n}";
     codes(&src, &[(Code::Mismatch, (26, 21))]);
 }
+
+/// `tir` writes a call's type arguments as a program writes them, a class by its name.
+#[test]
+fn call_type_arguments_should_name_their_classes_in_tir() {
+    contains(
+        "class Box<T> {\n    v: T\n}\nfn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(Box(v: 1)).v)\n}",
+        &["(call id<Box<i64>> "],
+    );
+}

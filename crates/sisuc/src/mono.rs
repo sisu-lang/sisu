@@ -719,6 +719,11 @@ mod tests {
              fn main() {\n    let b = Box(v: \"a\")\n}",
         );
         assert_eq!(class_names(&program), ["Box<i64>", "Box<string>"]);
+        // An instance inside a type argument comes before the instance that takes it.
+        let program = instantiated(
+            "class Box<T> {\n    v: T\n}\nfn main() {\n    let b = Box(v: Box(v: 1))\n}",
+        );
+        assert_eq!(class_names(&program), ["Box<i64>", "Box<Box<i64>>"]);
     }
 
     #[test]
