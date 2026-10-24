@@ -994,10 +994,9 @@ impl Checker<'_> {
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
         };
-        // Only an applied name can be an instance that grows: a plain name has no arguments.
-        if let (Some(written), ast::TypeKind::Applied(applied)) = (&mut self.written, &ty.kind)
-            && matches!(named.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
-        {
+        // Only an applied name can be an instance that grows: a plain name has no arguments, and
+        // arguments on a parameter or a built-in type are an error that resolved to `None`.
+        if let (Some(written), ast::TypeKind::Applied(applied)) = (&mut self.written, &ty.kind) {
             // Without the `?`: the type that grows is the instance, not the optional of it.
             written.push((named, Span::new(ty.span.start(), applied.angles.end())));
         }
