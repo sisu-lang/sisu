@@ -60,7 +60,7 @@ The rules:
 - The error type must conform to the interface `Error`. So `-> i64 | bool` is an error. The interface `Error` requires `Display`.
 - `string` conforms to `Error`. So `-> i64 | string` is a function that fails with a message.
 - A function that returns no value on success returns `unit | E`. There is no form `fn save(...) | IoError`.
-- A result has one error type. `T | A | B` is an error. To report several causes, declare one enum with a variant for each cause.
+- A result has one error type. `T | A | B` is an error.
 - `|` in a type never means "one of these types". `i64 | string` is an `i64` or a failure message, and `i64 | bool` does not build.
 - `i64 | E?` is `i64 | (E?)`, and its right side is not an error type. For an optional result, write `(i64 | E)?`.
 - A generic function that returns `T | E` needs the bound `E: Error`. `Result<i64, bool>` is the same error as `i64 | bool`.
@@ -97,7 +97,7 @@ The rules:
 
 ## fail
 
-`fail e` ends the enclosing function with the failure `e`. The function must return a `T | E`, and `e` must have the type `E`. In any other function, `fail` is an error.
+`fail e` returns `Err(e)` from the enclosing function. So the function returns a `T | E`.
 
 ```sisu pending
 enum ConfigError: Error {
@@ -125,26 +125,12 @@ fn main() {
 `x?` passes a failure up. When `x` is a `T | E` that holds a success, `x?` is the value of type `T`. When `x` holds a failure, the enclosing function returns that failure.
 
 ```sisu pending
-enum TotalError: Error {
-    Io(IoError)
-    Empty
-}
-
-extend IoError: Convert<TotalError> {
-    fn convert(self) -> TotalError {
-        TotalError.Io(self)
-    }
-}
-
-fn length(path: string) -> i64 | TotalError {
+fn length(path: string) -> i64 | IoError {
     let text = read_file(path)?
-    if text.len() == 0 {
-        fail TotalError.Empty
-    }
     text.len()
 }
 
-fn main() -> unit | TotalError {
+fn main() -> unit | IoError {
     print(length("notes.txt")?)
 }
 ```
@@ -152,7 +138,7 @@ fn main() -> unit | TotalError {
 The rules:
 
 - The return type of the enclosing function must be a result `U | F`. When `F` is `E`, the failure passes up as it is.
-- When `F` is not `E`, `E` must conform to `Convert<F>`. Then `?` returns `e.convert()` as the failure. Above, an `IoError` becomes a `TotalError`.
+- An `IoError` converts to a `string`, so `read_file(path)?` works in a function that returns a `T | string`.
 - On an optional `T?`, `x?` is the value when `x` holds one. When `x` is `None`, the enclosing function returns `None`. Its return type must be an optional.
 - `?` on a result in a function that returns an optional is an error. So is `?` on an optional in a function that returns a result. Write `x ?? fail ...` to turn an empty optional into a failure.
 - `?` works on a result or an optional only. `5?` is an error.
@@ -251,6 +237,6 @@ fn main() -> unit | IoError {
 | `read_file(path)` | The text of the file, a `string \| IoError` |
 | `write_file(path, text)` | A `unit \| IoError`. It creates the file or replaces its content |
 
-`IoError` is an enum that conforms to `Error`. It has the variants `NotFound(path)`, `PermissionDenied(path)`, `NotUtf8(path)` and `Other(path, reason)`. A file that is not valid UTF-8 gives `NotUtf8`.
+`IoError` is an enum that conforms to `Error`. It has the variants `NotFound(path)`, `PermissionDenied(path)`, `NotUtf8(path)` and `Other(path, reason)`.
 
 These functions give a program no file handle. A program cannot append to a file, read it line by line or move inside it. The functions `print`, `eprint` and `read_line` keep their rules ([Input and output](io.md)).

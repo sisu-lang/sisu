@@ -42,7 +42,7 @@ fn main() {
 The rules:
 
 - A named function is a value of its function type. `add` has the type `(i64, i64) -> i64`.
-- A function type goes anywhere a type goes: in a parameter, a return type, a local, a field, a payload, an array, an optional and a type argument.
+- A function type goes anywhere a type goes. It can be the type of a parameter, a local, a field, a payload, an array element or a type argument. It can be a return type or an optional.
 - `->` groups to the right. `(i64) -> (i64) -> i64` takes an `i64` and returns a function. An optional function type needs parentheses: `(() -> unit)?`.
 - A function type has no labels. A named function takes its arguments by position when a call goes through a value.
 - `unit` is a type name that a program can write. `-> unit` on a function declaration means the same as no return type.
@@ -93,16 +93,11 @@ class Button {
 
 fn main() {
     let say = () => print("hi")
-    twice(say)                         // hi
+    twice(say)                         // hi, then hi
     let b = Button(on_click: say)
     b.on_click()                       // hi
 }
 ```
-
-The rules:
-
-- The arguments of the call must fit the parameter types of the function type, in order and by position.
-- A function inside an optional is called after `if let`: `if let f = b.on_click { f() }`.
 
 ## Closures
 
@@ -130,14 +125,12 @@ fn main() {
         y + 1
     }
     print(bump(5))                     // 11
-    let square = (x: i64) => x * x
-    print(square(4))                   // 16
 }
 ```
 
 The rules:
 
-- The parameter types come from the expected type. A closure with no expected function type must write the type of each parameter. So `let f = x => x + 1` is an error, and `let f = (x: i64) => x + 1` is valid.
+- The parameter types come from the expected type, so `apply(x => x + 1, 1)` needs no type for `x`. A parameter can also have a written type, as in `(x: i64) => x * 2`.
 - The return type always comes from the body. A closure has no syntax for it. Where an expected type exists, `sisu` checks the body against its return type.
 - `_` as a parameter name binds nothing. A parameter list can have it more than once.
 - The body is one expression, one assignment or compound assignment, or a block. An assignment has the type `unit`, so `() => c.count += 1` is valid.
@@ -188,7 +181,7 @@ To keep a value that changes, return the new value from the closure, or keep the
 
 ## Weak captures
 
-A closure that captures an object keeps the object alive. When the object also holds the closure, as in a field, the two never get freed ([Cycles](values.md#cycles)). A *weak capture* does not keep the object alive.
+A closure that captures an object keeps the object alive. When the object also holds the closure, as in a field, the two never get freed ([Cycles](values.md#cycles)). The example below makes such a cycle.
 
 ```sisu pending
 class Button {
@@ -200,7 +193,7 @@ class Counter {
     button: Button
 
     fn wire(self) {
-        self.button.on_click = [weak self] () => self?.increment()
+        self.button.on_click = () => self.increment()
     }
 
     fn increment(self) {
@@ -211,43 +204,32 @@ class Counter {
 fn main() {
     let c = Counter(count: 0, button: Button(on_click: None))
     c.wire()
-    if let f = c.button.on_click {
-        f()
-    }
-    print(c.count)                     // 1
 }
 ```
 
+A *weak capture* does not keep the object alive. The way to write a weak capture is not final, so this page shows none.
+
 The rules:
 
-- `[weak name]` before the parameters captures `name` weakly. A list of several is `[weak a, weak b]`.
-- Only a class object, or an optional class object, can be captured weakly. Any other capture is an error.
+- A name can be captured weakly when its type conforms to `AnyObject`, or is an optional of such a type. A class, and a class-only interface value, conform ([Bounds](generics.md#bounds), [Interface values](generics.md#interface-values)). Any other capture is an error.
 - Inside the closure, a name that is captured weakly is an optional. Read it with `?.`, `??` and `if let`, as a [weak field](values.md#weak-fields).
-- When the object is gone, the closure still runs. Here, `self?.increment()` then does nothing.
-- A closure can capture an object `x` strongly, and the program can store the closure in a place that starts at `x`, such as `x.button.on_click`. Then the object keeps itself alive, and the program builds with a warning. `[weak x]` removes the cycle.
+- When the object is gone, the closure still runs. A call such as `self?.increment()` then does nothing.
+- A closure captures an object `x` strongly, and the program stores the closure in a place that starts at `x`, such as `x.button.on_click`. Then the object keeps itself alive, and the program builds with a warning. The fix is to capture `x` weakly.
+- The warning sees only a direct store. A closure that a call passes on, or that another object stores, can still make a cycle.
 
 ## Iterators
 
-An *iterator* is a value with a method `next`. Each call of `next` gives the next element as an optional, and `None` when no element is left. The interface `Iterator` states this.
+An *iterator* is a value with a method `next`. Each call of `next` gives the next element as an optional, and `None` when no element is left. The interface `Iterator` states this, with an associated type `Item`.
 
 ```sisu pending
-class Countdown: Iterator {
-    mut left: i64
-
-    type Item = i64
-
-    fn next(self) -> i64? {
-        if self.left == 0 {
-            return None
-        }
-        self.left -= 1
-        self.left + 1
-    }
-}
-
 fn main() {
-    for n in Countdown(left: 3) {
-        print(n)                       // 3, then 2, then 1
+    let xs = [10, 20, 30]
+    for x in xs.iter() {
+        print(x)                       // 10, 20, 30
+    }
+    let mut it = xs.iter()
+    while let x = it.next() {
+        print(x)                       // 10, 20, 30
     }
 }
 ```
@@ -259,11 +241,9 @@ The rules:
 - `for x in e` with an array or a range works as [`for`](statements.md#for) tells. For any other `e`, the type of `e` must conform to `Iterable`. The loop calls `e.iter()` once, then `next()` until the result is `None`.
 - An array conforms to `Iterable`. `xs.iter()` gives the iterator of an array. It holds the array, so a change to the array during the loop copies the array, and the loop sees the old elements.
 - Every iterator is an iterable. Its `iter()` gives a copy of the iterator itself.
-- A class conforms to `Iterator` with a plain `self` method, because a class method can write the `mut` fields of its object.
 - A range is a value. `0..n` and `0..=n` can be stored, passed and returned, and they are iterators of `i64`.
 - A `for` loop copies its iterator. So after a `break`, the variable that held the iterator is where it was, and a second `for` over it starts again. An iterator that is an object is shared, so the loop advances it.
 - To continue where a loop stopped, call `next` in a `while let`.
-- A bound can fix the associated type: `fn total<S: Iterable<Item = i64>>(xs: S) -> i64` takes an array, a range or a chain of iterator methods.
 
 ## Iterator methods
 
@@ -273,14 +253,9 @@ Every iterable has these methods. An *adapter* returns a new iterator and does n
 | --- | --- | --- |
 | `map(f)` | An iterator of the results of `f` | Adapter |
 | `filter(keep)` | An iterator of the elements for which `keep` is true | Adapter |
-| `take(n)` | An iterator of the first `n` elements | Adapter |
-| `take_while(keep)` | An iterator of the elements before the first one for which `keep` is false | Adapter |
 | `filter_some()` | For an iterator of `T?`, an iterator of the `T` values | Adapter |
 | `count()` | The number of elements, an `i64` | Uses up |
 | `any(f)`, `all(f)` | A `bool` | Uses up, stops early |
-| `find(f)` | The first element for which `f` is true, as an optional | Uses up, stops early |
-| `fold(init, f)` | `f` applied to `init` and each element in turn | Uses up |
-| `to_array()` | An array of the elements | Uses up |
 | `sum()` | The sum, for elements of type `i64` or `f64` | Uses up |
 
 ```sisu pending
@@ -289,7 +264,7 @@ fn main() {
     print(words.filter(w => w.len() > 4).count())     // 3
     let total = (0..10).filter(x => x % 2 == 0).map(x => x * x).sum()
     print(total)                                      // 120
-    print(words.map(w => w.len()).fold(0, (acc, n) => acc + n))   // 19
+    print(words.map(w => w.len()).sum())              // 19
 }
 ```
 
@@ -297,6 +272,4 @@ The rules:
 
 - A chain such as `.filter(...).map(...).sum()` builds no array between its steps.
 - A statement that only calls an adapter, such as `xs.map(f)`, builds with the warning for an unused value. A note tells that `map` does nothing until a method uses up the iterator.
-- `take(n)` returns at most `n` elements.
-- `any`, `all` and `find` stop at the first element that decides the result.
-- `sum` of `i64` adds with the checked `+`, so it panics on overflow ([Overflow](operators.md#overflow)).
+- `any` and `all` stop at the first element that decides the result.
