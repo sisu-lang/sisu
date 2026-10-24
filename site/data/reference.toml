@@ -57,3 +57,7 @@ description = "print, eprint, read_line, program arguments and the exit code."
 [[page]]
 file = "generics"
 description = "Type parameters and arguments, inference, what a generic body can do, bounds, interfaces, type aliases and interface values."
+
+[[page]]
+file = "closures"
+description = "Function types, closures, captures, weak captures, iterators and the iterator methods."
