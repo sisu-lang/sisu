@@ -757,6 +757,21 @@ fn enum_box_shortcut_only_when_reflexive() {
     }
 }
 
+/// `eq_component` queues the links it still has to compare, so it never calls itself: a call
+/// per level of a left-deep value would overflow the stack.
+#[test]
+fn eq_component_should_not_call_an_eq_component_helper() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "enum E {\n    Leaf\n    Node(E, E)\n}\nfn main() {\n    print(E.Node(E.Leaf, E.Leaf) == E.Leaf)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = function_body(&ir, "define internal i1 @sisu_rc.eq_component.E(i32");
+    assert!(!body.contains("@sisu_rc.eq_component."), "{body}");
+}
+
 #[test]
 fn helper_names_cannot_collide() {
     let context = Context::create();
