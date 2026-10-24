@@ -194,7 +194,7 @@ Here, the local `parent` is the only strong reference to the first node. When `a
 
 The rules:
 
-- `weak` comes before `mut`. A weak field must be a `mut` field. Its type must be an optional of a type that conforms to `AnyObject`. Such a type is a class, so `Node?` is valid.
+- `weak` comes before `mut`. A weak field must be a `mut` field. Its type must be an optional of a type that conforms to `AnyObject`. A class conforms, so `Node?` is valid.
 - A `T?` with `T: AnyObject` is valid too, and so is `(any I)?` for an interface `I` that only classes conform to ([Bounds](generics.md#bounds), [Interface values](generics.md#interface-values)).
 - A weak field reads like any optional, with `?.`, `??` and `if let`. A read never fails, and it never gives a freed object.
 - A weak field makes the time of the free visible. A reference held by a local can go away at its last use. So a weak field can read `None` before the end of that block.

@@ -138,7 +138,7 @@ fn main() -> unit | IoError {
 The rules:
 
 - The return type of the enclosing function must be a result `U | F`. When `F` is `E`, the failure passes up as it is.
-- An `IoError` converts to a `string`, so `read_file(path)?` works in a function that returns a `T | string`.
+- `read_file(path)?` also works in a function that returns a `T | string`.
 - On an optional `T?`, `x?` is the value when `x` holds one. When `x` is `None`, the enclosing function returns `None`. Its return type must be an optional.
 - `?` on a result in a function that returns an optional is an error. So is `?` on an optional in a function that returns a result. Write `x ?? fail ...` to turn an empty optional into a failure.
 - `?` works on a result or an optional only. `5?` is an error.

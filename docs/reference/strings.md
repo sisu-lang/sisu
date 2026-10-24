@@ -134,7 +134,7 @@ fn main() {
 
 ### Text of other types
 
-`print` and interpolation also take a value of any other type. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+`print` and interpolation also take a value of any type that can be a type argument. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
 
 ```sisu pending
 class Sauna {

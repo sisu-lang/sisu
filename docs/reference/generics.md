@@ -301,6 +301,7 @@ The rules:
 - A type argument that does not conform to a bound is an error at the call.
 - Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` work on a `T`.
 - Every class conforms to `AnyObject`, and nothing else can. `T: AnyObject` lets the body use `is` on values of type `T`, and lets a class declare a [weak field](values.md#weak-fields) of type `T?`.
+- An interface that inherits `AnyObject` is class-only. Its `any` values support `is` too, and a class can hold one in a weak field ([Interface values](#interface-values)).
 
 ## Interfaces
 
@@ -425,7 +426,7 @@ An *associated type* is a type that each conforming type chooses once. The inter
 
 ```sisu pending
 interface Source {
-    type Item
+    type Item: Display
     fn next(self) -> Item?
 }
 
@@ -447,13 +448,22 @@ fn first_item<S: Source>(s: S) -> S.Item? {
     s.next()
 }
 
+fn show_next<S: Source>(s: S) {
+    if let x = s.next() {
+        print(x)
+    }
+}
+
 fn main() {
     let c = Countdown(left: 2)
     print(first_item(c) ?? 0)          // 2
+    show_next(c)                       // 1
 }
 ```
 
 Inside the interface, the associated type is written `Item`. Elsewhere it is written through the type: `S.Item` for a type parameter `S: Source`.
+
+An associated type can carry a bound, such as `type Item: Display`. Generic code can then print an `S.Item`, as `show_next` does.
 
 Use an associated type when each type has one answer, such as the item of a `Source`. Use a type parameter, as in `Transform<T>`, when one type can conform in several ways. An interface can have both.
 
@@ -494,7 +504,7 @@ The rules:
 - `f64` conforms to `Eq` and `Ord` with the rules of IEEE 754. In generic code, `nan` is not equal to `nan`, as in other code.
 - An enum has `==` when all its payloads have it, and it has `<` only when it conforms to `Ord`.
 - Only `to_string` conforms by name. A type with its own `eq` or `less` method conforms to `Eq` or `Ord` only when its declaration names the interface.
-- Built-in types, such as `i64` and `string`, have `Eq` and `Ord` with no declaration. An enum has `Eq` with no declaration when all its payloads have it.
+- `i64`, `u8`, `char` and `string` have `Eq` and `Ord` with no declaration. An enum has `Eq` with no declaration when all its payloads have it.
 
 ## Type aliases
 
@@ -556,4 +566,5 @@ The rules:
 
 - An interface name alone is not a type. Write `T: Shape` for a type parameter, or `any Shape` for a value.
 - An interface whose methods are generic, or that uses `Self` besides the receiver, cannot be `any`. So `any Eq` and `any Ord` are errors.
+- An `any` value prints through the `Display` of the type that it holds. It has no `==` and no `<`.
 - A generic function with the bound `T: Shape` accepts an `[any Shape]`.

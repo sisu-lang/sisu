@@ -136,7 +136,7 @@ The rules:
 - The body is one expression, one assignment or compound assignment, or a block. An assignment has the type `unit`, so `() => c.count += 1` is valid.
 - A `return` in a block body returns from the closure. A `break` or `continue` cannot leave the closure for a loop around it.
 - A closure whose expected result type is `unit` gives no value. When its body has a value, the program builds with the warning for an unused value ([W0004](../diagnostics/W0004.md)).
-- A closure argument of a generic call is checked after the other arguments. Its body can fix a type argument that nothing else fixed. In `fold(0, (acc, x) => acc + x)`, the `0` fixes the type of `acc`.
+- A closure argument of a generic call is checked after the other arguments. Its body can fix a type argument that nothing else fixed. For a generic function such as `fold(init, f)`, the call `fold(0, (acc, x) => acc + x)` uses the `0` to fix the type of `acc`.
 
 ## Captures
 
@@ -255,7 +255,6 @@ Every iterable has these methods. An *adapter* returns a new iterator and does n
 | `filter(keep)` | An iterator of the elements for which `keep` is true | Adapter |
 | `filter_some()` | For an iterator of `T?`, an iterator of the `T` values | Adapter |
 | `count()` | The number of elements, an `i64` | Uses up |
-| `any(f)`, `all(f)` | A `bool` | Uses up, stops early |
 | `sum()` | The sum, for elements of type `i64` or `f64` | Uses up |
 
 ```sisu pending
@@ -272,4 +271,3 @@ The rules:
 
 - A chain such as `.filter(...).map(...).sum()` builds no array between its steps.
 - A statement that only calls an adapter, such as `xs.map(f)`, builds with the warning for an unused value. A note tells that `map` does nothing until a method uses up the iterator.
-- `any` and `all` stop at the first element that decides the result.
