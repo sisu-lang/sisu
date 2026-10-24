@@ -445,7 +445,7 @@ The rules:
 - The condition is a `bool` ([E0032](../diagnostics/E0032.md)).
 - The program calculates the condition only when the pattern accepts the value.
 - A guard belongs to the whole arm. When an alternative accepts the value and the guard is `false`, the program tries the next alternative. It calculates the guard again, with the names of that alternative.
-- With several sets of alternatives, the set nearest the end of the pattern changes first.
+- With several sets of alternatives, the set nearest the end of the pattern changes first. A set in the arm pattern itself changes last.
 - When no alternative has a `true` guard, the `match` goes on with the next arm.
 - A guarded arm covers no values, because its guard can be `false` ([Coverage](#coverage)).
 

@@ -46,8 +46,8 @@ The rules:
 - `print` and `eprint` give no value ([E0043](../diagnostics/E0043.md)).
 - When standard output is a terminal, `print` writes each line at once. Otherwise `print` collects its text and writes it later, and `eprint` still writes at once. So the order of the two streams in one file or pipe is not fixed.
 - A panic writes the text that `print` collected before it writes the panic message ([panic](functions.md#panic)).
-- A write to standard output that fails with an error, such as on a full disk, is a panic.
-- A write to either stream on a pipe with no reader ends the program with the signal SIGPIPE, with no panic. A closed standard output drops the text. Any other failed write to standard error is ignored.
+- A write to standard output that fails, such as on a full disk, is a panic. The next rule gives the exceptions.
+- A `print` or `eprint` write on a pipe with no reader ends the program with the signal SIGPIPE, with no panic. A panic still ends with the exit code 101. A closed standard output drops the text. Any other failed write to standard error is ignored.
 
 ## read_line
 
