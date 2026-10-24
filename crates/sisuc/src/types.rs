@@ -514,7 +514,6 @@ mod tests {
         assert!(HELD.get() <= text.len(), "{} steps for {text}", HELD.get());
     }
 
-    /// `t_20` has 21 distinct types but 2^20 paths to its leaf.
     #[test]
     fn seed_kinds_should_name_no_parameter() {
         for kind in SEEDS {
@@ -522,6 +521,7 @@ mod tests {
         }
     }
 
+    /// `t_20` has 21 distinct types but 2^20 paths to its leaf.
     #[test]
     fn subst_should_visit_each_shared_type_once() {
         let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
