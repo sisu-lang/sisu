@@ -393,6 +393,10 @@ struct Body {
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
+    /// The initializer of the `let` being checked, and what that `let` writes before its type
+    /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
+    /// `None` or `[]`.
+    let_init: Option<(Span, Symbol, bool)>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,

@@ -443,7 +443,12 @@ pub(crate) enum DiagnosticKind {
         access: Span,
     },
     /// A `None` or `[]` (`literal`) at `at` whose type nothing fixes.
-    CannotInfer { literal: Literal, at: Span },
+    CannotInfer {
+        literal: Literal,
+        /// What the `let` that the literal initializes writes before its type, for the example.
+        binding: Option<String>,
+        at: Span,
+    },
     /// A call at `at` of `callee` that binds nothing to its type parameter `param`; `example`
     /// writes the call with its type arguments.
     CannotInferParam {
@@ -2033,10 +2038,20 @@ impl From<DiagnosticKind> for Diagnostic {
                     },
                 )
             }
-            DiagnosticKind::CannotInfer { literal, at } => {
-                let (literal, example) = match literal {
-                    Literal::None => ("None", "let x: Tree? = None"),
-                    Literal::EmptyArray => ("[]", "let xs: [i64] = []"),
+            DiagnosticKind::CannotInfer {
+                literal,
+                binding,
+                at,
+            } => {
+                let (literal, example) = match (literal, binding) {
+                    (Literal::None, name) => (
+                        "None",
+                        format!("let {}: i64? = None", name.as_deref().unwrap_or("x")),
+                    ),
+                    (Literal::EmptyArray, name) => (
+                        "[]",
+                        format!("let {}: [i64] = []", name.as_deref().unwrap_or("xs")),
+                    ),
                 };
                 Diagnostic::coded(code, at, format!("cannot infer the type of `{literal}`"))
                     .with_help(format!("write the type: `{example}`"))

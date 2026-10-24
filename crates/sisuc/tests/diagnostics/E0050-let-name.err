@@ -1,0 +1,42 @@
+error[E0050]: cannot infer the type of `None`
+ --> E0050-let-name.sisu:2:17
+  |
+2 |     let found = None
+  |                 ^^^^
+  |
+  = help: write the type: `let found: i64? = None`
+
+error[E0050]: cannot infer the type of `[]`
+ --> E0050-let-name.sisu:3:14
+  |
+3 |     let ys = []
+  |              ^^
+  |
+  = help: write the type: `let ys: [i64] = []`
+
+error[E0050]: cannot infer the type of `None`
+ --> E0050-let-name.sisu:4:21
+  |
+4 |     let mut count = None
+  |                     ^^^^
+  |
+  = help: write the type: `let mut count: i64? = None`
+
+error[E0050]: cannot infer the type of `None`
+ --> E0050-let-name.sisu:6:13
+  |
+6 |     let _ = None
+  |             ^^^^
+  |
+  = help: write the type: `let x: i64? = None`
+
+error[E0050]: cannot infer the type of `[]`
+ --> E0050-let-name.sisu:7:13
+  |
+7 |     let _ = []
+  |             ^^
+  |
+  = help: write the type: `let xs: [i64] = []`
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050
