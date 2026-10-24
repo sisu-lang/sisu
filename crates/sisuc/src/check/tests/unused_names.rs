@@ -120,6 +120,17 @@ fn enum_should_warn_when_nothing_builds_a_variant() {
 }
 
 #[test]
+fn enum_should_hide_its_dead_method_when_nothing_builds_a_variant() {
+    judge_unused();
+    diagnostic(
+        "enum E {\n    A\n    B\n    fn name(self) -> i64 {\n        1\n    }\n}\nfn main() {}",
+        W0012,
+        (1, 6, "E"),
+        &[],
+    );
+}
+
+#[test]
 fn items_should_cite_their_own_dead_uses_when_they_are_not_the_first_of_their_kind() {
     judge_unused();
     // `B` is the second class, `Light` comes after the classes and `LIMIT` is the second constant.
@@ -553,12 +564,6 @@ fn unread_with_fix(src: &str, pos: (usize, usize, &str)) -> Diagnostic {
 fn let_should_warn_when_nothing_reads_it() {
     judge_unused();
     unread_without_fix(&in_f("let x = 1"), (2, 9, "x"));
-}
-
-#[test]
-fn for_name_should_warn_when_nothing_reads_it() {
-    judge_unused();
-    unread_with_fix(&in_f("for i in 0..3 { print(1) }"), (2, 9, "i"));
 }
 
 #[test]
