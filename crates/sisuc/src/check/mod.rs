@@ -30,6 +30,7 @@ use crate::diagnostic::{
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
+use crate::types::{Head, write_type};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use prelude::PRELUDE;
@@ -1232,20 +1233,16 @@ impl Checker<'_> {
     }
 
     fn type_name(&self, ty: Type) -> String {
-        match ty.kind() {
-            TypeKind::Class(id, args) => format!(
-                "{}{}",
-                self.classes[id.0].name.name,
-                args.written(|ty| self.type_name(ty))
-            ),
-            TypeKind::Enum(id, args) => format!(
-                "{}{}",
-                self.enums[id.0].name.name,
-                args.written(|ty| self.type_name(ty))
-            ),
-            TypeKind::Array(element) => format!("[{}]", self.type_name(element)),
-            TypeKind::Optional(payload) => format!("{}?", self.type_name(payload)),
-            _ => ty.to_string(),
+        let mut name = String::new();
+        write_type(&mut name, ty, |head| self.head(head));
+        name
+    }
+
+    /// The declared name of a class or an enum.
+    fn head(&self, head: Head) -> &'static str {
+        match head {
+            Head::Class(id) => self.classes[id.0].name.name.as_str(),
+            Head::Enum(id) => self.enums[id.0].name.name.as_str(),
         }
     }
 

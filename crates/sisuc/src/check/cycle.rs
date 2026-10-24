@@ -20,6 +20,7 @@ use crate::diagnostic::DiagnosticKind;
 use crate::graph::components;
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
+use crate::types::write_args;
 
 /// An instantiation, which a diagnostic writes as the program does.
 #[derive(Clone, Copy)]
@@ -304,19 +305,23 @@ impl Checker<'_> {
             Instance::Type(ty) => return self.type_name(ty),
             Instance::Call(func, types) => (func, types),
         };
-        let written = |list: &[Type]| TypeArgs::intern(list).written(|ty| self.type_name(ty));
         let owner = functions[func.0]
             .as_ref()
             .expect("a callee on a cycle should have a body, which gives its edge on the cycle")
             .owner_params;
         let (owner_args, args) = types.get().split_at(owner);
         let name = &self.signatures[func.0].name;
-        match name.split_once('.') {
-            Some((owner, method)) => {
-                format!("{owner}{}.{method}{}", written(owner_args), written(args))
-            }
-            None => format!("{name}{}", written(args)),
+        let mut out = String::new();
+        if let Some((owner, method)) = name.split_once('.') {
+            out.push_str(owner);
+            write_args(&mut out, owner_args, |head| self.head(head));
+            out.push('.');
+            out.push_str(method);
+        } else {
+            out.push_str(name);
         }
+        write_args(&mut out, args, |head| self.head(head));
+        out
     }
 }
 

@@ -102,16 +102,6 @@ impl TypeArgs {
         args().lists[self.0 as usize].0
     }
 
-    /// The arguments as a program writes them, `<i64, [T]>` with each type named by `name`;
-    /// nothing for `NONE`.
-    pub(crate) fn written(self, name: impl Fn(Type) -> String) -> String {
-        if self == TypeArgs::NONE {
-            return String::new();
-        }
-        let list: Vec<String> = self.get().iter().map(|&ty| name(ty)).collect();
-        format!("<{}>", list.join(", "))
-    }
-
     fn has_param(self) -> bool {
         args().lists[self.0 as usize].1
     }
@@ -131,6 +121,111 @@ impl TypeArgs {
 impl fmt::Debug for TypeArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.get(), f)
+    }
+}
+
+/// The bytes of type text that `write_type` writes before it cuts the text.
+pub(crate) const NAME_LIMIT: usize = 256;
+
+/// A class or an enum, which a type's text names by its head.
+#[derive(Clone, Copy)]
+pub(crate) enum Head {
+    Class(ClassId),
+    Enum(EnumId),
+}
+
+/// What `write_steps` writes next: a type, the text that closes one, or the `, ` between two.
+enum Step {
+    Type(Type),
+    Close(&'static str),
+    Separator,
+}
+
+/// Writes `ty` to `out` as a program writes it, each class and enum named by `head`. Returns
+/// whether the text was cut: past `NAME_LIMIT` bytes, `...` and the closers still owed end it.
+pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> &'n str) -> bool {
+    write_steps(out, vec![Step::Type(ty)], head)
+}
+
+/// Writes `<a, b>` for `args` to `out`, and nothing for none, as `write_type` writes each type.
+/// Returns whether the text was cut.
+pub(crate) fn write_args<'n>(
+    out: &mut String,
+    args: &[Type],
+    head: impl Fn(Head) -> &'n str,
+) -> bool {
+    let mut steps = Vec::new();
+    push_args(out, &mut steps, args);
+    write_steps(out, steps, head)
+}
+
+/// Writes `steps` to `out`, the last first. One string grows in place, and a stack stands in for
+/// recursion: a type can nest deeper than the call stack allows. Once `out` holds `NAME_LIMIT`
+/// bytes, no type or separator follows, so the work is linear in the text, not in the type.
+fn write_steps<'n>(out: &mut String, mut steps: Vec<Step>, head: impl Fn(Head) -> &'n str) -> bool {
+    while let Some(step) = steps.pop() {
+        let ty = match step {
+            Step::Close(text) => {
+                out.push_str(text);
+                continue;
+            }
+            Step::Type(_) | Step::Separator if out.len() >= NAME_LIMIT => {
+                out.push_str("...");
+                for step in steps.iter().rev() {
+                    if let Step::Close(text) = step {
+                        out.push_str(text);
+                    }
+                }
+                return true;
+            }
+            Step::Separator => {
+                out.push_str(", ");
+                continue;
+            }
+            Step::Type(ty) => ty,
+        };
+        let args = match ty.kind() {
+            TypeKind::Class(id, args) => {
+                out.push_str(head(Head::Class(id)));
+                args
+            }
+            TypeKind::Enum(id, args) => {
+                out.push_str(head(Head::Enum(id)));
+                args
+            }
+            TypeKind::Array(element) => {
+                out.push('[');
+                steps.extend([Step::Close("]"), Step::Type(element)]);
+                continue;
+            }
+            TypeKind::Optional(payload) => {
+                steps.extend([Step::Close("?"), Step::Type(payload)]);
+                continue;
+            }
+            _ => {
+                fmt::Write::write_fmt(out, format_args!("{ty}"))
+                    .expect("writing to a `String` should not fail");
+                continue;
+            }
+        };
+        push_args(out, &mut steps, args.get());
+    }
+    false
+}
+
+/// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
+/// for `write_steps`, `a` on top.
+fn push_args(out: &mut String, steps: &mut Vec<Step>, args: &[Type]) {
+    if args.is_empty() {
+        return;
+    }
+    out.push('<');
+    steps.push(Step::Close(">"));
+    for (i, &ty) in args.iter().enumerate().rev() {
+        steps.push(Step::Type(ty));
+        if i > 0 {
+            steps.push(Step::Separator);
+        }
     }
 }
 
@@ -314,6 +409,48 @@ mod tests {
         assert_eq!(format!("{pair:?}"), "[I64, String]");
         let stack = |args| Type::intern(TypeKind::Class(ClassId(0), args));
         assert_ne!(stack(pair), stack(TypeArgs::NONE));
+    }
+
+    /// `t_0 = leaf` and `t_{i+1} = P<t_i, t_i>` over one class `P`: `depth + 1` interned types
+    /// whose text, written whole, doubles at each level.
+    fn doubled(leaf: Type, depth: usize) -> Type {
+        (0..depth).fold(leaf, |t, _| {
+            Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[t, t])))
+        })
+    }
+
+    /// The text of `ty`, each class named `P`, and whether it was cut.
+    fn text(ty: Type) -> (String, bool) {
+        let mut out = String::new();
+        let cut = write_type(&mut out, ty, |_| "P");
+        (out, cut)
+    }
+
+    fn count(text: &str, c: char) -> usize {
+        text.chars().filter(|&x| x == c).count()
+    }
+
+    #[test]
+    fn type_text_should_be_cut_at_the_limit() {
+        let whole = "P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>";
+        assert_eq!(text(doubled(Type::I64, 3)), (whole.to_string(), false));
+        // Written whole, `t_40` has 2^40 leaves.
+        let (long, cut) = text(doubled(Type::I64, 40));
+        assert!(cut, "{long}");
+        assert!(long.len() <= NAME_LIMIT + 64, "{long}");
+        assert!(long.contains("..."), "{long}");
+        assert_eq!(count(&long, '<'), count(&long, '>'), "{long}");
+        let (optional, cut) = text(Type::array(Type::optional(doubled(Type::I64, 40))));
+        assert!(cut && optional.ends_with(">?]"), "{optional}");
+        let nested = |depth| (0..depth).fold(Type::I64, |t, _| Type::array(t));
+        let (deep, cut) = text(nested(300));
+        assert!(cut, "{deep}");
+        assert_eq!(count(&deep, '['), count(&deep, ']'), "{deep}");
+        assert!(deep.len() <= 2 * NAME_LIMIT + 3, "{deep}");
+        // 257 bytes, past the limit only by its closers.
+        let (closed, cut) = text(nested(127));
+        assert_eq!(closed.len(), 257, "{closed}");
+        assert!(!cut && !closed.contains("..."), "{closed}");
     }
 
     #[test]

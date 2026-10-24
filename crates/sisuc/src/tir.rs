@@ -8,6 +8,7 @@ use crate::graph::components;
 use crate::source::Span;
 
 pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
+use crate::types::{Head, write_args, write_type};
 pub(crate) use crate::types::{Type, TypeArgs, TypeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1032,7 +1033,7 @@ impl Printer<'_> {
             ExprKind::Local(id) => self.local(f, *id),
             ExprKind::Call { func, types, args } => {
                 let name = &self.program.functions[func.0].name;
-                let types = types.written(|ty| self.program.type_name(ty));
+                let types = self.program.args_name(types.get());
                 self.list(f, format_args!("call {name}{types}"), args)
             }
             ExprKind::New { class, args } => {
@@ -1334,73 +1335,21 @@ impl Program {
     /// A type as `--emit tir` prints it: a class or an enum by its name.
     pub(crate) fn type_name(&self, ty: Type) -> String {
         let mut name = String::new();
-        self.write_names(&mut name, vec![Step::Type(ty)]);
+        write_type(&mut name, ty, |head| self.head(head));
         name
     }
 
     /// `<a, b>` for `args`, each named as `type_name` names it; nothing for none.
     pub(crate) fn args_name(&self, args: &[Type]) -> String {
         let mut name = String::new();
-        let mut steps = Vec::new();
-        push_args(&mut name, &mut steps, args);
-        self.write_names(&mut name, steps);
+        write_args(&mut name, args, |head| self.head(head));
         name
     }
 
-    /// Writes `steps` to `out`, the last first, each type as `type_name` names it. One string
-    /// grows in place, and a stack stands in for recursion: a type can nest deeper than the
-    /// call stack allows.
-    fn write_names<'a>(&'a self, out: &mut String, mut steps: Vec<Step<'a>>) {
-        while let Some(step) = steps.pop() {
-            let ty = match step {
-                Step::Text(text) => {
-                    out.push_str(text);
-                    continue;
-                }
-                Step::Type(ty) => ty,
-            };
-            let (name, args) = match ty.kind() {
-                TypeKind::Class(id, args) => (&self.classes[id.0].name, args),
-                TypeKind::Enum(id, args) => (&self.enums[id.0].name, args),
-                TypeKind::Array(element) => {
-                    out.push('[');
-                    steps.extend([Step::Text("]"), Step::Type(element)]);
-                    continue;
-                }
-                TypeKind::Optional(payload) => {
-                    steps.extend([Step::Text("?"), Step::Type(payload)]);
-                    continue;
-                }
-                _ => {
-                    fmt::Write::write_fmt(out, format_args!("{ty}"))
-                        .expect("writing to a `String` should not fail");
-                    continue;
-                }
-            };
-            out.push_str(name);
-            push_args(out, &mut steps, args.get());
-        }
-    }
-}
-
-/// What `Program::write_names` writes next: a type, or text around one.
-enum Step<'a> {
-    Type(Type),
-    Text(&'a str),
-}
-
-/// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
-/// for `Program::write_names`, `a` on top.
-fn push_args(out: &mut String, steps: &mut Vec<Step<'_>>, args: &[Type]) {
-    if args.is_empty() {
-        return;
-    }
-    out.push('<');
-    steps.push(Step::Text(">"));
-    for (i, &ty) in args.iter().enumerate().rev() {
-        steps.push(Step::Type(ty));
-        if i > 0 {
-            steps.push(Step::Text(", "));
+    fn head(&self, head: Head) -> &str {
+        match head {
+            Head::Class(id) => &self.classes[id.0].name,
+            Head::Enum(id) => &self.enums[id.0].name,
         }
     }
 }
@@ -2355,7 +2304,8 @@ mod tests {
         }
     }
 
-    /// A type nested deeper than a 64 KiB stack allows recursing into is named all the same.
+    /// A type nested deeper than a 64 KiB stack allows recursing into is named all the same, cut
+    /// at `NAME_LIMIT` bytes.
     #[test]
     fn deep_types_should_be_named_without_recursion() {
         let levels = 10_000;
@@ -2376,9 +2326,10 @@ mod tests {
             .expect("the thread should start")
             .join()
             .expect("naming should not overflow the stack");
+        let limit = crate::types::NAME_LIMIT;
         assert_eq!(
             name,
-            format!("{}i64{}", "[".repeat(levels), "]".repeat(levels))
+            format!("{}...{}", "[".repeat(limit), "]".repeat(limit))
         );
     }
 

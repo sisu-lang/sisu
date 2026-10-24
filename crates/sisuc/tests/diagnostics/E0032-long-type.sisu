@@ -1,0 +1,28 @@
+class P<A, B> {
+    a: A
+    b: B
+}
+
+fn main() {
+    let y1 = P(a: 1, b: 1)
+    let y2 = P(a: y1, b: y1)
+    let y3 = P(a: y2, b: y2)
+    let y4 = P(a: y3, b: y3)
+    let y5 = P(a: y4, b: y4)
+    let y6 = P(a: y5, b: y5)
+    let y7 = P(a: y6, b: y6)
+    let y8 = P(a: y7, b: y7)
+    let y9 = P(a: y8, b: y8)
+    let y10 = P(a: y9, b: y9)
+    let y11 = P(a: y10, b: y10)
+    let y12 = P(a: y11, b: y11)
+    let y13 = P(a: y12, b: y12)
+    let y14 = P(a: y13, b: y13)
+    let y15 = P(a: y14, b: y14)
+    let y16 = P(a: y15, b: y15)
+    let y17 = P(a: y16, b: y16)
+    let y18 = P(a: y17, b: y17)
+    let y19 = P(a: y18, b: y18)
+    let y20 = P(a: y19, b: y19)
+    let s: string = y20
+}

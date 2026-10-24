@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 8] = [
+const EXCLUDED: [(&str, &str); 11] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -50,12 +50,24 @@ const EXCLUDED: [(&str, &str); 8] = [
         "a `None` pattern is an error in every position (E0127)",
     ),
     (
-        "tir::Step::Type",
-        "a private worklist item of `Program::write_names`, which is no node of the typed tree",
+        "types::Step::Type",
+        "a private worklist item of `types::write_steps`, which is no type",
     ),
     (
-        "tir::Step::Text",
-        "a private worklist item of `Program::write_names`, which is no node of the typed tree",
+        "types::Step::Close",
+        "a private worklist item of `types::write_steps`, which is no type",
+    ),
+    (
+        "types::Step::Separator",
+        "a private worklist item of `types::write_steps`, which is no type",
+    ),
+    (
+        "types::Head::Class",
+        "the key by which `types::write_type` asks for a name, which is no type",
+    ),
+    (
+        "types::Head::Enum",
+        "the key by which `types::write_type` asks for a name, which is no type",
     ),
 ];
 
