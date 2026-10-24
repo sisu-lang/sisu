@@ -126,7 +126,7 @@ fn main() {
 
 ## match
 
-A `match` is an expression. Its value is the value of the arm that matches. The values of the arms follow the rules of the branches of an `if`.
+A `match` is an expression. Its value is the value of the arm that matches. The values of the arms follow the rules of the branches of an `if`. [Enums and patterns](enums.md#match) tells the patterns, the guards and the coverage rules.
 
 ```sisu
 fn main() {

@@ -88,7 +88,7 @@ fn main() {
 The rules:
 
 - A name cannot be a keyword or a reserved word.
-- `_` alone is not a name. It is a keyword that `let`, `for` and `match` use to bind nothing.
+- `_` alone is not a name. It is a keyword that `let`, `for` and [`match`](enums.md#patterns) use to bind nothing.
 - The built-in functions and [types](types.md), such as `print`, `i64` and `string`, are names, not keywords.
 
 ## Keywords

@@ -30,7 +30,7 @@ When the program binds a value, passes it, stores it or returns it, the value is
 | `i64`, `u8`, `f64`, `bool`, `char` | Copies it |
 | `string` | Behaves as a copy |
 | An array | Behaves as a copy. The objects in it stay shared |
-| An enum value | Behaves as a copy. The objects in its payload stay shared |
+| An [enum](enums.md#enum-values) value | Behaves as a copy. The objects in its payload stay shared |
 | An optional `T?` | Copies or shares it as for `T` |
 | An object of a class | Shares it: the new holder refers to the same object |
 

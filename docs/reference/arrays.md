@@ -90,7 +90,7 @@ The rules:
 
 - A binding without `mut` cannot change its array, also not an element of an inner array ([E0001](../diagnostics/E0001.md)).
 - An object in an array stays shared, so its `mut` fields can change also when the array cannot ([Classes](classes.md#fields)).
-- An optional array has no index. Unwrap it first, for example with `if let` ([E0062](../diagnostics/E0062.md)).
+- An optional array has no index. Unwrap it first, for example with [`if let`](enums.md#if-let-and-while-let) ([E0062](../diagnostics/E0062.md)).
 
 ```sisu
 fn main() {

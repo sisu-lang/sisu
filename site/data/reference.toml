@@ -35,6 +35,10 @@ file = "classes"
 description = "Fields, mut fields, constructors, methods, self and object identity."
 
 [[page]]
+file = "enums"
+description = "Enums, variants, match, every pattern form, guards, coverage, if let and while let."
+
+[[page]]
 file = "arrays"
 description = "Array literals, filled arrays, indexes, for, methods, equality and copy-on-write."
 

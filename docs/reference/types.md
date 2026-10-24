@@ -248,7 +248,7 @@ A `string` is not an array. An index on a string is an error ([E0068](../diagnos
 
 ## Optionals
 
-An *optional* `T?` holds a value of the type `T`, or `None`. Use `??` to give a value for `None`, and `if let` to use the value only when it is there.
+An *optional* `T?` holds a value of the type `T`, or `None`. Use `??` to give a value for `None`, and [`if let`](enums.md#if-let-and-while-let) to use the value only when it is there.
 
 ```sisu
 fn main() {
@@ -266,7 +266,7 @@ The rules:
 
 - Where an optional `T?` is expected, a `T` becomes a `T?` that holds it. Some examples are a `let` with a type, an assignment, an argument and a `return` value. Others are a field, an array element, the other side of an `==` or `!=`, and the other branches of an `if` or a `match`.
 - `None` needs an expected optional type. Where the context expects a type that is not optional, `None` is an error ([E0032](../diagnostics/E0032.md)).
-- An optional is not its value. An arithmetic operator, a comparison, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or `if let`.
+- An optional is not its value. An arithmetic operator, a comparison, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or [`if let`](enums.md#if-let-and-while-let).
 - `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
 - An optional of an optional, such as `i64??`, is not a type ([E0014](../diagnostics/E0014.md)).
 - `print` and interpolation do not take an optional ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)).

@@ -59,7 +59,7 @@ fn main() {
 
 The program calculates the operands of a binary operator from left to right, then applies the operator. `&&`, `||` and `??` can skip their right operand, as their sections tell.
 
-A `..` or `..=` range is not an operator. It is part of a [`for` loop](statements.md#for) or a pattern, and is an error in other places ([E0023](../diagnostics/E0023.md)).
+A `..` or `..=` range is not an operator. It is part of a [`for` loop](statements.md#for) or a [pattern](enums.md#literals-and-ranges), and is an error in other places ([E0023](../diagnostics/E0023.md)).
 
 ## Arithmetic
 
@@ -274,7 +274,7 @@ fn main() {
 
 The rules:
 
-- Two [arrays](arrays.md#equality) are equal when they have the same length and their elements are equal, in order. Two enum values are equal when they are the same variant and their payloads are equal.
+- Two [arrays](arrays.md#equality) are equal when they have the same length and their elements are equal, in order. Two [enum](enums.md#enum-values) values are equal when they are the same variant and their payloads are equal.
 - A `T` beside a `T?` becomes a `T?`. Two optionals are equal when both are `None`, or both hold equal values.
 - `x == None` and `x != None` test whether the optional `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
 - Values of two types cannot be compared ([E0047](../diagnostics/E0047.md), [E0032](../diagnostics/E0032.md)).

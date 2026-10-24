@@ -251,6 +251,8 @@ fn main() {
 }
 ```
 
+A `while let` loop tests a pattern in place of a condition ([Enums and patterns](enums.md#if-let-and-while-let)).
+
 The rules:
 
 - The condition must be a `bool` ([E0032](../diagnostics/E0032.md)).
@@ -314,7 +316,7 @@ A *range* `start..end` holds the integers from `start` up to `end`, without `end
 
 The rules:
 
-- The source of a `for` is an array or a range ([E0035](../diagnostics/E0035.md)). An optional array must be unwrapped first ([E0062](../diagnostics/E0062.md)). A range is valid only in a `for` and in a pattern ([E0023](../diagnostics/E0023.md)).
+- The source of a `for` is an array or a range ([E0035](../diagnostics/E0035.md)). An optional array must be unwrapped first ([E0062](../diagnostics/E0062.md)). A range is valid only in a `for` and in a [pattern](enums.md#literals-and-ranges) ([E0023](../diagnostics/E0023.md)).
 - The two ends of a range are `i64` ([E0032](../diagnostics/E0032.md)). When `start` is not less than `end`, `start..end` is empty. When `start` is more than `end`, `start..=end` is empty.
 - `start..=end` also works when `end` is the largest `i64`.
 - The program calculates the source once, before the first pass. For a range, it calculates `start`, then `end`.
