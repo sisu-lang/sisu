@@ -116,7 +116,7 @@ Interpolation and `print` write a value as text in the same way. They take an `i
 | `char` | The character |
 | `string` | The string, as it is |
 
-The text of an `f64` has at least one digit after the point, such as `100.0`. A number with an absolute value of 1e16 or more has an exponent instead, such as `1e21`. So has a number below 1e-4 that is not 0, such as `1.5e-7`. The exponent has no `+` sign and no leading zero. The text of the special values is `inf`, `-inf` and `nan`, and `-0.0` keeps its sign.
+The text of an `f64` has at least one digit after the point, such as `100.0`. A number with an absolute value of 1e16 or more has an exponent instead, such as `1e21`. So has a number whose absolute value is below 1e-4 but not 0, such as `1.5e-7`. The exponent has no `+` sign and no leading zero. The text of the special values is `inf`, `-inf` and `nan`, and `-0.0` keeps its sign.
 
 ```sisu
 fn main() {

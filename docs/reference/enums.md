@@ -445,6 +445,7 @@ The rules:
 - The condition is a `bool` ([E0032](../diagnostics/E0032.md)).
 - The program calculates the condition only when the pattern accepts the value.
 - A guard belongs to the whole arm. When an alternative accepts the value and the guard is `false`, the program tries the next alternative. It calculates the guard again, with the names of that alternative.
+- With several sets of alternatives, the set nearest the end of the pattern changes first.
 - When no alternative has a `true` guard, the `match` goes on with the next arm.
 - A guarded arm covers no values, because its guard can be `false` ([Coverage](#coverage)).
 
@@ -471,6 +472,37 @@ fn main() {
 check 1
 check 5
 50
+```
+
+```sisu
+enum Ints {
+    T(i64, i64)
+}
+
+enum Duo {
+    D(Ints, Ints)
+}
+
+fn see(x: i64, y: i64) -> bool {
+    print("see {x} {y}")
+    false
+}
+
+fn main() {
+    let r = match Duo.D(Ints.T(1, 2), Ints.T(3, 4)) {
+        D(T(x, _) | T(_, x), T(y, _) | T(_, y)) if see(x, y) => 1
+        D(_, _) => 0
+    }
+    print(r)
+}
+```
+
+```output
+see 1 3
+see 1 4
+see 2 3
+see 2 4
+0
 ```
 
 ## Coverage
