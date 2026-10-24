@@ -40,7 +40,7 @@ The rules:
 
 - The argument is one `i64`, `u8`, `f64`, `bool`, `char` or `string`. Any other type is an error ([E0059](../diagnostics/E0059.md)), also an optional. So is no argument, or more than one.
 - An array is an error ([E0060](../diagnostics/E0060.md)). Write each element in a `for` loop.
-- The section [Text of other types](strings.md#text-of-other-types) is in development, and it changes the two rules above.
+- The section [Text of other types](strings.md#text-of-other-types) is in development, and it changes the two rules above. The section [Option and Result](types.md#option-and-result) is in development, and it changes the rule for an optional.
 - An argument of the type `never`, such as a call of `panic`, is an error ([E0061](../diagnostics/E0061.md)).
 - The text of a value is the same as in an interpolation ([Strings and formatting](strings.md#text-of-a-value)). `print("{x}")` and `print(x)` write the same text for a value `x` of those types.
 - The line break is one `\n` byte. A `\r` is written only when the text holds it.
@@ -49,6 +49,31 @@ The rules:
 - A panic writes the text that `print` collected before it writes the panic message ([panic](functions.md#panic)).
 - A write to standard output that fails, such as on a full disk, is a panic. The next rule gives the exceptions.
 - A `print` or `eprint` write on a pipe with no reader ends the program with the signal SIGPIPE, with no panic. A panic still ends with the exit code 101. A closed standard output drops the text. Any other failed write to standard error is ignored.
+
+## dbg
+
+`dbg(e)` writes a line about `e` to standard error, and gives the value of `e` unchanged.
+
+```sisu pending
+fn double(n: i64) -> i64 {
+    n * 2
+}
+
+fn main() {
+    let y = dbg(double(21)) + 1
+    print(y)                           // 43
+}
+```
+
+The program above writes the line `example.sisu:6:17: double(21) = 42` to standard error.
+
+The rules:
+
+- The line holds the file, the line and the column of the argument, the source text of the argument as written, and the value. The value is laid out as `{x:#}` lays it out ([The `#` flag](strings.md#the--flag)).
+- For an object, `dbg` shows the fields one level deep: `dbg(node)` shows `Node(value: 3, next: Node)`. A field that is a class shows only its text, which is its name or its own `to_string`. So `dbg` follows no reference.
+- A class with a method `to_string` shows that text instead of its fields. The same holds for a class inside an array, a payload or an optional.
+- An argument of the type `unit` or `never` is an error, as for `print`.
+- A local can have the name `dbg`. A function, a class, an enum or a constant cannot.
 
 ## read_line
 

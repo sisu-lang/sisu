@@ -239,3 +239,22 @@ fn main() {
     print("{n:.2}")                          // error[E0111]
 }
 ```
+
+### The `#` flag
+
+`{x:#}` lays a value out on several lines when it does not fit on one line. A value that fits stays on one line. A part that does not fit breaks into one element per line.
+
+```sisu pending
+fn main() {
+    let xs = [1, 2, 3]
+    print("{xs:#}")                    // [1, 2, 3]
+    print("{7:#}")                     // 7
+}
+```
+
+The rules:
+
+- A hand-written `to_string` gives one piece of text that the layout does not break.
+- `#` does not combine with a width, an alignment or a precision. `{x:#>8}` is an error.
+- `#` on a number or a string changes nothing.
+- There is no function for it: `print("{x:#}")` is the one way.

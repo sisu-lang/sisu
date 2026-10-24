@@ -97,7 +97,7 @@ The rules:
 
 ## fail
 
-`fail e` returns `Err(e)` from the enclosing function. So the function returns a `T | E`.
+`fail e` returns `Err(e)` from the enclosing function.
 
 ```sisu pending
 enum ConfigError: Error {
@@ -145,6 +145,28 @@ The rules:
 - `?` is a postfix operator and binds as a call does. `x??` is the operator `??`. To apply `?` twice, write `(x?)?`.
 - On a result, `x?.name` passes a failure up, then reads the member: `read_file(p)?.len()` is `(read_file(p)?).len()`. On an optional, `?.` is still [optional chaining](operators.md#optional-chaining).
 - `x?` calculates `x` once. When it is a failure, nothing after it in the same statement runs.
+- A `?` followed by a `.`, with white space or a line break between them, means `?.`. So `opt? .len()` means `opt?.len()`.
+
+### In a closure
+
+In a closure, `fail` and `?` act on the return type of the closure, as `return` does. A failure ends the closure, and the function around it goes on.
+
+```sisu pending
+fn parse(text: string) -> i64 | string {
+    i64(text) ?? fail "not a number: {text}"
+}
+
+fn main() {
+    let check: (string) -> bool | string = text => {
+        let n = parse(text)?
+        n > 0
+    }
+    if let Ok(positive) = check("12x") {
+        print(positive)
+    }
+    print("main goes on")              // main goes on
+}
+```
 
 ## Handling a failure
 
@@ -237,6 +259,8 @@ fn main() -> unit | IoError {
 | `read_file(path)` | The text of the file, a `string \| IoError` |
 | `write_file(path, text)` | A `unit \| IoError`. It creates the file or replaces its content |
 
-`IoError` is an enum that conforms to `Error`. It has the variants `NotFound(path)`, `PermissionDenied(path)`, `NotUtf8(path)` and `Other(path, reason)`.
+`IoError` is an enum that conforms to `Error`. It has the variants `NotFound(path)`, `PermissionDenied(path)`, `NotUtf8(path)` and `Other(path, reason)`. A path with a NUL character fails with `Other` and the reason `the path contains a NUL character`, before any system call.
+
+`write_file` is not atomic. A failure part way can leave a partial file. A program cannot declare its own top-level `read_file`, `write_file` or `IoError`.
 
 These functions give a program no file handle. A program cannot append to a file, read it line by line or move inside it. The functions `print`, `eprint` and `read_line` keep their rules ([Input and output](io.md)).

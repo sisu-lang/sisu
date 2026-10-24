@@ -134,7 +134,7 @@ The rules:
 - The return type always comes from the body. A closure has no syntax for it. Where an expected type exists, `sisu` checks the body against its return type.
 - `_` as a parameter name binds nothing. A parameter list can have it more than once.
 - The body is one expression, one assignment or compound assignment, or a block. An assignment has the type `unit`, so `() => c.count += 1` is valid.
-- A `return` in a block body returns from the closure. A `break` or `continue` cannot leave the closure for a loop around it.
+- A `return` in a block body returns from the closure. So do `fail` and `?`, which act on the closure's own return type ([In a closure](errors.md#in-a-closure)). A `break` or `continue` cannot leave the closure for a loop around it.
 - A closure whose expected result type is `unit` gives no value. When its body has a value, the program builds with the warning for an unused value ([W0004](../diagnostics/W0004.md)).
 - A closure argument of a generic call is checked after the other arguments. Its body can fix a type argument that nothing else fixed. For a generic function such as `fold(init, f)`, the call `fold(0, (acc, x) => acc + x)` uses the `0` to fix the type of `acc`.
 
@@ -215,7 +215,8 @@ The rules:
 - Inside the closure, a name that is captured weakly is an optional. Read it with `?.`, `??` and `if let`, as a [weak field](values.md#weak-fields).
 - When the object is gone, the closure still runs. A call such as `self?.increment()` then does nothing.
 - A closure captures an object `x` strongly, and the program stores the closure in a place that starts at `x`, such as `x.button.on_click`. Then the object keeps itself alive, and the program builds with a warning. The fix is to capture `x` weakly.
-- The warning sees only a direct store. A closure that a call passes on, or that another object stores, can still make a cycle.
+- A store is an assignment or a `push`, as in `self.handlers.push(() => self.go())`. The closure can be anywhere in the stored value, for example in a constructor, an array literal or an enum value.
+- A closure inside the body of another closure does not count. A closure that a call passes on, or that another object stores, can still make a cycle with no warning.
 
 ## Iterators
 

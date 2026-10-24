@@ -234,6 +234,7 @@ fn main() {
 The rules:
 
 - An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)). `contains` on a `[T]` uses `==`, so it is an error too. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` is an error.
+- `!`, `&&` and `||` take only a `bool`, so a `T` there is a type mismatch ([E0032](../diagnostics/E0032.md)).
 - A `T` has no method and no field ([E0063](../diagnostics/E0063.md)).
 - `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)).
 - `print` and interpolation do not take a `T` ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)).
@@ -481,17 +482,28 @@ class Point {
     }
 }
 
-class Money: Eq {
+class Money: Eq, Ord {
     cents: i64
 
     fn eq(self, other: Money) -> bool {
         self.cents == other.cents
     }
+
+    fn less(self, other: Money) -> bool {
+        self.cents < other.cents
+    }
+}
+
+enum Level: Eq {
+    Low
+    High
 }
 
 fn main() {
     print(Point(x: 1, y: 2))                           // (1, 2)
     print(Money(cents: 5) == Money(cents: 5))          // true
+    print(Money(cents: 3) < Money(cents: 5))           // true
+    print(Level.Low == Level.High)                     // false
 }
 ```
 
@@ -503,6 +515,11 @@ The rules:
 - A value that holds a class, such as an array of objects, has `==` only when the class conforms to `Eq`.
 - `f64` conforms to `Eq` and `Ord` with the rules of IEEE 754. In generic code, `nan` is not equal to `nan`, as in other code.
 - An enum has `==` when all its payloads have it, and it has `<` only when it conforms to `Ord`.
+- The methods that the interfaces require are `fn to_string(self) -> string` for `Display`, `fn eq(self, other: Self) -> bool` for `Eq`, and `fn less(self, other: Self) -> bool` for `Ord`. A method named `to_string` with another signature is an error.
+- `Ord` requires `Eq`. A type that conforms to `Ord` but not to `Eq` is an error.
+- For `Eq`, `a != b` is `!a.eq(b)`. For a hand-written `Ord`, `a > b` is `b.less(a)`, `a <= b` is `!b.less(a)` and `a >= b` is `!a.less(b)`.
+- A conformance that a program writes replaces the generated one. An enum that writes `to_string` prints its own text.
+- A type can name a generated interface and write no method for it: `enum Level: Eq` has no `eq`. Where nothing is generated, such as `class Node: Eq` with no `eq`, a missing method is an error.
 - Only `to_string` conforms by name. A type with its own `eq` or `less` method conforms to `Eq` or `Ord` only when its declaration names the interface.
 - `i64`, `u8`, `char` and `string` have `Eq` and `Ord` with no declaration. An enum has `Eq` with no declaration when all its payloads have it.
 
