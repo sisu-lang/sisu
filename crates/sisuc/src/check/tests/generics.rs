@@ -1178,6 +1178,19 @@ fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
             "fn g() {\n    let xs = id(if 1.0 { [] } else { [] })\n}",
             vec![(Code::CannotInfer, (2, 14)), (Code::Mismatch, (2, 20))],
         ),
+        // What fails inside the branch for the call's failure is not reported again.
+        (
+            "fn g() {\n    let xs = id(match true { _ => [id([])] })\n}",
+            vec![(Code::CannotInfer, (2, 14))],
+        ),
+        (
+            "fn g() {\n    let xs = id([[[]]])\n}",
+            vec![(Code::CannotInfer, (2, 14))],
+        ),
+        (
+            "fn g() {\n    let xs = id([id([])])\n}",
+            vec![(Code::CannotInfer, (2, 14))],
+        ),
     ] {
         codes(&with_generics(body), &expected);
     }
