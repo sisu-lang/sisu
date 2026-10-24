@@ -4,7 +4,7 @@ error[E0050]: cannot infer the type of `None`
 2 |     let x = None
   |             ^^^^
   |
-  = help: write the type: `let x: Tree? = None`
+  = help: write the type: `let x: i64? = None`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0050

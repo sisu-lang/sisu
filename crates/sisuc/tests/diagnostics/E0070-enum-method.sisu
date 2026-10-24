@@ -1,0 +1,13 @@
+enum Shape {
+    Circle(i64)
+    Square(i64)
+
+    fn scaled(self, by: i64) -> i64 {
+        by
+    }
+}
+
+fn main() {
+    let s = Shape.Circle(1)
+    print(scaled(s, 2))
+}

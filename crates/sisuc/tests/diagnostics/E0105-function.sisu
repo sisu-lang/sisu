@@ -1,0 +1,8 @@
+fn g() -> i64 {
+    1
+}
+
+fn main() {
+    let h = g
+    print(h)
+}

@@ -379,7 +379,7 @@ fn failed_construction_poisons() {
 
 /// An item that takes a variant's name is what the name means.
 #[test]
-fn bare_variant_yields_to_items() {
+fn bare_variant_should_yield_to_items() {
     // A class's name, and an enum's.
     for name in ["Size", "Shape"] {
         let src = format!(
@@ -397,7 +397,7 @@ fn bare_variant_yields_to_items() {
         ("let Idle = 1\n    let _ = Idle", &[]),
         (
             "let _ = Idle\n}\nfn Idle() {",
-            &[(Code::BindingNotFound, (2, 13))],
+            &[(Code::TypeAsValue, (2, 13))],
         ),
         (
             "let _ = Idle()\n}\nconst Idle = 1\nfn h() {",

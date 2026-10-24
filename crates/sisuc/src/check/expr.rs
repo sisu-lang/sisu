@@ -355,6 +355,7 @@ impl Checker<'_> {
             None => (
                 DiagnosticKind::CannotInfer {
                     literal: Literal::None,
+                    binding: self.let_binding(span),
                     at: span,
                 },
                 false,
@@ -362,6 +363,14 @@ impl Checker<'_> {
         };
         self.diagnostics.push(kind.into());
         Err(Poisoned { ty: None, mismatch })
+    }
+
+    /// What the `let` whose whole initializer is the literal at `span` writes before its type,
+    /// if any: its name, after `mut` when it has it.
+    pub(super) fn let_binding(&self, span: Span) -> Option<String> {
+        let (init, name, mutable) = self.body.let_init?;
+        (init == span && name.as_str() != "_")
+            .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
     }
 
     /// Whether a comment starts in one of the byte ranges `deleted`.

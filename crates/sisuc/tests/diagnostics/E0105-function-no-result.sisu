@@ -1,0 +1,7 @@
+fn g() {
+    print(1)
+}
+
+fn main() {
+    let h = g
+}

@@ -43,6 +43,7 @@ impl Checker<'_> {
                 None => (
                     DiagnosticKind::CannotInfer {
                         literal: Literal::EmptyArray,
+                        binding: self.let_binding(span),
                         at: span,
                     },
                     false,

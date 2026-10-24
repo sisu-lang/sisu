@@ -393,6 +393,10 @@ struct Body {
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
+    /// The initializer of the `let` being checked, and what that `let` writes before its type
+    /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
+    /// `None` or `[]`.
+    let_init: Option<(Span, Symbol, bool)>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,
@@ -1191,7 +1195,7 @@ impl Checker<'_> {
 
     /// "cannot find binding `name`", offering the closest binding of any open scope, and of any
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
-    /// an enum's, is in scope, but as a type: that is reported instead.
+    /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
         if built_in_type(name.as_str()).is_some()
             || self.class_ids.contains_key(&name)
@@ -1200,6 +1204,23 @@ impl Checker<'_> {
             return DiagnosticKind::TypeAsValue {
                 name: name.to_string(),
                 at: span,
+            }
+            .into();
+        }
+        // Whether the function takes arguments; a prelude function is a function too.
+        let takes_arguments = match self.function_ids.get(&name) {
+            Some(&Declared::Known(func)) => Some(!self.signatures[func.0].params.is_empty()),
+            // A broken function has no known parameters: no call is offered.
+            Some(Declared::Broken) => Some(true),
+            None => PRELUDE
+                .contains(&name.as_str())
+                .then(|| prelude::takes_arguments(name.as_str())),
+        };
+        if let Some(takes_arguments) = takes_arguments {
+            return DiagnosticKind::FunctionAsValue {
+                name: name.to_string(),
+                at: span,
+                takes_arguments,
             }
             .into();
         }

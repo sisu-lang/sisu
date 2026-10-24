@@ -702,19 +702,14 @@ fn math_idioms() {
 /// A class, function or constant named `math` or `Math` is declared, so `math.sqrt` is not the
 /// idiom: the path that reports a class, a function or a constant's field reports it.
 #[test]
-fn declared_math_is_not_the_idiom() {
+fn declared_math_should_not_be_the_idiom() {
     let class = "class Math {\n    a: i64\n}\n";
     let rows = [
         (class, "Math.PI", Code::TypeAsValue, (5, 13)),
         (class, "Math.sqrt(x)", Code::TypeAsValue, (5, 13)),
         (class, "Math.sqrt", Code::TypeAsValue, (5, 13)),
-        (
-            "fn math() {}\n",
-            "math.sqrt(x)",
-            Code::BindingNotFound,
-            (3, 13),
-        ),
-        ("fn math() {}\n", "math.pi", Code::BindingNotFound, (3, 13)),
+        ("fn math() {}\n", "math.sqrt(x)", Code::TypeAsValue, (3, 13)),
+        ("fn math() {}\n", "math.pi", Code::TypeAsValue, (3, 13)),
         ("const Math = 1\n", "Math.PI", Code::NoMember, (3, 18)),
     ];
     for (item, expr, code, at) in rows {
