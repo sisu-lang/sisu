@@ -1927,3 +1927,64 @@ fn call_type_arguments_should_name_their_classes_in_tir() {
         &["(call id<Box<i64>> "],
     );
 }
+
+/// Parameters of array types whose elements are optional, and `main`.
+const OPTIONAL_ELEMENTS: &str = "fn g1<T>(xs: [T?]) -> i64 { 0 }\nfn g3<T>(xs: [[T]]) -> i64 { 0 }\nfn g4<T>(xs: [[T?]]) -> i64 { 0 }\nfn main() {}";
+
+/// `body` in a function of `b: u8`, `x: i64` and `ys: [i64]`, on lines 2 on, then
+/// `OPTIONAL_ELEMENTS`.
+fn with_optional_elements(body: &str) -> String {
+    format!("fn h(b: u8, x: i64, ys: [i64]) -> i64 {{\n    {body}\n}}\n{OPTIONAL_ELEMENTS}")
+}
+
+/// An array literal checked against a parameter that names an unbound type parameter in an
+/// optional element binds it from the elements, and wraps the ones that need it.
+#[test]
+fn generic_array_literals_should_take_optional_elements() {
+    for (call, callee, expected) in [
+        ("g1([1, 2])", "g1", "i64"),
+        ("g1([[1]])", "g1", "[i64]"),
+        ("g1([1, None])", "g1", "i64"),
+        ("g1([None, 1])", "g1", "i64"),
+        // A literal takes the type of the concrete element, whichever comes first.
+        ("g1([b, 1])", "g1", "u8"),
+        ("g1([1, b])", "g1", "u8"),
+        ("g3([[], [1]])", "g3", "i64"),
+        ("g4([[1]])", "g4", "i64"),
+        ("g4([[None, 1]])", "g4", "i64"),
+        ("g4([[], [1]])", "g4", "i64"),
+    ] {
+        let found = call_types(&with_optional_elements(call), callee);
+        assert_eq!(found, [expected, "i64"], "{call}");
+    }
+}
+
+/// A mistake in an array literal that takes optional elements is reported once, where it is.
+#[test]
+fn generic_array_literals_should_report_each_mistake_once() {
+    for (body, expected) in [
+        ("g1([None, None])", vec![(Code::CannotInfer, (2, 5))]),
+        ("g1([nope, None])", vec![(Code::BindingNotFound, (2, 9))]),
+        (
+            "g1([nope, None, []])",
+            vec![(Code::BindingNotFound, (2, 9))],
+        ),
+        ("g1([b, x])", vec![(Code::Mismatch, (2, 12))]),
+        // An array is invariant: a variable of `[i64]` is not a `[i64?]`.
+        (
+            "let zs = [1, 2]\n    g1(zs)",
+            vec![(Code::Mismatch, (3, 8))],
+        ),
+        ("g1(ys)", vec![(Code::Mismatch, (2, 8))]),
+        // Elements of type `unit` bind nothing, then `unit` is reported, and no `None` besides.
+        (
+            "g1([print(1), print(2)])",
+            vec![(Code::TypeArgument, (2, 9))],
+        ),
+        ("g1([print(1), None])", vec![(Code::TypeArgument, (2, 9))]),
+        // Nothing in the outer literal binds `T`, so the first `None` is the one reported.
+        ("g4([[None], [1]])", vec![(Code::CannotInfer, (2, 10))]),
+    ] {
+        codes(&with_optional_elements(body), &expected);
+    }
+}

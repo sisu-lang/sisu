@@ -129,7 +129,7 @@ impl Checker<'_> {
 
     /// The `ArrayLit` of `checked`, an `[element]`, unless an element failed. `mismatched`
     /// when the literal's rule reported an element, which makes it `Error`.
-    fn array(
+    pub(super) fn array(
         &mut self,
         span: Span,
         element: Type,

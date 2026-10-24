@@ -6,7 +6,7 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
-use super::expr::int_literal;
+use super::expr::{int_literal, rank};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
@@ -19,6 +19,15 @@ use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
+
+/// Whether `ty`, an array's element, is an optional, or arrays of them: the shape of element
+/// that `against` cannot wrap an array literal's elements to.
+fn optional_element(mut ty: Type) -> bool {
+    while let TypeKind::Array(inner) = ty.kind() {
+        ty = inner;
+    }
+    matches!(ty.kind(), TypeKind::Optional(_))
+}
 
 /// Whether `ty` names the type parameter at `i`.
 fn names_param(ty: Type, i: usize) -> bool {
@@ -369,23 +378,37 @@ impl Checker<'_> {
     /// Checks `e`, the argument at `i` for `param`: against `param` once the call binds what it
     /// names, and otherwise on its own, which binds what its type fixes.
     fn infer_arg(&mut self, call: &mut Inference, i: usize, e: &ast::Expr, param: Option<Type>) {
-        let pattern = match param.map(|param| (param, call.bindings.known(param))) {
-            None => {
-                call.slots[i] = Some(mark(self.operand(e, None)));
-                return;
-            }
-            Some((_, Some(want))) => {
-                call.slots[i] = Some(mark(self.operand(e, Some(want))));
-                return;
-            }
-            Some((pattern, None)) => pattern,
+        let Some(pattern) = param else {
+            call.slots[i] = Some(mark(self.operand(e, None)));
+            return;
         };
+        let unbound = call.bindings.known(pattern).is_none();
+        let checked = self.infer_value(call, e, pattern);
+        if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
+            call.last.push((i, ty));
+        }
+        call.slots[i] = Some(checked);
+    }
+
+    /// Checks `e` against `pattern`, a parameter's type or an element's: against what the call
+    /// binds of it, or, while it names an unbound parameter, on its own, which binds what its
+    /// type fixes. A non-empty array literal for an array of optionals (see `optional_element`)
+    /// is the exception: its elements bind the parameter one by one (see `inferred_array`).
+    /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
+    fn infer_value(&mut self, call: &mut Inference, e: &ast::Expr, pattern: Type) -> Checked {
+        if let Some(want) = call.bindings.known(pattern) {
+            return mark(self.operand(e, Some(want)));
+        }
+        if let ast::ExprKind::ArrayLit(elements) = &e.kind
+            && !elements.is_empty()
+            && let TypeKind::Array(element) = pattern.kind()
+            && optional_element(element)
+        {
+            return self.inferred_array(call, e.span, elements, element);
+        }
         let checked = self.expr(e, None);
-        call.slots[i] = Some(match type_of(&checked) {
-            Some(ty @ (Type::UNIT | Type::NEVER)) => {
-                call.last.push((i, ty));
-                checked
-            }
+        match type_of(&checked) {
+            Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
                 let d = self.mismatch(e.span, Some(e), pattern, ty);
                 self.diagnostics.push(d);
@@ -399,9 +422,61 @@ impl Checker<'_> {
                 );
                 mark(self.against(e, checked, want, None))
             }
-            // `Error`, which binds nothing.
-            None => checked,
-        });
+        }
+    }
+
+    /// The array literal `elements` for `[element]`, where `element` names an unbound
+    /// parameter. The elements are checked in the three waves of `rank`, each by `infer_value`,
+    /// so a later `None` or integer literal meets the parameter already bound by an earlier
+    /// element, and so wraps. A `None` or `[]` with nothing bound is reported as `joined`
+    /// reports it: the first alone, unless an element failed already or bound nothing.
+    fn inferred_array(
+        &mut self,
+        call: &mut Inference,
+        span: Span,
+        elements: &[ast::Expr],
+        element: Type,
+    ) -> Checked {
+        let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
+        let mut quiet = false;
+        for wave in 0..3 {
+            if wave == 2 {
+                quiet = (slots.iter().flatten())
+                    .any(|c| matches!(type_of(c), None | Some(Type::UNIT | Type::NEVER)));
+            }
+            for (slot, e) in iter::zip(&mut slots, elements).filter(|(_, e)| rank(e) == wave) {
+                *slot = Some(if wave < 2 || call.bindings.known(element).is_some() {
+                    self.infer_value(call, e, element)
+                } else {
+                    // Only its own diagnostics matter.
+                    let _ = self.value(e, quiet.then_some(UNKNOWN));
+                    quiet = true;
+                    Err(Poisoned::error())
+                });
+            }
+        }
+        let Some(bound) = call.bindings.known(element) else {
+            // Only elements of type `unit` or `never` can have left it unbound, and so bind it.
+            let unit = iter::zip(&slots, elements).find_map(|(slot, e)| {
+                match slot.as_ref().and_then(type_of) {
+                    Some(ty @ (Type::UNIT | Type::NEVER)) => Some((ty, e.span)),
+                    _ => None,
+                }
+            });
+            if let Some((ty, at)) = unit {
+                self.bind_param(call, element, ty, at);
+            }
+            return Err(Poisoned::error());
+        };
+        let mismatched = slots
+            .iter()
+            .flatten()
+            .any(|c| matches!(c, Err(Poisoned { mismatch: true, .. })));
+        let checked = slots
+            .into_iter()
+            .map(|slot| slot.expect("the three waves should check every element, one rank each"))
+            .collect();
+        self.array(span, bound, checked, mismatched)
     }
 
     /// `Bindings::unify`, reporting at `at` each parameter it binds to a type that no type

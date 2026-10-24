@@ -1,0 +1,28 @@
+// GIVEN generic functions that take an array of optional elements, `[T?]` and `[[T?]]`
+// WHEN they are called with array literals of plain values, of `None`s, and of arrays
+// THEN each literal binds `T` from its elements, and the elements are wrapped as optionals
+// AND Valgrind and `--rc-checks` find every object freed exactly once
+fn count<T>(xs: [T?]) -> i64 {
+    let mut n = 0
+    for x in xs {
+        if let _ = x {
+            n += 1
+        }
+    }
+    n
+}
+
+fn count2<T>(xs: [[T?]]) -> i64 {
+    let mut n = 0
+    for row in xs {
+        n += count(row)
+    }
+    n
+}
+
+fn main() {
+    print(count([1, 2]))
+    print(count([None, 1]))
+    print(count([[1], [2, 3]]))
+    print(count2([[1, None], [2]]))
+}
