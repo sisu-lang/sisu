@@ -291,6 +291,11 @@ state = "works"
 notes = [["JSON output", "docs/diagnostics/README.md#json-output"]]
 
 [[area.feature]]
+text = "Warnings for unused names"
+state = "works"
+notes = [["W0012", "docs/diagnostics/W0012.md"], ["W0013", "docs/diagnostics/W0013.md"], ["W0014", "docs/diagnostics/W0014.md"]]
+
+[[area.feature]]
 text = "Formatter"
 state = "planned"
 notes = [["Roadmap: later and stretch goals", "docs/roadmap.md#later-and-stretch-goals"]]

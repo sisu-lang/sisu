@@ -47,6 +47,7 @@ enum Light {
 fn main() {
     print(Light.Green.go())      // true
     print(Light.Red.go())        // false
+    print(Light.Amber.go())      // false
 }
 ```
 
@@ -62,6 +63,7 @@ The rules:
 - An enum is declared at the top level. Its name follows the rules of a function name ([Functions](functions.md#declarations)).
 - Two variants, or a variant and a method, of one enum cannot have the same name ([E0034](../diagnostics/E0034.md)). A variant can have the name of a class or a function.
 - A variant cannot be named `Some`, `None`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)).
+- An enum that no live code builds builds with a warning ([W0012](../diagnostics/W0012.md)). A variant that no live code builds also builds with a warning ([W0013](../diagnostics/W0013.md)). A pattern that names a variant does not build it.
 - A generic enum also has type parameters after its name, such as `enum Maybe<T>` ([Generics](generics.md#type-parameters)).
 
 A method follows the rules of a [method of a class](classes.md#methods): it has `self` as its first parameter. `self` is the value of the enum. An enum has no method without `self` ([E0017](../diagnostics/E0017.md)).
@@ -182,13 +184,19 @@ enum Coin {
 }
 
 fn main() {
-    let c = Coin.Euro(2)
-    let cents = match c {
-        Cent => 1
-        Euro(n) => n * 100
+    for c in [Coin.Cent, Coin.Euro(2)] {
+        let cents = match c {
+            Cent => 1
+            Euro(n) => n * 100
+        }
+        print(cents)
     }
-    print(cents)                 // 200
 }
+```
+
+```output
+1
+200
 ```
 
 An arm is a pattern, an optional [guard](#guards), `=>`, and a body. The body is an expression, a block, an assignment, `return`, `break` or `continue`. The names that the pattern binds are in scope in the guard and the body of the arm, and nowhere else.
@@ -554,6 +562,7 @@ fn go(l: Light) -> bool {
 
 fn main() {
     print(go(Light.Green))      // false
+    print(go(Light.Red))        // false
 }
 ```
 
@@ -569,15 +578,22 @@ enum Command {
 }
 
 fn main() {
-    let c = Command.Wait(2)
-    if let Go(n) = c {
-        print("go {n}")
-    } else if let Wait(n) = c {
-        print("wait {n}")       // wait 2
-    } else {
-        print("stop")
+    for c in [Command.Go(1), Command.Stop, Command.Wait(2)] {
+        if let Go(n) = c {
+            print("go {n}")
+        } else if let Wait(n) = c {
+            print("wait {n}")
+        } else {
+            print("stop")
+        }
     }
 }
+```
+
+```output
+go 1
+stop
+wait 2
 ```
 
 `while let pattern = value { ... }` calculates the value, and runs its block while the pattern accepts the value. The program calculates the value again for each turn.

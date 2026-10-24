@@ -44,7 +44,7 @@ class Empty {}
 
 fn main() {
     print(Point(x: 3, y: 4).sum())   // 7
-    let e = Empty()
+    let _e = Empty()
 }
 ```
 
@@ -55,6 +55,7 @@ The rules:
 - A class is declared at the top level. Its name follows the rules of a function name ([Functions](functions.md#declarations)).
 - Two fields, two methods, or a field and a method of one class cannot have the same name ([E0034](../diagnostics/E0034.md)).
 - A class cannot extend another class. Sisu has no inheritance.
+- A class that no live code builds builds with a warning ([W0012](../diagnostics/W0012.md)). A field that no live code reads builds with a warning ([W0013](../diagnostics/W0013.md)). A name that starts with `_` gets no warning.
 - A generic class also has type parameters after its name, such as `class Stack<T>` ([Generics](generics.md#type-parameters)).
 
 A field cannot need an object of its own class, directly or through other classes or enums, because no first object could exist ([E0027](../diagnostics/E0027.md)). An optional field, such as `next: Node?`, or an array field, such as `children: [Node]`, can be empty, so it is valid. An [enum](enums.md#declarations) with a variant that needs no object of the class, such as a variant with no payload, also ends the chain.
@@ -120,6 +121,7 @@ fn main() {
     let p = Player(name: "Aino", score: 0)
     p.score += 10
     print(p.score)               // 10
+    print(p.name)                // Aino
 }
 ```
 
