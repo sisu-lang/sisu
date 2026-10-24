@@ -371,6 +371,14 @@ fn equal_should_read_an_argument_held_through_a_class_declared_before_or_after()
 }
 
 #[test]
+fn equal_should_read_an_argument_held_through_a_generic_enum_field() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}enum E<T> {{\n    A(T)\n}}\nclass C<T> {{\n    e: E<T>\n}}\nfn main() {{\n    let c = C(e: E.A(P(x: 1)))\n    print(c == c)\n}}"
+    ));
+}
+
+#[test]
 fn equal_should_read_the_fields_of_a_payload_type_argument() {
     judge_unused();
     clean(&format!(
