@@ -298,7 +298,7 @@ The rules:
 - In the body, a value of type `T` can do what its bounds give it: the methods of the interfaces, and the operators that they map to. `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`.
 - Anything else is an error where the body is written. The help suggests the bound that is missing.
 - A type argument that does not conform to a bound is an error at the call.
-- Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` take a `T`.
+- Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` work on a `T`.
 - `T: AnyObject` lets the body use `is` on values of type `T`.
 
 ## Interfaces

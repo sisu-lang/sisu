@@ -125,10 +125,11 @@ fn apply(f: (i64) -> i64, x: i64) -> i64 {
 fn main() {
     print(apply(x => x + 1, 1))        // 2
     print(apply(_ => 0, 1))            // 0
-    print(apply(x => {
+    let bump = (x: i64) => {
         let y = x * 2
         y + 1
-    }, 5))                             // 11
+    }
+    print(bump(5))                     // 11
     let square = (x: i64) => x * x
     print(square(4))                   // 16
 }
@@ -255,12 +256,13 @@ An *iterable* is a value that can make an iterator. The interface `Iterable` has
 
 The rules:
 
-- `for x in e` with an array or a range works as it does now. For any other `e`, the type of `e` must conform to `Iterable`. The loop calls `e.iter()` once, then `next()` until the result is `None`.
+- `for x in e` with an array or a range works as [`for`](statements.md#for) tells. For any other `e`, the type of `e` must conform to `Iterable`. The loop calls `e.iter()` once, then `next()` until the result is `None`.
 - An array conforms to `Iterable`. `xs.iter()` gives the iterator of an array. It holds the array, so a change to the array during the loop copies the array, and the loop sees the old elements.
 - Every iterator is an iterable. Its `iter()` gives a copy of the iterator itself.
 - A class conforms to `Iterator` with a plain `self` method, because a class method can write the `mut` fields of its object.
 - A range is a value. `0..n` and `0..=n` can be stored, passed and returned, and they are iterators of `i64`.
-- A `for` loop copies its iterator. After a `break`, the iterator of the program is where it was. A second `for` over it starts again. To continue where a loop stopped, call `next` in a `while let`. An iterator that is an object is shared, so the loop advances it.
+- A `for` loop copies its iterator. So after a `break`, the variable that held the iterator is where it was, and a second `for` over it starts again. An iterator that is an object is shared, so the loop advances it.
+- To continue where a loop stopped, call `next` in a `while let`.
 - A bound can fix the associated type: `fn total<S: Iterable<Item = i64>>(xs: S) -> i64` takes an array, a range or a chain of iterator methods.
 
 ## Iterator methods

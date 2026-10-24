@@ -253,4 +253,4 @@ fn main() -> unit | IoError {
 
 `IoError` is an enum that conforms to `Error`. It has the variants `NotFound(path)`, `PermissionDenied(path)`, `NotUtf8(path)` and `Other(path, reason)`. A file that is not valid UTF-8 gives `NotUtf8`.
 
-These functions give a program no file handle. A program cannot append to a file, read it line by line or move inside it. `print`, `eprint` and `read_line` do not change ([Input and output](io.md)).
+These functions give a program no file handle. A program cannot append to a file, read it line by line or move inside it. The functions `print`, `eprint` and `read_line` keep their rules ([Input and output](io.md)).
