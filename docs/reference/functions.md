@@ -39,7 +39,7 @@ The rules:
 
 - A function can call a function that is declared below it.
 - Functions, classes, enums and constants share one set of names. Each name is declared once ([E0034](../diagnostics/E0034.md)).
-- A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic` or `read_line` ([E0034](../diagnostics/E0034.md)).
+- A function cannot take the name of a built-in type, such as `i64`, or `Option`, `Result`, `Some`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)). It cannot take the name `print`, `eprint`, `panic` or `read_line` ([E0034](../diagnostics/E0034.md)). [Input and output](io.md) tells these functions.
 - A function cannot be named `_` ([E0080](../diagnostics/E0080.md)).
 - A function cannot be declared in the body of another function.
 - A binding or a parameter can take the name of a function or a class. A call still finds the function or the class, because a binding is never called ([Shadowing](statements.md#shadowing)).
@@ -209,7 +209,7 @@ fn main() {
 The rules:
 
 - `main` takes no parameters, or one `[string]`. It has no return type ([E0029](../diagnostics/E0029.md)).
-- A `main` with a `[string]` parameter gets the arguments of the program, without the name of the program.
+- A `main` with a `[string]` parameter gets the arguments of the program, without the name of the program ([Input and output](io.md#program-arguments)).
 - A program without `main` is an error ([E0028](../diagnostics/E0028.md)).
 - A `return` in the first call of `main` ends the program.
 - A program can call `main` again. That call returns to its caller, as any call does.

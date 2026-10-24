@@ -49,3 +49,7 @@ description = "What is copied and what is shared, is and ==, object lifetime and
 [[page]]
 file = "strings"
 description = "Strings and bytes, the methods of a string, how a value becomes text, and format specs."
+
+[[page]]
+file = "io"
+description = "print, eprint, read_line, program arguments and the exit code."
