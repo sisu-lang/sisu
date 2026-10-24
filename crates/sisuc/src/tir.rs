@@ -2307,7 +2307,7 @@ mod tests {
     /// A type nested deeper than a 64 KiB stack allows recursing into is named all the same, cut
     /// at `NAME_LIMIT` bytes.
     #[test]
-    fn deep_types_should_be_named_without_recursion() {
+    fn deep_types_should_be_cut_in_tir_names() {
         let levels = 10_000;
         let name = std::thread::Builder::new()
             .stack_size(64 * 1024)

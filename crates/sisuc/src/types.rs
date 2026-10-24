@@ -134,11 +134,18 @@ pub(crate) enum Head {
     Enum(EnumId),
 }
 
-/// What `write_steps` writes next: a type, the text that closes one, or the `, ` between two.
-enum Step {
+#[cfg(test)]
+thread_local! {
+    /// The most steps `write_steps` has held at once on this thread.
+    static HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// What `write_steps` writes next: a type, the text that closes one, or the arguments of a list
+/// after its first, each after a `, `. A list waits as one slice, so a wide list costs one step.
+enum Step<'a> {
     Type(Type),
     Close(&'static str),
-    Separator,
+    Rest(&'a [Type]),
 }
 
 /// Writes `ty` to `out` as a program writes it, each class and enum named by `head`. Returns
@@ -162,14 +169,21 @@ pub(crate) fn write_args<'n>(
 /// Writes `steps` to `out`, the last first. One string grows in place, and a stack stands in for
 /// recursion: a type can nest deeper than the call stack allows. Once `out` holds `NAME_LIMIT`
 /// bytes, no type or separator follows, so the work is linear in the text, not in the type.
-fn write_steps<'n>(out: &mut String, mut steps: Vec<Step>, head: impl Fn(Head) -> &'n str) -> bool {
+fn write_steps<'n>(
+    out: &mut String,
+    mut steps: Vec<Step<'_>>,
+    head: impl Fn(Head) -> &'n str,
+) -> bool {
     while let Some(step) = steps.pop() {
+        #[cfg(test)]
+        HELD.set(HELD.get().max(steps.len() + 1));
         let ty = match step {
             Step::Close(text) => {
                 out.push_str(text);
                 continue;
             }
-            Step::Type(_) | Step::Separator if out.len() >= NAME_LIMIT => {
+            Step::Rest([]) => continue,
+            Step::Type(_) | Step::Rest(_) if out.len() >= NAME_LIMIT => {
                 out.push_str("...");
                 for step in steps.iter().rev() {
                     if let Step::Close(text) = step {
@@ -178,8 +192,9 @@ fn write_steps<'n>(out: &mut String, mut steps: Vec<Step>, head: impl Fn(Head) -
                 }
                 return true;
             }
-            Step::Separator => {
+            Step::Rest([ty, rest @ ..]) => {
                 out.push_str(", ");
+                steps.extend([Step::Rest(rest), Step::Type(*ty)]);
                 continue;
             }
             Step::Type(ty) => ty,
@@ -215,18 +230,12 @@ fn write_steps<'n>(out: &mut String, mut steps: Vec<Step>, head: impl Fn(Head) -
 
 /// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
 /// for `write_steps`, `a` on top.
-fn push_args(out: &mut String, steps: &mut Vec<Step>, args: &[Type]) {
-    if args.is_empty() {
+fn push_args<'a>(out: &mut String, steps: &mut Vec<Step<'a>>, args: &'a [Type]) {
+    let [first, rest @ ..] = args else {
         return;
-    }
+    };
     out.push('<');
-    steps.push(Step::Close(">"));
-    for (i, &ty) in args.iter().enumerate().rev() {
-        steps.push(Step::Type(ty));
-        if i > 0 {
-            steps.push(Step::Separator);
-        }
-    }
+    steps.extend([Step::Close(">"), Step::Rest(rest), Step::Type(*first)]);
 }
 
 /// The kinds without a payload, at the indices of `Type`'s constants.
@@ -451,6 +460,16 @@ mod tests {
         let (closed, cut) = text(nested(127));
         assert_eq!(closed.len(), 257, "{closed}");
         assert!(!cut && !closed.contains("..."), "{closed}");
+    }
+
+    /// A list of 100,000 arguments, cut after a few dozen of them.
+    #[test]
+    fn steps_held_should_stay_within_the_text_when_a_list_is_wide() {
+        let wide = TypeArgs::intern(&vec![Type::I64; 100_000]);
+        HELD.set(0);
+        let (text, cut) = text(Type::intern(TypeKind::Class(ClassId(0), wide)));
+        assert!(cut && text.len() <= NAME_LIMIT + 64, "{text}");
+        assert!(HELD.get() <= text.len(), "{} steps for {text}", HELD.get());
     }
 
     #[test]

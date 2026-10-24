@@ -247,10 +247,10 @@ impl Mono {
         }
     }
 
-    /// The name of the instance `id` of the declaration `name` with the concrete checked `args`,
-    /// the first `owner` of them its class's: `name` with the arguments as a program writes them
-    /// (`Stack<i64>.push`). The checked types are written, not the output's, whose heads are
-    /// whole instance names. A name cut at `NAME_LIMIT` ends in `#id`, so that it stays distinct.
+    /// The name of the instance `id` of the declaration `name`, with the concrete checked `args`.
+    /// The first `owner` of `args` are its class's. The name writes the arguments as a program
+    /// does: `Stack<i64>.push`. It writes the checked types, because an output type's head is a
+    /// whole instance name. A name cut at `NAME_LIMIT` ends in `#id`, so it stays distinct.
     fn instance_name(&self, name: &str, args: &[Type], owner: usize, id: usize) -> String {
         let head = |head| self.head(head);
         let (owner_args, own) = args.split_at(owner);
@@ -664,7 +664,7 @@ mod tests {
         let program = instantiated(&format!(
             "class {long} {{\n    x: i64\n}}\nclass P<A, B> {{\n    a: A\n    b: B\n    fn m(self) -> i64 {{ 1 }}\n}}\n\
              fn g<T>(x: T) -> i64 {{ 1 }}\nfn main() {{\n    let p = P(a: {long}(x: 1), b: 1)\n    \
-             let q = P(a: {long}(x: 1), b: \"s\")\n    print(g(p) + g(q) + p.m() + q.m())\n}}"
+             let q = P(a: {long}(x: 1), b: \"s\")\n    print(g(p) + g(q) + p.m() + q.m() + g(1))\n}}"
         ));
         let functions = function_names(&program);
         let classes = class_names(&program);
@@ -680,6 +680,7 @@ mod tests {
             }
         }
         // A name under the limit gets no `#`.
+        assert!(functions.contains(&"g<i64>"), "{functions:?}");
         for name in functions.iter().chain(&classes) {
             assert_eq!(name.contains('#'), name.contains("..."), "{name}");
         }

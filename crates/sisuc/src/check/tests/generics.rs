@@ -1,8 +1,6 @@
 //! Generic declarations: the scopes of type parameters, type arguments in types and
 //! expressions, what a value of a type parameter may do, and which generic enums can be built.
 
-use std::fmt::Write as _;
-
 use super::*;
 
 /// The classes the rows name, and an empty `main`, after the line a row tests.
@@ -1860,21 +1858,6 @@ fn instantiation_cycles_should_be_reported_beside_other_errors() {
             (Code::InstantiationCycle, (4, 11)),
         ],
     );
-}
-
-/// Each `y{i}` doubles the text of the type before it, so the type of `y20`, written whole, has
-/// 2^20 leaves.
-#[test]
-fn long_types_should_be_cut_in_diagnostics() {
-    let mut src = String::from(
-        "class P<A, B> {\n    a: A\n    b: B\n}\nfn main() {\n    let y1 = P(a: 1, b: 1)\n",
-    );
-    for i in 1..20 {
-        writeln!(src, "    let y{} = P(a: y{i}, b: y{i})", i + 1)
-            .expect("writing to a `String` should succeed");
-    }
-    src += "    let s: string = y20\n}";
-    codes(&src, &[(Code::Mismatch, (26, 21))]);
 }
 
 /// `tir` writes a call's type arguments as a program writes them, a class by its name.

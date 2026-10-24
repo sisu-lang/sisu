@@ -58,7 +58,7 @@ const EXCLUDED: [(&str, &str); 11] = [
         "a private worklist item of `types::write_steps`, which is no type",
     ),
     (
-        "types::Step::Separator",
+        "types::Step::Rest",
         "a private worklist item of `types::write_steps`, which is no type",
     ),
     (
