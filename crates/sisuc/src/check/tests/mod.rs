@@ -2294,6 +2294,14 @@ fn method_through_class_name() {
 }
 
 #[test]
+fn function_name_should_report_as_a_value_in_a_binding_and_an_argument() {
+    codes(
+        "fn g() -> i64 { 1 }\nfn main() {\n    let h = g\n    print(g)\n    print(h)\n}",
+        &[(Code::TypeAsValue, (3, 13)), (Code::TypeAsValue, (4, 11))],
+    );
+}
+
+#[test]
 fn unknown_field_type_poisons() {
     codes(
         "class T {\n    mut x: Nope\n}\nfn main() { print(T(x: 1).x + true) }",

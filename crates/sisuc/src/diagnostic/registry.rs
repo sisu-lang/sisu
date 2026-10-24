@@ -159,7 +159,7 @@ codes! {
     ExponentNeedsDigits = "E0102",
     FloatOutOfRange = "E0103",
     NotExactlyF64 = "E0104",
-    TypeAsValue = "E0105",
+    TypeAsValue | FunctionAsValue = "E0105",
     MathIdiom = "E0106",
     PowerOperator = "E0107",
     MalformedFormatSpec = "E0108",
@@ -704,6 +704,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// The built-in type or class `name`, at `at`, read as a value.
     TypeAsValue { name: String, at: Span },
+    /// The function `name`, at `at`, read as a value. `takes_arguments` when it has parameters.
+    FunctionAsValue {
+        name: String,
+        at: Span,
+        takes_arguments: bool,
+    },
     /// The member of `math`, `Math` or `f64`, written at `written`, which is not how Sisu writes
     /// math: a method or constant of another language, or `f64.max(a, b)` for `a.max(b)`; `fix`
     /// is the form Sisu uses, when it surely checks.
@@ -2631,6 +2637,18 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::TypeAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a type, not a value"))
+            }
+            DiagnosticKind::FunctionAsValue {
+                name,
+                at,
+                takes_arguments,
+            } => {
+                let d = Diagnostic::coded(code, at, format!("`{name}` is a function, not a value"));
+                d.with_help(if takes_arguments {
+                    "call it with its arguments".to_string()
+                } else {
+                    format!("call it: `{name}()`")
+                })
             }
             DiagnosticKind::MathIdiom { written, fix } => {
                 let d = Diagnostic::coded(

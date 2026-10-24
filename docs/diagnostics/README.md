@@ -112,7 +112,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0102](E0102.md) | error | exponent without digits |
 | [E0103](E0103.md) | error | float literal out of range for `f64` |
 | [E0104](E0104.md) | error | integer literal not exactly an `f64` |
-| [E0105](E0105.md) | error | a type used as a value |
+| [E0105](E0105.md) | error | a type or a function used as a value |
 | [E0106](E0106.md) | error | math written another way |
 | [E0107](E0107.md) | error | `**` |
 | [E0108](E0108.md) | error | malformed format spec |
