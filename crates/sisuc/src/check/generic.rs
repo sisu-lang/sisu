@@ -49,6 +49,8 @@ pub(super) struct Bindings {
     /// The parameters the last `unify` or `constrain` bound: the only ones whose types need
     /// checking.
     fresh: Vec<usize>,
+    /// How many parameters `bind` has bound and kept: a change shows a new binding.
+    kept: usize,
 }
 
 impl Bindings {
@@ -58,6 +60,7 @@ impl Bindings {
         Bindings {
             found: owner.iter().copied().map(Some).chain(unbound).collect(),
             fresh: Vec::new(),
+            kept: 0,
         }
     }
 
@@ -73,6 +76,7 @@ impl Bindings {
                 VISITS.set(VISITS.get() + 1);
                 self.found[i] = None;
             }
+            self.kept -= self.fresh.len();
             self.fresh.clear();
         }
         unified
@@ -98,6 +102,7 @@ impl Bindings {
                 }
                 self.found[i] = Some(value);
                 self.fresh.push(i);
+                self.kept += 1;
                 true
             }
             (TypeKind::Array(p), TypeKind::Array(v))
@@ -117,6 +122,8 @@ impl Bindings {
     /// `ty`, a callee's, with its parameters' bindings in their place; `None` while it names
     /// one that is unbound.
     pub(super) fn known(&self, ty: Type) -> Option<Type> {
+        #[cfg(test)]
+        WALKED.set(WALKED.get() + 1);
         if !ty.has_param() {
             return Some(ty);
         }
@@ -151,6 +158,8 @@ impl Bindings {
 thread_local! {
     /// How many bindings inference has checked or undone on this thread.
     pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `Bindings::known` has looked at on this thread.
+    pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names the search for reported ones has looked at on this
     /// thread.
     pub(super) static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -438,9 +447,15 @@ impl Checker<'_> {
     /// is the exception: its elements bind the parameter one by one (see `inferred_array`).
     /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
     fn infer_value(&mut self, call: &mut Inference, e: &ast::Expr, pattern: Type) -> Checked {
-        if let Some(want) = call.bindings.known(pattern) {
-            return mark(self.operand(e, Some(want)));
+        match call.bindings.known(pattern) {
+            Some(want) => mark(self.operand(e, Some(want))),
+            None => self.infer_unbound(call, e, pattern),
         }
+    }
+
+    /// `infer_value` for a `pattern` that names an unbound parameter, with no walk of
+    /// `pattern` to find this out.
+    fn infer_unbound(&mut self, call: &mut Inference, e: &ast::Expr, pattern: Type) -> Checked {
         if let ast::ExprKind::ArrayLit(elements) = &e.kind
             && !elements.is_empty()
             && let TypeKind::Array(element) = pattern.kind()
@@ -468,7 +483,7 @@ impl Checker<'_> {
     }
 
     /// The array literal `elements` for `[element]`, where `element` names an unbound
-    /// parameter. The elements are checked in the three waves of `rank`, each by `infer_value`,
+    /// parameter. The elements are checked in the three waves of `rank`, as `infer_value` does,
     /// so a later `None` or integer literal meets the parameter already bound by an earlier
     /// element, and so wraps. A `None` or `[]` with nothing bound is reported as `joined`
     /// reports it: the first alone, unless an element failed already. An element of type `unit`
@@ -482,10 +497,21 @@ impl Checker<'_> {
     ) -> Checked {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
         let mut quiet = false;
+        // `element`'s type once an element binds all it names. A later element meets it with
+        // no new walk of `element`, so the work does not grow with elements times its depth.
+        let mut bound = None;
         for wave in 0..3 {
             for (i, e) in elements.iter().enumerate().filter(|(_, e)| rank(e) == wave) {
-                let checked = if wave < 2 || call.bindings.known(element).is_some() {
-                    self.infer_value(call, e, element)
+                let checked = if let Some(want) = bound {
+                    mark(self.operand(e, Some(want)))
+                } else if wave < 2 {
+                    let kept = call.bindings.kept;
+                    let checked = self.infer_unbound(call, e, element);
+                    // Only a new binding can bind `element`.
+                    if call.bindings.kept != kept {
+                        bound = call.bindings.known(element);
+                    }
+                    checked
                 } else {
                     quiet = quiet || slots.iter().flatten().any(|c| type_of(c).is_none());
                     // Only its own diagnostics matter.
@@ -504,7 +530,7 @@ impl Checker<'_> {
                 });
             }
         }
-        let Some(bound) = call.bindings.known(element) else {
+        let Some(bound) = bound else {
             return Err(Poisoned::error());
         };
         let mismatched = slots

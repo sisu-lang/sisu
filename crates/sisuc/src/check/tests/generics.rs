@@ -1228,6 +1228,28 @@ fn inference_should_check_each_binding_once() {
     assert_eq!(visits(128), 128);
 }
 
+/// An element pattern 20 arrays deep, so a walk of it for each element would show. Once the
+/// first element binds `T`, a later one adds no walk. A `bool` before it binds nothing, and
+/// adds no walk either.
+#[test]
+fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
+    let walked = |elements: &str| {
+        let (open, close) = ("[".repeat(20), "]".repeat(20));
+        let src = format!(
+            "fn take<T>(xs: [{open}T?{close}]) -> i64 {{ xs.len() }}\n\
+             fn main() {{\n    let b = true\n    let x: {open}i64?{close} = {open}1{close}\n    \
+             print(take([{elements}]))\n}}"
+        );
+        generic::WALKED.set(0);
+        let mismatches = diags(&src).len();
+        (generic::WALKED.get(), mismatches)
+    };
+    let (one, _) = walked("x");
+    assert_eq!(walked(&vec!["x"; 100].join(", ")), (one, 0));
+    let (bad, _) = walked("b, x");
+    assert_eq!(walked(&format!("{}x", "b, ".repeat(100))), (bad, 100));
+}
+
 /// A call that leaves type parameters unbound looks at each declared name once to find the
 /// reported ones, so its work grows with them, not with their square; a call that binds them
 /// all looks at none.
