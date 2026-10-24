@@ -1229,15 +1229,17 @@ fn inference_should_check_each_binding_once() {
 }
 
 /// An element pattern 20 arrays deep, so a walk of it for each element would show. Once the
-/// first element binds `T`, a later one adds no walk. A `bool` before it binds nothing, and
-/// adds no walk either.
+/// first element binds `T`, a later one adds no walk. A `P<i64, bool>` before it binds `T`,
+/// then fails at `bool` and undoes the binding: it adds no walk either.
 #[test]
 fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
     let walked = |elements: &str| {
         let (open, close) = ("[".repeat(20), "]".repeat(20));
         let src = format!(
-            "fn take<T>(xs: [{open}T?{close}]) -> i64 {{ xs.len() }}\n\
-             fn main() {{\n    let b = true\n    let x: {open}i64?{close} = {open}1{close}\n    \
+            "class P<A, B> {{\n    a: A\n    b: B\n}}\n\
+             fn take<T>(xs: [{open}P<T, T>?{close}]) -> i64 {{ xs.len() }}\n\
+             fn main() {{\n    let b: {open}P<i64, bool>?{close} = {open}P(a: 1, b: true){close}\n    \
+             let x: {open}P<i64, i64>?{close} = {open}P(a: 1, b: 2){close}\n    \
              print(take([{elements}]))\n}}"
         );
         generic::WALKED.set(0);
