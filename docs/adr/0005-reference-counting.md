@@ -32,7 +32,8 @@ same way. See the milestone 2 spec, "Reference counting".
   optimization removes redundant pairs.
 - Counts are not atomic. Concurrent tasks keep them that way by sharing no
   objects (ADR 0010, proposed).
-- Drop follows a class's own-type field (a list's `next`) in a loop, so a
-  list of any length frees in constant stack. Other references recurse: a
-  tree once per level, a chain that alternates between classes once per
-  object.
+- Drop follows a field that holds a class of the same cycle in a loop, so a
+  list, or a chain that alternates between classes, frees in constant stack. A
+  cycle is a set of classes that hold each other in direct fields, `X` or
+  `X?`. A list's `next` is a cycle of one class. Other references recurse: a
+  field of an array or an enum, and a class outside the cycle.

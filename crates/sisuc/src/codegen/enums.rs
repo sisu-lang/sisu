@@ -519,15 +519,15 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.branch_to(done);
     }
 
-    /// The pending lists of a component of `members` enums: one head per member, in
+    /// The pending lists of a component of `members` enums or classes: one head per member, in
     /// declaration order, each `null` when its list is empty.
-    fn heads_type(&self, members: usize) -> StructType<'ctx> {
+    pub(super) fn heads_type(&self, members: usize) -> StructType<'ctx> {
         let ptr_type = self.context.ptr_type(AddressSpace::default()).into();
         self.context.struct_type(&vec![ptr_type; members], false)
     }
 
     /// The address of the head of member `index`'s list in `heads`, of type `heads_type`.
-    fn head(
+    pub(super) fn head(
         &self,
         heads_type: StructType<'ctx>,
         heads: PointerValue<'ctx>,
@@ -994,13 +994,12 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// member `kind` of the component whose first member is `F0`. It switches on `kind`, then
     /// compares as `eq` does. It compares a link, a box or an inline link (`inline_link`) by
     /// the values it holds: see `link_pair`. It neither retains nor releases. It compares depth
-    /// first. In each variant it compares the fields in order, but the last link comes after
-    /// the fields that follow it. So a field after the last link is compared before a mismatch
-    /// in that link, which a recursive `==` would find first. The last link loops: `kind`, `a`
-    /// and `b` become that link's enum and its two values. Before a link that is not the last,
-    /// it pushes where the value's comparison goes on (`push_pending`). Then it loops into the
-    /// link. When a value is done, it pops that place and goes on there. So it compares any
-    /// depth and shape of value in one frame. Every address it holds points into the compared
+    /// first. In each variant it compares the fields in order and stops at the first
+    /// difference, as a recursive `==` does. A link that is the last field loops: `kind`, `a`
+    /// and `b` become that link's enum and its two values. Before any other link, it pushes
+    /// where the value's comparison goes on (`push_pending`). Then it loops into the link.
+    /// When a value is done, it pops that place and goes on there. So it compares any depth
+    /// and shape of value in one frame. Every address it holds points into the compared
     /// values, which the caller keeps alive.
     fn define_eq_component(&self, first: EnumId, function: FunctionValue<'ctx>) {
         let members = self.component(first).expect(
@@ -1076,7 +1075,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.pop_pending(&pending, equal, dispatch, popped);
         self.builder.position_at_end(dispatch);
         let Some((&default, rest)) = resumes.split_first() else {
-            // No variant has a link before its last, so nothing is ever pushed.
+            // No variant has a link that is not its last field, so nothing is ever pushed.
             self.builder.build_unreachable().expect(POSITIONED);
             return;
         };
@@ -1096,9 +1095,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Compares the fields of variant `variant` of the enum `id`, in the loop `eq`, from the
-    /// builder's block. Before each link that is not the last, it pushes the index of a new
-    /// block in `resumes`, which goes on from the next field, and loops into the link. Then the
-    /// last link loops, or with no link the value is done and goes to `pop`.
+    /// builder's block, in field order. Before each link that is not the last field, it pushes
+    /// the index of a new block in `resumes`, which goes on from the next field, and loops into
+    /// the link. A last field that is a link loops with no push. Else the value is done and
+    /// goes to `pop`.
     fn compare_variant(
         &self,
         eq: &EqLoop<'ctx>,
@@ -1112,7 +1112,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         let payloads = &self.program.enums[id.0].variants[variant].fields;
         let looped = payloads
             .iter()
-            .rposition(|payload| self.is_link(id, payload));
+            .enumerate()
+            .next_back()
+            .filter(|(_, payload)| self.is_link(id, payload))
+            .map(|(field, _)| field);
         for (field, payload) in payloads.iter().enumerate() {
             if looped == Some(field) {
                 continue;

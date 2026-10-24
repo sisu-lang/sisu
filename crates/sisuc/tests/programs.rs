@@ -47,10 +47,11 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 14] = [
+const SMALL_STACK: [&str; 16] = [
     "longlist",
     "rightskew",
     "deepchain",
+    "dropmutual",
     "eqlist",
     "enumlist",
     "enumfold",
@@ -60,6 +61,7 @@ const SMALL_STACK: [&str; 14] = [
     "dropleft",
     "eqleft",
     "eqorder",
+    "eqtrail",
     "tailfresh",
     "tailpass",
 ];
@@ -384,12 +386,35 @@ fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
     assert_small_stack_prints_at_both("eqorder", "false\n");
 }
 
-/// GIVEN the `deepchain` program, whose drop recurses once per object
+/// GIVEN the `dropmutual` program, which builds chains of 1 000 000 pairs of two classes that
+/// hold each other and of 300 000 triples of three classes that hold each other
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints 1000000 and 300000
+///
+/// The drop frees the objects of the classes in a cycle from pending lists, not by recursion.
+#[test]
+fn class_drop_should_free_chains_of_classes_that_hold_each_other_in_a_small_stack() {
+    assert_small_stack_prints_at_both("dropmutual", "1000000\n300000\n");
+}
+
+/// GIVEN the `eqtrail` program, which compares two pairs of left-deep values of 1 000 000 nodes
+/// whose links are followed by an `i64` field
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `true` and `false`
+///
+/// `==` keeps a link that has a field after it on the heap, not on the stack.
+#[test]
+fn enums_with_a_field_after_the_link_should_compare_in_a_small_stack() {
+    assert_small_stack_prints_at_both("eqtrail", "true\nfalse\n");
+}
+
+/// GIVEN the `deepchain` program, which holds 500 000 objects each in an array of the one before
 /// WHEN it runs under a 256 KiB stack
 /// THEN it dies by signal 11 and prints nothing
 ///
 /// The control for `longlist_should_free_a_million_nodes_in_a_small_stack`: a drop that
-/// recurses once per object overflows the same stack, so the limit is in force.
+/// recurses once per object, as the drop of an array does, overflows the same stack, so the
+/// limit is in force.
 #[test]
 fn deepchain_should_overflow_the_small_stack() {
     let out = run_in_small_stack("deepchain");

@@ -1,0 +1,160 @@
+// A class's drop frees each object of the classes in its cycle from pending lists, in one
+// frame. `A` and `B` hold each other; `X`, `Y` and `Z` form a ring of three. `A` holds a string
+// and `B` and `Z` hold a `Tag`, a class outside the cycles, which the drop releases with each
+// object. Valgrind and the RC checks find a leak, a double free or a read of a freed object.
+class Tag {
+    _id: i64
+}
+
+class A {
+    b: B?
+    _name: string
+}
+
+class B {
+    a: A?
+    _tag: Tag
+}
+
+class X {
+    y: Y?
+}
+
+class Y {
+    z: Z?
+}
+
+class Z {
+    x: X?
+    _tag: Tag
+}
+
+fn objects_from_a(a: A?) -> i64 {
+    if let n = a { 1 + objects_from_b(n.b) } else { 0 }
+}
+
+fn objects_from_b(b: B?) -> i64 {
+    if let n = b { 1 + objects_from_a(n.a) } else { 0 }
+}
+
+fn objects_from_x(x: X?) -> i64 {
+    if let n = x { 1 + objects_from_y(n.y) } else { 0 }
+}
+
+fn objects_from_y(y: Y?) -> i64 {
+    if let n = y { 1 + objects_from_z(n.z) } else { 0 }
+}
+
+fn objects_from_z(z: Z?) -> i64 {
+    if let n = z { 1 + objects_from_x(n.x) } else { 0 }
+}
+
+// A chain of three pairs, so six objects: the drop of the first `A` frees `B` and `A` objects
+// from both lists in turn.
+fn pairs() {
+    let mut a: A? = None
+    let mut i = 0
+    while i < 3 {
+        i += 1
+        let b = B(a: a, _tag: Tag(_id: i))
+        a = A(b: b, _name: "a{i}")
+    }
+    print(objects_from_a(a)) // 6
+}
+
+// The `B` object is the `b` of `first` and of `second`. The drop of `first` leaves it to
+// `second`, which reads it after that drop, and the drop of `second` frees it with the `A`
+// object it holds.
+fn shared() {
+    let mut second: A? = None
+    if true {
+        let b = B(a: A(b: None, _name: "inner"), _tag: Tag(_id: 7))
+        let first = A(b: b, _name: "first")
+        second = A(b: b, _name: "second")
+        print(objects_from_a(first)) // 3
+    }
+    print(objects_from_a(second)) // 3
+}
+
+// A chain of three triples, so nine objects.
+fn ring() {
+    let mut x: X? = None
+    let mut i = 0
+    while i < 3 {
+        i += 1
+        x = X(y: Y(z: Z(x: x, _tag: Tag(_id: i))))
+    }
+    print(objects_from_x(x)) // 9
+}
+
+// `P<string>` and `Q<string>` are two classes that hold each other, with different layouts.
+class P<T> {
+    q: Q<T>?
+    _v: T
+}
+
+class Q<T> {
+    p: P<T>?
+}
+
+enum Holder {
+    Has(A?)
+}
+
+fn objects_from_p<T>(p: P<T>?) -> i64 {
+    if let n = p { 1 + objects_from_q(n.q) } else { 0 }
+}
+
+fn objects_from_q<T>(q: Q<T>?) -> i64 {
+    if let n = q { 1 + objects_from_p(n.p) } else { 0 }
+}
+
+// A chain of `pairs` pairs of `A` and `B`.
+fn chain(pairs: i64) -> A? {
+    let mut a: A? = None
+    let mut i = 0
+    while i < pairs {
+        i += 1
+        let b = B(a: a, _tag: Tag(_id: i))
+        a = A(b: b, _name: "a{i}")
+    }
+    a
+}
+
+// The release of an array and of an enum reaches the drop of the chains they hold.
+fn entry_through_array_and_enum() {
+    let xs = [chain(1), chain(2)]
+    print(objects_from_a(xs[0]) + objects_from_a(xs[1])) // 6
+    let h = Holder.Has(chain(2))
+    match h {
+        Holder.Has(a) => print(objects_from_a(a)) // 4
+    }
+}
+
+// An instance of a generic class in a cycle: a chain of three pairs, so six objects.
+fn generic_pairs() {
+    let mut p: P<string>? = None
+    let mut i = 0
+    while i < 3 {
+        i += 1
+        p = P(q: Q(p: p), _v: "p{i}")
+    }
+    print(objects_from_p(p)) // 6
+}
+
+// The first object to drop is not of the first class of its cycle: a `B` and a `Z`.
+fn later_class() {
+    let b = B(a: A(b: B(a: None, _tag: Tag(_id: 1)), _name: "a"), _tag: Tag(_id: 2))
+    print(objects_from_b(b)) // 3
+    let z = Z(x: X(y: Y(z: None)), _tag: Tag(_id: 3))
+    print(objects_from_z(z)) // 3
+}
+
+fn main() {
+    pairs()
+    shared()
+    ring()
+    later_class()
+    entry_through_array_and_enum()
+    generic_pairs()
+}

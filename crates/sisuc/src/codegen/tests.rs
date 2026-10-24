@@ -467,6 +467,45 @@ fn class_drop_should_call_no_drop_or_release_of_its_own_class() {
     assert!(tree.contains("@sisu_rc.release.string("), "{tree}");
 }
 
+/// `A` and `B` hold each other, so they are one cycle with one `drain` helper. `H` holds `A`
+/// but is in no cycle, so its drop releases `A` as before.
+#[test]
+fn class_drop_should_call_no_drop_or_release_of_the_other_class_in_its_cycle() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class A {\n    b: B?\n}\nclass B {\n    a: A?\n    c: C\n    name: string\n}\nclass C {}\nclass H {\n    a: A?\n}\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    let drop = |name| {
+        function_body(
+            &ir,
+            &format!("define internal void @sisu_rc.drop.{name}(ptr"),
+        )
+    };
+    for name in ["A", "B"] {
+        let body = drop(name);
+        assert!(body.contains("@sisu_rc.drain.A("), "{body}");
+        for unwanted in ["@sisu_free(", "@sisu_rc.drop.", "@sisu_rc.release."] {
+            assert!(!body.contains(unwanted), "{unwanted:?} in\n{body}");
+        }
+    }
+    let drain = function_body(&ir, "define internal void @sisu_rc.drain.A(ptr");
+    assert_eq!(drain.matches("@sisu_free(").count(), 2, "{drain}");
+    for wanted in ["@sisu_rc.release.string(", "@sisu_rc.release.C("] {
+        assert!(drain.contains(wanted), "no {wanted:?} in\n{drain}");
+    }
+    for unwanted in [
+        "@sisu_rc.drop.",
+        "@sisu_rc.release.A(",
+        "@sisu_rc.release.B(",
+    ] {
+        assert!(!drain.contains(unwanted), "{unwanted:?} in\n{drain}");
+    }
+    assert!(drop("H").contains("@sisu_rc.release.A("));
+}
+
 /// The helpers of an enum and of a class hand an inline enum field to its own helper by
 /// address. A copy in a stack slot makes each frame as large as the field, so a chain of
 /// nested enums needs stack quadratic in its depth.
@@ -777,6 +816,27 @@ fn eq_component_should_not_call_an_eq_component_helper() {
     .to_string();
     let body = function_body(&ir, "define internal i1 @sisu_rc.eq_component.E(i32");
     assert!(!body.contains("@sisu_rc.eq_component."), "{body}");
+}
+
+/// `Pair` has a link and then a class field. `eq_component` compares in field order: it queues
+/// the link, enters it, and compares the class field only after it pops the queue, in the
+/// `resume` block. So no `==` on the class field comes before that block.
+#[test]
+fn eq_component_should_compare_a_field_after_a_link_only_when_it_resumes() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class C {\n    n: i64\n}\nenum E {\n    Leaf\n    Pair(E, C)\n}\nfn main() {\n    print(E.Pair(E.Leaf, C(n: 1)) == E.Leaf)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = function_body(&ir, "define internal i1 @sisu_rc.eq_component.E(i32");
+    assert_eq!(body.matches("@sisu_rc.eq.C(").count(), 1, "{body}");
+    let (before, after) = body
+        .split_once("\nresume:")
+        .unwrap_or_else(|| panic!("no resume block in\n{body}"));
+    assert!(!before.contains("@sisu_rc.eq.C("), "{body}");
+    assert!(after.contains("@sisu_rc.eq.C("), "{body}");
 }
 
 #[test]

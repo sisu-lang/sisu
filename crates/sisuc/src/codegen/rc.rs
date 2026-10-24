@@ -7,13 +7,15 @@
 
 use inkwell::basic_block::BasicBlock;
 use inkwell::module::Linkage;
+use inkwell::types::StructType;
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
 use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
 use super::layout::HeapBlock;
 use super::{Codegen, POSITIONED};
-use crate::tir::{LocalId, Program, Type, TypeKind};
+use crate::graph::components;
+use crate::tir::{ClassId, LocalId, Program, Type, TypeArgs, TypeKind};
 
 /// A kind of helper that a counted type has.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,7 +27,8 @@ pub(super) enum Helper {
     Unique,
     /// `@sisu_rc.walk.<F>(value, heads)`: releases a value's counted parts, listing its boxes.
     Walk,
-    /// `@sisu_rc.drain.<F0>(heads)`: frees the boxes on a component's pending lists.
+    /// `@sisu_rc.drain.<F0>(heads)`: frees the boxes of an enum component, or the objects of
+    /// a cycle of classes, on its pending lists.
     Drain,
     /// `@sisu_rc.eq_component.<F0>(kind, a, b)`: `==` on values of a component's member `kind`.
     EqComponent,
@@ -37,6 +40,78 @@ pub(super) enum Helper {
     /// `@sisu_rc.reuse.<F>(token) -> ptr`: a token's box, or a new block for a box of `F` when
     /// the token is `null`.
     Reuse,
+}
+
+/// The cycles of classes that hold each other, which `define_drop` frees in a loop. A class is
+/// in a cycle when a class holds it in a field, `X` or `X?`, along a path that comes back to
+/// the holder: its strongly connected component of that graph has two classes, or it holds
+/// itself. A field of an array or of an enum is not an edge.
+pub(super) struct ClassCycles {
+    /// For each class, the index in `members` of its cycle, when it is in one.
+    cycle: Vec<Option<usize>>,
+    /// For each class, its index among the classes of its cycle.
+    position: Vec<usize>,
+    /// The classes of each cycle, in declaration order.
+    members: Vec<Vec<ClassId>>,
+}
+
+impl ClassCycles {
+    /// The classes of the cycle of `class`, in declaration order, when it is in one.
+    pub(super) fn members(&self, class: ClassId) -> Option<&[ClassId]> {
+        self.cycle[class.0].map(|cycle| self.members[cycle].as_slice())
+    }
+
+    /// The index of `class` among the classes of its cycle.
+    pub(super) fn position(&self, class: ClassId) -> usize {
+        self.position[class.0]
+    }
+
+    /// The index among the classes of the cycle of `holder` of the class that a field of type
+    /// `field` holds, when `holder` is in a cycle and that class is in it too.
+    fn link(&self, holder: ClassId, field: Type) -> Option<usize> {
+        let TypeKind::Class(held, _) = counted_core(field)?.kind() else {
+            return None;
+        };
+        let cycle = self.cycle[holder.0]?;
+        (self.cycle[held.0] == Some(cycle)).then(|| self.position[held.0])
+    }
+}
+
+/// The `ClassCycles` of `program`, by `components` of the graph with an edge from each class to
+/// each class it holds in a field. It reads every field once.
+pub(super) fn class_cycles(program: &Program) -> ClassCycles {
+    let held = |ty| match counted_core(ty)?.kind() {
+        TypeKind::Class(id, _) => Some(id.0),
+        _ => None,
+    };
+    let edges: Vec<Vec<usize>> = program
+        .classes
+        .iter()
+        .map(|class| class.fields.iter().filter_map(|f| held(f.ty)).collect())
+        .collect();
+    let mut groups = vec![Vec::new(); edges.len()];
+    for (class, component) in components(&edges).into_iter().enumerate() {
+        groups[component].push(class);
+    }
+    let mut cycles = ClassCycles {
+        cycle: vec![None; edges.len()],
+        position: vec![0; edges.len()],
+        members: Vec::new(),
+    };
+    for group in groups {
+        let loops = group.len() > 1 || group.iter().any(|&class| edges[class].contains(&class));
+        if !loops {
+            continue;
+        }
+        for (position, &class) in group.iter().enumerate() {
+            cycles.cycle[class] = Some(cycles.members.len());
+            cycles.position[class] = position;
+        }
+        cycles
+            .members
+            .push(group.into_iter().map(ClassId).collect());
+    }
+    cycles
 }
 
 /// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with any
@@ -112,8 +187,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Defines the counting helpers, which take their object without taking ownership:
     /// `@sisu_rc.retain` adds 1 to its count; `@sisu_rc.release.<C>` subtracts 1 and at 0
     /// calls `@sisu_rc.drop.<C>`, which releases each counted field, then frees the object.
-    /// Both return at once on `null`. Drop does not recurse on a field of its own class: see
-    /// `define_drop`.
+    /// Both return at once on `null`. Drop does not recurse on a field of a class in its own
+    /// cycle: see `define_drop`.
     /// `@sisu_rc.eq.<C>` is `==` on two objects; see `define_eq`. An array's `drop`, `eq` and
     /// `unique` come from `define_array_helper`, a string's `drop` and `eq` from
     /// `define_string_helper`, an enum's `retain`, `release` and `eq` from `define_enum_helper`.
@@ -138,11 +213,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 (_, TypeKind::Array(element)) => self.define_array_helper(kind, element, function),
                 (_, TypeKind::String) => self.define_string_helper(kind, function),
                 (Helper::Drop, _) => self.define_drop(function, ty),
+                (Helper::Drain, _) => self.define_class_drain(function, ty),
                 (Helper::Eq, _) => self.define_eq(function, ty),
                 (Helper::Unique, _) => {
                     unreachable!("only an array type should be queued for a `unique` helper")
                 }
-                (Helper::Walk | Helper::Drain | Helper::EqComponent, _) => {
+                (Helper::Walk | Helper::EqComponent, _) => {
                     unreachable!("only an enum type should be queued for a component helper")
                 }
                 (Helper::Unbox | Helper::Free | Helper::Reuse, _) => {
@@ -162,60 +238,161 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.branch_to(done);
     }
 
-    /// `@sisu_rc.drop.<C>`: frees the object, and in the same frame each object of `C` that it
-    /// holds the last reference to, at any depth. A field of type `C` or `C?` that is not `null`
-    /// loses 1 from its object's count. At 0, that object goes onto a pending list, linked to
-    /// the old head through its count word, which is dead by then. Every other counted field
-    /// goes through `release_at`. The loop reads every field, frees the object, then takes the
-    /// next object off the list. No other holder reaches a listed object, so no RC check reads
-    /// that word.
+    /// `@sisu_rc.drop.<C>`: frees the object, and in the same frame each object that it holds the
+    /// last reference to, at any depth, in the cycle of classes of `C` (see `class_cycles`).
+    /// A field of a class in the cycle that is not `null` loses 1 from its object's count. At 0,
+    /// that object goes onto the pending list of its class, linked to the old head through its
+    /// count word, which is dead by then. Every other counted field goes through `release_at`.
+    /// A loop reads every field of an object, frees it, then takes the next object off a list.
+    /// No other holder reaches a listed object, so no RC check reads that word. A class in no
+    /// cycle has no loop. A class that is alone in its cycle loops in its own frame. Else the
+    /// object is already dead, its count 0 from `release`, so it only goes onto the list of
+    /// its class, with no decrement, and `@sisu_rc.drain.<C0>` of the first class `C0` of the
+    /// cycle runs the loop for the cycle. So the code for a cycle is as large as the cycle.
     fn define_drop(&self, drop: FunctionValue<'ctx>, ty: Type) {
         let TypeKind::Class(id, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")
         };
         let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let block = |name| self.context.append_basic_block(drop, name);
-        let is_null = |pointer| {
-            self.builder
-                .build_is_null(pointer, "null")
-                .expect(POSITIONED)
-        };
-        let fields = &self.program.classes[id.0].fields;
-        let own = |field_ty| counted_core(field_ty) == Some(ty);
-        let entry = block("entry");
+        let entry = self.context.append_basic_block(drop, "entry");
         self.builder.position_at_end(entry);
-        // With a field of its own class, the body is a loop over the pending list.
-        let looped = fields.iter().any(|field| own(field.ty)).then(|| {
-            let head = self.entry_alloca(ptr_type.into(), "pending");
-            self.store(head, ptr_type.const_null().into());
-            let body = block("loop");
-            self.branch_to(body);
-            self.builder.position_at_end(body);
-            let phi = self
-                .builder
-                .build_phi(ptr_type, "object")
-                .expect(POSITIONED);
-            phi.add_incoming(&[(&param(drop), entry)]);
-            (head, body, phi)
-        });
-        let object = looped.map_or_else(
-            || param(drop),
-            |(_, _, phi)| phi.as_basic_value().into_pointer_value(),
+        let Some(members) = self.class_cycles.members(id) else {
+            self.release_class_fields(id, param(drop), None);
+            self.free_class(id, param(drop));
+            self.builder.build_return(None).expect(POSITIONED);
+            return;
+        };
+        let heads_type = self.heads_type(members.len());
+        let heads = self.entry_alloca(heads_type.into(), "heads");
+        self.store(heads, heads_type.const_zero().into());
+        if members.len() > 1 {
+            let head = self.head(heads_type, heads, self.class_cycles.position(id));
+            self.store(head, param(drop).into());
+            // The object is the whole list, so the link in its count word ends it.
+            self.store(param(drop), ptr_type.const_null().into());
+            let first = Type::intern(TypeKind::Class(members[0], TypeArgs::NONE));
+            self.call(self.helper(Helper::Drain, first), &[heads.into()]);
+            self.builder.build_return(None).expect(POSITIONED);
+            return;
+        }
+        let head = self.head(heads_type, heads, 0);
+        let (body, done) = (
+            self.context.append_basic_block(drop, "loop"),
+            self.context.append_basic_block(drop, "done"),
         );
-        for (index, field) in fields.iter().enumerate() {
+        self.branch_to(body);
+        self.builder.position_at_end(body);
+        let phi = self
+            .builder
+            .build_phi(ptr_type, "object")
+            .expect(POSITIONED);
+        phi.add_incoming(&[(&param(drop), entry)]);
+        let object = phi.as_basic_value().into_pointer_value();
+        self.release_class_fields(id, object, Some((heads_type, heads)));
+        self.free_class(id, object);
+        let take = self.context.append_basic_block(drop, "take");
+        let taken = self
+            .builder
+            .build_load(ptr_type, head, "taken")
+            .expect(POSITIONED)
+            .into_pointer_value();
+        let null = self.builder.build_is_null(taken, "null").expect(POSITIONED);
+        self.branch_on(null, done, take);
+        self.builder.position_at_end(take);
+        let following = self
+            .builder
+            .build_load(ptr_type, taken, "following")
+            .expect(POSITIONED);
+        self.store(head, following);
+        phi.add_incoming(&[(&taken, take)]);
+        self.branch_to(body);
+        self.builder.position_at_end(done);
+        self.builder.build_return(None).expect(POSITIONED);
+    }
+
+    /// `@sisu_rc.drain.<C0>(heads)`, for the cycle of classes whose first class is `C0`: while
+    /// some list in `heads` is not empty, takes the object at the head of the first such list,
+    /// makes the next object its head, releases the fields of the object
+    /// (`release_class_fields`) and frees it. It runs in one frame, however many objects it
+    /// frees. It scans the heads from the first for each object, so it costs the number of
+    /// objects times the number of classes in the cycle, as the drain of an enum component does.
+    fn define_class_drain(&self, function: FunctionValue<'ctx>, ty: Type) {
+        let TypeKind::Class(first, _) = ty.kind() else {
+            unreachable!("only a class type should reach the class helper bodies")
+        };
+        let members = self.class_cycles.members(first).expect(
+            "only the first class of a cycle should get a `drain` helper, and it has a cycle",
+        );
+        let heads = param(function);
+        let entry = self.context.append_basic_block(function, "entry");
+        self.builder.position_at_end(entry);
+        let heads_type = self.heads_type(members.len());
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let block = |name| self.context.append_basic_block(function, name);
+        let next = block("drain");
+        self.branch_to(next);
+        self.builder.position_at_end(next);
+        for (index, &member) in members.iter().enumerate() {
+            let head = self.head(heads_type, heads, index);
+            let object = self
+                .builder
+                .build_load(ptr_type, head, "object")
+                .expect(POSITIONED)
+                .into_pointer_value();
+            let (take, empty) = (block("take"), block("empty"));
+            let null = self
+                .builder
+                .build_is_null(object, "null")
+                .expect(POSITIONED);
+            self.branch_on(null, empty, take);
+            self.builder.position_at_end(take);
+            let following = self
+                .builder
+                .build_load(ptr_type, object, "following")
+                .expect(POSITIONED);
+            self.store(head, following);
+            self.release_class_fields(member, object, Some((heads_type, heads)));
+            self.free_class(member, object);
+            self.branch_to(next);
+            self.builder.position_at_end(empty);
+        }
+        self.builder.build_return(None).expect(POSITIONED);
+    }
+
+    /// Releases each counted field of the object of class `id` at `object`. A `null` field of a
+    /// class in the cycle of `id`, with its `heads`, is skipped. Another such field loses 1
+    /// from its object's count, and at 0 the object becomes the head of its class's list, linked
+    /// to the old head through its count word. Every other counted field goes through
+    /// `release_at`.
+    fn release_class_fields(
+        &self,
+        id: ClassId,
+        object: PointerValue<'ctx>,
+        heads: Option<(StructType<'ctx>, PointerValue<'ctx>)>,
+    ) {
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let block = |name| {
+            self.context
+                .append_basic_block(self.current_function(), name)
+        };
+        for (index, field) in self.program.classes[id.0].fields.iter().enumerate() {
             let place = self.field_ptr(id, object, index);
-            let Some((head, ..)) = looped.filter(|_| own(field.ty)) else {
+            let Some(((heads_type, heads), position)) =
+                heads.zip(self.class_cycles.link(id, field.ty))
+            else {
                 if field.ty.is_counted(&self.program.enums) {
                     self.release_at(place, field.ty);
                 }
                 continue;
             };
-            let (live, last, next) = (block("own"), block("own.last"), block("own.next"));
+            let (live, last, next) = (block("link"), block("link.last"), block("link.next"));
             let child = self.load_value(field.ty, place).into_pointer_value();
-            self.branch_on(is_null(child), next, live);
+            let null = self.builder.build_is_null(child, "null").expect(POSITIONED);
+            self.branch_on(null, next, live);
             self.builder.position_at_end(live);
             self.decrement(child, last, next);
             self.builder.position_at_end(last);
+            let head = self.head(heads_type, heads, position);
             let old = self
                 .builder
                 .build_load(ptr_type, head, "old")
@@ -225,27 +402,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.branch_to(next);
             self.builder.position_at_end(next);
         }
+    }
+
+    /// Frees the object of class `id` at `object`, with the size and alignment it has.
+    fn free_class(&self, id: ClassId, object: PointerValue<'ctx>) {
         let (size, align) = self.heap_size(&HeapBlock::Class(id));
         self.call(self.free, &[object.into(), size.into(), align.into()]);
-        if let Some((head, body, phi)) = looped {
-            let (take, done) = (block("take"), block("done"));
-            let taken = self
-                .builder
-                .build_load(ptr_type, head, "taken")
-                .expect(POSITIONED)
-                .into_pointer_value();
-            self.branch_on(is_null(taken), done, take);
-            self.builder.position_at_end(take);
-            let following = self
-                .builder
-                .build_load(ptr_type, taken, "following")
-                .expect(POSITIONED);
-            self.store(head, following);
-            phi.add_incoming(&[(&taken, take)]);
-            self.branch_to(body);
-            self.builder.position_at_end(done);
-        }
-        self.builder.build_return(None).expect(POSITIONED);
     }
 
     /// `@sisu_rc.eq.<C>(a, b)`: see `eq_entry` for the same pointer and `null`; otherwise

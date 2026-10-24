@@ -1,9 +1,10 @@
 // `==` on two enum values compares depth first. In each variant it compares the fields in
-// order, except the last field of the enum's own type: it comes after the fields that follow
-// it. Both fields of `Node` are of type `E`, so `==` compares them in order. Here the mismatch
-// is in the first field. The second fields hold two distinct class objects that each point to
-// themselves. `==` on those two objects never ends. So an `==` that compared the second field
-// before it found the mismatch would hang.
+// order and stops at the first difference. Here the mismatch is in an early field. The later
+// fields hold two distinct class objects that each point to themselves. `==` on those two
+// objects never ends. So an `==` that compared such a field before it found the mismatch
+// would hang. The first pair differs in the first field of `Node`, and its second field is the
+// last link. Each other pair differs in a link that a class field follows: a box in `Pair`, a
+// box of an optional in `Maybe`, and an inline link in `Both`, which holds an `Expr` inline.
 class C {
     mut next: C?
 }
@@ -12,6 +13,22 @@ enum E {
     Leaf
     Value(C)
     Node(E, E)
+    Pair(E, C)
+}
+
+enum Maybe {
+    Leaf
+    Pair(Maybe?, C)
+}
+
+// `Both` holds an `Expr` inline: the box of the cycle is on the field of `Pair`.
+enum Two<T> {
+    Both(T, C)
+}
+
+enum Expr {
+    Lit(i64)
+    Pair(Two<Expr>)
 }
 
 fn main() {
@@ -22,6 +39,15 @@ fn main() {
     let x = E.Node(E.Node(E.Leaf, E.Leaf), E.Value(a))
     let y = E.Node(E.Node(E.Node(E.Leaf, E.Leaf), E.Leaf), E.Value(b))
     print(x == y)    // false
+    let p = E.Pair(E.Leaf, a)
+    let q = E.Pair(E.Pair(E.Leaf, a), b)
+    print(p == q)    // false
+    let m = Maybe.Pair(None, a)
+    let n = Maybe.Pair(Maybe.Leaf, b)
+    print(m == n)    // false
+    let e = Expr.Pair(Two.Both(Expr.Lit(1), a))
+    let f = Expr.Pair(Two.Both(Expr.Pair(Two.Both(Expr.Lit(1), a)), b))
+    print(e == f)    // false
     a.next = None
     b.next = None
 }
