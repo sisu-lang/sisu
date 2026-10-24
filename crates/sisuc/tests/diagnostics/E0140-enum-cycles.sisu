@@ -1,0 +1,9 @@
+class Pair<A, B> {
+    a: A
+    b: B
+}
+enum Link<T, U> {
+    End
+    Next(Pair<Link<[T], i64>, Link<i64, [U]>>)
+}
+fn main() {}

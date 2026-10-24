@@ -1,0 +1,8 @@
+error[E0140]: `Link` instantiates itself without end
+ --> E0140-two-instances.sisu:6:27
+  |
+6 |     next: Pair<Link<[T]>, Link<[[T]]>>?
+  |                           ^^^^^^^^^^^ `Link<[[T]]>` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

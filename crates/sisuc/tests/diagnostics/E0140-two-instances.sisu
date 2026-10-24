@@ -1,0 +1,8 @@
+class Pair<A, B> {
+    a: A
+    b: B
+}
+class Link<T> {
+    next: Pair<Link<[T]>, Link<[[T]]>>?
+}
+fn main() {}

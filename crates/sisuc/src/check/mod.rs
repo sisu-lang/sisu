@@ -977,15 +977,15 @@ impl Checker<'_> {
         }
     }
 
-    /// `None`, reported at the name without its `?`, for an unknown type, and for type
-    /// arguments that do not fit.
-    /// `resolve`, and the class and enum types written in `ty`, each with its span.
+    /// `resolve`, and the applied names written in `ty`, each with its span.
     fn resolve_written(&mut self, ty: &ast::TypeExpr) -> (Option<Type>, Vec<(Type, Span)>) {
         self.written = Some(Vec::new());
         let resolved = self.resolve(ty);
         (resolved, self.written.take().unwrap_or_default())
     }
 
+    /// `None`, reported at the name without its `?`, for an unknown type, and for type
+    /// arguments that do not fit.
     fn resolve(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
         let named = match &ty.kind {
             ast::TypeKind::Array(element) => Type::array(self.resolve(element)?),
@@ -994,8 +994,8 @@ impl Checker<'_> {
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
         };
-        // Only an applied name can be an instance that grows: a plain name has no arguments, and
-        // arguments on a parameter or a built-in type are an error that resolved to `None`.
+        // Only an applied name can be an instance that grows: a plain name has no arguments.
+        // Arguments on a parameter or a built-in type are E0137, and no instance has that type.
         if let (Some(written), ast::TypeKind::Applied(applied)) = (&mut self.written, &ty.kind) {
             // Without the `?`: the type that grows is the instance, not the optional of it.
             written.push((named, Span::new(ty.span.start(), applied.angles.end())));

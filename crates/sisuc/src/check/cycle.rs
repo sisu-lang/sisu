@@ -39,6 +39,9 @@ struct Edge {
     growing: bool,
     holder: usize,
     site: Span,
+    /// What a diagnostic underlines: `site`, or the instance inside it. Only `site` picks and
+    /// merges cycles.
+    mark: Span,
     instance: Option<Instance>,
 }
 
@@ -67,6 +70,7 @@ impl Graph {
         args: &[Type],
         target: usize,
         site: Span,
+        mark: Span,
         instance: Instance,
     ) {
         for (q, &arg) in args.iter().enumerate().filter(|(_, arg)| arg.has_param()) {
@@ -77,6 +81,7 @@ impl Graph {
                 growing: !matches!(arg.kind(), TypeKind::Param(..)),
                 holder,
                 site,
+                mark,
                 instance: Some(instance),
             });
         }
@@ -108,6 +113,7 @@ impl Graph {
                     growing: false,
                     holder,
                     site: Span::new(0, 0),
+                    mark: Span::new(0, 0),
                     instance: None,
                 });
             }
@@ -149,8 +155,8 @@ impl Graph {
                 TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
                 _ => continue,
             };
-            let at = spans.get(&ty).copied().unwrap_or(site);
-            self.args(holder, args.get(), target, at, Instance::Type(ty));
+            let mark = spans.get(&ty).copied().unwrap_or(site);
+            self.args(holder, args.get(), target, site, mark, Instance::Type(ty));
             stack.extend(args.get());
         }
     }
@@ -221,9 +227,9 @@ impl Checker<'_> {
                 .filter_map(|e| {
                     e.instance
                         .filter(|_| shown.insert(e.site))
-                        .map(|i| (e.site, i))
+                        .map(|i| (e.mark, i))
                 })
-                .map(|(site, instance)| (site, self.instance_name(functions, instance)))
+                .map(|(mark, instance)| (mark, self.instance_name(functions, instance)))
                 .collect();
             let name = match edge.holder.checked_sub(declared) {
                 None => self.signatures[edge.holder].name.clone(),
@@ -232,7 +238,7 @@ impl Checker<'_> {
             };
             self.report(DiagnosticKind::InstantiationCycle {
                 name,
-                at: edge.site,
+                at: edge.mark,
                 instance: self.instance_name(
                     functions,
                     edge.instance
@@ -274,6 +280,7 @@ impl Checker<'_> {
                         holder,
                         types.get(),
                         func.0,
+                        e.span,
                         e.span,
                         Instance::Call(func, types),
                     );
@@ -416,7 +423,7 @@ mod tests {
         }
         let site = Span::new(0, 1);
         let mut g = graph(1);
-        g.args(0, &[ty], 0, site, Instance::Type(ty));
+        g.args(0, &[ty], 0, site, site, Instance::Type(ty));
         // A node per `Pair`, an edge from each of its two arguments, and the call's edge.
         assert_eq!(g.typed.len(), 20);
         assert_eq!(g.edges.len(), 2 * 20 + 1);
@@ -439,7 +446,8 @@ mod tests {
             }
             let mut g = graph(n as usize + 1);
             for site in 0..10 {
-                g.args(0, &[ty], 0, Span::new(site, site + 1), Instance::Type(ty));
+                let at = Span::new(site, site + 1);
+                g.args(0, &[ty], 0, at, at, Instance::Type(ty));
             }
             assert_eq!(g.typed.len(), n as usize);
             assert_eq!(g.edges.len(), 2 * n as usize + 10);
@@ -459,7 +467,14 @@ mod tests {
                     ty = Type::intern(TypeKind::Array(ty));
                 }
                 let mut g = graph(1);
-                g.args(0, &[ty], 0, Span::new(0, 1), Instance::Type(ty));
+                g.args(
+                    0,
+                    &[ty],
+                    0,
+                    Span::new(0, 1),
+                    Span::new(0, 1),
+                    Instance::Type(ty),
+                );
                 assert_eq!(g.typed.len(), levels);
                 let mut ty = param(0);
                 for _ in 0..levels {
