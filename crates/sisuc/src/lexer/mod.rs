@@ -3323,6 +3323,8 @@ mod tests {
         // Every header keyword makes the fix safe, and the gap before the `{` becomes a space.
         for (src, gap, at) in [
             ("fn main()\n{\n}", (9, 10), (2, 1)),
+            // A blank first line puts the newline before the header at byte 0.
+            ("\nfn main()\n{\n}\n", (10, 11), (3, 1)),
             ("class A\n{\n}", (7, 8), (2, 1)),
             ("enum A\n{\n}", (6, 7), (2, 1)),
             (
@@ -4232,8 +4234,8 @@ mod tests {
         }
     }
 
-    /// A `{` that starts a line finds its line and its statement by a count in the source and in
-    /// the tokens that is linear in their size, not by a scan back for each token of its line.
+    /// A `{` that starts a line finds its line and its statement. The work for this is about as
+    /// large as the source and the tokens. It is not a new scan back for each token of the line.
     #[test]
     fn line_of_should_read_one_line() {
         let params: Vec<String> = (0..2000).map(|i| format!("a{i}: i64")).collect();
@@ -4241,11 +4243,8 @@ mod tests {
         BACK_SCANNED.set(0);
         let lexed = lex(&src).expect("the lexer should recover");
         assert_eq!(lexed.diagnostics.len(), 1, "one E0004");
-        assert!(
-            BACK_SCANNED.get() <= 4 * src.len(),
-            "{} scanned",
-            BACK_SCANNED.get()
-        );
+        let scanned = BACK_SCANNED.get();
+        assert!(scanned <= 4 * src.len(), "{scanned} scanned");
     }
 
     /// Line-start `{` blocks in `( )`, where no `Newline` ends the statement, still find the
@@ -4257,10 +4256,10 @@ mod tests {
         let lexed = lex(&src).expect("the lexer should recover");
         assert!(lexed.diagnostics.len() >= 1999, "an E0004 for each block");
         let tokens = lexed.tokens.len();
+        let scanned = BACK_SCANNED.get();
         assert!(
-            BACK_SCANNED.get() <= 4 * tokens,
-            "{} scanned of {tokens} tokens",
-            BACK_SCANNED.get()
+            scanned <= 4 * tokens,
+            "{scanned} scanned of {tokens} tokens"
         );
     }
 
