@@ -645,6 +645,9 @@ struct Statement {
     /// `>` or any other token closes it. A bracket closes it before it is saved, so a statement
     /// given back at a `}` never has it.
     params: bool,
+    /// Where its first token stands among the tokens. A bracket other than `{` keeps the
+    /// statement around it going, so it shares that statement's start.
+    start: usize,
 }
 
 impl Statements {
@@ -670,15 +673,22 @@ impl Statements {
                 LBrace | LParen | LBracket | StrHead(_) => {
                     let header = if t.kind == LBrace { None } else { s.header };
                     self.enclosing.push(*s);
+                    let start = if t.kind == LBrace { i + 1 } else { s.start };
                     self.current = Statement {
                         header,
+                        start,
                         ..Statement::default()
                     };
                 }
                 RBrace | RParen | RBracket | StrTail(_) => {
                     self.current = self.enclosing.pop().unwrap_or_default();
                 }
-                Newline | Semicolon => *s = Statement::default(),
+                Newline | Semicolon => {
+                    *s = Statement {
+                        start: i + 1,
+                        ..Statement::default()
+                    };
+                }
                 Colon | Arrow => s.annotation = Some(0),
                 // A `>=` after a type annotation closes it and starts its value. So does a loop
                 // keyword: it follows a loop label's `:`, which is no annotation.
@@ -712,12 +722,30 @@ impl Statements {
     /// is a `fn`, `class` or `enum` header, where a `>` can only close type arguments, never
     /// compare.
     fn closes_header(&mut self, tokens: &[Token]) -> bool {
-        let end = tokens
-            .iter()
-            .rposition(|t| !matches!(t.kind, TokenKind::Newline | TokenKind::Semicolon))
-            .map_or(0, |i| i + 1);
-        self.read(tokens, end).header == Some(true)
+        self.read(tokens, statement_end(tokens)).header == Some(true)
     }
+
+    /// The statement that `tokens` ends with in a block, before any line break or `;` after it:
+    /// from the last line break or `;` that ended a statement, or the `{` of the block it stands
+    /// in. A break inside brackets or before a continuation never reached `tokens`, so a
+    /// statement can span lines, and a `;` inside `( )`, `[ ]` or an interpolation does not end
+    /// it.
+    fn last<'t>(&mut self, tokens: &'t [Token]) -> &'t [Token] {
+        let end = statement_end(tokens);
+        &tokens[self.read(tokens, end).start..end]
+    }
+}
+
+/// Where the statement that `tokens` ends with ends: before the `Newline`s and `;`s after it.
+fn statement_end(tokens: &[Token]) -> usize {
+    tokens
+        .iter()
+        .rposition(|t| {
+            #[cfg(test)]
+            BACK_SCANNED.set(BACK_SCANNED.get() + 1);
+            !matches!(t.kind, TokenKind::Newline | TokenKind::Semicolon)
+        })
+        .map_or(0, |i| i + 1)
 }
 
 impl Brackets {
@@ -1062,6 +1090,8 @@ fn continues_params(code: &str, tokens: &[Token], brackets: &mut Brackets) -> bo
 thread_local! {
     /// How many tokens `Statements::read` has read on this thread.
     static JUDGED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many tokens and bytes `line_of` and `Statements::last` have examined on this thread.
+    static BACK_SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many bytes `next_code` has looked through on this thread.
     static LOOKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -1126,7 +1156,7 @@ fn check_line_start(
                     // Only a header takes the `{`: joining it to another statement almost never
                     // gives a valid one (`print(1) {`, `let x = 1 {`, `} {`). Inside `(` or `[`
                     // the moved `{` would still sit in the unclosed bracket.
-                    let statement = match last_statement(tokens) {
+                    let statement = match statements.last(tokens) {
                         // A loop label: the header starts after it.
                         [label, colon, header @ ..]
                             if matches!(label.kind, TokenKind::Ident(_))
@@ -1174,39 +1204,20 @@ fn check_line_start(
 
 /// The tokens on the line of `code`, up to the end of `tokens`.
 fn line_of<'t>(source: &str, tokens: &'t [Token], code: &Token) -> &'t [Token] {
-    let before = tokens.iter().rposition(|t| {
-        source[t.span.start().min(code.span.start())..code.span.start()].contains('\n')
-    });
-    &tokens[before.map_or(0, |i| i + 1)..]
-}
-
-/// The statement that `tokens` ends with in a block, before any line break or `;` after it: back
-/// to the last line break or `;` that ended a statement, or to the `{` of the block it stands in.
-/// A break inside brackets or before a continuation never reached `tokens`, so a statement can
-/// span lines, and a `;` inside `( )`, `[ ]` or an interpolation does not end it.
-fn last_statement(tokens: &[Token]) -> &[Token] {
-    let end = tokens
+    let line = source.as_bytes()[..code.span.start()]
         .iter()
-        .rposition(|t| !matches!(t.kind, TokenKind::Newline | TokenKind::Semicolon))
+        .rposition(|&b| {
+            #[cfg(test)]
+            BACK_SCANNED.set(BACK_SCANNED.get() + 1);
+            b == b'\n'
+        })
         .map_or(0, |i| i + 1);
-    let mut depth = 0_usize;
-    let start = tokens[..end].iter().rposition(|t| match t.kind {
-        TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket | TokenKind::StrTail(_) => {
-            depth += 1;
-            false
-        }
-        TokenKind::LBrace if depth > 0 => {
-            depth -= 1;
-            false
-        }
-        TokenKind::LParen | TokenKind::LBracket | TokenKind::StrHead(_) => {
-            depth = depth.saturating_sub(1);
-            false
-        }
-        TokenKind::LBrace | TokenKind::Newline | TokenKind::Semicolon => depth == 0,
-        _ => false,
+    let from = tokens.partition_point(|t| {
+        #[cfg(test)]
+        BACK_SCANNED.set(BACK_SCANNED.get() + 1);
+        t.span.start() < line
     });
-    &tokens[start.map_or(0, |i| i + 1)..end]
+    &tokens[from..]
 }
 
 /// Whether `t` starts a header, which takes a `{` at the end of its line.
@@ -4219,6 +4230,38 @@ mod tests {
             tokens(src);
             assert_eq!(JUDGED.get(), 0, "{src}");
         }
+    }
+
+    /// A `{` that starts a line finds its line and its statement by a count in the source and in
+    /// the tokens that is linear in their size, not by a scan back for each token of its line.
+    #[test]
+    fn line_of_should_read_one_line() {
+        let params: Vec<String> = (0..2000).map(|i| format!("a{i}: i64")).collect();
+        let src = format!("fn f({})\n{{\n}}", params.join(", "));
+        BACK_SCANNED.set(0);
+        let lexed = lex(&src).expect("the lexer should recover");
+        assert_eq!(lexed.diagnostics.len(), 1, "one E0004");
+        assert!(
+            BACK_SCANNED.get() <= 4 * src.len(),
+            "{} scanned",
+            BACK_SCANNED.get()
+        );
+    }
+
+    /// Line-start `{` blocks in `( )`, where no `Newline` ends the statement, still find the
+    /// statement from its recorded start.
+    #[test]
+    fn brace_chains_should_scan_once() {
+        let src = format!("let x = f(\n{})", "{\n}\n".repeat(2000));
+        BACK_SCANNED.set(0);
+        let lexed = lex(&src).expect("the lexer should recover");
+        assert!(lexed.diagnostics.len() >= 1999, "an E0004 for each block");
+        let tokens = lexed.tokens.len();
+        assert!(
+            BACK_SCANNED.get() <= 4 * tokens,
+            "{} scanned of {tokens} tokens",
+            BACK_SCANNED.get()
+        );
     }
 
     /// Blank lines and comments between two parameters, each of which a line break starts.
