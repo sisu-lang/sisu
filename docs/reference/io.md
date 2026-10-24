@@ -117,3 +117,13 @@ The rules:
 ## Exit code
 
 A program ends with the exit code 0 when `main` returns and the text of `print` is written ([main](functions.md#main)). When that last write fails with an error, the program panics. A panic ends the program with the exit code 101 ([panic](functions.md#panic)).
+
+### A failure from main
+
+When `main` returns a failure, the program writes `error: ` and the text of the error to standard error. Then it ends with the exit code 1 ([A main that fails](errors.md#a-main-that-fails)).
+
+```sisu pending
+fn main() -> unit | string {
+    fail "missing file"
+}
+```

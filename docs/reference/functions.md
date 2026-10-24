@@ -113,6 +113,20 @@ fn main() {
 }
 ```
 
+### Unused parameters
+
+A parameter can be named `_`. It binds nothing, and a parameter list can have `_` more than once. Use it for a parameter that the function does not need.
+
+```sisu pending
+fn first(x: i64, _: i64) -> i64 {
+    x
+}
+
+fn main() {
+    print(first(1, 2))                 // 1
+}
+```
+
 ## Return types
 
 A function with a return type `-> T` gives a value of the type `T`. The value is the value of the last expression of its body, or the value of a `return`.
@@ -228,6 +242,16 @@ fn start() {                     // error[E0028]
 }
 ```
 
+### A main that fails
+
+`main` can return a `unit | E`. When it returns a failure, the program writes `error: ` and the text of the error to standard error. Then it ends with the exit code 1 ([A main that fails](errors.md#a-main-that-fails)).
+
+```sisu pending
+fn main() -> unit | string {
+    fail "no input"
+}
+```
+
 ## panic
 
 `panic(message)` stops the program. It writes the message to standard error and the program ends with the exit code 101.
@@ -304,4 +328,22 @@ fn main() {
 
 ```stderr
 sisu: panic at example.sisu:2:5: not yet implemented: read the file
+```
+
+## Functions as values
+
+A function is a value of a function type, such as `(i64) -> i64`. A program can pass it, store it and return it ([Function types](closures.md#function-types)).
+
+```sisu pending
+fn double(n: i64) -> i64 {
+    n * 2
+}
+
+fn apply(f: (i64) -> i64, x: i64) -> i64 {
+    f(x)
+}
+
+fn main() {
+    print(apply(double, 21))           // 42
+}
 ```

@@ -250,3 +250,25 @@ fn main() {
 ```
 
 An object stays in memory while a reference to it exists. [Values and memory](values.md#object-lifetime) tells when Sisu frees it.
+
+## Interfaces
+
+A class can name interfaces after its name, as in `class Person: Named`. Its body then holds the methods of those interfaces ([Interfaces](generics.md#interfaces)).
+
+```sisu pending
+interface Named {
+    fn name(self) -> string
+}
+
+class Person: Named {
+    first: string
+
+    fn name(self) -> string {
+        self.first
+    }
+}
+
+fn main() {
+    print(Person(first: "Aino").name())    // Aino
+}
+```

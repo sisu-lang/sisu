@@ -347,6 +347,22 @@ fn main() {
 102
 ```
 
+### Loops over iterables
+
+A `for` loop also takes a value that conforms to `Iterable`, such as the result of an iterator method ([Iterators](closures.md#iterators)). A range is a value, so a binding can hold it.
+
+```sisu pending
+fn main() {
+    let r = 0..3
+    for i in r {
+        print(i)                       // 0, 1, 2
+    }
+    for x in [1, 2, 3].map(x => x * 2) {
+        print(x)                       // 2, 4, 6
+    }
+}
+```
+
 ## loop
 
 A `loop` runs its body again and again, until a `break` ends it. A `loop` is also an expression: a `break` with a value gives the loop that value ([Expressions](expressions.md#loop)).

@@ -159,6 +159,19 @@ fn main() {
 }
 ```
 
+### More methods
+
+`xs.push(x)` adds `x` after the last element of `xs`. It writes the array, as `xs[i] = x` does. An array also has the [iterator methods](closures.md#iterator-methods).
+
+```sisu pending
+fn main() {
+    let mut xs = [1, 2]
+    xs.push(3)
+    print(xs.len())                    // 3
+    print(xs.map(x => x * 2).sum())    // 12
+}
+```
+
 ## Equality
 
 Two arrays are equal when they have the same length and their elements are equal, in order ([Equality](operators.md#equality)). `<` and the other comparisons do not apply to arrays ([E0032](../diagnostics/E0032.md)). Nor does `is`, because an array is not an object ([E0046](../diagnostics/E0046.md)).

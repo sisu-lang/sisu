@@ -428,3 +428,23 @@ fn main() {
 label
 heat: 80
 ```
+
+## Passing a failure up
+
+`x?` on a result gives the success, or ends the enclosing function with the failure. On an optional, `x?` gives the value, or ends the function with `None`. `r ?? d` on a result gives the success, or `d` on any failure ([The `?` operator](errors.md#the--operator)).
+
+```sisu pending
+fn parse(text: string) -> i64 | string {
+    i64(text) ?? fail "not a number: {text}"
+}
+
+fn twice(text: string) -> i64 | string {
+    parse(text)? * 2
+}
+
+fn main() {
+    print(twice("21") ?? 0)            // 42
+}
+```
+
+`?` is a postfix operator and binds as a call does.

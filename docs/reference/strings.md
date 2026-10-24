@@ -132,6 +132,21 @@ fn main() {
 }
 ```
 
+### Text of other types
+
+`print` and interpolation also take a value of any other type. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+
+```sisu pending
+class Sauna {
+    heat: i64
+}
+
+fn main() {
+    print([1, 2])                      // [1, 2]
+    print(Sauna(heat: 80))             // Sauna
+}
+```
+
 ## Interpolation
 
 `{expression}` in a string literal writes the value of the expression as text ([Literals](literals.md#interpolation)). A `:` after the expression adds a format spec.

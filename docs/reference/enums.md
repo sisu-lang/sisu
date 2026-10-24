@@ -636,3 +636,24 @@ fn main() {
     }
 }
 ```
+
+### Patterns on an optional
+
+`if let` on an optional `T?` also takes any pattern for `T`. A pattern whose outermost name is `Some` or `None` matches the optional itself ([Option and Result](types.md#option-and-result)).
+
+```sisu pending
+enum Shape {
+    Circle(i64)
+    Square(i64)
+}
+
+fn main() {
+    let maybe: Shape? = Shape.Circle(2)
+    if let Circle(r) = maybe {
+        print(r)                       // 2
+    }
+    if let Some(_) = maybe {
+        print("a shape")               // a shape
+    }
+}
+```
