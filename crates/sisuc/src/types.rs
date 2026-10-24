@@ -109,10 +109,19 @@ impl TypeArgs {
     /// The list with `Type::subst` applied to each element. A list without a parameter comes
     /// back as it is.
     pub(crate) fn subst(self, with: &[Type]) -> TypeArgs {
+        self.subst_in(with, &mut FxHashMap::default())
+    }
+
+    /// `subst`, sharing `memo` with the walk that called it.
+    fn subst_in(self, with: &[Type], memo: &mut FxHashMap<Type, Type>) -> TypeArgs {
         if !self.has_param() {
             return self;
         }
-        let list: Vec<Type> = self.get().iter().map(|ty| ty.subst(with)).collect();
+        let list: Vec<Type> = self
+            .get()
+            .iter()
+            .map(|ty| ty.subst_in(with, memo))
+            .collect();
         TypeArgs::intern(&list)
     }
 }
@@ -136,6 +145,8 @@ pub(crate) enum Head {
 
 #[cfg(test)]
 thread_local! {
+    /// The types `Type::subst` has substituted on this thread: those that name a parameter.
+    static SUBSTITUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The most steps `write_steps` has held at once on this thread.
     static HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -350,19 +361,34 @@ impl Type {
     }
 
     /// The type with each `Param(_, i)` replaced by `args[i]`. A type without a parameter comes
-    /// back as it is. An optional is rebuilt with `Type::optional`, so it never flattens.
+    /// back as it is. An optional is rebuilt with `Type::optional`, so it never flattens. Each
+    /// distinct type inside this one is substituted once, however many paths lead to it.
     pub(crate) fn subst(self, args: &[Type]) -> Type {
+        self.subst_in(args, &mut FxHashMap::default())
+    }
+
+    /// `subst`, with `memo` holding each type that the walk has already substituted.
+    fn subst_in(self, args: &[Type], memo: &mut FxHashMap<Type, Type>) -> Type {
         if !self.has_param() {
             return self;
         }
-        match self.kind() {
-            TypeKind::Param(_, i) => args[i as usize],
-            TypeKind::Array(element) => Type::array(element.subst(args)),
-            TypeKind::Optional(payload) => Type::optional(payload.subst(args)),
-            TypeKind::Class(id, list) => Type::intern(TypeKind::Class(id, list.subst(args))),
-            TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, list.subst(args))),
-            _ => unreachable!("only a kind with a child can name a parameter"),
+        if let Some(&done) = memo.get(&self) {
+            return done;
         }
+        #[cfg(test)]
+        SUBSTITUTED.set(SUBSTITUTED.get() + 1);
+        let done = match self.kind() {
+            TypeKind::Param(_, i) => args[i as usize],
+            TypeKind::Array(element) => Type::array(element.subst_in(args, memo)),
+            TypeKind::Optional(payload) => Type::optional(payload.subst_in(args, memo)),
+            TypeKind::Class(id, list) => {
+                Type::intern(TypeKind::Class(id, list.subst_in(args, memo)))
+            }
+            TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, list.subst_in(args, memo))),
+            _ => unreachable!("only a kind with a child can name a parameter"),
+        };
+        memo.insert(self, done);
+        done
     }
 
     /// `[element]`.
@@ -470,6 +496,18 @@ mod tests {
         let (text, cut) = text(Type::intern(TypeKind::Class(ClassId(0), wide)));
         assert!(cut && text.len() <= NAME_LIMIT + 64, "{text}");
         assert!(HELD.get() <= text.len(), "{} steps for {text}", HELD.get());
+    }
+
+    /// `t_20` has 21 distinct types but 2^21 paths to its leaf.
+    #[test]
+    fn subst_should_visit_each_shared_type_once() {
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        SUBSTITUTED.set(0);
+        assert_eq!(
+            doubled(param, 20).subst(&[Type::I64]),
+            doubled(Type::I64, 20)
+        );
+        assert!(SUBSTITUTED.get() <= 2 * 21, "{} visits", SUBSTITUTED.get());
     }
 
     #[test]
