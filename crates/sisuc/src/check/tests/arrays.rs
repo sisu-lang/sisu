@@ -117,6 +117,125 @@ fn operands_spill_before_an_exit() {
     );
 }
 
+/// A literal whose expected type failed still types and joins its elements: only what takes
+/// its type from the context is left quiet. A `loop` takes its type from its `break` values,
+/// which must agree. Each quiet row checks clean with an array type written for `Bad`.
+#[test]
+fn a_literal_in_a_failed_context_should_still_join_its_elements() {
+    let quiet = [
+        "[[None; 1]]",
+        "[[None; 1]; 2]",
+        "[[[]]]",
+        "[loop { break [] }]",
+        "[[loop { break [] }]]",
+        "[make(1)]",
+        "[[make(1)]]",
+        "[id([])]",
+        "[if true { loop { break [] } } else { [1] }]",
+        "[{ [] }]",
+        "[match true { _ => None }]",
+        // The `else` block's value is a parenthesized `if`, which shares its span.
+        "[if true { [] } else { (if false { id([]) } else { [] }) }]",
+    ];
+    for literal in quiet {
+        let src = format!(
+            "fn main() {{\n    let xs: Bad = {literal}\n}}\nfn id<T>(x: T) -> T {{ x }}\nfn make<T>(n: i64) -> [T] {{ [] }}"
+        );
+        codes(&src, &[(Code::UnknownType, (2, 13))]);
+    }
+    for (src, expected) in [
+        // A statement does not take the literal's type, so its own failure is reported.
+        (
+            "fn main() {\n    let xs: Bad = [{\n        let q = []\n        1\n    }]\n}",
+            vec![(Code::UnknownType, (2, 13)), (Code::CannotInfer, (3, 17))],
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [nope, [None; 1]]\n}",
+            vec![
+                (Code::UnknownType, (2, 13)),
+                (Code::BindingNotFound, (2, 20)),
+            ],
+        ),
+        // A loop in a branch or in a `break` value of the element joins its values too.
+        (
+            "fn main() {\n    let xs: Bad = [if true { loop { break 1 } } else { true }]\n}",
+            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 56))],
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [loop {\n        if true { break loop { break 1 } }\n        break \"a\"\n    }]\n}",
+            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+        ),
+        // A loop in a statement before the element's value keeps its own rules.
+        (
+            "fn main() {\n    let xs: Bad = [{\n        let y: Bad = loop {\n            if true { break 1 }\n            break true\n        }\n        1\n    }]\n}",
+            vec![(Code::UnknownType, (2, 13)), (Code::UnknownType, (3, 16))],
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [loop { break 1 }, true]\n}",
+            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 38))],
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [loop {\n        if true { break 1 }\n        break true\n    }]\n}",
+            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+        ),
+    ] {
+        codes(src, &expected);
+    }
+}
+
+#[test]
+fn a_part_that_fails_on_its_own_in_a_quiet_element_should_add_no_report() {
+    // GIVEN a loop whose values do not join, in a part of the element that failed first
+    let looped = "loop {\n        if true { break 1 }\n        break true\n    }";
+    for (element, at, code) in [
+        (format!("nope + {looped}"), (2, 20), Code::BindingNotFound),
+        (format!("nope ?? {looped}"), (2, 20), Code::BindingNotFound),
+        (format!("nope({looped})"), (2, 20), Code::FunctionNotFound),
+        (
+            format!("if true {{ nope }} else {{ {looped} }}"),
+            (2, 30),
+            Code::BindingNotFound,
+        ),
+    ] {
+        // WHEN the element is checked in a literal whose context failed
+        let src = format!("fn main() {{\n    let xs: Bad = [{element}]\n}}");
+        // THEN only the failed context and the first failure are reported
+        codes(&src, &[(Code::UnknownType, (2, 13)), (code, at)]);
+    }
+    codes(
+        "fn f(b: u8) {\n    let xs: Bad = [nope + loop {\n        if true { break 1 }\n        break b\n    }]\n}\nfn main() {}",
+        &[
+            (Code::UnknownType, (2, 13)),
+            (Code::BindingNotFound, (2, 20)),
+        ],
+    );
+    // A loop that is the receiver of a field keeps its own report, as with no failed context.
+    codes(
+        &format!("fn main() {{\n    let xs: Bad = [{looped}.x]\n}}"),
+        &[(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+    );
+}
+
+#[test]
+fn branches_that_do_not_join_in_a_quiet_element_should_still_be_reported() {
+    for (src, at) in [
+        (
+            "fn main() {\n    let xs: Bad = [if true { [] } else { 1 }]\n}",
+            (2, 30),
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [if true { 1 } else { [] }]\n}",
+            (2, 41),
+        ),
+        (
+            "fn main() {\n    let xs: Bad = [match true {\n        true => []\n        false => 1\n    }]\n}",
+            (3, 17),
+        ),
+    ] {
+        codes(src, &[(Code::UnknownType, (2, 13)), (Code::Mismatch, at)]);
+    }
+}
+
 #[test]
 fn empty_array_cannot_be_inferred() {
     diagnostic(

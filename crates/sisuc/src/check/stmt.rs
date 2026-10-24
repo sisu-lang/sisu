@@ -75,7 +75,7 @@ impl Checker<'_> {
     }
 
     /// `scoped_block`, its statements before `so_far.done` checked already.
-    fn resume_block(
+    pub(super) fn resume_block(
         &mut self,
         block: &ast::Block,
         expected: Option<Type>,
@@ -437,7 +437,7 @@ impl Checker<'_> {
                 });
                 let frame = LoopFrame::new(LoopKind::WhileLet, *keyword, label.clone(), None);
                 let ((bound, checked), _) = self.loop_body(frame, |c| {
-                    c.let_block(Unwrap::WhileLet, form, pattern, body, None)
+                    c.let_block(Unwrap::WhileLet, &form, pattern, body, None)
                 });
                 if let Ok(checked) = &checked {
                     self.discard_tail(body, checked);
@@ -1076,7 +1076,8 @@ impl Checker<'_> {
         body: &ast::Block,
         expected: Option<Type>,
     ) -> Checked {
-        let frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
+        let mut frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
+        frame.quiet = self.quiet(span, expected);
         let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, None));
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
@@ -1142,6 +1143,7 @@ impl Checker<'_> {
             return Err(Poisoned::typed(Type::NEVER));
         }
         let frame = self.frame(target);
+        let quiet = frame.quiet;
         let hint = frame
             .expected
             .map(|ty| (ty, None))
@@ -1150,10 +1152,16 @@ impl Checker<'_> {
             .and_then(|(_, first)| first)
             .map(|first| (v.span, first));
         let outer = std::mem::replace(&mut self.body.break_hint, from);
+        // A value of a quiet loop that expects nothing is quiet too, wherever the `break` is.
+        let outer_quiet = self.body.quiet_at;
+        if quiet {
+            self.body.quiet_at = Some(v.span);
+        }
         self.body.label_typo = typo.map(|name| name.span);
         let checked = self.expr(v, hint.map(|(ty, _)| ty));
         self.body.label_typo = None;
         self.body.break_hint = outer;
+        self.body.quiet_at = outer_quiet;
         // A failed value fails the loop, and gives it no type and no second report.
         if checked.is_err() {
             self.frame(target).failed = true;
@@ -1214,12 +1222,23 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> (tir::LocalId, CheckedBlock) {
         self.body.scopes.push(FxHashMap::default());
-        let bind = if name.name.as_str() == "_" {
+        let bind = self.bind_unwrapped(keyword, name, ty);
+        (bind, self.scoped_block(block, expected))
+    }
+
+    /// `name` bound to a `ty` in the innermost scope, as `keyword` binds it, and its local.
+    /// A `_` binds a fresh unnamed local and declares no name.
+    pub(super) fn bind_unwrapped(
+        &mut self,
+        keyword: &'static str,
+        name: &ast::Ident,
+        ty: Option<Type>,
+    ) -> tir::LocalId {
+        if name.name.as_str() == "_" {
             self.fresh(ty.unwrap_or(Type::UNIT))
         } else {
             self.declare(name, ty, BindingKind::Unwrapped(keyword), None)
-        };
-        (bind, self.scoped_block(block, expected))
+        }
     }
 
     /// A new local with no source name, for a value the lowering binds.

@@ -1,0 +1,8 @@
+error[E0032]: expected `string`, found `P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>, P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>>, P<P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>, P<P<P<i64, i64>, P<i64, i64>>, P<P<i64...>>>>>>>>>>>>>>>>>>>>`
+  --> E0032-long-type.sisu:27:21
+   |
+27 |     let s: string = y20
+   |                     ^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

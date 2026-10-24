@@ -98,7 +98,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `sisu_realloc(ptr, old_size, align, new_size) -> ptr` from the runtime, declared on
     /// first use, so that a module without `+` stays as it was.
-    fn realloc(&self) -> FunctionValue<'ctx> {
+    pub(super) fn realloc(&self) -> FunctionValue<'ctx> {
         self.runtime("sisu_realloc")
     }
 

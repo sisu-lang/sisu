@@ -15,6 +15,7 @@ use crate::tir::{
     Arm, Block, Class, ClassId, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, Place,
     Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
 };
+use crate::types::{Head, write_args};
 
 /// `program` with each generic function, class and enum replaced by the instantiations it
 /// reaches, and its enums laid out again.
@@ -238,11 +239,51 @@ impl Mono {
         done
     }
 
-    /// `<a, b>` for the concrete checked types `args`, each named as the output names it;
-    /// nothing for none.
-    fn written(&mut self, args: &[Type]) -> String {
-        let args: Vec<Type> = args.iter().map(|&ty| self.output(ty)).collect();
-        self.out.args_name(&args)
+    /// Reaches each of the concrete checked types `args`, before the instance that takes them
+    /// gets its id, so that the instances inside them get lower ids.
+    fn reach(&mut self, args: &[Type]) {
+        for &ty in args {
+            self.output(ty);
+        }
+    }
+
+    /// The name of the instance `id` of the declaration `name`, with the concrete checked `args`.
+    /// The first `owner` of `args` are its class's. The name writes the arguments as a program
+    /// does: `Stack<i64>.push`. It writes the checked types, because an output type's head is a
+    /// whole instance name. A name cut at `NAME_LIMIT` ends in `#id`, so it stays distinct.
+    fn instance_name(&self, name: &str, args: &[Type], owner: usize, id: usize) -> String {
+        let head = |head| self.head(head);
+        let (owner_args, own) = args.split_at(owner);
+        let mut out = String::new();
+        let mut cut = false;
+        if let Some((class, method)) = name.split_once('.') {
+            out.push_str(class);
+            cut = write_args(&mut out, owner_args, head);
+            out.push('.');
+            out.push_str(method);
+        } else {
+            out.push_str(name);
+        }
+        if write_args(&mut out, own, head) || cut {
+            // `#` cannot occur in an identifier, so a cut name never meets a whole one.
+            out.push('#');
+            out.push_str(&id.to_string());
+        }
+        out
+    }
+
+    /// The declared name of the checked class or enum `head`.
+    fn head(&self, head: Head) -> &str {
+        match head {
+            Head::Class(id) => match &self.class_decls[id.0] {
+                Some(decl) => &decl.name,
+                None => &self.out.classes[self.class_ids[&(id, TypeArgs::NONE)].0].name,
+            },
+            Head::Enum(id) => match &self.enum_decls[id.0] {
+                Some(decl) => &decl.name,
+                None => &self.out.enums[self.enum_ids[&(id, TypeArgs::NONE)].0].name,
+            },
+        }
     }
 
     /// The output id of class `id` with `args`, given and put on the worklist when first reached.
@@ -250,16 +291,16 @@ impl Mono {
         if let Some(&done) = self.class_ids.get(&(id, args)) {
             return done;
         }
-        let written = self.written(args.get());
+        self.reach(args.get());
+        let done = ClassId(self.out.classes.len());
         let decl = self.class_decls[id.0]
             .as_ref()
             .expect("a class reached with arguments should be generic");
         let class = Class {
-            name: format!("{}{written}", decl.name),
+            name: self.instance_name(&decl.name, args.get(), 0, done.0),
             type_params: Vec::new(),
             fields: Vec::new(),
         };
-        let done = ClassId(self.out.classes.len());
         self.out.classes.push(class);
         self.class_ids.insert((id, args), done);
         self.work.push_back(Work::Class {
@@ -275,18 +316,18 @@ impl Mono {
         if let Some(&done) = self.enum_ids.get(&(id, args)) {
             return done;
         }
-        let written = self.written(args.get());
+        self.reach(args.get());
+        let done = EnumId(self.out.enums.len());
         let decl = self.enum_decls[id.0]
             .as_ref()
             .expect("an enum reached with arguments should be generic");
         let e = Enum {
-            name: format!("{}{written}", decl.name),
+            name: self.instance_name(&decl.name, args.get(), 0, done.0),
             type_params: Vec::new(),
             variants: Vec::new(),
             counted: false,
             cycle: None,
         };
-        let done = EnumId(self.out.enums.len());
         self.out.enums.push(e);
         self.enum_ids.insert((id, args), done);
         self.work.push_back(Work::Enum {
@@ -303,19 +344,12 @@ impl Mono {
         if let Some(&done) = self.function_ids.get(&(id, args)) {
             return done;
         }
+        self.reach(args.get());
+        let done = FuncId(self.functions.len());
         let decl = self.decls[id.0]
             .as_ref()
             .expect("a function reached with arguments should be generic");
-        let (name, owner_params) = (decl.name.clone(), decl.owner_params);
-        let (owner, own) = args.get().split_at(owner_params);
-        let name = match name.split_once('.') {
-            Some((class, method)) => {
-                let owner = self.written(owner);
-                format!("{class}{owner}.{method}{}", self.written(own))
-            }
-            None => format!("{name}{}", self.written(own)),
-        };
-        let done = FuncId(self.functions.len());
+        let name = self.instance_name(&decl.name, args.get(), decl.owner_params, done.0);
         self.functions.push(None);
         self.function_ids.insert((id, args), done);
         self.work.push_back(Work::Function {
@@ -563,9 +597,14 @@ fn concrete(ty: Type) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
+    use rustc_hash::FxHashSet;
+
     use super::*;
     use crate::check::check;
     use crate::parser::parse_ok;
+    use crate::types::NAME_LIMIT;
 
     /// The program `front_end` gives for `src`, which checks without an error.
     fn instantiated(src: &str) -> Program {
@@ -583,6 +622,76 @@ mod tests {
 
     const FIRST: &str =
         "fn first<T>(xs: [T]) -> T? {\n    if xs.len() > 0 { xs[0] } else { None }\n}";
+
+    /// The names of `program`'s functions, classes and enums.
+    fn all_names(program: &Program) -> Vec<&str> {
+        let enums = program.enums.iter().map(|e| e.name.as_str());
+        let mut names = function_names(program);
+        names.extend(class_names(program).into_iter().chain(enums));
+        names
+    }
+
+    /// `f{i}` calls `f{i+1}` with `P(a: x, b: Q.V(x))`, so the argument of `f25` is a type
+    /// whose text, written whole, has 2^24 leaves. The enum `Q` grows with it.
+    #[test]
+    fn instance_names_should_stay_bounded() {
+        let mut src =
+            String::from("class P<A, B> {\n    a: A\n    b: B\n}\nenum Q<A> {\n    V(A)\n}\n");
+        for i in 1..=24 {
+            writeln!(
+                src,
+                "fn f{i}<T>(x: T) -> i64 {{ f{}(P(a: x, b: Q.V(x))) }}",
+                i + 1
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src += "fn f25<T>(x: T) -> i64 { 1 }\nfn main() {\n    f1(1)\n}";
+        let program = instantiated(&src);
+        let names = all_names(&program);
+        for name in &names {
+            assert!(name.len() <= NAME_LIMIT + 64, "{name}");
+        }
+        let distinct: FxHashSet<&str> = names.iter().copied().collect();
+        assert_eq!(distinct.len(), names.len(), "{names:?}");
+        assert!(names.contains(&"f1<i64>"), "{names:?}");
+        assert!(names.contains(&"P<i64, Q<i64>>"), "{names:?}");
+        assert!(names.contains(&"Q<i64>"), "{names:?}");
+        assert!(
+            names
+                .iter()
+                .any(|name| name.starts_with("Q<") && name.contains("..."))
+        );
+    }
+
+    /// The class name is longer than `NAME_LIMIT`, so the two instances of `g`, of `P` and of
+    /// `P.m` agree in their first `NAME_LIMIT` bytes and differ only in their last argument.
+    #[test]
+    fn cut_names_should_stay_distinct() {
+        let long = format!("A{}", "a".repeat(300));
+        let program = instantiated(&format!(
+            "class {long} {{\n    x: i64\n}}\nclass P<A, B> {{\n    a: A\n    b: B\n    fn m(self) -> i64 {{ 1 }}\n}}\n\
+             fn g<T>(x: T) -> i64 {{ 1 }}\nfn main() {{\n    let p = P(a: {long}(x: 1), b: 1)\n    \
+             let q = P(a: {long}(x: 1), b: \"s\")\n    print(g(p) + g(q) + p.m() + q.m() + g(1))\n}}"
+        ));
+        let functions = function_names(&program);
+        let classes = class_names(&program);
+        for (names, count) in [(&functions, 4), (&classes, 2)] {
+            let cut: Vec<(usize, &str)> = (names.iter().copied().enumerate())
+                .filter(|(_, name)| name.contains("..."))
+                .collect();
+            assert_eq!(cut.len(), count, "{names:?}");
+            let distinct: FxHashSet<&str> = cut.iter().map(|&(_, name)| name).collect();
+            assert_eq!(distinct.len(), count, "{names:?}");
+            for (id, name) in cut {
+                assert!(name.ends_with(&format!("#{id}")), "{name} at {id}");
+            }
+        }
+        // A name under the limit gets no `#`.
+        assert!(functions.contains(&"g<i64>"), "{functions:?}");
+        for name in functions.iter().chain(&classes) {
+            assert_eq!(name.contains('#'), name.contains("..."), "{name}");
+        }
+    }
 
     #[test]
     fn each_argument_list_should_be_instantiated_once() {
@@ -618,6 +727,11 @@ mod tests {
              fn main() {\n    let b = Box(v: \"a\")\n}",
         );
         assert_eq!(class_names(&program), ["Box<i64>", "Box<string>"]);
+        // An instance inside a type argument comes before the instance that takes it.
+        let program = instantiated(
+            "class Box<T> {\n    v: T\n}\nfn main() {\n    let b = Box(v: Box(v: 1))\n}",
+        );
+        assert_eq!(class_names(&program), ["Box<i64>", "Box<Box<i64>>"]);
     }
 
     #[test]

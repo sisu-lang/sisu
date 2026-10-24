@@ -1,0 +1,36 @@
+// Two trees of 1 000 000 nodes, dropped under a 256 KiB stack. `r` is the chain field, so the
+// first tree, deep through `l`, and the second, which alternates `l` and `r`, are deep through
+// a field that is not the chain field. A drop that recursed on such a field would need a frame
+// per level and overflow that stack.
+class T {
+    l: T?
+    r: T?
+}
+
+fn left(depth: i64) {
+    let mut t: T? = None
+    let mut i = 0
+    while i < depth {
+        i += 1
+        t = T(l: t, r: None)
+    }
+}
+
+fn alternate(depth: i64) {
+    let mut t: T? = None
+    let mut i = 0
+    while i < depth {
+        i += 1
+        if i % 2 == 0 {
+            t = T(l: t, r: None)
+        } else {
+            t = T(l: None, r: t)
+        }
+    }
+}
+
+fn main() {
+    left(1_000_000)
+    alternate(1_000_000)
+    print("done")
+}

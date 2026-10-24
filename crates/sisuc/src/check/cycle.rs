@@ -20,6 +20,7 @@ use crate::diagnostic::DiagnosticKind;
 use crate::graph::components;
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
+use crate::types::write_args;
 
 /// An instantiation, which a diagnostic writes as the program does.
 #[derive(Clone, Copy)]
@@ -38,6 +39,9 @@ struct Edge {
     growing: bool,
     holder: usize,
     site: Span,
+    /// What a diagnostic underlines: `site`, or the instance inside it. Only `site` picks and
+    /// merges cycles.
+    mark: Span,
     instance: Option<Instance>,
 }
 
@@ -66,6 +70,7 @@ impl Graph {
         args: &[Type],
         target: usize,
         site: Span,
+        mark: Span,
         instance: Instance,
     ) {
         for (q, &arg) in args.iter().enumerate().filter(|(_, arg)| arg.has_param()) {
@@ -76,6 +81,7 @@ impl Graph {
                 growing: !matches!(arg.kind(), TypeKind::Param(..)),
                 holder,
                 site,
+                mark,
                 instance: Some(instance),
             });
         }
@@ -107,6 +113,7 @@ impl Graph {
                     growing: false,
                     holder,
                     site: Span::new(0, 0),
+                    mark: Span::new(0, 0),
                     instance: None,
                 });
             }
@@ -124,10 +131,15 @@ impl Graph {
     }
 
     /// The edges of each generic class and enum in `ty`, written at `site` inside `holder`; a
-    /// type shared inside `ty` is walked once.
-    fn types(&mut self, holder: usize, ty: Type, site: Span) {
+    /// type shared inside `ty` is walked once. An edge sits at the span `inner` gives its
+    /// instance, else at `site`.
+    fn types(&mut self, holder: usize, ty: Type, site: Span, inner: &[(Type, Span)]) {
         if !ty.has_param() {
             return;
+        }
+        let mut spans = FxHashMap::default();
+        for &(t, span) in inner {
+            spans.entry(t).or_insert(span);
         }
         let mut stack = vec![ty];
         while let Some(ty) = stack.pop() {
@@ -143,7 +155,8 @@ impl Graph {
                 TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
                 _ => continue,
             };
-            self.args(holder, args.get(), target, site, Instance::Type(ty));
+            let mark = spans.get(&ty).copied().unwrap_or(site);
+            self.args(holder, args.get(), target, site, mark, Instance::Type(ty));
             stack.extend(args.get());
         }
     }
@@ -214,9 +227,9 @@ impl Checker<'_> {
                 .filter_map(|e| {
                     e.instance
                         .filter(|_| shown.insert(e.site))
-                        .map(|i| (e.site, i))
+                        .map(|i| (e.mark, i))
                 })
-                .map(|(site, instance)| (site, self.instance_name(functions, instance)))
+                .map(|(mark, instance)| (mark, self.instance_name(functions, instance)))
                 .collect();
             let name = match edge.holder.checked_sub(declared) {
                 None => self.signatures[edge.holder].name.clone(),
@@ -225,7 +238,7 @@ impl Checker<'_> {
             };
             self.report(DiagnosticKind::InstantiationCycle {
                 name,
-                at: edge.site,
+                at: edge.mark,
                 instance: self.instance_name(
                     functions,
                     edge.instance
@@ -268,6 +281,7 @@ impl Checker<'_> {
                         types.get(),
                         func.0,
                         e.span,
+                        e.span,
                         Instance::Call(func, types),
                     );
                 }
@@ -279,7 +293,7 @@ impl Checker<'_> {
             }
             for field in &class.fields {
                 if let Some(ty) = field.ty {
-                    graph.types(declared + c, ty, field.ty_span);
+                    graph.types(declared + c, ty, field.ty_span, &field.inner);
                 }
             }
         }
@@ -288,9 +302,14 @@ impl Checker<'_> {
                 continue;
             }
             for variant in &info.variants {
-                for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
+                let written = variant
+                    .fields
+                    .iter()
+                    .zip(&variant.spans)
+                    .zip(&variant.inner);
+                for ((ty, &span), inner) in written {
                     if let Some(ty) = *ty {
-                        graph.types(declared + self.classes.len() + e, ty, span);
+                        graph.types(declared + self.classes.len() + e, ty, span, inner);
                     }
                 }
             }
@@ -304,19 +323,23 @@ impl Checker<'_> {
             Instance::Type(ty) => return self.type_name(ty),
             Instance::Call(func, types) => (func, types),
         };
-        let written = |list: &[Type]| TypeArgs::intern(list).written(|ty| self.type_name(ty));
         let owner = functions[func.0]
             .as_ref()
             .expect("a callee on a cycle should have a body, which gives its edge on the cycle")
             .owner_params;
         let (owner_args, args) = types.get().split_at(owner);
         let name = &self.signatures[func.0].name;
-        match name.split_once('.') {
-            Some((owner, method)) => {
-                format!("{owner}{}.{method}{}", written(owner_args), written(args))
-            }
-            None => format!("{name}{}", written(args)),
+        let mut out = String::new();
+        if let Some((owner, method)) = name.split_once('.') {
+            out.push_str(owner);
+            write_args(&mut out, owner_args, |head| self.head(head));
+            out.push('.');
+            out.push_str(method);
+        } else {
+            out.push_str(name);
         }
+        write_args(&mut out, args, |head| self.head(head));
+        out
     }
 }
 
@@ -400,14 +423,14 @@ mod tests {
         }
         let site = Span::new(0, 1);
         let mut g = graph(1);
-        g.args(0, &[ty], 0, site, Instance::Type(ty));
+        g.args(0, &[ty], 0, site, site, Instance::Type(ty));
         // A node per `Pair`, an edge from each of its two arguments, and the call's edge.
         assert_eq!(g.typed.len(), 20);
         assert_eq!(g.edges.len(), 2 * 20 + 1);
         // Written as a field's type: each level's `Pair` gives an edge into each of its two
         // parameters, once, from the nodes of the 19 levels below the top.
         let mut g = graph(1);
-        g.types(0, ty, site);
+        g.types(0, ty, site, &[]);
         assert_eq!(g.edges.len(), 2 * 20 + 2 * 19);
     }
 
@@ -423,7 +446,8 @@ mod tests {
             }
             let mut g = graph(n as usize + 1);
             for site in 0..10 {
-                g.args(0, &[ty], 0, Span::new(site, site + 1), Instance::Type(ty));
+                let at = Span::new(site, site + 1);
+                g.args(0, &[ty], 0, at, at, Instance::Type(ty));
             }
             assert_eq!(g.typed.len(), n as usize);
             assert_eq!(g.edges.len(), 2 * n as usize + 10);
@@ -443,14 +467,21 @@ mod tests {
                     ty = Type::intern(TypeKind::Array(ty));
                 }
                 let mut g = graph(1);
-                g.args(0, &[ty], 0, Span::new(0, 1), Instance::Type(ty));
+                g.args(
+                    0,
+                    &[ty],
+                    0,
+                    Span::new(0, 1),
+                    Span::new(0, 1),
+                    Instance::Type(ty),
+                );
                 assert_eq!(g.typed.len(), levels);
                 let mut ty = param(0);
                 for _ in 0..levels {
                     ty = pair(ty, param(0));
                 }
                 let mut g = graph(1);
-                g.types(0, ty, Span::new(0, 1));
+                g.types(0, ty, Span::new(0, 1), &[]);
                 assert_eq!(g.walked.len(), levels + 1);
             })
             .expect("the thread should start")

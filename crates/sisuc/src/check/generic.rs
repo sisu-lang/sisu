@@ -6,7 +6,8 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
-use super::expr::int_literal;
+use super::expr::{int_literal, rank};
+use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
@@ -14,11 +15,20 @@ use super::{
     built_in_type, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ArgumentsForm, MainForm};
+use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
+
+/// Whether `ty`, an array's element, is an optional, or arrays of them: the shape of element
+/// that `against` cannot wrap an array literal's elements to.
+fn optional_element(mut ty: Type) -> bool {
+    while let TypeKind::Array(inner) = ty.kind() {
+        ty = inner;
+    }
+    matches!(ty.kind(), TypeKind::Optional(_))
+}
 
 /// Whether `ty` names the type parameter at `i`.
 fn names_param(ty: Type, i: usize) -> bool {
@@ -39,6 +49,8 @@ pub(super) struct Bindings {
     /// The parameters the last `unify` or `constrain` bound: the only ones whose types need
     /// checking.
     fresh: Vec<usize>,
+    /// How many parameters `bind` has bound and kept: a change shows a new binding.
+    kept: usize,
 }
 
 impl Bindings {
@@ -48,6 +60,7 @@ impl Bindings {
         Bindings {
             found: owner.iter().copied().map(Some).chain(unbound).collect(),
             fresh: Vec::new(),
+            kept: 0,
         }
     }
 
@@ -63,6 +76,7 @@ impl Bindings {
                 VISITS.set(VISITS.get() + 1);
                 self.found[i] = None;
             }
+            self.kept -= self.fresh.len();
             self.fresh.clear();
         }
         unified
@@ -88,6 +102,7 @@ impl Bindings {
                 }
                 self.found[i] = Some(value);
                 self.fresh.push(i);
+                self.kept += 1;
                 true
             }
             (TypeKind::Array(p), TypeKind::Array(v))
@@ -107,6 +122,8 @@ impl Bindings {
     /// `ty`, a callee's, with its parameters' bindings in their place; `None` while it names
     /// one that is unbound.
     pub(super) fn known(&self, ty: Type) -> Option<Type> {
+        #[cfg(test)]
+        WALKED.set(WALKED.get() + 1);
         if !ty.has_param() {
             return Some(ty);
         }
@@ -141,10 +158,12 @@ impl Bindings {
 thread_local! {
     /// How many bindings inference has checked or undone on this thread.
     pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `Bindings::known` has looked at on this thread.
+    pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names the search for reported ones has looked at on this
     /// thread.
     pub(super) static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many entries of `body.ahead` lookups have inspected on this thread.
+    /// How many lookups of `body.ahead` have found an entry on this thread.
     pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -209,12 +228,40 @@ fn fits(
 }
 
 /// Work that ranking an argument did ahead of its turn (see `needs_context`), kept in
-/// `body.ahead` by the span it was done for until checking reaches it: a method's checked
-/// receiver, or a block's scope and its statements before its value. It lives no longer than
+/// `body.ahead` by the span it was done for until checking reaches it. It lives no longer than
 /// the generic call that ranked it, nor than the diagnostics and locals it made.
 pub(super) enum Ahead {
+    /// A method's checked receiver, or a `match`'s scrutinee.
     Receiver(Checked),
+    /// An `if let`'s value, as `let_value` gives it.
+    Let(Checked, LetValue, bool),
+    /// A block's scope, and its statements before its value.
     Block(FxHashMap<Symbol, Binding>, BlockSoFar),
+    /// A branch with a pattern, an `if let`'s first block or a `match` arm: what the pattern
+    /// bound, the arm's checked guard, the scope that holds the pattern's names and the
+    /// branch's statements, and its statements before its value (none for an arm whose body
+    /// is not a block).
+    Bound(
+        LetPattern,
+        Option<Checked>,
+        FxHashMap<Symbol, Binding>,
+        BlockSoFar,
+    ),
+}
+
+/// Whether one of `branches` has a value, and each that has one needs context: each is `None`
+/// when its branch ends in an exit, else whether its value needs context. It stops at the first
+/// value that does not, so the branches after it are not ranked.
+fn branches_wait(branches: impl IntoIterator<Item = Option<bool>>) -> bool {
+    let mut any = false;
+    for waits in branches {
+        match waits {
+            None => {}
+            Some(true) => any = true,
+            Some(false) => return false,
+        }
+    }
+    any
 }
 
 /// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
@@ -233,8 +280,8 @@ impl Checker<'_> {
     /// parameter's type. An argument of type `unit` or `never` binds only what none of the
     /// others does. Returns the arguments in source order, the type arguments, and the call's
     /// type; `None`, reported, when a parameter is left unbound or bound to a type no
-    /// parameter takes, and then an argument that needs context and has none is not checked,
-    /// unless a call in it does not fit its declaration, which it then reports. What ranking
+    /// parameter takes, and then an argument that needs context and has none is checked against
+    /// `UNKNOWN`, for its own mistakes only. What ranking
     /// the arguments checked ahead (see `Ahead`) and left unused is dropped.
     pub(super) fn generic_call(
         &mut self,
@@ -245,9 +292,12 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
         let mark = self.body.ahead.len();
+        // The context of the quiet value failed, as an `UNKNOWN` one did.
+        let expected = expected.or(self.quiet(span, expected).then_some(UNKNOWN));
         let call = self.infer_call(span, sig, written, args, expected);
         // A key is kept again only once its last entry is used, so an earlier entry of a key
-        // truncated here, if any, is used, and dropping the key loses nothing.
+        // truncated here, if any, is used, and dropping the key loses nothing. A placeholder
+        // (`keep` with no work) is the exception, but ranking fills each one before this runs.
         for (key, _) in self.body.ahead.drain(mark..) {
             self.body.ahead_at.remove(&key);
         }
@@ -342,8 +392,8 @@ impl Checker<'_> {
             }
         }
         let list = match call.bindings.finish() {
-            Ok(list) if !call.failed && !broken => list,
-            Ok(_) => return None,
+            Ok(list) if !call.failed && !broken => Some(list),
+            Ok(_) => None,
             Err(i) => {
                 // An argument that failed, or a parameter's or the return type that did, may be
                 // what would have bound it, and an `UNKNOWN` context is one that failed.
@@ -353,8 +403,18 @@ impl Checker<'_> {
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
                     self.cannot_infer(sig, i);
                 }
-                return None;
+                None
             }
+        };
+        let Some(list) = list else {
+            // What waited for context and has none is checked against a failed one, so it
+            // reports only its own mistakes, and uses what ranking kept for it.
+            for (arg, slot) in iter::zip(args, &call.slots) {
+                if slot.is_none() {
+                    let _ = self.expr(&arg.value, Some(UNKNOWN));
+                }
+            }
+            return None;
         };
         let checked = call
             .slots
@@ -369,23 +429,43 @@ impl Checker<'_> {
     /// Checks `e`, the argument at `i` for `param`: against `param` once the call binds what it
     /// names, and otherwise on its own, which binds what its type fixes.
     fn infer_arg(&mut self, call: &mut Inference, i: usize, e: &ast::Expr, param: Option<Type>) {
-        let pattern = match param.map(|param| (param, call.bindings.known(param))) {
-            None => {
-                call.slots[i] = Some(mark(self.operand(e, None)));
-                return;
-            }
-            Some((_, Some(want))) => {
-                call.slots[i] = Some(mark(self.operand(e, Some(want))));
-                return;
-            }
-            Some((pattern, None)) => pattern,
+        let Some(pattern) = param else {
+            call.slots[i] = Some(mark(self.operand(e, None)));
+            return;
         };
+        let unbound = call.bindings.known(pattern).is_none();
+        let checked = self.infer_value(call, e, pattern);
+        if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
+            call.last.push((i, ty));
+        }
+        call.slots[i] = Some(checked);
+    }
+
+    /// Checks `e` against `pattern`, a parameter's type or an element's: against what the call
+    /// binds of it, or, while it names an unbound parameter, on its own, which binds what its
+    /// type fixes. A non-empty array literal for an array of optionals (see `optional_element`)
+    /// is the exception: its elements bind the parameter one by one (see `inferred_array`).
+    /// A value of type `unit` or `never` binds nothing, for `infer_arg` to defer.
+    fn infer_value(&mut self, call: &mut Inference, e: &ast::Expr, pattern: Type) -> Checked {
+        match call.bindings.known(pattern) {
+            Some(want) => mark(self.operand(e, Some(want))),
+            None => self.infer_unbound(call, e, pattern),
+        }
+    }
+
+    /// `infer_value` for a `pattern` that names an unbound parameter, with no walk of
+    /// `pattern` to find this out.
+    fn infer_unbound(&mut self, call: &mut Inference, e: &ast::Expr, pattern: Type) -> Checked {
+        if let ast::ExprKind::ArrayLit(elements) = &e.kind
+            && !elements.is_empty()
+            && let TypeKind::Array(element) = pattern.kind()
+            && optional_element(element)
+        {
+            return self.inferred_array(call, e.span, elements, element);
+        }
         let checked = self.expr(e, None);
-        call.slots[i] = Some(match type_of(&checked) {
-            Some(ty @ (Type::UNIT | Type::NEVER)) => {
-                call.last.push((i, ty));
-                checked
-            }
+        match type_of(&checked) {
+            Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
                 let d = self.mismatch(e.span, Some(e), pattern, ty);
                 self.diagnostics.push(d);
@@ -399,9 +479,69 @@ impl Checker<'_> {
                 );
                 mark(self.against(e, checked, want, None))
             }
-            // `Error`, which binds nothing.
-            None => checked,
-        });
+        }
+    }
+
+    /// The array literal `elements` for `[element]`, where `element` names an unbound
+    /// parameter. The elements are checked in the three waves of `rank`, as `infer_value` does,
+    /// so a later `None` or integer literal meets the parameter already bound by an earlier
+    /// element, and so wraps. A `None` or `[]` with nothing bound is reported as `joined`
+    /// reports it: the first alone, unless an element failed already. An element of type `unit`
+    /// or `never` has no value, which is reported at once, and binds nothing.
+    fn inferred_array(
+        &mut self,
+        call: &mut Inference,
+        span: Span,
+        elements: &[ast::Expr],
+        element: Type,
+    ) -> Checked {
+        let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
+        let mut quiet = false;
+        // `element`'s type once an element binds all it names. A later element meets it with
+        // no new walk of `element`, so the work does not grow with elements times its depth.
+        let mut bound = None;
+        for wave in 0..3 {
+            for (i, e) in elements.iter().enumerate().filter(|(_, e)| rank(e) == wave) {
+                let checked = if let Some(want) = bound {
+                    mark(self.operand(e, Some(want)))
+                } else if wave < 2 {
+                    let kept = call.bindings.kept;
+                    let checked = self.infer_unbound(call, e, element);
+                    // Only a new binding can bind `element`.
+                    if call.bindings.kept != kept {
+                        bound = call.bindings.known(element);
+                    }
+                    checked
+                } else {
+                    quiet = quiet || slots.iter().flatten().any(|c| type_of(c).is_none());
+                    // Only its own diagnostics matter.
+                    let _ = self.value(e, quiet.then_some(UNKNOWN));
+                    quiet = true;
+                    Err(Poisoned::error())
+                };
+                // An element has a value: `infer_value` leaves `unit` and `never` for
+                // `infer_arg`, which an element has not.
+                slots[i] = Some(match type_of(&checked) {
+                    Some(ty @ (Type::UNIT | Type::NEVER)) => {
+                        self.no_value(e.span, ty);
+                        Err(Poisoned::error())
+                    }
+                    _ => checked,
+                });
+            }
+        }
+        let Some(bound) = bound else {
+            return Err(Poisoned::error());
+        };
+        let mismatched = slots
+            .iter()
+            .flatten()
+            .any(|c| matches!(c, Err(Poisoned { mismatch: true, .. })));
+        let checked = slots
+            .into_iter()
+            .map(|slot| slot.expect("the three waves should check every element, one rank each"))
+            .collect();
+        self.array(span, bound, checked, mismatched)
     }
 
     /// `Bindings::unify`, reporting at `at` each parameter it binds to a type that no type
@@ -460,12 +600,13 @@ impl Checker<'_> {
     }
 
     /// Whether `e`'s type cannot come from itself: a bare `[]` or `None`; a payload-free
-    /// variant of a generic enum; an array literal whose elements all need context; an `if` or
-    /// a block whose every value branch does; or a call of a generic function or method, or a
-    /// construction of a generic class or variant, its type arguments not written, whose
-    /// arguments fit its declaration and all need context. A name resolves as the checker
-    /// resolves it: a call's callee by its declaration, whatever local takes it. A method's
-    /// receiver is checked here, ahead of its call, and kept for it (see `receiver_ahead`).
+    /// variant of a generic enum; an array literal whose elements all need context; an `if`, an
+    /// `if let` or a `match` whose every value branch does, or a block whose value does; or a
+    /// call of a generic function or method, or a construction of a generic class or variant,
+    /// its type arguments not written, whose arguments fit its declaration and all need
+    /// context. A name resolves as the checker resolves it: a call's callee by its declaration,
+    /// whatever local takes it. A method's receiver, an `if let`'s value and a `match`'s
+    /// scrutinee are checked here, ahead of their turn, and kept for it (see `Ahead`).
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
     pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
@@ -522,8 +663,32 @@ impl Checker<'_> {
                 then_block,
                 else_block: Some(else_block),
                 ..
-            } => return self.branches_wait(&[then_block, else_block], fit),
-            K::Block(block) => return self.branches_wait(&[block], fit),
+            } => {
+                let blocks = [then_block, else_block].into_iter();
+                return branches_wait(blocks.map(|b| self.block_waits(b, fit, |_| None)));
+            }
+            K::IfLet {
+                pattern,
+                value,
+                then_block,
+                else_block: Some(else_block),
+            } => return self.if_let_waits(pattern, value, then_block, else_block, fit),
+            K::Match {
+                scrutinee, arms, ..
+            } => {
+                let form = LetValue::Match {
+                    ty: self.value_ahead(scrutinee).filter(|&ty| matchable(ty)),
+                };
+                return branches_wait(arms.iter().map(|arm| {
+                    let bind =
+                        |c: &mut Self| Some(c.bind_pattern(None, &form, &arm.pattern, Some(arm)));
+                    match &arm.body.kind {
+                        K::Block(block) => self.block_waits(block, fit, bind),
+                        _ => Some(self.tail_waits(arm_key(arm), None, &arm.body, fit, bind)),
+                    }
+                }));
+            }
+            K::Block(block) => return self.block_waits(block, fit, |_| None) == Some(true),
             _ => return false,
         };
         let waits = generic && args.iter().all(|arg| self.waits(&arg.value, fit));
@@ -531,45 +696,100 @@ impl Checker<'_> {
         waits
     }
 
-    /// Whether one of `blocks` ends in a value, and each that does needs context; one that
-    /// ends in an exit has none.
-    fn branches_wait(&mut self, blocks: &[&ast::Block], fit: &mut bool) -> bool {
-        let mut any = false;
-        for block in blocks {
-            match block.stmts.last().map(|stmt| &stmt.kind) {
-                Some(StmtKind::Return(_) | StmtKind::Break { .. } | StmtKind::Continue { .. }) => {}
-                Some(StmtKind::Expr(tail)) if self.tail_waits(block, tail, fit) => any = true,
-                _ => return false,
-            }
-        }
-        any
+    /// Whether the `if let pattern = value { then_block } else { else_block }` waits, as
+    /// `branches_wait` decides. Its value is checked once, and kept for it (see `Ahead::Let`).
+    fn if_let_waits(
+        &mut self,
+        pattern: &ast::Pattern,
+        value: &ast::Expr,
+        then_block: &ast::Block,
+        else_block: &ast::Block,
+        fit: &mut bool,
+    ) -> bool {
+        // Ranked before: its value comes back to bind the first block, and goes back after.
+        let kept = self.kept(value.span, false);
+        let (index, checked, form, mismatched) =
+            if let Some((index, Ahead::Let(checked, form, mismatched))) = kept {
+                (index, checked, form, mismatched)
+            } else {
+                // An argument is not part of an assignment target's chain.
+                let target = std::mem::take(&mut self.body.in_target);
+                let (checked, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
+                self.body.in_target = target;
+                let index = self.keep((value.span, false), None);
+                (index, checked, form, mismatched)
+            };
+        let then = self.block_waits(then_block, fit, |c| {
+            Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None))
+        });
+        self.body.ahead[index].1 = Some(Ahead::Let(checked, form, mismatched));
+        let other = iter::once_with(|| self.block_waits(else_block, fit, |_| None));
+        branches_wait(iter::once(then).chain(other))
     }
 
-    /// Whether `tail`, the value of `block`, needs context, in the block's scope: the
-    /// statements before it are checked here, once, and kept with that scope for `block`.
-    fn tail_waits(&mut self, block: &ast::Block, tail: &ast::Expr, fit: &mut bool) -> bool {
+    /// Whether `block` ends in a value that needs context (see `tail_waits`, which `bind` binds
+    /// for); `None` when it ends in an exit, which leaves no value.
+    fn block_waits(
+        &mut self,
+        block: &ast::Block,
+        fit: &mut bool,
+        bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
+    ) -> Option<bool> {
+        match block.stmts.last().map(|stmt| &stmt.kind) {
+            Some(StmtKind::Return(_) | StmtKind::Break { .. } | StmtKind::Continue { .. }) => None,
+            Some(StmtKind::Expr(tail)) => {
+                Some(self.tail_waits(block.span, Some(block), tail, fit, bind))
+            }
+            _ => Some(false),
+        }
+    }
+
+    /// Whether `tail`, the value of the branch at `key`, needs context, in the branch's scope.
+    /// Here, once, `bind` binds its names in that scope, if any, and the statements of `block`
+    /// before `tail` are checked. The scope is kept for the branch (see `Ahead`). `block` is
+    /// `None` for a `match` arm whose body is `tail`.
+    fn tail_waits(
+        &mut self,
+        key: Span,
+        block: Option<&ast::Block>,
+        tail: &ast::Expr,
+        fit: &mut bool,
+        bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
+    ) -> bool {
         // Ranked before: its scope comes back for the value, and goes back after.
-        let (index, so_far) =
-            if let Some((index, Ahead::Block(scope, so_far))) = self.kept(block.span, true) {
-                self.body.scopes.push(scope);
-                (index, so_far)
-            } else {
-                self.body.scopes.push(FxHashMap::default());
-                let mut so_far = BlockSoFar::default();
-                // A statement is not part of an assignment target's chain.
-                let target = std::mem::take(&mut self.body.in_target);
+        let kept = match self.kept(key, true) {
+            Some((index, Ahead::Block(scope, so_far))) => Some((index, None, scope, so_far)),
+            Some((index, Ahead::Bound(bound, guard, scope, so_far))) => {
+                Some((index, Some((bound, guard)), scope, so_far))
+            }
+            _ => None,
+        };
+        let (index, bound, so_far) = if let Some((index, bound, scope, so_far)) = kept {
+            self.body.scopes.push(scope);
+            (index, bound, so_far)
+        } else {
+            self.body.scopes.push(FxHashMap::default());
+            // Neither a pattern's guard nor a statement is part of an assignment target's chain.
+            let target = std::mem::take(&mut self.body.in_target);
+            let bound = bind(self);
+            let mut so_far = BlockSoFar::default();
+            if let Some(block) = block {
                 self.block_statements(block, None, &mut so_far, block.stmts.len() - 1);
-                self.body.in_target = target;
-                // Its place, held before the value's ranking keeps work of its own.
-                (self.keep((block.span, true), None), so_far)
-            };
+            }
+            self.body.in_target = target;
+            // Its place, held before the value's ranking keeps work of its own.
+            (self.keep((key, true), None), bound, so_far)
+        };
         let waits = self.waits(tail, fit);
         let scope = self
             .body
             .scopes
             .pop()
-            .expect("the block's scope should be open while its value is ranked");
-        self.body.ahead[index].1 = Some(Ahead::Block(scope, so_far));
+            .expect("the branch's scope should be open while its value is ranked");
+        self.body.ahead[index].1 = Some(match bound {
+            Some((bound, guard)) => Ahead::Bound(bound, guard, scope, so_far),
+            None => Ahead::Block(scope, so_far),
+        });
         waits
     }
 
@@ -656,24 +876,34 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        let kept = self
-            .body
-            .ahead_at
-            .get(&(receiver.span, false))
-            .and_then(|&index| {
-                #[cfg(test)]
-                INSPECTED.set(INSPECTED.get() + 1);
-                self.body.ahead[index].1.as_ref()
-            });
+        self.value_ahead(receiver)
+    }
+
+    /// `e` checked as a value: as ranking checked it ahead, a method's receiver or a `match`'s
+    /// scrutinee (see `value_ahead`), else now.
+    pub(super) fn value_kept(&mut self, e: &ast::Expr) -> Checked {
+        match self.kept(e.span, false) {
+            Some((_, Ahead::Receiver(checked))) => checked,
+            _ => self.value(e, None),
+        }
+    }
+
+    /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`.
+    fn value_ahead(&mut self, e: &ast::Expr) -> Option<Type> {
+        let kept = self.body.ahead_at.get(&(e.span, false)).and_then(|&index| {
+            #[cfg(test)]
+            INSPECTED.set(INSPECTED.get() + 1);
+            self.body.ahead[index].1.as_ref()
+        });
         if let Some(Ahead::Receiver(checked)) = kept {
             return type_of(checked);
         }
         // An argument is not part of an assignment target's chain.
         let target = std::mem::take(&mut self.body.in_target);
-        let checked = self.value(receiver, None);
+        let checked = self.value(e, None);
         self.body.in_target = target;
         let ty = type_of(&checked);
-        self.keep((receiver.span, false), Some(Ahead::Receiver(checked)));
+        self.keep((e.span, false), Some(Ahead::Receiver(checked)));
         ty
     }
 
@@ -854,18 +1084,26 @@ impl Checker<'_> {
         self.misread_as(name, compare)
     }
 
-    /// Whether the type argument `arg` could be a value: a name, with no `?`, that is a local
-    /// or names no type, built-in, class, enum or type parameter.
+    /// Whether the type argument `arg` could be a value: a local, or a name that names no type.
     pub(super) fn could_be_value(&self, arg: &ast::TypeExpr) -> bool {
         let ast::TypeKind::Name(n) = arg.kind else {
             return false;
         };
+        !arg.optional && self.body.scopes.iter().any(|scope| scope.contains_key(&n))
+            || self.names_no_type(arg)
+    }
+
+    /// Whether the type argument `arg` is a name, with no `?`, that is no built-in type, class,
+    /// enum or type parameter.
+    pub(super) fn names_no_type(&self, arg: &ast::TypeExpr) -> bool {
+        let ast::TypeKind::Name(n) = arg.kind else {
+            return false;
+        };
         !arg.optional
-            && (self.body.scopes.iter().any(|scope| scope.contains_key(&n))
-                || built_in_type(n.as_str()).is_none()
-                    && !self.class_ids.contains_key(&n)
-                    && !self.enum_ids.contains_key(&n)
-                    && self.body.type_param(n).is_none())
+            && built_in_type(n.as_str()).is_none()
+            && !self.class_ids.contains_key(&n)
+            && !self.enum_ids.contains_key(&n)
+            && self.body.type_param(n).is_none()
     }
 
     /// `misread` with the comparison `compare` its help writes, if any.
@@ -880,15 +1118,20 @@ impl Checker<'_> {
     }
 
     /// Marks `span`, an `a<b, c>(d)` whose type arguments `types` took a comma, as misread when
-    /// it does not check: the comma may be its argument list's, whose count is then not
-    /// reported (see `misread_in`).
+    /// it does not check and the first and last of `types` name no type: the comma may be its
+    /// argument list's, whose count is then not reported (see `misread_in`).
     pub(super) fn misread_unless_checked(
         &mut self,
         span: Span,
         types: &[ast::TypeExpr],
         checked: &Checked,
     ) {
-        if types.len() > 1 && checked.is_err() {
+        // Only a list whose first and last argument name no type could join `a <` and `> (d)`.
+        if let [first, .., last] = types
+            && checked.is_err()
+            && self.names_no_type(first)
+            && self.names_no_type(last)
+        {
             self.body.misread.insert(span.start());
         }
     }
@@ -994,15 +1237,24 @@ impl Checker<'_> {
     }
 
     /// Reports the type arguments in `angles` after `variant`, a variant of the generic enum
-    /// `base` names, which takes its enum's: the help writes them on the enum.
-    pub(super) fn variant_args(&mut self, base: &ast::Expr, variant: &ast::Ident, angles: Span) {
+    /// `base` names. The enum takes them, so the help writes them on the enum. There is no help
+    /// when one of `types` names no type: the list may be a comparison.
+    pub(super) fn variant_args(
+        &mut self,
+        base: &ast::Expr,
+        variant: &ast::Ident,
+        types: &[ast::TypeExpr],
+        angles: Span,
+    ) {
         let text = self.source.text;
-        let instead = format!(
-            "{}{}.{}",
-            &text[base.span.range()],
-            &text[angles.range()],
-            variant.name
-        );
+        let instead = types.iter().all(|ty| !self.names_no_type(ty)).then(|| {
+            format!(
+                "{}{}.{}",
+                &text[base.span.range()],
+                &text[angles.range()],
+                variant.name
+            )
+        });
         self.report(DiagnosticKind::TypeArguments {
             name: text[base.span.start()..variant.span.end()].to_string(),
             at: angles,

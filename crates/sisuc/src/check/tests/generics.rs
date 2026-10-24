@@ -42,6 +42,17 @@ fn generic_declarations_should_check_clean() {
     }
 }
 
+#[test]
+fn type_parameter_lists_should_check_clean_over_many_lines() {
+    for src in [
+        "fn f<\n    T\n>(x: T) -> T {\n    x\n}",
+        "class C<\n    T,\n    U\n> {\n    a: T\n    b: U\n}",
+        "enum E<\n    T\n> {\n    A(T)\n}",
+    ] {
+        clean(&with_decls(src));
+    }
+}
+
 /// `tir` names each declaration's type parameters, a method's owner's before its own.
 #[test]
 fn type_parameters_should_reach_tir() {
@@ -260,6 +271,65 @@ fn a_failed_list_with_a_comma_should_hide_the_count() {
         (
             "fn f() -> bool { h(two<i64, bool>(1, true)) }\nfn two<T, U>(t: T, u: U) -> bool { true }",
             vec![(Code::ArgumentCount, (1, 18))],
+        ),
+    ] {
+        codes(&format!("{line}\n{decls}"), &expected);
+    }
+}
+
+/// Lists such as `<i64, bool>` cannot be comparisons. Their inner errors do not hide the errors
+/// of the outer call. A list whose ends name no type could be comparisons, and it keeps the
+/// outer errors hidden.
+#[test]
+fn accepted_type_arguments_should_keep_outer_errors() {
+    let decls = "fn h(a: bool, b: bool) -> bool { a }\nfn two<T, U>(t: T, u: U) -> bool { true }\nfn three<T, U, V>(t: T, u: U, v: V) -> bool { true }\nclass C {\n    v: i64\n}\nclass Box<T> {\n    v: T\n    fn two<U, V>(self, u: U, v: V) -> bool { true }\n}\nfn main() {}";
+    for (line, expected) in [
+        (
+            "fn f() { print(h(two<i64, bool>(1, \"x\"))) }",
+            vec![(Code::ArgumentCount, (1, 16)), (Code::Mismatch, (1, 36))],
+        ),
+        (
+            "fn f() { print(h(two<i64, bool>(1))) }",
+            vec![
+                (Code::ArgumentCount, (1, 16)),
+                (Code::ArgumentCount, (1, 18)),
+            ],
+        ),
+        (
+            "fn f(b: Box<i64>) { print(h(b.two<i64, bool>(1, \"x\"))) }",
+            vec![(Code::ArgumentCount, (1, 27)), (Code::Mismatch, (1, 49))],
+        ),
+        (
+            "fn f(b: Box<i64>) { print(h(b.two<i64, bool>(1))) }",
+            vec![
+                (Code::ArgumentCount, (1, 27)),
+                (Code::ArgumentCount, (1, 29)),
+            ],
+        ),
+        // An array type is no name, so it cannot join a comparison.
+        (
+            "fn f() { h(two<[i64], [bool]>([1])) }",
+            vec![
+                (Code::ArgumentCount, (1, 10)),
+                (Code::ArgumentCount, (1, 12)),
+            ],
+        ),
+        // A name that is a class names a type, even when a local takes its spelling.
+        (
+            "fn f() {\n    let C = 0\n    h(two<C, C>(1, C))\n}",
+            vec![
+                (Code::ArgumentCount, (3, 5)),
+                (Code::Mismatch, (3, 17)),
+                (Code::Mismatch, (3, 20)),
+            ],
+        ),
+        (
+            "fn f() {\n    let C = 0\n    h(three<C, bool, C>(1, true, C))\n}",
+            vec![
+                (Code::ArgumentCount, (3, 5)),
+                (Code::Mismatch, (3, 25)),
+                (Code::Mismatch, (3, 34)),
+            ],
         ),
     ] {
         codes(&format!("{line}\n{decls}"), &expected);
@@ -1022,6 +1092,164 @@ fn generic_methods_should_wait_for_context() {
     );
 }
 
+/// An `if let` and a `match` wait as an `if` does, each branch ranked in the scope that holds
+/// what its pattern binds.
+#[test]
+fn if_let_and_match_should_wait_for_context() {
+    infers(&[
+        (
+            "fn g(b: Box<i64>, o: i64?) {\n    let xs: [i64] = id(if let n = o { b.make() } else { [] })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "fn g(o: Box<i64>?) {\n    let xs: [i64] = id(if let n = o { n.make() } else { [] })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "fn g(o: Box<i64>?) {\n    let xs: [i64] = id(id(if let n = o { n.make() } else { [] }))\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nfn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) => []\n        Empty => b.make()\n    })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nfn g(e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) => x.make()\n        Empty => []\n    })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nfn g(e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) => {\n            let y = 1\n            x.make()\n        }\n        Empty => []\n    })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+        (
+            "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nfn g(e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) if x.v > 0 => x.make()\n        _ => []\n    })\n}",
+            "Box.make",
+            &["i64", "i64", "[i64]"],
+        ),
+    ]);
+    // A guard sees the pattern's `x`, not the `x` its body declares after it.
+    let arm = "Has(x) if x.v > 0 => {\n            let x = 1\n            [x]\n        }";
+    let missing = "Has(x) if y > 0 => {\n            let y = 1\n            [y]\n        }";
+    for (open, close) in [("id(", ")"), ("id(id(", "))")] {
+        let src = |arm: &str| {
+            format!(
+                "enum Slot {{\n    Has(Box<i64>)\n    Empty\n}}\nfn g(e: Slot) {{\n    let xs: [i64] = {open}match e {{\n        {arm}\n        _ => []\n    }}{close}\n}}"
+            )
+        };
+        clean(&with_generics(&src(arm)));
+        codes(
+            &with_generics(&src(missing)),
+            &[(Code::BindingNotFound, (7, 19))],
+        );
+    }
+}
+
+/// Ranking an `if let` or a `match` checks its value and binds each ranked branch's pattern
+/// once: what the pattern reports, it reports once, and each name it binds is one local.
+#[test]
+fn ranked_patterns_should_report_and_bind_once() {
+    const SLOT: &str =
+        "enum Slot {\n    Has(Box<i64>)\n    Empty\n}\nenum One { Only(Box<i64>) }\n";
+    for (body, expected) in [
+        (
+            "fn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(if let Slot.Nope(x) = e { b.make() } else { [] })\n}",
+            vec![(Code::UnknownVariant, (7, 36))],
+        ),
+        (
+            "fn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(match e {\n        Nope(x) => b.make()\n        _ => []\n    })\n}",
+            vec![(Code::UnknownVariant, (8, 9))],
+        ),
+        // A block arm's body starts at `(`, but ranking and the check keep it by its block.
+        (
+            "fn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(match e {\n        Nope(x) => ({ b.make() })\n        _ => []\n    })\n}",
+            vec![(Code::UnknownVariant, (8, 9))],
+        ),
+        (
+            "fn g(e: One) {\n    let xs: [i64] = id(if let Only(x) = e { x.make() } else { [] })\n}",
+            vec![(Code::AlwaysMatches, (7, 31))],
+        ),
+        // The value and the scrutinee are checked once, by ranking.
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id(if let n = nope { b.make() } else { [] })\n}",
+            vec![(Code::BindingNotFound, (7, 35))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id(match nope {\n        Has(x) => b.make()\n        _ => []\n    })\n}",
+            vec![(Code::BindingNotFound, (7, 30))],
+        ),
+    ] {
+        codes(&with_generics(&format!("{SLOT}{body}")), &expected);
+    }
+    for (body, name) in [
+        (
+            "fn g(o: Box<i64>?) {\n    let xs: [i64] = id(if let n = o { n.make() } else { [] })\n}",
+            "n",
+        ),
+        (
+            "fn g(o: Box<i64>?) {\n    let xs: [i64] = id(id(if let n = o { n.make() } else { [] }))\n}",
+            "n",
+        ),
+        (
+            "fn g(e: Slot) {\n    let xs: [i64] = id(id(match e {\n        Has(x) if x.v > 0 => x.make()\n        _ => []\n    }))\n}",
+            "x",
+        ),
+        (
+            "fn g(e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) => ({ x.make() })\n        _ => []\n    })\n}",
+            "x",
+        ),
+    ] {
+        let (program, ds) = checked(&with_generics(&format!("{SLOT}{body}")));
+        assert!(ds.is_empty(), "{body}: {ds:?}");
+        let program = program.expect("a program without diagnostics should have a tir");
+        let g = program.functions.iter().find(|f| f.name == "g");
+        let g = g.expect("the program should hold `g`");
+        let bound = g.locals.iter().filter(|l| l.name.as_deref() == Some(name));
+        assert_eq!(bound.count(), 1, "{body}");
+    }
+}
+
+/// A `match` or an `if` that waits for context is still checked when the call cannot infer its
+/// type parameter. It reports its own mistakes beside the call's, and its branches do not report
+/// what the call reports.
+#[test]
+fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
+    for (body, expected) in [
+        (
+            "fn g() {\n    let xs = id(match 1.0 { _ => [] })\n}",
+            vec![(Code::CannotInfer, (2, 14)), (Code::CannotMatch, (2, 23))],
+        ),
+        (
+            "fn g() {\n    let ys = id(match true { true => [] })\n}",
+            vec![(Code::CannotInfer, (2, 14)), (Code::NonExhaustive, (2, 17))],
+        ),
+        (
+            "fn g() {\n    let xs = id(if 1.0 { [] } else { [] })\n}",
+            vec![(Code::CannotInfer, (2, 14)), (Code::Mismatch, (2, 20))],
+        ),
+        // What fails inside the branch for the call's failure is not reported again.
+        (
+            "fn g() {\n    let xs = id(match true { _ => [id([])] })\n}",
+            vec![(Code::CannotInfer, (2, 14))],
+        ),
+        (
+            "fn g() {\n    let xs = id([[[]]])\n}",
+            vec![(Code::CannotInfer, (2, 14))],
+        ),
+        (
+            "fn g() {\n    let xs = id([id([])])\n}",
+            vec![(Code::CannotInfer, (2, 14))],
+        ),
+    ] {
+        codes(&with_generics(body), &expected);
+    }
+}
+
 /// Each binding is checked once, and a failed one undoes only what it bound, so inference's
 /// work grows with a call's type parameters, not with their square.
 #[test]
@@ -1041,6 +1269,30 @@ fn inference_should_check_each_binding_once() {
     };
     assert_eq!(visits(64), 64);
     assert_eq!(visits(128), 128);
+}
+
+/// An element pattern 20 arrays deep, so a walk of it for each element would show. Once the
+/// first element binds `T`, a later one adds no walk. A `P<i64, bool>` before it binds `T`,
+/// then fails at `bool` and undoes the binding: it adds no walk either.
+#[test]
+fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
+    let walked = |elements: &str| {
+        let (open, close) = ("[".repeat(20), "]".repeat(20));
+        let src = format!(
+            "class P<A, B> {{\n    a: A\n    b: B\n}}\n\
+             fn take<T>(xs: [{open}P<T, T>?{close}]) -> i64 {{ xs.len() }}\n\
+             fn main() {{\n    let b: {open}P<i64, bool>?{close} = {open}P(a: 1, b: true){close}\n    \
+             let x: {open}P<i64, i64>?{close} = {open}P(a: 1, b: 2){close}\n    \
+             print(take([{elements}]))\n}}"
+        );
+        generic::WALKED.set(0);
+        let mismatches = diags(&src).len();
+        (generic::WALKED.get(), mismatches)
+    };
+    let (one, _) = walked("x");
+    assert_eq!(walked(&vec!["x"; 100].join(", ")), (one, 0));
+    let (bad, _) = walked("b, x");
+    assert_eq!(walked(&format!("{}x", "b, ".repeat(100))), (bad, 100));
 }
 
 /// A call that leaves type parameters unbound looks at each declared name once to find the
@@ -1901,4 +2153,89 @@ fn instantiation_cycles_should_be_reported_beside_other_errors() {
             (Code::InstantiationCycle, (4, 11)),
         ],
     );
+}
+
+/// `tir` writes a call's type arguments as a program writes them, a class by its name.
+#[test]
+fn call_type_arguments_should_name_their_classes_in_tir() {
+    contains(
+        "class Box<T> {\n    v: T\n}\nfn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(Box(v: 1)).v)\n}",
+        &["(call id<Box<i64>> "],
+    );
+}
+
+/// Parameters of array types whose elements are optional, and `main`.
+const OPTIONAL_ELEMENTS: &str = "fn g1<T>(xs: [T?]) -> i64 { 0 }\nfn g3<T>(xs: [[T]]) -> i64 { 0 }\nfn g4<T>(xs: [[T?]]) -> i64 { 0 }\nfn g5<T>(xs: [T]) -> i64 { 0 }\nfn main() {}";
+
+/// `body` in a function of `b: u8`, `x: i64` and `ys: [i64]`, on lines 2 on, then
+/// `OPTIONAL_ELEMENTS`.
+fn with_optional_elements(body: &str) -> String {
+    format!("fn h(b: u8, x: i64, ys: [i64]) -> i64 {{\n    {body}\n}}\n{OPTIONAL_ELEMENTS}")
+}
+
+/// An array literal checked against a parameter that names an unbound type parameter in an
+/// optional element binds it from the elements, and wraps the ones that need it.
+#[test]
+fn generic_array_literals_should_take_optional_elements() {
+    for (call, callee, expected) in [
+        ("g1([1, 2])", "g1", "i64"),
+        ("g1([[1]])", "g1", "[i64]"),
+        ("g1([1, None])", "g1", "i64"),
+        ("g1([None, 1])", "g1", "i64"),
+        // A literal takes the type of the concrete element, whichever comes first.
+        ("g1([b, 1])", "g1", "u8"),
+        ("g1([1, b])", "g1", "u8"),
+        ("g3([[], [1]])", "g3", "i64"),
+        ("g4([[1]])", "g4", "i64"),
+        ("g4([[None, 1]])", "g4", "i64"),
+        ("g4([[], [1]])", "g4", "i64"),
+    ] {
+        let found = call_types(&with_optional_elements(call), callee);
+        assert_eq!(found, [expected, "i64"], "{call}");
+    }
+}
+
+/// A mistake in an array literal that takes optional elements is reported once, where it is.
+#[test]
+fn generic_array_literals_should_report_each_mistake_once() {
+    for (body, expected) in [
+        ("g1([None, None])", vec![(Code::CannotInfer, (2, 5))]),
+        ("g1([nope, None])", vec![(Code::BindingNotFound, (2, 9))]),
+        (
+            "g1([nope, None, []])",
+            vec![(Code::BindingNotFound, (2, 9))],
+        ),
+        ("g1([b, x])", vec![(Code::Mismatch, (2, 12))]),
+        // An array is invariant: a variable of `[i64]` is not a `[i64?]`.
+        (
+            "let zs = [1, 2]\n    g1(zs)",
+            vec![(Code::Mismatch, (3, 8))],
+        ),
+        ("g1(ys)", vec![(Code::Mismatch, (2, 8))]),
+        // A parameter that is no array of optionals keeps the join: `T` is `i64?`, which no
+        // type argument may be.
+        ("g5([1, None])", vec![(Code::TypeArgument, (2, 8))]),
+        // An element with no value, `unit` or `never`, is reported where it is, binds nothing,
+        // and leaves a `None` beside it silent.
+        ("g1([print(1), 2])", vec![(Code::NoValue, (2, 9))]),
+        ("g1([2, print(1)])", vec![(Code::NoValue, (2, 12))]),
+        (
+            "g1([print(1), print(2)])",
+            vec![(Code::NoValue, (2, 9)), (Code::NoValue, (2, 19))],
+        ),
+        ("g1([print(1), None])", vec![(Code::NoValue, (2, 9))]),
+        ("g4([print(1)])", vec![(Code::NoValue, (2, 9))]),
+        (
+            "g1([if x > 0 { return 0 } else { return 1 }, 1])",
+            vec![(Code::NoValue, (2, 9))],
+        ),
+        (
+            "g1([1, if x > 0 { return 0 } else { return 1 }])",
+            vec![(Code::NoValue, (2, 12))],
+        ),
+        // Nothing in the outer literal binds `T`, so the first `None` is the one reported.
+        ("g4([[None], [1]])", vec![(Code::CannotInfer, (2, 10))]),
+    ] {
+        codes(&with_optional_elements(body), &expected);
+    }
 }

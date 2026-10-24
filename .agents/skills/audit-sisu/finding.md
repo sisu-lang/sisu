@@ -20,7 +20,7 @@ Ranked from worst; the report orders findings this way.
 Signals that are not `crash`:
 
 - 134 with Rust's `memory allocation of N bytes failed`, for a size the program really asked for (`largest_array_should_reach_the_allocator_and_abort` in `crates/sisuc/tests/programs.rs` expects it). From a size that overflowed, it is `wrong`.
-- 139 from user recursion that runs out of stack, and from the drop shapes [known-findings.md](known-findings.md) lists. A stack overflow while dropping along a class's chain field (its last own-type field, which drops in a loop) is `crash`.
+- 139 from user recursion that runs out of stack, and from the drop shapes [known-findings.md](known-findings.md) lists. A stack overflow while dropping along a class's fields of its own type (freed from a pending list) is `crash`.
 - 141 when stdout's reader closes early (`$D/p | head -c 0`): the program keeps the default `SIGPIPE` action, as a C program does. Report it as `gap` until `known-findings.md` rules on it.
 
 A lint warning is a lead until you show the operation is reachable from a

@@ -167,6 +167,27 @@ fn main() {
 2
 ```
 
+A line break inside the type-parameter list of a `fn`, `class` or `enum` header does not end a statement either. This applies when the header starts its statement. A header that comes after a `}` on the same line must keep its list on one line.
+
+```sisu
+class Pair<
+    A,
+    B,
+> {
+    first: A
+    second: B
+}
+
+fn main() {
+    let p = Pair(first: 1, second: "two")
+    print(p.first + p.second.len())
+}
+```
+
+```output
+4
+```
+
 ### Layout rules
 
 Because a line break can end a statement, some forms must stay on one line.

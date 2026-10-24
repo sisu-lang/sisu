@@ -53,6 +53,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         tokens: &tokens,
         window: &tokens,
         halves: &halves,
+        halved: None,
         pos: 0,
         depth: 0,
         lexer: &diagnostics,
@@ -295,6 +296,9 @@ struct Parser<'a> {
     window: &'a [Token],
     /// The `=` left of each `>=`, built at the first split.
     halves: &'a OnceCell<Vec<Token>>,
+    /// The index of the `>=` whose `=` half the last `bump_past_window` took, if the token just
+    /// consumed was that half.
+    halved: Option<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -346,9 +350,11 @@ impl<'a> Parser<'a> {
     /// `bump` past `window`, which then covers every token again.
     #[cold]
     fn bump_past_window(&mut self) -> &'a Token {
+        let split = self.split();
         let token = self.past_window();
         self.window = self.tokens;
         if token.kind != TokenKind::Eof {
+            self.halved = split.then_some(self.pos);
             self.pos += 1;
         }
         token
@@ -1211,6 +1217,7 @@ impl<'a> Parser<'a> {
             labels: Vec::new(),
             window: self.tokens,
             halves: self.halves,
+            halved: None,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -1689,9 +1696,16 @@ impl<'a> Parser<'a> {
             .map_or(0, |t| t.span.end())
     }
 
-    /// The span of the token just consumed.
+    /// The span of the token just consumed: the `=` half of a `>=` that closed a list, if that
+    /// half was taken.
     fn last_span(&self) -> Span {
-        self.tokens[self.pos - 1].span
+        let last = self.pos - 1;
+        let span = self.tokens[last].span;
+        if self.halved == Some(last) {
+            Span::new(span.start() + 1, span.end())
+        } else {
+            span
+        }
     }
 
     /// `let pattern = value`, after `if` or `while`; `None` when no `let` follows.
@@ -4304,7 +4318,6 @@ mod tests {
         assert_eq!(parse_err("fn f<>() {}"), (Code::Expected, 1, 6));
         assert_eq!(parse_err("class A<_> {}"), (Code::UnderscoreName, 1, 9));
         assert_eq!(parse_err("enum E<T: Ord> {}"), (Code::Expected, 1, 9));
-        assert_eq!(parse_err("fn f(x: Stack<1>) {}"), (Code::Expected, 1, 15));
     }
 
     #[test]
@@ -4321,6 +4334,8 @@ mod tests {
             let src = format!("fn main() {{ let x: {ty} = y }}");
             assert_eq!(body(&src), format!("(block (let x {expected} y))"), "{src}");
         }
+        // A type argument is a type: a number is none.
+        assert_eq!(parse_err("fn f(x: Stack<1>) {}"), (Code::Expected, 1, 15));
     }
 
     /// `>=` closes the list that ends before it, and the `=` stays for the `let`.
@@ -4439,6 +4454,51 @@ mod tests {
         );
     }
 
+    /// A line break in a header's type-parameter list goes on only before a name, `,` or `>`,
+    /// so a list that is not closed or holds another token reports as before, and a `<` that
+    /// compares still compares.
+    #[test]
+    fn a_malformed_type_parameter_list_should_keep_its_diagnostic() {
+        // The `{` left open stops the lexer, with its one diagnostic.
+        for src in ["fn f<T\n{", "fn f<T>\n{"] {
+            let d = lex(src).expect_err("the open `{` should stop the lexer");
+            let (line, col) = line_col(src, d.span().start());
+            assert_eq!((d.code(), line, col), (Code::BraceOnNewLine, 2, 1), "{src}");
+        }
+        for (src, expected) in [
+            ("fn f<T, 1>(x: T) {}", (Code::Expected, 1, 9)),
+            (
+                "fn main() {\n    let a = P<\n i64\n>(1)\n}",
+                (Code::Expected, 4, 1),
+            ),
+            // A keyword is no name: it starts the next item.
+            ("fn f<T\nfn g() {}", (Code::Expected, 1, 7)),
+        ] {
+            assert_eq!(parse_err(src), expected, "{src}");
+        }
+        // Only the `<` after the header's name opens the list, not the one of a return type.
+        let src = "fn f() -> Box<\n    i64\n> {}";
+        let found: Vec<_> = (parsed(src).diagnostics.iter())
+            .map(|d| (d.code(), line_col(src, d.span().start())))
+            .collect();
+        assert_eq!(found, [(Code::Expected, (2, 8)), (Code::Expected, (3, 1))]);
+        // Nor a `<` that is the third token of another statement.
+        assert_eq!(
+            program("fn f() -> bool {\n    return a <\n        b\n    print(1)\n}"),
+            "(fn f () bool (block (return (< a b)) (call print 1)))"
+        );
+    }
+
+    /// The name on the next line goes on with a method's list that is not closed, so the one
+    /// error is at that name.
+    #[test]
+    fn an_unclosed_method_list_should_report_the_name_on_the_next_line() {
+        assert_eq!(
+            parse_err("class C {\n    fn m<T\n    x: i64\n}"),
+            (Code::Expected, 3, 5)
+        );
+    }
+
     /// A header's line that ends in type arguments ends the header, so a `{` on the next line
     /// is E0004, as after a type with none.
     #[test]
@@ -4530,13 +4590,13 @@ mod tests {
         }
     }
 
-    /// Whether `type_args_follow` holds at the `<` that is the second token of `src`.
-    fn follows(src: &str) -> bool {
+    /// Runs `f` on a parser of `src` at token `pos`.
+    fn parser_at<R>(src: &str, pos: usize, f: impl FnOnce(&mut Parser) -> R) -> R {
         let lexed = lex(src).expect("source lexes");
-        Parser {
+        f(&mut Parser {
             source: lexed.source,
             tokens: &lexed.tokens,
-            pos: 1,
+            pos,
             depth: 0,
             lexer: &lexed.diagnostics,
             comments: &lexed.comments,
@@ -4546,8 +4606,35 @@ mod tests {
             labels: Vec::new(),
             window: &lexed.tokens,
             halves: &OnceCell::new(),
-        }
-        .type_args_follow()
+            halved: None,
+        })
+    }
+
+    /// Whether `type_args_follow` holds at the `<` that is the second token of `src`.
+    fn follows(src: &str) -> bool {
+        parser_at(src, 1, |p| p.type_args_follow())
+    }
+
+    #[test]
+    fn last_span_after_a_skip_past_the_window_should_be_the_whole_token() {
+        // Error recovery moves `pos` past a window that a split cut down.
+        let (span, token) = parser_at("fn f() {}\nfn g() {}", 0, |p| {
+            p.window = &p.tokens[..2];
+            p.pos = 4;
+            let token = p.bump().span;
+            (p.last_span(), token)
+        });
+        assert_eq!(span, token);
+    }
+
+    #[test]
+    fn last_span_after_a_split_greater_equal_should_be_the_equals_half() {
+        let span = parser_at("A<i64>= x", 0, |p| {
+            p.parse_type().expect("the type parses");
+            p.expect(&TokenKind::Eq).expect("the `=` half is left");
+            p.last_span()
+        });
+        assert_eq!((span.start(), span.end()), (6, 7));
     }
 
     /// A list nested more than `MAX_DEPTH` levels below its `<` is none, however its nesting is

@@ -1,0 +1,13 @@
+class Box<T> {
+    v: T
+
+    fn f(self) {
+        Box(v: self).f()
+    }
+}
+
+fn f<T>(x: T) {
+    f(Box(v: x))
+}
+
+fn main() {}

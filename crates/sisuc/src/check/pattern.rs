@@ -8,6 +8,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::branch::Branch;
 use super::enums::reserved_name;
 use super::exhaust::{self, Report, Row};
+use super::generic::Ahead;
+use super::stmt::BlockSoFar;
 use super::{Checked, CheckedBlock, Checker, Declared, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
@@ -52,7 +54,7 @@ pub(super) enum LetValue {
     Match { ty: Option<Type> },
 }
 
-/// The checked pattern of an `if let` or `while let`, from `let_block`.
+/// The checked pattern of an `if let`, a `while let` or a `match` arm, from `bind_pattern`.
 pub(super) enum LetPattern {
     /// An optional's payload bound to `bind`, as `IfSome` binds it.
     Some { bind: tir::LocalId },
@@ -63,7 +65,7 @@ pub(super) enum LetPattern {
 }
 
 /// Whether `ty` is one `match` takes.
-fn matchable(ty: Type) -> bool {
+pub(super) fn matchable(ty: Type) -> bool {
     matches!(
         ty.kind(),
         TypeKind::Enum(..)
@@ -73,6 +75,16 @@ fn matchable(ty: Type) -> bool {
             | TypeKind::Char
             | TypeKind::String
     )
+}
+
+/// The key under which ranking keeps the branch of `arm` (see `Ahead::Bound`). A block is kept
+/// under its own span. A block in parentheses has a body that starts at `(`, so the key is the
+/// block's span, not the body's.
+pub(super) fn arm_key(arm: &ast::Arm) -> Span {
+    match &arm.body.kind {
+        ast::ExprKind::Block(block) => block.span,
+        _ => arm.body.span,
+    }
 }
 
 /// The path of a variant pattern as written: `Num` or `Expr.Num`.
@@ -105,7 +117,7 @@ impl Checker<'_> {
         arms: &[ast::Arm],
         expected: Option<Type>,
     ) -> Checked {
-        let checked = self.value(scrutinee, None);
+        let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty));
         if let Some(ty) = cannot {
@@ -125,16 +137,19 @@ impl Checker<'_> {
             .collect();
         let mut patterns: Vec<_> = arms.iter().map(|_| None).collect();
         let mut guards: Vec<_> = arms.iter().map(|_| None).collect();
-        let (blocks, ty) = self.join(&sources, expected, |c, i, expected| {
+        let form = LetValue::Match { ty: position };
+        let (blocks, ty) = self.join(span, &sources, expected, |c, i, expected| {
             let arm = &arms[i];
-            c.body.scopes.push(FxHashMap::default());
-            patterns[i] = c.pattern_in_scope(&arm.pattern, position, "match", Some(arm));
-            guards[i] = arm
-                .guard
-                .as_ref()
-                .map(|guard| c.expect(guard, Some(Type::BOOL)));
+            let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
+                c.bind_pattern(None, &form, &arm.pattern, Some(arm))
+            });
+            let LetPattern::Match { pattern } = bound else {
+                panic!("a `match` arm should test its value, which `bind_pattern` never unwraps");
+            };
+            patterns[i] = pattern;
+            guards[i] = guard;
             if let ast::ExprKind::Block(block) = &arm.body.kind {
-                return c.scoped_block(block, expected);
+                return c.resume_block(block, expected, so_far);
             }
             let value = c.expr(&arm.body, expected);
             c.pop_scope();
@@ -355,22 +370,55 @@ impl Checker<'_> {
     pub(super) fn let_block(
         &mut self,
         keyword: Unwrap,
-        value: LetValue,
+        value: &LetValue,
         pattern: &ast::Pattern,
         block: &ast::Block,
         expected: Option<Type>,
     ) -> (LetPattern, CheckedBlock) {
-        match value {
-            LetValue::Unwrap { name, bound } => {
-                let (bind, block) =
-                    self.unwrapping_block(keyword.word(), &name, bound, block, expected);
-                (LetPattern::Some { bind }, block)
-            }
-            LetValue::Match { ty } => {
-                self.body.scopes.push(FxHashMap::default());
-                let pattern = self.pattern_in_scope(pattern, ty, keyword.word(), None);
+        let (bound, _, so_far) = self.bound_branch(block.span, |c| {
+            c.bind_pattern(Some(keyword), value, pattern, None)
+        });
+        (bound, self.resume_block(block, expected, so_far))
+    }
+
+    /// The branch at `key` with its pattern bound, in its scope, now open: as ranking kept it
+    /// (see `Ahead::Bound`), else by `bind` in a fresh scope. What the pattern bound, the
+    /// branch's checked guard, and its statements checked so far.
+    pub(super) fn bound_branch(
+        &mut self,
+        key: Span,
+        bind: impl FnOnce(&mut Self) -> (LetPattern, Option<Checked>),
+    ) -> (LetPattern, Option<Checked>, BlockSoFar) {
+        if let Some((_, Ahead::Bound(bound, guard, scope, so_far))) = self.kept(key, true) {
+            self.body.scopes.push(scope);
+            return (bound, guard, so_far);
+        }
+        self.body.scopes.push(FxHashMap::default());
+        let (bound, guard) = bind(self);
+        (bound, guard, BlockSoFar::default())
+    }
+
+    /// What `pattern` binds of `value`, declared in the scope just opened, and the checked
+    /// guard of `arm`, the `match` arm it starts, if any. `keyword` is the `if let` or
+    /// `while let` that tests `value`, and reports a pattern that always matches; it is `None`
+    /// for an arm. The guard is checked here, before the body, so it sees no name the body
+    /// declares.
+    pub(super) fn bind_pattern(
+        &mut self,
+        keyword: Option<Unwrap>,
+        value: &LetValue,
+        pattern: &ast::Pattern,
+        arm: Option<&ast::Arm>,
+    ) -> (LetPattern, Option<Checked>) {
+        let word = keyword.map_or("match", Unwrap::word);
+        let bound = match value {
+            LetValue::Unwrap { name, bound } => LetPattern::Some {
+                bind: self.bind_unwrapped(word, name, *bound),
+            },
+            &LetValue::Match { ty } => {
+                let pattern = self.pattern_in_scope(pattern, ty, word, arm);
                 // An optional takes only a name or `_`, which unwraps it: only an enum gets here.
-                if let (Some(ty), Some((pattern, _))) = (ty, &pattern)
+                if let (Some(keyword), Some(ty), Some((pattern, _))) = (keyword, ty, &pattern)
                     && let TypeKind::Enum(..) = ty.kind()
                 {
                     let rows = [Row {
@@ -387,12 +435,13 @@ impl Checker<'_> {
                         });
                     }
                 }
-                (
-                    LetPattern::Match { pattern },
-                    self.scoped_block(block, expected),
-                )
+                LetPattern::Match { pattern }
             }
-        }
+        };
+        let guard = arm
+            .and_then(|arm| arm.guard.as_ref())
+            .map(|guard| self.expect(guard, Some(Type::BOOL)));
+        (bound, guard)
     }
 
     /// `pattern` at a position of type `ty` (`None` is `Error`), its names declared in the

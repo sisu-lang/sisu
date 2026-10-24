@@ -1,0 +1,63 @@
+// A class's drop frees each object it reaches through a field of its own class from a pending
+// list, in one frame. Valgrind and the RC checks find a leak, a double free or a read of a
+// freed object.
+class T {
+    l: T?
+    r: T?
+    v: i64
+}
+
+// `next` holds the same class, and `name` is a string that the drop releases with each object.
+class Named {
+    next: Named?
+    name: string
+}
+
+// A full binary tree of `depth` levels.
+fn full(depth: i64) -> T? {
+    if depth == 0 {
+        return None
+    }
+    T(l: full(depth - 1), r: full(depth - 1), v: 1)
+}
+
+fn sum(t: T?) -> i64 {
+    if let n = t { sum(n.l) + n.v + sum(n.r) } else { 0 }
+}
+
+fn tree() {
+    let t = full(10)
+    print(sum(t)) // 1023
+}
+
+// The object of value 5 is the `l` of `a` and the `r` of `b`. The drop of `a` leaves it to `b`,
+// which reads it after that drop, and the drop of `b` frees it.
+fn shared() {
+    let mut b: T? = None
+    if true {
+        let a = T(l: T(l: None, r: None, v: 5), r: None, v: 1)
+        b = T(l: None, r: a.l, v: 2)
+        print(sum(a)) // 6
+    }
+    print(sum(b)) // 7
+}
+
+fn named() {
+    let mut head: Named? = None
+    let mut i = 0
+    while i < 3 {
+        i += 1
+        head = Named(next: head, name: "n{i}")
+    }
+    let mut node = head
+    while let n = node {
+        print(n.name) // n3, then n2, then n1
+        node = n.next
+    }
+}
+
+fn main() {
+    tree()
+    shared()
+    named()
+}

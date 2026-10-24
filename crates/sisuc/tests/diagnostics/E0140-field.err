@@ -2,7 +2,7 @@ error[E0140]: `Link` instantiates itself without end
  --> E0140-field.sisu:2:11
   |
 2 |     next: Link<Link<[T]>>?
-  |           ^^^^^^^^^^^^^^^^ `Link<Link<[T]>>` here
+  |           ^^^^^^^^^^^^^^^ `Link<Link<[T]>>` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0140

@@ -1,0 +1,76 @@
+// The generated `==` keeps where each value's comparison goes on in a stack of pending pairs:
+// the top pair in its frame, the pairs below it in a buffer. A value whose only link is its
+// last pushes nothing. A left-deep `Node(..., Leaf)` of 20 levels waits on 20 pairs at once,
+// more than the first capacity, so the buffer grows. A mismatch at its bottom returns while 19
+// pairs are still in the buffer, and the buffer is freed then. `--rc-checks` and Valgrind find
+// a buffer that is not freed.
+// In `Deep`, each queued first child sits in a `W<Deep>?` that `==` reaches through the last
+// link of a `V<Deep>`. A queued pair that pointed into a copy of that `W`, which the next level
+// overwrites, would compare the wrong first child.
+enum List {
+    Nil
+    Cons(i64, List)
+}
+
+enum E {
+    Leaf
+    Node(E, E)
+}
+
+enum W<T> {
+    A(T?, T?)
+}
+
+enum V<T> {
+    B(W<T>?, W<T>?)
+}
+
+enum Deep {
+    Leaf
+    N(V<Deep>)
+}
+
+enum Pair<T> {
+    P(T?, T?)
+}
+
+enum Q {
+    Leaf
+    Node(Pair<Q>)
+}
+
+// `Node(Node(... Node(bottom, Leaf) ..., Leaf), Leaf)`, `depth` nodes deep.
+fn left(depth: i64, bottom: E) -> E {
+    let mut e = bottom
+    let mut i = 0
+    while i < depth {
+        e = E.Node(e, E.Leaf)
+        i += 1
+    }
+    e
+}
+
+// A chain of `depth` levels through the second child of each `W`. The first child of each
+// level is `Leaf`, except at level `odd`, where it is `N(B(None, None))`.
+fn chain(depth: i64, odd: i64) -> Deep {
+    let mut d = Deep.Leaf
+    let mut i = 0
+    while i < depth {
+        let first = if i == odd { Deep.N(V.B(None, None)) } else { Deep.Leaf }
+        d = Deep.N(V.B(None, W.A(first, d)))
+        i += 1
+    }
+    d
+}
+
+fn main() {
+    let list = List.Cons(1, List.Cons(2, List.Cons(3, List.Nil)))
+    print(list == List.Cons(1, List.Cons(2, List.Cons(3, List.Nil))))  // true
+    print(left(20, E.Leaf) == left(20, E.Leaf))                         // true
+    print(left(20, E.Leaf) == left(20, E.Node(E.Leaf, E.Leaf)))         // false
+    print(chain(10, 2) == chain(10, -1))                                // false
+    print(chain(10, 2) == chain(10, 2))                                 // true
+    let a = Q.Node(Pair.P(Q.Leaf, Q.Node(Pair.P(Q.Leaf, Q.Leaf))))
+    let b = Q.Node(Pair.P(Q.Node(Pair.P(None, None)), Q.Node(Pair.P(Q.Leaf, Q.Leaf))))
+    print(a == b)                                                       // false
+}

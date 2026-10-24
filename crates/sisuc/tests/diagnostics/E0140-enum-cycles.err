@@ -1,0 +1,8 @@
+error[E0140]: `Link` instantiates itself without end
+ --> E0140-enum-cycles.sisu:7:15
+  |
+7 |     Next(Pair<Link<[T], i64>, Link<i64, [U]>>)
+  |               ^^^^^^^^^^^^^^ `Link<[T], i64>` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

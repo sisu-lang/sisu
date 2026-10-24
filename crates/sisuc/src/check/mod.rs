@@ -31,6 +31,7 @@ use crate::diagnostic::{
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
+use crate::types::{Head, write_type};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use prelude::PRELUDE;
@@ -114,6 +115,8 @@ struct FieldInfo {
     name: ast::Ident,
     /// Where the field's type is written.
     ty_span: Span,
+    /// The class and enum types written in the field's type, each with its span.
+    inner: Vec<(Type, Span)>,
     /// `None` is `Error`.
     ty: Option<Type>,
     mutable: bool,
@@ -207,6 +210,8 @@ struct LoopFrame {
     first: Option<(Type, Span)>,
     /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
     widened: bool,
+    /// Whether the loop is a quiet value (see `Body::quiet_at`), and so its values are too.
+    quiet: bool,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
@@ -237,6 +242,7 @@ impl LoopFrame {
             valued: None,
             failed: false,
             widened: false,
+            quiet: false,
             crossed: false,
         }
     }
@@ -302,6 +308,9 @@ struct Checker<'src> {
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
+    /// While a field's or payload's type resolves, the class and enum types in it and where each
+    /// is written; `None` otherwise.
+    written: Option<Vec<(Type, Span)>>,
     /// The first constant of each name, and every broken one.
     constants: FxHashMap<Symbol, Declared<ConstInfo>>,
     /// What a value of each enum and class may hold, for W0011.
@@ -409,6 +418,11 @@ struct Body {
     /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
     /// loop label there as the `break`'s label, so a fix must not write one there.
     break_start: Option<usize>,
+    /// Where the quiet value is: an expression that has no expected type only because the
+    /// context of an array literal around it failed (see `joined`). Its value parts are quiet
+    /// too, and a quiet value that cannot be inferred is not reported, as the failed context
+    /// was reported. Only the expression at this span is quiet, not its operands.
+    quiet_at: Option<Span>,
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
@@ -624,6 +638,7 @@ impl<'src> Checker<'src> {
             enums: Vec::new(),
             enum_ids: FxHashMap::default(),
             lowered_enums: Vec::new(),
+            written: None,
             constants: FxHashMap::default(),
             holds_table: HoldsTable::default(),
             diagnostics: Diagnostics::default(),
@@ -841,7 +856,7 @@ impl Checker<'_> {
                 match member {
                     ast::Member::Field(field) => {
                         self.body.set_type_params(&owner);
-                        let ty = self.resolve(&field.ty);
+                        let (ty, inner) = self.resolve_written(&field.ty);
                         self.body.set_type_params(&[]);
                         if self.first_definition(
                             &mut first,
@@ -852,6 +867,7 @@ impl Checker<'_> {
                             self.classes[id.0].fields.push(FieldInfo {
                                 name: field.name.clone(),
                                 ty_span: field.ty.span,
+                                inner,
                                 ty,
                                 mutable: field.mutable,
                             });
@@ -999,6 +1015,13 @@ impl Checker<'_> {
         }
     }
 
+    /// `resolve`, and the applied names written in `ty`, each with its span.
+    fn resolve_written(&mut self, ty: &ast::TypeExpr) -> (Option<Type>, Vec<(Type, Span)>) {
+        self.written = Some(Vec::new());
+        let resolved = self.resolve(ty);
+        (resolved, self.written.take().unwrap_or_default())
+    }
+
     /// `None`, reported at the name without its `?`, for an unknown type, and for type
     /// arguments that do not fit.
     fn resolve(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
@@ -1009,6 +1032,12 @@ impl Checker<'_> {
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
         };
+        // Only an applied name can be an instance that grows: a plain name has no arguments.
+        // Arguments on a parameter or a built-in type are E0137, and no instance has that type.
+        if let (Some(written), ast::TypeKind::Applied(applied)) = (&mut self.written, &ty.kind) {
+            // Without the `?`: the type that grows is the instance, not the optional of it.
+            written.push((named, Span::new(ty.span.start(), applied.angles.end())));
+        }
         if !ty.optional {
             return Some(named);
         }
@@ -1288,20 +1317,16 @@ impl Checker<'_> {
     }
 
     fn type_name(&self, ty: Type) -> String {
-        match ty.kind() {
-            TypeKind::Class(id, args) => format!(
-                "{}{}",
-                self.classes[id.0].name.name,
-                args.written(|ty| self.type_name(ty))
-            ),
-            TypeKind::Enum(id, args) => format!(
-                "{}{}",
-                self.enums[id.0].name.name,
-                args.written(|ty| self.type_name(ty))
-            ),
-            TypeKind::Array(element) => format!("[{}]", self.type_name(element)),
-            TypeKind::Optional(payload) => format!("{}?", self.type_name(payload)),
-            _ => ty.to_string(),
+        let mut name = String::new();
+        write_type(&mut name, ty, |head| self.head(head));
+        name
+    }
+
+    /// The declared name of a class or an enum.
+    fn head(&self, head: Head) -> &'static str {
+        match head {
+            Head::Class(id) => self.classes[id.0].name.name.as_str(),
+            Head::Enum(id) => self.enums[id.0].name.name.as_str(),
         }
     }
 

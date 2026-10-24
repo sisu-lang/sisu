@@ -78,6 +78,8 @@ pub(super) enum HeapBlock<'a, 'ctx> {
     String { cap: IntValue<'ctx> },
     /// A box of the enum.
     Box(EnumId),
+    /// The pending pairs of an `eq_component` helper, with room for `cap` of them.
+    Pending { cap: IntValue<'ctx> },
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
@@ -187,6 +189,21 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .build_extract_value(pair, 1, name)
             .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair")
+    }
+
+    /// The address of the value in the optional `ty` at `place`, a `{ flag, value }` pair:
+    /// meaningful only when it has a value.
+    pub(super) fn optional_value_place(
+        &self,
+        ty: Type,
+        place: PointerValue<'ctx>,
+    ) -> PointerValue<'ctx> {
+        let pair = self
+            .optional_pair(ty)
+            .expect("an optional held in place should be a `{ flag, value }` pair");
+        self.builder
+            .build_struct_gep(pair, place, 1, "value")
+            .expect("an optional pair should have its value at element 1")
     }
 
     /// Lays out every enum, then every class: a class's layout needs the sizes of its enum
@@ -370,7 +387,24 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .expect(POSITIONED);
                 (size, i64_type.const_int(u64::from(layout.align), false))
             }
+            // A buffer this large holds a pair for each link of values that exist in memory.
+            HeapBlock::Pending { cap } => {
+                let (entry, align) = abi(&self.pending_pair());
+                let size = self
+                    .builder
+                    .build_int_nuw_mul(cap, entry, "size")
+                    .expect(POSITIONED);
+                (size, align)
+            }
         }
+    }
+
+    /// `{ i32 kind, ptr a, ptr b }`: a pair of values that an `eq_component` helper still has
+    /// to compare, with the member index of their enum.
+    pub(super) fn pending_pair(&self) -> StructType<'ctx> {
+        let ptr_type = self.context.ptr_type(AddressSpace::default()).into();
+        self.context
+            .struct_type(&[self.context.i32_type().into(), ptr_type, ptr_type], false)
     }
 
     /// `heap_size`'s array formula with checks, for `[v; n]`, whose length `len` is the

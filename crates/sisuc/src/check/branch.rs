@@ -1,6 +1,7 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
 use super::expr::{fits, rank};
+use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::{
     Checked, CheckedBlock, Checker, Poisoned, UNKNOWN, block_type, optional_of, tail, value_span,
@@ -23,9 +24,10 @@ impl Checker<'_> {
         expected: Option<Type>,
     ) -> Checked {
         let (cond, mismatched) = self.operand(cond, Some(Type::BOOL));
-        let (then, other, ty) = self.branches(then_block, else_block, expected, |c, expected| {
-            c.block(then_block, expected)
-        });
+        let (then, other, ty) =
+            self.branches(span, then_block, else_block, expected, |c, expected| {
+                c.block(then_block, expected)
+            });
         // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
         let ty = match ty {
             Ok(Type::NEVER) if mismatched => Err(Poisoned::typed(Type::NEVER)),
@@ -58,13 +60,19 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
         expected: Option<Type>,
     ) -> Checked {
-        let (scrutinee, form, mismatched) = self.let_value(Unwrap::IfLet, pattern, value);
+        // Ranking the `if let` for context may have checked its value (see `waits`).
+        let (scrutinee, form, mismatched) = match self.kept(value.span, false) {
+            Some((_, Ahead::Let(checked, form, mismatched))) => (checked, form, mismatched),
+            _ => self.let_value(Unwrap::IfLet, pattern, value),
+        };
         let mut checked = None;
-        let (then, other, ty) = self.branches(then_block, else_block, expected, |c, expected| {
-            let (bound, block) = c.let_block(Unwrap::IfLet, form, pattern, then_block, expected);
-            checked = Some(bound);
-            block
-        });
+        let (then, other, ty) =
+            self.branches(span, then_block, else_block, expected, |c, expected| {
+                let (bound, block) =
+                    c.let_block(Unwrap::IfLet, &form, pattern, then_block, expected);
+                checked = Some(bound);
+                block
+            });
         let bound = checked.expect("`branches` should check the first block, which sets it");
         // A failed join keeps its own `mismatch`, and branches that never end keep `Never`.
         let ty = match ty {
@@ -95,10 +103,11 @@ impl Checker<'_> {
         Ok(tir::Expr { kind, ty, span })
     }
 
-    /// The blocks of an `if` or `if let`, `then` checking the first, and their type: `unit`
-    /// without an `else`; see `join`.
+    /// The blocks of the `if` or `if let` at `span`, `then` checking the first, and their type:
+    /// `unit` without an `else`; see `join`.
     fn branches(
         &mut self,
+        span: Span,
         then_block: &ast::Block,
         else_block: Option<&ast::Block>,
         expected: Option<Type>,
@@ -109,7 +118,7 @@ impl Checker<'_> {
         };
         let mut then = Some(then);
         let sources = [Branch::of_block(then_block), Branch::of_block(else_block)];
-        let (blocks, ty) = self.join(&sources, expected, |c, i, expected| {
+        let (blocks, ty) = self.join(span, &sources, expected, |c, i, expected| {
             if i == 0 {
                 let then = then
                     .take()
@@ -124,17 +133,19 @@ impl Checker<'_> {
         (first, Some(other), ty)
     }
 
-    /// The `sources.len()` branches of an `if` or arms of a `match`, `check(i)` checking branch
-    /// `i`, and their type. With no `expected` type, the branch whose value is of lowest `rank`
-    /// is checked first, the first in source order on a tie, and each after it expects the type
-    /// of the first of a known type that is not `never`, made optional. A failed or `unit`
-    /// branch sets what the branches after it expect only until a branch of another known type
-    /// is checked. Then a `never` branch, and after it an `Error` one, takes the others' type; a
-    /// `T` and a `T?` join to `T?`, the `T` branches wrapped; other types that differ are
-    /// reported. A join that fails for a branch that rejected `expected` is a mismatch too.
-    /// With no branches, the type is `never`.
+    /// The `sources.len()` branches of the `if` or arms of the `match` at `span`, `check(i)`
+    /// checking branch `i`, and their type. With no `expected` type, the branch whose value is of
+    /// lowest `rank` is checked first, the first in source order on a tie. Each branch after it
+    /// expects the type of the first branch of a known type that is not `never`, made optional.
+    /// A failed or `unit` branch sets what the branches after it expect only until a branch of
+    /// another known type is checked. Then a `never` branch, and after it an `Error` one, takes
+    /// the others' type. A `T` and a `T?` join to `T?`, the `T` branches wrapped; other types
+    /// that differ are reported. A join that fails for a branch that rejected `expected` is a
+    /// mismatch too. With no branches, the type is `never`. A branch with no expected type is
+    /// quiet when the `if` or `match` is (see `Body::quiet_at`).
     pub(super) fn join(
         &mut self,
+        span: Span,
         sources: &[Branch<'_>],
         expected: Option<Type>,
         mut check: impl FnMut(&mut Self, usize, Option<Type>) -> CheckedBlock,
@@ -146,8 +157,10 @@ impl Checker<'_> {
         let mut checked: Vec<Option<CheckedBlock>> = sources.iter().map(|_| None).collect();
         let mut anchor = None;
         for i in order {
-            let after = anchor.and_then(after_branch);
-            let block = check(self, i, expected.or(after));
+            let expected = expected.or(anchor.and_then(after_branch));
+            let outer = self.pass_quiet(span, sources[i].tail.map(|v| v.span), expected);
+            let block = check(self, i, expected);
+            self.body.quiet_at = outer;
             // The first branch of a known type anchors the rest; a failed or `unit` one only
             // until then.
             match block_type(&block) {

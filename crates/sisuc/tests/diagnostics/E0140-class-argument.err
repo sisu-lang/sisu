@@ -1,0 +1,14 @@
+error[E0140]: `Box.f` instantiates itself without end
+ --> E0140-class-argument.sisu:5:9
+  |
+5 |         Box(v: self).f()
+  |         ^^^^^^^^^^^^^^^^ `Box<Box<T>>.f` here
+
+error[E0140]: `f` instantiates itself without end
+  --> E0140-class-argument.sisu:10:5
+   |
+10 |     f(Box(v: x))
+   |     ^^^^^^^^^^^^ `f<Box<T>>` here
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0140

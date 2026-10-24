@@ -47,7 +47,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 11] = [
+const SMALL_STACK: [&str; 14] = [
     "longlist",
     "rightskew",
     "deepchain",
@@ -57,6 +57,9 @@ const SMALL_STACK: [&str; 11] = [
     "enummutual",
     "enumeq",
     "deeppair",
+    "dropleft",
+    "eqleft",
+    "eqorder",
     "tailfresh",
     "tailpass",
 ];
@@ -229,6 +232,8 @@ allocation_counts! {
     // Each step takes `e`'s two boxes apart for the new `Add`. Building into the old boxes
     // allocates nothing.
     (enum_alloc_rewrite, "12\n", "12\n", 0),
+    // `==` on right-deep values needs no buffer of pending pairs: only the 4 boxes per level.
+    (enum_alloc_eq_right, "true\n", "true\n", 4000),
 }
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.
@@ -347,6 +352,36 @@ fn equal_enum_lists_should_compare_in_a_small_stack() {
 #[test]
 fn deep_inline_links_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("deeppair", "true\nfalse\n");
+}
+
+/// GIVEN the `dropleft` program, which builds a class tree 1 000 000 deep through `l`, not the
+/// chain field, and one that alternates `l` and `r`
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `done`
+#[test]
+fn class_drop_should_free_trees_deep_through_any_own_field_in_a_small_stack() {
+    assert_small_stack_prints_at_both("dropleft", "done\n");
+}
+
+/// GIVEN the `eqleft` program, which compares three pairs of left-deep trees of 1 000 000 nodes
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `true`, `false` and `false`
+///
+/// `==` keeps the first fields it still has to compare on the heap, not on the stack.
+#[test]
+fn left_deep_enums_should_compare_in_a_small_stack() {
+    assert_small_stack_prints_at_both("eqleft", "true\nfalse\nfalse\n");
+}
+
+/// GIVEN the `eqorder` program, whose two enum values differ in their first fields and hold
+/// 20 000-deep class chains in their second fields
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `false`
+///
+/// `==` finds the first mismatch before it compares the chains, whose `==` would overflow.
+#[test]
+fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
+    assert_small_stack_prints_at_both("eqorder", "false\n");
 }
 
 /// GIVEN the `deepchain` program, whose drop recurses once per object

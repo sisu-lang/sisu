@@ -1,6 +1,6 @@
-// A right-skewed tree of 1 000 000 nodes, run under a 256 KiB stack. Its drop recurses on
-// `_left`, which is always None here, and follows `right`, the chain field, in a loop. A drop
-// that loops on `_left` instead recurses on `right` once per node and overflows that stack.
+// A right-skewed tree of 1 000 000 nodes, run under a 256 KiB stack. Its drop frees each node
+// from a pending list, in one frame. A drop that recursed on `right` would need a frame per
+// node and overflow that stack.
 class Tree {
     _left: Tree?
     right: Tree?
