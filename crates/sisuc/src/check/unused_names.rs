@@ -157,10 +157,11 @@ impl Checker<'_> {
         }
     }
 
-    /// The W0012, W0013 and W0014 warnings, in no order: each function, method, class, enum and
-    /// constant that no live code uses, each field of a built class that it does not read, and
-    /// each variant of a built enum that it does not build, except a `_` name. A method of a
-    /// class or an enum that nothing builds is not reported: the class or enum is. Each cites up
+    /// The W0012, W0013 and W0014 warnings, in no order. W0012 is for each function, method,
+    /// class, enum and constant that no live code uses. W0013 is for each field of a built class
+    /// that live code does not read. It is also for each variant of a built enum that live code
+    /// does not build. A `_` name gets no warning. A method of a class or an enum that nothing
+    /// builds is not reported: the class or enum is. Each cites up
     /// to three of its uses in dead code. Each pending finding of a live function is W0014, and
     /// of a dead function the W0002 that it holds, if any: the function's warning tells to delete
     /// it all.
