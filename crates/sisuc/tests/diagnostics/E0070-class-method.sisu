@@ -1,0 +1,15 @@
+class Name {}
+
+class Actual {
+    fn name(self) {
+        print(1)
+    }
+
+    fn run(self) {
+        name(self)
+    }
+}
+
+fn main() {
+    Actual().run()
+}

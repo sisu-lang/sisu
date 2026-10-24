@@ -1,0 +1,14 @@
+error[E0074]: `print` is a function, not a variable
+ --> E0074-prelude.sisu:2:5
+  |
+2 |     print = 1
+  |     ^^^^^
+
+error[E0074]: `read_line` is a function, not a variable
+ --> E0074-prelude.sisu:3:5
+  |
+3 |     read_line += 2
+  |     ^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0074

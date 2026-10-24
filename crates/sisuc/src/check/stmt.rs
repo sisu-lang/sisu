@@ -332,10 +332,12 @@ impl Checker<'_> {
                 init,
             } => {
                 let declared = ty.as_ref().map(|ty| self.resolve(ty));
+                self.body.let_init = Some((init.span, name.name, mutable.is_some()));
                 let init = match declared {
                     Some(declared) => self.expect(init, declared),
                     None => self.value(init, None),
                 };
+                self.body.let_init = None;
                 // `let _ = e` binds nothing: the value is an expression statement, which
                 // codegen releases at once.
                 if name.name.as_str() == "_" {

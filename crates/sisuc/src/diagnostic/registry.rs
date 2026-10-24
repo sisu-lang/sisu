@@ -159,7 +159,7 @@ codes! {
     ExponentNeedsDigits = "E0102",
     FloatOutOfRange = "E0103",
     NotExactlyF64 = "E0104",
-    TypeAsValue = "E0105",
+    TypeAsValue | FunctionAsValue = "E0105",
     MathIdiom = "E0106",
     PowerOperator = "E0107",
     MalformedFormatSpec = "E0108",
@@ -446,7 +446,12 @@ pub(crate) enum DiagnosticKind {
         access: Span,
     },
     /// A `None` or `[]` (`literal`) at `at` whose type nothing fixes.
-    CannotInfer { literal: Literal, at: Span },
+    CannotInfer {
+        literal: Literal,
+        /// What the `let` that the literal initializes writes before its type, for the example.
+        binding: Option<String>,
+        at: Span,
+    },
     /// A call at `at` of `callee` that binds nothing to its type parameter `param`; `example`
     /// writes the call with its type arguments.
     CannotInferParam {
@@ -582,10 +587,10 @@ pub(crate) enum DiagnosticKind {
     CannotIndex { ty: String, at: Span },
     /// A `sum` at `at` of an array of type `ty`, which is neither `[i64]` nor `[f64]`.
     SumNeedsNumbers { ty: String, at: Span },
-    /// A call at `at` of the method `name` of an array or a number as a function, with the
-    /// receiver as its first argument. `next` is the next argument, if any. `wrap` is whether
-    /// `receiver` needs parentheses to take a `.name(...)`, and `safe` whether the method call
-    /// checks.
+    /// A call at `at` of the method `name` of an array, a number, a class or an enum as a
+    /// function, with the receiver as its first argument. `next` is the next argument, if any.
+    /// `wrap` is whether `receiver` needs parentheses to take a `.name(...)`, and `safe` whether
+    /// the method call checks.
     MethodAsFunction {
         name: String,
         at: Span,
@@ -702,6 +707,12 @@ pub(crate) enum DiagnosticKind {
     },
     /// The built-in type or class `name`, at `at`, read as a value.
     TypeAsValue { name: String, at: Span },
+    /// The function `name`, at `at`, read as a value. `takes_arguments` when it has parameters.
+    FunctionAsValue {
+        name: String,
+        at: Span,
+        takes_arguments: bool,
+    },
     /// The member of `math`, `Math` or `f64`, written at `written`, which is not how Sisu writes
     /// math: a method or constant of another language, or `f64.max(a, b)` for `a.max(b)`; `fix`
     /// is the form Sisu uses, when it surely checks.
@@ -2074,10 +2085,20 @@ impl From<DiagnosticKind> for Diagnostic {
                     },
                 )
             }
-            DiagnosticKind::CannotInfer { literal, at } => {
-                let (literal, example) = match literal {
-                    Literal::None => ("None", "let x: Tree? = None"),
-                    Literal::EmptyArray => ("[]", "let xs: [i64] = []"),
+            DiagnosticKind::CannotInfer {
+                literal,
+                binding,
+                at,
+            } => {
+                let (literal, example) = match (literal, binding) {
+                    (Literal::None, name) => (
+                        "None",
+                        format!("let {}: i64? = None", name.as_deref().unwrap_or("x")),
+                    ),
+                    (Literal::EmptyArray, name) => (
+                        "[]",
+                        format!("let {}: [i64] = []", name.as_deref().unwrap_or("xs")),
+                    ),
                 };
                 Diagnostic::coded(code, at, format!("cannot infer the type of `{literal}`"))
                     .with_help(format!("write the type: `{example}`"))
@@ -2179,7 +2200,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 })
             }
             DiagnosticKind::LabeledArgument { at, variant: None } => {
-                Diagnostic::coded(code, at, "labels on arguments come in milestone 10")
+                Diagnostic::coded(code, at, "this call takes no labels on its arguments").with_help(
+                    "remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments",
+                )
             }
             DiagnosticKind::LabeledArgument {
                 at,
@@ -2655,6 +2678,18 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::TypeAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a type, not a value"))
+            }
+            DiagnosticKind::FunctionAsValue {
+                name,
+                at,
+                takes_arguments,
+            } => {
+                let d = Diagnostic::coded(code, at, format!("`{name}` is a function, not a value"));
+                d.with_help(if takes_arguments {
+                    "call it with its arguments".to_string()
+                } else {
+                    format!("call it: `{name}()`")
+                })
             }
             DiagnosticKind::MathIdiom { written, fix } => {
                 let d = Diagnostic::coded(

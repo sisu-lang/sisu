@@ -1,0 +1,4 @@
+fn main() {
+    let p = print
+    let l = read_line
+}

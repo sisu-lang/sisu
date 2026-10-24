@@ -196,7 +196,7 @@ The rules:
 - In a method, use `self` to reach the fields and the other methods: `self.x` and `self.m()`. A bare `x` or `m()` does not find a field or a method. A bare `x` finds a binding or a constant with that name. A bare `m(...)` finds a function, a class (its constructor) or a conversion, such as `f64(n)`. Else each is an error ([E0033](../diagnostics/E0033.md), [E0052](../diagnostics/E0052.md)).
 - A method can call a method that is declared below it, and it can call itself.
 - A method can take the name of a function, such as `len` or `print`. A call `x.print()` finds the method, and `print(...)` finds the function.
-- A method is not a function. A call `name(x)` does not find the method `name` ([E0052](../diagnostics/E0052.md)). A call on the class, such as `Account.show()`, is an error ([E0105](../diagnostics/E0105.md)).
+- A method is not a function. A call `name(x)` does not find the method `name`: write `x.name()` ([E0070](../diagnostics/E0070.md)). A call on the class, such as `Account.show()`, is an error ([E0105](../diagnostics/E0105.md)).
 - For an optional object, call a method with `?.` ([Optional chaining](operators.md#optional-chaining)).
 
 A method can return `self`, so that calls can follow one another.

@@ -312,7 +312,7 @@ impl Checker<'_> {
                 let Some(b) = self.lookup(name) else {
                     if let Some(place) = self.constant_place(span, name, element) {
                         return place;
-                    } else if self.function_ids.contains_key(&name) {
+                    } else if self.is_function(name) {
                         self.report(DiagnosticKind::AssignToFunction {
                             name: name.to_string(),
                             at: target.span,

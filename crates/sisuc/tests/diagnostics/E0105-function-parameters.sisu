@@ -1,0 +1,8 @@
+fn double(n: i64) -> i64 {
+    n * 2
+}
+
+fn main() {
+    let h = double
+    print(h)
+}

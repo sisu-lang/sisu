@@ -153,7 +153,6 @@ crates/sisuc/src/check/tests/constants.rs::type_list_errors
 crates/sisuc/src/check/tests/constants.rs::typing_errors
 crates/sisuc/src/check/tests/constants.rs::use_errors
 crates/sisuc/src/check/tests/constants.rs::uses_lower_to_literals
-crates/sisuc/src/check/tests/enums.rs::bare_variant_yields_to_items
 crates/sisuc/src/check/tests/enums.rs::boxes_follow_components
 crates/sisuc/src/check/tests/enums.rs::class_cycle_not_repeated
 crates/sisuc/src/check/tests/enums.rs::construction_errors
@@ -175,7 +174,6 @@ crates/sisuc/src/check/tests/enums.rs::variant_case_fix
 crates/sisuc/src/check/tests/enums.rs::variant_form_fix
 crates/sisuc/src/check/tests/enums.rs::variant_labels_fix
 crates/sisuc/src/check/tests/floats.rs::char_after_a_rejected_integer_adds_no_error
-crates/sisuc/src/check/tests/floats.rs::declared_math_is_not_the_idiom
 crates/sisuc/src/check/tests/floats.rs::exactness
 crates/sisuc/src/check/tests/floats.rs::f64_constant_errors
 crates/sisuc/src/check/tests/floats.rs::f64_constant_in_const

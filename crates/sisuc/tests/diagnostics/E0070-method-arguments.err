@@ -1,0 +1,38 @@
+error[E0070]: `add` is a method, not a function
+ --> E0070-method-arguments.sisu:9:11
+  |
+9 |     print(add(c))
+  |           ^^^
+  |
+help: try calling `add` as a method, then fix its arguments
+  |
+9 -     print(add(c))
+9 +     print(c.add())
+  |
+
+error[E0070]: `add` is a method, not a function
+  --> E0070-method-arguments.sisu:10:11
+   |
+10 |     print(add(c, 1, 2))
+   |           ^^^
+   |
+help: try calling `add` as a method, then fix its arguments
+   |
+10 -     print(add(c, 1, 2))
+10 +     print(c.add(1, 2))
+   |
+
+error[E0070]: `add` is a method, not a function
+  --> E0070-method-arguments.sisu:11:11
+   |
+11 |     print(add(c, true))
+   |           ^^^
+   |
+help: try calling `add` as a method, then fix its arguments
+   |
+11 -     print(add(c, true))
+11 +     print(c.add(true))
+   |
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0070
