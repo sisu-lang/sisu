@@ -440,19 +440,19 @@ impl Checker<'_> {
         let mut slots: Vec<Option<Checked>> = elements.iter().map(|_| None).collect();
         let mut quiet = false;
         for wave in 0..3 {
-            if wave == 2 {
-                quiet = (slots.iter().flatten())
-                    .any(|c| matches!(type_of(c), None | Some(Type::UNIT | Type::NEVER)));
-            }
-            for (slot, e) in iter::zip(&mut slots, elements).filter(|(_, e)| rank(e) == wave) {
-                *slot = Some(if wave < 2 || call.bindings.known(element).is_some() {
+            for (i, e) in elements.iter().enumerate().filter(|(_, e)| rank(e) == wave) {
+                let checked = if wave < 2 || call.bindings.known(element).is_some() {
                     self.infer_value(call, e, element)
                 } else {
+                    quiet = quiet
+                        || (slots.iter().flatten())
+                            .any(|c| matches!(type_of(c), None | Some(Type::UNIT | Type::NEVER)));
                     // Only its own diagnostics matter.
                     let _ = self.value(e, quiet.then_some(UNKNOWN));
                     quiet = true;
                     Err(Poisoned::error())
-                });
+                };
+                slots[i] = Some(checked);
             }
         }
         let Some(bound) = call.bindings.known(element) else {

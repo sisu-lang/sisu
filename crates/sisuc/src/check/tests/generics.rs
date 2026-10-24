@@ -1929,7 +1929,7 @@ fn call_type_arguments_should_name_their_classes_in_tir() {
 }
 
 /// Parameters of array types whose elements are optional, and `main`.
-const OPTIONAL_ELEMENTS: &str = "fn g1<T>(xs: [T?]) -> i64 { 0 }\nfn g3<T>(xs: [[T]]) -> i64 { 0 }\nfn g4<T>(xs: [[T?]]) -> i64 { 0 }\nfn main() {}";
+const OPTIONAL_ELEMENTS: &str = "fn g1<T>(xs: [T?]) -> i64 { 0 }\nfn g3<T>(xs: [[T]]) -> i64 { 0 }\nfn g4<T>(xs: [[T?]]) -> i64 { 0 }\nfn g5<T>(xs: [T]) -> i64 { 0 }\nfn main() {}";
 
 /// `body` in a function of `b: u8`, `x: i64` and `ys: [i64]`, on lines 2 on, then
 /// `OPTIONAL_ELEMENTS`.
@@ -1976,6 +1976,9 @@ fn generic_array_literals_should_report_each_mistake_once() {
             vec![(Code::Mismatch, (3, 8))],
         ),
         ("g1(ys)", vec![(Code::Mismatch, (2, 8))]),
+        // A parameter that is no array of optionals keeps the join: `T` is `i64?`, which no
+        // type argument may be.
+        ("g5([1, None])", vec![(Code::TypeArgument, (2, 8))]),
         // Elements of type `unit` bind nothing, then `unit` is reported, and no `None` besides.
         (
             "g1([print(1), print(2)])",
