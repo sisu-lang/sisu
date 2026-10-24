@@ -37,7 +37,8 @@ newlines".
   header ends nothing, as inside `(`, when the header starts its statement.
   The list's `<` comes right after the declared name and holds only the
   declaration's type parameters. A `<` in an expression is still an operator.
-  A header after a `}` on the same line (`fn a() {} fn b<`) gets no such list.
+  The list of a header after a `}` on the same line (`fn a() {} fn b<`)
+  does not span lines.
 - From milestone 8, a `>` can end a statement too, when it closes a type
   annotation: after a `:` or `->` with no `=` after it, with every `<` closed
   (`b: Box<i64>`). The lexer decides, so every reader sees the same line
