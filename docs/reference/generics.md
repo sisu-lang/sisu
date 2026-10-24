@@ -19,7 +19,7 @@ fn main() {
 }
 ```
 
-`first` works for an array with elements of any type. A function, a class and an enum can be generic. This page also tells what a generic body can do with a value of a type parameter, and which features are in development.
+`first` works for an array whose elements have a type that a type argument can be ([Type arguments](#type-arguments)). A function, a class and an enum can be generic. This page also tells what a generic body can do with a value of a type parameter, and which features are in development.
 
 ## Type parameters
 
@@ -62,10 +62,10 @@ fn main() {
 
 The rules:
 
-- A type parameter is a type in the whole declaration: in its parameters, its return type, its fields, its payloads and the types of the bindings in its body.
+- A type parameter is a type in the whole declaration. It can be the type of a parameter, a field or a payload, a return type, and a binding in the body.
 - A method of a generic class or enum uses the type parameters of its type. A method can also add type parameters of its own, such as `C` above.
 - The type parameters of one declaration have different names. A method cannot reuse a name from its type ([E0034](../diagnostics/E0034.md)).
-- A type parameter cannot take the name of a built-in type ([E0026](../diagnostics/E0026.md)).
+- A type parameter cannot take a name that [E0026](../diagnostics/E0026.md) lists, such as `i64` or `Option`.
 - `main` has no type parameters ([E0029](../diagnostics/E0029.md)).
 
 ```sisu
@@ -103,9 +103,9 @@ fn main() {
 
 The rules:
 
-- A use of a generic class or enum gives one type argument for each type parameter ([E0137](../diagnostics/E0137.md)). `Box` alone, and `Box<i64, i64>`, are errors.
+- A type that names a generic class or enum gives one type argument for each type parameter ([E0137](../diagnostics/E0137.md)). As a type, `Box` alone and `Box<i64, i64>` are errors.
 - A class, an enum or a function that is not generic takes no type arguments ([E0137](../diagnostics/E0137.md)).
-- The type arguments of a variant go on its enum: `Tree<i64>.Leaf`, not `Tree.Leaf<i64>` ([E0137](../diagnostics/E0137.md)).
+- The type arguments of a variant go on its enum: `Tree<i64>.Node(...)`, not `Tree.Node<i64>(...)` ([E0137](../diagnostics/E0137.md)).
 - A type argument cannot be `unit`, `never` or an optional ([E0138](../diagnostics/E0138.md)). The type of a call that gives no value, such as `print(1)`, is `unit`. An array of optionals, such as `[i64?]`, is valid. The sections [Optionals of optionals](types.md#optionals-of-optionals) and [unit](types.md#unit) are in development, and they lift the rule for optionals and for `unit`.
 
 ```sisu
@@ -233,7 +233,7 @@ fn main() {
 
 The rules:
 
-- An operator does not apply to a `T`: not `+`, `<` or `==` ([E0139](../diagnostics/E0139.md)). `contains` on a `[T]` uses `==`, so it is an error too. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` is an error.
+- An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)). `contains` on a `[T]` uses `==`, so it is an error too. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` is an error.
 - A `T` has no method and no field ([E0063](../diagnostics/E0063.md)).
 - `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)).
 - `print` and interpolation do not take a `T` ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)).
@@ -295,11 +295,12 @@ fn main() {
 
 The rules:
 
-- In the body, a value of type `T` can do what its bounds give it: the methods of the interfaces, and the operators that they map to. `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`.
+- In the body, a value of type `T` can do what its bounds give it. These are the methods of the interfaces and the operators that they map to.
+- `Eq` gives `==` and `!=`. `Ord` gives `<`, `<=`, `>` and `>=`.
 - Anything else is an error where the body is written. The help suggests the bound that is missing.
 - A type argument that does not conform to a bound is an error at the call.
 - Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` work on a `T`.
-- `T: AnyObject` lets the body use `is` on values of type `T`.
+- Every class conforms to `AnyObject`, and nothing else can. `T: AnyObject` lets the body use `is` on values of type `T`, and lets a class declare a [weak field](values.md#weak-fields) of type `T?`.
 
 ## Interfaces
 
@@ -353,18 +354,18 @@ class Fahrenheit {
     degrees: f64
 }
 
-interface Convert<T> {
-    fn convert(self) -> T
+interface Transform<T> {
+    fn transform(self) -> T
 }
 
-extend Celsius: Convert<Fahrenheit> {
-    fn convert(self) -> Fahrenheit {
+extend Celsius: Transform<Fahrenheit> {
+    fn transform(self) -> Fahrenheit {
         Fahrenheit(degrees: self.degrees * 1.8 + 32.0)
     }
 }
 
 fn main() {
-    let f: Fahrenheit = Celsius(degrees: 100.0).convert()
+    let f: Fahrenheit = Celsius(degrees: 100.0).transform()
     print(f.degrees)                   // 212.0
 }
 ```
@@ -373,8 +374,50 @@ The rules:
 
 - `extend Type { ... }` adds methods that follow no interface.
 - A program cannot extend a built-in type, such as `string` or `[T]`.
-- A generic interface, such as `Convert<T>`, lets one type conform to it several times, with different type arguments.
-- When a call can use more than one conformance, the expected type picks one: `let f: Fahrenheit = c.convert()`. Without an expected type, the call is an error.
+- A generic interface, such as `Transform<T>`, lets one type conform to it several times, with different type arguments.
+- When a call can use more than one conformance, the expected type picks one: `let f: Fahrenheit = c.transform()`. Without an expected type, the call is an error.
+
+### Generic extensions
+
+An `extend` can have type parameters. `extend<T> Stack<T>` adds methods to every `Stack`. `extend Stack<i64>` adds methods to `Stack<i64>` only.
+
+```sisu pending
+class Stack<T> {
+    mut items: [T]
+}
+
+extend<T> Stack<T> {
+    fn size(self) -> i64 {
+        self.items.len()
+    }
+}
+
+extend<T: Eq> Stack<T>: Eq {
+    fn eq(self, other: Stack<T>) -> bool {
+        self.items == other.items
+    }
+}
+
+extend Stack<i64> {
+    fn total(self) -> i64 {
+        self.items.sum()
+    }
+}
+
+fn main() {
+    let a = Stack(items: [1, 2])
+    let b = Stack(items: [1, 2])
+    print(a.size())                    // 2
+    print(a.total())                   // 3
+    print(a == b)                      // true
+}
+```
+
+The rules:
+
+- `extend<T: Eq> Stack<T>: Eq` makes `Stack<T>` conform to `Eq` only when `T` does.
+- Methods with the same name on different instantiations never overlap.
+- One method name in two extensions that both cover an instantiation is an error. An example is `extend<T> Stack<T>` and `extend Stack<i64>`, which both define `total`.
 
 ### Associated types
 
@@ -400,13 +443,19 @@ class Countdown: Source {
     }
 }
 
+fn first_item<S: Source>(s: S) -> S.Item? {
+    s.next()
+}
+
 fn main() {
     let c = Countdown(left: 2)
-    print(c.next() ?? 0)               // 2
+    print(first_item(c) ?? 0)          // 2
 }
 ```
 
-Use an associated type when each type has one answer, such as the item of a `Source`. Use a type parameter, as in `Convert<T>`, when one type can conform in several ways. An interface can have both.
+Inside the interface, the associated type is written `Item`. Elsewhere it is written through the type: `S.Item` for a type parameter `S: Source`.
+
+Use an associated type when each type has one answer, such as the item of a `Source`. Use a type parameter, as in `Transform<T>`, when one type can conform in several ways. An interface can have both.
 
 ### Display, Eq and Ord
 
@@ -438,12 +487,14 @@ fn main() {
 
 The rules:
 
-- A class, an enum, an array and a built-in type each have a `Display`. A class prints its name, with its type arguments, and never its fields. A class with a method `to_string` prints the text of that method.
+- Every type that can be a type argument has a `Display`.
+- A class prints its name, with its type arguments, and never its fields. A class with a method `to_string` prints the text of that method.
 - A class has no `==` and no `<`. A class that conforms to `Eq` has `==`, and one that conforms to `Ord` has `<`. `a is b` compares two objects by identity.
 - A value that holds a class, such as an array of objects, has `==` only when the class conforms to `Eq`.
 - `f64` conforms to `Eq` and `Ord` with the rules of IEEE 754. In generic code, `nan` is not equal to `nan`, as in other code.
 - An enum has `==` when all its payloads have it, and it has `<` only when it conforms to `Ord`.
-- Only `to_string` conforms by name. A type conforms to `Eq` or `Ord` only when its declaration names it.
+- Only `to_string` conforms by name. A type with its own `eq` or `less` method conforms to `Eq` or `Ord` only when its declaration names the interface.
+- Built-in types, such as `i64` and `string`, have `Eq` and `Ord` with no declaration. An enum has `Eq` with no declaration when all its payloads have it.
 
 ## Type aliases
 
@@ -463,7 +514,7 @@ fn main() {
 
 The rules:
 
-- A type alias is a top-level declaration. It shares the names of functions, classes, enums and constants.
+- A type alias is a top-level declaration. Its name must differ from the name of any function, class, enum or constant.
 - An alias can have type parameters, such as `Pairs<T>`.
 - An alias that refers to itself, directly or through another alias, is an error.
 
@@ -505,5 +556,4 @@ The rules:
 
 - An interface name alone is not a type. Write `T: Shape` for a type parameter, or `any Shape` for a value.
 - An interface whose methods are generic, or that uses `Self` besides the receiver, cannot be `any`. So `any Eq` and `any Ord` are errors.
-- An `any` value prints through the `Display` of its type. It has no `==` and no `<`.
 - A generic function with the bound `T: Shape` accepts an `[any Shape]`.
