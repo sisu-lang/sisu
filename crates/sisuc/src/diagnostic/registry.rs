@@ -588,16 +588,11 @@ pub(crate) enum DiagnosticKind {
     /// A `sum` at `at` of an array of type `ty`, which is neither `[i64]` nor `[f64]`.
     SumNeedsNumbers { ty: String, at: Span },
     /// A call at `at` of the method `name` of an array, a number, a class or an enum as a
-    /// function, with the receiver as its first argument. `next` is the next argument, if any.
-    /// `wrap` is whether `receiver` needs parentheses to take a `.name(...)`, and `safe` whether
-    /// the method call checks.
+    /// function, with its `receiver`.
     MethodAsFunction {
         name: String,
         at: Span,
-        receiver: Span,
-        next: Option<Span>,
-        wrap: bool,
-        safe: bool,
+        receiver: MethodReceiver,
     },
     /// The token at `at`, where the tree passes `limit` levels.
     NestingTooDeep { at: Span, limit: usize },
@@ -996,6 +991,54 @@ pub(crate) enum DiagnosticKind {
         instance: String,
         through: Vec<(Span, String)>,
     },
+}
+
+/// The receiver of a method that a call writes as a function.
+pub(crate) enum MethodReceiver {
+    /// The first argument. `safe` is whether the method call checks.
+    Argument {
+        argument: ReceiverArgument,
+        safe: bool,
+    },
+    /// The first argument, an optional whose payload has the method. `value` is its path as
+    /// written, when it has one, and `takes` is whether the method takes the other arguments.
+    /// The fix is never safe: `?.` skips the call on `None`.
+    Optional {
+        argument: ReceiverArgument,
+        value: Option<String>,
+        takes: bool,
+    },
+    /// The `self` of the method that holds the call, which has the method. `safe` is whether
+    /// the method call checks.
+    SelfValue { safe: bool },
+}
+
+/// A first argument that becomes the receiver of the method call.
+pub(crate) struct ReceiverArgument {
+    pub(crate) at: Span,
+    /// The next argument, if any.
+    pub(crate) next: Option<Span>,
+    /// Whether `at` needs parentheses to take a `.name(...)`.
+    pub(crate) wrap: bool,
+}
+
+impl ReceiverArgument {
+    /// The edits that move the receiver before the method name at `callee`. `access` replaces
+    /// the text from the end of the receiver to the next argument: it ends with the `(` of the
+    /// method call.
+    fn edits(&self, callee: Span, access: &str) -> Vec<Edit> {
+        let (open, close) = if self.wrap { ("(", ")") } else { ("", "") };
+        vec![
+            Edit {
+                span: Span::new(callee.start(), self.at.start()),
+                replacement: open.to_string(),
+            },
+            Edit {
+                span: Span::new(self.at.end(), self.next.map_or(self.at.end(), Span::start)),
+                replacement: format!("{close}{access}"),
+            },
+        ]
+    }
 }
 
 /// How written type arguments do not fit what they follow.
@@ -2374,33 +2417,55 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 at,
                 receiver,
-                next,
-                wrap,
-                safe,
             } => {
-                let (open, close) = if wrap { ("(", ")") } else { ("", "") };
-                Diagnostic::coded(
-                    code,
-                    at,
-                    format!("`{name}` is a method, not a function"),
-                )
-                .with_fix(Fix {
-                    message: if safe {
-                        format!("call `{name}` as a method")
-                    } else {
-                        format!("try calling `{name}` as a method, then fix its arguments")
-                    },
+                let d = Diagnostic::coded(code, at, format!("`{name}` is a method, not a function"));
+                let (message, safe, edits) = match receiver {
+                    // The first argument was checked without its parameter's type, so a correct
+                    // call can be unsafe: the message does not say that the arguments are wrong.
+                    MethodReceiver::SelfValue { safe } => (
+                        if safe {
+                            format!("call `{name}` as a method of `self`")
+                        } else {
+                            format!("try calling `{name}` as a method of `self`")
+                        },
+                        safe,
+                        vec![Edit {
+                            span: Span::new(at.start(), at.start()),
+                            replacement: "self.".to_string(),
+                        }],
+                    ),
+                    MethodReceiver::Argument { argument, safe } => (
+                        if safe {
+                            format!("call `{name}` as a method")
+                        } else {
+                            format!("try calling `{name}` as a method, then fix its arguments")
+                        },
+                        safe,
+                        argument.edits(at, &format!(".{name}(")),
+                    ),
+                    MethodReceiver::Optional {
+                        argument,
+                        value,
+                        takes,
+                    } => {
+                        let value = named(value);
+                        let d = d.with_help(format!(
+                            "{value} may be `None`: to call `{name}` only when it is present, unwrap it with `if let`"
+                        ));
+                        let fix = if takes { "" } else { ", then fix its arguments" };
+                        return d.with_fix(Fix {
+                            message: format!(
+                                "to skip the call when {value} is `None`, call `{name}` with `?.`{fix}"
+                            ),
+                            safe: false,
+                            edits: argument.edits(at, &format!("?.{name}(")),
+                        });
+                    }
+                };
+                d.with_fix(Fix {
+                    message,
                     safe,
-                    edits: vec![
-                        Edit {
-                            span: Span::new(at.start(), receiver.start()),
-                            replacement: open.to_string(),
-                        },
-                        Edit {
-                            span: Span::new(receiver.end(), next.map_or(receiver.end(), Span::start)),
-                            replacement: format!("{close}.{name}("),
-                        },
-                    ],
+                    edits,
                 })
             }
             DiagnosticKind::NestingTooDeep { at, limit } => {

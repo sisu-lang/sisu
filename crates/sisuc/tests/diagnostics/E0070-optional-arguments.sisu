@@ -1,0 +1,8 @@
+class Person {
+    fn greet(self, times: i64) {}
+}
+
+fn main() {
+    let person: Person? = Person()
+    greet(person)
+}

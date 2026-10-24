@@ -1,0 +1,16 @@
+class Counter {
+    count: i64
+
+    fn add(self, by: i64) -> i64 {
+        self.count + by
+    }
+
+    fn run(self) {
+        print(add(1, 2))
+        print(add(true))
+    }
+}
+
+fn main() {
+    Counter(count: 0).run()
+}

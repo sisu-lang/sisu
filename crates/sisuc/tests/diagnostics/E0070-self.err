@@ -1,0 +1,13 @@
+error[E0070]: `name` is a method, not a function
+ --> E0070-self.sisu:7:9
+  |
+7 |         name()
+  |         ^^^^
+  |
+help: call `name` as a method of `self`
+  |
+7 |         self.name()
+  |         +++++
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

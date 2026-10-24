@@ -1,0 +1,15 @@
+error[E0070]: `greet` is a method, not a function
+ --> E0070-optional-arguments.sisu:7:5
+  |
+7 |     greet(person)
+  |     ^^^^^
+  |
+  = help: `person` may be `None`: to call `greet` only when it is present, unwrap it with `if let`
+help: to skip the call when `person` is `None`, call `greet` with `?.`, then fix its arguments
+  |
+7 -     greet(person)
+7 +     person?.greet()
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

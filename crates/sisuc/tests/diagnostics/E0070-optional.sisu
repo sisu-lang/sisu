@@ -1,0 +1,8 @@
+class Person {
+    fn name(self) {}
+}
+
+fn main() {
+    let person: Person? = Person()
+    name(person)
+}

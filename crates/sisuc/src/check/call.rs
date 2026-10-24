@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::expr::{fits, no_member, postfix};
+use super::expr::{fits, no_member, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
@@ -13,7 +13,8 @@ use super::{
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, Suggestion, alias, suggestion,
+    Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument, Suggestion,
+    alias, suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -63,7 +64,7 @@ impl Checker<'_> {
                     self.stray(args);
                     Err(Poisoned::error())
                 }
-                None => self.unknown_call(callee, args),
+                None => self.unknown_call(site, args),
             },
         }
     }
@@ -71,17 +72,35 @@ impl Checker<'_> {
     /// A call of `callee`, which names nothing callable. `len(xs)`, `sum(xs)` and
     /// `contains(xs, v)`, where `xs` is an array with that method, point to the method, and so
     /// do `sqrt(x)` and `max(a, b)`, where the first argument is a number with it, and
-    /// `name(p)`, where `p` is an object of a class or an enum that has the method `name`.
-    fn unknown_call(&mut self, callee: &ast::Ident, args: &[ast::Arg]) -> Checked {
+    /// `name(p)`, where `p` is an object of a class or an enum that has the method `name`, or an
+    /// optional of one. In a method, `name(args)` where its class or enum has the method `name`
+    /// points to `self.name(args)`. `site` writes `callee` with its type arguments.
+    fn unknown_call(&mut self, site: Site<'_>, args: &[ast::Arg]) -> Checked {
+        let callee = site.name;
         let name = callee.name.as_str();
+        let unlabeled = args.iter().all(|arg| arg.label.is_none());
+        let mut first_checked = None;
         let rest = match args.split_first() {
-            Some((first, rest)) if args.iter().all(|arg| arg.label.is_none()) => {
+            Some((first, rest)) if unlabeled => {
                 let receiver = self.expr(&first.value, Some(UNKNOWN));
+                // When it fits the method of `self`, the call is most likely `self.name(args)`,
+                // as in a language that calls a bare method name on `this`.
+                let want = self.self_parameter(callee.name, args.len());
+                let fits_self =
+                    want.is_some_and(|want| receiver.as_ref().is_ok_and(|r| fits(want, r.ty)));
                 // A poisoned receiver is not known to have the method.
-                let idiom = receiver.as_ref().ok().and_then(|receiver| {
-                    Some((self.idiom_of(callee.name, receiver.ty)?, receiver.ty))
-                });
-                if let Some((idiom, ty)) = idiom {
+                let idiom = receiver
+                    .as_ref()
+                    .ok()
+                    .filter(|_| !fits_self)
+                    .and_then(|receiver| {
+                        let (ty, optional) = match receiver.ty.kind() {
+                            TypeKind::Optional(payload) => (payload, true),
+                            _ => (receiver.ty, false),
+                        };
+                        Some((self.idiom_of(callee.name, ty)?, ty, optional))
+                    });
+                if let Some((idiom, ty, optional)) = idiom {
                     let next = rest.first().map(|arg| arg.value.span);
                     // The rewrite deletes the text before the receiver and between it and
                     // `next`, so a comment there makes it unsafe.
@@ -91,22 +110,57 @@ impl Checker<'_> {
                     ];
                     let takes = match idiom {
                         Idiom::Built => self.idiom_arguments(name, ty, rest),
-                        Idiom::Method(func, owner) => self.method_arguments(func, owner, rest),
+                        Idiom::Method(func, owner) => {
+                            self.method_arguments(func, owner, rest, None)
+                        }
+                    };
+                    let argument = ReceiverArgument {
+                        at: first.value.span,
+                        next,
+                        wrap: !postfix(&first.value) || self.label_starts_receiver(callee, first),
+                    };
+                    let receiver = if optional {
+                        MethodReceiver::Optional {
+                            argument,
+                            value: path(&first.value),
+                            takes,
+                        }
+                    } else {
+                        MethodReceiver::Argument {
+                            argument,
+                            safe: takes && !self.comment_in(&deleted),
+                        }
                     };
                     self.report(DiagnosticKind::MethodAsFunction {
                         name: callee.name.to_string(),
                         at: callee.span,
-                        receiver: first.value.span,
-                        next,
-                        wrap: !postfix(&first.value) || self.label_starts_receiver(callee, first),
-                        safe: takes && !self.comment_in(&deleted),
+                        receiver,
                     });
                     return Err(Poisoned::error());
                 }
+                first_checked = Some(receiver);
                 rest
             }
             _ => args,
         };
+        // Not the first argument's method, but one of the class or the enum that holds the call.
+        let own = self
+            .body
+            .self_type
+            .and_then(|ty| self.idiom_of(callee.name, ty));
+        if let Some(Idiom::Method(func, owner)) = own {
+            let takes = self.method_arguments(func, owner, args, first_checked);
+            self.report(DiagnosticKind::MethodAsFunction {
+                name: callee.name.to_string(),
+                at: callee.span,
+                receiver: MethodReceiver::SelfValue {
+                    // `self.name<T>(args)` keeps the type arguments, which a method call
+                    // does not take (E0137).
+                    safe: takes && unlabeled && site.written.is_empty(),
+                },
+            });
+            return Err(Poisoned::error());
+        }
         let at_start = self.starts_break_value(callee.span);
         let functions = self
             .function_ids
@@ -131,6 +185,26 @@ impl Checker<'_> {
         // No `labels`: the name may have meant a class, whose constructor takes them.
         self.stray(rest);
         Err(Poisoned::error())
+    }
+
+    /// The type of the first parameter of the method `name` of `self`. `None` unless the method
+    /// takes `count` arguments and has no type parameters of its own.
+    fn self_parameter(&self, name: Symbol, count: usize) -> Option<Type> {
+        let Some(Idiom::Method(func, owner)) =
+            self.body.self_type.and_then(|ty| self.idiom_of(name, ty))
+        else {
+            return None;
+        };
+        let sig = &self.signatures[func.0];
+        let owner = owner.get();
+        if sig.type_params.len() > owner.len() || sig.params.len() != count {
+            return None;
+        }
+        sig.params
+            .first()
+            .copied()
+            .flatten()
+            .map(|ty| ty.subst(owner))
     }
 
     /// How the method `name` belongs to a receiver of type `ty`: a built-in array or number
@@ -191,31 +265,43 @@ impl Checker<'_> {
             })
     }
 
-    /// Checks `rest`, the arguments after the receiver of a call of the method `func`, written
-    /// as a function, each once. `owner` is the type arguments of the receiver's class or enum.
-    /// The method call takes them when there are as many as the method has parameters. Each
-    /// must fit its parameter type, with `owner` in it, as a call `receiver.method(args)`
+    /// Checks `args`, the arguments of a call of the method `func`, each once. `first` is the
+    /// first one when it is checked already. `owner` is the type arguments of the method's class
+    /// or enum. The method call takes them when there are as many as the method has parameters.
+    /// Each must fit its parameter type, with `owner` in it, as a call `receiver.method(args)`
     /// checks. A method with type parameters of its own takes none of them as written, as they
     /// are not known.
-    fn method_arguments(&mut self, func: tir::FuncId, owner: TypeArgs, rest: &[ast::Arg]) -> bool {
+    fn method_arguments(
+        &mut self,
+        func: tir::FuncId,
+        owner: TypeArgs,
+        args: &[ast::Arg],
+        first: Option<Checked>,
+    ) -> bool {
         let owner = owner.get();
         let sig = &self.signatures[func.0];
         if sig.type_params.len() > owner.len() {
-            self.stray(rest);
+            // The first argument is reported already.
+            self.stray(&args[usize::from(first.is_some())..]);
             return false;
         }
-        // The checks below borrow `self` again.
+        let mut takes = args.len() == sig.params.len();
+        // The checks below borrow `self` again. Only the parameters that have an argument are
+        // made, so that a call with few arguments costs little.
         let params: Vec<_> = sig
             .params
             .iter()
+            .take(args.len())
             .map(|ty| ty.map(|ty| ty.subst(owner)))
             .collect();
-        let mut takes = rest.len() == params.len();
-        for (arg, &want) in rest
+        let mut first = first;
+        for (arg, &want) in args
             .iter()
             .zip(params.iter().chain(std::iter::repeat(&None)))
         {
-            let checked = self.expr(&arg.value, want.or(Some(UNKNOWN)));
+            let checked = first
+                .take()
+                .unwrap_or_else(|| self.expr(&arg.value, want.or(Some(UNKNOWN))));
             takes &= want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
         }
         takes
