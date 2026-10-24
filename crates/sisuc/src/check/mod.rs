@@ -34,7 +34,7 @@ use crate::tir::{self, Type, TypeArgs, TypeKind};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use prelude::PRELUDE;
-use unused_names::{Owner, Use};
+use unused_names::{Owner, Pending, Use};
 
 /// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when
 /// still known (an `if` with one failed branch takes the other's), else it is the poison
@@ -128,6 +128,10 @@ enum BindingKind {
     Unwrapped(&'static str),
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact, set by a different statement or expression"
+)]
 struct Binding {
     local: tir::LocalId,
     /// `None` is `Error`.
@@ -144,6 +148,10 @@ struct Binding {
     written: u32,
     /// Whether W0011 names the binding, which then gets no W0002: its fix would keep the loop.
     loop_named: bool,
+    /// Whether an expression reads the binding's value.
+    read: bool,
+    /// Where each later alternative of an or-pattern binds the name again.
+    also: Vec<Span>,
 }
 
 /// Which part of a loop the code being checked is in.
@@ -302,6 +310,8 @@ struct Checker<'src> {
     body: Body,
     /// Each use of an item that a function, method or constant has, in check order.
     uses: Vec<Use>,
+    /// Each binding of a function or a method that nothing reads, in check order.
+    pending: Vec<Pending>,
 }
 
 /// The checker's diagnostics, and how many errors were added to them. The count never goes
@@ -413,6 +423,11 @@ struct Body {
     exits: u32,
     /// How many W0005 (a comparison with `f64.nan`) the body has reported.
     nans: u32,
+    /// The target of the compound assignment being checked, whose reads are not reads: they
+    /// only give the value back to the target.
+    quiet: Option<Span>,
+    /// Whether the body has a `todo`, which keeps its parameters from W0014.
+    todo: bool,
     /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done
     /// for and whether that is a block's; `None` once used.
     ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
@@ -504,8 +519,10 @@ pub(crate) fn check<'src>(
     // parser sees an item that fails to parse.
     if !failed && !parsed.iter().any(|d| d.severity() == Severity::Error) {
         diagnostics.extend(checker.unused());
-        diagnostics.sort_by_key(|d| d.span().start());
+    } else {
+        diagnostics.extend(checker.unjudged());
     }
+    diagnostics.sort_by_key(|d| d.span().start());
     let broken = !program.broken.is_empty()
         || program.items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
@@ -606,6 +623,7 @@ impl<'src> Checker<'src> {
             parse_errors: Vec::new(),
             body: Body::default(),
             uses: Vec::new(),
+            pending: Vec::new(),
         }
     }
 

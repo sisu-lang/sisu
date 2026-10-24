@@ -569,7 +569,7 @@ fn main() {
     #[test]
     fn brace_in_string_fix_passes_the_front_end() {
         for text in [r#""}""#, r#""\\}""#, r#""{n}}""#, r#""{ "}" }""#] {
-            let src = format!("fn main() {{\n    let n = 1\n    print({text})\n}}\n");
+            let src = format!("fn main() {{\n    let n = 1\n    print(n)\n    print({text})\n}}\n");
             let ds = front_end(&src).1;
             let [d] = ds.as_slice() else {
                 panic!("expected one diagnostic, got {ds:?}");

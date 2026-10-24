@@ -507,7 +507,7 @@ panic_cases! {
 /// after the outer one.
 fn write_bounds_case() -> (String, String) {
     (
-        "fn main() {\n    let mut grid = [[false, false, false]]\n    grid[0][9] = true\n}\n"
+        "fn main() {\n    let mut grid = [[false, false, false]]\n    grid[0][9] = true\n    print(grid[0][0])\n}\n"
             .to_string(),
         "3:13: index 9 out of bounds for length 3".to_string(),
     )
@@ -518,7 +518,7 @@ fn write_bounds_case() -> (String, String) {
 /// `panic_cases` expects shows the panic comes first.
 fn append_bounds_case() -> (String, String) {
     (
-        "fn say() -> string {\n    print(\"said\")\n    \"x\"\n}\nfn main() {\n    let mut names = [\"a\", \"b\"]\n    let i = 3\n    names[i] += say()\n}\n"
+        "fn say() -> string {\n    print(\"said\")\n    \"x\"\n}\nfn main() {\n    let mut names = [\"a\", \"b\"]\n    let i = 3\n    names[i] += say()\n    print(names[0])\n}\n"
             .to_string(),
         "8:11: index 3 out of bounds for length 2".to_string(),
     )

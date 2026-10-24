@@ -45,19 +45,19 @@ fn sum(nodes: Node?) -> i64 {
 
 // `return` inside `if let` releases the binding, the locals around it and the parameter.
 fn return_in_if_let(nodes: Node?) -> i64 {
-    let a = E()
+    let _a = E()
     if let n = nodes {
-        let b = E()
+        let _b = E()
         return n.value
     }
     0
 }
 
 fn return_in_while_let(nodes: Node?) -> i64 {
-    let a = E()
+    let _a = E()
     let mut node = nodes
     while let n = node {
-        let b = E()
+        let _b = E()
         if n.value == 2 { return n.value * 10 }
         node = n.next
     }
@@ -65,11 +65,11 @@ fn return_in_while_let(nodes: Node?) -> i64 {
 }
 
 fn break_in_while_let(nodes: Node?) {
-    let a = E()
+    let _a = E()
     let mut node = nodes
     let mut seen = 0
     while let n = node {
-        let b = E()
+        let _b = E()
         seen += 1
         if n.value == 2 { break }
         node = n.next
@@ -78,11 +78,11 @@ fn break_in_while_let(nodes: Node?) {
 }
 
 fn continue_in_while_let(nodes: Node?) {
-    let a = E()
+    let _a = E()
     let mut node = nodes
     let mut odd = 0
     while let n = node {
-        let b = E()
+        let _b = E()
         node = n.next
         if n.value % 2 == 0 { continue }
         odd += n.value
@@ -92,13 +92,13 @@ fn continue_in_while_let(nodes: Node?) {
 
 // `break` and `continue` inside an `if let` in a `while` loop.
 fn exits_in_if_let(nodes: Node?) {
-    let a = E()
+    let _a = E()
     let mut i = 0
     loop {
-        let b = E()
+        let _b = E()
         i += 1
         if let n = nodes {
-            let c = E()
+            let _c = E()
             if i == 1 { continue }
             if i == n.value { break }
         }

@@ -8,4 +8,5 @@ fn noisy(n: i64) -> i64 {
 fn main() {
     let mut c = [0]
     c[5] = noisy(3)
+    print(c[0])                       // never runs
 }

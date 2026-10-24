@@ -41,7 +41,7 @@ fn pick(t: T) -> T {
     t
 }
 
-fn take(e: E, n: i64) -> i64 {
+fn take(_e: E, n: i64) -> i64 {
     n
 }
 
@@ -52,31 +52,31 @@ fn return_in_loop() -> i64 {
         let b = T(count: 10, e: E())
         i += 1
         if i == 3 { return a.count + b.count + i }
-        let c = E()
+        let _c = E()
     }
 }
 
 fn break_in_loop() {
-    let a = E()
+    let _a = E()
     let mut i = 0
     loop {
-        let b = T(count: i, e: E())
+        let _b = T(count: i, e: E())
         i += 1
         if i == 2 { break }
-        let c = E()
+        let _c = E()
     }
     print(i)
 }
 
 fn continue_in_loop() {
-    let a = E()
+    let _a = E()
     let mut i = 0
     let mut sum = 0
     while i < 4 {
         let b = T(count: i, e: E())
         i += 1
         if i % 2 == 0 { continue }
-        let c = E()
+        let _c = E()
         sum += b.count
     }
     print(sum)
@@ -84,9 +84,9 @@ fn continue_in_loop() {
 
 // `b` was never bound when the `return` runs, so only `a` is released there.
 fn early_return(c: bool) {
-    let a = E()
+    let _a = E()
     if c { return }
-    let b = E()
+    let _b = E()
     print(2)
 }
 
@@ -135,7 +135,7 @@ fn reassign_field() {
 
 // The field is retained before the call's result is released.
 fn field_of_call() {
-    let n = make().next
+    let _n = make().next
     let _ = make().next
 }
 
@@ -175,11 +175,11 @@ fn reassign_local() {
 fn nested_loops(p: T) -> i64 {
     let mut i = 0
     while i < 3 {
-        let a = E()
+        let _a = E()
         i += 1
         let mut j = 0
         while j < 3 {
-            let b = E()
+            let _b = E()
             j += 1
             if j == 1 { continue }
             if i == 2 { return p.count + i * 10 + j }

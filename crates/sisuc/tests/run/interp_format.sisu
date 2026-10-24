@@ -7,7 +7,7 @@ fn main() {
     let s = "日本"
     let n = 7
     let mut last = "-"
-    for i in 0..iterations() {
+    for _ in 0..iterations() {
         last = "{x:>8.2}|{s:^5}|{n}"
     }
     print(last)                      // `    2.67| 日本  |7` (- with no iterations)

@@ -199,7 +199,7 @@ fn main() {
     // stays in the scrutinee beside the moved string.
     match Chain.Link("ab" + "", Chain.Link("c" + "", None)) {
         Link(s, next) => {
-            let rest = if let m = next { 1 } else { 0 }
+            let rest = if let _m = next { 1 } else { 0 }
             print(s.len() + rest)  // 3
         }
         End => print(0)  // never runs

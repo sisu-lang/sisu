@@ -1,5 +1,5 @@
 // args: a b
 // `main` never reads `args`, and the array and its strings are still released.
-fn main(args: [string]) {
+fn main(_args: [string]) {
     print(1)            // 1
 }

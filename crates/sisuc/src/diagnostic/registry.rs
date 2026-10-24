@@ -209,6 +209,7 @@ codes! {
     UnchangedLoopCondition = "W0011",
     UnusedItem = "W0012",
     UnusedMember = "W0013",
+    UnusedVariable = "W0014",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -937,6 +938,14 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         uses: Vec<(Span, Definition, String)>,
+    },
+    /// The local `name`, or the parameter when `param`, declared at `at`, which nothing reads;
+    /// `fix` holds, for a `for` or pattern name, each place that binds it, which `_` can replace.
+    UnusedVariable {
+        param: bool,
+        name: String,
+        at: Span,
+        fix: Vec<Span>,
     },
     /// The comparison at `at`, `!=` when `negated`, one side of which is `f64.nan`, which no
     /// number equals; `fix` is its `is_nan` test, when the other side is an `f64`.
@@ -3289,6 +3298,29 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!("used here, in `{name}`, which is never {}", user.unused_verb()),
                     )
                 })
+            }
+            DiagnosticKind::UnusedVariable {
+                param,
+                name,
+                at,
+                fix,
+            } => {
+                let kind = if param { "parameter" } else { "variable" };
+                let d = Diagnostic::coded(code, at, format!("{kind} `{name}` is never read"))
+                    .with_label("never read");
+                if fix.is_empty() {
+                    d.with_help(format!("if this is on purpose, name it `_{name}`"))
+                } else {
+                    let edits = fix.into_iter().map(|span| Edit {
+                        span,
+                        replacement: "_".to_string(),
+                    });
+                    d.with_fix(Fix {
+                        message: format!("replace `{name}` with `_`"),
+                        safe: true,
+                        edits: edits.collect(),
+                    })
+                }
             }
             DiagnosticKind::TypeArguments { name, at, form } => match form {
                 ArgumentsForm::Count { want, found } => {

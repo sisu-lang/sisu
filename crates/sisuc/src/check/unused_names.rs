@@ -1,7 +1,9 @@
-//! Unused names (W0012, W0013). The checker records each use of an item or a member as an edge
-//! from the body that holds it. After a check with no error, `unused` walks the edges out from
-//! the roots, `main` and each `_` function, method and constant, and reports each item that no
-//! live code uses, each field that it does not read and each variant that it does not build.
+//! Unused names (W0012, W0013, W0014). The checker records each use of an item or a member as an
+//! edge from the body that holds it, and each binding of a function that nothing reads as a
+//! pending finding. After a check with no error, `unused` walks the edges out from the roots,
+//! `main` and each `_` function, method and constant, and reports each item that no live code
+//! uses, each field that it does not read, each variant that it does not build, and the pending
+//! findings of the live functions.
 
 use rustc_hash::FxHashSet;
 
@@ -40,6 +42,41 @@ pub(super) struct Use {
     from: Owner,
     to: Used,
     at: Span,
+}
+
+/// A binding of the function `func` that nothing read, a parameter when `param`, named `name`
+/// and declared at `at`. `fix` holds each place that binds a `for` or pattern name, which `_`
+/// can replace, and is empty for any other. `keyword` is the `mut` of a `let mut` that W0002
+/// would warn about: it does when the pass does not judge the binding.
+pub(super) struct Pending {
+    pub(super) func: tir::FuncId,
+    pub(super) param: bool,
+    pub(super) name: String,
+    pub(super) at: Span,
+    pub(super) fix: Vec<Span>,
+    pub(super) keyword: Option<Span>,
+}
+
+impl Pending {
+    /// The W0014 of the binding when its function is judged; otherwise its W0002, if it is a
+    /// `let mut` that W0002 warns about.
+    fn judged(self, judged: bool) -> Option<Diagnostic> {
+        let (name, at) = (self.name, self.at);
+        if judged {
+            let (param, fix) = (self.param, self.fix);
+            return Some(
+                DiagnosticKind::UnusedVariable {
+                    param,
+                    name,
+                    at,
+                    fix,
+                }
+                .into(),
+            );
+        }
+        let keyword = self.keyword?;
+        Some(DiagnosticKind::NeverReassigned { name, at, keyword }.into())
+    }
 }
 
 impl Owner {
@@ -108,12 +145,15 @@ impl Checker<'_> {
         }
     }
 
-    /// The W0012 and W0013 warnings, in no order: each function, method, class, enum and
+    /// The W0012, W0013 and W0014 warnings, in no order: each function, method, class, enum and
     /// constant that no live code uses, each field of a built class that it does not read, and
     /// each variant of a built enum that it does not build, except a `_` name. A method of a
     /// class or an enum that nothing builds is not reported: the class or enum is. Each cites up
-    /// to three of its uses in dead code.
-    pub(super) fn unused(&self) -> Vec<Diagnostic> {
+    /// to three of its uses in dead code. Each pending finding of a live function is W0014, and
+    /// of a dead function the W0002 that it holds, if any: the function's warning tells to delete
+    /// it all.
+    pub(super) fn unused(&mut self) -> Vec<Diagnostic> {
+        let pending = std::mem::take(&mut self.pending);
         let functions = self.signatures.len();
         let constants = self.constant_names();
         let reached = self.reach(&constants);
@@ -203,7 +243,21 @@ impl Checker<'_> {
                 report(Definition::Constant, span, Owner::Const(c).index(functions));
             }
         }
+        found.extend(pending.into_iter().filter_map(|p| {
+            let live = reached.live[p.func.0];
+            p.judged(live)
+        }));
         found
+    }
+
+    /// The W0002 of each pending finding that holds one, for a program that the pass does not
+    /// judge.
+    pub(super) fn unjudged(&mut self) -> Vec<Diagnostic> {
+        let pending = std::mem::take(&mut self.pending);
+        pending
+            .into_iter()
+            .filter_map(|p| p.judged(false))
+            .collect()
     }
 
     /// The slots past the first `owners`.

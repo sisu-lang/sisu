@@ -1,10 +1,12 @@
 //! W0012: a function, method, class, enum or constant that no live code uses. W0013: a field
-//! that no live code reads, or a variant that no live code builds.
+//! that no live code reads, or a variant that no live code builds. W0014: a local or a parameter
+//! that nothing reads.
 
 use super::*;
 
 const W0012: Code = Code::UnusedItem;
 const W0013: Code = Code::UnusedMember;
+const W0014: Code = Code::UnusedVariable;
 
 /// `old_report` is the only caller of `format_row`, and nothing calls `old_report`.
 const CHAIN: &str = "fn format_row() {\n    print(1)\n}\nfn old_report() {\n    format_row()\n}\n";
@@ -486,5 +488,234 @@ fn field_should_cite_each_dead_comparison_when_two_start_at_one_place() {
             (W0013, (5, 5), vec![(8, 30)]),
             (W0012, (7, 4), vec![]),
         ]
+    );
+}
+
+/// `body`, its lines indented, as the body of `f`, which `main` calls.
+fn in_f(body: &str) -> String {
+    let body: String = body.lines().flat_map(|line| ["    ", line, "\n"]).collect();
+    format!("fn f() {{\n{body}}}\nfn main() {{\n    f()\n}}")
+}
+
+/// `body`, its lines indented, as the body of `area`, which `main` calls.
+fn in_area(body: &str) -> String {
+    let body: String = body.lines().flat_map(|line| ["    ", line, "\n"]).collect();
+    format!("fn area(w: i64, h: i64) -> i64 {{\n{body}}}\nfn main() {{\n    print(area(1, 2))\n}}")
+}
+
+/// Asserts that `src` gives one W0014, at `pos`, with no fix.
+fn unread_without_fix(src: &str, pos: (usize, usize, &str)) {
+    let d = diagnostic(src, W0014, pos, &[]);
+    assert!(fixes(src, &d).is_empty(), "{d:?}");
+}
+
+/// Asserts that `src` gives one W0014, at `pos`, whose one safe fix replaces the name with `_`.
+fn unread_with_fix(src: &str, pos: (usize, usize, &str)) -> Diagnostic {
+    let d = diagnostic(src, W0014, pos, &[]);
+    assert_eq!(
+        fixes(src, &d),
+        [(true, vec![(pos.0, pos.1, pos.2, "_".to_string())])]
+    );
+    d
+}
+
+#[test]
+fn let_should_warn_when_nothing_reads_it() {
+    judge_unused();
+    unread_without_fix(&in_f("let x = 1"), (2, 9, "x"));
+}
+
+#[test]
+fn for_name_should_warn_when_nothing_reads_it() {
+    judge_unused();
+    unread_with_fix(&in_f("for i in 0..3 { print(1) }"), (2, 9, "i"));
+}
+
+#[test]
+fn pattern_name_should_warn_when_nothing_reads_it() {
+    judge_unused();
+    unread_with_fix(
+        "enum Expr {\n    Add(i64, i64)\n    Num(i64)\n}\nfn f(e: Expr) -> i64 {\n    match e {\n        Add(a, b) => a\n        Num(n) => n\n    }\n}\nfn main() {\n    print(f(Expr.Num(1)) + f(Expr.Add(1, 2)))\n}",
+        (7, 16, "b"),
+    );
+}
+
+#[test]
+fn if_let_name_should_warn_when_nothing_reads_it() {
+    judge_unused();
+    unread_with_fix(
+        "fn f(o: i64?) {\n    if let v = o { print(1) }\n}\nfn main() {\n    f(None)\n}",
+        (2, 12, "v"),
+    );
+}
+
+#[test]
+fn compound_assign_should_not_read_its_target() {
+    judge_unused();
+    // `diagnostic` asserts the one diagnostic, so no W0002 either.
+    unread_without_fix(&in_f("let mut n = 0\nn += 1"), (2, 13, "n"));
+}
+
+#[test]
+fn assigned_value_should_read_its_target() {
+    judge_unused();
+    clean(&in_f("let mut n = 0\nn = n + 1"));
+}
+
+#[test]
+fn element_write_should_not_read_its_array() {
+    judge_unused();
+    unread_without_fix(&in_f("let mut xs = [1]\nxs[0] = 2"), (2, 13, "xs"));
+}
+
+#[test]
+fn field_write_should_read_its_root() {
+    judge_unused();
+    clean(
+        "class P {\n    mut x: i64\n}\nfn f() {\n    let p = P(x: 1)\n    p.x = 2\n}\nfn main() {\n    f()\n    print(P(x: 3).x)\n}",
+    );
+}
+
+#[test]
+fn interpolation_should_read_its_name() {
+    judge_unused();
+    clean(&in_f("let x = 1\nprint(\"{x}\")"));
+}
+
+#[test]
+fn underscore_local_should_not_warn() {
+    judge_unused();
+    clean(&in_f("let _x = 1"));
+}
+
+#[test]
+fn parameter_should_warn_when_nothing_reads_it() {
+    judge_unused();
+    unread_without_fix(&in_area("w * w"), (1, 17, "h"));
+}
+
+#[test]
+fn parameter_should_not_warn_when_its_function_has_todo() {
+    judge_unused();
+    codes(&in_area("todo"), &[(Code::TodoLeft, (2, 5))]);
+}
+
+#[test]
+fn local_should_warn_when_its_function_has_todo() {
+    judge_unused();
+    codes(
+        &in_area("let t = 1\ntodo"),
+        &[(W0014, (2, 9)), (Code::TodoLeft, (3, 5))],
+    );
+}
+
+#[test]
+fn parameters_should_not_warn_when_both_are_read() {
+    judge_unused();
+    clean(&in_area("w * h"));
+}
+
+#[test]
+fn main_parameter_should_warn_when_nothing_reads_it() {
+    judge_unused();
+    unread_without_fix("fn main(args: [string]) {\n    print(1)\n}", (1, 9, "args"));
+}
+
+#[test]
+fn underscore_function_should_judge_its_locals() {
+    judge_unused();
+    unread_without_fix(
+        "fn _old_report() {\n    let t = 1\n}\nfn main() {}",
+        (2, 9, "t"),
+    );
+}
+
+#[test]
+fn local_should_not_warn_when_its_function_is_dead() {
+    judge_unused();
+    codes(
+        "fn old_report() {\n    let x = 1\n}\nfn main() {}",
+        &[(W0012, (1, 4))],
+    );
+}
+
+#[test]
+fn never_reassigned_should_warn_when_its_function_is_dead() {
+    judge_unused();
+    codes(
+        "fn old_report() {\n    let mut x = 1\n}\nfn main() {}",
+        &[(W0012, (1, 4)), (Code::NeverReassigned, (2, 13))],
+    );
+}
+
+#[test]
+fn never_reassigned_should_warn_when_the_program_has_an_error() {
+    judge_unused();
+    codes(
+        "fn helper() {\n    print(1)\n}\nfn main() {\n    let mut m = 1\n    let u: i64 = \"a\"\n}",
+        &[(Code::NeverReassigned, (5, 13)), (Code::Mismatch, (6, 18))],
+    );
+}
+
+#[test]
+fn loop_condition_should_read_its_local() {
+    judge_unused();
+    codes(
+        "fn main() {\n    let i = 0\n    while i < 3 { print(1) }\n}",
+        &[(Code::UnchangedLoopCondition, (3, 11))],
+    );
+}
+
+#[test]
+fn for_fix_should_leave_a_clean_program() {
+    judge_unused();
+    let src = in_f("for i in 0..3 { print(1) }");
+    let d = unread_with_fix(&src, (2, 9, "i"));
+    clean(&applied(&src, &d));
+}
+
+#[test]
+fn never_reassigned_should_warn_when_its_binding_is_read() {
+    judge_unused();
+    codes(
+        &in_f("let mut k = 1\nprint(k)"),
+        &[(Code::NeverReassigned, (2, 13))],
+    );
+}
+
+#[test]
+fn shadowed_local_should_warn_when_nothing_reads_it() {
+    judge_unused();
+    unread_without_fix(&in_f("let x = 1\nlet x = 2\nprint(x)"), (2, 9, "x"));
+}
+
+#[test]
+fn or_pattern_fix_should_edit_every_alternative() {
+    judge_unused();
+    let src = "enum Op {\n    Add(i64, i64)\n    Sub(i64, i64)\n}\nfn f(o: Op) -> i64 {\n    match o {\n        Add(a, b) | Sub(a, b) => a\n    }\n}\nfn main() {\n    print(f(Op.Add(1, 2)) + f(Op.Sub(3, 4)))\n}";
+    let d = diagnostic(src, W0014, (7, 16, "b"), &[]);
+    assert_eq!(
+        fixes(src, &d),
+        [(
+            true,
+            vec![(7, 16, "b", "_".to_string()), (7, 28, "b", "_".to_string())]
+        )]
+    );
+    clean(&applied(src, &d));
+}
+
+#[test]
+fn compound_assign_should_read_its_value_when_it_names_the_target() {
+    judge_unused();
+    clean(&in_f("let mut n = 1\nn += n"));
+}
+
+#[test]
+fn never_reassigned_should_warn_once_when_the_checker_checks_it_twice() {
+    judge_unused();
+    // An expected `u8` makes the checker check the join, and so the block, again.
+    codes(
+        "fn main() {\n    let s: u8 = \"a\" + if true {\n        let mut t = 1\n        \"b\"\n    } else {\n        \"c\"\n    }\n}",
+        &[(Code::Mismatch, (2, 17)), (Code::NeverReassigned, (3, 17))],
     );
 }

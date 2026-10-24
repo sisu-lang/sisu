@@ -73,7 +73,7 @@ fn let_copy() {
 fn reassign() {
     let c = [1, 2, 3]
     let mut a = [0]
-    for j in 0..2 {
+    for _ in 0..2 {
         a = c
         a[0] = 9
     }
@@ -107,7 +107,7 @@ fn nested() {
     print("{g[0][0]} {g[0][1]}")      // 0 0
     let mut a = [1, 2, 3]
     let mut keep = [0]
-    for i in 0..2 {
+    for _ in 0..2 {
         keep = a
         for j in 0..3 {
             a[j] += 1
@@ -169,7 +169,7 @@ fn after_loop() {
     }
     let d = b
     b[0] = 9
-    for j in 0..2 {
+    for _ in 0..2 {
         b[1] = 8
     }
     print("{a[0]} {a[1]} {a[2]}")     // 1 2 3

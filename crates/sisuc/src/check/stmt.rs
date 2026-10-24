@@ -7,6 +7,7 @@ use super::expr::{fits, local};
 use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
+use super::unused_names::{Owner, Pending};
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, LoopContext, LoopFrame,
     LoopKind, Poisoned, UNKNOWN, block_expr, built_in_type, starts_in, tail, type_of, wrap,
@@ -1322,6 +1323,8 @@ impl Checker<'_> {
             shadows_mut,
             written: 0,
             loop_named: false,
+            read: false,
+            also: Vec::new(),
         };
         if kind == BindingKind::Param
             && let Some(first) = scope.get(&name.name)
@@ -1344,12 +1347,12 @@ impl Checker<'_> {
         }
         // Nothing can reassign the binding it replaces from here on.
         if let Some(old) = scope.insert(name.name, binding) {
-            self.never_reassigned(name.name, &old);
+            self.retire(name.name, &old);
         }
         local
     }
 
-    /// Closes the innermost scope, warning about each `let mut` that was never reassigned.
+    /// Closes the innermost scope, and retires each of its bindings.
     pub(super) fn pop_scope(&mut self) {
         let scope = self
             .body
@@ -1357,17 +1360,42 @@ impl Checker<'_> {
             .pop()
             .expect("a scope should be open while a block is checked");
         for (name, b) in scope {
-            self.never_reassigned(name, &b);
+            self.retire(name, &b);
         }
     }
 
-    /// Warns when `b`, which `name` can no longer reach, is a `let mut` that was never
-    /// reassigned.
-    fn never_reassigned(&mut self, name: Symbol, b: &Binding) {
-        if let Some(keyword) = b.keyword
-            && !b.reassigned
-            && !b.loop_named
+    /// Judges `b`, which `name` can no longer reach. When nothing read it, its name does not
+    /// start with `_` and it is a function's or a method's, it waits for the pass (W0014), unless
+    /// it is a parameter of a body with a `todo`. Otherwise a `let mut` that was never reassigned
+    /// gets W0002.
+    fn retire(&mut self, name: Symbol, b: &Binding) {
+        let keyword = b.keyword.filter(|_| !b.reassigned && !b.loop_named);
+        if let Some(Owner::Func(func)) = self.body.owner
+            && !b.read
+            && !name.as_str().starts_with('_')
         {
+            let param = b.kind == BindingKind::Param;
+            if param && self.body.todo {
+                return;
+            }
+            // Only a `for` or pattern name can become `_`, in each place that binds it.
+            let fix = match b.kind {
+                BindingKind::Unwrapped(_) => {
+                    std::iter::once(b.span).chain(b.also.clone()).collect()
+                }
+                _ => Vec::new(),
+            };
+            self.pending.push(Pending {
+                func,
+                param,
+                name: name.to_string(),
+                at: b.span,
+                fix,
+                keyword,
+            });
+            return;
+        }
+        if let Some(keyword) = keyword {
             self.report(DiagnosticKind::NeverReassigned {
                 name: name.to_string(),
                 at: b.span,

@@ -110,6 +110,7 @@ impl Checker<'_> {
     /// program.
     pub(super) fn todo(&mut self, span: Span, keyword: Span, args: &[ast::Arg]) -> Checked {
         self.body.exits += 1;
+        self.body.todo = true;
         self.report(DiagnosticKind::TodoLeft { at: keyword });
         let labeled = self.labels(args);
         let text = |text: &str| tir::Expr {

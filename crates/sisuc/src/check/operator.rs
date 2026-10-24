@@ -155,14 +155,20 @@ impl Checker<'_> {
         if self.body.joins.contains(&span) {
             return self.integers(operands, None, operator, op);
         }
-        let (diagnostics, locals) = (self.diagnostics.len(), self.body.locals.len());
+        let (diagnostics, locals, pending) = (
+            self.diagnostics.len(),
+            self.body.locals.len(),
+            self.pending.len(),
+        );
         let result = self.integers(operands, expected, operator, op);
         if result.1 != Some(Type::STRING) {
             return result;
         }
-        // The first check is dropped, and its locals with it, so none is left that nothing binds.
+        // The first check is dropped, and its locals and their findings with it, so none is left
+        // that nothing binds, and none is judged twice.
         self.diagnostics.truncate(diagnostics);
         self.body.locals.truncate(locals);
+        self.pending.truncate(pending);
         self.body.joins.insert(span);
         self.integers(operands, None, operator, op)
     }

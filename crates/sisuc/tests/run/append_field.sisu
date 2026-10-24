@@ -8,7 +8,7 @@ class P {
 // literal into a block of capacity 2, then a reallocation at each doubling to 1024.
 fn main() {
     let p = P(name: "a")
-    for i in 0..iterations() {
+    for _ in 0..iterations() {
         p.name += "x"
     }
     print(p.name.len())              // 1001 (1 with no iterations)

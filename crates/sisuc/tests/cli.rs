@@ -568,7 +568,7 @@ fn emit_ast_and_tir_should_print_mut_for_mutable_variables_and_fields() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("emit_mut.sisu"),
-        "class P {\n    name: i64\n    mut hp: i64\n}\nfn main() {\n    let mut x = 1\n    x = 2\n}\n",
+        "class P {\n    name: i64\n    mut hp: i64\n}\nfn main() {\n    let mut x = 1\n    x = 2\n    print(x)\n}\n",
     )
     .expect("writes");
     let emit = |what: &str| {
@@ -582,11 +582,11 @@ fn emit_ast_and_tir_should_print_mut_for_mutable_variables_and_fields() {
     };
     assert_eq!(
         emit("ast"),
-        "(class P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x 1) (= x 2)))\n"
+        "(class P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x 1) (= x 2) (call print x)))\n"
     );
     assert_eq!(
         emit("tir"),
-        "(class P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x#0 1) (= x#0 2)))\n"
+        "(class P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x#0 1) (= x#0 2) (print x#0)))\n"
     );
 }
 
@@ -1409,7 +1409,7 @@ fn emit_ir_at_o3_should_have_more_loops_than_at_o2_when_a_loop_can_unswitch() {
 #[test]
 fn print_in_a_loop_should_not_keep_a_bounds_check_at_o2() {
     let source = "fn main() {\n    let xs = [1; 10_000]\n    let mut total = 0\n\
-                  for round in 0..1000 {\n        for i in 0..10_000 {\n\
+                  for _ in 0..1000 {\n        for i in 0..10_000 {\n\
                   if xs[i] == 0 { print(i) }\n            total += xs[i]\n        }\n    }\n\
                   print(total)\n}\n";
     let out = run_on("print_in_a_loop", source, &["build", "-O2", "--emit", "ir"]);
