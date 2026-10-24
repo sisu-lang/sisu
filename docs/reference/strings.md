@@ -219,7 +219,7 @@ The rules:
 - A precision on a value that is not an `f64` is an error ([E0111](../diagnostics/E0111.md)).
 - A width above 1000, or a precision above 30, is an error ([E0110](../diagnostics/E0110.md)).
 - A spec with no width and no precision, or a `.` with no digits, is an error ([E0108](../diagnostics/E0108.md)).
-- Other parts, such as zero padding, a sign, a fill character, a type letter, or a width from a variable, are errors ([E0109](../diagnostics/E0109.md)).
+- Other parts, such as zero padding, a sign, a fill character, a type letter, or a width from a variable, are errors ([E0109](../diagnostics/E0109.md)). The section [The `#` flag](#the--flag) is in development, and it changes this rule.
 - A `:` inside a string or character literal in the expression does not start a spec.
 
 ```sisu
@@ -256,5 +256,5 @@ The rules:
 
 - A hand-written `to_string` gives one piece of text that the layout does not break.
 - `#` does not combine with a width, an alignment or a precision. `{x:#>8}` is an error.
-- `#` on a number or a string changes nothing.
+- `#` on an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` changes nothing.
 - There is no function for it: `print("{x:#}")` is the one way.

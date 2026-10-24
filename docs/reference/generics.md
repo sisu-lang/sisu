@@ -517,7 +517,7 @@ The rules:
 - An enum has `==` when all its payloads have it, and it has `<` only when it conforms to `Ord`.
 - The methods that the interfaces require are `fn to_string(self) -> string` for `Display`, `fn eq(self, other: Self) -> bool` for `Eq`, and `fn less(self, other: Self) -> bool` for `Ord`. A method named `to_string` with another signature is an error.
 - `Ord` requires `Eq`. A type that conforms to `Ord` but not to `Eq` is an error.
-- For `Eq`, `a != b` is `!a.eq(b)`. For a hand-written `Ord`, `a > b` is `b.less(a)`, `a <= b` is `!b.less(a)` and `a >= b` is `!a.less(b)`.
+- For `Eq`, `a != b` is `!a.eq(b)`.
 - A conformance that a program writes replaces the generated one. An enum that writes `to_string` prints its own text.
 - A type can name a generated interface and write no method for it: `enum Level: Eq` has no `eq`. Where nothing is generated, such as `class Node: Eq` with no `eq`, a missing method is an error.
 - Only `to_string` conforms by name. A type with its own `eq` or `less` method conforms to `Eq` or `Ord` only when its declaration names the interface.

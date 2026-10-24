@@ -73,7 +73,7 @@ The rules:
 - For an object, `dbg` shows the fields one level deep: `dbg(node)` shows `Node(value: 3, next: Node)`. A field that is a class shows only its text, which is its name or its own `to_string`. So `dbg` follows no reference.
 - A class with a method `to_string` shows that text instead of its fields. The same holds for a class inside an array, a payload or an optional.
 - An argument of the type `unit` or `never` is an error, as for `print`.
-- A local can have the name `dbg`. A function, a class, an enum or a constant cannot.
+- A local can have the name `dbg`. A top-level item cannot.
 
 ## read_line
 

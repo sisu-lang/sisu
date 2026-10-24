@@ -355,7 +355,7 @@ The rules:
 fn main() {
     let a: i64?? = None
     let b: i64?? = Some(None)
-    let c: i64?? = 5
+    let c: i64?? = Some(5)
     let d: i64??? = Some(Some(None))
     print(a.to_string())               // None
     print(b.to_string())               // Some(None)
