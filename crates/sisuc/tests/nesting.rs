@@ -38,7 +38,8 @@ enum R {
 
 fn _prelude() {
     print(id(some(N(next: None, v: 1).me().v) ?? 0))
-    let _ = R.Z
+    print(N(next: None, v: 2).next == None)
+    let _ = R.A(R.Z)
 }
 
 ";

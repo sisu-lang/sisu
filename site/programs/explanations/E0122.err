@@ -1,13 +1,13 @@
 error[E0122]: Sisu writes `match`
- --> E0122.sisu:8:13
+ --> E0122.sisu:8:17
   |
-8 |     let n = switch s {
-  |             ^^^^^^
+8 |         let n = switch s {
+  |                 ^^^^^^
   |
 help: write `match`
   |
-8 -     let n = switch s {
-8 +     let n = match s {
+8 -         let n = switch s {
+8 +         let n = match s {
   |
 
 sisu: 1 error

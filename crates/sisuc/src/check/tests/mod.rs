@@ -37,7 +37,7 @@ fn judge_unused() {
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let (program, mut ds) = check(&parse_ok(src), src, &[]);
     if !UNUSED.get() {
-        ds.retain(|d| d.code() != Code::UnusedItem);
+        ds.retain(|d| !matches!(d.code(), Code::UnusedItem | Code::UnusedMember));
     }
     (program, ds)
 }

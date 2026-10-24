@@ -1,11 +1,22 @@
-//! W0012: a function, method, class, enum or constant that no live code uses.
+//! W0012: a function, method, class, enum or constant that no live code uses. W0013: a field
+//! that no live code reads, or a variant that no live code builds.
 
 use super::*;
 
 const W0012: Code = Code::UnusedItem;
+const W0013: Code = Code::UnusedMember;
 
 /// `old_report` is the only caller of `format_row`, and nothing calls `old_report`.
 const CHAIN: &str = "fn format_row() {\n    print(1)\n}\nfn old_report() {\n    format_row()\n}\n";
+
+/// A class `P` with the fields `x` and `y`.
+const P: &str = "class P {\n    x: i64\n    y: i64\n}\n";
+
+/// A class `P` with the field `x`.
+const P_X: &str = "class P {\n    x: i64\n}\n";
+
+/// An enum `Light` with the variants `Red` and `Green`.
+const LIGHT: &str = "enum Light {\n    Red\n    Green\n}\n";
 
 /// A class `P` with a field `x` and a method `reset`.
 const CLASS_P: &str = "class P {\n    x: i64\n    fn reset(self) {\n        print(1)\n    }\n}\n";
@@ -240,5 +251,213 @@ fn safe_call_should_keep_its_method_live() {
     judge_unused();
     clean(
         "class Node {\n    n: i64\n    fn size(self) -> i64 {\n        self.n\n    }\n    fn total(self) -> i64 {\n        self.size()\n    }\n}\nfn count(o: Node?) -> i64 {\n    o?.total() ?? 0\n}\nfn main() {\n    print(count(Node(n: 1)))\n}",
+    );
+}
+
+#[test]
+fn field_should_warn_when_nothing_reads_it() {
+    judge_unused();
+    diagnostic(
+        &format!("{P}fn main() {{\n    let p = P(x: 1, y: 2)\n    print(p.x)\n}}"),
+        W0013,
+        (3, 5, "y"),
+        &[],
+    );
+}
+
+#[test]
+fn field_should_warn_when_code_only_writes_it() {
+    judge_unused();
+    diagnostic(
+        "class P {\n    x: i64\n    mut y: i64\n}\nfn main() {\n    let p = P(x: 1, y: 2)\n    p.y = 3\n    print(p.x)\n}",
+        W0013,
+        (3, 9, "y"),
+        &[],
+    );
+}
+
+#[test]
+fn field_should_warn_when_code_only_compound_assigns_it() {
+    judge_unused();
+    diagnostic(
+        "class P {\n    x: i64\n    mut n: i64\n}\nfn main() {\n    let p = P(x: 1, n: 0)\n    p.n += 1\n    print(p.x)\n}",
+        W0013,
+        (3, 9, "n"),
+        &[],
+    );
+}
+
+#[test]
+fn equal_should_read_every_field() {
+    judge_unused();
+    clean(&format!(
+        "{P}fn main() {{\n    let a = P(x: 1, y: 2)\n    let b = P(x: 1, y: 2)\n    print(a == b)\n}}"
+    ));
+}
+
+#[test]
+fn equal_should_read_every_field_of_an_array_element() {
+    judge_unused();
+    clean(&format!(
+        "{P}fn main() {{\n    let a = P(x: 1, y: 2)\n    let b = P(x: 1, y: 2)\n    print([a] == [b])\n}}"
+    ));
+}
+
+#[test]
+fn equal_should_read_the_fields_of_a_held_class() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}class Q {{\n    p: P\n}}\nfn main() {{\n    let a = Q(p: P(x: 1))\n    print(a == a)\n}}"
+    ));
+}
+
+#[test]
+fn equal_should_read_the_fields_of_a_class_in_a_variant() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}enum E {{\n    Has(P)\n    Empty\n}}\nfn main() {{\n    let e = E.Has(P(x: 1))\n    print(e == E.Empty)\n}}"
+    ));
+}
+
+#[test]
+fn equal_should_read_the_fields_of_a_type_argument() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}class Box<T> {{\n    v: T\n}}\nfn main() {{\n    let b = Box(v: P(x: 1))\n    print(b == b)\n}}"
+    ));
+}
+
+#[test]
+fn equal_should_read_the_fields_of_a_payload_type_argument() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}enum Maybe<T> {{\n    Has(T)\n    Empty\n}}\nfn main() {{\n    let m = Maybe.Has(P(x: 1))\n    print(m == Maybe.Empty)\n}}"
+    ));
+}
+
+#[test]
+fn contains_should_read_every_field() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}fn main() {{\n    let a = P(x: 1)\n    let xs = [a]\n    print(xs.contains(a))\n}}"
+    ));
+}
+
+#[test]
+fn safe_field_read_should_read_the_field() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}fn get(o: P?) -> i64 {{\n    o?.x ?? 0\n}}\nfn main() {{\n    print(get(P(x: 1)))\n}}"
+    ));
+}
+
+#[test]
+fn equal_should_read_no_field_when_it_compares_with_none() {
+    judge_unused();
+    diagnostic(
+        &format!(
+            "{P_X}fn show(p: P?) {{\n    print(p == None)\n}}\nfn main() {{\n    show(P(x: 1))\n}}"
+        ),
+        W0013,
+        (2, 5, "x"),
+        &[],
+    );
+}
+
+#[test]
+fn contains_should_read_no_field_when_it_searches_for_none() {
+    judge_unused();
+    diagnostic(
+        &format!(
+            "{P_X}fn show(xs: [P?]) {{\n    print(xs.contains(None))\n}}\nfn main() {{\n    show([P(x: 1)])\n}}"
+        ),
+        W0013,
+        (2, 5, "x"),
+        &[],
+    );
+}
+
+#[test]
+fn field_should_cite_a_dead_comparison() {
+    judge_unused();
+    assert_eq!(
+        found(&format!(
+            "{P}fn old_report(p: P) {{\n    print(p == p)\n}}\nfn main() {{\n    print(P(x: 1, y: 2).x)\n}}"
+        )),
+        [(W0013, (3, 5), vec![(6, 11)]), (W0012, (5, 4), vec![])]
+    );
+}
+
+#[test]
+fn variant_should_warn_when_only_a_pattern_names_it() {
+    judge_unused();
+    diagnostic(
+        &format!(
+            "{LIGHT}fn main() {{\n    let l = Light.Green\n    match l {{\n        Red => print(1)\n        Green => print(2)\n    }}\n}}"
+        ),
+        W0013,
+        (2, 5, "Red"),
+        &[],
+    );
+}
+
+#[test]
+fn field_should_warn_when_only_a_dead_function_reads_it() {
+    judge_unused();
+    assert_eq!(
+        found(&format!(
+            "{P}fn old_report(p: P) {{\n    print(p.y)\n}}\nfn main() {{\n    let p = P(x: 1, y: 2)\n    print(p.x)\n}}"
+        )),
+        [(W0013, (3, 5), vec![(6, 11)]), (W0012, (5, 4), vec![])]
+    );
+}
+
+#[test]
+fn variant_should_warn_when_only_a_dead_function_builds_it() {
+    judge_unused();
+    assert_eq!(
+        found(&format!(
+            "{LIGHT}fn old_report() -> Light {{\n    Light.Red\n}}\nfn main() {{\n    let l = Light.Green\n    print(l == Light.Green)\n}}"
+        )),
+        [(W0013, (2, 5), vec![(6, 5)]), (W0012, (5, 4), vec![])]
+    );
+}
+
+#[test]
+fn underscore_field_should_not_warn() {
+    judge_unused();
+    clean(
+        "class P {\n    x: i64\n    _pad: i64\n}\nfn main() {\n    let p = P(x: 1, _pad: 0)\n    print(p.x)\n}",
+    );
+}
+
+#[test]
+fn field_should_cite_the_first_dead_comparison_in_source_order() {
+    judge_unused();
+    // `pick` checks its second argument first, as the first needs its type.
+    let src = format!(
+        "{P}fn pick<T>(a: T?, b: T) -> T {{\n    a ?? b\n}}\nfn old_report(p: P) {{\n    print(pick(if p == p {{ None }} else {{ None }}, [p] == [p]))\n}}\nfn main() {{\n    print(P(x: 1, y: 2).x)\n    print(pick(None, 1))\n}}"
+    );
+    assert_eq!(
+        found(&src),
+        [(W0013, (3, 5), vec![(9, 19)]), (W0012, (8, 4), vec![])]
+    );
+}
+
+#[test]
+fn field_should_cite_a_dead_comparison_only_when_it_has_fewer_than_three_reads() {
+    judge_unused();
+    // The comparison comes first in the source, so a list of three reads must still keep it out.
+    let src = "class P {\n    x: i64\n    y: i64\n    z: i64\n}\nfn a(p: P) {\n    print(p == p)\n}\nfn b(p: P) {\n    print(p.y)\n}\nfn c(p: P) {\n    print(p.y + p.z)\n}\nfn d(p: P) {\n    print(p.y)\n}\nfn main() {\n    print(P(x: 1, y: 2, z: 3).x)\n}";
+    assert_eq!(
+        found(src),
+        [
+            (W0013, (3, 5), vec![(10, 11), (13, 11), (16, 11)]),
+            (W0013, (4, 5), vec![(7, 11), (13, 17)]),
+            (W0012, (6, 4), vec![]),
+            (W0012, (9, 4), vec![]),
+            (W0012, (12, 4), vec![]),
+            (W0012, (15, 4), vec![]),
+        ]
     );
 }

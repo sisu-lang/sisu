@@ -1,0 +1,11 @@
+enum Light {
+    Red
+    Green
+}
+fn old_report() -> Light {
+    Light.Red
+}
+fn main() {
+    let l = Light.Green
+    print(l == Light.Green)
+}

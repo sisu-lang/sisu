@@ -12,4 +12,5 @@ fn go(l: Light) -> bool {
 
 fn main() {
     print(go(Light.Green))
+    print(go(Light.Red))
 }

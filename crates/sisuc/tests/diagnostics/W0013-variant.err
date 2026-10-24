@@ -1,0 +1,21 @@
+warning[W0013]: variant `Red` is never built
+ --> W0013-variant.sisu:2:5
+  |
+2 |     Red
+  |     ^^^ never built
+...
+6 |     Light.Red
+  |     --------- used here, in `old_report`, which is never called
+  |
+  = help: delete it
+
+warning[W0012]: function `old_report` is never called
+ --> W0013-variant.sisu:5:4
+  |
+5 | fn old_report() -> Light {
+  |    ^^^^^^^^^^ never called
+  |
+  = help: delete it, or name it `_old_report` if it is kept on purpose
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012, W0013

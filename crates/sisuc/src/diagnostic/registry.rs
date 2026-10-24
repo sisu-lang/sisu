@@ -208,6 +208,7 @@ codes! {
     UnconditionalRecursion = "W0010",
     UnchangedLoopCondition = "W0011",
     UnusedItem = "W0012",
+    UnusedMember = "W0013",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -924,6 +925,14 @@ pub(crate) enum DiagnosticKind {
     /// declaration is at `at`, which no live code uses; `uses` are up to three uses in dead code,
     /// each with the kind and name of its dead user.
     UnusedItem {
+        kind: Definition,
+        name: String,
+        at: Span,
+        uses: Vec<(Span, Definition, String)>,
+    },
+    /// The field or variant `name` (its `kind`), whose name in its declaration is at `at`, which
+    /// no live code reads or builds; `uses` are as `UnusedItem`'s.
+    UnusedMember {
         kind: Definition,
         name: String,
         at: Span,
@@ -3253,17 +3262,27 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 at,
                 uses,
+            }
+            | DiagnosticKind::UnusedMember {
+                kind,
+                name,
+                at,
+                uses,
             } => {
                 let verb = kind.unused_verb();
+                // A variant cannot take a `_` name (E0113).
+                let help = if kind == Definition::Variant {
+                    "delete it".to_string()
+                } else {
+                    format!("delete it, or name it `_{name}` if it is kept on purpose")
+                };
                 let d = Diagnostic::coded(
                     code,
                     at,
                     format!("{} `{name}` is never {verb}", kind.word()),
                 )
                 .with_label(format!("never {verb}"))
-                .with_help(format!(
-                    "delete it, or name it `_{name}` if it is kept on purpose"
-                ));
+                .with_help(help);
                 uses.into_iter().fold(d, |d, (at, user, name)| {
                     d.with_secondary(
                         at,

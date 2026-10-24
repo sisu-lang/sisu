@@ -3,6 +3,7 @@
 use super::expr::{
     fits, if_some, int_literal, literal_type, local, none_literal, operator, path, rank, typed,
 };
+use super::unused_names::Used;
 use super::{Checked, Checker, Poisoned, UNKNOWN, optional_of, payload, type_of, wrap};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
@@ -438,6 +439,12 @@ impl Checker<'_> {
         let checked = self.value(first, None);
         let want = type_of(&checked).map_or_else(|| UNKNOWN, optional_of);
         let other = self.value(second, Some(want));
+        // A class compares field by field, so it reads every field; `None` reads none.
+        if !none_literal(second)
+            && let Some(ty) = type_of(&checked)
+        {
+            self.record(Used::Equal(ty), span);
+        }
         // `second` is the bare `None`, if either is.
         if none_literal(second)
             && let Some(ty) = type_of(&checked)
