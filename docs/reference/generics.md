@@ -300,8 +300,8 @@ The rules:
 - Anything else is an error where the body is written. The help suggests the bound that is missing.
 - A type argument that does not conform to a bound is an error at the call.
 - Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` work on a `T`.
-- Every class conforms to `AnyObject`, and nothing else can. `T: AnyObject` lets the body use `is` on values of type `T`, and lets a class declare a [weak field](values.md#weak-fields) of type `T?`.
-- An interface that inherits `AnyObject` is class-only. Its `any` values support `is` too, and a class can hold one in a weak field ([Interface values](#interface-values)).
+- Every class conforms to `AnyObject`. So does an `any` value of a class-only interface (next rule). Nothing else does. `T: AnyObject` lets the body use `is` on values of type `T`, and lets a class declare a [weak field](values.md#weak-fields) of type `T?`.
+- An interface that inherits `AnyObject` is class-only. Its `any` values support `is` too, and a class can hold one in a weak field.
 
 ## Interfaces
 
@@ -530,7 +530,7 @@ The rules:
 
 ## Interface values
 
-`any Shape` is a type for a value of any type that conforms to `Shape`. A value converts to it where an `any` type is expected. A call of a method on it uses the method of the type that the value has.
+`any Shape` is a type for a value of any type that conforms to `Shape`. A value converts to it where an `any` type is expected. A call of a method on it uses the method of the type that the value has. An interface that inherits `AnyObject` is class-only, as [Bounds](#bounds) says.
 
 ```sisu pending
 interface Shape {
