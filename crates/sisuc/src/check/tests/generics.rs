@@ -1979,12 +1979,24 @@ fn generic_array_literals_should_report_each_mistake_once() {
         // A parameter that is no array of optionals keeps the join: `T` is `i64?`, which no
         // type argument may be.
         ("g5([1, None])", vec![(Code::TypeArgument, (2, 8))]),
-        // Elements of type `unit` bind nothing, then `unit` is reported, and no `None` besides.
+        // An element with no value, `unit` or `never`, is reported where it is, binds nothing,
+        // and leaves a `None` beside it silent.
+        ("g1([print(1), 2])", vec![(Code::NoValue, (2, 9))]),
+        ("g1([2, print(1)])", vec![(Code::NoValue, (2, 12))]),
         (
             "g1([print(1), print(2)])",
-            vec![(Code::TypeArgument, (2, 9))],
+            vec![(Code::NoValue, (2, 9)), (Code::NoValue, (2, 19))],
         ),
-        ("g1([print(1), None])", vec![(Code::TypeArgument, (2, 9))]),
+        ("g1([print(1), None])", vec![(Code::NoValue, (2, 9))]),
+        ("g4([print(1)])", vec![(Code::NoValue, (2, 9))]),
+        (
+            "g1([if x > 0 { return 0 } else { return 1 }, 1])",
+            vec![(Code::NoValue, (2, 9))],
+        ),
+        (
+            "g1([1, if x > 0 { return 0 } else { return 1 }])",
+            vec![(Code::NoValue, (2, 12))],
+        ),
         // Nothing in the outer literal binds `T`, so the first `None` is the one reported.
         ("g4([[None], [1]])", vec![(Code::CannotInfer, (2, 10))]),
     ] {

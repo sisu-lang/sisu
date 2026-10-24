@@ -429,7 +429,8 @@ impl Checker<'_> {
     /// parameter. The elements are checked in the three waves of `rank`, each by `infer_value`,
     /// so a later `None` or integer literal meets the parameter already bound by an earlier
     /// element, and so wraps. A `None` or `[]` with nothing bound is reported as `joined`
-    /// reports it: the first alone, unless an element failed already or bound nothing.
+    /// reports it: the first alone, unless an element failed already. An element of type `unit`
+    /// or `never` has no value, which is reported at once, and binds nothing.
     fn inferred_array(
         &mut self,
         call: &mut Inference,
@@ -444,28 +445,24 @@ impl Checker<'_> {
                 let checked = if wave < 2 || call.bindings.known(element).is_some() {
                     self.infer_value(call, e, element)
                 } else {
-                    quiet = quiet
-                        || (slots.iter().flatten())
-                            .any(|c| matches!(type_of(c), None | Some(Type::UNIT | Type::NEVER)));
+                    quiet = quiet || slots.iter().flatten().any(|c| type_of(c).is_none());
                     // Only its own diagnostics matter.
                     let _ = self.value(e, quiet.then_some(UNKNOWN));
                     quiet = true;
                     Err(Poisoned::error())
                 };
-                slots[i] = Some(checked);
+                // An element has a value: `infer_value` leaves `unit` and `never` for
+                // `infer_arg`, which an element has not.
+                slots[i] = Some(match type_of(&checked) {
+                    Some(ty @ (Type::UNIT | Type::NEVER)) => {
+                        self.no_value(e.span, ty);
+                        Err(Poisoned::error())
+                    }
+                    _ => checked,
+                });
             }
         }
         let Some(bound) = call.bindings.known(element) else {
-            // Only elements of type `unit` or `never` can have left it unbound, and so bind it.
-            let unit = iter::zip(&slots, elements).find_map(|(slot, e)| {
-                match slot.as_ref().and_then(type_of) {
-                    Some(ty @ (Type::UNIT | Type::NEVER)) => Some((ty, e.span)),
-                    _ => None,
-                }
-            });
-            if let Some((ty, at)) = unit {
-                self.bind_param(call, element, ty, at);
-            }
             return Err(Poisoned::error());
         };
         let mismatched = slots

@@ -21,8 +21,8 @@ fn count2<T>(xs: [[T?]]) -> i64 {
 }
 
 fn main() {
-    print(count([1, 2]))
-    print(count([None, 1]))
-    print(count([[1], [2, 3]]))
-    print(count2([[1, None], [2]]))
+    print(count([1, 2]))                    // 2
+    print(count([None, 1]))                 // 1
+    print(count([[1], [2, 3]]))             // 2
+    print(count2([[1, None], [2]]))         // 2
 }
