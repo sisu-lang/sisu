@@ -762,3 +762,42 @@ fn never_reassigned_should_warn_once_when_the_checker_checks_it_twice() {
         &[(Code::Mismatch, (2, 17)), (Code::NeverReassigned, (3, 17))],
     );
 }
+
+#[test]
+fn equal_should_walk_branching_generic_classes_linearly() {
+    judge_unused();
+    // Each class holds the one before it in two ways, so a walk that put in the type arguments
+    // would walk twice the types at each class.
+    let steps = |n: usize| {
+        let classes = (1..=n)
+            .map(|i| {
+                let before = i - 1;
+                format!(
+                    "class _L{i}<T> {{\n    a: _L{before}<[T]>\n    b: _L{before}<_Wrap<T>>\n}}\n"
+                )
+            })
+            .collect::<Vec<_>>()
+            .concat();
+        let src = format!(
+            "class _Wrap<T> {{\n    v: T\n}}\nclass _L0<T> {{\n    v: T\n}}\n{classes}enum E<T> {{\n    Empty\n    Has(_L{n}<T>)\n}}\nfn _keep(x: _L{n}<i64>) {{\n    let _ = E.Has(x)\n}}\nfn main() {{\n    print(E<i64>.Empty == E<i64>.Empty)\n}}"
+        );
+        HELD_STEPS.set(0);
+        clean(&src);
+        HELD_STEPS.get()
+    };
+    assert_near_linear(steps(4), steps(8), steps(12));
+}
+
+#[test]
+fn equal_of_primitives_should_not_walk_the_generic_classes() {
+    judge_unused();
+    let n = 100;
+    let classes = (0..n)
+        .map(|i| format!("class _Tag{i}<T> {{\n    v: T\n}}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    HELD_STEPS.set(0);
+    clean(&format!("{classes}fn main() {{\n    print(1 == 1)\n}}"));
+    // Finding the held parameters would take a step for each class.
+    assert!(HELD_STEPS.get() < n);
+}

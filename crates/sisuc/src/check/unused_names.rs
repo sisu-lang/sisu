@@ -124,7 +124,8 @@ struct Reached {
     read: Vec<Vec<bool>>,
     /// Each class whose fields a comparison in live code reads.
     compared: Vec<bool>,
-    /// The held type parameters (`held_params`), found at the first comparison.
+    /// The held type parameters (`held_params`), found when a comparison first walks a class or
+    /// an enum with type arguments.
     held: OnceCell<FxHashSet<(Holder, usize)>>,
 }
 
@@ -161,10 +162,10 @@ impl Checker<'_> {
     /// class, enum and constant that no live code uses. W0013 is for each field of a built class
     /// that live code does not read. It is also for each variant of a built enum that live code
     /// does not build. A `_` name gets no warning. A method of a class or an enum that nothing
-    /// builds is not reported: the class or enum is. Each cites up
-    /// to three of its uses in dead code. Each pending finding of a live function is W0014, and
-    /// of a dead function the W0002 that it holds, if any: the function's warning tells to delete
-    /// it all.
+    /// builds is not reported: the class or enum is. Each cites up to three of its uses in dead
+    /// code. Each pending finding of a live function is W0014. A pending finding of a dead
+    /// function gives only the W0002 that it holds, if any. The function's warning tells you to
+    /// delete all of it.
     pub(super) fn unused(&mut self) -> Vec<Diagnostic> {
         let pending = std::mem::take(&mut self.pending);
         let functions = self.signatures.len();
@@ -371,8 +372,9 @@ impl Checker<'_> {
     /// of, and that `seen` does not hold. These are the classes that `ty` holds through arrays,
     /// optionals, declared field and payload types, and the arguments for held parameters
     /// (`held_params`). No type is made, and each type, class and enum is walked once for all the
-    /// calls that share `seen`. An explicit stack, so a long chain of classes cannot overflow the
-    /// stack.
+    /// calls that share `seen`. The held parameters are found only when the walk gets to a class
+    /// or an enum with type arguments, so a comparison of primitives finds none. An explicit
+    /// stack, so a long chain of classes cannot overflow the stack.
     fn held_classes(
         &self,
         ty: Type,
@@ -380,9 +382,10 @@ impl Checker<'_> {
         seen: &mut Seen,
         mut found: impl FnMut(tir::ClassId),
     ) {
-        let held = held.get_or_init(|| self.held_params());
         let mut stack = vec![ty];
         while let Some(ty) = stack.pop() {
+            #[cfg(test)]
+            super::HELD_STEPS.set(super::HELD_STEPS.get() + 1);
             if !seen.types.insert(ty) {
                 continue;
             }
@@ -402,17 +405,23 @@ impl Checker<'_> {
                 // A type parameter in these types is skipped: the arguments stand for it.
                 stack.extend(self.declared(holder));
             }
-            let args = args.get().iter().enumerate();
-            stack.extend(args.filter_map(|(k, &arg)| held.contains(&(holder, k)).then_some(arg)));
+            let args = args.get();
+            if !args.is_empty() {
+                let held = held.get_or_init(|| self.held_params());
+                let args = args.iter().enumerate();
+                stack.extend(
+                    args.filter_map(|(k, &arg)| held.contains(&(holder, k)).then_some(arg)),
+                );
+            }
         }
     }
 
-    /// Each type parameter, by its holder and its index, that a field or a payload field holds:
-    /// as itself, in an array or an optional, or as the argument for a held parameter of a class
-    /// or an enum. A comparison reads the argument for a held parameter, and no other argument.
-    /// Each type of a declaration is walked once. A type that waits for a parameter that is not
-    /// yet held is walked when that parameter is found held. So the cost is linear in the
-    /// declared types.
+    /// Each held type parameter, by its holder and its index. A field or a payload field holds a
+    /// parameter as itself, or in an array or an optional. It also holds it as the argument for a
+    /// held parameter of a class or an enum. A comparison reads the argument for a held
+    /// parameter, and no other argument. Each type of a declaration is walked once. A type that
+    /// waits for a parameter that is not yet held is walked when that parameter is found held. So
+    /// the cost is linear in the declared types.
     fn held_params(&self) -> FxHashSet<(Holder, usize)> {
         let classes = (0..self.classes.len()).map(|c| Holder::Class(tir::ClassId(c)));
         let enums = (0..self.enums.len()).map(|e| Holder::Enum(tir::EnumId(e)));
@@ -423,6 +432,8 @@ impl Checker<'_> {
         let mut walked = FxHashSet::default();
         let mut waiting: FxHashMap<(Holder, usize), Vec<(Holder, Type)>> = FxHashMap::default();
         while let Some((h, ty)) = stack.pop() {
+            #[cfg(test)]
+            super::HELD_STEPS.set(super::HELD_STEPS.get() + 1);
             if !ty.has_param() || !walked.insert((h, ty)) {
                 continue;
             }

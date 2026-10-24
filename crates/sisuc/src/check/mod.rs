@@ -279,6 +279,9 @@ thread_local! {
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
     pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types the walks for comparisons and for held type parameters have taken from
+    /// their stacks on this thread.
+    pub(super) static HELD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
