@@ -49,7 +49,9 @@ languages do, not by what Sisu did before.
    `GLOSSARY.md`.
 5. **Performance.** Of `sisu`: no clone, allocation or repeat pass
    without a reason, anywhere. On a per-token, per-node or per-lookup
-   path, that reason is also measured or obvious. Of the generated code: the IR after `-O2` does no avoidable work. A claim that
+   path, that reason is also measured or obvious. Each new walk, fixpoint
+   or worklist is linear in the program: build the worst input you can
+   find, and give its cost. Of the generated code: the IR after `-O2` does no avoidable work. A claim that
    something is faster, or costs nothing, needs callgrind counts.
 6. **Tests.** Judge them with `test-audit`. Unit tests and end-to-end
    cases (`crates/sisuc/tests/run`, and the fixture of each diagnostic
