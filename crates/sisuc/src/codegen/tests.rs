@@ -454,7 +454,7 @@ fn class_drop_should_call_no_drop_or_release_of_its_own_class() {
             &ir,
             &format!("define internal void @sisu_rc.drop.{name}(ptr"),
         );
-        assert!(body.contains("\ndrain:"), "no loop in\n{body}");
+        assert!(body.contains("phi ptr"), "no loop in\n{body}");
         assert_eq!(body.matches("@sisu_free(").count(), 1, "{body}");
         for unwanted in [
             format!("@sisu_rc.drop.{name}("),
@@ -816,6 +816,27 @@ fn eq_component_should_not_call_an_eq_component_helper() {
     .to_string();
     let body = function_body(&ir, "define internal i1 @sisu_rc.eq_component.E(i32");
     assert!(!body.contains("@sisu_rc.eq_component."), "{body}");
+}
+
+/// `Pair` has a link and then a class field. `eq_component` compares in field order: it queues
+/// the link, enters it, and compares the class field only after it pops the queue, in the
+/// `resume` block. So no `==` on the class field comes before that block.
+#[test]
+fn eq_component_should_compare_a_field_after_a_link_only_when_it_resumes() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class C {\n    n: i64\n}\nenum E {\n    Leaf\n    Pair(E, C)\n}\nfn main() {\n    print(E.Pair(E.Leaf, C(n: 1)) == E.Leaf)\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = function_body(&ir, "define internal i1 @sisu_rc.eq_component.E(i32");
+    assert_eq!(body.matches("@sisu_rc.eq.C(").count(), 1, "{body}");
+    let (before, after) = body
+        .split_once("\nresume:")
+        .unwrap_or_else(|| panic!("no resume block in\n{body}"));
+    assert!(!before.contains("@sisu_rc.eq.C("), "{body}");
+    assert!(after.contains("@sisu_rc.eq.C("), "{body}");
 }
 
 #[test]

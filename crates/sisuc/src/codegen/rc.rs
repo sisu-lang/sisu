@@ -243,16 +243,17 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// A field of a class in the cycle that is not `null` loses 1 from its object's count. At 0,
     /// that object goes onto the pending list of its class, linked to the old head through its
     /// count word, which is dead by then. Every other counted field goes through `release_at`.
-    /// A loop reads every field of the object at the head of the first list that is not empty,
-    /// frees that object, and repeats. No other holder reaches a listed object, so no RC check
-    /// reads that word. A class in no cycle has no loop. A class that is alone in its cycle
-    /// puts itself on its list and runs the loop in its own frame. Else it puts itself on its
-    /// list and calls `@sisu_rc.drain.<C0>` of the first class `C0` of the cycle, which runs
-    /// the loop for the cycle. So the code for a cycle is as large as the cycle.
+    /// A loop reads every field of an object, frees it, then takes the next object off a list.
+    /// No other holder reaches a listed object, so no RC check reads that word. A class in no
+    /// cycle has no loop. A class that is alone in its cycle loops in its own frame. Else the
+    /// object is already dead, its count 0 from `release`, so it only goes onto the list of
+    /// its class, with no decrement, and `@sisu_rc.drain.<C0>` of the first class `C0` of the
+    /// cycle runs the loop for the cycle. So the code for a cycle is as large as the cycle.
     fn define_drop(&self, drop: FunctionValue<'ctx>, ty: Type) {
         let TypeKind::Class(id, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")
         };
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
         let entry = self.context.append_basic_block(drop, "entry");
         self.builder.position_at_end(entry);
         let Some(members) = self.class_cycles.members(id) else {
@@ -264,45 +265,67 @@ impl<'ctx> Codegen<'ctx, '_> {
         let heads_type = self.heads_type(members.len());
         let heads = self.entry_alloca(heads_type.into(), "heads");
         self.store(heads, heads_type.const_zero().into());
-        let head = self.head(heads_type, heads, self.class_cycles.position(id));
-        self.store(head, param(drop).into());
-        // The object is the whole list, so the link in its count word ends it.
-        let null = self.context.ptr_type(AddressSpace::default()).const_null();
-        self.store(param(drop), null.into());
-        if members.len() == 1 {
-            self.drain_classes(drop, members, heads);
+        if members.len() > 1 {
+            let head = self.head(heads_type, heads, self.class_cycles.position(id));
+            self.store(head, param(drop).into());
+            // The object is the whole list, so the link in its count word ends it.
+            self.store(param(drop), ptr_type.const_null().into());
+            let first = Type::intern(TypeKind::Class(members[0], TypeArgs::NONE));
+            self.call(self.helper(Helper::Drain, first), &[heads.into()]);
+            self.builder.build_return(None).expect(POSITIONED);
             return;
         }
-        let first = Type::intern(TypeKind::Class(members[0], TypeArgs::NONE));
-        self.call(self.helper(Helper::Drain, first), &[heads.into()]);
+        let head = self.head(heads_type, heads, 0);
+        let (body, done) = (
+            self.context.append_basic_block(drop, "loop"),
+            self.context.append_basic_block(drop, "done"),
+        );
+        self.branch_to(body);
+        self.builder.position_at_end(body);
+        let phi = self
+            .builder
+            .build_phi(ptr_type, "object")
+            .expect(POSITIONED);
+        phi.add_incoming(&[(&param(drop), entry)]);
+        let object = phi.as_basic_value().into_pointer_value();
+        self.release_class_fields(id, object, Some((heads_type, heads)));
+        self.free_class(id, object);
+        let take = self.context.append_basic_block(drop, "take");
+        let taken = self
+            .builder
+            .build_load(ptr_type, head, "taken")
+            .expect(POSITIONED)
+            .into_pointer_value();
+        let null = self.builder.build_is_null(taken, "null").expect(POSITIONED);
+        self.branch_on(null, done, take);
+        self.builder.position_at_end(take);
+        let following = self
+            .builder
+            .build_load(ptr_type, taken, "following")
+            .expect(POSITIONED);
+        self.store(head, following);
+        phi.add_incoming(&[(&taken, take)]);
+        self.branch_to(body);
+        self.builder.position_at_end(done);
         self.builder.build_return(None).expect(POSITIONED);
     }
 
-    /// `@sisu_rc.drain.<C0>(heads)`, for the cycle of classes whose first class is `C0`: see
-    /// `drain_classes`.
-    fn define_class_drain(&self, drain: FunctionValue<'ctx>, ty: Type) {
+    /// `@sisu_rc.drain.<C0>(heads)`, for the cycle of classes whose first class is `C0`: while
+    /// some list in `heads` is not empty, takes the object at the head of the first such list,
+    /// makes the next object its head, releases the fields of the object
+    /// (`release_class_fields`) and frees it. It runs in one frame, however many objects it
+    /// frees. It scans the heads from the first for each object, so it costs the number of
+    /// objects times the number of classes in the cycle, as the drain of an enum component does.
+    fn define_class_drain(&self, function: FunctionValue<'ctx>, ty: Type) {
         let TypeKind::Class(first, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")
         };
         let members = self.class_cycles.members(first).expect(
             "only the first class of a cycle should get a `drain` helper, and it has a cycle",
         );
-        let entry = self.context.append_basic_block(drain, "entry");
+        let heads = param(function);
+        let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
-        self.drain_classes(drain, members, param(drain));
-    }
-
-    /// Ends `function` with a loop over the pending lists `heads` of the cycle of `members`
-    /// classes, one head per class in order: while some list is not empty, it takes the object
-    /// at the head of the first such list, makes the next object its head, releases the fields
-    /// of the object (`release_class_fields`) and frees it. It runs in one frame, however many
-    /// objects it frees.
-    fn drain_classes(
-        &self,
-        function: FunctionValue<'ctx>,
-        members: &[ClassId],
-        heads: PointerValue<'ctx>,
-    ) {
         let heads_type = self.heads_type(members.len());
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let block = |name| self.context.append_basic_block(function, name);

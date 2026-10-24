@@ -87,6 +87,61 @@ fn ring() {
     print(objects_from_x(x)) // 9
 }
 
+// `P<string>` and `Q<string>` are two classes that hold each other, with different layouts.
+class P<T> {
+    q: Q<T>?
+    _v: T
+}
+
+class Q<T> {
+    p: P<T>?
+}
+
+enum Holder {
+    Has(A?)
+}
+
+fn objects_from_p<T>(p: P<T>?) -> i64 {
+    if let n = p { 1 + objects_from_q(n.q) } else { 0 }
+}
+
+fn objects_from_q<T>(q: Q<T>?) -> i64 {
+    if let n = q { 1 + objects_from_p(n.p) } else { 0 }
+}
+
+// A chain of `pairs` pairs of `A` and `B`.
+fn chain(pairs: i64) -> A? {
+    let mut a: A? = None
+    let mut i = 0
+    while i < pairs {
+        i += 1
+        let b = B(a: a, _tag: Tag(_id: i))
+        a = A(b: b, _name: "a{i}")
+    }
+    a
+}
+
+// The release of an array and of an enum reaches the drop of the chains they hold.
+fn entry_through_array_and_enum() {
+    let xs = [chain(1), chain(2)]
+    print(objects_from_a(xs[0]) + objects_from_a(xs[1])) // 6
+    let h = Holder.Has(chain(2))
+    match h {
+        Holder.Has(a) => print(objects_from_a(a)) // 4
+    }
+}
+
+// An instance of a generic class in a cycle: a chain of three pairs, so six objects.
+fn generic_pairs() {
+    let mut p: P<string>? = None
+    let mut i = 0
+    while i < 3 {
+        i += 1
+        p = P(q: Q(p: p), _v: "p{i}")
+    }
+    print(objects_from_p(p)) // 6
+}
+
 // The first object to drop is not of the first class of its cycle: a `B` and a `Z`.
 fn later_class() {
     let b = B(a: A(b: B(a: None, _tag: Tag(_id: 1)), _name: "a"), _tag: Tag(_id: 2))
@@ -100,4 +155,6 @@ fn main() {
     shared()
     ring()
     later_class()
+    entry_through_array_and_enum()
+    generic_pairs()
 }
