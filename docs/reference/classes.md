@@ -57,7 +57,7 @@ The rules:
 - A class cannot extend another class. Sisu has no inheritance.
 - A generic class also has type parameters after its name, such as `class Stack<T>`.
 
-A field cannot need an object of its own class, directly or through other classes or enums, because no first object could exist ([E0027](../diagnostics/E0027.md)). An optional field, such as `next: Node?`, or an array field, such as `children: [Node]`, can be empty, so it is valid. An enum with a variant that holds no object of the class also ends the chain.
+A field cannot need an object of its own class, directly or through other classes or enums, because no first object could exist ([E0027](../diagnostics/E0027.md)). An optional field, such as `next: Node?`, or an array field, such as `children: [Node]`, can be empty, so it is valid. An enum with a variant that needs no object of the class, such as a variant with no payload, also ends the chain.
 
 ```sisu
 class Node {
