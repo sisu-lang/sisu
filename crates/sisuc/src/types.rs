@@ -47,7 +47,14 @@ impl TypeKind {
             TypeKind::Param(..) => true,
             TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.has_param(),
             TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.has_param(),
-            _ => false,
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never => false,
         }
     }
 }
@@ -385,7 +392,16 @@ impl Type {
                 Type::intern(TypeKind::Class(id, list.subst_in(args, memo)))
             }
             TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, list.subst_in(args, memo))),
-            _ => unreachable!("only a kind with a child can name a parameter"),
+            TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never => {
+                unreachable!("only a kind with a child can name a parameter")
+            }
         };
         memo.insert(self, done);
         done

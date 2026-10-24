@@ -154,7 +154,7 @@ thread_local! {
     /// How many type parameter names the search for reported ones has looked at on this
     /// thread.
     pub(super) static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many entries of `body.ahead` lookups have inspected on this thread.
+    /// How many lookups of `body.ahead` have found an entry on this thread.
     pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -287,7 +287,8 @@ impl Checker<'_> {
         let expected = expected.or(self.quiet(span, expected).then_some(UNKNOWN));
         let call = self.infer_call(span, sig, written, args, expected);
         // A key is kept again only once its last entry is used, so an earlier entry of a key
-        // truncated here, if any, is used, and dropping the key loses nothing.
+        // truncated here, if any, is used, and dropping the key loses nothing. A placeholder
+        // (`keep` with no work) is the exception, but ranking fills each one before this runs.
         for (key, _) in self.body.ahead.drain(mark..) {
             self.body.ahead_at.remove(&key);
         }
@@ -1210,15 +1211,24 @@ impl Checker<'_> {
     }
 
     /// Reports the type arguments in `angles` after `variant`, a variant of the generic enum
-    /// `base` names, which takes its enum's: the help writes them on the enum.
-    pub(super) fn variant_args(&mut self, base: &ast::Expr, variant: &ast::Ident, angles: Span) {
+    /// `base` names, which takes its enum's: the help writes them on the enum, unless one of
+    /// `types` names no type, and then the list may be a comparison.
+    pub(super) fn variant_args(
+        &mut self,
+        base: &ast::Expr,
+        variant: &ast::Ident,
+        types: &[ast::TypeExpr],
+        angles: Span,
+    ) {
         let text = self.source.text;
-        let instead = format!(
-            "{}{}.{}",
-            &text[base.span.range()],
-            &text[angles.range()],
-            variant.name
-        );
+        let instead = types.iter().all(|ty| !self.names_no_type(ty)).then(|| {
+            format!(
+                "{}{}.{}",
+                &text[base.span.range()],
+                &text[angles.range()],
+                variant.name
+            )
+        });
         self.report(DiagnosticKind::TypeArguments {
             name: text[base.span.start()..variant.span.end()].to_string(),
             at: angles,

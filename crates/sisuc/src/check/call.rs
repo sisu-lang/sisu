@@ -203,7 +203,7 @@ impl Checker<'_> {
         let path = !types.is_empty() && self.path_method(receiver, method);
         if path && self.generic_variant(receiver, method).is_some() {
             // Its arguments alone could not bind what the list was meant to.
-            self.variant_args(receiver, method, angles);
+            self.variant_args(receiver, method, types, angles);
             self.stray(args);
             return Err(Poisoned::error());
         }

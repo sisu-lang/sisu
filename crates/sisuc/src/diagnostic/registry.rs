@@ -973,7 +973,7 @@ pub(crate) enum ArgumentsForm {
     /// in parentheses; before a `.` it was no comparison.
     Value { compare: Option<String> },
     /// A variant of a generic enum, which takes its enum's: `instead` writes them on the enum.
-    Variant { instead: String },
+    Variant { instead: Option<String> },
 }
 
 /// Why `main`'s signature is wrong.
@@ -3264,8 +3264,11 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                 }
                 ArgumentsForm::Variant { instead } => {
-                    Diagnostic::coded(code, at, format!("`{name}` takes no type arguments"))
-                        .with_help(format!("write `{instead}`"))
+                    let d = Diagnostic::coded(code, at, format!("`{name}` takes no type arguments"));
+                    match instead {
+                        Some(instead) => d.with_help(format!("write `{instead}`")),
+                        None => d,
+                    }
                 }
             },
             DiagnosticKind::TypeArgument { ty, at, optional } => {

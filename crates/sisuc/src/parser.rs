@@ -53,6 +53,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         tokens: &tokens,
         window: &tokens,
         halves: &halves,
+        halved: None,
         pos: 0,
         depth: 0,
         lexer: &diagnostics,
@@ -295,6 +296,9 @@ struct Parser<'a> {
     window: &'a [Token],
     /// The `=` left of each `>=`, built at the first split.
     halves: &'a OnceCell<Vec<Token>>,
+    /// The index of the `>=` whose `=` half the last `bump_past_window` took, if the token just
+    /// consumed was that half.
+    halved: Option<usize>,
 }
 
 impl<'a> Parser<'a> {
@@ -349,6 +353,7 @@ impl<'a> Parser<'a> {
         let token = self.past_window();
         self.window = self.tokens;
         if token.kind != TokenKind::Eof {
+            self.halved = Some(self.pos);
             self.pos += 1;
         }
         token
@@ -1211,6 +1216,7 @@ impl<'a> Parser<'a> {
             labels: Vec::new(),
             window: self.tokens,
             halves: self.halves,
+            halved: None,
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -1689,9 +1695,16 @@ impl<'a> Parser<'a> {
             .map_or(0, |t| t.span.end())
     }
 
-    /// The span of the token just consumed.
+    /// The span of the token just consumed: the `=` half of a `>=` that closed a list, if that
+    /// half was taken.
     fn last_span(&self) -> Span {
-        self.tokens[self.pos - 1].span
+        let last = self.pos - 1;
+        let span = self.tokens[last].span;
+        if self.halved == Some(last) {
+            Span::new(span.start() + 1, span.end())
+        } else {
+            span
+        }
     }
 
     /// `let pattern = value`, after `if` or `while`; `None` when no `let` follows.
@@ -4304,7 +4317,6 @@ mod tests {
         assert_eq!(parse_err("fn f<>() {}"), (Code::Expected, 1, 6));
         assert_eq!(parse_err("class A<_> {}"), (Code::UnderscoreName, 1, 9));
         assert_eq!(parse_err("enum E<T: Ord> {}"), (Code::Expected, 1, 9));
-        assert_eq!(parse_err("fn f(x: Stack<1>) {}"), (Code::Expected, 1, 15));
     }
 
     #[test]
@@ -4321,6 +4333,8 @@ mod tests {
             let src = format!("fn main() {{ let x: {ty} = y }}");
             assert_eq!(body(&src), format!("(block (let x {expected} y))"), "{src}");
         }
+        // A type argument is a type: a number is none.
+        assert_eq!(parse_err("fn f(x: Stack<1>) {}"), (Code::Expected, 1, 15));
     }
 
     /// `>=` closes the list that ends before it, and the `=` stays for the `let`.
@@ -4575,13 +4589,13 @@ mod tests {
         }
     }
 
-    /// Whether `type_args_follow` holds at the `<` that is the second token of `src`.
-    fn follows(src: &str) -> bool {
+    /// Runs `f` on a parser of `src` at token `pos`.
+    fn parser_at<R>(src: &str, pos: usize, f: impl FnOnce(&mut Parser) -> R) -> R {
         let lexed = lex(src).expect("source lexes");
-        Parser {
+        f(&mut Parser {
             source: lexed.source,
             tokens: &lexed.tokens,
-            pos: 1,
+            pos,
             depth: 0,
             lexer: &lexed.diagnostics,
             comments: &lexed.comments,
@@ -4591,8 +4605,23 @@ mod tests {
             labels: Vec::new(),
             window: &lexed.tokens,
             halves: &OnceCell::new(),
-        }
-        .type_args_follow()
+            halved: None,
+        })
+    }
+
+    /// Whether `type_args_follow` holds at the `<` that is the second token of `src`.
+    fn follows(src: &str) -> bool {
+        parser_at(src, 1, |p| p.type_args_follow())
+    }
+
+    #[test]
+    fn last_span_after_a_split_greater_equal_should_be_the_equals_half() {
+        let span = parser_at("A<i64>= x", 0, |p| {
+            p.parse_type().expect("the type parses");
+            p.expect(&TokenKind::Eq).expect("the `=` half is left");
+            p.last_span()
+        });
+        assert_eq!((span.start(), span.end()), (6, 7));
     }
 
     /// A list nested more than `MAX_DEPTH` levels below its `<` is none, however its nesting is

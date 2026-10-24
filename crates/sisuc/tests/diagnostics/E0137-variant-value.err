@@ -1,0 +1,8 @@
+error[E0137]: `Tree.Node` takes no type arguments
+ --> E0137-variant-value.sisu:8:33
+  |
+8 |     let t: Tree<i64> = Tree.Node<b, b>(1)
+  |                                 ^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0137
