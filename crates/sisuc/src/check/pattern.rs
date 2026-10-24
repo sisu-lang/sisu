@@ -77,6 +77,16 @@ pub(super) fn matchable(ty: Type) -> bool {
     )
 }
 
+/// The key under which ranking keeps the branch of `arm` (see `Ahead::Bound`). A block is kept
+/// under its own span. A block in parentheses has a body that starts at `(`, so the key is the
+/// block's span, not the body's.
+pub(super) fn arm_key(arm: &ast::Arm) -> Span {
+    match &arm.body.kind {
+        ast::ExprKind::Block(block) => block.span,
+        _ => arm.body.span,
+    }
+}
+
 /// The path of a variant pattern as written: `Num` or `Expr.Num`.
 fn written(qualifier: Option<&ast::Ident>, name: &ast::Ident) -> String {
     match qualifier {
@@ -130,7 +140,7 @@ impl Checker<'_> {
         let form = LetValue::Match { ty: position };
         let (blocks, ty) = self.join(&sources, expected, |c, i, expected| {
             let arm = &arms[i];
-            let (bound, guard, so_far) = c.bound_branch(arm.body.span, |c| {
+            let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
                 c.bind_pattern(None, &form, &arm.pattern, Some(arm))
             });
             let LetPattern::Match { pattern } = bound else {

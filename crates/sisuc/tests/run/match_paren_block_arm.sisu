@@ -1,0 +1,24 @@
+// GIVEN a `match` arm whose body is a block in parentheses, and reads its pattern's binding
+// WHEN the `match` is the argument of a generic call, which ranks it for context
+// THEN the check binds the pattern once, and the body reads that binding
+// AND Valgrind and `--rc-checks` find every object freed exactly once
+class Box {
+    v: i64
+    fn read(self) -> i64 { self.v }
+}
+
+enum E {
+    Has(Box)
+    Empty
+}
+
+fn id<T>(x: T) -> T { x }
+
+fn main() {
+    let e = E.Has(Box(v: 2))
+    let xs = id(match e {
+        Has(x) => ({ [x.read()] })
+        _ => []
+    })
+    print(xs[0])    // 2
+}

@@ -1111,6 +1111,11 @@ fn ranked_patterns_should_report_and_bind_once() {
             "fn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(match e {\n        Nope(x) => b.make()\n        _ => []\n    })\n}",
             vec![(Code::UnknownVariant, (8, 9))],
         ),
+        // A block arm's body starts at `(`, but ranking and the check keep it by its block.
+        (
+            "fn g(b: Box<i64>, e: Slot) {\n    let xs: [i64] = id(match e {\n        Nope(x) => ({ b.make() })\n        _ => []\n    })\n}",
+            vec![(Code::UnknownVariant, (8, 9))],
+        ),
         (
             "fn g(e: One) {\n    let xs: [i64] = id(if let Only(x) = e { x.make() } else { [] })\n}",
             vec![(Code::AlwaysMatches, (7, 31))],
@@ -1140,6 +1145,10 @@ fn ranked_patterns_should_report_and_bind_once() {
             "fn g(e: Slot) {\n    let xs: [i64] = id(id(match e {\n        Has(x) if x.v > 0 => x.make()\n        _ => []\n    }))\n}",
             "x",
         ),
+        (
+            "fn g(e: Slot) {\n    let xs: [i64] = id(match e {\n        Has(x) => ({ x.make() })\n        _ => []\n    })\n}",
+            "x",
+        ),
     ] {
         let (program, ds) = checked(&with_generics(&format!("{SLOT}{body}")));
         assert!(ds.is_empty(), "{body}: {ds:?}");
@@ -1148,6 +1157,29 @@ fn ranked_patterns_should_report_and_bind_once() {
         let g = g.expect("the program should hold `g`");
         let bound = g.locals.iter().filter(|l| l.name.as_deref() == Some(name));
         assert_eq!(bound.count(), 1, "{body}");
+    }
+}
+
+/// A `match` or an `if` that waits for context is still checked when the call cannot infer its
+/// type parameter. It reports its own mistakes beside the call's, and its branches do not report
+/// what the call reports.
+#[test]
+fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
+    for (body, expected) in [
+        (
+            "fn g() {\n    let xs = id(match 1.0 { _ => [] })\n}",
+            vec![(Code::CannotInfer, (2, 14)), (Code::CannotMatch, (2, 23))],
+        ),
+        (
+            "fn g() {\n    let ys = id(match true { true => [] })\n}",
+            vec![(Code::CannotInfer, (2, 14)), (Code::NonExhaustive, (2, 17))],
+        ),
+        (
+            "fn g() {\n    let xs = id(if 1.0 { [] } else { [] })\n}",
+            vec![(Code::CannotInfer, (2, 14)), (Code::Mismatch, (2, 20))],
+        ),
+    ] {
+        codes(&with_generics(body), &expected);
     }
 }
 

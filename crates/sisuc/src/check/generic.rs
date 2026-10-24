@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
 use super::expr::{int_literal, rank};
-use super::pattern::{LetPattern, LetValue, matchable};
+use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
@@ -271,8 +271,8 @@ impl Checker<'_> {
     /// parameter's type. An argument of type `unit` or `never` binds only what none of the
     /// others does. Returns the arguments in source order, the type arguments, and the call's
     /// type; `None`, reported, when a parameter is left unbound or bound to a type no
-    /// parameter takes, and then an argument that needs context and has none is not checked,
-    /// unless a call in it does not fit its declaration, which it then reports. What ranking
+    /// parameter takes, and then an argument that needs context and has none is checked against
+    /// `UNKNOWN`, for its own mistakes only. What ranking
     /// the arguments checked ahead (see `Ahead`) and left unused is dropped.
     pub(super) fn generic_call(
         &mut self,
@@ -380,8 +380,8 @@ impl Checker<'_> {
             }
         }
         let list = match call.bindings.finish() {
-            Ok(list) if !call.failed && !broken => list,
-            Ok(_) => return None,
+            Ok(list) if !call.failed && !broken => Some(list),
+            Ok(_) => None,
             Err(i) => {
                 // An argument that failed, or a parameter's or the return type that did, may be
                 // what would have bound it, and an `UNKNOWN` context is one that failed.
@@ -391,8 +391,18 @@ impl Checker<'_> {
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
                     self.cannot_infer(sig, i);
                 }
-                return None;
+                None
             }
+        };
+        let Some(list) = list else {
+            // What waited for context and has none is checked against a failed one, so it
+            // reports only its own mistakes, and uses what ranking kept for it.
+            for (arg, slot) in iter::zip(args, &call.slots) {
+                if slot.is_none() {
+                    let _ = self.expr(&arg.value, Some(UNKNOWN));
+                }
+            }
+            return None;
         };
         let checked = call
             .slots
@@ -625,7 +635,7 @@ impl Checker<'_> {
                 else_block: Some(else_block),
                 ..
             } => {
-                let blocks = [then_block, else_block];
+                let blocks = [then_block, else_block].into_iter();
                 return branches_wait(blocks.map(|b| self.block_waits(b, fit, |_| None)));
             }
             K::IfLet {
@@ -645,7 +655,7 @@ impl Checker<'_> {
                         |c: &mut Self| Some(c.bind_pattern(None, &form, &arm.pattern, Some(arm)));
                     match &arm.body.kind {
                         K::Block(block) => self.block_waits(block, fit, bind),
-                        _ => Some(self.tail_waits(arm.body.span, None, &arm.body, fit, bind)),
+                        _ => Some(self.tail_waits(arm_key(arm), None, &arm.body, fit, bind)),
                     }
                 }));
             }
@@ -705,9 +715,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `tail`, the value of the branch at `key`, needs context, in the branch's scope:
-    /// what `bind` binds there, if anything, and the statements of `block` before `tail` are
-    /// checked here, once, and kept with that scope for the branch (see `Ahead`). `block` is
+    /// Whether `tail`, the value of the branch at `key`, needs context, in the branch's scope.
+    /// Here, once, `bind` binds its names in that scope, if any, and the statements of `block`
+    /// before `tail` are checked. The scope is kept for the branch (see `Ahead`). `block` is
     /// `None` for a `match` arm whose body is `tail`.
     fn tail_waits(
         &mut self,
