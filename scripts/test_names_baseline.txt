@@ -617,7 +617,6 @@ crates/sisuc/src/check/tests/shadowing.rs::let_mut_shadows_let
 crates/sisuc/src/check/tests/shadowing.rs::redeclared_label_outer_scope
 crates/sisuc/src/check/tests/shadowing.rs::redeclared_label_same_scope
 crates/sisuc/src/check/tests/shadowing.rs::rhs_sees_old_binding
-crates/sisuc/src/check/tests/shadowing.rs::shadowed_mut_warns_unless_reassigned_first
 crates/sisuc/src/check/tests/shadowing.rs::type_can_change
 crates/sisuc/src/check/tests/strings.rs::cannot_interpolate
 crates/sisuc/src/check/tests/strings.rs::chain_binds_each_operand
@@ -803,7 +802,6 @@ crates/sisuc/src/diagnostic/suggest.rs::ties_go_alphabetically
 crates/sisuc/src/front_end.rs::a_fix_over_a_comment_or_a_lexer_error_is_unsafe
 crates/sisuc/src/front_end.rs::a_fix_that_breaks_the_syntax_is_dropped
 crates/sisuc/src/front_end.rs::block_value_survives_a_semicolon
-crates/sisuc/src/front_end.rs::brace_in_string_fix_passes_the_front_end
 crates/sisuc/src/front_end.rs::bracket_error_is_alone
 crates/sisuc/src/front_end.rs::broken_class_poisons_its_uses
 crates/sisuc/src/front_end.rs::broken_class_reports_its_earliest_error

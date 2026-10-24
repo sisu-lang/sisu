@@ -567,7 +567,7 @@ fn main() {
     /// The fix of a `}` in a string leaves a program that passes the whole front end, after an
     /// escaped backslash, after an interpolation and in a string inside one.
     #[test]
-    fn brace_in_string_fix_passes_the_front_end() {
+    fn brace_fix_should_pass_the_front_end() {
         for text in [r#""}""#, r#""\\}""#, r#""{n}}""#, r#""{ "}" }""#] {
             let src = format!("fn main() {{\n    let n = 1\n    print(n)\n    print({text})\n}}\n");
             let ds = front_end(&src).1;

@@ -1365,9 +1365,9 @@ impl Checker<'_> {
     }
 
     /// Judges `b`, which `name` can no longer reach. When nothing read it, its name does not
-    /// start with `_` and it is a function's or a method's, it waits for the pass (W0014), unless
-    /// it is a parameter of a body with a `todo`. Otherwise a `let mut` that was never reassigned
-    /// gets W0002.
+    /// start with `_` and it is a function's or a method's, it waits for the pass (W0014). A
+    /// parameter of a body with a `todo` does not wait. Otherwise a `let mut` that was never
+    /// reassigned gets W0002.
     fn retire(&mut self, name: Symbol, b: &Binding) {
         let keyword = b.keyword.filter(|_| !b.reassigned && !b.loop_named);
         if let Some(Owner::Func(func)) = self.body.owner
@@ -1380,9 +1380,9 @@ impl Checker<'_> {
             }
             // Only a `for` or pattern name can become `_`, in each place that binds it.
             let fix = match b.kind {
-                BindingKind::Unwrapped(_) => {
-                    std::iter::once(b.span).chain(b.also.clone()).collect()
-                }
+                BindingKind::Unwrapped(_) => std::iter::once(b.span)
+                    .chain(b.also.iter().copied())
+                    .collect(),
                 _ => Vec::new(),
             };
             self.pending.push(Pending {

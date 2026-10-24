@@ -34,7 +34,7 @@ fn if_let_binding_shadowed() {
 /// reassigned before the shadowing `let`. The shadowing `let` reads it, so W0014 does not
 /// take the place of W0002.
 #[test]
-fn shadowed_mut_warns_unless_reassigned_first() {
+fn shadowed_variable_should_warn_unless_reassigned_first() {
     codes(
         "fn main() {\n    let mut a = 0\n    let a = a + 1\n    print(a)\n}",
         &[(Code::NeverReassigned, (2, 13))],
