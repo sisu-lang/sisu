@@ -47,7 +47,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 13] = [
+const SMALL_STACK: [&str; 14] = [
     "longlist",
     "rightskew",
     "deepchain",
@@ -57,6 +57,7 @@ const SMALL_STACK: [&str; 13] = [
     "enummutual",
     "enumeq",
     "deeppair",
+    "dropleft",
     "eqleft",
     "eqorder",
     "tailfresh",
@@ -351,6 +352,15 @@ fn equal_enum_lists_should_compare_in_a_small_stack() {
 #[test]
 fn deep_inline_links_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("deeppair", "true\nfalse\n");
+}
+
+/// GIVEN the `dropleft` program, which builds a class tree 1 000 000 deep through `l`, not the
+/// chain field, and one that alternates `l` and `r`
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `done`
+#[test]
+fn class_drop_should_free_trees_deep_through_any_own_field_in_a_small_stack() {
+    assert_small_stack_prints_at_both("dropleft", "done\n");
 }
 
 /// GIVEN the `eqleft` program, which compares three pairs of left-deep trees of 1 000 000 nodes

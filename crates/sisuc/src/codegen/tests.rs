@@ -439,25 +439,32 @@ fn helpers_are_generated() {
     }
 }
 
+/// `T` is deep through `l`, which is not its chain field (`r`), and has a `string` field too.
 #[test]
-fn drop_loops_on_the_chain_field() {
+fn class_drop_should_call_no_drop_or_release_of_its_own_class() {
     let context = Context::create();
     let ir = compiled(
         &context,
-        "class Node {\n    value: i64\n    next: Node?\n}\nclass Tree {\n    left: Tree?\n    right: Tree?\n    v: i64\n}\nfn main() {}",
+        "class Node {\n    value: i64\n    next: Node?\n}\nclass T {\n    l: T?\n    r: T?\n    name: string\n}\nfn main() {}",
     )
     .print_to_string()
     .to_string();
-    let node = function_body(&ir, "define internal void @sisu_rc.drop.Node(ptr");
-    assert!(node.contains("phi ptr"), "no loop in\n{node}");
-    assert_eq!(node.matches("@sisu_free(").count(), 1, "{node}");
-    for unwanted in ["@sisu_rc.drop.Node(", "@sisu_rc.release.Node("] {
-        assert!(!node.contains(unwanted), "{unwanted:?} in\n{node}");
+    for name in ["Node", "T"] {
+        let body = function_body(
+            &ir,
+            &format!("define internal void @sisu_rc.drop.{name}(ptr"),
+        );
+        assert!(body.contains("phi ptr"), "no loop in\n{body}");
+        assert_eq!(body.matches("@sisu_free(").count(), 1, "{body}");
+        for unwanted in [
+            format!("@sisu_rc.drop.{name}("),
+            format!("@sisu_rc.release.{name}("),
+        ] {
+            assert!(!body.contains(&unwanted), "{unwanted:?} in\n{body}");
+        }
     }
-    // `right` is the chain field; only `left` is released, by recursion.
-    let tree = function_body(&ir, "define internal void @sisu_rc.drop.Tree(ptr");
-    assert_eq!(tree.matches("@sisu_rc.release.Tree(").count(), 1, "{tree}");
-    assert!(!tree.contains("@sisu_rc.drop.Tree("), "{tree}");
+    let tree = function_body(&ir, "define internal void @sisu_rc.drop.T(ptr");
+    assert!(tree.contains("@sisu_rc.release.string("), "{tree}");
 }
 
 /// The helpers of an enum and of a class hand an inline enum field to its own helper by
@@ -928,9 +935,9 @@ fn assert_faults_on(lines: &[&str], dead: &str, kind: u32, body: &str) -> usize 
 }
 
 #[test]
-fn rc_checks_guard_retain_release_and_exit() {
+fn rc_checks_should_guard_retain_release_drop_and_exit() {
     let context = Context::create();
-    // A chain field: its drop loop's phi must name the block the checked decrement ends in.
+    // `next` holds the class itself, so the drop lists the next object after a checked decrement.
     // `fill` shares one array among its slots; `write` makes a shared array unique.
     let src = format!(
         "class P {{\n    next: P?\n}}\nfn fill(n: i64) -> [[i64]] {{ [[1]; n] }}\nfn write(xs: [i64]) -> [i64] {{\n    let mut ys = xs\n    ys[0] = 1\n    ys\n}}\n{FIB}"
@@ -944,6 +951,10 @@ fn rc_checks_guard_retain_release_and_exit() {
     });
     let release = function_body(&ir, "define internal void @sisu_rc.release.P(ptr");
     assert_count_checked(release, 1, &|t| {
+        t.starts_with("add i64 ") && t.ends_with(", -1")
+    });
+    let drop = function_body(&ir, "define internal void @sisu_rc.drop.P(ptr");
+    assert_count_checked(drop, 1, &|t| {
         t.starts_with("add i64 ") && t.ends_with(", -1")
     });
     let fill = function_body(&ir, "@sisu.fill(");

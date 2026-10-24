@@ -112,8 +112,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Defines the counting helpers, which take their object without taking ownership:
     /// `@sisu_rc.retain` adds 1 to its count; `@sisu_rc.release.<C>` subtracts 1 and at 0
     /// calls `@sisu_rc.drop.<C>`, which releases each counted field, then frees the object.
-    /// Both return at once on `null`. Drop does not release the chain field: it loads it,
-    /// frees the object, subtracts 1 from the next object's count and at 0 drops it in a loop.
+    /// Both return at once on `null`. Drop does not recurse on a field of its own class: see
+    /// `define_drop`.
     /// `@sisu_rc.eq.<C>` is `==` on two objects; see `define_eq`. An array's `drop`, `eq` and
     /// `unique` come from `define_array_helper`, a string's `drop` and `eq` from
     /// `define_string_helper`, an enum's `retain`, `release` and `eq` from `define_enum_helper`.
@@ -162,57 +162,87 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.branch_to(done);
     }
 
-    /// `@sisu_rc.drop.<C>`: releases each counted field but the chain field, frees the
-    /// object, then drops the chain's next object in a loop when its count reaches 0.
+    /// `@sisu_rc.drop.<C>`: frees the object, and in the same frame each object of `C` that it
+    /// holds the last reference to, at any depth. A field of type `C` or `C?` that is not `null`
+    /// loses 1 from its object's count. At 0, that object goes onto a pending list, linked to
+    /// the old head through its count word, which is dead by then. Every other counted field
+    /// goes through `release_at`. The loop reads every field, frees the object, then takes the
+    /// next object off the list. No other holder reaches a listed object, so no RC check reads
+    /// that word.
     fn define_drop(&self, drop: FunctionValue<'ctx>, ty: Type) {
         let TypeKind::Class(id, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")
         };
         let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let entry = self.context.append_basic_block(drop, "entry");
+        let block = |name| self.context.append_basic_block(drop, name);
+        let is_null = |pointer| {
+            self.builder
+                .build_is_null(pointer, "null")
+                .expect(POSITIONED)
+        };
+        let fields = &self.program.classes[id.0].fields;
+        let own = |field_ty| counted_core(field_ty) == Some(ty);
+        let entry = block("entry");
         self.builder.position_at_end(entry);
-        let chain = self.program.chain_field(id);
-        // With a chain field, the body is a loop over the chain's objects, in one frame.
-        let looped = chain.map(|_| {
-            let body = self.context.append_basic_block(drop, "loop");
+        // With a field of its own class, the body is a loop over the pending list.
+        let looped = fields.iter().any(|field| own(field.ty)).then(|| {
+            let head = self.entry_alloca(ptr_type.into(), "pending");
+            self.store(head, ptr_type.const_null().into());
+            let body = block("loop");
             self.branch_to(body);
             self.builder.position_at_end(body);
-            let object = self
+            let phi = self
                 .builder
                 .build_phi(ptr_type, "object")
                 .expect(POSITIONED);
-            object.add_incoming(&[(&param(drop), entry)]);
-            (body, object)
+            phi.add_incoming(&[(&param(drop), entry)]);
+            (head, body, phi)
         });
         let object = looped.map_or_else(
             || param(drop),
-            |(_, phi)| phi.as_basic_value().into_pointer_value(),
+            |(_, _, phi)| phi.as_basic_value().into_pointer_value(),
         );
-        let fields = &self.program.classes[id.0].fields;
         for (index, field) in fields.iter().enumerate() {
-            if field.ty.is_counted(&self.program.enums) && chain != Some(index) {
-                self.release_at(self.field_ptr(id, object, index), field.ty);
-            }
-        }
-        // Loaded before the free, which ends the object.
-        let next = chain.map(|index| {
             let place = self.field_ptr(id, object, index);
-            self.load_value(fields[index].ty, place)
-                .into_pointer_value()
-        });
+            let Some((head, ..)) = looped.filter(|_| own(field.ty)) else {
+                if field.ty.is_counted(&self.program.enums) {
+                    self.release_at(place, field.ty);
+                }
+                continue;
+            };
+            let (live, last, next) = (block("own"), block("own.last"), block("own.next"));
+            let child = self.load_value(field.ty, place).into_pointer_value();
+            self.branch_on(is_null(child), next, live);
+            self.builder.position_at_end(live);
+            self.decrement(child, last, next);
+            self.builder.position_at_end(last);
+            let old = self
+                .builder
+                .build_load(ptr_type, head, "old")
+                .expect(POSITIONED);
+            self.store(child, old);
+            self.store(head, child.into());
+            self.branch_to(next);
+            self.builder.position_at_end(next);
+        }
         let (size, align) = self.heap_size(&HeapBlock::Class(id));
         self.call(self.free, &[object.into(), size.into(), align.into()]);
-        if let (Some(next), Some((body, phi))) = (next, looped) {
-            let done = self.context.append_basic_block(drop, "done");
-            let counted = self.context.append_basic_block(drop, "next");
-            let null = self.builder.build_is_null(next, "null").expect(POSITIONED);
-            self.builder
-                .build_conditional_branch(null, done, counted)
+        if let Some((head, body, phi)) = looped {
+            let (take, done) = (block("take"), block("done"));
+            let taken = self
+                .builder
+                .build_load(ptr_type, head, "taken")
+                .expect(POSITIONED)
+                .into_pointer_value();
+            self.branch_on(is_null(taken), done, take);
+            self.builder.position_at_end(take);
+            let following = self
+                .builder
+                .build_load(ptr_type, taken, "following")
                 .expect(POSITIONED);
-            self.builder.position_at_end(counted);
-            self.decrement(next, body, done);
-            // The RC checks put the branch in a block after `counted`.
-            phi.add_incoming(&[(&next, self.current_block())]);
+            self.store(head, following);
+            phi.add_incoming(&[(&taken, take)]);
+            self.branch_to(body);
             self.builder.position_at_end(done);
         }
         self.builder.build_return(None).expect(POSITIONED);

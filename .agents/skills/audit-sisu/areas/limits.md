@@ -16,7 +16,7 @@ where it did:
 - recursion depth inside `sisu`: deeply nested expressions, blocks, `if` chains, parentheses, array literals (`[[[[...]]]]`), `?.` chains, comparison chains;
 - program size: thousands of functions, locals, classes and fields; one function of 100 000 statements;
 - data size: `[0; n]` growing towards the `ulimit`, and an `n` that overflows `n * element size` (it must panic or fail cleanly, never allocate a short block);
-- long lists and deep trees dropped at exit, along the chain field and along other fields (see known-findings);
+- long lists and deep trees dropped at exit, along a field of the class's own type and along a field of another class (see known-findings);
 - integer edges in every place an integer becomes a size or an index.
 
 For `sisu`'s time, run with `timeout 60`, and record the first size at

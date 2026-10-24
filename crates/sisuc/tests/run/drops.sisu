@@ -22,7 +22,7 @@ class Rev {
     tag: Tag
 }
 
-// The drop recurses on `left` and loops on `right`, the chain field.
+// The drop lists `left` and `right` and frees them in its loop.
 class Tree {
     left: Tree?
     value: i64
