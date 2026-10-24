@@ -4439,6 +4439,51 @@ mod tests {
         );
     }
 
+    /// A line break in a header's type-parameter list goes on only before a name, `,` or `>`,
+    /// so a list that is not closed or holds another token reports as before, and a `<` that
+    /// compares still compares.
+    #[test]
+    fn a_malformed_type_parameter_list_should_keep_its_diagnostic() {
+        // The `{` left open stops the lexer, with its one diagnostic.
+        for src in ["fn f<T\n{", "fn f<T>\n{"] {
+            let d = lex(src).expect_err("the open `{` should stop the lexer");
+            let (line, col) = line_col(src, d.span().start());
+            assert_eq!((d.code(), line, col), (Code::BraceOnNewLine, 2, 1), "{src}");
+        }
+        for (src, expected) in [
+            ("fn f<T, 1>(x: T) {}", (Code::Expected, 1, 9)),
+            (
+                "fn main() {\n    let a = P<\n i64\n>(1)\n}",
+                (Code::Expected, 4, 1),
+            ),
+            // A keyword is no name: it starts the next item.
+            ("fn f<T\nfn g() {}", (Code::Expected, 1, 7)),
+        ] {
+            assert_eq!(parse_err(src), expected, "{src}");
+        }
+        // Only the `<` after the header's name opens the list, not the one of a return type.
+        let src = "fn f() -> Box<\n    i64\n> {}";
+        let found: Vec<_> = (parsed(src).diagnostics.iter())
+            .map(|d| (d.code(), line_col(src, d.span().start())))
+            .collect();
+        assert_eq!(found, [(Code::Expected, (2, 8)), (Code::Expected, (3, 1))]);
+        // Nor a `<` that is the third token of another statement.
+        assert_eq!(
+            program("fn f() -> bool {\n    return a <\n        b\n    print(1)\n}"),
+            "(fn f () bool (block (return (< a b)) (call print 1)))"
+        );
+    }
+
+    /// The name on the next line goes on with a method's list that is not closed, so the one
+    /// error is at that name.
+    #[test]
+    fn an_unclosed_method_list_should_report_the_name_on_the_next_line() {
+        assert_eq!(
+            parse_err("class C {\n    fn m<T\n    x: i64\n}"),
+            (Code::Expected, 3, 5)
+        );
+    }
+
     /// A header's line that ends in type arguments ends the header, so a `{` on the next line
     /// is E0004, as after a type with none.
     #[test]

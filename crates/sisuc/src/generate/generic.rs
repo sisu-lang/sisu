@@ -200,6 +200,26 @@ struct Solved {
 type Env = Vec<(String, GTy, bool)>;
 
 impl Gen<'_> {
+    /// Writes `<T, U>` of `params` type parameters for the declaration numbered `id`. An odd `id`
+    /// breaks the line after `<`, after each `,` and before `>`. The choice takes no byte, so
+    /// every other choice stays as it is.
+    fn tparams(&mut self, params: usize, id: usize) {
+        if id.is_multiple_of(2) {
+            self.w.text(&format!("<{}>", PARAMS[..params].join(", ")));
+            return;
+        }
+        self.w.text("<");
+        for (i, param) in PARAMS[..params].iter().enumerate() {
+            if i > 0 {
+                self.w.text(",");
+            }
+            self.w.line();
+            self.w.text(param);
+        }
+        self.w.line();
+        self.w.text(">");
+    }
+
     /// Declares the generic classes and enums, makes instances of them, and declares the generic
     /// functions. When the bytes run out, it declares nothing.
     pub(crate) fn generics(&mut self) {
@@ -276,7 +296,9 @@ impl Gen<'_> {
             let name = self.scope.fresh("g");
             fields.push(GField { name, ty, mutable });
         }
-        self.w.text(&format!("class G{id}{} ", tparams(params)));
+        self.w.text(&format!("class G{id}"));
+        self.tparams(params, id);
+        self.w.text(" ");
         self.w.open();
         for GField { name, ty, mutable } in &fields {
             self.w.line();
@@ -381,7 +403,9 @@ impl Gen<'_> {
 
     /// Writes the enum `G<id>` and records it.
     fn declare_enum(&mut self, id: usize, params: usize, variants: Vec<GVariant>) {
-        self.w.text(&format!("enum G{id}{} ", tparams(params)));
+        self.w.text(&format!("enum G{id}"));
+        self.tparams(params, id);
+        self.w.text(" ");
         self.w.open();
         for variant in &variants {
             let types: Vec<String> = variant.fields.iter().map(ToString::to_string).collect();
@@ -630,7 +654,9 @@ impl Gen<'_> {
             }
         }
         let (ret, solved) = chosen.expect("the argument itself should solve the last try");
-        self.w.text(&format!("fn {name}{}(", tparams(params)));
+        self.w.text(&format!("fn {name}"));
+        self.tparams(params, self.scope.gfuncs.len());
+        self.w.text("(");
         for (i, (n, t)) in names.iter().zip(&args).enumerate() {
             if i > 0 {
                 self.w.text(", ");
@@ -1045,11 +1071,6 @@ enum Source {
     Build,
     Call,
     Match,
-}
-
-/// `<T, U>` of `params` type parameters.
-fn tparams(params: usize) -> String {
-    format!("<{}>", PARAMS[..params].join(", "))
 }
 
 #[cfg(test)]

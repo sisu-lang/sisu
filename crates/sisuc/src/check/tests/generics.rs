@@ -42,6 +42,17 @@ fn generic_declarations_should_check_clean() {
     }
 }
 
+#[test]
+fn type_parameter_lists_should_check_clean_over_many_lines() {
+    for src in [
+        "fn f<\n    T\n>(x: T) -> T {\n    x\n}",
+        "class C<\n    T,\n    U\n> {\n    a: T\n    b: U\n}",
+        "enum E<\n    T\n> {\n    A(T)\n}",
+    ] {
+        clean(&with_decls(src));
+    }
+}
+
 /// `tir` names each declaration's type parameters, a method's owner's before its own.
 #[test]
 fn type_parameters_should_reach_tir() {

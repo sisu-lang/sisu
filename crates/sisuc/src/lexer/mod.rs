@@ -322,7 +322,8 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
     let (mut comments, mut breaks) = (Vec::new(), Vec::new());
     let mut brackets = Brackets::default();
     let mut chars = source.char_indices().peekable();
-    let mut first_on_line = true;
+    // `goes_on` is where the code starts that continues the line before the gap in front of it.
+    let (mut first_on_line, mut goes_on) = (true, 0);
     // Where the last skipped text starts.
     let mut skipped = None;
     while let Some((start, c)) = chars.next() {
@@ -335,10 +336,10 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
                 first_on_line = true;
                 // Look ahead only where a `Newline` would be pushed: the next newlines of a
                 // blank run then find `Newline` last and skip it, so no gap is scanned twice.
-                if ends_statement(&tokens, &mut brackets) {
-                    if let Some(gap) = continues_line(&source[start..]) {
-                        // Jump to the `.`/`?.`, so a long gap is scanned once.
-                        while chars.next_if(|&(i, _)| i < start + gap).is_some() {}
+                if start >= goes_on && ends_statement(&tokens, &mut brackets) {
+                    if let Some(gap) = continues_line(&source[start..], &tokens, &mut brackets) {
+                        // The line breaks in the gap are not judged again.
+                        goes_on = start + gap;
                     } else {
                         // Empty, at the line end: a span over `\n` renders as a two-line range,
                         // and one at `\n` after `\r` sits a column too far right.
@@ -615,8 +616,9 @@ struct Separator {
 
 /// The statements that the tokens read so far end in: one for each open bracket, innermost
 /// last, so a block that closes gives back the statement around it as it was. A `>` at a line's
-/// end and a `{` that starts a line ask about theirs, and only the tokens since the last
-/// question are read, so neither scans back to its statement's start.
+/// end, a `{` that starts a line, and a line break before a name, `,` or `>` ask about theirs,
+/// and only the tokens since the last question are read, so none scans back to its statement's
+/// start.
 ///
 /// Only tokens up to the last code token are read. Every later change to the tokens is after
 /// it: a line-start `{` removes the `Newline` before it, and a cut ends an interpolation, which
@@ -636,16 +638,23 @@ struct Statement {
     /// After its last `:` or `->` that no `=` follows, how many more `>` than `<` there are;
     /// `None` when there is no such `:` or `->`.
     annotation: Option<isize>,
+    /// How many tokens it has read so far, so the reader can tell the third.
+    tokens: usize,
+    /// Whether a header's type-parameter list is open. A `<` that is the third token, after
+    /// `fn`, `class` or `enum` and a name, opens it. Its names and `,`s keep it open, and its
+    /// `>` or any other token closes it. A bracket closes it before it is saved, so a statement
+    /// given back at a `}` never has it.
+    params: bool,
 }
 
 impl Statements {
     /// The innermost statement after reading the tokens before `end`.
     fn read(&mut self, tokens: &[Token], end: usize) -> Statement {
         use TokenKind::{
-            Arrow, Colon, Eq, Ge, Gt, LBrace, LBracket, LParen, Loop, Lt, Newline, RBrace,
-            RBracket, RParen, Semicolon, StrHead, StrTail,
+            Arrow, Colon, Comma, Eq, Ge, Gt, Ident, LBrace, LBracket, LParen, Loop, Lt, Newline,
+            RBrace, RBracket, RParen, Semicolon, StrHead, StrTail,
         };
-        for t in &tokens[self.read..end] {
+        for (i, t) in tokens.iter().enumerate().take(end).skip(self.read) {
             #[cfg(test)]
             JUDGED.set(JUDGED.get() + 1);
             let s = &mut self.current;
@@ -653,6 +662,8 @@ impl Statements {
                 t.kind,
                 TokenKind::Fn | TokenKind::Class | TokenKind::Enum
             )));
+            s.tokens += 1;
+            s.params = s.params && matches!(t.kind, Ident(_) | Comma);
             match t.kind {
                 // A block's statements start at its `{`. Inside `( )`, `[ ]` or an interpolation
                 // the statement around it goes on, though no type annotation does.
@@ -661,7 +672,7 @@ impl Statements {
                     self.enclosing.push(*s);
                     self.current = Statement {
                         header,
-                        annotation: None,
+                        ..Statement::default()
                     };
                 }
                 RBrace | RParen | RBracket | StrTail(_) => {
@@ -673,7 +684,12 @@ impl Statements {
                 // keyword: it follows a loop label's `:`, which is no annotation.
                 Eq | Ge | TokenKind::While | TokenKind::For | Loop => s.annotation = None,
                 Gt => s.annotation = s.annotation.map(|a| a + 1),
-                Lt => s.annotation = s.annotation.map(|a| a - 1),
+                Lt => {
+                    s.annotation = s.annotation.map(|a| a - 1);
+                    s.params = s.tokens == 3
+                        && s.header == Some(true)
+                        && matches!(tokens[i - 1].kind, Ident(_));
+                }
                 _ => {}
             }
         }
@@ -953,24 +969,33 @@ fn after_skip(source: &str, tokens: &[Token], brackets: &Brackets, skipped: Opti
     })
 }
 
-/// The offset in `rest` of the `.` or `?.` that continues the line break at the start
-/// of `rest`, past whitespace, blank lines and `//` comments; `None` if code of another
-/// kind follows.
-fn continues_line(rest: &str) -> Option<usize> {
+/// The offset in `rest` of the code after the line break at the start of `rest`, past
+/// whitespace, blank lines and `//` comments.
+fn next_code(rest: &str) -> usize {
     let mut code = rest;
     loop {
         // Only what the main loop skips: `trim_start` would also take Unicode whitespace.
         code = code.trim_start_matches([' ', '\t', '\r', '\n']);
         match code.strip_prefix("//") {
             Some(comment) => code = comment.split_once('\n').map_or("", |(_, after)| after),
-            None => {
-                // `..` starts a range, not a continuation.
-                return ((code.starts_with('.') && !code.starts_with(".."))
-                    || code.starts_with("?."))
-                .then(|| rest.len() - code.len());
-            }
+            None => break,
         }
     }
+    #[cfg(test)]
+    LOOKED.set(LOOKED.get() + rest.len() - code.len());
+    rest.len() - code.len()
+}
+
+/// The offset in `rest` of the code that continues the line break at the start of `rest`, which
+/// `ends_statement` judged, past the gap `next_code` finds: a `.` or `?.`, or a name, `,` or `>`
+/// that goes on with a header's type-parameter list (`continues_params`). `None` if code of
+/// another kind follows.
+fn continues_line(rest: &str, tokens: &[Token], brackets: &mut Brackets) -> Option<usize> {
+    let gap = next_code(rest);
+    let code = &rest[gap..];
+    // `..` starts a range, not a continuation.
+    let dot = code.starts_with('.') && !code.starts_with("..") || code.starts_with("?.");
+    (dot || continues_params(code, tokens, brackets)).then_some(gap)
 }
 
 /// The last token that is not a `Newline`, nor, in a block, a `;` that separates statements: the
@@ -1010,10 +1035,28 @@ fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
                     .annotates_type(&tokens[..tokens.len() - trailing]))
 }
 
+/// Whether `code`, after a line break, goes on with the header's type-parameter list open before
+/// it: `code` starts with a name, `,` or `>`. A `;` before the line break ends the list's
+/// statement.
+fn continues_params(code: &str, tokens: &[Token], brackets: &mut Brackets) -> bool {
+    let word = &code[..code
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(code.len())];
+    let listed = code.starts_with(',')
+        || code.starts_with('>') && !code.starts_with(">=")
+        || word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && matches!(keyword_or_ident(word), TokenKind::Ident(_));
+    listed
+        && brackets.trailing_semicolons == 0
+        && brackets.statements.read(tokens, tokens.len()).params
+}
+
 #[cfg(test)]
 thread_local! {
     /// How many tokens `Statements::read` has read on this thread.
     static JUDGED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many bytes `next_code` has looked through on this thread.
+    static LOOKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether `token` can end a statement (Go's rule).
@@ -4018,5 +4061,126 @@ mod tests {
             };
             crate::mir::tests::assert_near_linear(judged(1000), judged(2000), judged(3000));
         }
+    }
+
+    /// A header's list that is not closed, or that holds a token other than a name or `,`,
+    /// ends at its line break as before, and so does each line after it. A name on the next
+    /// line goes on with the list, but the line break after that name ends the statement.
+    #[test]
+    fn a_malformed_header_list_should_keep_the_line_breaks_after_it() {
+        use TokenKind::{Comma, Eof, Eq, Fn, LBrace, LParen, Let, Lt, Newline, RBrace, RParen};
+        for (src, expected) in [
+            (
+                "fn f<T\n{\n    let a = 1\n    let b = 2\n}\nfn g() {}",
+                vec![
+                    Fn,
+                    ident("f"),
+                    Lt,
+                    ident("T"),
+                    LBrace,
+                    Let,
+                    ident("a"),
+                    Eq,
+                    int(1),
+                    Newline,
+                    Let,
+                    ident("b"),
+                    Eq,
+                    int(2),
+                    Newline,
+                    RBrace,
+                    Newline,
+                    Fn,
+                    ident("g"),
+                    LParen,
+                    RParen,
+                    LBrace,
+                    RBrace,
+                    Newline,
+                    Eof,
+                ],
+            ),
+            (
+                "fn f<T, 1\n    let a = 1\n    let b = 2",
+                vec![
+                    Fn,
+                    ident("f"),
+                    Lt,
+                    ident("T"),
+                    Comma,
+                    int(1),
+                    Newline,
+                    Let,
+                    ident("a"),
+                    Eq,
+                    int(1),
+                    Newline,
+                    Let,
+                    ident("b"),
+                    Eq,
+                    int(2),
+                    Newline,
+                    Eof,
+                ],
+            ),
+            (
+                "fn f<T\n    a = 1\n    b = 2",
+                vec![
+                    Fn,
+                    ident("f"),
+                    Lt,
+                    ident("T"),
+                    ident("a"),
+                    Eq,
+                    int(1),
+                    Newline,
+                    ident("b"),
+                    Eq,
+                    int(2),
+                    Newline,
+                    Eof,
+                ],
+            ),
+        ] {
+            let lexed = lex(src).expect("the lexer should recover");
+            let kinds: Vec<_> = lexed.tokens.into_iter().map(|t| t.kind).collect();
+            assert_eq!(kinds, expected, "{src}");
+        }
+    }
+
+    /// A list continued at the start of each line, so that each line break asks about it.
+    #[test]
+    fn a_long_header_list_over_many_lines_should_be_judged_once_per_token() {
+        let params: Vec<String> = (0..1000).map(|i| format!("T{i}")).collect();
+        let src = format!("fn f<\n    {}\n>(x: T0) {{}}", params.join("\n    , "));
+        JUDGED.set(0);
+        let tokens = tokens(&src);
+        assert!(
+            tokens[..tokens.len() - 2]
+                .iter()
+                .all(|t| t.kind != TokenKind::Newline),
+            "the header should hold no `Newline`"
+        );
+        assert!(JUDGED.get() <= tokens.len(), "{} judged", JUDGED.get());
+    }
+
+    /// Blank lines and comments between two parameters, each of which a line break starts.
+    #[test]
+    fn a_long_gap_in_a_header_list_should_be_looked_through_once() {
+        let gap = format!("\n{}\n    ", "\n// c".repeat(1000));
+        let src = format!("fn f<\n    T{gap}, U>(a: T, b: U) {{}}");
+        LOOKED.set(0);
+        let tokens = tokens(&src);
+        assert!(
+            tokens[..tokens.len() - 2]
+                .iter()
+                .all(|t| t.kind != TokenKind::Newline),
+            "the header should hold no `Newline`"
+        );
+        assert!(
+            LOOKED.get() <= gap.len(),
+            "{} bytes looked at",
+            LOOKED.get()
+        );
     }
 }

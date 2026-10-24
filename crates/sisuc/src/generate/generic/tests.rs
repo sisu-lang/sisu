@@ -643,8 +643,25 @@ fn a_generic_type_should_be_written_as_the_program_writes_it() {
     assert_eq!(optional(ty).to_string(), "G1<[T], i64>?");
     assert_eq!(array(param(1)).to_string(), "[U]");
     assert_eq!(super::angled(&[Ty::I64, Ty::Bool]), "<i64, bool>");
-    assert_eq!(super::tparams(1), "<T>");
-    assert_eq!(super::tparams(2), "<T, U>");
+}
+
+#[test]
+fn a_type_parameter_list_should_be_written_on_one_line_or_over_lines() {
+    let written = |params, id| {
+        let mut g = Gen::new(&[]);
+        g.tparams(params, id);
+        g.w.out.program.clone()
+    };
+    assert_eq!(written(1, 0), "<T>");
+    assert_eq!(written(2, 2), "<T, U>");
+    assert_eq!(written(1, 1), "<\nT\n>");
+    assert_eq!(written(2, 3), "<\nT,\nU\n>");
+    let source = format!("fn f{}(x: T, y: U) {{}}\nfn main() {{}}\n", written(2, 1));
+    let (program, diagnostics) = crate::front_end::checked(&source);
+    assert!(
+        program.is_some() && diagnostics.is_empty(),
+        "{diagnostics:?}"
+    );
 }
 
 #[test]
