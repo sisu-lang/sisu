@@ -234,7 +234,10 @@ largest alignment first, and fields of equal alignment in declared order, so
 less padding sits between them; `tir` and every diagnostic keep declared
 order. Codegen emits the helpers that
 manage them: `sisu_rc.retain`, and for each class `sisu_rc.release.<Class>`
-and `sisu_rc.drop.<Class>`. A class that `==` compares also gets
+and `sisu_rc.drop.<Class>`. A class in a cycle of classes that hold each other
+in direct fields frees the objects of the cycle from pending lists, linked
+through the dead count word. So a drop uses one frame for any depth. A cycle of
+two or more classes shares one `sisu_rc.drain.<Class>` helper. A class that `==` compares also gets
 `sisu_rc.eq.<Class>`, made the first time the compiler needs it. A field
 read and a field assignment tag their load and store with a TBAA tag of that
 field's own, `<Class>.<field>`, so LLVM knows that writing one field changes

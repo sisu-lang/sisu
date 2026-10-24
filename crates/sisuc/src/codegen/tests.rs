@@ -454,7 +454,7 @@ fn class_drop_should_call_no_drop_or_release_of_its_own_class() {
             &ir,
             &format!("define internal void @sisu_rc.drop.{name}(ptr"),
         );
-        assert!(body.contains("phi ptr"), "no loop in\n{body}");
+        assert!(body.contains("\ndrain:"), "no loop in\n{body}");
         assert_eq!(body.matches("@sisu_free(").count(), 1, "{body}");
         for unwanted in [
             format!("@sisu_rc.drop.{name}("),
@@ -465,6 +465,45 @@ fn class_drop_should_call_no_drop_or_release_of_its_own_class() {
     }
     let tree = function_body(&ir, "define internal void @sisu_rc.drop.T(ptr");
     assert!(tree.contains("@sisu_rc.release.string("), "{tree}");
+}
+
+/// `A` and `B` hold each other, so they are one cycle with one `drain` helper. `H` holds `A`
+/// but is in no cycle, so its drop releases `A` as before.
+#[test]
+fn class_drop_should_call_no_drop_or_release_of_the_other_class_in_its_cycle() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class A {\n    b: B?\n}\nclass B {\n    a: A?\n    c: C\n    name: string\n}\nclass C {}\nclass H {\n    a: A?\n}\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    let drop = |name| {
+        function_body(
+            &ir,
+            &format!("define internal void @sisu_rc.drop.{name}(ptr"),
+        )
+    };
+    for name in ["A", "B"] {
+        let body = drop(name);
+        assert!(body.contains("@sisu_rc.drain.A("), "{body}");
+        for unwanted in ["@sisu_free(", "@sisu_rc.drop.", "@sisu_rc.release."] {
+            assert!(!body.contains(unwanted), "{unwanted:?} in\n{body}");
+        }
+    }
+    let drain = function_body(&ir, "define internal void @sisu_rc.drain.A(ptr");
+    assert_eq!(drain.matches("@sisu_free(").count(), 2, "{drain}");
+    for wanted in ["@sisu_rc.release.string(", "@sisu_rc.release.C("] {
+        assert!(drain.contains(wanted), "no {wanted:?} in\n{drain}");
+    }
+    for unwanted in [
+        "@sisu_rc.drop.",
+        "@sisu_rc.release.A(",
+        "@sisu_rc.release.B(",
+    ] {
+        assert!(!drain.contains(unwanted), "{unwanted:?} in\n{drain}");
+    }
+    assert!(drop("H").contains("@sisu_rc.release.A("));
 }
 
 /// The helpers of an enum and of a class hand an inline enum field to its own helper by

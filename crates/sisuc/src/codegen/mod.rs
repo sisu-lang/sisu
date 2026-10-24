@@ -118,6 +118,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             tbaa_root,
             program,
             reaches_f64: rc::reaching_f64(program),
+            class_cycles: rc::class_cycles(program),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
             target_data,
@@ -256,6 +257,8 @@ struct Codegen<'ctx, 'src> {
     /// Whether each class, then each enum, reaches an `f64` through its fields; see
     /// `rc::reaching_f64`.
     reaches_f64: Vec<bool>,
+    /// The classes that hold each other in a loop; see `rc::class_cycles`.
+    class_cycles: rc::ClassCycles,
     /// The helpers declared so far, by kind and counted type; see `rc::helper`.
     helpers: RefCell<FxHashMap<(Helper, Type), FunctionValue<'ctx>>>,
     /// The helpers declared but not yet defined; `define_helpers` empties it.

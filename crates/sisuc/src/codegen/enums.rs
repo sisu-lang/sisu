@@ -519,15 +519,15 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.branch_to(done);
     }
 
-    /// The pending lists of a component of `members` enums: one head per member, in
+    /// The pending lists of a component of `members` enums or classes: one head per member, in
     /// declaration order, each `null` when its list is empty.
-    fn heads_type(&self, members: usize) -> StructType<'ctx> {
+    pub(super) fn heads_type(&self, members: usize) -> StructType<'ctx> {
         let ptr_type = self.context.ptr_type(AddressSpace::default()).into();
         self.context.struct_type(&vec![ptr_type; members], false)
     }
 
     /// The address of the head of member `index`'s list in `heads`, of type `heads_type`.
-    fn head(
+    pub(super) fn head(
         &self,
         heads_type: StructType<'ctx>,
         heads: PointerValue<'ctx>,
