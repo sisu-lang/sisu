@@ -1115,6 +1115,15 @@ fn ranked_patterns_should_report_and_bind_once() {
             "fn g(e: One) {\n    let xs: [i64] = id(if let Only(x) = e { x.make() } else { [] })\n}",
             vec![(Code::AlwaysMatches, (7, 31))],
         ),
+        // The value and the scrutinee are checked once, by ranking.
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id(if let n = nope { b.make() } else { [] })\n}",
+            vec![(Code::BindingNotFound, (7, 35))],
+        ),
+        (
+            "fn g(b: Box<i64>) {\n    let xs: [i64] = id(match nope {\n        Has(x) => b.make()\n        _ => []\n    })\n}",
+            vec![(Code::BindingNotFound, (7, 30))],
+        ),
     ] {
         codes(&with_generics(&format!("{SLOT}{body}")), &expected);
     }
