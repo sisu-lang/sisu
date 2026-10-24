@@ -3323,7 +3323,7 @@ mod tests {
     }
 
     #[test]
-    fn brace_on_new_line_fix() {
+    fn brace_on_new_line_should_get_a_safe_join_after_a_one_line_header() {
         // Every header keyword makes the fix safe, and the gap before the `{` becomes a space.
         for (src, gap, at) in [
             ("fn main()\n{\n}", (9, 10), (2, 1)),

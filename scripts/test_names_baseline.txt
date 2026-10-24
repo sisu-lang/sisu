@@ -1014,7 +1014,6 @@ crates/sisuc/src/lexer/mod.rs::brace_on_its_own_line_lexes_as_one_line
 crates/sisuc/src/lexer/mod.rs::brace_on_new_line_after_a_semicolon_joins_its_statement
 crates/sisuc/src/lexer/mod.rs::brace_on_new_line_after_else
 crates/sisuc/src/lexer/mod.rs::brace_on_new_line_after_else_inside_parens
-crates/sisuc/src/lexer/mod.rs::brace_on_new_line_fix
 crates/sisuc/src/lexer/mod.rs::brace_on_new_line_has_no_fix
 crates/sisuc/src/lexer/mod.rs::brace_on_new_line_inside_parens
 crates/sisuc/src/lexer/mod.rs::brace_on_new_line_is_unsafe_after_a_multi_line_header
