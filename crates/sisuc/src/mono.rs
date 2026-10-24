@@ -631,15 +631,16 @@ mod tests {
         names
     }
 
-    /// `f{i}` calls `f{i+1}` with `P(a: x, b: x)`, so the argument of `f25` is a type whose
-    /// text, written whole, has 2^24 leaves.
+    /// `f{i}` calls `f{i+1}` with `P(a: x, b: Q.V(x))`, so the argument of `f25` is a type
+    /// whose text, written whole, has 2^24 leaves. The enum `Q` grows with it.
     #[test]
     fn instance_names_should_stay_bounded() {
-        let mut src = String::from("class P<A, B> {\n    a: A\n    b: B\n}\n");
+        let mut src =
+            String::from("class P<A, B> {\n    a: A\n    b: B\n}\nenum Q<A> {\n    V(A)\n}\n");
         for i in 1..=24 {
             writeln!(
                 src,
-                "fn f{i}<T>(x: T) -> i64 {{ f{}(P(a: x, b: x)) }}",
+                "fn f{i}<T>(x: T) -> i64 {{ f{}(P(a: x, b: Q.V(x))) }}",
                 i + 1
             )
             .expect("writing to a `String` should succeed");
@@ -653,7 +654,13 @@ mod tests {
         let distinct: FxHashSet<&str> = names.iter().copied().collect();
         assert_eq!(distinct.len(), names.len(), "{names:?}");
         assert!(names.contains(&"f1<i64>"), "{names:?}");
-        assert!(names.contains(&"P<i64, i64>"), "{names:?}");
+        assert!(names.contains(&"P<i64, Q<i64>>"), "{names:?}");
+        assert!(names.contains(&"Q<i64>"), "{names:?}");
+        assert!(
+            names
+                .iter()
+                .any(|name| name.starts_with("Q<") && name.contains("..."))
+        );
     }
 
     /// The class name is longer than `NAME_LIMIT`, so the two instances of `g`, of `P` and of
