@@ -992,15 +992,16 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `@sisu_rc.eq_component.<F0>(kind, a, b) -> i1`: `==` on the values at `a` and `b` of
     /// member `kind` of the component whose first member is `F0`. It switches on `kind`, then
-    /// compares as `eq` does, with a link, a box or an inline link (`inline_link`), compared by
-    /// the values it holds: see `link_pair`. It neither retains nor releases. It compares
-    /// depth first and in field order, as a recursive `==` does, so it stops at the first
-    /// mismatch that one would find. Each variant compares its last link last, by looping:
-    /// `kind`, `a` and `b` become that link's enum and its two values. Before a link that is
-    /// not the last, it pushes where the value's comparison goes on (`push_pending`), then
-    /// loops into the link; when a value is done, it pops that place and goes on there. So it
-    /// compares any depth and shape of value in one frame. Every address it holds points into
-    /// the compared values, which the caller keeps alive.
+    /// compares as `eq` does. It compares a link, a box or an inline link (`inline_link`) by
+    /// the values it holds: see `link_pair`. It neither retains nor releases. It compares depth
+    /// first. In each variant it compares the fields in order, but the last link comes after
+    /// the fields that follow it. So a field after the last link is compared before a mismatch
+    /// in that link, which a recursive `==` would find first. The last link loops: `kind`, `a`
+    /// and `b` become that link's enum and its two values. Before a link that is not the last,
+    /// it pushes where the value's comparison goes on (`push_pending`). Then it loops into the
+    /// link. When a value is done, it pops that place and goes on there. So it compares any
+    /// depth and shape of value in one frame. Every address it holds points into the compared
+    /// values, which the caller keeps alive.
     fn define_eq_component(&self, first: EnumId, function: FunctionValue<'ctx>) {
         let members = self.component(first).expect(
             "only the first member of a component with boxes should get an `eq_component` helper",

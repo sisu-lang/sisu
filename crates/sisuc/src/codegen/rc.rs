@@ -250,10 +250,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `@sisu_rc.eq.<C>(a, b)`: see `eq_entry` for the same pointer and `null`; otherwise
     /// whether each pair of fields is equal, comparing the chain field last and stopping at the
-    /// first difference. It neither retains nor releases. Like `define_drop`, it does not
-    /// recurse on the chain field: it compares the other fields of the pair, then steps both
-    /// objects to the objects their chain fields hold and repeats the checks of `eq_entry`, in
-    /// one frame.
+    /// first difference. It neither retains nor releases. It does not recurse on the chain
+    /// field: it compares the other fields of the pair, then steps both objects to the objects
+    /// their chain fields hold. Then it repeats the checks of `eq_entry`, in one frame.
     fn define_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
         let TypeKind::Class(id, _) = ty.kind() else {
             unreachable!("only a class type should reach the class helper bodies")

@@ -616,8 +616,8 @@ struct Separator {
 
 /// The statements that the tokens read so far end in: one for each open bracket, innermost
 /// last, so a block that closes gives back the statement around it as it was. A `>` at a line's
-/// end, a `{` that starts a line, and a line break before a name, `,` or `>` ask about theirs,
-/// and only the tokens since the last question are read, so none scans back to its statement's
+/// end, a `{` that starts a line, and a line break before a name, `,` or `>` ask about theirs.
+/// Only the tokens since the last question are read, so none scans back to its statement's
 /// start.
 ///
 /// Only tokens up to the last code token are read. Every later change to the tokens is after
@@ -725,11 +725,10 @@ impl Statements {
         self.read(tokens, statement_end(tokens)).header == Some(true)
     }
 
-    /// The statement that `tokens` ends with in a block, before any line break or `;` after it:
-    /// from the last line break or `;` that ended a statement, or the `{` of the block it stands
-    /// in. A break inside brackets or before a continuation never reached `tokens`, so a
-    /// statement can span lines, and a `;` inside `( )`, `[ ]` or an interpolation does not end
-    /// it.
+    /// The statement that `tokens` ends with in a block, before any line break or `;` after it.
+    /// It starts after the last line break or `;` that ended a statement, or after the `{` of its
+    /// block. A break inside brackets or before a continuation never reached `tokens`, so a
+    /// statement can span lines. A `;` inside `( )`, `[ ]` or an interpolation does not end it.
     fn last<'t>(&mut self, tokens: &'t [Token]) -> &'t [Token] {
         let end = statement_end(tokens);
         &tokens[self.read(tokens, end).start..end]
@@ -1014,10 +1013,10 @@ fn next_code(rest: &str) -> usize {
     rest.len() - code.len()
 }
 
-/// The offset in `rest` of the code that continues the line break at the start of `rest`, which
-/// `ends_statement` judged, past the gap `next_code` finds: a `.` or `?.`, or a name, `,` or `>`
-/// that goes on with a header's type-parameter list (`continues_params`). `None` if code of
-/// another kind follows.
+/// The offset in `rest` of the code that continues the line break at the start of `rest`, past
+/// the gap `next_code` finds. `ends_statement` judged that line break. The code is a `.` or
+/// `?.`, or a name, `,` or `>` that goes on with a header's type-parameter list
+/// (`continues_params`). `None` if code of another kind follows.
 fn continues_line(rest: &str, tokens: &[Token], brackets: &mut Brackets) -> Option<usize> {
     let gap = next_code(rest);
     let code = &rest[gap..];

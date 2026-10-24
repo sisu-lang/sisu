@@ -135,14 +135,14 @@ impl Checker<'_> {
 
     /// The `sources.len()` branches of the `if` or arms of the `match` at `span`, `check(i)`
     /// checking branch `i`, and their type. With no `expected` type, the branch whose value is of
-    /// lowest `rank` is checked first, the first in source order on a tie, and each after it
-    /// expects the type of the first of a known type that is not `never`, made optional. A failed
-    /// or `unit` branch sets what the branches after it expect only until a branch of another known
-    /// type is checked. Then a `never` branch, and after it an `Error` one, takes the others' type;
-    /// a `T` and a `T?` join to `T?`, the `T` branches wrapped; other types that differ are
-    /// reported. A join that fails for a branch that rejected `expected` is a mismatch too. With no
-    /// branches, the type is `never`. A branch with no expected type is quiet when the `if` or
-    /// `match` is (see `Body::quiet_at`).
+    /// lowest `rank` is checked first, the first in source order on a tie. Each branch after it
+    /// expects the type of the first branch of a known type that is not `never`, made optional.
+    /// A failed or `unit` branch sets what the branches after it expect only until a branch of
+    /// another known type is checked. Then a `never` branch, and after it an `Error` one, takes
+    /// the others' type. A `T` and a `T?` join to `T?`, the `T` branches wrapped; other types
+    /// that differ are reported. A join that fails for a branch that rejected `expected` is a
+    /// mismatch too. With no branches, the type is `never`. A branch with no expected type is
+    /// quiet when the `if` or `match` is (see `Body::quiet_at`).
     pub(super) fn join(
         &mut self,
         span: Span,
