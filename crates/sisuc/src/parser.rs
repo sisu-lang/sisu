@@ -350,10 +350,11 @@ impl<'a> Parser<'a> {
     /// `bump` past `window`, which then covers every token again.
     #[cold]
     fn bump_past_window(&mut self) -> &'a Token {
+        let split = self.split();
         let token = self.past_window();
         self.window = self.tokens;
         if token.kind != TokenKind::Eof {
-            self.halved = Some(self.pos);
+            self.halved = split.then_some(self.pos);
             self.pos += 1;
         }
         token
@@ -4612,6 +4613,18 @@ mod tests {
     /// Whether `type_args_follow` holds at the `<` that is the second token of `src`.
     fn follows(src: &str) -> bool {
         parser_at(src, 1, |p| p.type_args_follow())
+    }
+
+    #[test]
+    fn last_span_after_a_skip_past_the_window_should_be_the_whole_token() {
+        // Error recovery moves `pos` past a window that a split cut down.
+        let (span, token) = parser_at("fn f() {}\nfn g() {}", 0, |p| {
+            p.window = &p.tokens[..2];
+            p.pos = 4;
+            let token = p.bump().span;
+            (p.last_span(), token)
+        });
+        assert_eq!(span, token);
     }
 
     #[test]

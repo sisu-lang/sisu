@@ -1211,8 +1211,8 @@ impl Checker<'_> {
     }
 
     /// Reports the type arguments in `angles` after `variant`, a variant of the generic enum
-    /// `base` names, which takes its enum's: the help writes them on the enum, unless one of
-    /// `types` names no type, and then the list may be a comparison.
+    /// `base` names. The enum takes them, so the help writes them on the enum. There is no help
+    /// when one of `types` names no type: the list may be a comparison.
     pub(super) fn variant_args(
         &mut self,
         base: &ast::Expr,

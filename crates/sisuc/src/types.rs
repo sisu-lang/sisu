@@ -516,6 +516,13 @@ mod tests {
 
     /// `t_20` has 21 distinct types but 2^20 paths to its leaf.
     #[test]
+    fn seed_kinds_should_name_no_parameter() {
+        for kind in SEEDS {
+            assert!(!kind.has_param(), "{kind:?}");
+        }
+    }
+
+    #[test]
     fn subst_should_visit_each_shared_type_once() {
         let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
         SUBSTITUTED.set(0);
