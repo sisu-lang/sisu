@@ -458,7 +458,7 @@ impl Checker<'_> {
     fn literal_name(&self, e: &ast::Expr) -> Option<String> {
         (matches!(e.kind, ExprKind::Str(_))
             && self.source.quotes.binary_search(&e.span.start()).is_ok())
-        .then(|| literal(&self.source.text[e.span.range()]))
+        .then(|| literal(self.source.file.text(e.span)))
     }
 }
 

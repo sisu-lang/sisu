@@ -1,10 +1,12 @@
 //! The front end: from source to the checked program.
 
+use std::iter;
+
 use rustc_hash::FxHashSet;
 
-use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Severity};
-use crate::source::Span;
-use crate::{check, lexer, mono, parser, tir};
+use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Edit, Fix, Severity};
+use crate::source::{PRELUDE_BASE, Span};
+use crate::{ast, check, lexer, mono, parser, tir};
 
 /// The source in `bytes`. Bytes that are not UTF-8 are an error at the first invalid one, with
 /// the text to render it over: the valid text before it, then U+FFFD in its place, so the
@@ -21,9 +23,21 @@ pub(crate) fn decode(bytes: Vec<u8>) -> Result<String, Box<(String, Diagnostic)>
     })
 }
 
+/// The prelude: Sisu source that is lexed, parsed and checked after the user's, so that its
+/// items come after the user's in every list.
+pub(crate) const PRELUDE_SOURCE: &str = include_str!("prelude.sisu");
+
 /// `checked`, its program instantiated by `mono`.
 pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let (program, diagnostics) = checked(source);
+    front_end_with(PRELUDE_SOURCE, source)
+}
+
+/// `front_end` with `prelude` in place of `PRELUDE_SOURCE`, for the tests of the prelude's rules.
+pub(crate) fn front_end_with(
+    prelude: &str,
+    source: &str,
+) -> (Option<tir::Program>, Vec<Diagnostic>) {
+    let (program, diagnostics) = checked_with(prelude, source);
     (program.map(mono::instantiate), diagnostics)
 }
 
@@ -33,6 +47,12 @@ pub(crate) fn front_end(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>)
 /// declared. `sisu check` stops here: `mono` names each instantiation, which costs as much as
 /// its type is long, and check prints none.
 pub(crate) fn checked(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
+    checked_with(PRELUDE_SOURCE, source)
+}
+
+/// `checked` with `prelude` in place of `PRELUDE_SOURCE`. A diagnostic that points into the
+/// prelude is an internal error, never one the user sees: the prelude's text is not theirs.
+pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let lexed = match lexer::lex(source) {
         Ok(lexed) => lexed,
         Err(d) => return (None, vec![d]),
@@ -41,12 +61,45 @@ pub(crate) fn checked(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     if !parsed.checkable {
         return (None, parsed.diagnostics);
     }
-    let (program, checked) = check::check(&parsed.program, source, &parsed.diagnostics);
+    let prelude = prelude_program(prelude);
+    let (program, checked) = check::check(&parsed.program, &prelude, source, &parsed.diagnostics);
+    if let Some(d) = checked.iter().find(|d| points_into_prelude(d)) {
+        internal_error(d);
+    }
     let mut diagnostics = parsed.diagnostics;
     diagnostics.extend(checked);
     diagnostics.sort_by_key(|d| d.span().start());
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
     (program.filter(|_| !failed), diagnostics)
+}
+
+/// The syntax tree of `prelude`, whose spans start at `PRELUDE_BASE`.
+pub(crate) fn prelude_program(prelude: &str) -> ast::Program {
+    let lexed =
+        lexer::lex_at(prelude, PRELUDE_BASE as usize).unwrap_or_else(|d| internal_error(&d));
+    let parsed = parser::parse(lexed);
+    if let Some(d) = parsed.diagnostics.first() {
+        internal_error(d);
+    }
+    parsed.program
+}
+
+/// Whether a span of `d` lies in the prelude: its primary span, a label, or a fix's edit.
+fn points_into_prelude(d: &Diagnostic) -> bool {
+    let labels = d.secondary().iter().map(|&(span, _)| span);
+    let edits = d.fixes().iter().flat_map(Fix::edits).map(Edit::span);
+    iter::once(d.span())
+        .chain(labels)
+        .chain(edits)
+        .any(Span::in_prelude)
+}
+
+/// A diagnostic about the prelude is the compiler's fault, so it stops the compiler.
+fn internal_error(d: &Diagnostic) -> ! {
+    panic!(
+        "internal compiler error: the prelude does not check clean: {}",
+        d.message()
+    )
 }
 
 /// `diagnostics` without each fix of a lexer or parser diagnostic that leaves `source` lexing or
@@ -987,5 +1040,161 @@ fn main() {
         // Functions and classes share a namespace: the broken function `Tree` poisons the type.
         let src = "class Tree {\n    n: i64\n}\nfn Tree() {\n    let = 1\n}\nfn main() {\n    let t: Tree = 1\n}\n";
         assert_eq!(codes(src), [(Code::Expected, (5, 9))]);
+    }
+
+    /// The names of `program`'s classes, enums and functions, in list order.
+    fn names(program: &tir::Program) -> [Vec<&str>; 3] {
+        [
+            program.classes.iter().map(|c| c.name.as_str()).collect(),
+            program.enums.iter().map(|e| e.name.as_str()).collect(),
+            program.functions.iter().map(|f| f.name.as_str()).collect(),
+        ]
+    }
+
+    /// With `Result`, `Ok` and `Err` unused, this also shows that the unused-names pass reports
+    /// nothing in the prelude: W0012 and W0013 would be an internal error here.
+    #[test]
+    fn prelude_should_check_clean_with_no_diagnostic() {
+        for (program, diagnostics) in [front_end("fn main() {}"), checked("fn main() {}")] {
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert!(program.is_some());
+        }
+    }
+
+    /// The lexer stops on `$`, which is no token.
+    #[test]
+    #[should_panic(expected = "internal compiler error: the prelude does not check clean")]
+    fn prelude_should_be_an_internal_error_when_it_does_not_lex() {
+        front_end_with("enum P { A } $", "fn main() {}");
+    }
+
+    /// `42` is no name. The parser quotes it from the prelude's text, so this also shows that
+    /// it slices the text at the prelude's offsets.
+    #[test]
+    #[should_panic(expected = "internal compiler error: the prelude does not check clean")]
+    fn prelude_should_be_an_internal_error_when_it_does_not_parse() {
+        front_end_with("fn 42() {}", "fn main() {}");
+    }
+
+    /// The same variant twice is a checker error.
+    #[test]
+    #[should_panic(expected = "internal compiler error: the prelude does not check clean")]
+    fn prelude_should_be_an_internal_error_when_it_does_not_check() {
+        front_end_with("enum Result<T, E> { Ok(T)\n Ok(E) }", "fn main() {}");
+    }
+
+    /// Each row has one span in the prelude and the others in the user's text, in the place
+    /// that the row names.
+    #[test]
+    fn diagnostic_should_point_into_the_prelude_by_any_of_its_spans() {
+        let (user, prelude) = (
+            Span::new(0, 1),
+            Span::new(PRELUDE_BASE as usize, PRELUDE_BASE as usize + 1),
+        );
+        for (d, expected, place) in [
+            (
+                Diagnostic::for_test(prelude, &[user], &[(user, "")]),
+                true,
+                "the primary span",
+            ),
+            (
+                Diagnostic::for_test(user, &[prelude], &[(user, "")]),
+                true,
+                "a label",
+            ),
+            (
+                Diagnostic::for_test(user, &[user], &[(prelude, "")]),
+                true,
+                "an edit of a fix",
+            ),
+            (
+                Diagnostic::for_test(user, &[user], &[(user, "")]),
+                false,
+                "none",
+            ),
+        ] {
+            assert_eq!(points_into_prelude(&d), expected, "{place}");
+        }
+    }
+
+    /// The prelude's items follow the user's in every list, so a user item keeps the id it has
+    /// without a prelude, and `prelude` counts where the prelude's start. `helper` is unused, and
+    /// `P`, `A` and `Q` are never built: none is reported, and `helper`'s name is not read as the
+    /// user's text.
+    #[test]
+    fn prelude_items_should_follow_the_users_in_every_list() {
+        let prelude = "enum P { A }\nclass Q {}\nfn helper() {}";
+        let src = "enum E { A }\nclass C {}\nfn main() {\n    let _ = E.A\n    let _ = C()\n}";
+        let (program, diagnostics) = checked_with(prelude, src);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let program = program.expect("the program should check");
+        assert_eq!(
+            names(&program),
+            [vec!["C", "Q"], vec!["E", "P"], vec!["main", "helper"]]
+        );
+        let prelude = tir::ItemCounts {
+            classes: 1,
+            enums: 1,
+            funcs: 1,
+        };
+        assert_eq!(program.prelude, prelude);
+    }
+
+    /// A user's own method counts in `prelude.funcs`: the prelude's first function comes after
+    /// every method of a user's class and enum.
+    #[test]
+    fn prelude_should_start_after_the_methods_of_the_users_items() {
+        let src =
+            "class C {\n    fn m(self) {}\n}\nenum E {\n    A\n    fn n(self) {}\n}\nfn main() {}";
+        let (program, _) = checked_with("fn helper() {}", src);
+        let program = program.expect("the program should check");
+        assert_eq!(program.prelude.funcs, 3);
+        assert_eq!(program.functions[3].name, "helper");
+    }
+
+    /// `mono` drops what a program does not reach: with no type argument and no generic item of
+    /// the user's, it cuts the prelude's items off, and `Result` makes no instance.
+    #[test]
+    fn mono_should_drop_the_prelude_when_a_program_instantiates_nothing() {
+        let (program, diagnostics) = front_end("fn main() {}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let program = program.expect("the program should check");
+        assert_eq!(names(&program), [vec![], vec![], vec!["main"]]);
+    }
+
+    /// A generic item of the user's that nothing calls records no type argument. The program
+    /// takes the normal path, which drops the template too.
+    #[test]
+    fn mono_should_drop_an_uncalled_generic_function_of_the_user() {
+        let (program, _) = front_end("fn id<T>(x: T) -> T { x }\nfn main() {}");
+        let program = program.expect("the program should check");
+        assert_eq!(names(&program), [vec![], vec![], vec!["main"]]);
+    }
+
+    /// A written type argument is what makes `Result<i64, string>` an enum of the program.
+    #[test]
+    fn mono_should_instantiate_a_prelude_enum_that_a_type_names() {
+        let src = "fn main() {\n    let _: Result<i64, string> = Result.Ok(1)\n}";
+        let (program, diagnostics) = front_end(src);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let program = program.expect("the program should check");
+        assert_eq!(
+            names(&program),
+            [vec![], vec!["Result<i64, string>"], vec!["main"]]
+        );
+    }
+
+    /// The only type argument is inferred from a call: no angle brackets are written, and the
+    /// user's items are not generic.
+    #[test]
+    fn mono_should_instantiate_a_prelude_function_that_a_call_infers() {
+        let prelude = "fn first<T>(x: T) -> T { x }";
+        let (program, diagnostics) = front_end_with(prelude, "fn main() {\n    print(first(1))\n}");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let program = program.expect("the program should check");
+        assert_eq!(
+            names(&program),
+            [vec![], vec![], vec!["main", "first<i64>"]]
+        );
     }
 }

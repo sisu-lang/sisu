@@ -232,7 +232,7 @@ impl Checker<'_> {
     /// loop label, and the call starts the value of an unlabeled `break`: the fix then writes
     /// the label there, unless it wraps the receiver in parentheses.
     fn label_starts_receiver(&self, callee: &ast::Ident, first: &ast::Arg) -> bool {
-        let text = &self.source.text[first.value.span.start()..];
+        let text = self.source.file.rest(first.value.span.start());
         let end = text
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
             .unwrap_or(text.len());
@@ -381,10 +381,10 @@ impl Checker<'_> {
                         deferred = false;
                         c.stray(args);
                         let at = receiver.span.to(method.span);
-                        let text = c.source.text;
+                        let text = c.source.file;
                         let compare = (arity == 0).then(|| {
-                            let rest = &text[at.end()..first.span.end()];
-                            format!("{}(){rest}", &text[at.start()..at.end()])
+                            let rest = text.slice(at.end()..first.span.end());
+                            format!("{}(){rest}", text.text(at))
                         });
                         return Err(c.misread_as(at, compare));
                     }

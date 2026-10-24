@@ -416,6 +416,7 @@ impl Checker<'_> {
             }
             return None;
         };
+        self.instantiates = true;
         let checked = call
             .slots
             .into_iter()
@@ -987,6 +988,7 @@ impl Checker<'_> {
             _ => {
                 // Each argument is checked, so this collects into a `Vec` before it gives up.
                 let args: Vec<_> = written.iter().map(|arg| self.type_argument(arg)).collect();
+                self.instantiates = true;
                 return args
                     .into_iter()
                     .collect::<Option<Vec<_>>>()
@@ -1048,7 +1050,7 @@ impl Checker<'_> {
     /// among them or a name in the rest of `main`, outside its strings and comments, is one.
     pub(super) fn main_type_params(&mut self, main: &ast::Function) {
         let angles = main.angles;
-        let rest = &self.source.text[angles.end()..main.span.end()];
+        let rest = self.source.file.slice(angles.end()..main.span.end());
         // What does not lex alone is held to name one.
         let named = lex(rest).map_or(true, |lexed| {
             lexed.tokens.iter().any(|token| {
@@ -1080,7 +1082,12 @@ impl Checker<'_> {
     /// and `first` could be a value: a name that is not a built-in type, with no `?`.
     pub(super) fn misread(&mut self, name: Span, first: Option<&ast::TypeExpr>) -> Poisoned {
         let first = first.filter(|first| self.could_be_value(first));
-        let compare = first.map(|first| self.source.text[name.start()..first.span.end()].into());
+        let compare = first.map(|first| {
+            self.source
+                .file
+                .slice(name.start()..first.span.end())
+                .into()
+        });
         self.misread_as(name, compare)
     }
 
@@ -1110,7 +1117,7 @@ impl Checker<'_> {
     pub(super) fn misread_as(&mut self, name: Span, compare: Option<String>) -> Poisoned {
         self.body.misread.insert(name.start());
         self.report(DiagnosticKind::TypeArguments {
-            name: self.source.text[name.start()..name.end()].to_string(),
+            name: self.source.file.slice(name.start()..name.end()).to_string(),
             at: name,
             form: ArgumentsForm::Value { compare },
         });
@@ -1246,17 +1253,19 @@ impl Checker<'_> {
         types: &[ast::TypeExpr],
         angles: Span,
     ) {
-        let text = self.source.text;
+        let text = self.source.file;
         let instead = types.iter().all(|ty| !self.names_no_type(ty)).then(|| {
             format!(
                 "{}{}.{}",
-                &text[base.span.range()],
-                &text[angles.range()],
+                text.text(base.span),
+                text.text(angles),
                 variant.name
             )
         });
         self.report(DiagnosticKind::TypeArguments {
-            name: text[base.span.start()..variant.span.end()].to_string(),
+            name: text
+                .slice(base.span.start()..variant.span.end())
+                .to_string(),
             at: angles,
             form: ArgumentsForm::Variant { instead },
         });

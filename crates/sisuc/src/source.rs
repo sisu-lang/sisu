@@ -12,9 +12,18 @@
 ///   call names (`(` and `{close}.{name}(`). That name is a built-in one or also stands
 ///   elsewhere in the source, in its declaration or in the call the fix rewrites, so a fix
 ///   inserts at most source-sized text and the fixed text is at most `2 * MAX_SOURCE` bytes.
+///
+/// A suggested name may also stand in the prelude, whose length is fixed and far below
+/// `MAX_SOURCE`, so the prelude adds nothing to these bounds.
 pub(crate) const MAX_SOURCE: usize = 1 << 30;
 
 const _: () = assert!(2 * MAX_SOURCE + 3 <= u32::MAX as usize);
+
+/// Where the prelude's offsets start: above every offset of a user's text (at most
+/// `2 * MAX_SOURCE + 3`), so that a span says by its offsets which text it indexes.
+pub(crate) const PRELUDE_BASE: u32 = 3 << 30;
+
+const _: () = assert!(PRELUDE_BASE as usize > 2 * MAX_SOURCE + 3);
 
 /// A byte range of the source. The offsets are stored as `u32`s, which `MAX_SOURCE` keeps
 /// them within; `new` is the one place that converts them.
@@ -63,6 +72,51 @@ impl Span {
     /// The span from the start of `self` to the end of `other`.
     pub(crate) fn to(self, other: Span) -> Span {
         Span::new(self.start(), other.end())
+    }
+
+    /// Whether `self` lies in the prelude's text, not the user's.
+    pub(crate) fn in_prelude(self) -> bool {
+        self.start >= PRELUDE_BASE
+    }
+}
+
+/// One text, whose spans start at `base`: a user's file at 0, the prelude at `PRELUDE_BASE`.
+/// Every slice of a text by a span goes through it, so that a span of one text never indexes
+/// another.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Source<'a> {
+    text: &'a str,
+    base: usize,
+}
+
+impl<'a> Source<'a> {
+    /// `text`, whose first byte has offset `base`.
+    pub(crate) fn new(text: &'a str, base: usize) -> Source<'a> {
+        Source { text, base }
+    }
+
+    /// The text that `span` covers.
+    pub(crate) fn text(&self, span: Span) -> &'a str {
+        self.slice(span.range())
+    }
+
+    /// The text between the offsets of `range`. The offsets of another text lie outside this
+    /// one: the wrapped subtraction then leaves a range that no text has.
+    pub(crate) fn slice(&self, range: std::ops::Range<usize>) -> &'a str {
+        let range = range.start.wrapping_sub(self.base)..range.end.wrapping_sub(self.base);
+        self.text
+            .get(range)
+            .expect("a span should lie in the text it indexes")
+    }
+
+    /// The offset just past the last byte.
+    pub(crate) fn end(&self) -> usize {
+        self.base + self.text.len()
+    }
+
+    /// The text from offset `from` to the end.
+    pub(crate) fn rest(&self, from: usize) -> &'a str {
+        self.slice(from..self.end())
     }
 }
 
@@ -131,6 +185,34 @@ mod tests {
     fn span_offset_past_u32_max_panics() {
         let max = usize::try_from(u32::MAX).expect("`u32::MAX` should fit in `usize` here");
         Span::new(0, max + 1);
+    }
+
+    #[test]
+    fn in_prelude_should_hold_from_the_base_on() {
+        let base = PRELUDE_BASE as usize;
+        assert!(!Span::new(0, 1).in_prelude());
+        assert!(!Span::new(base - 1, base - 1).in_prelude());
+        assert!(Span::new(base, base).in_prelude());
+        assert!(Span::new(base + 5, base + 6).in_prelude());
+    }
+
+    /// The text is non-ASCII, so a byte offset that is not a char boundary would panic.
+    #[test]
+    fn source_should_slice_the_text_at_offsets_above_its_base() {
+        let base = 100;
+        let source = Source::new("äb cd", base);
+        assert_eq!(source.text(Span::new(base, base + 2)), "ä");
+        assert_eq!(source.slice(base + 4..base + 6), "cd");
+        assert_eq!(source.rest(base + 3), " cd");
+        assert_eq!(source.rest(source.end()), "");
+        assert_eq!(source.end(), base + 6);
+    }
+
+    #[test]
+    #[should_panic(expected = "a span should lie in the text it indexes")]
+    fn source_should_refuse_a_span_of_another_text() {
+        let prelude = Source::new("enum P { A }", PRELUDE_BASE as usize);
+        prelude.text(Span::new(0, 4));
     }
 
     #[test]

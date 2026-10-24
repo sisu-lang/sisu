@@ -102,11 +102,26 @@ impl MathOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Program {
     pub(crate) classes: Vec<Class>,
     pub(crate) enums: Vec<Enum>,
     pub(crate) functions: Vec<Function>,
+    /// Whether the checker recorded a type argument: a written one, or one a call inferred. A
+    /// program with none, and with no generic item of the user's, has nothing for `mono` to
+    /// instantiate. Only the checker sets it.
+    pub(crate) instantiates: bool,
+    /// Where the prelude's items start in each list; the user's come first. Only the checker
+    /// sets it.
+    pub(crate) prelude: ItemCounts,
+}
+
+/// How many classes, enums and functions (methods too) come first in their lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ItemCounts {
+    pub(crate) classes: usize,
+    pub(crate) enums: usize,
+    pub(crate) funcs: usize,
 }
 
 #[derive(Debug)]
@@ -1505,6 +1520,7 @@ mod tests {
                     ty: Type::I64,
                 },
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1637,6 +1653,7 @@ mod tests {
                     ty: Type::NEVER,
                 },
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1733,6 +1750,7 @@ mod tests {
                     ty: Type::I64,
                 },
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1815,6 +1833,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![first, second],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1860,6 +1879,7 @@ mod tests {
                         .collect(),
                 ),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1889,6 +1909,7 @@ mod tests {
                 locals: vec![param("c", Type::CHAR)],
                 body: block(vec![print(char_lit), print(to_i64), print(to_char)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1918,6 +1939,7 @@ mod tests {
                 locals: vec![],
                 body: block(vec![Stmt::Expr(eprint)]),
             }],
+            ..Program::default()
         };
         assert_eq!(program.to_string(), "(fn f () unit (block (eprint 1)))");
     }
@@ -1938,6 +1960,7 @@ mod tests {
                 locals: vec![],
                 body: block(vec![Stmt::Expr(read_line)]),
             }],
+            ..Program::default()
         };
         assert_eq!(program.to_string(), "(fn f () unit (block (read_line)))");
     }
@@ -1959,6 +1982,7 @@ mod tests {
                 locals: vec![param("s", Type::STRING)],
                 body: block(vec![Stmt::Expr(words)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1988,6 +2012,7 @@ mod tests {
                 locals: vec![param("s", Type::STRING)],
                 body: block(vec![Stmt::Expr(print)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2023,6 +2048,7 @@ mod tests {
                 locals: vec![param("s", Type::STRING), param("n", Type::I64)],
                 body: block(vec![Stmt::Expr(print)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2073,6 +2099,7 @@ mod tests {
                 locals: vec![param("n", Type::I64), param("x", Type::F64)],
                 body: block(vec![Stmt::Expr(print)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2109,6 +2136,7 @@ mod tests {
                     print(expr(ExprKind::FromChars(chars()), Type::STRING)),
                 ]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2153,6 +2181,7 @@ mod tests {
                     append,
                 ]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2177,6 +2206,7 @@ mod tests {
                 locals: vec![],
                 body: block(vec![Stmt::Expr(panic)]),
             }],
+            ..Program::default()
         };
         assert_eq!(program.to_string(), r#"(fn f () unit (block (panic "x")))"#);
     }
@@ -2235,6 +2265,7 @@ mod tests {
             ],
             enums: vec![],
             functions: vec![],
+            ..Program::default()
         };
         let chains = [0, 1, 2, 4].map(|id| program.chain_field(ClassId(id)));
         assert_eq!(chains, [Some(1), Some(1), Some(0), None]);
@@ -2287,6 +2318,7 @@ mod tests {
                 cycle: None,
             }],
             functions: vec![],
+            ..Program::default()
         };
         let args = TypeArgs::intern(&[Type::array(t)]);
         let pair = TypeArgs::intern(&[Type::I64, t]);
@@ -2320,6 +2352,7 @@ mod tests {
                     classes: Vec::new(),
                     enums: Vec::new(),
                     functions: Vec::new(),
+                    ..Program::default()
                 };
                 program.type_name(ty)
             })

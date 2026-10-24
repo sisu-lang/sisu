@@ -24,11 +24,19 @@ use crate::types::{Head, write_args};
 /// the non-generic functions' bodies, then each instantiation's in turn. A method is reached only
 /// by a call, never with its class. The checker has accepted the program, so nothing here can
 /// fail.
-pub(crate) fn instantiate(program: Program) -> Program {
-    let generic = program.functions.iter().any(|f| !f.type_params.is_empty())
-        || program.classes.iter().any(|c| !c.type_params.is_empty())
-        || program.enums.iter().any(|e| !e.type_params.is_empty());
-    if !generic {
+pub(crate) fn instantiate(mut program: Program) -> Program {
+    let prelude = program.prelude;
+    let generic = program.functions[..prelude.funcs]
+        .iter()
+        .any(|f| !f.type_params.is_empty())
+        || (program.classes[..prelude.classes].iter()).any(|c| !c.type_params.is_empty())
+        || (program.enums[..prelude.enums].iter()).any(|e| !e.type_params.is_empty());
+    if !generic && !program.instantiates {
+        // Reaching a generic item records a type argument, so nothing of the prelude's that a
+        // program does not name is used: they are all templates or unused.
+        program.functions.truncate(prelude.funcs);
+        program.classes.truncate(prelude.classes);
+        program.enums.truncate(prelude.enums);
         return program;
     }
     let program = Mono::new(program).run();
@@ -36,6 +44,13 @@ pub(crate) fn instantiate(program: Program) -> Program {
         assert_concrete(&program);
     }
     program
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times the worklist has run on this thread: `instantiate` skips it for a program
+    /// that instantiates nothing.
+    pub(crate) static RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// An instantiation reached and given its id, whose body waits on the worklist.
@@ -91,11 +106,7 @@ impl Mono {
             enum_decls: Vec::with_capacity(program.enums.len()),
             types: FxHashMap::default(),
             functions: Vec::new(),
-            out: Program {
-                classes: Vec::new(),
-                enums: Vec::new(),
-                functions: Vec::new(),
-            },
+            out: Program::default(),
             work: VecDeque::new(),
         };
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -132,6 +143,8 @@ impl Mono {
     }
 
     fn run(mut self) -> Program {
+        #[cfg(test)]
+        RUNS.set(RUNS.get() + 1);
         for i in 0..self.out.classes.len() {
             let mut fields = mem::take(&mut self.out.classes[i].fields);
             for field in &mut fields {
@@ -602,7 +615,7 @@ mod tests {
     use rustc_hash::FxHashSet;
 
     use super::*;
-    use crate::check::check;
+    use crate::check::check_alone;
     use crate::parser::parse_ok;
     use crate::types::NAME_LIMIT;
 
@@ -610,6 +623,29 @@ mod tests {
     fn instantiated(src: &str) -> Program {
         let (program, diagnostics) = crate::front_end::front_end(src);
         program.unwrap_or_else(|| panic!("{diagnostics:?}"))
+    }
+
+    /// How many times the worklist runs for `src`.
+    fn runs(src: &str) -> usize {
+        let before = RUNS.get();
+        instantiated(src);
+        RUNS.get() - before
+    }
+
+    /// The worklist walks every function, so a program with nothing to instantiate skips it: the
+    /// prelude's `Result` is a template, and a template alone is not work. A generic item of the
+    /// user's, called or not, takes the worklist.
+    #[test]
+    fn instantiate_should_skip_the_worklist_when_nothing_is_generic() {
+        assert_eq!(runs("fn main() {}"), 0);
+        assert_eq!(runs("fn main() {\n    print(1)\n}"), 0);
+        assert_eq!(runs("fn id<T>(x: T) -> T { x }\nfn main() {}"), 1);
+        assert_eq!(runs("class C<T> {\n    v: T\n}\nfn main() {}"), 1);
+        assert_eq!(runs("enum E<T> {\n    A(T)\n}\nfn main() {}"), 1);
+        assert_eq!(
+            runs("fn main() {\n    let _: Result<i64, string> = Result.Ok(1)\n}"),
+            1
+        );
     }
 
     fn function_names(program: &Program) -> Vec<&str> {
@@ -914,7 +950,7 @@ mod tests {
     #[should_panic(expected = "mono should leave no generic type in id")]
     fn a_type_parameter_left_behind_should_be_caught() {
         let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(1))\n}";
-        let (program, diagnostics) = check(&parse_ok(src), src, &[]);
+        let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
         assert_concrete(&program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     }
 
@@ -1015,7 +1051,7 @@ mod tests {
                    enum E {\n    A(P)\n    B\n}\n\
                    fn f(e: E) -> i64 {\n    match e {\n        E.A(p) => p.get()\n        E.B => 0\n    }\n}\n\
                    fn main() {\n    print(f(E.A(P(x: 1))))\n}";
-        let (program, diagnostics) = check(&parse_ok(src), src, &[]);
+        let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
         let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
         let (text, count) = (program.to_string(), program.functions.len());
         let program = instantiate(program);

@@ -35,7 +35,7 @@ fn judge_unused() {
 }
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let (program, mut ds) = check(&parse_ok(src), src, &[]);
+    let (program, mut ds) = check_alone(&parse_ok(src), src, &[]);
     if !UNUSED.get() {
         ds.retain(|d| {
             !matches!(
@@ -1776,7 +1776,7 @@ fn empty_file_has_no_main() {
     // The empty span at offset 0 renders without a panic.
     assert!(
         ds[0]
-            .render("empty.sisu", "", &crate::source::LineIndex::new(""), false)
+            .render("empty.sisu", "", &source::LineIndex::new(""), false)
             .contains(Code::NoMain.as_str())
     );
 }

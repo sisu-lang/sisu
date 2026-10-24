@@ -6,7 +6,7 @@ use crate::lexer::Float;
 use crate::source::Span;
 use crate::symbol::Symbol;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Program {
     pub(crate) items: Vec<Item>,
     /// The named items that hold a syntax error, which the checker treats as declared.

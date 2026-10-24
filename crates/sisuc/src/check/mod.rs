@@ -28,7 +28,7 @@ use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
     MismatchSource, Severity, Unbuilt, suggestion,
 };
-use crate::source::Span;
+use crate::source::{self, Span};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{Head, write_type};
@@ -268,7 +268,7 @@ impl LoopFrame {
 /// The program's text and the positions the lexer and parser found in it; never changes.
 struct Source<'src> {
     /// The text the program's spans index.
-    text: &'src str,
+    file: source::Source<'src>,
     /// Where each comment starts.
     comments: &'src [usize],
     /// Where each string literal starts, in order.
@@ -324,6 +324,10 @@ struct Checker<'src> {
     uses: Vec<Use>,
     /// Each binding of a function or a method that nothing reads, in check order.
     pending: Vec<Pending>,
+    /// Whether a type argument was recorded: see `tir::Program::instantiates`.
+    instantiates: bool,
+    /// How many classes, enums and functions the user's items declare.
+    prelude: tir::ItemCounts,
 }
 
 /// The checker's diagnostics, and how many errors were added to them. The count never goes
@@ -480,16 +484,21 @@ impl Body {
 
 /// Diagnostics sorted by span start (stable); the program only when none is an error. `parsed`
 /// holds the parser's diagnostics, sorted by span start: their errors count against a function too.
+/// The items of `prelude` follow those of `program`, so that every id of a user's item is what it
+/// would be without a prelude. The prelude has no broken item, and no diagnostic should point into
+/// it: `front_end` takes one that does for an internal error. `source` is the user's text.
 pub(crate) fn check<'src>(
     program: &'src ast::Program,
+    prelude: &'src ast::Program,
     source: &'src str,
     parsed: &[Diagnostic],
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let mut checker = Checker::new(program, source);
     checker.parse_errors = error_spans(parsed);
-    checker.collect_names(program);
-    let declared = checker.collect_signatures(program);
-    checker.fold_constants(program);
+    let items: Vec<&ast::Item> = program.items.iter().chain(&prelude.items).collect();
+    checker.collect_names(&items, program.items.len(), &program.broken);
+    let declared = checker.collect_signatures(&items);
+    checker.fold_constants(&items);
     let cyclic = checker.never_constructed();
     let unbuilt;
     (checker.lowered_enums, unbuilt) = checker.lower_enums(&cyclic);
@@ -545,12 +554,13 @@ pub(crate) fn check<'src>(
     }
     diagnostics.sort_by_key(|d| d.span().start());
     let broken = !program.broken.is_empty()
-        || program.items.iter().any(|item| match item {
+        || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
             ast::Item::Enum(e) => !e.broken_methods.is_empty(),
             ast::Item::Function(_) | ast::Item::Const(_) => false,
         });
     let enums = checker.lowered_enums;
+    let (instantiates, prelude) = (checker.instantiates, checker.prelude);
     let program = functions
         .into_iter()
         .collect::<Option<_>>()
@@ -560,6 +570,8 @@ pub(crate) fn check<'src>(
             classes,
             enums,
             functions,
+            instantiates,
+            prelude,
         });
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
@@ -567,6 +579,17 @@ pub(crate) fn check<'src>(
         "a missing program implies an error diagnostic or a broken item or method"
     );
     (program, diagnostics)
+}
+
+/// `check` over a program with no prelude, for the tests of what follows the checker: the
+/// prelude's templates would stay in a program that `mono` has not run on.
+#[cfg(test)]
+pub(crate) fn check_alone(
+    program: &ast::Program,
+    source: &str,
+    parsed: &[Diagnostic],
+) -> (Option<tir::Program>, Vec<Diagnostic>) {
+    check(program, &ast::Program::default(), source, parsed)
 }
 
 /// The non-empty spans of the errors in `diagnostics`, in order. `NoMain`'s empty span at offset
@@ -626,7 +649,7 @@ impl<'src> Checker<'src> {
     fn new(program: &'src ast::Program, source: &'src str) -> Checker<'src> {
         Checker {
             source: Source {
-                text: source,
+                file: source::Source::new(source, 0),
                 comments: &program.comments,
                 quotes: &program.quotes,
                 breaks: &program.breaks,
@@ -646,6 +669,8 @@ impl<'src> Checker<'src> {
             body: Body::default(),
             uses: Vec::new(),
             pending: Vec::new(),
+            instantiates: false,
+            prelude: tir::ItemCounts::default(),
         }
     }
 
@@ -668,12 +693,16 @@ impl Checker<'_> {
     /// function, class, enum and constant of each name, so that types, calls and uses can name
     /// any of them. They share a namespace. `FuncId`s run in source order, a class's or an
     /// enum's methods at its place.
-    fn collect_names(&mut self, program: &ast::Program) {
+    /// The first `user_items` of `items` are the user's: `self.prelude` is where the rest start.
+    fn collect_names(&mut self, items: &[&ast::Item], user_items: usize, broken: &[ast::Broken]) {
         let mut first = FxHashMap::default();
         let mut next_function = 0;
         // Source order among the constants.
         let mut order = 0;
-        for item in &program.items {
+        for (at, item) in items.iter().enumerate() {
+            if at == user_items {
+                self.prelude = self.item_counts(next_function);
+            }
             match item {
                 ast::Item::Class(class) => {
                     let type_params = self.type_params(&[], &class.type_params);
@@ -735,7 +764,10 @@ impl Checker<'_> {
                 }
             }
         }
-        for broken in &program.broken {
+        if user_items == items.len() {
+            self.prelude = self.item_counts(next_function);
+        }
+        for broken in broken {
             let name = &broken.name.name;
             match broken.kind {
                 ast::BrokenKind::Function => {
@@ -810,6 +842,10 @@ impl Checker<'_> {
         name: &ast::Ident,
     ) -> bool {
         if let Some(&(span, first_kind)) = first.get(&name.name) {
+            // A user's item took the prelude's name first, and its `BuiltInName` has said so.
+            if name.span.in_prelude() && !span.in_prelude() {
+                return false;
+            }
             let first = Earlier::At {
                 span,
                 kind: first_kind,
@@ -822,17 +858,27 @@ impl Checker<'_> {
         true
     }
 
+    /// How many classes, enums and functions are declared so far, `functions` being the count of
+    /// functions.
+    fn item_counts(&self, functions: usize) -> tir::ItemCounts {
+        tir::ItemCounts {
+            classes: self.classes.len(),
+            enums: self.enums.len(),
+            funcs: functions,
+        }
+    }
+
     /// Pass 2: each class's fields, each enum's variants and every signature, in `FuncId`
     /// order. Returns each function with the type of a method's `self`. A class's fields and
     /// methods share a namespace.
     fn collect_signatures<'a>(
         &mut self,
-        program: &'a ast::Program,
+        items: &[&'a ast::Item],
     ) -> Vec<(&'a ast::Function, Option<Type>)> {
         let mut declared = Vec::new();
         let mut next_class = 0;
         let mut next_enum = 0;
-        for item in &program.items {
+        for item in items {
             let class = match item {
                 ast::Item::Function(f) => {
                     self.signature(f, f.name.name.to_string(), &[]);

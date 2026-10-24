@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::str::CharIndices;
 
 use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Join};
-use crate::source::{LineIndex, Span};
+use crate::source::{LineIndex, Source, Span};
 use crate::symbol::Symbol;
 use literal::End;
 pub(crate) use literal::Float;
@@ -291,7 +291,7 @@ type Open = (char, Span);
 /// in source order.
 #[derive(Debug)]
 pub(crate) struct Lexed<'src> {
-    pub(crate) source: &'src str,
+    pub(crate) source: Source<'src>,
     pub(crate) tokens: Vec<Token>,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) warnings: Vec<Diagnostic>,
@@ -307,6 +307,28 @@ pub(crate) fn lex_clean(source: &str) -> Result<Vec<Token>, Diagnostic> {
         Some(d) => Err(d),
         None => Ok(lexed.tokens),
     }
+}
+
+/// `lex(text)` with every offset it holds, in the tokens, comments and breaks, moved up by
+/// `base`, so that the spans of two texts never meet. A text with a base is the prelude, which
+/// must lex without a diagnostic or a warning: the first of them is the error.
+pub(crate) fn lex_at(text: &str, base: usize) -> Result<Lexed<'_>, Diagnostic> {
+    let mut lexed = lex(text)?;
+    if base == 0 {
+        return Ok(lexed);
+    }
+    if let Some(d) = lexed.diagnostics.first().or(lexed.warnings.first()) {
+        return Err(d.clone());
+    }
+    let moved = |at: Span| Span::new(at.start() + base, at.end() + base);
+    for token in &mut lexed.tokens {
+        token.span = moved(token.span);
+    }
+    for at in lexed.comments.iter_mut().chain(&mut lexed.breaks) {
+        *at += base;
+    }
+    lexed.source = Source::new(text, base);
+    Ok(lexed)
 }
 
 /// Lexes `source`, reporting every error it can continue after. `Err` holds the one diagnostic a
@@ -423,7 +445,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
     let warnings = separate(source, &mut tokens, &brackets.separators);
     tokens.push(eof(&tokens));
     Ok(Lexed {
-        source,
+        source: Source::new(source, 0),
         tokens,
         diagnostics,
         warnings,
@@ -4076,7 +4098,7 @@ mod tests {
                 let reported: Vec<_> = parsed.diagnostics.iter().map(|d| at(&fixed, d)).collect();
                 assert_eq!(reported, [want], "{fixed}");
                 let parsed = crate::parser::parse(Lexed {
-                    source: &fixed,
+                    source: Source::new(&fixed, 0),
                     tokens,
                     diagnostics: Vec::new(),
                     warnings: Vec::new(),
@@ -4300,5 +4322,42 @@ mod tests {
             "{} bytes looked at",
             LOOKED.get()
         );
+    }
+
+    /// The text has a `//` comment and three line breaks, so that each list has offsets to move.
+    #[test]
+    fn lex_at_should_move_every_offset_up_by_the_base() {
+        let text = "fn f() {}\n// c\nfn g() {}\n";
+        let base = 1000;
+        let (plain, moved) = (
+            lex(text).expect("lexes"),
+            lex_at(text, base).expect("lexes"),
+        );
+        let shift = |at: Span| Span::new(at.start() + base, at.end() + base);
+        assert_eq!(moved.tokens.len(), plain.tokens.len());
+        for (m, p) in moved.tokens.iter().zip(&plain.tokens) {
+            assert_eq!((m.span, &m.kind), (shift(p.span), &p.kind));
+            assert_eq!(moved.source.text(m.span), plain.source.text(p.span));
+        }
+        assert_eq!(moved.comments, [10 + base]);
+        assert_eq!(moved.breaks, [9 + base, 14 + base, 24 + base]);
+    }
+
+    /// A bracket error stops the lexer at any base.
+    #[test]
+    fn lex_at_should_pass_on_a_bracket_error() {
+        assert!(lex_at("fn f(", 0).is_err());
+        assert!(lex_at("fn f(", 10).is_err());
+    }
+
+    /// A text at a base is the prelude, which has no diagnostic and no warning: the first one
+    /// is the error. At base 0 it is a user's text, whose diagnostics stay.
+    #[test]
+    fn lex_at_should_refuse_a_diagnostic_or_a_warning_when_the_base_is_not_zero() {
+        for (text, kind) in [("enum P { A } $", "error"), ("x\n    y;\n", "warning")] {
+            assert!(lex_at(text, 10).is_err(), "{kind}");
+            let lexed = lex_at(text, 0).expect("a user's text lexes");
+            assert_eq!(lexed.diagnostics.len() + lexed.warnings.len(), 1, "{kind}");
+        }
     }
 }

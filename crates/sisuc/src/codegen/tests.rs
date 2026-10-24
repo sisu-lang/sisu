@@ -1,5 +1,5 @@
 use super::*;
-use crate::check::check;
+use crate::check::check_alone;
 use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::tir::BinaryOp;
@@ -25,7 +25,7 @@ fn compiled_from<'ctx>(
     edit: impl FnOnce(&mut mir::Program),
 ) -> Module<'ctx> {
     let program = parse_ok(src);
-    let (program, diagnostics) = check(&program, src, &[]);
+    let (program, diagnostics) = check_alone(&program, src, &[]);
     let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     let mut mir = mir::build(&program);
     edit(&mut mir);
@@ -1778,7 +1778,7 @@ fn address_of(instruction: InstructionValue<'_>, n: u32) -> InstructionValue<'_>
 fn binary_takes_and_and_or_of_two_computed_bools() {
     let context = Context::create();
     let src = "fn main() {}";
-    let (program, diagnostics) = check(&parse_ok(src), src, &[]);
+    let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
     let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let codegen = Codegen::new(&context, &program, "test.sisu", src, &machine, false);

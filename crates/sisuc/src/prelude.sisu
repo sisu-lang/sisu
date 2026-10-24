@@ -1,0 +1,8 @@
+// The prelude: Sisu source that the compiler checks before every program. The compiler
+// embeds this file (`front_end::PRELUDE_SOURCE`), and an error in it is an internal error.
+
+// The result of work that can fail: a value, or the reason it failed.
+enum Result<T, E> {
+    Ok(T)
+    Err(E)
+}

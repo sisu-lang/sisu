@@ -1,5 +1,5 @@
 use super::*;
-use crate::check::check;
+use crate::check::check_alone;
 use crate::parser::parse_ok;
 
 mod certify;
@@ -65,7 +65,7 @@ fn checked(src: &str) -> tir::Program {
     } else {
         format!("{src}\nfn main() {{}}")
     };
-    let (program, diagnostics) = check(&parse_ok(&src), &src, &[]);
+    let (program, diagnostics) = check_alone(&parse_ok(&src), &src, &[]);
     crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")))
 }
 

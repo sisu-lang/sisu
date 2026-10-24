@@ -2,6 +2,8 @@
 //! and `todo`.
 
 use super::*;
+use crate::front_end::{PRELUDE_SOURCE, prelude_program};
+use crate::source::PRELUDE_BASE;
 
 /// A function `f` over `params`, whose body is `body` from line 2, and an empty `main`.
 fn body(params: &str, body: &str) -> String {
@@ -374,4 +376,30 @@ fn todo_ends_at_the_line() {
             (Code::UnusedValue, (3, 5)),
         ],
     );
+}
+
+/// A user's item that takes a name which the prelude declares is one E0026, at the user's name.
+/// The prelude's own declaration is no second error, and no diagnostic points into the prelude.
+#[test]
+fn user_item_should_not_take_a_name_the_prelude_declares() {
+    let prelude = prelude_program(PRELUDE_SOURCE);
+    for (item, expected) in [
+        ("enum Result { A }", (1, 6)),
+        ("fn Result() {}", (1, 4)),
+        ("class Ok {}", (1, 7)),
+    ] {
+        let src = format!("{item}\nfn main() {{}}");
+        let (_, ds) = check(&parse_ok(&src), &prelude, &src, &[]);
+        let errors: Vec<_> = ds
+            .iter()
+            .filter(|d| d.severity() == Severity::Error)
+            .collect();
+        let [error] = errors[..] else {
+            panic!("{src}: {ds:?}");
+        };
+        assert_eq!(error.code(), Code::BuiltInName, "{src}");
+        assert!(error.span().end() < PRELUDE_BASE as usize, "{src}");
+        assert_eq!(at(&src, error.span()), expected, "{src}");
+        assert!(ds.iter().all(|d| !d.span().in_prelude()), "{src}: {ds:?}");
+    }
 }

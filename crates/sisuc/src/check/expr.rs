@@ -43,7 +43,7 @@ impl Checker<'_> {
             let (x, exact) = (value as f64, (value as f64) as i128 == i128::from(value));
             if !exact {
                 self.report(DiagnosticKind::NotExactlyF64 {
-                    text: self.source.text[literal.range()].to_string(),
+                    text: self.source.file.text(literal).to_string(),
                     nearest: format!("{x:?}"),
                     at,
                 });
@@ -61,7 +61,7 @@ impl Checker<'_> {
                 DiagnosticKind::NegatedU8 { at }.into()
             } else {
                 DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source.text[literal.range()].to_string(),
+                    text: self.source.file.text(literal).to_string(),
                     at,
                 }
                 .into()

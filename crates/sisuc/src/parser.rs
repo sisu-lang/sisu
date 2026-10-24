@@ -15,7 +15,7 @@ use crate::diagnostic::{
     LetField, MatchIdiomForm, Owner, PowerFix,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
-use crate::source::Span;
+use crate::source::{Source, Span};
 use crate::symbol::Symbol;
 
 /// What the parser makes of a lexed source.
@@ -269,7 +269,7 @@ enum RangeOp {
 
 struct Parser<'a> {
     /// The text the token spans index.
-    source: &'a str,
+    source: Source<'a>,
     tokens: &'a [Token],
     pos: usize,
     /// While a node's children are parsed: the levels above them. When a parse function returns:
@@ -433,7 +433,7 @@ impl<'a> Parser<'a> {
             },
             TokenKind::Int(_) => DiagnosticKind::Expected {
                 what: what.to_string(),
-                found: format!("`{}`", &self.source[found.span.range()]),
+                found: format!("`{}`", self.source.text(found.span)),
                 at: found.span,
             },
             // A `Newline` over a `;` that separates is named as written.
@@ -1010,7 +1010,10 @@ impl<'a> Parser<'a> {
         let separated = matches!(
             next.kind,
             TokenKind::RBrace | TokenKind::Eof | TokenKind::Semicolon
-        ) || self.source[comma.end()..next.span.start()].contains('\n');
+        ) || self
+            .source
+            .slice(comma.end()..next.span.start())
+            .contains('\n');
         let replacement = if separated { "" } else { ";" }.to_string();
         DiagnosticKind::FieldComma {
             at: comma,
@@ -1075,7 +1078,7 @@ impl<'a> Parser<'a> {
             let class = self.peek().span;
             return Err(DiagnosticKind::MatchIdiom {
                 form: MatchIdiomForm::EnumClass {
-                    name: self.source[next.span.range()].to_string(),
+                    name: self.source.text(next.span).to_string(),
                     remove: Span::new(class.start(), next.span.start()),
                 },
                 at: class,
@@ -1623,7 +1626,7 @@ impl<'a> Parser<'a> {
                 depth == 0
             })
             .map_or(start, |token| token.span);
-        self.source[start.to(end).range()].to_string()
+        self.source.text(start.to(end)).to_string()
     }
 
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
@@ -1683,7 +1686,7 @@ impl<'a> Parser<'a> {
         let gap = self.last_code_end()..at.start();
         let join = (lacks_else && takes_block).then(|| Join {
             gap: Span::new(gap.start, gap.end),
-            safe: self.source[gap.clone()].trim().is_empty(),
+            safe: self.source.slice(gap.clone()).trim().is_empty(),
         });
         DiagnosticKind::ElseOnNewLine { at, join }.into()
     }
@@ -1791,11 +1794,7 @@ impl<'a> Parser<'a> {
                     if let Some(&(first_label, _)) = labels.first() {
                         return Err(DiagnosticKind::PatternForm {
                             form: ForeignPattern::Labels {
-                                form: format!(
-                                    "{}{}",
-                                    &self.source[path.range()],
-                                    self.listed(&fields)
-                                ),
+                                form: format!("{}{}", self.source.text(path), self.listed(&fields)),
                                 labels: labels.into_iter().map(|(_, remove)| remove).collect(),
                             },
                             at: first_label,
@@ -1817,7 +1816,7 @@ impl<'a> Parser<'a> {
                     let fields = self.listed(&fields);
                     return Err(DiagnosticKind::PatternForm {
                         form: ForeignPattern::Braces {
-                            form: format!("{}{fields}", &self.source[path.range()]),
+                            form: format!("{}{fields}", self.source.text(path)),
                             replace: Span::new(path.end(), braces.end()),
                             fields,
                         },
@@ -2007,8 +2006,8 @@ impl<'a> Parser<'a> {
         end: Option<Span>,
         fixable: bool,
     ) -> Diagnostic {
-        let start_text = self.source[start.range()].to_string();
-        let end_text = end.map(|end| self.source[end.range()].to_string());
+        let start_text = self.source.text(start).to_string();
+        let end_text = end.map(|end| self.source.text(end).to_string());
         let form = match lt {
             Some(lt) => ForeignRange::Exclusive {
                 start: start_text,
@@ -2078,10 +2077,7 @@ impl<'a> Parser<'a> {
 
     /// `patterns` as written, in parentheses: `(x, y)`.
     fn listed(&self, patterns: &[Pattern]) -> String {
-        let written: Vec<&str> = patterns
-            .iter()
-            .map(|p| &self.source[p.span.range()])
-            .collect();
+        let written: Vec<&str> = patterns.iter().map(|p| self.source.text(p.span)).collect();
         format!("({})", written.join(", "))
     }
 
@@ -2103,8 +2099,8 @@ impl<'a> Parser<'a> {
         Some(
             DiagnosticKind::MatchIdiom {
                 form: MatchIdiomForm::Path {
-                    name: self.source[name.range()].to_string(),
-                    member: self.source[member.span.range()].to_string(),
+                    name: self.source.text(name).to_string(),
+                    member: self.source.text(member.span).to_string(),
                 },
                 at: first.span.to(second.span),
             }
@@ -2153,7 +2149,7 @@ impl<'a> Parser<'a> {
         }
         // Neither is `Eof`, so the token after it exists.
         let next = &self.tokens[self.pos + 1];
-        let text = &self.source[token.span.range()];
+        let text = self.source.text(token.span);
         let (form, at) = match (&token.kind, &next.kind) {
             (TokenKind::Ident(_), kind) if text == "case" && *kind != TokenKind::FatArrow => {
                 // Swift's `case let .some(x)` also loses its `let` and its `.`. A `let` is not
@@ -2259,7 +2255,9 @@ impl<'a> Parser<'a> {
             return Ok(());
         };
         let gap = self.last_code_end()..next.span.start();
-        let join = self.source[gap.clone()]
+        let join = self
+            .source
+            .slice(gap.clone())
             .trim()
             .is_empty()
             .then(|| Span::new(gap.start, gap.end));
@@ -2874,7 +2872,9 @@ impl<'a> Parser<'a> {
         let next = &self.tokens[self.pos + 1];
         matches!(next.kind, TokenKind::Int(_))
             && next.span.start() == self.peek().span.end()
-            && self.source[next.span.range()]
+            && self
+                .source
+                .text(next.span)
                 .bytes()
                 .all(|b| b.is_ascii_digit() || b == b'_')
     }
@@ -2920,7 +2920,7 @@ impl<'a> Parser<'a> {
             }
         };
         // A word right after the deleted text would join `todo`: `todo!x` is not `todo x`.
-        let rest = &self.source[delete.end()..];
+        let rest = self.source.rest(delete.end());
         let safe = !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
         Err(DiagnosticKind::TodoForm { at, delete, safe }.into())
     }

@@ -79,8 +79,12 @@ fn names_itself(ty: Type, e: usize, count: usize) -> bool {
 }
 
 impl Checker<'_> {
-    /// Whether `name` is one milestone 8's prelude takes; reports it when it is.
+    /// Whether `name` is one milestone 8's prelude takes; reports it when it is. The prelude's
+    /// own declarations take them without a report.
     pub(super) fn reserved(&mut self, name: &ast::Ident) -> bool {
+        if name.span.in_prelude() {
+            return false;
+        }
         let Some(kind) = reserved_name(name.name.as_str()) else {
             return false;
         };

@@ -229,8 +229,8 @@ impl Checker<'_> {
         report: Report,
         reachable: &mut [bool],
     ) {
-        let source = self.source.text;
-        let line_start = |at: usize| source[..at].rfind('\n').map_or(0, |n| n + 1);
+        let source = self.source.file;
+        let line_start = |at: usize| source.slice(0..at).rfind('\n').map_or(0, |n| n + 1);
         // Each entry is an arm's pattern or an alternative in it, in arm order.
         let mut rest = arms.iter().enumerate();
         let mut current = rest.next();
@@ -252,7 +252,7 @@ impl Checker<'_> {
                 let start = arm.pattern.span.start();
                 let end = arm.body.span.end();
                 let next = arms.get(index + 1).map(|next| next.pattern.span.start());
-                if !source[line_start(start)..start].trim().is_empty() {
+                if !source.slice(line_start(start)..start).trim().is_empty() {
                     // The arm follows another on its line: take the `;` before it too.
                     let previous = index.checked_sub(1).and_then(|i| arms.get(i));
                     let previous = previous.expect("an unreachable arm should follow an arm");
@@ -266,11 +266,14 @@ impl Checker<'_> {
                 // This arm starts its line and the next starts its own. The fix takes the
                 // whole line, a comment after the body too, unless the `match`'s `}` ends it:
                 // then from the line break before the arm through the body, so the `}` stays.
-                let line_end = source[end..].find('\n').map_or(source.len(), |n| end + n);
+                let line_end = source
+                    .rest(end)
+                    .find('\n')
+                    .map_or(source.end(), |n| end + n);
                 if close.start() < line_end {
                     Span::new(line_start(start) - 1, end)
                 } else {
-                    Span::new(line_start(start), (line_end + 1).min(source.len()))
+                    Span::new(line_start(start), (line_end + 1).min(source.end()))
                 }
             });
             self.report(DiagnosticKind::UnreachableArm {
@@ -284,8 +287,9 @@ impl Checker<'_> {
             return;
         };
         // What comes before `at` on its line, when that is only whitespace.
-        let blank = |at: usize| Some(&source[line_start(at)..at]).filter(|s| s.trim().is_empty());
-        let line = &source[line_start(keyword.start())..keyword.start()];
+        let blank =
+            |at: usize| Some(source.slice(line_start(at)..at)).filter(|s| s.trim().is_empty());
+        let line = source.slice(line_start(keyword.start())..keyword.start());
         let match_indent = &line[..line.len() - line.trim_start().len()];
         let close = close.start();
         let indent = match arms.first().and_then(|arm| blank(arm.pattern.span.start())) {
@@ -698,7 +702,7 @@ impl Checker<'_> {
             }
             if value > i64::from(u8::MAX) {
                 self.report(DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source.text[text.range()].to_string(),
+                    text: self.source.file.text(text).to_string(),
                     at: text,
                 });
                 return None;
@@ -799,7 +803,7 @@ impl Checker<'_> {
         let want = self.type_name(ty);
         self.report(DiagnosticKind::PatternMismatch {
             want,
-            found: self.source.text[at.range()].to_string(),
+            found: self.source.file.text(at).to_string(),
             at,
         });
     }
@@ -887,13 +891,15 @@ impl Checker<'_> {
         mut candidates: impl Iterator<Item = String>,
     ) -> Option<(String, String)> {
         let arm = bound.arm?;
-        let source = self.source.text;
+        let source = self.source.file;
         let read = iter::once(arm.pattern.span)
             .chain(arm.guard.iter().map(|guard| guard.span))
             .chain([arm.body.span]);
         let words: FxHashSet<_> = read
             .flat_map(|span| {
-                source[span.range()].split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                source
+                    .text(span)
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
             })
             .collect();
         let fresh = candidates
@@ -911,8 +917,8 @@ impl Checker<'_> {
                         },
                     ..
                 },
-            ) => format!(" && ({})", &source[guard.span.range()]),
-            Some(guard) => format!(" && {}", &source[guard.span.range()]),
+            ) => format!(" && ({})", source.text(guard.span)),
+            Some(guard) => format!(" && {}", source.text(guard.span)),
         };
         Some((fresh, own))
     }
@@ -1037,7 +1043,7 @@ impl Checker<'_> {
                 Some(GuardHelp::InWords)
             } else {
                 self.guard_help(bound, candidates).map(|(fresh, own)| {
-                    let pattern = &self.source.text[bound.top.range()];
+                    let pattern = self.source.file.text(bound.top);
                     let start = name.span.start() - bound.top.start();
                     let end = name.span.end() - bound.top.start();
                     GuardHelp::Rewritten(format!(
