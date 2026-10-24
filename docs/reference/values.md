@@ -143,7 +143,7 @@ Here, `head = head?.next` replaces the reference to the node with the value 3. N
 The rules:
 
 - Sisu frees the memory of an array or a string in the same way, when its last holder goes away.
-- No code of the program runs when Sisu frees an object. The time of the free changes only how much memory the program uses.
+- No code of the program runs when Sisu frees an object. Without a [weak field](#weak-fields), a program cannot see when it happens. The time changes only how much memory the program uses.
 
 ## Cycles
 
@@ -165,3 +165,36 @@ fn main() {
 ```
 
 To let Sisu free the objects, break the cycle while a reference to one of them remains. Above, `a.next = None` breaks it. So both nodes are freed when their last references go away.
+
+## Weak fields
+
+A *weak field* refers to an object without keeping it alive. When the last other reference to the object goes away, Sisu frees the object, and the weak field reads `None`.
+
+```sisu pending
+class Node {
+    value: i64
+    weak mut parent: Node?
+}
+
+fn attach(child: Node) {
+    let parent = Node(value: 1, parent: None)
+    child.parent = parent
+    print(child.parent?.value ?? 0)      // 1
+    print(parent.value)                  // 1
+}
+
+fn main() {
+    let child = Node(value: 2, parent: None)
+    attach(child)
+    print(child.parent?.value ?? 0)      // 0
+}
+```
+
+Here, the local `parent` is the only strong reference to the first node. When `attach` returns, Sisu frees that node, and `child.parent` reads `None`.
+
+The rules:
+
+- `weak` comes before `mut`. A weak field must be a `mut` field, and its type must be an optional class, such as `Node?`.
+- A weak field reads like any optional, with `?.`, `??` and `if let`. A read never fails, and it never gives a freed object.
+- A weak field makes the time of the free visible. A reference held by a local can go away at its last use. So a weak field can read `None` before the end of that block.
+- A weak field breaks a cycle. When a parent holds its child and the child holds its parent in a weak field, Sisu can free both.
