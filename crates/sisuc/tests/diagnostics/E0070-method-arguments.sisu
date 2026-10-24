@@ -1,0 +1,12 @@
+class Counter {
+    fn add(self, by: i64) -> i64 {
+        by
+    }
+}
+
+fn main() {
+    let c = Counter()
+    print(add(c))
+    print(add(c, 1, 2))
+    print(add(c, true))
+}

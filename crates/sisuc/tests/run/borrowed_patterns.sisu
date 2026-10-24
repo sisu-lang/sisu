@@ -51,8 +51,8 @@ fn eval(e: Expr) -> i64 {
 // A binding passed on in tail position borrows from `e`, so `e` stays borrowed.
 fn leftmost(e: Expr) -> i64 {
     match e {
-        Add(a, b) => leftmost(a)
-        Mul(a, b) => leftmost(a)
+        Add(a, _b) => leftmost(a)
+        Mul(a, _b) => leftmost(a)
         Num(n) => n
     }
 }
@@ -65,8 +65,8 @@ fn pick(p: [i64]?) -> [i64] {
 // Returning a binding consumes `e`, so `first` copies it.
 fn first(e: Expr) -> Expr {
     match e {
-        Add(a, b) => a
-        Mul(a, b) => b
+        Add(a, _b) => a
+        Mul(_a, b) => b
         Num(n) => Expr.Num(n)
     }
 }
@@ -86,7 +86,7 @@ fn reset(o: O, depth: i64) {
 // `reset` frees the old `o.e` while the arm still reads `a`: only the copy keeps `a` alive.
 fn replaced(o: O) -> i64 {
     match o.e {
-        Add(a, b) => {
+        Add(a, _b) => {
             reset(o, 2)
             eval(a)
         }
@@ -99,13 +99,13 @@ fn f(e: Expr, c: bool) -> i64 {
     while k < 3 {
         k += 1
         match e {
-            Add(a, b) => {
+            Add(a, _b) => {
                 if c {
                     return eval(a)
                 }
                 break
             }
-            Mul(a, b) => {
+            Mul(_a, _b) => {
                 continue
             }
             Num(n) => {
@@ -165,11 +165,11 @@ fn show_default(p: string?) {
 
 fn split(e: Expr) -> i64 {
     match e {
-        Add(a, b) => {
+        Add(a, _b) => {
             let k = e
             eval(a) + eval(k)
         }
-        Mul(a, b) => 0
+        Mul(_a, _b) => 0
         Num(n) => n
     }
 }

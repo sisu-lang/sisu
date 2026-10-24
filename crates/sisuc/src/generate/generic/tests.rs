@@ -656,7 +656,10 @@ fn a_type_parameter_list_should_be_written_on_one_line_or_over_lines() {
     assert_eq!(written(2, 2), "<T, U>");
     assert_eq!(written(1, 1), "<\nT\n>");
     assert_eq!(written(2, 3), "<\nT,\nU\n>");
-    let source = format!("fn f{}(x: T, y: U) {{}}\nfn main() {{}}\n", written(2, 1));
+    let source = format!(
+        "fn _f{}(_x: T, _y: U) {{}}\nfn main() {{}}\n",
+        written(2, 1)
+    );
     let (program, diagnostics) = crate::front_end::checked(&source);
     assert!(
         program.is_some() && diagnostics.is_empty(),

@@ -15,7 +15,7 @@ enum E {
 fn id<T>(x: T) -> T { x }
 
 fn main() {
-    let e = E.Has(Box(v: 2))
+    let e = if true { E.Has(Box(v: 2)) } else { E.Empty }
     let xs = id(match e {
         Has(x) => ({ [x.read()] })
         _ => []

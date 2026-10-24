@@ -72,7 +72,7 @@ enum Wrap<T> {
     W(T)
 }
 
-fn take<T>(x: T, n: i64) -> i64 {
+fn take<T>(_x: T, n: i64) -> i64 {
     n
 }
 

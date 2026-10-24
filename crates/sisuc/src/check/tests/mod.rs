@@ -21,9 +21,30 @@ mod shadowing;
 mod strings;
 mod u8;
 mod unused;
+mod unused_names;
+
+thread_local! {
+    /// Whether this test judges unused names; `judge_unused` sets it.
+    static UNUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Keeps the unused-names warnings for the rest of this test, which `checked` drops otherwise:
+/// most test programs have helpers that `main` never calls.
+fn judge_unused() {
+    UNUSED.set(true);
+}
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    check(&parse_ok(src), src, &[])
+    let (program, mut ds) = check(&parse_ok(src), src, &[]);
+    if !UNUSED.get() {
+        ds.retain(|d| {
+            !matches!(
+                d.code(),
+                Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable
+            )
+        });
+    }
+    (program, ds)
 }
 
 fn diags(src: &str) -> Vec<Diagnostic> {
@@ -2290,6 +2311,88 @@ fn method_through_class_name() {
     codes(
         "class Tree {\n    fn sum(self) -> i64 { 0 }\n}\nfn main() {\n    print(Tree.sum(Tree()))\n}",
         &[(Code::TypeAsValue, (5, 11))],
+    );
+}
+
+/// The fix is safe when the arguments fit the method as a call `receiver.method(args)` checks
+/// them, the receiver's type arguments included; a name that is no method of the receiver stays
+/// a missing function.
+#[test]
+fn method_as_function_should_offer_the_method_call_for_a_class_and_an_enum() {
+    let class = "class P {\n    fn add(self, by: i64) -> i64 { by }\n}\nfn main() {\n    let p = P()\n    print(CALL)\n}";
+    let optional = "class P {\n    fn add(self, by: i64?) -> i64 { 1 }\n}\nfn main() {\n    let p = P()\n    print(add(p, 1))\n}";
+    let own = "class P {\n    fn same<U>(self, u: U) -> U { u }\n}\nfn main() {\n    let p = P()\n    print(same(p, None))\n}";
+    let generic = "class B<T> {\n    v: T\n    fn FN\n}\nfn main() {\n    CALL\n}";
+    let shape =
+        "enum S {\n    A\n    fn size(self) -> i64 { 1 }\n}\nfn main() {\n    print(size(S.A))\n}";
+    let generic = |method: &str, call: &str| generic.replace("FN", method).replace("CALL", call);
+    let cases = [
+        (class.replace("CALL", "add(p, 1)"), (6, 11, "add"), true),
+        (class.replace("CALL", "add(p)"), (6, 11, "add"), false),
+        (class.replace("CALL", "add(p, true)"), (6, 11, "add"), false),
+        (class.replace("CALL", "add(p, 1, 2)"), (6, 11, "add"), false),
+        (
+            class.replace("CALL", "add(p, // c\n        1)"),
+            (6, 11, "add"),
+            false,
+        ),
+        // The real call accepts a `T` for a `T?`.
+        (optional.to_string(), (6, 11, "add"), true),
+        // The class's type argument is `i64`: no method type parameters are in play.
+        (
+            generic("size(self) -> i64 { 1 }", "print(size(B(v: 1)))"),
+            (6, 11, "size"),
+            true,
+        ),
+        (
+            generic("arr(self, xs: [T]) {}", "arr(B(v: 1), [1, 2])"),
+            (6, 5, "arr"),
+            true,
+        ),
+        (
+            generic("arr(self, xs: [T]) {}", "arr(B(v: 1))"),
+            (6, 5, "arr"),
+            false,
+        ),
+        // The method's own type parameter is not known as written.
+        (own.to_string(), (6, 11, "same"), false),
+        (shape.to_string(), (6, 11, "size"), true),
+    ];
+    for (src, pos, safe) in cases {
+        let d = diagnostic(&src, Code::MethodAsFunction, pos, &[]);
+        assert_eq!(d.fixes().len(), 1, "{src}");
+        assert_eq!(d.fixes()[0].safe(), safe, "{src}");
+        if safe {
+            fix_removes_its_code(&src, &d);
+        }
+    }
+    let src = class.replace("CALL", "other(p, 1)");
+    codes(&src, &[(Code::FunctionNotFound, (6, 11))]);
+    // A method with type parameters of its own still has its arguments checked, once.
+    let src = own.replace("same(p, None)", "same(p, nope)");
+    codes(
+        &src,
+        &[
+            (Code::MethodAsFunction, (6, 11)),
+            (Code::BindingNotFound, (6, 19)),
+        ],
+    );
+    // A bad argument is reported once, with the method call.
+    let src = class.replace("CALL", "add(p, nope)");
+    codes(
+        &src,
+        &[
+            (Code::MethodAsFunction, (6, 11)),
+            (Code::BindingNotFound, (6, 18)),
+        ],
+    );
+}
+
+#[test]
+fn function_name_should_report_as_a_value_in_a_binding_and_an_argument() {
+    codes(
+        "fn g() -> i64 { 1 }\nfn main() {\n    let h = g\n    print(g)\n    print(h)\n}",
+        &[(Code::TypeAsValue, (3, 13)), (Code::TypeAsValue, (4, 11))],
     );
 }
 

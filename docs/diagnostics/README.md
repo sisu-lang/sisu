@@ -112,7 +112,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0102](E0102.md) | error | exponent without digits |
 | [E0103](E0103.md) | error | float literal out of range for `f64` |
 | [E0104](E0104.md) | error | integer literal not exactly an `f64` |
-| [E0105](E0105.md) | error | a type used as a value |
+| [E0105](E0105.md) | error | a type or a function used as a value |
 | [E0106](E0106.md) | error | math written another way |
 | [E0107](E0107.md) | error | `**` |
 | [E0108](E0108.md) | error | malformed format spec |
@@ -164,6 +164,9 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [W0009](W0009.md) | warning | `while` with the condition `true` |
 | [W0010](W0010.md) | warning | function that calls itself on every path |
 | [W0011](W0011.md) | warning | `while` condition that nothing in the loop changes |
+| [W0012](W0012.md) | warning | function, method, class, enum or constant that no live code uses |
+| [W0013](W0013.md) | warning | field that no live code reads, or variant that no live code builds |
+| [W0014](W0014.md) | warning | local or parameter that nothing reads |
 
 ## Explanations
 

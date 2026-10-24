@@ -1,0 +1,10 @@
+warning[W0014]: parameter `h` is never read
+ --> W0014.sisu:1:17
+  |
+1 | fn area(w: i64, h: i64) -> i64 {
+  |                 ^ never read
+  |
+  = help: if this is on purpose, name it `_h`
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0014

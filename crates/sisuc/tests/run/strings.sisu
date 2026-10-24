@@ -38,7 +38,7 @@ fn main() {
 
     // Growth past several reallocations keeps every earlier byte.
     let mut u = ""
-    for i in 0..20 {
+    for _ in 0..20 {
         u += "ä"
     }
     print(u)                         // ääääääääääääääääääää

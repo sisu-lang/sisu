@@ -1,0 +1,7 @@
+fn g() {
+    let = 1
+}
+
+fn main() {
+    let h = g
+}

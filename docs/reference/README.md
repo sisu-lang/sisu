@@ -14,7 +14,7 @@ A page states a rule only when `sisu` follows it today. A test checks every exam
 
 ## How to read an example
 
-Every example is a full program with a `main` function.
+Every example is a full program with a [`main` function](functions.md#main), except the example of the error for a program without `main`.
 
 ### Output comments
 
@@ -106,7 +106,7 @@ fn main() {
 
 ### Panics
 
-A stderr panel shows what the program writes to standard error. When the program panics, this is the panic message, and the program stops with exit code 101.
+A stderr panel shows what the program writes to standard error. When the program panics, this is the panic message, and the program stops with exit code 101. The example below panics on an [integer overflow](operators.md#overflow).
 
 ```sisu panics
 fn main() {

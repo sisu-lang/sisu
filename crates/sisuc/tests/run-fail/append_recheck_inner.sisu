@@ -13,4 +13,5 @@ fn shrink(b: B) -> string {
 fn main() {
     let b = B(grid: [["a", "b"]])
     b.grid[0][1] += shrink(b)
+    print(b.grid[0][0])               // never runs
 }

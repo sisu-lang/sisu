@@ -4,7 +4,7 @@ fn iterations() -> i64 { 1000 }
 // copy of the literal, then a reallocation at each doubling to 1024. The array is never copied.
 fn main() {
     let mut names = ["a"]
-    for i in 0..iterations() {
+    for _ in 0..iterations() {
         names[0] += "x"
     }
     print(names[0].len())            // 1001 (1 with no iterations)

@@ -542,7 +542,7 @@ panic_cases! {
 /// after the outer one.
 fn write_bounds_case() -> (String, String) {
     (
-        "fn main() {\n    let mut grid = [[false, false, false]]\n    grid[0][9] = true\n}\n"
+        "fn main() {\n    let mut grid = [[false, false, false]]\n    grid[0][9] = true\n    print(grid[0][0])\n}\n"
             .to_string(),
         "3:13: index 9 out of bounds for length 3".to_string(),
     )
@@ -553,7 +553,7 @@ fn write_bounds_case() -> (String, String) {
 /// `panic_cases` expects shows the panic comes first.
 fn append_bounds_case() -> (String, String) {
     (
-        "fn say() -> string {\n    print(\"said\")\n    \"x\"\n}\nfn main() {\n    let mut names = [\"a\", \"b\"]\n    let i = 3\n    names[i] += say()\n}\n"
+        "fn say() -> string {\n    print(\"said\")\n    \"x\"\n}\nfn main() {\n    let mut names = [\"a\", \"b\"]\n    let i = 3\n    names[i] += say()\n    print(names[0])\n}\n"
             .to_string(),
         "8:11: index 3 out of bounds for length 2".to_string(),
     )
@@ -1237,7 +1237,7 @@ fn bounds_case(index: &str, message: &str) -> (String, String) {
 
 /// Prints `1` and exits 0, but leaks: an object that refers to itself is never freed. Building
 /// the cycle in a callee keeps the pointer out of `main`'s registers.
-const LEAKS_A_CYCLE: &str = "class Node {\n    mut next: Node?\n}\n\nfn leak() {\n    let a = Node(next: None)\n    a.next = a\n}\n\nfn main() {\n    leak()\n    print(1)\n}\n";
+const LEAKS_A_CYCLE: &str = "class Node {\n    mut _next: Node?\n}\n\nfn leak() {\n    let a = Node(_next: None)\n    a._next = a\n}\n\nfn main() {\n    leak()\n    print(1)\n}\n";
 
 /// GIVEN a program that leaks a cycle and prints 1
 /// WHEN it runs plain and then under Valgrind
@@ -2454,4 +2454,16 @@ mod arithmetic {
             }
         }
     }
+}
+
+/// GIVEN the stderr of a build whose source quotes `warning[W0012]` in a string, under a W0002
+/// AND the stderr of a build with a real W0012
+/// WHEN the run harness looks for an unused-name warning in each
+/// THEN it finds none in the first and one in the second
+#[test]
+fn unused_warning_should_match_only_a_diagnostic_first_line() {
+    let quoted = "warning[W0002]: `n` is never reassigned\n --> fib.sisu:6:13\n  |\n6 |     let mut n = 30; let _ = \"warning[W0012]\"\n  |             ^\n  |\nhelp: declare it with `let`\n  |\n6 -     let mut n = 30; let _ = \"warning[W0012]\"\n6 +     let n = 30; let _ = \"warning[W0012]\"\n  |\n\nsisu: 1 warning\nsisu: for more on a code, run `sisu explain <code>`: W0002\n";
+    let real = "warning[W0012]: function `probe` is never called\n --> fib.sisu:4:4\n  |\n4 | fn probe() {}\n  |    ^^^^^ never called\n  |\n\nsisu: 1 warning\nsisu: for more on a code, run `sisu explain <code>`: W0012\n";
+    assert!(!support::has_unused_warning(quoted));
+    assert!(support::has_unused_warning(real));
 }

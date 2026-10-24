@@ -53,13 +53,13 @@ fn glider(dx: i64, dy: i64) -> [[bool]] {
 fn main() {
     let start = glider(0, 0)
     let mut grid = start
-    for i in 0..4 {
+    for _ in 0..4 {
         grid = step(grid)
     }
     print(count(grid))                // 5
     // A glider moves one cell down and to the right every 4 steps.
     print(grid == glider(1, 1))       // true
-    for i in 4..32 {
+    for _ in 4..32 {
         grid = step(grid)
     }
     // 32 steps move it 8 cells each way, all around the grid.

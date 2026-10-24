@@ -1,0 +1,10 @@
+warning[W0014]: variable `x` is never read
+ --> W0014-let.sisu:2:13
+  |
+2 |     let mut x = 1
+  |             ^ never read
+  |
+  = help: if this is on purpose, name it `_x`
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0014

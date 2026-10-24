@@ -39,6 +39,11 @@ _Avoid_: dropped value (dropping is what a reference count does)
 A function that calls itself on every path, so it can never return; the
 compiler warns about it.
 
+**Live code**:
+Code that `main`, or a function, method or constant whose name starts with `_`,
+can reach through calls and constant names. Only a use in live code counts as a
+use for the unused-name warnings.
+
 **Loop label**:
 The name written before a loop (`outer: for ...`) that a `break` or
 `continue` names to leave or restart that loop instead of the innermost one.
@@ -364,6 +369,79 @@ confused with **Object**, one heap value of a class.
 **Class-only interface**:
 An interface that inherits `AnyObject`, so that only classes conform to it
 and its interface values support `is` and `weak`.
+
+## Functions and closures
+
+Milestone 9 adds these.
+
+**Function type**:
+The type of a function value, written `(i64, i64) -> bool`: the parameter
+types in order, then the return type. It has no labels.
+_Avoid_: signature (a declaration's), delegate
+
+**Function value**:
+A value of a function type: a named function used without a call, or a
+closure. It can be stored, passed, returned and called.
+_Avoid_: function pointer, callable
+
+**Closure**:
+A function written as an expression, such as `x => x + n`, that can use the
+locals around it. It has no name.
+_Avoid_: lambda, anonymous function, block
+
+**Capture**:
+A copy, made when a closure is created, of an outer local, parameter or
+`self` that the closure's body names. A closure cannot change its captures.
+_Avoid_: upvalue, closed-over variable
+
+**Weak capture**:
+A capture that does not keep its object alive. Inside the closure the name is
+an optional, which reads `None` once the object has been dropped.
+
+## Iterators
+
+Milestone 9 adds these.
+
+**Iterator**:
+A value that conforms to `Iterator` and gives its elements one at a time
+from `next`, until `next` returns `None`.
+_Avoid_: generator, enumerator, cursor
+
+**Iterable**:
+A value that conforms to `Iterable`, so `for` can walk it: `iter()` gives
+an iterator over it. Arrays, ranges and every iterator are iterable.
+_Avoid_: sequence, collection
+
+**Adapter**:
+An iterator that wraps another and changes what it gives, such as the
+result of `map` or `filter`.
+_Avoid_: combinator
+
+## Results
+
+Milestone 12 adds these.
+
+**Result**:
+A value of type `T | E`, short for `Result<T, E>`: a success holding a `T` or
+a failure holding an `E`.
+_Avoid_: union, either
+
+**Success**:
+The `Ok` side of a result. A plain value converts to a success where a
+result is expected.
+
+**Failure**:
+The `Err` side of a result, made by `fail`. A failure passes up with `?`.
+_Avoid_: exception, error (the error is the value a failure holds)
+
+**Error type**:
+The type on the right of `|`: a type that conforms to `Error`, such as
+`IoError` or `string`.
+_Avoid_: failure type
+
+**Unused result**:
+An unused value whose type is a result. Unlike other unused values it is
+an error, not a warning; `let _ = e` ignores it on purpose.
 
 ## Compiler
 

@@ -31,7 +31,7 @@ fn main() {
 }
 ```
 
-A `-` before a literal is the unary minus operator. It is not part of the literal.
+A `-` before a literal is the [unary minus operator](operators.md#unary-operators). It is not part of the literal.
 
 ### Bases
 
@@ -106,7 +106,7 @@ fn main() {
 
 The same rule applies in other bases, such as `-0x8000000000000000`.
 
-A `.`, `?.` or `[` after the literal applies before the `-` does. So `-9223372036854775808.max(0)` is an error.
+A `.`, `?.` or `[` after the literal applies before the `-` does ([Precedence](operators.md#precedence)). So `-9223372036854775808.max(0)` is an error.
 
 ### The type of an integer literal
 
@@ -126,18 +126,18 @@ The rules, in order:
 
 - When the context expects a `u8` or a `u8?`, the literal is a `u8`. When the context expects an `f64` or an `f64?`, the literal is an `f64`.
 - In a group of operands, the operands that are not integer literals decide the type of its integer literals. If one of them is a `u8` or a `u8?`, the literals in the group are `u8`s. If one is an `f64`, an `f64?` or a float literal, they are `f64`s. These are the groups:
-  - the two operands of an arithmetic operator or a comparison, such as `+`, `<` or `==`
-  - the operands of a comparison chain
-  - the elements of an array literal
+  - the two operands of an [arithmetic operator](operators.md#arithmetic) or a comparison, such as `+`, `<` or `==`
+  - the operands of a [comparison chain](operators.md#comparison-chains)
+  - the elements of an [array literal](arrays.md#array-literals)
   - the branches of an `if` or an `if let`, or the arms of a `match`
 - When a literal has no expected type and is not in a group, it is an `i64`.
 
 These places give an expected type:
 
 - the declared type of a `let` or a `const`
-- the place of an assignment, also with `+=` and the other compound operators
+- the place of an [assignment](statements.md#assignment), also with `+=` and the other [compound operators](statements.md#compound-assignment)
 - a parameter of a function or a method, also a built-in method such as `max`
-- a field of a class constructor, or a value of an enum variant
+- a field of a [class constructor](classes.md#constructors), or a value of an enum variant
 - the return type, for a `return` value and for the last expression of a function body
 - the element type, for each element of an array literal
 - the type of the value in the left operand of `??`, for the right operand
@@ -187,7 +187,7 @@ A float literal never becomes an integer.
 
 ## Float literals
 
-A float literal has a fraction, an exponent or both. Its type is always `f64`.
+A float literal has a fraction, an exponent or both. Its type is always [`f64`](types.md#floating-point-numbers).
 
 ```sisu
 fn main() {
@@ -221,7 +221,7 @@ fn main() {
 
 ## Character literals
 
-A character literal is one Unicode scalar value between single quotes, such as `'a'` or `'ä'`. Its type is `char`. An escape can write the value.
+A character literal is one Unicode scalar value between single quotes, such as `'a'` or `'ä'`. Its type is [`char`](types.md#char). An escape can write the value.
 
 ```sisu
 fn main() {
@@ -243,7 +243,7 @@ A `'` in a character literal must be the escape `\'`. A `"` can stand as it is. 
 
 ## String literals
 
-A string literal is text between double quotes, such as `"sauna"`. Its type is `string`. The text can hold any character, and the escapes below.
+A string literal is text between double quotes, such as `"sauna"`. Its type is [`string`](types.md#string). [Strings and formatting](strings.md) tells how a string works. The text can hold any character, and the escapes below.
 
 ```sisu
 fn main() {
@@ -267,11 +267,11 @@ fn main() {
 
 The rules:
 
-- The value of the expression must be an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` ([E0098](../diagnostics/E0098.md)).
+- The value of the expression must be an `i64`, a `u8`, an `f64`, a `bool`, a `char` or a `string` ([E0098](../diagnostics/E0098.md)). The section [Text of other types](strings.md#text-of-other-types) is in development, and it changes this rule.
 - The expression can include a string literal of its own: `"{ "a" + "b" }"`.
 - The expression must be on the line of the string literal.
 - A `}` closes the interpolation only when every bracket opened in the interpolation is closed. A `{` or `}` in a string or character literal in the expression does not count, so `"{ c == '}' }"` is valid.
-- A `:` after the expression starts a format spec, such as `"{x:.2}"`.
+- A `:` after the expression starts a format spec, such as `"{x:.2}"` ([Format specs](strings.md#format-specs)).
 - An empty interpolation, `"{}"` or `"{ }"`, is an error ([E0096](../diagnostics/E0096.md)).
 - A comment cannot be in an interpolation ([E0097](../diagnostics/E0097.md)).
 - A `}` in the text, outside an interpolation, is an error ([E0095](../diagnostics/E0095.md)).
@@ -330,7 +330,7 @@ fn main() {
 
 ## Boolean literals
 
-`true` and `false` are the two values of `bool`.
+`true` and `false` are the two values of [`bool`](types.md#bool).
 
 ```sisu
 fn main() {

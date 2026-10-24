@@ -12,4 +12,5 @@ fn shrink(b: B) -> string {
 fn main() {
     let b = B(tags: ["a", "b"])
     b.tags[1] += shrink(b)
+    print(b.tags[0])                  // never runs
 }

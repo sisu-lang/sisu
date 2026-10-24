@@ -5,6 +5,6 @@ fn f() -> i64 {
 fn main() {
     let n = 1
     match n {
-        t => f()
+        _ => f()
     }
 }

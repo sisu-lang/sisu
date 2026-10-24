@@ -4,7 +4,7 @@ fn iterations() -> i64 { 1000 }
 // and the count never reaches 0, so the block is never freed.
 fn main() {
     let mut total = 0
-    for i in 0..iterations() {
+    for _ in 0..iterations() {
         let s = "abc"
         total += s.len()
     }

@@ -1,13 +1,13 @@
 warning[W0004]: unused value of type `i64`
  --> W0004-arm.sisu:8:14
   |
-8 |         t => f()
+8 |         _ => f()
   |              ^^^
   |
   = help: use it, or write `{ let _ = ... }` to drop it on purpose
 help: drop it on purpose
   |
-8 |         t => { let _ = f() }
+8 |         _ => { let _ = f() }
   |              +++++++++     +
 
 sisu: 1 warning

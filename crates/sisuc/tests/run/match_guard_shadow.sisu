@@ -12,7 +12,7 @@ enum E {
 fn id<T>(x: T) -> T { x }
 
 fn main() {
-    let e = E.Has(Box(v: 2))
+    let e = if true { E.Has(Box(v: 2)) } else { E.Empty }
     let xs: [i64] = id(match e {
         Has(x) if x.v > 0 => {
             let x = 1

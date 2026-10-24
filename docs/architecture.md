@@ -122,7 +122,12 @@ Maranget's usefulness algorithm over each
 misses as a pattern, such as `Mul(_, _)`, and an arm that no value reaches is
 a warning. The same check rejects an `if let` or `while let` whose pattern
 always matches. `check/recursion.rs` walks the `tir` of each function and gives
-W0010 when the function calls itself on every path. `check/operator.rs` checks operators (arithmetic, comparison,
+W0010 when the function calls itself on every path. After a check with no
+error, `check/unused_names.rs` walks the uses that the checker records, out
+from `main` and each function, method and constant whose name starts with `_`.
+It gives W0012 for an item that no live code uses, W0013 for a field that live
+code does not read or a variant that it does not build, and W0014 for a local
+or parameter of live code that nothing reads. `check/operator.rs` checks operators (arithmetic, comparison,
 equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
 their branch types, `check/call.rs` calls, method calls and constructors, and
 `check/member.rs` fields and methods found through `.` and `?.`.

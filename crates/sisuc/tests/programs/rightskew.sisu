@@ -2,9 +2,9 @@
 // from a pending list, in one frame. A drop that recursed on `right` would need a frame per
 // node and overflow that stack.
 class Tree {
-    left: Tree?
+    _left: Tree?
     right: Tree?
-    v: i64
+    _v: i64
 }
 
 fn main() {
@@ -12,7 +12,7 @@ fn main() {
     let mut i = 0
     while i < 1_000_000 {
         i += 1
-        root = Tree(left: None, right: root, v: i)
+        root = Tree(_left: None, right: root, _v: i)
     }
     let mut depth = 0
     let mut node = root

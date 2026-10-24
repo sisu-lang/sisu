@@ -281,6 +281,16 @@ fn main() {
         );
     }
 
+    /// Only the parser sees the error in `broken`, so the checker's own list holds no error.
+    #[test]
+    fn front_end_should_not_warn_about_unused_names_when_an_item_fails_to_parse() {
+        let src = "fn helper() {\n    print(1)\n}\nfn broken() {\n    let = 1\n}\nfn main() {\n    let mut m = 1\n    print(m)\n}\n";
+        assert_eq!(
+            codes(src),
+            [(Code::Expected, (5, 9)), (Code::NeverReassigned, (8, 13))]
+        );
+    }
+
     /// The unnamed `const enum` starts where its line does, inside the unnamed `1` before it;
     /// the `$` between them is reported once.
     #[test]
@@ -557,9 +567,9 @@ fn main() {
     /// The fix of a `}` in a string leaves a program that passes the whole front end, after an
     /// escaped backslash, after an interpolation and in a string inside one.
     #[test]
-    fn brace_in_string_fix_passes_the_front_end() {
+    fn brace_fix_should_pass_the_front_end() {
         for text in [r#""}""#, r#""\\}""#, r#""{n}}""#, r#""{ "}" }""#] {
-            let src = format!("fn main() {{\n    let n = 1\n    print({text})\n}}\n");
+            let src = format!("fn main() {{\n    let n = 1\n    print(n)\n    print({text})\n}}\n");
             let ds = front_end(&src).1;
             let [d] = ds.as_slice() else {
                 panic!("expected one diagnostic, got {ds:?}");
@@ -723,7 +733,7 @@ fn main() {
     /// end where it was, up to the length the fix removes. The lexer's list catches what the front
     /// end hides when an item is broken.
     #[test]
-    fn redundant_semicolon_fix_changes_nothing_else() {
+    fn redundant_semicolon_fix_should_leave_other_diagnostics_unchanged() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics");
         let mut sources: Vec<String> = [
             "fn main() {\n    let x = 1;\n    {\n    }\n}\n",
@@ -732,7 +742,7 @@ fn main() {
             "fn main() {\n    let t = 1\n    ; - 2\n}\n",
             "fn f() -> i64 {\n;\n- 1\n}\nfn main() { print(f()) }\n",
             "fn helper();\nfn main() {}\n",
-            "class C {\n    x: i64;\n}\nfn main() {}\n",
+            "class _C {\n    x: i64;\n}\nfn main() {}\n",
             "fn main() {\n    if true { print(1) }; else { print(2) }\n}\n",
             "fn main() {\n    let x = 1 $\n    ; - 2\n}\n",
             "fn main() { return;else { } }\n",

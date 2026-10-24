@@ -92,38 +92,11 @@ impl Checker<'_> {
     ) -> Result<tir::Stmt, Poisoned> {
         let unit = || Poisoned::typed(Type::UNIT);
         if let ast::ExprKind::Name(name) = target.kind {
-            // `assign` already reports an unknown target; a synthetic read would repeat it.
-            if self.lookup(name).is_none() {
-                return self.assign(span, target, value);
-            }
-            // A `char` has no arithmetic, and a rewrite of the statement would break the
-            // assignment: `target` stands for the value, which `assign` accepts.
-            if self.lookup(name).is_some_and(|b| b.ty == Some(Type::CHAR)) {
-                self.char_compound(op_span, value);
-                return self.assign(span, target, target);
-            }
-            // `assign` of `target op value`, whose `op` spans the statement.
-            let place = self.place(span, target, false);
-            let want = place.ty;
-            let checked = self.binary(
-                span,
-                (op, op_span),
-                target,
-                value,
-                Some(want.unwrap_or(UNKNOWN)),
-                true,
-            );
-            let expanded = ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op,
-                    op_span,
-                    lhs: Box::new(target.clone()),
-                    rhs: Box::new(value.clone()),
-                },
-                span,
-            };
-            let (checked, _) = self.settled(&expanded, checked, want);
-            return self.assigned(span, place, checked);
+            // The target is checked as a value only to give its value back to it: no read.
+            let outer = self.body.quiet.replace(target.span);
+            let result = self.compound_assign_name(span, (op, op_span), (target, name), value);
+            self.body.quiet = outer;
+            return result;
         }
         let place = self.place(span, target, false);
         let Some(ty) = place.ty else {
@@ -175,6 +148,48 @@ impl Checker<'_> {
         let operands = reads(&temps);
         lets.push(self.write(span, root, operands, value));
         Ok(tir::Stmt::Expr(block_expr(lets, None, Type::UNIT, span)))
+    }
+
+    /// `compound_assign` of the name `target`, which is `name`.
+    fn compound_assign_name(
+        &mut self,
+        span: Span,
+        (op, op_span): (ast::BinaryOp, Span),
+        (target, name): (&ast::Expr, Symbol),
+        value: &ast::Expr,
+    ) -> Result<tir::Stmt, Poisoned> {
+        // `assign` already reports an unknown target; a synthetic read would repeat it.
+        if self.lookup(name).is_none() {
+            return self.assign(span, target, value);
+        }
+        // A `char` has no arithmetic, and a rewrite of the statement would break the
+        // assignment: `target` stands for the value, which `assign` accepts.
+        if self.lookup(name).is_some_and(|b| b.ty == Some(Type::CHAR)) {
+            self.char_compound(op_span, value);
+            return self.assign(span, target, target);
+        }
+        // `assign` of `target op value`, whose `op` spans the statement.
+        let place = self.place(span, target, false);
+        let want = place.ty;
+        let checked = self.binary(
+            span,
+            (op, op_span),
+            target,
+            value,
+            Some(want.unwrap_or(UNKNOWN)),
+            true,
+        );
+        let expanded = ast::Expr {
+            kind: ast::ExprKind::Binary {
+                op,
+                op_span,
+                lhs: Box::new(target.clone()),
+                rhs: Box::new(value.clone()),
+            },
+            span,
+        };
+        let (checked, _) = self.settled(&expanded, checked, want);
+        self.assigned(span, place, checked)
     }
 
     /// The operator `op` of a compound assignment over the place `target`, of type `ty`, whose
@@ -297,7 +312,7 @@ impl Checker<'_> {
                 let Some(b) = self.lookup(name) else {
                     if let Some(place) = self.constant_place(span, name, element) {
                         return place;
-                    } else if self.function_ids.contains_key(&name) {
+                    } else if self.is_function(name) {
                         self.report(DiagnosticKind::AssignToFunction {
                             name: name.to_string(),
                             at: target.span,

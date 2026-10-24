@@ -19,6 +19,7 @@ mod prelude;
 mod recursion;
 mod stmt;
 mod string;
+mod unused_names;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -34,6 +35,7 @@ use crate::types::{Head, write_type};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use prelude::PRELUDE;
+use unused_names::{Owner, Pending, Use};
 
 /// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when
 /// still known (an `if` with one failed branch takes the other's), else it is the poison
@@ -129,6 +131,10 @@ enum BindingKind {
     Unwrapped(&'static str),
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact, set by a different statement or expression"
+)]
 struct Binding {
     local: tir::LocalId,
     /// `None` is `Error`.
@@ -145,6 +151,10 @@ struct Binding {
     written: u32,
     /// Whether W0011 names the binding, which then gets no W0002: its fix would keep the loop.
     loop_named: bool,
+    /// Whether an expression reads the binding's value.
+    read: bool,
+    /// Where each later alternative of an or-pattern binds the name again.
+    also: Vec<Span>,
 }
 
 /// Which part of a loop the code being checked is in.
@@ -275,6 +285,9 @@ thread_local! {
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
     pub(super) static PARAM_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types the walks for comparisons and for held type parameters have taken from
+    /// their stacks on this thread.
+    pub(super) static HELD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -307,6 +320,10 @@ struct Checker<'src> {
     parse_errors: Vec<Span>,
     /// The body being checked.
     body: Body,
+    /// Each use of an item that a function, method or constant has, in check order.
+    uses: Vec<Use>,
+    /// Each binding of a function or a method that nothing reads, in check order.
+    pending: Vec<Pending>,
 }
 
 /// The checker's diagnostics, and how many errors were added to them. The count never goes
@@ -369,6 +386,8 @@ impl std::ops::DerefMut for Diagnostics {
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
+    /// The function, method or constant whose body this is; `None` for none, such as a signature.
+    owner: Option<Owner>,
     /// The type parameters in scope, which `resolve` finds before any other type.
     type_params: Vec<Symbol>,
     /// Where in `type_params` each name first is, so a lookup does not scan them.
@@ -407,6 +426,10 @@ struct Body {
     /// Whether the expression being checked is a link of an assigned field's base chain (field
     /// bases, method receivers, indexed bases), where a `?.` cannot stand.
     in_target: bool,
+    /// The initializer of the `let` being checked, and what that `let` writes before its type
+    /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
+    /// `None` or `[]`.
+    let_init: Option<(Span, Symbol, bool)>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,
@@ -421,6 +444,11 @@ struct Body {
     exits: u32,
     /// How many W0005 (a comparison with `f64.nan`) the body has reported.
     nans: u32,
+    /// The target of the compound assignment being checked, whose reads are not reads: they
+    /// only give the value back to the target.
+    quiet: Option<Span>,
+    /// Whether the body has a `todo`, which keeps its parameters from W0014.
+    todo: bool,
     /// Work ranking arguments did ahead of its turn, innermost last, by the span it was done
     /// for and whether that is a block's; `None` once used.
     ahead: Vec<((Span, bool), Option<generic::Ahead>)>,
@@ -475,7 +503,7 @@ pub(crate) fn check<'src>(
         .collect();
     checker.instantiation_cycles(&functions, &unbuilt);
     let classes = checker.classes.iter().map(lower_class).collect();
-    let mut diagnostics = checker.diagnostics.into_vec();
+    let mut diagnostics = std::mem::take(&mut checker.diagnostics).into_vec();
     diagnostics.sort_by_key(|d| d.span().start());
     let errors = error_spans(&diagnostics);
     // A function with an error of its own is skipped, so that its errors stand alone.
@@ -508,6 +536,14 @@ pub(crate) fn check<'src>(
     diagnostics.extend(warnings);
     diagnostics.sort_by_key(|d| d.span().start());
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
+    // A use in a failed expression may not be recorded, so an error stops the pass. Only the
+    // parser sees an item that fails to parse.
+    if !failed && !parsed.iter().any(|d| d.severity() == Severity::Error) {
+        diagnostics.extend(checker.unused());
+    } else {
+        diagnostics.extend(checker.unjudged());
+    }
+    diagnostics.sort_by_key(|d| d.span().start());
     let broken = !program.broken.is_empty()
         || program.items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
@@ -608,6 +644,8 @@ impl<'src> Checker<'src> {
             diagnostics: Diagnostics::default(),
             parse_errors: Vec::new(),
             body: Body::default(),
+            uses: Vec::new(),
+            pending: Vec::new(),
         }
     }
 
@@ -1095,6 +1133,7 @@ impl Checker<'_> {
             _ => 0,
         };
         let mut fresh = Body {
+            owner: Some(Owner::Func(id)),
             ret,
             self_type: owner,
             ..Body::default()
@@ -1220,7 +1259,7 @@ impl Checker<'_> {
 
     /// "cannot find binding `name`", offering the closest binding of any open scope, and of any
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
-    /// an enum's, is in scope, but as a type: that is reported instead.
+    /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
         if built_in_type(name.as_str()).is_some()
             || self.class_ids.contains_key(&name)
@@ -1229,6 +1268,23 @@ impl Checker<'_> {
             return DiagnosticKind::TypeAsValue {
                 name: name.to_string(),
                 at: span,
+            }
+            .into();
+        }
+        // Whether the function takes arguments; a prelude function is a function too.
+        let takes_arguments = match self.function_ids.get(&name) {
+            Some(&Declared::Known(func)) => Some(!self.signatures[func.0].params.is_empty()),
+            // A broken function has no known parameters: no call is offered.
+            Some(Declared::Broken) => Some(true),
+            None => PRELUDE
+                .contains(&name.as_str())
+                .then(|| prelude::takes_arguments(name.as_str())),
+        };
+        if let Some(takes_arguments) = takes_arguments {
+            return DiagnosticKind::FunctionAsValue {
+                name: name.to_string(),
+                at: span,
+                takes_arguments,
             }
             .into();
         }

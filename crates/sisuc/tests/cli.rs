@@ -568,7 +568,7 @@ fn emit_ast_and_tir_should_print_mut_for_mutable_variables_and_fields() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
     fs::write(
         dir.join("emit_mut.sisu"),
-        "class P {\n    name: i64\n    mut hp: i64\n}\nfn main() {\n    let mut x = 1\n    x = 2\n}\n",
+        "class _P {\n    name: i64\n    mut hp: i64\n}\nfn main() {\n    let mut x = 1\n    x = 2\n    print(x)\n}\n",
     )
     .expect("writes");
     let emit = |what: &str| {
@@ -582,11 +582,11 @@ fn emit_ast_and_tir_should_print_mut_for_mutable_variables_and_fields() {
     };
     assert_eq!(
         emit("ast"),
-        "(class P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x 1) (= x 2)))\n"
+        "(class _P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x 1) (= x 2) (call print x)))\n"
     );
     assert_eq!(
         emit("tir"),
-        "(class P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x#0 1) (= x#0 2)))\n"
+        "(class _P (name i64) (mut hp i64))\n(fn main () unit (block (let mut x#0 1) (= x#0 2) (print x#0)))\n"
     );
 }
 
@@ -1052,7 +1052,7 @@ fn emit_tir_should_print_a_while_loop_as_a_loop_with_a_break() {
 fn emit_mir_should_show_a_move_when_a_function_returns_its_parameter() {
     let out = run_on(
         "emit_mir_shows_moves",
-        "fn f(xs: [i64]) -> [i64] { xs }\nfn main() {}\n",
+        "fn _f(xs: [i64]) -> [i64] { xs }\nfn main() {}\n",
         &["build", "--emit", "mir"],
     );
     assert_eq!(
@@ -1073,7 +1073,7 @@ fn emit_mir_should_show_a_move_when_a_function_returns_its_parameter() {
 fn emit_mir_should_print_the_blocks_of_each_function() {
     let out = run_on(
         "emit_mir",
-        "enum E {\n    A(string)\n    B\n}\n\nfn name(e: E) -> string {\n    match e {\n        A(s) => s\n        B => \"b\"\n    }\n}\n\nfn main() {\n    print(name(E.A(\"a\")))\n}\n",
+        "enum E {\n    A(string)\n    B\n}\n\nfn name(e: E) -> string {\n    match e {\n        A(s) => s\n        B => \"b\"\n    }\n}\n\nfn main() {\n    print(name(E.A(\"a\")))\n    print(name(E.B))\n}\n",
         &["build", "--emit", "mir"],
     );
     assert_eq!(
@@ -1409,7 +1409,7 @@ fn emit_ir_at_o3_should_have_more_loops_than_at_o2_when_a_loop_can_unswitch() {
 #[test]
 fn print_in_a_loop_should_not_keep_a_bounds_check_at_o2() {
     let source = "fn main() {\n    let xs = [1; 10_000]\n    let mut total = 0\n\
-                  for round in 0..1000 {\n        for i in 0..10_000 {\n\
+                  for _ in 0..1000 {\n        for i in 0..10_000 {\n\
                   if xs[i] == 0 { print(i) }\n            total += xs[i]\n        }\n    }\n\
                   print(total)\n}\n";
     let out = run_on("print_in_a_loop", source, &["build", "-O2", "--emit", "ir"]);
@@ -1660,6 +1660,11 @@ fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
         writeln!(wide, "    V{v}").expect("writing to a `String` should not fail");
         wide
     });
+    // `main` builds each variant that the comparisons do not, so that none of them is unused.
+    let builds = (1..256).fold(String::new(), |mut builds, v| {
+        writeln!(builds, "    let _ = Wide.V{v}").expect("writing to a `String` should not fail");
+        builds
+    });
     let source = format!(
         "enum Outer {{\n    Maybe(Pair?)\n}}\n\n\
          enum Pair {{\n    Two(i64, i64)\n}}\n\n\
@@ -1672,7 +1677,7 @@ fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
          print(Holder.Wrap(Trio.Three(1, 2, 3)) == Holder.Wrap(Trio.Three(1, 2, 4)))\n    \
          print(Light.Red == Light.Green)\n    \
          print(Wide.V256 == Wide.V0)\n\
-         }}\n"
+         {builds}}}\n"
     );
     let out = run_on(
         "enum_layouts_follow_the_target",

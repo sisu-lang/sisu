@@ -1,0 +1,8 @@
+fn main() {
+    let found = None
+    let ys = []
+    let mut count = None
+    count = None
+    let _ = None
+    let _ = []
+}

@@ -1061,7 +1061,10 @@ impl Checker<'_> {
         let mut agrees = true;
         let local = if let Some(alternatives) = bound.alternatives.last_mut() {
             if let Some(&local) = alternatives.first.get(&name.name) {
-                let earlier = self.lookup(name.name).map(|b| (b.ty, b.span));
+                let earlier = self.lookup(name.name).map(|b| {
+                    b.also.push(name.span);
+                    (b.ty, b.span)
+                });
                 if let (Some((Some(want), earlier)), Some(got)) = (earlier, ty)
                     && want != got
                 {

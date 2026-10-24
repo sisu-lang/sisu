@@ -1,0 +1,14 @@
+error[E0070]: `scaled` is a method, not a function
+  --> E0070-enum-method.sisu:12:11
+   |
+12 |     print(scaled(s, 2))
+   |           ^^^^^^
+   |
+help: call `scaled` as a method
+   |
+12 -     print(scaled(s, 2))
+12 +     print(s.scaled(2))
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

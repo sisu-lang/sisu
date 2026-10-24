@@ -1,0 +1,21 @@
+warning[W0012]: function `format_row` is never called
+ --> W0012.sisu:1:4
+  |
+1 | fn format_row() {
+  |    ^^^^^^^^^^ never called
+...
+5 |     format_row()
+  |     ------------ used here, in `old_report`, which is never called
+  |
+  = help: delete it, or name it `_format_row` if it is kept on purpose
+
+warning[W0012]: function `old_report` is never called
+ --> W0012.sisu:4:4
+  |
+4 | fn old_report() {
+  |    ^^^^^^^^^^ never called
+  |
+  = help: delete it, or name it `_old_report` if it is kept on purpose
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012

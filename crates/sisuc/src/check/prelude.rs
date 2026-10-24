@@ -8,12 +8,23 @@ use super::{Checked, Checker, Poisoned, payload, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, MismatchFix};
 use crate::source::Span;
+use crate::symbol::Symbol;
 use crate::tir::{self, Stream, Type, TypeKind};
 
 /// The prelude's names.
 pub(super) const PRELUDE: [&str; 4] = ["print", "eprint", "panic", "read_line"];
 
+/// Whether the prelude function `name` takes arguments: only `read_line` takes none.
+pub(super) fn takes_arguments(name: &str) -> bool {
+    name != "read_line"
+}
+
 impl Checker<'_> {
+    /// Whether `name` is a function of the program or of the prelude.
+    pub(super) fn is_function(&self, name: Symbol) -> bool {
+        self.function_ids.contains_key(&name) || PRELUDE.contains(&name.as_str())
+    }
+
     /// A call of the prelude function `callee`; `None` when `callee` names none.
     pub(super) fn prelude_call(
         &mut self,
@@ -110,6 +121,7 @@ impl Checker<'_> {
     /// program.
     pub(super) fn todo(&mut self, span: Span, keyword: Span, args: &[ast::Arg]) -> Checked {
         self.body.exits += 1;
+        self.body.todo = true;
         self.report(DiagnosticKind::TodoLeft { at: keyword });
         let labeled = self.labels(args);
         let text = |text: &str| tir::Expr {

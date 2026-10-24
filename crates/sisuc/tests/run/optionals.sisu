@@ -118,9 +118,9 @@ fn coalesce() {
     print(b ?? loud(200))
     print(b ?? b ?? 9)
     let e: E? = E()
-    let f = e ?? loud_object(500)
+    let _f = e ?? loud_object(500)
     let g: E? = None
-    let h = g ?? loud_object(600)
+    let _h = g ?? loud_object(600)
 }
 
 // `?.` evaluates its arguments only when the receiver holds a value.

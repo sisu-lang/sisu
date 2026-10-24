@@ -3,9 +3,10 @@
 
 use std::fmt;
 
-use super::expr::{no_member, postfix};
+use super::expr::{fits, no_member, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::prelude::PRELUDE;
+use super::unused_names::Used;
 use super::{
     Checked, Checker, Declared, Poisoned, UNKNOWN, block_expr, built_in_type, own_args, type_of,
 };
@@ -17,6 +18,15 @@ use crate::diagnostic::{
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
+
+/// The method that a call written as a function names.
+enum Idiom {
+    /// A method of an array or a number.
+    Built,
+    /// A method of a class or an enum.
+    /// With the type arguments of the receiver's class or enum.
+    Method(tir::FuncId, TypeArgs),
+}
 
 impl Checker<'_> {
     /// `callee(args)`, which `site` writes with its type arguments.
@@ -60,30 +70,18 @@ impl Checker<'_> {
 
     /// A call of `callee`, which names nothing callable. `len(xs)`, `sum(xs)` and
     /// `contains(xs, v)`, where `xs` is an array with that method, point to the method, and so
-    /// do `sqrt(x)` and `max(a, b)`, where the first argument is a number with it.
+    /// do `sqrt(x)` and `max(a, b)`, where the first argument is a number with it, and
+    /// `name(p)`, where `p` is an object of a class or an enum that has the method `name`.
     fn unknown_call(&mut self, callee: &ast::Ident, args: &[ast::Arg]) -> Checked {
         let name = callee.name.as_str();
-        let idiom = (matches!(name, "len" | "sum" | "contains")
-            || number::method_name(name).is_some())
-            && args.iter().all(|arg| arg.label.is_none());
         let rest = match args.split_first() {
-            Some((first, rest)) if idiom => {
+            Some((first, rest)) if args.iter().all(|arg| arg.label.is_none()) => {
                 let receiver = self.expr(&first.value, Some(UNKNOWN));
-                // A poisoned receiver is not known to be an array or a number.
-                let ty = match &receiver {
-                    Ok(tir::Expr { ty, .. }) => match ty.kind() {
-                        TypeKind::Array(element)
-                            if matches!(name, "len" | "contains")
-                                || name == "sum" && matches!(element, Type::I64 | Type::F64) =>
-                        {
-                            Some(*ty)
-                        }
-                        _ if number::method(*ty, name).is_some() => Some(*ty),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                if let Some(ty) = ty {
+                // A poisoned receiver is not known to have the method.
+                let idiom = receiver.as_ref().ok().and_then(|receiver| {
+                    Some((self.idiom_of(callee.name, receiver.ty)?, receiver.ty))
+                });
+                if let Some((idiom, ty)) = idiom {
                     let next = rest.first().map(|arg| arg.value.span);
                     // The rewrite deletes the text before the receiver and between it and
                     // `next`, so a comment there makes it unsafe.
@@ -91,14 +89,17 @@ impl Checker<'_> {
                         callee.span.start()..first.value.span.start(),
                         first.value.span.end()..next.map_or(first.value.span.end(), Span::start),
                     ];
-                    let safe = self.idiom_arguments(name, ty, rest) && !self.comment_in(&deleted);
+                    let takes = match idiom {
+                        Idiom::Built => self.idiom_arguments(name, ty, rest),
+                        Idiom::Method(func, owner) => self.method_arguments(func, owner, rest),
+                    };
                     self.report(DiagnosticKind::MethodAsFunction {
                         name: callee.name.to_string(),
                         at: callee.span,
                         receiver: first.value.span,
                         next,
                         wrap: !postfix(&first.value) || self.label_starts_receiver(callee, first),
-                        safe,
+                        safe: takes && !self.comment_in(&deleted),
                     });
                     return Err(Poisoned::error());
                 }
@@ -130,6 +131,27 @@ impl Checker<'_> {
         // No `labels`: the name may have meant a class, whose constructor takes them.
         self.stray(rest);
         Err(Poisoned::error())
+    }
+
+    /// How the method `name` belongs to a receiver of type `ty`: a built-in array or number
+    /// method, or a method of a class or an enum. `None` when the type has no such method.
+    fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
+        let (methods, owner) = match ty.kind() {
+            TypeKind::Array(element)
+                if matches!(name.as_str(), "len" | "contains")
+                    || name.as_str() == "sum" && matches!(element, Type::I64 | Type::F64) =>
+            {
+                return Some(Idiom::Built);
+            }
+            _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
+            TypeKind::Class(id, owner) => (&self.classes[id.0].methods, owner),
+            TypeKind::Enum(id, owner) => (&self.enums[id.0].methods, owner),
+            _ => return None,
+        };
+        match methods.get(&name) {
+            Some(&Declared::Known(func)) => Some(Idiom::Method(func, owner)),
+            _ => None,
+        }
     }
 
     /// Whether the receiver `first` of the idiom call `callee(first, ...)` starts with an open
@@ -167,6 +189,36 @@ impl Checker<'_> {
                         (ExprKind::Int { value, .. }, Type::U8) if u8::try_from(*value).is_ok()
                     )
             })
+    }
+
+    /// Checks `rest`, the arguments after the receiver of a call of the method `func`, written
+    /// as a function, each once. `owner` is the type arguments of the receiver's class or enum.
+    /// The method call takes them when there are as many as the method has parameters. Each
+    /// must fit its parameter type, with `owner` in it, as a call `receiver.method(args)`
+    /// checks. A method with type parameters of its own takes none of them as written, as they
+    /// are not known.
+    fn method_arguments(&mut self, func: tir::FuncId, owner: TypeArgs, rest: &[ast::Arg]) -> bool {
+        let owner = owner.get();
+        let sig = &self.signatures[func.0];
+        if sig.type_params.len() > owner.len() {
+            self.stray(rest);
+            return false;
+        }
+        // The checks below borrow `self` again.
+        let params: Vec<_> = sig
+            .params
+            .iter()
+            .map(|ty| ty.map(|ty| ty.subst(owner)))
+            .collect();
+        let mut takes = rest.len() == params.len();
+        for (arg, &want) in rest
+            .iter()
+            .zip(params.iter().chain(std::iter::repeat(&None)))
+        {
+            let checked = self.expr(&arg.value, want.or(Some(UNKNOWN)));
+            takes &= want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
+        }
+        takes
     }
 
     /// Whether `member` of `base`, a path, is a value, whose `<` and `>` were comparisons when
@@ -307,6 +359,7 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
+        self.record(Used::Func(func), span);
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
@@ -426,6 +479,7 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
+        self.record(Used::Class(class), span);
         let info = &self.classes[class.0];
         let name = info.name.name.as_str();
         let fields: Vec<(Symbol, Option<Type>)> =

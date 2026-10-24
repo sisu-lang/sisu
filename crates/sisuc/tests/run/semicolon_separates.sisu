@@ -9,4 +9,4 @@ fn pick(e: E) -> i64 { match e { A => 1; B => 2 } }
 
 // `main` is one line, so its values are listed here, in order: 2 (`p.y`), 3 (`p.sum()`),
 // 2 (`pick(E.B)`), 9 (`K + L`), 5 (the block) and 1 (`x`).
-fn main() { let p = P(x: 1, y: 2); print(p.y); print(p.sum()); print(pick(E.B)); print(K + L); print({ let a = 4; a + 1 }); let x = 1; print(x) }
+fn main() { let _ = E.A; let p = P(x: 1, y: 2); print(p.y); print(p.sum()); print(pick(E.B)); print(K + L); print({ let a = 4; a + 1 }); let x = 1; print(x) }

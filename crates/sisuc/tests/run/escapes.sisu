@@ -15,7 +15,7 @@ fn main() {
     print(joined)                    // a<NUL>bä<NUL>c
     print(joined.len())              // 7
     let mut z = "\0"
-    for i in 0..10 {
+    for _ in 0..10 {
         z += "a\0"
     }
     print(z)                         // <NUL>, then a<NUL> ten times

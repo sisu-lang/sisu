@@ -40,7 +40,7 @@ fn main() {
     print(repeats(xs))
     let entries = [Entry(name: word(1), hits: 0), Entry(name: word(2), hits: 0), Entry(name: word(3), hits: 0), Entry(name: word(5), hits: 0), Entry(name: word(8), hits: 0), Entry(name: word(13), hits: 0), Entry(name: word(21), hits: 0), Entry(name: word(34), hits: 0)]
     let mut total = 0
-    for round in 0..20 {
+    for _ in 0..20 {
         total += lookups(entries, xs)
     }
     print(total)

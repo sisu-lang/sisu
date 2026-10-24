@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use super::generic::Site;
-use super::{Binding, Checked, Checker, Poisoned, UNKNOWN, payload, tail, type_of, wrap};
+use super::{Checked, Checker, Poisoned, UNKNOWN, payload, tail, type_of, wrap};
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
     Definition, Diagnostic, DiagnosticKind, Literal, MismatchSource, suggestion,
@@ -239,18 +239,20 @@ impl Checker<'_> {
 
     /// A read of `name`: a local, a constant, or an unknown name, which is reported.
     fn name(&mut self, span: Span, name: Symbol) -> Checked {
+        let quiet = self.body.quiet == Some(span);
         match self.lookup(name) {
-            Some(Binding {
-                local,
-                ty: Some(ty),
-                ..
-            }) => Ok(tir::Expr {
-                kind: tir::ExprKind::Local(*local),
-                ty: *ty,
-                span,
-            }),
-            // `Error`: its diagnostic was recorded where it was bound.
-            Some(_) => Err(Poisoned::error()),
+            Some(b) => {
+                b.read |= !quiet;
+                match b.ty {
+                    Some(ty) => Ok(tir::Expr {
+                        kind: tir::ExprKind::Local(b.local),
+                        ty,
+                        span,
+                    }),
+                    // `Error`: its diagnostic was recorded where it was bound.
+                    None => Err(Poisoned::error()),
+                }
+            }
             None => self.constant_use(name, span).unwrap_or_else(|| {
                 let d = self
                     .bare_variant(name, span)
@@ -382,6 +384,7 @@ impl Checker<'_> {
             None => (
                 DiagnosticKind::CannotInfer {
                     literal: Literal::None,
+                    binding: self.let_binding(span),
                     at: span,
                 },
                 false,
@@ -389,6 +392,14 @@ impl Checker<'_> {
         };
         self.diagnostics.push(kind.into());
         Err(Poisoned { ty: None, mismatch })
+    }
+
+    /// What the `let` whose whole initializer is the literal at `span` writes before its type,
+    /// if any: its name, after `mut` when it has it.
+    pub(super) fn let_binding(&self, span: Span) -> Option<String> {
+        let (init, name, mutable) = self.body.let_init?;
+        (init == span && name.as_str() != "_")
+            .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
     }
 
     /// Whether a comment starts in one of the byte ranges `deleted`.

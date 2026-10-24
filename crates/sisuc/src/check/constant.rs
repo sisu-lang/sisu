@@ -5,6 +5,7 @@
 
 use rustc_hash::FxHashMap;
 
+use super::unused_names::{Owner, Used};
 use super::{Body, Checked, Checker, Declared, Poisoned, built_in_type, type_of};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Panic, TypedLiteral};
@@ -123,7 +124,7 @@ pub(super) struct ConstInfo {
     /// The name's span, for "first defined here" and "declared with `const` here".
     pub(super) span: Span,
     /// Source order among the constants.
-    order: usize,
+    pub(super) order: usize,
     /// The `: T` if given, else the folded value's type; `None` while unknown.
     pub(super) ty: Option<Type>,
     /// `None` until folded, and for good once folding fails.
@@ -232,6 +233,7 @@ impl Checker<'_> {
         };
         let (checked, _) = self.with_body(
             Body {
+                owner: Some(Owner::Const(order)),
                 in_constant: Some(site),
                 ..Body::default()
             },
@@ -308,15 +310,21 @@ impl Checker<'_> {
     }
 
     /// A use of `name` at `span` if it names a constant: its literal, or, if folding failed,
-    /// `Poisoned` of its `ty`, with no diagnostic.
-    pub(super) fn constant_use(&self, name: Symbol, span: Span) -> Option<Checked> {
-        Some(match self.constants.get(&name)? {
+    /// `Poisoned` of its `ty`, with no diagnostic. A use of a known constant is recorded.
+    pub(super) fn constant_use(&mut self, name: Symbol, span: Span) -> Option<Checked> {
+        let (order, checked) = match self.constants.get(&name)? {
             Declared::Known(ConstInfo {
-                value: Some(value), ..
-            }) => Ok(value.lower(span)),
-            Declared::Known(info) => Err(Poisoned::of(info.ty)),
-            Declared::Broken => Err(Poisoned::error()),
-        })
+                value: Some(value),
+                order,
+                ..
+            }) => (Some(*order), Ok(value.lower(span))),
+            Declared::Known(info) => (Some(info.order), Err(Poisoned::of(info.ty))),
+            Declared::Broken => (None, Err(Poisoned::error())),
+        };
+        if let Some(order) = order {
+            self.record(Used::Const(order), span);
+        }
+        Some(checked)
     }
 }
 

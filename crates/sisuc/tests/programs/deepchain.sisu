@@ -2,11 +2,11 @@
 // Each class holds the other, not itself, so the drop recurses once per object and overflows
 // the same 256 KiB stack.
 class A {
-    b: B?
+    _b: B?
 }
 
 class B {
-    a: A?
+    _a: A?
 }
 
 fn main() {
@@ -14,8 +14,8 @@ fn main() {
     let mut i = 0
     while i < 500_000 {
         i += 1
-        let b = B(a: a)
-        a = A(b: b)
+        let b = B(_a: a)
+        a = A(_b: b)
     }
     print(1)
 }
