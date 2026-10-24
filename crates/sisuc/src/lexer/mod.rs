@@ -1212,11 +1212,16 @@ fn line_of<'t>(source: &str, tokens: &'t [Token], code: &Token) -> &'t [Token] {
             b == b'\n'
         })
         .map_or(0, |i| i + 1);
-    let from = tokens.partition_point(|t| {
-        #[cfg(test)]
-        BACK_SCANNED.set(BACK_SCANNED.get() + 1);
-        t.span.start() < line
-    });
+    // A scan back from the end reads only the tokens of the line and the gap after it, not the
+    // tokens before the line.
+    let from = tokens
+        .iter()
+        .rposition(|t| {
+            #[cfg(test)]
+            BACK_SCANNED.set(BACK_SCANNED.get() + 1);
+            t.span.start() < line
+        })
+        .map_or(0, |i| i + 1);
     &tokens[from..]
 }
 
@@ -4261,6 +4266,21 @@ mod tests {
             scanned <= 4 * tokens,
             "{scanned} scanned of {tokens} tokens"
         );
+    }
+
+    /// A `{` after a short header finds the header's line with the same work, however many
+    /// tokens come before it. The comment makes the join unsafe, which `line_of` checks.
+    #[test]
+    fn line_of_should_not_read_the_tokens_before_the_line() {
+        let scanned = |n: usize| {
+            let src = "fn f()\n// c\n{\n}\n".repeat(n);
+            BACK_SCANNED.set(0);
+            let lexed = lex(&src).expect("the lexer should recover");
+            assert_eq!(lexed.diagnostics.len(), n, "an E0004 for each header");
+            BACK_SCANNED.get()
+        };
+        let each = scanned(2) - scanned(1);
+        assert_eq!(scanned(1001) - scanned(1000), each);
     }
 
     /// Blank lines and comments between two parameters, each of which a line break starts.
