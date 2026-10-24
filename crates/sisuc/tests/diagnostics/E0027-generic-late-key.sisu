@@ -1,0 +1,16 @@
+class Y {
+}
+class X {
+    y: Y
+}
+class C<A, B> {
+    y: Y
+}
+class W<T> {
+    t: T
+}
+class N {
+    c: C<X, N>
+    w: W<N>
+}
+fn main() {}

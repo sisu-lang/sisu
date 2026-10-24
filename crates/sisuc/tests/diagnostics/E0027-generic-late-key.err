@@ -1,0 +1,8 @@
+error[E0027]: no value of `N` can be built
+  --> E0027-generic-late-key.sisu:12:7
+   |
+12 | class N {
+   |       ^ `N.w` holds a `W<N>`, and `W.t` holds a `N`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0027
