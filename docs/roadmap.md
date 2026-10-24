@@ -985,8 +985,8 @@ How it uses the machine:
 
 The copy follows ADR 0010. Codegen generates `@sisu_rc.copy.<Class>` next to
 the drop glue. One visited map covers a whole crossing, so shared objects and
-cycles keep their shape. Like drop, it loops along a class's own-type field,
-so a long list copies in constant stack.
+cycles keep their shape. Like drop, it loops along the fields that hold a
+class of the same cycle of classes, so a long list copies in constant stack.
 
 The spec must settle these before work starts:
 
@@ -1548,8 +1548,8 @@ accepted.
   memory: a file, a socket, a lock. Decide its form, an interface the compiler
   calls (Rust's `Drop`) or a block in the class (Swift's `deinit`); what
   happens when the drop code stores `self` somewhere, so the object outlives
-  its last reference; how it runs inside the loop that drops a class's
-  own-type field (ADR 0005); and whether a panic runs it. An object in a cycle
+  its last reference; how it runs inside the loop that drops the classes of
+  a cycle (ADR 0005); and whether a panic runs it. An object in a cycle
   is never dropped, so drop code cannot be what makes a program correct.
 - **Nested optionals.** Resolved in milestone 8
   ([ADR 0024](adr/0024-optionals-nest.md)): optionals nest, `??` and `if let`
