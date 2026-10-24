@@ -61,3 +61,7 @@ description = "Type parameters and arguments, inference, what a generic body can
 [[page]]
 file = "closures"
 description = "Function types, closures, captures, weak captures, iterators and the iterator methods."
+
+[[page]]
+file = "errors"
+description = "Results written T | E, fail, the ? operator, handling a failure, unused results, a main that fails and files."
