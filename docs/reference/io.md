@@ -38,13 +38,15 @@ a warning
 
 The rules:
 
-- The argument is one `i64`, `u8`, `f64`, `bool`, `char` or `string`. Any other type is an error ([E0059](../diagnostics/E0059.md)), also an optional.
+- The argument is one `i64`, `u8`, `f64`, `bool`, `char` or `string`. Any other type is an error ([E0059](../diagnostics/E0059.md)), also an optional. So is no argument, or more than one.
 - An array is an error ([E0060](../diagnostics/E0060.md)). Write each element in a `for` loop.
 - An argument of the type `never`, such as a call of `panic`, is an error ([E0061](../diagnostics/E0061.md)).
 - The text of a value is the same as in an interpolation ([Strings and formatting](strings.md#text-of-a-value)). `print("{x}")` and `print(x)` write the same text for a value `x` of those types.
 - The line break is one `\n` byte. A `\r` is written only when the text holds it.
 - `print` and `eprint` give no value ([E0043](../diagnostics/E0043.md)).
-- The text that a program writes before a panic comes before the panic message ([panic](functions.md#panic)).
+- When standard output is a terminal, `print` writes each line at once. Otherwise `print` collects its text and writes it later, and `eprint` still writes at once. So the order of the two streams in one file or pipe is not fixed.
+- A panic writes the text that `print` collected before it writes the panic message ([panic](functions.md#panic)).
+- A failed write to standard output is a panic. A failed write to standard error is ignored.
 
 ## read_line
 
@@ -82,6 +84,7 @@ The rules:
 - At the end of the input, `read_line` gives `None`. Every later call gives `None` too. An empty input has no line.
 - A byte that is not valid UTF-8 becomes the character U+FFFD. Each maximal ill-formed part of the bytes gives one U+FFFD, so a `string` is always valid UTF-8 ([Strings and formatting](strings.md#text-and-bytes)). A zero byte stays in the line.
 - `read_line` takes no argument ([E0053](../diagnostics/E0053.md)). A function cannot take its name ([E0034](../diagnostics/E0034.md)).
+- A failed read of standard input is a panic.
 - A program that needs a line can use `??` with a default or with `panic` ([Operators](operators.md#default-values)).
 
 ## Program arguments
@@ -112,4 +115,4 @@ The rules:
 
 ## Exit code
 
-A program ends with the exit code 0 when `main` returns. It ends with the exit code 101 when it panics, after it writes the panic message to standard error ([panic](functions.md#panic)).
+A program ends with the exit code 0 when `main` returns and the text of `print` is written ([main](functions.md#main)). When that last write fails, the program panics. A panic ends the program with the exit code 101 ([panic](functions.md#panic)).

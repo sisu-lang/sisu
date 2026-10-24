@@ -191,7 +191,28 @@ fn main() {
 }
 ```
 
-An arm is a pattern, an optional [guard](#guards), `=>`, and a body. The body is an expression or a block. The names that the pattern binds are in scope in the guard and the body of the arm, and nowhere else.
+An arm is a pattern, an optional [guard](#guards), `=>`, and a body. The body is an expression, a block, an assignment, `return`, `break` or `continue`. The names that the pattern binds are in scope in the guard and the body of the arm, and nowhere else.
+
+```sisu
+enum Event {
+    Add(i64)
+    Reset
+    Quit
+}
+
+fn main() {
+    let mut total = 0
+    let events = [Event.Add(2), Event.Add(3), Event.Reset, Event.Add(4), Event.Quit, Event.Add(9)]
+    for e in events {
+        match e {
+            Add(n) => total += n
+            Reset => total = 0
+            Quit => break
+        }
+    }
+    print(total)                 // 4
+}
+```
 
 The rules:
 
@@ -274,7 +295,7 @@ fn main() {
 
 ### Names
 
-A pattern name that does not start with an upper-case letter binds the value. The new name hides any other name for the arm, and the other name is the same again after the arm.
+A pattern name that does not start with an upper-case letter binds the value. The new name hides any other binding for the arm, and that binding is the same again after the arm. A name that is a constant is an error ([E0126](../diagnostics/E0126.md)).
 
 ```sisu
 fn main() {
@@ -294,12 +315,13 @@ The rules:
 
 - A variant that is not in the enum is an error ([E0118](../diagnostics/E0118.md)). An upper-case name for a value that is not an enum is an error ([E0125](../diagnostics/E0125.md)).
 - A pattern can write the enum, as in `Shape.Circle(r)`. It must be the enum of the value ([E0032](../diagnostics/E0032.md)).
-- A name in a pattern never means a constant. Compare with the constant in a guard ([E0126](../diagnostics/E0126.md)).
+- A name that is a constant is an error, also as the bound of a range ([E0126](../diagnostics/E0126.md)). Compare with the constant in a guard.
+- A name that a pattern binds cannot change ([E0001](../diagnostics/E0001.md)). A pattern has no `mut` ([E0011](../diagnostics/E0011.md)).
 - A name appears once in a pattern. `Add(x, x)` does not compare two values ([E0129](../diagnostics/E0129.md)).
 
 ### Literals and ranges
 
-A literal pattern accepts the values that are equal to it. The literal has the type of the value that the `match` tests ([Literals](literals.md#the-type-of-an-integer-literal)). A literal that does not fit its type is an error, as `300` for a `u8` ([E0040](../diagnostics/E0040.md)). A literal of another type is an error ([E0032](../diagnostics/E0032.md)).
+A literal pattern accepts the values that are equal to it. The literal has the type of the value that the `match` tests ([Literals](literals.md#the-type-of-an-integer-literal)). A literal that does not fit its type is an error, as `300` for a `u8` ([E0040](../diagnostics/E0040.md)). A negative literal for a `u8` is an error too ([E0042](../diagnostics/E0042.md)). A literal of another type is an error ([E0032](../diagnostics/E0032.md)).
 
 A range `a..b` accepts the values from `a` up to, but not including, `b`. A range `a..=b` includes `b`. Both bounds are literals. The type of a range is an integer or a `char`.
 
@@ -345,7 +367,8 @@ The rules:
 - A sub-pattern follows the type of its value. It is a variant pattern for an enum. It is a literal for an integer, a `char`, a `bool` or a `string`, and a range for an integer or a `char`. A name or `_` fits every type.
 - The number of sub-patterns must be the number of values in the payload ([E0128](../diagnostics/E0128.md)).
 - A pattern takes the payload by position. It has no labels and no braces ([E0123](../diagnostics/E0123.md)).
-- A payload of the type `f64`, an optional, an array or a class takes only a name or `_` as its pattern. A variant or `None` is an error there ([E0127](../diagnostics/E0127.md)).
+- A payload of the type `f64`, an optional, an array or a class takes only a name or `_` as its pattern. So does a payload of a type parameter such as `T`, in generic code.
+- In such a place, a bare upper-case name is an error ([E0125](../diagnostics/E0125.md)). So is a variant pattern, with parentheses or with the enum written, and so is `None` ([E0127](../diagnostics/E0127.md)).
 
 ```sisu
 enum Shape {
@@ -420,9 +443,35 @@ medium
 The rules:
 
 - The condition is a `bool` ([E0032](../diagnostics/E0032.md)).
-- The program calculates the condition only when the pattern accepts the value. When it is `false`, the `match` goes on with the next arm.
-- A guard applies to the whole arm. With an alternative, it applies to each alternative.
+- The program calculates the condition only when the pattern accepts the value.
+- A guard belongs to the whole arm. When an alternative accepts the value and the guard is `false`, the program tries the next alternative. It calculates the guard again, with the names of that alternative.
+- When no alternative has a `true` guard, the `match` goes on with the next arm.
 - A guarded arm covers no values, because its guard can be `false` ([Coverage](#coverage)).
+
+```sisu
+enum Pair {
+    P(i64, i64)
+}
+
+fn big(n: i64) -> bool {
+    print("check {n}")
+    n > 3
+}
+
+fn main() {
+    let r = match Pair.P(1, 5) {
+        P(a, _) | P(_, a) if big(a) => a * 10
+        _ => 0
+    }
+    print(r)
+}
+```
+
+```output
+check 1
+check 5
+50
+```
 
 ## Coverage
 

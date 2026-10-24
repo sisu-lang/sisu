@@ -32,7 +32,7 @@ The rules:
 - `+` joins two strings ([Arithmetic](operators.md#arithmetic)). `+=` joins a string to a place that can change ([Compound assignment](statements.md#compound-assignment)). Another type beside a string is an error. Use interpolation.
 - `==`, `!=`, `<` and the other comparison operators compare byte by byte, which is the order of the code points ([Comparison](operators.md#comparison)).
 - Sisu does not normalize text. `"é"` as one character and `"e"` with a combining accent are not equal.
-- A string has no index ([E0068](../diagnostics/E0068.md)) and no fields. Use `chars()` or `bytes()` to get an array.
+- A string has no index ([E0068](../diagnostics/E0068.md)), no range index ([E0023](../diagnostics/E0023.md)) and no fields. Use `chars()` or `bytes()` to get an array.
 - A string can hold the null character `\0`. It counts as one byte.
 
 ```sisu
@@ -116,7 +116,7 @@ Interpolation and `print` write a value as text in the same way. They take an `i
 | `char` | The character |
 | `string` | The string, as it is |
 
-The text of an `f64` has at least one digit after the point, such as `100.0`. A number whose absolute value is 1e16 or more, or is less than 1e-4 but not 0, has an exponent instead, such as `1e21` or `1.5e-7`. The exponent has no `+` sign and no leading zero. The text of the special values is `inf`, `-inf` and `nan`, and `-0.0` keeps its sign.
+The text of an `f64` has at least one digit after the point, such as `100.0`. A number with an absolute value of 1e16 or more has an exponent instead, such as `1e21`. So has a number below 1e-4 that is not 0, such as `1.5e-7`. The exponent has no `+` sign and no leading zero. The text of the special values is `inf`, `-inf` and `nan`, and `-0.0` keeps its sign.
 
 ```sisu
 fn main() {
@@ -151,6 +151,26 @@ fn main() {
 
 Interpolation does not convert a value: it writes the text of the type that the value has. To write an optional, use `??` or `if let`. To write an array, use a `for` loop.
 
+The program calculates each expression once, from left to right, before it builds the text. This is so also when the parts have format specs.
+
+```sisu
+fn part(n: i64) -> i64 {
+    print("part {n}")
+    n
+}
+
+fn main() {
+    print("{part(1)}:{part(2):>3}:{part(3)}")
+}
+```
+
+```output
+part 1
+part 2
+part 3
+1:  2:3
+```
+
 ## Format specs
 
 A *format spec* sets the width of the text of a part, how it aligns, and how many decimals an `f64` has. It follows the expression and a `:`, as in `{x:>8.2}`.
@@ -166,7 +186,7 @@ fn main() {
 }
 ```
 
-A spec is `[align][width][.precision]`. All three parts are optional, but a spec has a width or a precision.
+A spec is `[align][width][.precision]`. A spec needs a width or a precision. The align is optional.
 
 | Part | Form | Meaning |
 | --- | --- | --- |
@@ -179,7 +199,7 @@ The rules:
 - A part that is shorter than its width gets spaces. A part that is longer is not cut.
 - Without an align, a number (`i64`, `u8` or `f64`) is on the right, with the spaces on its left. Every other type is on the left, with the spaces on its right.
 - The width counts characters, not bytes. `ä` and `😀` are each one column.
-- `^` puts the same number of spaces on both sides. When the number is odd, the extra space is on the right.
+- `^` puts half of the spaces on each side. When the number of spaces is odd, the extra space is on the right.
 - A precision rounds half to even from the exact value of the `f64`, and never uses an exponent. A precision of 0 writes no point. `inf`, `-inf` and `nan` have no decimals.
 - A precision on a value that is not an `f64` is an error ([E0111](../diagnostics/E0111.md)).
 - A width above 1000, or a precision above 30, is an error ([E0110](../diagnostics/E0110.md)).
