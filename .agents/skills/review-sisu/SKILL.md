@@ -27,11 +27,12 @@ The caller names one target. Infer its kind; ask when it is unclear.
 1. The repository root is `git rev-parse --show-toplevel` in the checkout that holds the target, which may be a worktree.
 2. `mktemp -d "${TMPDIR:-/tmp}/sisu-review-XXXXXXXX"` makes the run directory, `RUN`, and `mkdir RUN/opus-scratch` makes the Opus reviewer's scratch directory. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
 3. Find the two skills the brief cites: `test-audit` at `~/.claude/skills/test-audit/SKILL.md` and `codebase-design` at `~/.agents/skills/codebase-design/SKILL.md`. When one is not there, `find ~/.claude ~/.agents -path '*/<name>/SKILL.md'`. When neither place has it, delete its line from the brief and tell the user in the report.
-4. For the final diff of a branch, review what will merge. Run `git fetch origin`. When `git merge-base --is-ancestor origin/main <head>` fails, `main` has moved: rebase the branch onto `origin/main`, run `make test` and `make site`, and review the rebased range.
+4. Run `git fetch origin` before every review: the brief comes from `origin/main`, so a branch that started before a change to the criteria gets the current ones.
+5. For the final diff of a branch, review what will merge. When `git merge-base --is-ancestor origin/main <head>` fails, `main` has moved: bring it in, run `make test` and `make site`, and review the range from `origin/main` to the new head. Rebase onto `origin/main` when the branch's commits replay cleanly. Merge `origin/main` instead when a rebase conflicts in commits that later fix rounds rewrote: one merge resolves the conflict against the final code. A new check on `main`, such as a warning, can fail the branch's own tests with no conflict, so `make test` is part of the merge.
 
 ### 2. Write the brief
 
-Copy [brief.md](brief.md) to `RUN/brief.md`. Fill every `<...>` slot above
+Write `origin/main`'s copy of the template to `RUN/brief.md`: `git show origin/main:.agents/skills/review-sisu/brief.md > RUN/brief.md`. A branch's own [brief.md](brief.md) can be older than the criteria. Fill every `<...>` slot above
 "# Report"; the slots under it are the reviewer's. Keep the common
 sections and the section for the target's kind; delete the other two kind
 sections, and the "Read first" lines that are only for a diff. Under "Focus", write what the caller knows that

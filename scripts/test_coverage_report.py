@@ -148,6 +148,15 @@ class Report(unittest.TestCase):
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:5-3:17", "a.rs:4:5-4:11"])
 
+    def test_the_message_of_an_assert_that_ran_is_advisory(self):
+        exp = export(func("f", [(1, 1, 9, 1, 1), (3, 30, 3, 36, 0), (4, 30, 4, 36, 0), (5, 5, 5, 9, 0)]))
+        lines = {3: '    assert!(n <= 4, "{} steps", n.get());', 4: '    debug_assert_eq!(a, b, "{}", c);', 5: "    0"}
+        # Line 4 never ran, so its assert did not run, and its region still counts.
+        lc = lcov(**{"a.rs": {3: 1, 4: 0, 5: 0}})
+        _, touching, other = sections(run(exp, lc, diff(start=3, count=3), read=lambda p, n: lines[n]))
+        self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:4:30-4:36", "a.rs:5:5-5:9"])
+        self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:30-3:36"])
+
     def test_changed_lines_coverage_counts_only_instrumented_lines(self):
         out = run(export(), lcov(**{"a.rs": {1: 1, 2: 1, 3: 0}}), diff(start=1, count=4))
         self.assertIn("changed lines 66.7% (2 of 3).", out.splitlines()[0])

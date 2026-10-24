@@ -48,7 +48,10 @@ if ! grep -qxF "$header" "$report"; then
 	echo "$verdict (HEAD $head)"
 	exit 1
 fi
-uncovered=$(sed -n "/^$header\$/,/^\$/p" "$report" | sed '1d;/^$/d;/^(none)$/d' | wc -l)
+# The list also goes to a file, so a reader of a long log finds it without a search.
+listed=target/verify-uncovered.txt
+sed -n "/^$header\$/,/^\$/p" "$report" | sed '1d;/^$/d;/^(none)$/d' >"$listed"
+uncovered=$(wc -l <"$listed")
 
 # cargo mutants leaves mutants.out alone when it finds nothing to mutate, so
 # drop the last run's counts first.
@@ -71,7 +74,7 @@ if ((uncovered == 0 && status == 0)); then
 	exit 0
 fi
 reasons=
-((uncovered == 0)) || reasons="$uncovered uncovered regions touch the changes (listed above): cover or explain each; "
+((uncovered == 0)) || reasons="$uncovered uncovered regions touch the changes (listed in $listed): cover or explain each; "
 reasons+="mutants: $mutants"
 ((status == 0)) || reasons+=" (cargo mutants exit $status, see mutants.out/)"
 verdict="verify: FAIL: $reasons"
