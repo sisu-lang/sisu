@@ -48,7 +48,7 @@ fn main() {
 The forms of a type name:
 
 - A built-in type, such as `i64`.
-- The name of a class or an enum that the program declares. A generic class or enum also takes type arguments, such as `Stack<i64>`.
+- The name of a class or an enum that the program declares. A generic class or enum also takes type arguments, such as `Stack<i64>` ([Generics](generics.md#type-arguments)).
 - `[T]`, an array of elements of the type `T`.
 - `T?`, an optional of the type `T`.
 

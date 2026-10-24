@@ -62,7 +62,7 @@ The rules:
 - An enum is declared at the top level. Its name follows the rules of a function name ([Functions](functions.md#declarations)).
 - Two variants, or a variant and a method, of one enum cannot have the same name ([E0034](../diagnostics/E0034.md)). A variant can have the name of a class or a function.
 - A variant cannot be named `Some`, `None`, `Ok` or `Err` ([E0026](../diagnostics/E0026.md)).
-- A generic enum also has type parameters after its name, such as `enum Maybe<T>`.
+- A generic enum also has type parameters after its name, such as `enum Maybe<T>` ([Generics](generics.md#type-parameters)).
 
 A method follows the rules of a [method of a class](classes.md#methods): it has `self` as its first parameter. `self` is the value of the enum. An enum has no method without `self` ([E0017](../diagnostics/E0017.md)).
 
@@ -367,7 +367,7 @@ The rules:
 - A sub-pattern follows the type of its value. It is a variant pattern for an enum. It is a literal for an integer, a `char`, a `bool` or a `string`, and a range for an integer or a `char`. A name or `_` fits every type.
 - The number of sub-patterns must be the number of values in the payload ([E0128](../diagnostics/E0128.md)).
 - A pattern takes the payload by position. It has no labels and no braces ([E0123](../diagnostics/E0123.md)).
-- A payload of the type `f64`, an optional, an array or a class takes only a name or `_` as its pattern. So does a payload of a type parameter such as `T`, in generic code.
+- A payload of the type `f64`, an optional, an array or a class takes only a name or `_` as its pattern. So does a payload of a type parameter such as `T`, in generic code ([Generics](generics.md#values-of-a-type-parameter)).
 - In such a place, a bare upper-case name is an error ([E0125](../diagnostics/E0125.md)). So is a variant pattern, with parentheses or with the enum written, and so is `None` ([E0127](../diagnostics/E0127.md)).
 
 ```sisu

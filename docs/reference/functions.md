@@ -23,7 +23,7 @@ A call gives the arguments to the parameters in order ([Calls](expressions.md#ca
 
 A function declaration is `fn`, the name, the parameters in parentheses, an optional return type after `->`, and the body. A function is declared at the top level.
 
-A function in the body of a class or an enum is a method ([Classes](classes.md#methods)). This page shows functions without type parameters. A generic function also has type parameters after its name.
+A function in the body of a class or an enum is a method ([Classes](classes.md#methods)). This page shows functions without type parameters. A generic function also has type parameters after its name ([Generics](generics.md#type-parameters)).
 
 ```sisu
 fn main() {

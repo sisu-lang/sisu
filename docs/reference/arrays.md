@@ -55,7 +55,7 @@ The rules:
 - The program calculates `value` once, then `length`.
 - `length` is an `i64` ([E0032](../diagnostics/E0032.md)). A length of 0 gives an empty array.
 - At run time, a negative length stops the program with a panic. A length so large that the size of the array in bytes is more than an `i64` can hold also stops the program with a panic.
-- When the type of `value` is a class or an optional class, every element would be the same object. This is an error ([E0067](../diagnostics/E0067.md)), even when a binding of an optional class type holds `None`. A value whose type is a type parameter, such as `T`, is also an error, because `T` can be a class. The literal `None` is the one exception: `[None; length]` is valid where the context gives its type, such as `let slots: [Box?] = [None; 3]`. Without that context it is an error ([E0050](../diagnostics/E0050.md)).
+- When the type of `value` is a class or an optional class, every element would be the same object. This is an error ([E0067](../diagnostics/E0067.md)), even when a binding of an optional class type holds `None`. A value whose type is a type parameter, such as `T`, is also an error, because `T` can be a class ([Generics](generics.md#values-of-a-type-parameter)). The literal `None` is the one exception: `[None; length]` is valid where the context gives its type, such as `let slots: [Box?] = [None; 3]`. Without that context it is an error ([E0050](../diagnostics/E0050.md)).
 - When `value` holds objects, such as an array of objects, every element holds the same objects.
 
 ```sisu panics

@@ -53,3 +53,7 @@ description = "Strings and bytes, the methods of a string, how a value becomes t
 [[page]]
 file = "io"
 description = "print, eprint, read_line, program arguments and the exit code."
+
+[[page]]
+file = "generics"
+description = "Type parameters and arguments, inference, what a generic body can do, bounds, interfaces, type aliases and interface values."
