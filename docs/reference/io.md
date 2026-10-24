@@ -40,6 +40,7 @@ The rules:
 
 - The argument is one `i64`, `u8`, `f64`, `bool`, `char` or `string`. Any other type is an error ([E0059](../diagnostics/E0059.md)), also an optional. So is no argument, or more than one.
 - An array is an error ([E0060](../diagnostics/E0060.md)). Write each element in a `for` loop.
+- The section [Text of other types](strings.md#text-of-other-types) is in development, and it changes the two rules above.
 - An argument of the type `never`, such as a call of `panic`, is an error ([E0061](../diagnostics/E0061.md)).
 - The text of a value is the same as in an interpolation ([Strings and formatting](strings.md#text-of-a-value)). `print("{x}")` and `print(x)` write the same text for a value `x` of those types.
 - The line break is one `\n` byte. A `\r` is written only when the text holds it.

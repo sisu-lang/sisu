@@ -117,7 +117,7 @@ Hello, Aino
 Hello, Eero
 ```
 
-`print` cannot take an array ([E0060](../diagnostics/E0060.md)), and an interpolation cannot either ([E0098](../diagnostics/E0098.md)). To print an array, print its elements in a `for` loop.
+`print` cannot take an array ([E0060](../diagnostics/E0060.md)), and an interpolation cannot either ([E0098](../diagnostics/E0098.md)). To print an array, print its elements in a `for` loop. The section [Text of other types](strings.md#text-of-other-types) is in development, and it changes this rule.
 
 ## Methods
 

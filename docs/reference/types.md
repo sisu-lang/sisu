@@ -269,7 +269,7 @@ The rules:
 - An optional is not its value. An arithmetic operator, a comparison, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or [`if let`](enums.md#if-let-and-while-let).
 - `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
 - An optional of an optional, such as `i64??`, is not a type ([E0014](../diagnostics/E0014.md)). The section [Option and Result](#option-and-result) is in development, and it changes this rule.
-- `print` and interpolation do not take an optional ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)).
+- `print` and interpolation do not take an optional ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)). The section [Option and Result](#option-and-result) is in development, and it changes this rule.
 
 ```sisu
 fn half(n: i64) -> i64? {
@@ -403,15 +403,9 @@ fn main() {
 `unit` is the type of an expression that gives no value, such as a call of `print`. It is an ordinary type. A program can write it, for example in `-> unit`.
 
 ```sisu pending
-fn id<T>(x: T) -> T {
-    x
-}
-
 fn main() {
-    let u = print("x")                 // x
-    let v = id(u)
-    print(u == v)                      // true
-    print(u)                           // ()
+    print(print("x"))                  // x, then ()
+    print(print("a") == print("b"))    // a, then b, then true
 }
 ```
 
@@ -419,8 +413,7 @@ The rules:
 
 - `unit` can be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`. This lifts the rule in [Type arguments](generics.md#type-arguments).
 - `unit` has no literal. A `unit` value comes from a call, such as `print(...)`.
-- A program can bind, pass, store, return and compare a `unit` value. All `unit` values are equal.
-- A `unit` value prints as `()`.
+- A `unit` value prints as `()`. It has `Eq` and `Ord`, and all `unit` values are equal.
 
 ## Conversions
 

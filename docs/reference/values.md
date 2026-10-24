@@ -143,7 +143,7 @@ Here, `head = head?.next` replaces the reference to the node with the value 3. N
 The rules:
 
 - Sisu frees the memory of an array or a string in the same way, when its last holder goes away.
-- No code of the program runs when Sisu frees an object. Without a [weak field](#weak-fields), a program cannot see when it happens. The time changes only how much memory the program uses.
+- No code of the program runs when Sisu frees an object. A program cannot see when it happens. The time changes only how much memory the program uses. The section [Weak fields](#weak-fields) is in development, and it changes this rule.
 
 ## Cycles
 
@@ -164,7 +164,7 @@ fn main() {
 }
 ```
 
-To let Sisu free the objects, break the cycle while a reference to one of them remains. Above, `a.next = None` breaks it. So both nodes are freed when their last references go away.
+To let Sisu free the objects, break the cycle while a reference to one of them remains. Above, `a.next = None` breaks it. So both nodes are freed when their last references go away. The section [Weak fields](#weak-fields) is in development, and it adds a second way to break a cycle.
 
 ## Weak fields
 
@@ -194,7 +194,8 @@ Here, the local `parent` is the only strong reference to the first node. When `a
 
 The rules:
 
-- `weak` comes before `mut`. A weak field must be a `mut` field, and its type must be an optional class, such as `Node?`.
+- `weak` comes before `mut`. A weak field must be a `mut` field. Its type must be an optional of a type that conforms to `AnyObject`. Such a type is a class, so `Node?` is valid.
+- A `T?` with `T: AnyObject` is valid too, and so is `(any I)?` for an interface `I` that only classes conform to ([Bounds](generics.md#bounds), [Interface values](generics.md#interface-values)).
 - A weak field reads like any optional, with `?.`, `??` and `if let`. A read never fails, and it never gives a freed object.
 - A weak field makes the time of the free visible. A reference held by a local can go away at its last use. So a weak field can read `None` before the end of that block.
 - A weak field breaks a cycle. When a parent holds its child and the child holds its parent in a weak field, Sisu can free both.
