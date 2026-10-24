@@ -190,7 +190,9 @@ a `Coverage:` line, then two lists. "Uncovered regions touching changed code"
 names regions that a changed line touches. "Other uncovered regions in changed
 files (advisory)" names the rest of those files, and any region on an
 `unreachable!` or `panic!` line, whose message states an invariant no test
-should reach. Test code is left out:
+should reach. It also names a region on an `assert!`, `assert_eq!` or
+`assert_ne!` line that ran (or a `debug_` one): such a region is the message,
+which runs only when the assert fails. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
 or under `src/**/tests/`. It never fails on low
 coverage. Agents run it before the mutants. Commit new files, or
@@ -203,7 +205,8 @@ has uncommitted Rust changes. PASS needs no uncovered
 region touching the changes and no missed mutant; a mutant that hangs the
 tests until cargo-mutants' timeout counts as caught. A mutant proven
 equivalent goes into `exclude_re` in `.cargo/mutants.toml`, with the proof in
-a comment, so later runs skip it. A region you explain
+a comment, so later runs skip it. The touching regions also go to
+`target/verify-uncovered.txt`, which the FAIL line names. A region you explain
 rather than cover still fails it, so read the reasons, not only the word. A
 diff that changes no `.rs` file passes at once, with nothing run.
 
