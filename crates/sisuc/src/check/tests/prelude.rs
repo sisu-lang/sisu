@@ -464,3 +464,20 @@ fn result_should_report_what_it_cannot_decide() {
         codes(&src, expected);
     }
 }
+
+/// `Ok` and `Err` name the variants of a `Result` that declares them: with no prelude, or with
+/// a user's `Result` that has none (which E0026 reports), a call of either names nothing.
+#[test]
+fn ok_should_name_nothing_when_no_result_declares_it() {
+    let call = body("", "let r = Ok(1)");
+    codes(&call, &[(Code::FunctionNotFound, (2, 13))]);
+    with_prelude();
+    let src = format!("enum Result {{\n    A\n}}\n{call}");
+    codes(
+        &src,
+        &[
+            (Code::BuiltInName, (1, 6)),
+            (Code::FunctionNotFound, (5, 13)),
+        ],
+    );
+}
