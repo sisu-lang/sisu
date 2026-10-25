@@ -1,0 +1,8 @@
+fn first(o: Option<i64>) -> i64 {
+    match o {
+        Option<i64>.Some(v) => v
+        None => 0
+    }
+}
+
+fn main() {}

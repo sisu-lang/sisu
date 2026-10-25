@@ -1,0 +1,15 @@
+error[E0123]: a pattern takes no type arguments
+ --> E0123-type-args.sisu:3:15
+  |
+3 |         Option<i64>.Some(v) => v
+  |               ^^^^^
+  |
+  = help: the type of the matched value gives the type arguments
+help: remove the type arguments
+  |
+3 -         Option<i64>.Some(v) => v
+3 +         Option.Some(v) => v
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0123
