@@ -1106,19 +1106,64 @@ impl Checker<'_> {
     /// Reports each of `own` that takes a built-in type's name, or the name of one before it;
     /// `owner`'s are reported where they are declared. Every name keeps its place, so that a
     /// `Param`'s index is its place.
-    pub(super) fn type_params(&mut self, owner: &[ast::Ident], own: &[ast::Ident]) -> Vec<Symbol> {
+    pub(super) fn type_params(
+        &mut self,
+        owner: &[ast::TypeParam],
+        own: &[ast::TypeParam],
+    ) -> Vec<Symbol> {
         let mut first = FxHashMap::default();
         for param in owner {
             first
-                .entry(param.name)
-                .or_insert((param.span, Definition::Type));
+                .entry(param.name.name)
+                .or_insert((param.name.span, Definition::Type));
         }
         for param in own {
-            if !self.built_in(param) {
-                self.first_definition(&mut first, Definition::Type, None, param);
+            if !self.built_in(&param.name) {
+                self.first_definition(&mut first, Definition::Type, None, &param.name);
+            }
+            // The checker takes no bound yet; a later task of milestone 8 does.
+            for bound in &param.bounds {
+                self.unsupported(bound);
             }
         }
-        owner.iter().chain(own).map(|param| param.name).collect()
+        owner
+            .iter()
+            .chain(own)
+            .map(|param| param.name.name)
+            .collect()
+    }
+
+    /// Reports the written type `ty`, which the checker cannot take yet (a bound, a conformance
+    /// or an `extend` target, `Self`, a member type): E0030 at it, without its `?`. A later task
+    /// of milestone 8 replaces each use.
+    pub(super) fn unsupported(&mut self, ty: &ast::TypeExpr) {
+        let at = Span::new(ty.span.start(), ty.span.end() - usize::from(ty.optional));
+        self.unsupported_at(at);
+    }
+
+    /// `unsupported` for the interfaces a class or an enum lists and the associated types it
+    /// chooses.
+    pub(super) fn unsupported_conformances(
+        &mut self,
+        listed: &[ast::TypeExpr],
+        assoc: &[ast::AssocChoice],
+    ) {
+        for ty in listed {
+            self.unsupported(ty);
+        }
+        for choice in assoc {
+            self.unsupported_at(choice.name.span);
+        }
+    }
+
+    /// `unsupported` for the text at `at`.
+    pub(super) fn unsupported_at(&mut self, at: Span) {
+        let name = self.source.file.slice(at.range()).to_string();
+        self.report(DiagnosticKind::UnknownType {
+            name,
+            at,
+            suggestion: None,
+        });
     }
 
     /// The type arguments `written` in `angles` after `name`, whose declaration's type
@@ -1202,7 +1247,7 @@ impl Checker<'_> {
         let named = lex(rest).map_or(true, |lexed| {
             lexed.tokens.iter().any(|token| {
                 matches!(token.kind, TokenKind::Ident(name)
-                    if main.type_params.iter().any(|p| p.name == name))
+                    if main.type_params.iter().any(|p| p.name.name == name))
             })
         });
         let remove = (!named && !self.comment_in(&[angles.range()])).then_some(angles);

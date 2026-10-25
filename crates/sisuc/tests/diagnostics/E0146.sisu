@@ -1,0 +1,9 @@
+interface Shape {
+    fn area(self) -> f64 {
+        0.0
+    }
+}
+
+fn main() {
+    print(1)
+}

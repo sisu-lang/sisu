@@ -1,0 +1,5 @@
+fn first<T U>(xs: [T]) -> T? {
+    None
+}
+
+fn main() {}

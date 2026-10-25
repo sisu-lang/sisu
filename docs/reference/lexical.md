@@ -28,7 +28,7 @@ Outside comments and literals, the source uses only these characters:
 
 A carriage return without a line feed does not end a line. So two statements with only a carriage return between them are an error ([E0011](../diagnostics/E0011.md)).
 
-Any other character is an error ([E0010](../diagnostics/E0010.md)). This includes a letter that is not ASCII, such as `é`, and a lone `&`.
+Any other character is an error ([E0010](../diagnostics/E0010.md)). This includes a letter that is not ASCII, such as `é`, and a lone `&` outside a bound, where it joins interfaces (`T: Shape & Named`).
 
 A no-break space and a byte order mark are errors too, also at the start of the file. Comments, character literals and string literals can hold any character.
 
@@ -97,16 +97,16 @@ These words are keywords. A keyword cannot be a name.
 
 | Keywords | |
 | --- | --- |
-| Declarations | `fn`, `class`, `enum`, `const`, `let`, `mut` |
+| Declarations | `fn`, `class`, `enum`, `interface`, `extend`, `const`, `let`, `mut` |
 | Control flow | `if`, `else`, `while`, `for`, `in`, `loop`, `match`, `break`, `continue`, `return` |
-| Values | `true`, `false`, `None`, `self` |
+| Values | `true`, `false`, `None`, `self`, `Self` |
 | Other | `is`, `todo`, `_` |
 
 `var` is a keyword that Sisu does not use. Write `let mut` ([E0013](../diagnostics/E0013.md)).
 
 These words are reserved for a later version of Sisu. A reserved word cannot be a name or start an expression ([E0083](../diagnostics/E0083.md)).
 
-`as`, `echo`, `extern`, `import`, `interface`, `pub`, `record`, `test`, `type`, `weak`
+`as`, `echo`, `extern`, `import`, `pub`, `record`, `test`, `type`, `weak`
 
 ```sisu
 fn main() {

@@ -1035,6 +1035,45 @@ fn main() {
         assert_eq!(codes(src), [(Code::Expected, (4, 13))]);
     }
 
+    /// A broken `interface` header or `extend` block is a name for the checker to handle: it
+    /// reports only the parse error and goes on, with no panic.
+    #[test]
+    fn a_broken_interface_or_extend_block_should_give_its_parse_error_only() {
+        for (src, at) in [
+            ("extend C: {}\nfn main() {}\n", (1, 11)),
+            ("interface Shape: {}\nfn main() {}\n", (1, 18)),
+        ] {
+            assert_eq!(codes(src), [(Code::Expected, at)], "{src}");
+        }
+    }
+
+    /// The checker takes no bound, conformance, `extend` block, `Self` or member type yet: each
+    /// is E0030 at the type it cannot take, and an interface is skipped.
+    #[test]
+    fn what_the_checker_cannot_take_yet_should_be_an_unknown_type() {
+        for (src, at) in [
+            ("fn f<T: Ord>(x: T) {}\nfn main() {}\n", (1, 9)),
+            ("class C: Shape {}\nfn main() {}\n", (1, 10)),
+            ("enum E: Shape {\n    A\n}\nfn main() {}\n", (1, 9)),
+            (
+                "class C: Source {\n    type Item = i64\n}\nfn main() {}\n",
+                (1, 10),
+            ),
+            ("extend C {}\nfn main() {}\n", (1, 8)),
+            (
+                "class C {\n    fn f(self, x: Self) {}\n}\nfn main() {}\n",
+                (2, 19),
+            ),
+            ("fn f<S>(x: S.Item) {}\nfn main() {}\n", (1, 12)),
+        ] {
+            let found = codes(src);
+            assert_eq!(found.first(), Some(&(Code::UnknownType, at)), "{src}");
+        }
+        let src =
+            "interface Shape {\n    type Item: Same\n    fn area(self) -> f64\n}\nfn main() {}\n";
+        assert_eq!(codes(src), [], "{src}");
+    }
+
     #[test]
     fn broken_name_poisons_the_other_kind() {
         // Functions and classes share a namespace: the broken function `Tree` poisons the type.

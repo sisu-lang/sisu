@@ -5,14 +5,15 @@ use std::mem;
 use std::ops::Range;
 
 use crate::ast::{
-    Align, Applied, Arg, Arm, BinaryOp, Block, Bound, Broken, BrokenKind, Class, CompareOp, Const,
-    Enum, Expr, ExprKind, FieldDecl, ForSource, FormatSpec, Function, Ident, Item, Literal, Member,
-    Param, Part, Pattern, PatternKind, PayloadField, Program, Stmt, StmtKind, TypeExpr, TypeKind,
-    UnaryOp, Variant,
+    Align, Applied, Arg, Arm, AssocChoice, AssocType, BinaryOp, Block, Bound, Broken, BrokenKind,
+    Class, CompareOp, Const, Enum, Expr, ExprKind, Extend, FieldDecl, ForSource, FormatSpec,
+    Function, Ident, Interface, Item, Literal, Member, MutSelf, Param, Part, Pattern, PatternKind,
+    PayloadField, Program, Requirement, Stmt, StmtKind, TypeExpr, TypeKind, TypeParam, UnaryOp,
+    Variant,
 };
 use crate::diagnostic::{
-    self, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange, Join,
-    LetField, MatchIdiomForm, Owner, PowerFix,
+    self, BuiltIn, ClashForm, Diagnostic, DiagnosticKind, ForeignPattern, ForeignRange,
+    InterfaceBodyForm, Join, LetField, MatchIdiomForm, Owner, PowerFix,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
 use crate::source::{Source, Span};
@@ -259,6 +260,50 @@ fn compare_op(kind: &TokenKind) -> Option<CompareOp> {
 enum EnumMember {
     Variant(Variant),
     Method(Function),
+    Assoc(AssocChoice),
+}
+
+/// One line of a class body.
+enum ClassLine {
+    Member(Member),
+    Assoc(AssocChoice),
+}
+
+/// One line of an interface body.
+enum InterfaceLine {
+    Requirement(Requirement),
+    Assoc(AssocType),
+}
+
+/// One line of an `extend` block.
+enum ExtendLine {
+    Method(Function),
+    Assoc(AssocChoice),
+}
+
+/// A function's signature as written: everything before its body.
+struct Signature {
+    /// The `fn` token.
+    fn_span: Span,
+    name: Ident,
+    type_params: Vec<TypeParam>,
+    angles: Span,
+    self_param: Option<Span>,
+    mut_self: Option<MutSelf>,
+    params: Vec<Param>,
+    ret: Option<TypeExpr>,
+}
+
+/// What a function's first parameter may be: where the function stands.
+#[derive(Clone, Copy)]
+enum Receiver<'o> {
+    /// A function outside a class, an enum, an interface and an `extend` block: no `self`.
+    Free,
+    /// A method of a class, an enum or an interface. `mut self` is an error at once.
+    Of(&'o Owner),
+    /// A method of an `extend` block. The target may be a class or an enum, which the parser
+    /// cannot tell, so it records `mut self` for the checker to report.
+    Extension,
 }
 
 /// A range operator as written.
@@ -503,10 +548,12 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> Result<TypeExpr, Diagnostic> {
         self.descend()?;
         let start = self.peek().span;
-        let (kind, mut span) = if self.eat(&TokenKind::LBracket).is_some() {
+        let (mut kind, mut span) = if self.eat(&TokenKind::LBracket).is_some() {
             let element = self.parse_type()?;
             let close = self.expect(&TokenKind::RBracket)?;
             (TypeKind::Array(Box::new(element)), start.to(close.span))
+        } else if let Some(token) = self.eat(&TokenKind::SelfType) {
+            (TypeKind::SelfType, token.span)
         } else {
             let ident = self.ident("a type")?;
             if self.at(&TokenKind::Lt) {
@@ -523,6 +570,27 @@ impl<'a> Parser<'a> {
                 (TypeKind::Name(ident.name), ident.span)
             }
         };
+        // `.Name` after a name, `Self` or a type with arguments is an associated type, one level
+        // deeper each. A `.` and a name are always a member here: a type is never followed by a
+        // field access.
+        while !matches!(kind, TypeKind::Array(_))
+            && self.at(&TokenKind::Dot)
+            && matches!(self.tokens[self.pos + 1].kind, TokenKind::Ident(_))
+        {
+            self.descend()?;
+            self.bump();
+            let name = self.ident("an associated type")?;
+            let base = TypeExpr {
+                kind,
+                optional: 0,
+                span,
+            };
+            span = span.to(name.span);
+            kind = TypeKind::Member {
+                base: Box::new(base),
+                name,
+            };
+        }
         // Each `?` is one layer and one level of depth; `??` is one token of two.
         let mut optional = 0;
         loop {
@@ -629,11 +697,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Scans a type: a name and its list, or `[type]`, then its `?` layers, each one level deep.
+    /// Scans a type: a name or `Self` and its list and `.Name`s, or `[type]`, then its `?` layers,
+    /// each one level deep.
     fn scan_type(&self, at: &mut usize, depth: usize) -> bool {
         if depth > MAX_DEPTH {
             return false;
         }
+        let mut members = 0;
         match self.scanned(*at) {
             TokenKind::LBracket => {
                 *at += 1;
@@ -642,10 +712,20 @@ impl<'a> Parser<'a> {
                 }
                 *at += 1;
             }
-            TokenKind::Ident(_) => {
+            TokenKind::Ident(_) | TokenKind::SelfType => {
                 *at += 1;
                 if *self.scanned(*at) == TokenKind::Lt && !self.scan_list(at, depth) {
                     return false;
+                }
+                // Each `.Name` is a level deeper, as `parse_type` counts it.
+                while *self.scanned(*at) == TokenKind::Dot
+                    && matches!(self.scanned(*at + 1), TokenKind::Ident(_))
+                {
+                    members += 1;
+                    if depth + members > MAX_DEPTH {
+                        return false;
+                    }
+                    *at += 2;
                 }
             }
             _ => return false,
@@ -655,21 +735,23 @@ impl<'a> Parser<'a> {
             layers += match self.scanned(*at) {
                 TokenKind::Question => 1,
                 TokenKind::QuestionQuestion => 2,
-                _ => return depth + layers <= MAX_DEPTH,
+                _ => return depth + members + layers <= MAX_DEPTH,
             };
             *at += 1;
         }
     }
 
-    /// `<T, U>` after the name of a function, class or enum, with an optional trailing comma;
-    /// empty when no `<` follows.
-    fn type_params(&mut self) -> Result<Vec<Ident>, Diagnostic> {
+    /// `<T, U: Shape & Same>` after the name of a function, class, enum or interface, or after
+    /// `extend`, with an optional trailing comma; empty when no `<` follows.
+    fn type_params(&mut self) -> Result<Vec<TypeParam>, Diagnostic> {
         let mut params = Vec::new();
         if self.eat(&TokenKind::Lt).is_none() {
             return Ok(params);
         }
         loop {
-            params.push(self.name("a type parameter")?);
+            let name = self.name("a type parameter")?;
+            let bounds = self.bounds()?;
+            params.push(TypeParam { name, bounds });
             if self.eat(&TokenKind::Comma).is_none() || self.at(&TokenKind::Gt) {
                 break;
             }
@@ -678,6 +760,38 @@ impl<'a> Parser<'a> {
             return Err(self.expected("`,` or `>`"));
         }
         Ok(params)
+    }
+
+    /// `: A & B<T>` after a type parameter or an associated type: the interfaces it must meet;
+    /// empty when no `:` follows.
+    fn bounds(&mut self) -> Result<Vec<TypeExpr>, Diagnostic> {
+        let mut bounds = Vec::new();
+        if self.eat(&TokenKind::Colon).is_none() {
+            return Ok(bounds);
+        }
+        loop {
+            self.depth = 0;
+            bounds.push(self.parse_type()?);
+            if self.eat(&TokenKind::Amp).is_none() {
+                return Ok(bounds);
+            }
+        }
+    }
+
+    /// `: A, B<T>` after the name of a class, enum or interface: the interfaces it lists; empty
+    /// when no `:` follows.
+    fn interface_list(&mut self) -> Result<Vec<TypeExpr>, Diagnostic> {
+        let mut listed = Vec::new();
+        if self.eat(&TokenKind::Colon).is_none() {
+            return Ok(listed);
+        }
+        loop {
+            self.depth = 0;
+            listed.push(self.parse_type()?);
+            if self.eat(&TokenKind::Comma).is_none() {
+                return Ok(listed);
+            }
+        }
     }
 
     /// The program, which keeps the lexer's `breaks`.
@@ -695,9 +809,12 @@ impl<'a> Parser<'a> {
             let tokens = self.tokens;
             let previous = tokens[..start].last();
             let header = self.header(start);
+            // An `extend` block has no name of its own: its target may be no name at all, and
+            // the block is intact.
+            let extends = self.tokens[start].kind == TokenKind::Extend;
             // An item without a name would be lost, so the checker does not run; it runs on to
             // the next item, so that a foreign function and its body make one error.
-            let end = if header.is_some() {
+            let end = if header.is_some() || extends {
                 self.item_end(start)
             } else {
                 self.next_line_item(start)
@@ -715,23 +832,34 @@ impl<'a> Parser<'a> {
             }
             covered.push(bytes);
             let parsed = match self.peek().kind {
-                TokenKind::Fn => {
-                    self.checked(end, |p| Ok((Item::Function(p.function(None)?), Vec::new())))
-                }
+                TokenKind::Fn => self.checked(end, |p| {
+                    Ok((Item::Function(p.function(Receiver::Free)?), Vec::new()))
+                }),
                 TokenKind::Class => self.with_methods(end, |p, errors, methods| {
                     p.class_body(errors, methods).map(Item::Class)
                 }),
                 TokenKind::Enum => self.with_methods(end, |p, errors, methods| {
                     p.enum_body(errors, methods).map(Item::Enum)
                 }),
+                TokenKind::Interface => self.with_methods(end, |p, errors, methods| {
+                    p.interface_body(errors, methods).map(Item::Interface)
+                }),
+                TokenKind::Extend => self.with_methods(end, |p, errors, methods| {
+                    p.extend_body(errors, methods).map(Item::Extend)
+                }),
                 TokenKind::Const => {
                     self.checked(end, |p| Ok((Item::Const(p.constant(end)?), Vec::new())))
                 }
-                _ => self.checked(end, |p| Err(p.expected("`fn`, `class`, `const` or `enum`"))),
+                _ => self.checked(end, |p| {
+                    Err(p.expected("`fn`, `class`, `enum`, `interface`, `extend` or `const`"))
+                }),
             };
             match parsed {
                 Ok((item, errors)) => {
-                    debug_assert!(header.is_some(), "an unnamed item should hold an error");
+                    debug_assert!(
+                        header.is_some() || extends,
+                        "an unnamed item should hold an error"
+                    );
                     items.push(item);
                     diagnostics.extend(errors);
                 }
@@ -778,37 +906,70 @@ impl<'a> Parser<'a> {
     }
 
     /// The name and kind of the item that starts at `start`, when its header is intact: `fn`,
-    /// `class`, `enum` or `const`, then a name, with no lexer diagnostic before the token after the
-    /// name. `fn to$tal` lexes as `fn to tal`, so its name is not `to`.
+    /// `class`, `enum`, `interface` or `const`, then a name, with no lexer diagnostic before the
+    /// token after the name. `fn to$tal` lexes as `fn to tal`, so its name is not `to`. An
+    /// `extend` block is named by its target: the name after `extend` and its `<...>`, if any.
     fn header(&self, start: usize) -> Option<Broken> {
         let kind = match self.tokens[start].kind {
             TokenKind::Fn => BrokenKind::Function,
             TokenKind::Class => BrokenKind::Class,
             TokenKind::Enum => BrokenKind::Enum,
             TokenKind::Const => BrokenKind::Constant,
+            TokenKind::Interface => BrokenKind::Interface,
+            TokenKind::Extend => BrokenKind::Extend,
             _ => return None,
         };
+        let at = if kind == BrokenKind::Extend {
+            self.extend_target(start)?
+        } else {
+            start + 1
+        };
         // Neither a keyword nor a name is `Eof`, so the two tokens after the keyword exist.
-        let TokenKind::Ident(name) = &self.tokens[start + 1].kind else {
+        let TokenKind::Ident(name) = &self.tokens[at].kind else {
             return None;
         };
-        let header = self.tokens[start].span.start()..self.tokens[start + 2].span.start();
+        let header = self.tokens[start].span.start()..self.tokens[at + 1].span.start();
         if self.lexer_in(header).next().is_some() {
             return None;
         }
         Some(Broken {
             name: Ident {
                 name: *name,
-                span: self.tokens[start + 1].span,
+                span: self.tokens[at].span,
             },
             kind,
         })
     }
 
+    /// Where the target of the `extend` at `start` starts: after its type-parameter list, which
+    /// runs to the `>` that matches the `<`. `None` when that `>` is not on the line.
+    fn extend_target(&self, start: usize) -> Option<usize> {
+        let mut at = start + 1;
+        if self.tokens[at].kind != TokenKind::Lt {
+            return Some(at);
+        }
+        let mut open = 0usize;
+        loop {
+            match self.tokens[at].kind {
+                TokenKind::Lt => open += 1,
+                TokenKind::Gt => {
+                    open -= 1;
+                    if open == 0 {
+                        return Some(at + 1);
+                    }
+                }
+                TokenKind::Eof | TokenKind::LBrace | TokenKind::Newline => return None,
+                _ => {}
+            }
+            at += 1;
+        }
+    }
+
     /// The end, exclusive, of the item or member that starts at `start`: past the `}` that
     /// brings the depth back to where it started, or at a line break at that depth, which comes
     /// before any `{`. A closer below that depth (a class's `}`) or `Eof` ends it first. So does
-    /// an `fn`, `class`, `const` or `enum` that starts a line at that depth, also after a token
+    /// an `fn`, `class`, `const`, `enum`, `interface` or `extend` that starts a line at that
+    /// depth, also after a token
     /// that cannot end a line. A constant is one line, as a statement is, so a `}` in its value
     /// does not end it.
     fn item_end(&self, start: usize) -> usize {
@@ -835,20 +996,27 @@ impl<'a> Parser<'a> {
         unreachable!("the tokens should end with `Eof`")
     }
 
-    /// Whether token `i` is `fn`, `class`, `const` or `enum` and the first token on its line.
-    /// These words only start an item or a member, so one at the start of a line starts the next
-    /// one, also when a token that cannot end a line, such as `+`, leaves no `Newline` before it.
+    /// Whether token `i` is `fn`, `class`, `const`, `enum`, `interface` or `extend` and the first
+    /// token on its line. These words only start an item or a member, so one at the start of a
+    /// line starts the next one, also when a token that cannot end a line, such as `+`, leaves no
+    /// `Newline` before it.
     fn starts_item_line(&self, i: usize) -> bool {
         let (before, after) = (self.tokens[i - 1].span.end(), self.tokens[i].span.start());
         matches!(
             self.tokens[i].kind,
-            TokenKind::Fn | TokenKind::Class | TokenKind::Const | TokenKind::Enum
+            TokenKind::Fn
+                | TokenKind::Class
+                | TokenKind::Const
+                | TokenKind::Enum
+                | TokenKind::Interface
+                | TokenKind::Extend
         ) && self.breaks.partition_point(|&b| b < before)
             < self.breaks.partition_point(|&b| after > b)
     }
 
     /// The end, exclusive, of the unnamed item that starts at `start`: the next line whose first
-    /// token is `fn`, `class`, `const` or `enum` outside brackets, or `Eof`.
+    /// token is `fn`, `class`, `const`, `enum`, `interface` or `extend` outside brackets, or
+    /// `Eof`.
     fn next_line_item(&self, start: usize) -> usize {
         let mut depth = 0usize;
         for (i, token) in self.tokens.iter().enumerate().skip(start) {
@@ -960,16 +1128,21 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Class)?;
         let name = self.name("a class name")?;
         let type_params = self.type_params()?;
+        let conforms = self.interface_list()?;
         self.expect(&TokenKind::LBrace)?;
         let mut members = Vec::new();
+        let mut assoc = Vec::new();
         let mut broken_methods = Vec::new();
         self.skip_newlines();
         while !self.at(&TokenKind::RBrace) {
             self.depth = 0;
             let start = self.pos;
             let end = self.item_end(start);
-            match self.checked(end, Self::member_line) {
-                Ok(member) => members.push(member),
+            // Only a class that lists an interface may choose an associated type.
+            let chooses = !conforms.is_empty();
+            match self.checked(end, |p| p.class_line(chooses)) {
+                Ok(ClassLine::Member(member)) => members.push(member),
+                Ok(ClassLine::Assoc(choice)) => assoc.push(choice),
                 Err(error) => match self.header(start) {
                     Some(Broken {
                         name,
@@ -988,9 +1161,52 @@ impl<'a> Parser<'a> {
         Ok(Class {
             name,
             type_params,
+            conforms,
+            assoc,
             members,
             broken_methods,
         })
+    }
+
+    /// A class member or, when `chooses`, the choice of an associated type, and the end of its
+    /// line.
+    fn class_line(&mut self, chooses: bool) -> Result<ClassLine, Diagnostic> {
+        if chooses && self.at(&TokenKind::Reserved("type")) {
+            let choice = self.assoc_choice()?;
+            self.line_end()?;
+            return Ok(ClassLine::Assoc(choice));
+        }
+        self.member_line().map(ClassLine::Member)
+    }
+
+    /// `type Item = i64`, in a class, an enum or an `extend` block.
+    fn assoc_choice(&mut self) -> Result<AssocChoice, Diagnostic> {
+        self.bump();
+        let name = self.name("an associated type name")?;
+        self.expect(&TokenKind::Eq)?;
+        self.depth = 0;
+        Ok(AssocChoice {
+            name,
+            ty: self.parse_type()?,
+        })
+    }
+
+    /// `type Item` or `type Item: Same & Named`, in an interface.
+    fn assoc_type(&mut self) -> Result<AssocType, Diagnostic> {
+        self.bump();
+        let name = self.name("an associated type name")?;
+        Ok(AssocType {
+            name,
+            bounds: self.bounds()?,
+        })
+    }
+
+    /// The end of a member's line: a line break, a `;` that stands in for one, or the closing `}`.
+    fn line_end(&self) -> Result<(), Diagnostic> {
+        if !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Newline) {
+            return Err(self.end_of_line());
+        }
+        Ok(())
     }
 
     /// A class member, and the end of its line.
@@ -999,9 +1215,7 @@ impl<'a> Parser<'a> {
         if matches!(member, Member::Field(_)) && self.at(&TokenKind::Comma) {
             return Err(self.member_comma(diagnostic::Member::Field));
         }
-        if !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Newline) {
-            return Err(self.end_of_line());
-        }
+        self.line_end()?;
         Ok(member)
     }
 
@@ -1051,14 +1265,14 @@ impl<'a> Parser<'a> {
                 field: true,
             }
             .into()),
-            TokenKind::Fn => Ok(Member::Method(self.method(&Owner::Class)?)),
+            TokenKind::Fn => Ok(Member::Method(self.method(Receiver::Of(&Owner::Class))?)),
             _ => Err(self.expected("a field or `fn`")),
         }
     }
 
-    /// A method of `owner`, which must take `self`.
-    fn method(&mut self, owner: &Owner) -> Result<Function, Diagnostic> {
-        let method = self.function(Some(owner))?;
+    /// A method of `receiver`, which must take `self`.
+    fn method(&mut self, receiver: Receiver<'_>) -> Result<Function, Diagnostic> {
+        let method = self.function(receiver)?;
         if method.self_param.is_none() {
             return Err(DiagnosticKind::MethodNeedsSelf {
                 at: method.name.span,
@@ -1093,9 +1307,11 @@ impl<'a> Parser<'a> {
         }
         let name = self.name("an enum name")?;
         let type_params = self.type_params()?;
+        let conforms = self.interface_list()?;
         let owner = Owner::Enum(name.name.to_string());
         self.expect(&TokenKind::LBrace)?;
         let mut variants = Vec::new();
+        let mut assoc = Vec::new();
         let mut fns = Vec::new();
         let mut broken_methods = Vec::new();
         // The `fn` of the first method, broken or not.
@@ -1108,9 +1324,12 @@ impl<'a> Parser<'a> {
             if first_method.is_none() && self.at(&TokenKind::Fn) {
                 first_method = Some(self.peek().span);
             }
-            match self.checked(end, |p| p.enum_line(&owner, first_method)) {
+            // Only an enum that lists an interface may choose an associated type.
+            let chooses = !conforms.is_empty();
+            match self.checked(end, |p| p.enum_line(&owner, first_method, chooses)) {
                 Ok(EnumMember::Variant(variant)) => variants.push(variant),
                 Ok(EnumMember::Method(method)) => fns.push(method),
+                Ok(EnumMember::Assoc(choice)) => assoc.push(choice),
                 Err(error) => match self.header(start) {
                     Some(Broken {
                         name,
@@ -1129,21 +1348,26 @@ impl<'a> Parser<'a> {
         Ok(Enum {
             name,
             type_params,
+            conforms,
+            assoc,
             variants,
             methods: fns,
             broken_methods,
         })
     }
 
-    /// A variant or a method of `owner`, and the end of its line. `first_method` is the `fn` of
-    /// the first method before this line.
+    /// A variant or a method of `owner` or, when `chooses`, the choice of an associated type, and
+    /// the end of its line. `first_method` is the `fn` of the first method before this line.
     fn enum_line(
         &mut self,
         owner: &Owner,
         first_method: Option<Span>,
+        chooses: bool,
     ) -> Result<EnumMember, Diagnostic> {
         let member = if self.at(&TokenKind::Fn) {
-            EnumMember::Method(self.method(owner)?)
+            EnumMember::Method(self.method(Receiver::Of(owner))?)
+        } else if chooses && self.at(&TokenKind::Reserved("type")) {
+            EnumMember::Assoc(self.assoc_choice()?)
         } else {
             let start = self.peek().span;
             let variant = self.variant()?;
@@ -1159,9 +1383,7 @@ impl<'a> Parser<'a> {
             }
             EnumMember::Variant(variant)
         };
-        if !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Newline) {
-            return Err(self.end_of_line());
-        }
+        self.line_end()?;
         Ok(member)
     }
 
@@ -1275,8 +1497,36 @@ impl<'a> Parser<'a> {
         Ok(Const { name, ty, value })
     }
 
-    /// `owner` is the class or enum of a method, where `self` may be the first parameter.
-    fn function(&mut self, owner: Option<&Owner>) -> Result<Function, Diagnostic> {
+    /// `receiver` says where the function stands, and so whether `self` may be its first
+    /// parameter.
+    fn function(&mut self, receiver: Receiver<'_>) -> Result<Function, Diagnostic> {
+        let Signature {
+            fn_span,
+            name,
+            type_params,
+            angles,
+            self_param,
+            mut_self,
+            params,
+            ret,
+        } = self.signature(receiver)?;
+        self.depth = 0;
+        let body = self.block()?;
+        Ok(Function {
+            name,
+            type_params,
+            angles,
+            self_param,
+            mut_self,
+            params,
+            ret,
+            span: fn_span.to(body.span),
+            body,
+        })
+    }
+
+    /// A function's signature, from its `fn` through its return type.
+    fn signature(&mut self, kind: Receiver<'_>) -> Result<Signature, Diagnostic> {
         let fn_token = self.expect(&TokenKind::Fn)?;
         let name = self.name("a function name")?;
         let open = self.peek().span;
@@ -1288,14 +1538,16 @@ impl<'a> Parser<'a> {
         };
         self.expect(&TokenKind::LParen)?;
         let mut self_param = None;
+        let mut mut_self = None;
         let mut params = Vec::new();
         if !self.at(&TokenKind::RParen) {
             loop {
-                let receiver = owner.filter(|_| self_param.is_none() && params.is_empty());
+                let first = self_param.is_none() && params.is_empty();
+                let receiver = if first { kind } else { Receiver::Free };
                 if self.at(&TokenKind::Mut) {
                     // `mut` is never `Eof`, so the token after it exists.
                     match (&self.tokens[self.pos + 1].kind, receiver) {
-                        (TokenKind::SelfKw, Some(owner)) => {
+                        (TokenKind::SelfKw, Receiver::Of(owner)) => {
                             // `self` is not `Eof`, so the token after it exists.
                             let after = &self.tokens[self.pos + 2].kind;
                             return Err(DiagnosticKind::MutSelf {
@@ -1306,7 +1558,14 @@ impl<'a> Parser<'a> {
                             }
                             .into());
                         }
-                        (TokenKind::SelfKw, None) => {
+                        (TokenKind::SelfKw, Receiver::Extension) => {
+                            mut_self = Some(MutSelf {
+                                keyword: self.bump().span,
+                                receiver: self.peek().span,
+                                annotation: None,
+                            });
+                        }
+                        (TokenKind::SelfKw, Receiver::Free) => {
                             self.bump();
                         }
                         (TokenKind::Ident(name), _) => {
@@ -1320,13 +1579,20 @@ impl<'a> Parser<'a> {
                     }
                 }
                 if self.at(&TokenKind::SelfKw) {
-                    if receiver.is_none() {
+                    if matches!(receiver, Receiver::Free) {
                         return Err(DiagnosticKind::SelfNotFirst {
                             at: self.peek().span,
                         }
                         .into());
                     }
                     self_param = Some(self.bump().span);
+                    // The annotation of a `mut self` is part of the error the checker reports.
+                    if let Some(mut_self) = &mut mut_self
+                        && let Some(colon) = self.eat(&TokenKind::Colon)
+                    {
+                        let ty = self.parse_type()?;
+                        mut_self.annotation = Some(colon.span.to(ty.span));
+                    }
                     if self.eat(&TokenKind::Comma).is_none() {
                         break;
                     }
@@ -1347,18 +1613,188 @@ impl<'a> Parser<'a> {
             Some(_) => Some(self.parse_type()?),
             None => None,
         };
-        self.depth = 0;
-        let body = self.block()?;
-        Ok(Function {
+        Ok(Signature {
+            fn_span: fn_token.span,
             name,
             type_params,
             angles,
             self_param,
+            mut_self,
             params,
             ret,
-            span: fn_token.span.to(body.span),
-            body,
         })
+    }
+
+    /// An interface: its inherited interfaces, associated types and requirements, and the errors
+    /// of the requirements it breaks, as `class_body` does.
+    fn interface_body(
+        &mut self,
+        errors: &mut Vec<Diagnostic>,
+        methods: &mut Vec<Range<usize>>,
+    ) -> Result<Interface, Diagnostic> {
+        let keyword = self.expect(&TokenKind::Interface)?.span;
+        let name = self.name("an interface name")?;
+        let type_params = self.type_params()?;
+        let inherits = self.interface_list()?;
+        self.expect(&TokenKind::LBrace)?;
+        let mut assoc = Vec::new();
+        let mut requirements = Vec::new();
+        let mut broken_methods = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) {
+            self.depth = 0;
+            let start = self.pos;
+            let end = self.item_end(start);
+            match self.checked(end, Self::interface_line) {
+                Ok(InterfaceLine::Requirement(requirement)) => requirements.push(requirement),
+                Ok(InterfaceLine::Assoc(ty)) => assoc.push(ty),
+                Err(error) => match self.header(start) {
+                    Some(Broken {
+                        name,
+                        kind: BrokenKind::Function,
+                    }) => {
+                        methods.push(self.bytes(start, end));
+                        broken_methods.push(name);
+                        errors.push(error);
+                    }
+                    _ => return Err(error),
+                },
+            }
+            self.skip_newlines();
+        }
+        let close = self.bump().span;
+        Ok(Interface {
+            name,
+            type_params,
+            inherits,
+            assoc,
+            methods: requirements,
+            broken_methods,
+            span: keyword.to(close),
+        })
+    }
+
+    /// A requirement or an associated type of an interface, and the end of its line. A body after
+    /// a requirement, and a field, are errors.
+    fn interface_line(&mut self) -> Result<InterfaceLine, Diagnostic> {
+        let line = match self.peek().kind {
+            TokenKind::Fn => InterfaceLine::Requirement(self.requirement()?),
+            TokenKind::Reserved("type") => InterfaceLine::Assoc(self.assoc_type()?),
+            TokenKind::Ident(_)
+            | TokenKind::Underscore
+            | TokenKind::Mut
+            | TokenKind::Let
+            | TokenKind::Var => {
+                // A field that is itself wrong gets its own error.
+                let start = self.peek().span;
+                self.member()?;
+                return Err(DiagnosticKind::InterfaceBody {
+                    at: start.to(self.last_span()),
+                    form: InterfaceBodyForm::Field,
+                }
+                .into());
+            }
+            _ => return Err(self.expected("`fn` or `type`")),
+        };
+        self.line_end()?;
+        Ok(line)
+    }
+
+    /// A method signature of an interface, which must take `self` and has no body.
+    fn requirement(&mut self) -> Result<Requirement, Diagnostic> {
+        let signature = self.signature(Receiver::Of(&Owner::Interface))?;
+        let Some(self_param) = signature.self_param else {
+            return Err(DiagnosticKind::MethodNeedsSelf {
+                at: signature.name.span,
+            }
+            .into());
+        };
+        if self.at(&TokenKind::LBrace) {
+            return Err(DiagnosticKind::InterfaceBody {
+                at: self.peek().span,
+                form: InterfaceBodyForm::Body,
+            }
+            .into());
+        }
+        Ok(Requirement {
+            name: signature.name,
+            type_params: signature.type_params,
+            angles: signature.angles,
+            self_param,
+            params: signature.params,
+            ret: signature.ret,
+            span: signature.fn_span.to(self.last_span()),
+        })
+    }
+
+    /// An `extend` block: its target, the interface it makes the target meet, and its methods and
+    /// associated types, with the errors of the methods it breaks, as `class_body` does.
+    fn extend_body(
+        &mut self,
+        errors: &mut Vec<Diagnostic>,
+        methods: &mut Vec<Range<usize>>,
+    ) -> Result<Extend, Diagnostic> {
+        let keyword = self.expect(&TokenKind::Extend)?.span;
+        let type_params = self.type_params()?;
+        self.depth = 0;
+        let target = self.parse_type()?;
+        let interface = match self.eat(&TokenKind::Colon) {
+            Some(_) => {
+                self.depth = 0;
+                Some(self.parse_type()?)
+            }
+            None => None,
+        };
+        self.expect(&TokenKind::LBrace)?;
+        let mut assoc = Vec::new();
+        let mut fns = Vec::new();
+        let mut broken_methods = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) {
+            self.depth = 0;
+            let start = self.pos;
+            let end = self.item_end(start);
+            // Only a block that makes the target meet an interface may choose an associated type.
+            let chooses = interface.is_some();
+            match self.checked(end, |p| p.extend_line(chooses)) {
+                Ok(ExtendLine::Method(method)) => fns.push(method),
+                Ok(ExtendLine::Assoc(choice)) => assoc.push(choice),
+                Err(error) => match self.header(start) {
+                    Some(Broken {
+                        name,
+                        kind: BrokenKind::Function,
+                    }) => {
+                        methods.push(self.bytes(start, end));
+                        broken_methods.push(name);
+                        errors.push(error);
+                    }
+                    _ => return Err(error),
+                },
+            }
+            self.skip_newlines();
+        }
+        let close = self.bump().span;
+        Ok(Extend {
+            type_params,
+            target,
+            interface,
+            assoc,
+            methods: fns,
+            broken_methods,
+            span: keyword.to(close),
+        })
+    }
+
+    /// A method or, when `chooses`, the choice of an associated type, in an `extend` block, and
+    /// the end of its line.
+    fn extend_line(&mut self, chooses: bool) -> Result<ExtendLine, Diagnostic> {
+        let line = match self.peek().kind {
+            TokenKind::Fn => ExtendLine::Method(self.method(Receiver::Extension)?),
+            TokenKind::Reserved("type") if chooses => ExtendLine::Assoc(self.assoc_choice()?),
+            _ => return Err(self.expected("`fn`")),
+        };
+        self.line_end()?;
+        Ok(line)
     }
 
     fn block(&mut self) -> Result<Block, Diagnostic> {
@@ -2068,6 +2504,13 @@ impl<'a> Parser<'a> {
         DiagnosticKind::UnexpectedCharacter { c: '|', at }.into()
     }
 
+    /// A lone `&` where an expression stands: logical and is `&&`. Only a bound's interface list
+    /// reads a `&`.
+    fn lone_amp(&self) -> Diagnostic {
+        let at = self.peek().span;
+        DiagnosticKind::UnexpectedCharacter { c: '&', at }.into()
+    }
+
     /// The sub-patterns after the `(` or `{` at the next token, through `close`; the label
     /// before each one that has it, with the span its fix deletes; and the span from the opening
     /// token through `close`.
@@ -2540,6 +2983,8 @@ impl<'a> Parser<'a> {
                 }
             } else if *kind == TokenKind::Pipe {
                 return Err(self.lone_pipe());
+            } else if *kind == TokenKind::Amp {
+                return Err(self.lone_amp());
             } else {
                 return Ok(lhs);
             }
@@ -2907,6 +3352,7 @@ impl<'a> Parser<'a> {
                 .into());
             }
             TokenKind::Pipe => return Err(self.lone_pipe()),
+            TokenKind::Amp => return Err(self.lone_amp()),
             _ => return Err(self.expected("an expression")),
         };
         Ok(Expr {
@@ -4374,12 +4820,303 @@ mod tests {
     }
 
     #[test]
-    fn type_parameters_should_hold_names_only() {
-        // A bound waits for interfaces: the list closes at `,` or `>`.
-        assert_eq!(parse_err("fn f<T: Ord>() {}"), (Code::Expected, 1, 7));
+    fn a_bad_type_parameter_list_should_be_rejected() {
         assert_eq!(parse_err("fn f<>() {}"), (Code::Expected, 1, 6));
         assert_eq!(parse_err("class A<_> {}"), (Code::UnderscoreName, 1, 9));
-        assert_eq!(parse_err("enum E<T: Ord> {}"), (Code::Expected, 1, 9));
+        // A bound is a type, so a list that ends before it is missing a type.
+        assert_eq!(parse_err("fn f<T: >() {}"), (Code::Expected, 1, 9));
+        assert_eq!(parse_err("fn f<T: A &>() {}"), (Code::Expected, 1, 12));
+        assert_eq!(parse_err("fn f<T: A B>() {}"), (Code::Expected, 1, 11));
+    }
+
+    /// Each row is the `--emit ast` text of a declaration with a bound, a conformance list, an
+    /// associated type or an `extend` block.
+    #[test]
+    fn interfaces_extend_and_bounds_should_parse() {
+        let rows = [
+            ("fn f<T: Ord>() {}", "(fn f<T: Ord> () unit (block))"),
+            ("enum E<T: Ord> {}", "(enum E<T: Ord>)"),
+            (
+                "fn to<T: Convert<Kelvin>>(x: T) {}",
+                "(fn to<T: Convert<Kelvin>> ((x T)) unit (block))",
+            ),
+            (
+                "fn f<T: Shape & Same, U>(x: T, y: U.Item, z: [S.Item.Key]?) {}",
+                "(fn f<T: Shape & Same, U> ((x T) (y U.Item) (z [S.Item.Key]?)) unit (block))",
+            ),
+            (
+                "interface Shape: Display {\n    fn area(self) -> f64\n}",
+                "(interface Shape (: Display) (fn area (self) f64))",
+            ),
+            (
+                "interface Convert<T> { fn convert(self) -> T }",
+                "(interface Convert<T> (fn convert (self) T))",
+            ),
+            (
+                "interface Source {\n    type Item: Same & Named\n    fn next(self) -> Item?\n}",
+                "(interface Source (type Item: Same & Named) (fn next (self) Item?))",
+            ),
+            (
+                "interface Plain {\n    type Item\n    fn map<U: Same>(self, f: U) -> Self\n}",
+                "(interface Plain (type Item) (fn map<U: Same> (self (f U)) Self))",
+            ),
+            ("interface Marker {}", "(interface Marker)"),
+            (
+                "class Circle: Shape, Same {\n    r: f64\n}",
+                "(class Circle (: Shape Same) (r f64))",
+            ),
+            (
+                "enum E: Same {\n    A\n    fn same(self, other: Self) -> bool { true }\n}",
+                "(enum E (: Same) A (fn same (self (other Self)) bool (block true)))",
+            ),
+            (
+                "class Countdown: Source {\n    type Item = i64\n    n: i64\n}",
+                "(class Countdown (: Source) (type Item i64) (n i64))",
+            ),
+            (
+                "class C {\n    fn f(self, a: Self, b: [Self], c: Self?) -> Self? {}\n}",
+                "(class C (fn f (self (a Self) (b [Self]) (c Self?)) Self? (block)))",
+            ),
+            (
+                "extend Circle {\n    fn grow(self) {}\n}",
+                "(extend Circle (fn grow (self) unit (block)))",
+            ),
+            (
+                "extend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin {}\n}",
+                "(extend Celsius: Convert<Kelvin> (fn convert (self) Kelvin (block)))",
+            ),
+            (
+                "extend Wrap: Source {\n    type Item = i64\n}",
+                "(extend Wrap: Source (type Item i64))",
+            ),
+            (
+                "extend<T: Same> Stack<T>: Same {\n    fn same(self, other: Self) -> bool { true }\n}",
+                "(extend<T: Same> Stack<T>: Same (fn same (self (other Self)) bool (block true)))",
+            ),
+            ("extend Stack<i64> {}", "(extend Stack<i64>)"),
+            // The checker, not the parser, says that these cannot be extended.
+            ("extend [i64] {}", "(extend [i64])"),
+            ("extend<T> T {}", "(extend<T> T)"),
+        ];
+        for (src, expected) in rows {
+            assert_eq!(program(src), expected, "{src}");
+        }
+    }
+
+    /// A `;` between two members of an interface or an `extend` block separates them, as in a
+    /// class (ADR 0028), and one after the item is redundant.
+    #[test]
+    fn a_semicolon_in_an_interface_or_extend_block_should_end_a_member() {
+        for (line, same_line) in [
+            (
+                "interface Shape {\n    fn area(self) -> f64\n    fn name(self) -> string\n}",
+                "interface Shape { fn area(self) -> f64; fn name(self) -> string }",
+            ),
+            (
+                "interface Source {\n    type Item\n    fn next(self) -> Item?\n}",
+                "interface Source { type Item; fn next(self) -> Item? }",
+            ),
+            (
+                "extend Circle {\n    fn a(self) {}\n    fn b(self) {}\n}",
+                "extend Circle { fn a(self) {}; fn b(self) {} }",
+            ),
+        ] {
+            assert_eq!(program(same_line), program(line), "{same_line}");
+        }
+        for src in ["interface I {};", "extend C {};"] {
+            let ds = parsed(src).diagnostics;
+            assert_eq!(
+                ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+                [Code::RedundantSemicolon],
+                "{src}"
+            );
+            assert!(fix_edits(&ds[0]).is_some_and(|(safe, _)| safe), "{src}");
+        }
+    }
+
+    /// Each row is the first parse error of a declaration the grammar of interfaces rejects.
+    #[test]
+    fn a_malformed_interface_or_extend_block_should_be_rejected() {
+        for (src, want) in [
+            // A body after a requirement, and a field.
+            (
+                "interface I {\n    fn f(self) -> i64 { 1 }\n}",
+                (Code::InterfaceBody, 2, 23),
+            ),
+            ("interface I {\n    x: i64\n}", (Code::InterfaceBody, 2, 5)),
+            (
+                "interface I {\n    mut x: i64\n}",
+                (Code::InterfaceBody, 2, 5),
+            ),
+            // A requirement takes `self`, and never `mut self`.
+            (
+                "interface I {\n    fn f()\n}",
+                (Code::MethodNeedsSelf, 2, 8),
+            ),
+            (
+                "interface I {\n    fn f(mut self)\n}",
+                (Code::MutSelf, 2, 10),
+            ),
+            ("interface I {\n    1\n}", (Code::Expected, 2, 5)),
+            // `type` still belongs to a later milestone outside the places that read it.
+            ("type X = i64", (Code::ReservedWord, 1, 1)),
+            (
+                "fn main() {\n    print(p.type)\n}",
+                (Code::ReservedWord, 2, 13),
+            ),
+            (
+                "extend Circle {\n    type Item = i64\n}",
+                (Code::ReservedWord, 2, 5),
+            ),
+            (
+                "class C {\n    type Item = i64\n}",
+                (Code::ReservedWord, 2, 5),
+            ),
+            // `extend` and `Self` are keywords, not names.
+            ("fn main() {\n    let extend = 1\n}", (Code::Expected, 2, 9)),
+            ("class Self {}", (Code::Expected, 1, 7)),
+            (
+                "class C {\n    fn f(self) {\n        Self(r: 1)\n    }\n}",
+                (Code::Expected, 3, 9),
+            ),
+            // Nothing follows an `extend` target but `:` and `{`.
+            ("extend C: A, B {}", (Code::Expected, 1, 12)),
+            ("extend C {\n    x: i64\n}", (Code::Expected, 2, 5)),
+        ] {
+            assert_eq!(parse_err(src), want, "{src}");
+        }
+    }
+
+    /// A lone `&` is a token for a bound's list only: anywhere an expression stands it is the
+    /// lexer's old E0010, with the unsafe fix to `&&`.
+    #[test]
+    fn a_lone_amp_in_an_expression_should_be_an_unexpected_character() {
+        for (src, at, edit) in [
+            ("fn main() {\n    print(a & b)\n}", (2, 13), (24, 25)),
+            ("fn main() {\n    print(&a)\n}", (2, 11), (22, 23)),
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::UnexpectedCharacter, "{src}");
+            assert_eq!(line_col(src, d.span().start()), at, "{src}");
+            assert_eq!(
+                fix_edits(&d),
+                Some((false, vec![(edit.0, edit.1, "&&".to_string())])),
+                "{src}"
+            );
+        }
+    }
+
+    /// A broken `extend` block is named by its target when that is a name, and the parser goes
+    /// on with the next item; with no name to give, the file is not `checkable`.
+    #[test]
+    fn a_broken_extend_block_should_be_named_by_its_target() {
+        for (src, name) in [
+            ("extend C: {}\nfn main() {}", "C"),
+            ("extend<T> Stack<T>: {}\nfn main() {}", "Stack"),
+            (
+                "extend<T: Same & Convert<K>> Stack<T>: {}\nfn main() {}",
+                "Stack",
+            ),
+        ] {
+            let parsed = parsed(src);
+            let named: Vec<_> = (parsed.program.broken.iter())
+                .map(|b| (b.name.name.as_str(), b.kind))
+                .collect();
+            assert_eq!(named, [(name, BrokenKind::Extend)], "{src}");
+            assert!(parsed.checkable, "{src}");
+            assert_eq!(parsed.diagnostics.len(), 1, "{src}");
+            assert_eq!(parsed.program.items.len(), 1, "{src}");
+        }
+        for src in ["extend {}\nfn main() {}", "extend [i64]: {}\nfn main() {}"] {
+            let parsed = parsed(src);
+            assert!(parsed.program.broken.is_empty(), "{src}");
+            assert!(!parsed.checkable, "{src}");
+            assert_eq!(parsed.diagnostics.len(), 1, "{src}");
+            assert_eq!(parsed.program.items.len(), 1, "{src}");
+        }
+    }
+
+    /// A broken `interface` header keeps its name, and the item after it is read.
+    #[test]
+    fn a_broken_interface_header_should_keep_its_name() {
+        let parsed = parsed("interface Shape: {}\nfn main() {}");
+        let named: Vec<_> = (parsed.program.broken.iter())
+            .map(|b| (b.name.name.as_str(), b.kind))
+            .collect();
+        assert_eq!(named, [("Shape", BrokenKind::Interface)]);
+        assert!(parsed.checkable);
+        assert_eq!(parsed.diagnostics.len(), 1);
+        assert_eq!(parsed.program.items.len(), 1);
+    }
+
+    /// An item that no line break ends yet starts at `interface` or `extend` at a line start, so
+    /// an error before it and one in it are both reported.
+    #[test]
+    fn interface_and_extend_should_end_the_item_before_them() {
+        for (src, codes) in [
+            (
+                "let x = 1\ninterface I {\n    fn f(self) {}\n}",
+                [Code::Expected, Code::InterfaceBody],
+            ),
+            (
+                "let x = 1\nextend C {\n    type Item = i64\n}",
+                [Code::Expected, Code::ReservedWord],
+            ),
+            (
+                "fn f() +\ninterface I: {}",
+                [Code::Expected, Code::Expected],
+            ),
+            ("fn f() +\nextend C: {}", [Code::Expected, Code::Expected]),
+        ] {
+            let found: Vec<_> = (parsed(src).diagnostics.iter())
+                .map(Diagnostic::code)
+                .collect();
+            assert_eq!(found, codes, "{src}");
+        }
+    }
+
+    /// In an `extend` block the parser cannot tell a class from an enum, so it records `mut self`
+    /// for the checker, with the `: Type` that makes its fix unsafe.
+    #[test]
+    fn mut_self_in_an_extend_block_should_be_recorded_not_reported() {
+        let rows = [
+            (
+                "extend Circle {\n    fn area(mut self) {}\n}",
+                28..31,
+                32..36,
+                None,
+            ),
+            (
+                "extend Circle {\n    fn area(mut self, n: i64) {}\n}",
+                28..31,
+                32..36,
+                None,
+            ),
+            (
+                "extend Circle {\n    fn area(mut self: i64) {}\n}",
+                28..31,
+                32..36,
+                Some(36..41),
+            ),
+        ];
+        for (src, keyword, receiver, annotation) in rows {
+            let Some(Item::Extend(extend)) = parse_ok(src).items.pop() else {
+                panic!("{src}: expected an `extend` block");
+            };
+            let span = |r: Range<usize>| Span::new(r.start, r.end);
+            let want = MutSelf {
+                keyword: span(keyword),
+                receiver: span(receiver.clone()),
+                annotation: annotation.map(span),
+            };
+            assert_eq!(extend.methods[0].mut_self, Some(want), "{src}");
+            assert_eq!(extend.methods[0].self_param, Some(span(receiver)), "{src}");
+        }
+        // A class method has no record: its `mut self` is an error at once.
+        assert_eq!(
+            parse_err("class C {\n    fn f(mut self) {}\n}"),
+            (Code::MutSelf, 2, 10)
+        );
     }
 
     #[test]
@@ -5622,6 +6359,8 @@ mod tests {
                 "",
             ),
             ("class A {\n    x: i64;\n}", (2, 11), 20, ""),
+            ("interface I {};", (1, 15), 14, ""),
+            ("extend C {};", (1, 12), 11, ""),
             // `return;` has no value.
             ("fn main() { return; }", (1, 19), 18, ""),
             ("fn main() { ; }", (1, 13), 12, ""),

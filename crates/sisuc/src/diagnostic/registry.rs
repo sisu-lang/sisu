@@ -199,6 +199,7 @@ codes! {
     LabelReused = "E0143",
     MissingLabel = "E0144",
     LabelNotOnLoop | UnnamedLabel = "E0145",
+    InterfaceBody = "E0146",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -316,13 +317,16 @@ pub(crate) enum DiagnosticKind {
     /// A method named at `at` with no `self`.
     MethodNeedsSelf { at: Span },
     /// A `mut` at `keyword` in front of the `self` at `receiver`, in a method of `owner`. In a
-    /// class, removing it is `safe` when `self` is the whole parameter; in an enum it never is.
+    /// class or an interface, removing it is `safe` when `self` is the whole parameter; in an enum
+    /// it never is.
     MutSelf {
         keyword: Span,
         receiver: Span,
         safe: bool,
         owner: Owner,
     },
+    /// A body or a field at `at` in an interface, which holds signatures only.
+    InterfaceBody { at: Span, form: InterfaceBodyForm },
     /// A `mut` at `at` in front of the parameter `name`.
     MutParameter { name: String, at: Span },
     /// A `self` at `at` that is not a method's first parameter.
@@ -1455,6 +1459,16 @@ pub(crate) enum BadRange {
 pub(crate) enum Owner {
     Class,
     Enum(String),
+    Interface,
+}
+
+/// What an interface holds that it should not.
+#[derive(Clone, Copy)]
+pub(crate) enum InterfaceBodyForm {
+    /// A `{` after a requirement.
+    Body,
+    /// A field.
+    Field,
 }
 
 /// What a built-in name is, and so why a program cannot take it.
@@ -1769,25 +1783,41 @@ impl From<DiagnosticKind> for Diagnostic {
             } => {
                 let remove = Span::new(keyword.start(), receiver.start());
                 match owner {
-                    Owner::Class => Diagnostic::coded(
-                        code,
-                        keyword,
-                        "a class method takes `self`, not `mut self`",
-                    )
-                    .with_help("an object is shared: `self` can already write every `mut` field")
-                    .with_fix(Fix {
-                        message: if safe {
-                            "remove the `mut`"
+                    Owner::Class | Owner::Interface => {
+                        let d = if matches!(owner, Owner::Class) {
+                            Diagnostic::coded(
+                                code,
+                                keyword,
+                                "a class method takes `self`, not `mut self`",
+                            )
+                            .with_help(
+                                "an object is shared: `self` can already write every `mut` field",
+                            )
                         } else {
-                            "try removing the `mut`; the receiver may need another change"
-                        }
-                        .to_string(),
-                        safe,
-                        edits: vec![Edit {
-                            span: remove,
-                            replacement: String::new(),
-                        }],
-                    }),
+                            Diagnostic::coded(
+                                code,
+                                keyword,
+                                "an interface method cannot take `mut self`",
+                            )
+                            .with_help(
+                                "a class method changes its object's `mut` fields through plain \
+                                 `self`",
+                            )
+                        };
+                        d.with_fix(Fix {
+                            message: if safe {
+                                "remove the `mut`"
+                            } else {
+                                "try removing the `mut`; the receiver may need another change"
+                            }
+                            .to_string(),
+                            safe,
+                            edits: vec![Edit {
+                                span: remove,
+                                replacement: String::new(),
+                            }],
+                        })
+                    }
                     // The body may still assign `self`, so the fix is never safe.
                     Owner::Enum(name) => Diagnostic::coded(
                         code,
@@ -1796,6 +1826,17 @@ impl From<DiagnosticKind> for Diagnostic {
                     )
                     .with_help(format!("return a new `{name}`"))
                     .with_fix(unsafe_fix("remove the `mut`", remove, "")),
+                }
+            }
+            DiagnosticKind::InterfaceBody { at, form } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    "an interface holds only method signatures and associated types",
+                );
+                match form {
+                    InterfaceBodyForm::Body => d.with_help("write the body in each conforming type"),
+                    InterfaceBodyForm::Field => d,
                 }
             }
             DiagnosticKind::MutParameter { name, at } => {

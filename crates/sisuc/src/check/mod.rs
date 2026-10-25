@@ -563,6 +563,8 @@ pub(crate) fn check<'src>(
         || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
             ast::Item::Enum(e) => !e.broken_methods.is_empty(),
+            ast::Item::Interface(i) => !i.broken_methods.is_empty(),
+            ast::Item::Extend(e) => !e.broken_methods.is_empty(),
             ast::Item::Function(_) | ast::Item::Const(_) => false,
         });
     let enums = checker.lowered_enums;
@@ -712,6 +714,7 @@ impl Checker<'_> {
             match item {
                 ast::Item::Class(class) => {
                     let type_params = self.type_params(&[], &class.type_params);
+                    self.unsupported_conformances(&class.conforms, &class.assoc);
                     let id = tir::ClassId(self.classes.len());
                     self.classes.push(ClassInfo {
                         name: class.name.clone(),
@@ -742,6 +745,7 @@ impl Checker<'_> {
                 }
                 ast::Item::Enum(e) => {
                     let type_params = self.type_params(&[], &e.type_params);
+                    self.unsupported_conformances(&e.conforms, &e.assoc);
                     let id = tir::EnumId(self.enums.len());
                     self.enums.push(EnumInfo {
                         name: e.name.clone(),
@@ -768,18 +772,30 @@ impl Checker<'_> {
                     }
                     order += 1;
                 }
+                // Task 2 takes an interface; Task 3 takes an `extend` block, whose methods this
+                // pass, the signatures and the bodies skip until then.
+                ast::Item::Interface(_) => {}
+                ast::Item::Extend(extend) => self.unsupported(&extend.target),
             }
         }
         if user_items == items.len() {
             self.prelude = self.item_counts(next_function);
         }
+        self.poison_broken(broken);
+    }
+
+    /// Poisons the name of each broken item.
+    fn poison_broken(&mut self, broken: &[ast::Broken]) {
         for broken in broken {
             let name = &broken.name.name;
             match broken.kind {
                 ast::BrokenKind::Function => {
                     self.function_ids.insert(*name, Declared::Broken);
                 }
-                ast::BrokenKind::Class => {
+                // The name of an interface joins the type namespace in Task 2, where a broken
+                // interface poisons it; until then it poisons the class namespace, as a broken
+                // class does.
+                ast::BrokenKind::Class | ast::BrokenKind::Interface => {
                     self.class_ids.insert(*name, Declared::Broken);
                 }
                 ast::BrokenKind::Enum => {
@@ -788,6 +804,9 @@ impl Checker<'_> {
                 ast::BrokenKind::Constant => {
                     self.constants.insert(*name, Declared::Broken);
                 }
+                // Its target is intact, and its parse error already fails the program. A call of
+                // a method the block lost gives `NoMember` until Task 3 makes it poison.
+                ast::BrokenKind::Extend => continue,
             }
             // Functions, classes, enums and constants share a namespace, so an intact item of
             // another kind and this name is poisoned too.
@@ -897,7 +916,7 @@ impl Checker<'_> {
                     next_enum += 1;
                     continue;
                 }
-                ast::Item::Const(_) => continue,
+                ast::Item::Const(_) | ast::Item::Interface(_) | ast::Item::Extend(_) => continue,
             };
             let id = tir::ClassId(next_class);
             next_class += 1;
@@ -954,7 +973,7 @@ impl Checker<'_> {
 
     /// `f`'s signature, named `name`, where `owner` are the type parameters of a method's class
     /// or enum.
-    fn signature(&mut self, f: &ast::Function, name: String, owner: &[ast::Ident]) {
+    fn signature(&mut self, f: &ast::Function, name: String, owner: &[ast::TypeParam]) {
         let type_params = self.type_params(owner, &f.type_params);
         self.body.set_type_params(&type_params);
         let params = f.params.iter().map(|p| self.resolve(&p.ty)).collect();
@@ -1083,6 +1102,11 @@ impl Checker<'_> {
                 self.named_type(ty, applied.name, &applied.args, applied.angles)?
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
+            // Task 2 takes `Self`, Task 7 a member type.
+            ast::TypeKind::SelfType | ast::TypeKind::Member { .. } => {
+                self.unsupported(ty);
+                return None;
+            }
         };
         // Only an applied name can be an instance that grows: a plain name has no arguments.
         // Arguments on a parameter or a built-in type are E0137, and no instance has that type.

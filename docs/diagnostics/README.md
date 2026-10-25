@@ -152,6 +152,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0143](E0143.md) | error | loop label used by an enclosing loop |
 | [E0144](E0144.md) | error | `break` or `continue` naming no loop label around it |
 | [E0145](E0145.md) | error | loop label on something that is not a loop |
+| [E0146](E0146.md) | error | body or field in an interface |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

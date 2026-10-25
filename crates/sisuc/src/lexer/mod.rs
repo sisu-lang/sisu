@@ -56,10 +56,14 @@ pub(crate) enum TokenKind {
     Class,
     Const,
     Enum,
+    Interface,
+    Extend,
     Match,
     NoneKw,
     Is,
     SelfKw,
+    /// `Self`, the type of the declaration around it.
+    SelfType,
     True,
     False,
     Plus,
@@ -80,6 +84,8 @@ pub(crate) enum TokenKind {
     Gt,
     Ge,
     AndAnd,
+    /// A lone `&`, which only a bound's interface list reads.
+    Amp,
     OrOr,
     Bang,
     Eq,
@@ -147,10 +153,13 @@ impl TokenKind {
             TokenKind::Class => "Class",
             TokenKind::Const => "Const",
             TokenKind::Enum => "Enum",
+            TokenKind::Interface => "Interface",
+            TokenKind::Extend => "Extend",
             TokenKind::Match => "Match",
             TokenKind::NoneKw => "NoneKw",
             TokenKind::Is => "Is",
             TokenKind::SelfKw => "SelfKw",
+            TokenKind::SelfType => "SelfType",
             TokenKind::True => "True",
             TokenKind::False => "False",
             TokenKind::Plus => "Plus",
@@ -171,6 +180,7 @@ impl TokenKind {
             TokenKind::Gt => "Gt",
             TokenKind::Ge => "Ge",
             TokenKind::AndAnd => "AndAnd",
+            TokenKind::Amp => "Amp",
             TokenKind::OrOr => "OrOr",
             TokenKind::Bang => "Bang",
             TokenKind::Eq => "Eq",
@@ -226,10 +236,13 @@ impl TokenKind {
             TokenKind::Class => "class",
             TokenKind::Const => "const",
             TokenKind::Enum => "enum",
+            TokenKind::Interface => "interface",
+            TokenKind::Extend => "extend",
             TokenKind::Match => "match",
             TokenKind::NoneKw => "None",
             TokenKind::Is => "is",
             TokenKind::SelfKw => "self",
+            TokenKind::SelfType => "Self",
             TokenKind::True => "true",
             TokenKind::False => "false",
             TokenKind::Plus => "+",
@@ -250,6 +263,7 @@ impl TokenKind {
             TokenKind::Gt => ">",
             TokenKind::Ge => ">=",
             TokenKind::AndAnd => "&&",
+            TokenKind::Amp => "&",
             TokenKind::OrOr => "||",
             TokenKind::Bang => "!",
             TokenKind::Eq => "=",
@@ -510,8 +524,9 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
 }
 
 /// What becomes of the first `;` of `run`, a run of `;`s among `tokens`, in statement context.
-/// `between_items` is true when the run stands between top-level items, after a `fn`, `class` or
-/// `enum`. `statements` reads `tokens` forward, to tell whether a `>` or `??` before the run
+/// `between_items` is true when the run stands between top-level items, after a `fn`, `class`,
+/// `enum`, `interface` or `extend`. `statements` reads `tokens` forward, to tell whether a `>` or
+/// `??` before the run
 /// closes a type annotation, which ends a statement as at a line's end.
 /// The rules, in order: a `.` after the run is a continuation unless the `;` is needed to end the
 /// statement; a `;` that joins two lines into a different statement stays; a `;` next to a line
@@ -524,8 +539,8 @@ fn judge(
     statements: &mut Statements,
 ) -> Judgement {
     use TokenKind::{
-        Class, Const, Dot, Else, Enum, Fn, Gt, LBrace, Newline, QuestionDot, QuestionQuestion,
-        RBrace,
+        Class, Const, Dot, Else, Enum, Extend, Fn, Gt, Interface, LBrace, Newline, QuestionDot,
+        QuestionQuestion, RBrace,
     };
     let (i, end) = (run.start, run.end);
     let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
@@ -556,7 +571,7 @@ fn judge(
         || break_after
         || prev.is_none_or(|p| p.kind == LBrace)
         || next == Some(&RBrace)
-        || (between_items && matches!(next, Some(Fn | Class | Enum | Const)))
+        || (between_items && matches!(next, Some(Fn | Class | Enum | Interface | Extend | Const)))
     {
         Judgement::Redundant
     } else if between_items && prev.is_some_and(|p| p.kind != RBrace) && next == Some(&LBrace) {
@@ -624,8 +639,8 @@ struct Brackets {
     /// The `;`s that separate statements among the tokens, in source order. A cut leaves
     /// those in the literal it ends: no token starts there, so `separate` never finds them.
     separators: Vec<Separator>,
-    /// Whether the top-level item so far is a `fn`, `class` or `enum`, which ends at its `}` and
-    /// needs no separator before the next item, rather than a `const` or none.
+    /// Whether the top-level item so far is a `fn`, `class`, `enum`, `interface` or `extend`, which
+    /// ends at its `}` and needs no separator before the next item, rather than a `const` or none.
     // shortcut: assumes no `fn` inside a const's value; revisit with function types or closures
     self_ending: bool,
     /// The statements the tokens end in, read forward.
@@ -636,7 +651,8 @@ struct Brackets {
 struct Separator {
     /// Where the `;` starts.
     at: usize,
-    /// Whether it stands between top-level items, after a `fn`, `class` or `enum`.
+    /// Whether it stands between top-level items, after a `fn`, `class`, `enum`, `interface` or
+    /// `extend`.
     between_items: bool,
 }
 
@@ -659,7 +675,8 @@ struct Statements {
 /// What a statement's tokens so far, outside its closed brackets, show.
 #[derive(Clone, Copy, Default)]
 struct Statement {
-    /// Whether its first token is `fn`, `class` or `enum`; `None` before its first token.
+    /// Whether its first token is `fn`, `class`, `enum`, `interface` or `extend`; `None` before
+    /// its first token.
     header: Option<bool>,
     /// After its last `:` or `->` that no `=` follows, how many more `>` than `<` there are;
     /// `None` when there is no such `:` or `->`.
@@ -667,10 +684,13 @@ struct Statement {
     /// How many tokens it has read so far, so the reader can tell the third.
     tokens: usize,
     /// Whether a header's type-parameter list is open. A `<` that is the third token, after
-    /// `fn`, `class` or `enum` and a name, opens it. Its names and `,`s keep it open, and its
-    /// `>` or any other token closes it. A bracket closes it before it is saved, so a statement
-    /// given back at a `}` never has it.
+    /// `fn`, `class`, `enum` or `interface` and a name, opens it, and so does the second token of
+    /// `extend<T>`. Its names, `,`s, and a bound's `:` and `&` keep it open, and so do the `<` and
+    /// `>` of a bound's arguments. Its own `>` or any other token closes it. A bracket closes it
+    /// before it is saved, so a statement given back at a `}` never has it.
     params: bool,
+    /// How many `<` of a bound's arguments are open inside the list.
+    nested: usize,
     /// Where its first token stands among the tokens. A bracket other than `{` keeps the
     /// statement around it going, so it shares that statement's start.
     start: usize,
@@ -689,10 +709,19 @@ impl Statements {
             let s = &mut self.current;
             s.header = s.header.or(Some(matches!(
                 t.kind,
-                TokenKind::Fn | TokenKind::Class | TokenKind::Enum
+                TokenKind::Fn
+                    | TokenKind::Class
+                    | TokenKind::Enum
+                    | TokenKind::Interface
+                    | TokenKind::Extend
             )));
             s.tokens += 1;
-            s.params = s.params && matches!(t.kind, Ident(_) | Comma);
+            s.params = s.params
+                && match t.kind {
+                    Ident(_) | Comma | Colon | TokenKind::Amp | Lt => true,
+                    Gt => s.nested > 0,
+                    _ => false,
+                };
             match t.kind {
                 // A block's statements start at its `{`. Inside `( )`, `[ ]` or an interpolation
                 // the statement around it goes on, though no type annotation does.
@@ -719,12 +748,24 @@ impl Statements {
                 // A `>=` after a type annotation closes it and starts its value. So does a loop
                 // keyword: it follows a loop label's `:`, which is no annotation.
                 Eq | Ge | TokenKind::While | TokenKind::For | Loop => s.annotation = None,
-                Gt => s.annotation = s.annotation.map(|a| a + 1),
+                Gt => {
+                    s.annotation = s.annotation.map(|a| a + 1);
+                    if s.params {
+                        s.nested -= 1;
+                    }
+                }
                 Lt => {
                     s.annotation = s.annotation.map(|a| a - 1);
-                    s.params = s.tokens == 3
-                        && s.header == Some(true)
-                        && matches!(tokens[i - 1].kind, Ident(_));
+                    if s.params {
+                        s.nested += 1;
+                    } else {
+                        s.params = s.header == Some(true)
+                            && match tokens[i - 1].kind {
+                                Ident(_) => s.tokens == 3,
+                                TokenKind::Extend => s.tokens == 2,
+                                _ => false,
+                            };
+                    }
                 }
                 _ => {}
             }
@@ -801,7 +842,13 @@ impl Brackets {
     /// `;` that `separator` says separates statements.
     fn note(&mut self, kind: &TokenKind, at: usize, separator: bool) {
         match kind {
-            TokenKind::Fn | TokenKind::Class | TokenKind::Enum if self.open.is_empty() => {
+            TokenKind::Fn
+            | TokenKind::Class
+            | TokenKind::Enum
+            | TokenKind::Interface
+            | TokenKind::Extend
+                if self.open.is_empty() =>
+            {
                 self.self_ending = true;
             }
             TokenKind::Const if self.open.is_empty() => self.self_ending = false,
@@ -1089,13 +1136,14 @@ fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
 }
 
 /// Whether `code`, after a line break, goes on with the header's type-parameter list open before
-/// it: `code` starts with a name, `,` or `>`. An open list ends in a name, so a line that ends in
-/// anything else, a `;` too, stops the check before it reads the word or the statement.
+/// it: `code` starts with a name, `,` or `>`. An open list ends in a name, or in the `>` of a
+/// bound's arguments, so a line that ends in anything else, a `;` too, stops the check before it
+/// reads the word or the statement.
 fn continues_params(code: &str, tokens: &[Token], brackets: &mut Brackets) -> bool {
     if !matches!(
         tokens.last(),
         Some(Token {
-            kind: TokenKind::Ident(_),
+            kind: TokenKind::Ident(_) | TokenKind::Gt,
             ..
         })
     ) {
@@ -1125,7 +1173,7 @@ thread_local! {
 fn can_end_statement(token: Option<&Token>) -> bool {
     use TokenKind::{
         Break, Char, Continue, False, Float, Ident, Int, NoneKw, Question, RBrace, RBracket,
-        RParen, Return, SelfKw, Str, StrTail, Todo, True, Underscore,
+        RParen, Return, SelfKw, SelfType, Str, StrTail, Todo, True, Underscore,
     };
     token.is_some_and(|t| {
         matches!(
@@ -1145,6 +1193,7 @@ fn can_end_statement(token: Option<&Token>) -> bool {
                 | Continue
                 | NoneKw
                 | SelfKw
+                | SelfType
                 | Question
                 | RParen
                 | RBracket
@@ -1257,6 +1306,8 @@ fn is_header(t: &Token) -> bool {
         TokenKind::Fn
             | TokenKind::Class
             | TokenKind::Enum
+            | TokenKind::Interface
+            | TokenKind::Extend
             | TokenKind::If
             | TokenKind::Match
             | TokenKind::Else
@@ -1445,7 +1496,6 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "test" => TokenKind::Reserved("test"),
         "todo" => TokenKind::Todo,
         "echo" => TokenKind::Reserved("echo"),
-        "interface" => TokenKind::Reserved("interface"),
         "extern" => TokenKind::Reserved("extern"),
         "as" => TokenKind::Reserved("as"),
         "if" => TokenKind::If,
@@ -1460,10 +1510,13 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "class" => TokenKind::Class,
         "const" => TokenKind::Const,
         "enum" => TokenKind::Enum,
+        "interface" => TokenKind::Interface,
+        "extend" => TokenKind::Extend,
         "match" => TokenKind::Match,
         "None" => TokenKind::NoneKw,
         "is" => TokenKind::Is,
         "self" => TokenKind::SelfKw,
+        "Self" => TokenKind::SelfType,
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         "_" => TokenKind::Underscore,
@@ -1482,7 +1535,7 @@ pub(crate) fn literal_too_large(at: Span) -> Diagnostic {
 /// The operator or punctuation starting with `c`, consuming a second char when it has one.
 fn symbol(c: char, chars: &mut Chars) -> Option<TokenKind> {
     use TokenKind::{
-        AndAnd, Arrow, Bang, Colon, Comma, Dot, DotDot, DotDotEq, Eq, EqEq, FatArrow, Ge, Gt,
+        Amp, AndAnd, Arrow, Bang, Colon, Comma, Dot, DotDot, DotDotEq, Eq, EqEq, FatArrow, Ge, Gt,
         LBrace, LBracket, LParen, Le, Lt, Minus, MinusEq, NotEq, OrOr, Percent, PercentEq, Pipe,
         Plus, PlusEq, QuestionDot, QuestionQuestion, RBrace, RBracket, RParen, Semicolon, Slash,
         SlashEq, Star, StarEq, StarStar,
@@ -1511,6 +1564,7 @@ fn symbol(c: char, chars: &mut Chars) -> Option<TokenKind> {
         '>' if eat('=') => Ge,
         '>' => Gt,
         '&' if eat('&') => AndAnd,
+        '&' => Amp,
         '|' if eat('|') => OrOr,
         '|' => Pipe,
         '(' => LParen,
@@ -1640,16 +1694,7 @@ mod tests {
     fn reserved_words() {
         use TokenKind::{Eof, Reserved};
         let words = [
-            "import",
-            "pub",
-            "record",
-            "type",
-            "weak",
-            "test",
-            "echo",
-            "interface",
-            "extern",
-            "as",
+            "import", "pub", "record", "type", "weak", "test", "echo", "extern", "as",
         ];
         let mut expected: Vec<_> = words.iter().map(|w| Reserved(w)).collect();
         expected.extend([
@@ -1780,6 +1825,40 @@ mod tests {
                 Let,
                 Eof
             ]
+        );
+    }
+
+    /// `interface`, `extend` and `Self` are keywords, and `Self` is not `self`; a lone `&` is a
+    /// token, and `&&` is still one.
+    #[test]
+    fn interface_extend_self_and_amp_should_lex_as_their_tokens() {
+        use TokenKind::{Amp, AndAnd, Eof, Extend, Interface, SelfKw, SelfType};
+        assert_eq!(
+            kinds("interface extend Self self Selfish selfie extends"),
+            [
+                Interface,
+                Extend,
+                SelfType,
+                SelfKw,
+                ident("Selfish"),
+                ident("selfie"),
+                ident("extends"),
+                Eof
+            ]
+        );
+        assert_eq!(
+            kinds("a & b && c"),
+            [ident("a"), Amp, ident("b"), AndAnd, ident("c"), Eof]
+        );
+    }
+
+    /// A line that ends in `Self` ends its statement, as one that ends in `self` does.
+    #[test]
+    fn self_type_should_end_a_statement() {
+        use TokenKind::{Eof, Newline, SelfType};
+        assert_eq!(
+            all_kinds("Self\ny"),
+            [SelfType, Newline, ident("y"), Newline, Eof]
         );
     }
 
@@ -2776,17 +2855,8 @@ mod tests {
 
     #[test]
     fn unexpected_character_fix() {
-        // A lone `&` gets an unsafe fix to the doubled operator; a lone `|` is the parser's.
-        let src = "a & b";
-        let d = only(src);
-        assert_eq!(d.code(), Code::UnexpectedCharacter, "{src}");
-        assert_eq!(line_col(src, d.span().start()), (1, 3), "{src}");
-        assert_eq!(
-            fix_edits(&d),
-            Some((false, vec![(2, 3, "&&".to_string())])),
-            "{src}"
-        );
-        // No fix is offered for any other character.
+        // A lone `&` and a lone `|` are the parser's.
+        // No fix is offered for any character.
         let d = only("a $ b");
         assert_eq!(d.code(), Code::UnexpectedCharacter);
         assert_eq!(fix_edits(&d), None);
@@ -3376,6 +3446,8 @@ mod tests {
             ("\nfn main()\n{\n}\n", (10, 11), (3, 1)),
             ("class A\n{\n}", (7, 8), (2, 1)),
             ("enum A\n{\n}", (6, 7), (2, 1)),
+            ("interface Shape\n{}", (15, 16), (2, 1)),
+            ("extend C\n{}", (8, 9), (2, 1)),
             (
                 "fn main() {\n    match x\n    {\n    }\n}",
                 (23, 28),
@@ -3601,6 +3673,17 @@ mod tests {
             ("x;; y", vec![Sep, Gone(1, 3)]),
             ("x;", vec![Gone(1, 2)]),
             ("fn f() {}; fn g() {}", vec![Gone(1, 10)]),
+            // `interface` and `extend` end at their `}`, as `class` does: a `;` before one or
+            // after one is redundant. After a `const`, a `;` separates.
+            ("fn f() {};interface I {}", vec![Gone(1, 10)]),
+            ("fn f() {};extend C {}", vec![Gone(1, 10)]),
+            (
+                "const A = 1\ninterface I {}; fn main() {}",
+                vec![Gone(2, 15)],
+            ),
+            ("const A = 1\nextend C {}; fn main() {}", vec![Gone(2, 12)]),
+            ("const A = 1; interface I {}", vec![Sep]),
+            ("const A = 1; extend C {}", vec![Sep]),
             ("fn main(); { }", vec![Kept]),
             ("if c { a }; else { b }", vec![Gone(1, 11)]),
             ("const A = 1; const B = 2", vec![Sep]),
@@ -4019,7 +4102,7 @@ mod tests {
         for (src, want) in [
             // Text skipped on the previous line: the line-start error may be its consequence.
             (
-                "fn main() {\n    let a = 1 &\n        - 2\n}",
+                "fn main() {\n    let a = 1 $\n        - 2\n}",
                 vec![(UnexpectedCharacter, 2, 15)],
             ),
             (
@@ -4027,7 +4110,7 @@ mod tests {
                 vec![(UnexpectedCharacter, 2, 9)],
             ),
             (
-                "fn main() {\n    if true &\n    {\n    }\n}",
+                "fn main() {\n    if true $\n    {\n    }\n}",
                 vec![(UnexpectedCharacter, 2, 13)],
             ),
             // A string that is not closed loses the rest of its line too.
@@ -4241,6 +4324,30 @@ mod tests {
             let lexed = lex(src).expect("the lexer should recover");
             let kinds: Vec<_> = lexed.tokens.into_iter().map(|t| t.kind).collect();
             assert_eq!(kinds, expected, "{src}");
+        }
+    }
+
+    /// A header's list stays open through a bound, so a line break inside it leaves no `Newline`:
+    /// after a bound's name, after a `&`, and after the `>` of a bound's arguments. An `extend`
+    /// block's list opens at its second token. Only the line end after the header's `}` is left.
+    #[test]
+    fn a_line_break_inside_a_bound_list_should_leave_no_newline() {
+        for src in [
+            "fn f<T: I\n>(x: T) {}",
+            "fn f<T: A &\n B>() {}",
+            "extend<T\n> Stack<T> {}",
+            "extend<T: A\n> Stack<T> {}",
+            "interface Convert<T\n> {}",
+            "fn to<T: Convert<Kelvin>\n>(x: T) {}",
+            "fn to<T: Convert<Kelvin>\n, U>(x: T) {}",
+            "fn to<T: Convert<Pair<A, B>>\n>(x: T) {}",
+        ] {
+            let breaks = all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count();
+            assert_eq!(breaks, 1, "{src}");
+            crate::parser::parse_ok(src);
         }
     }
 

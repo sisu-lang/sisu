@@ -20,7 +20,8 @@ pub(crate) struct Program {
     pub(crate) breaks: Vec<usize>,
 }
 
-/// A function, class, enum or constant that holds a syntax error, so only its name survives.
+/// A function, class, enum, constant, interface or `extend` block that holds a syntax error, so
+/// only its name survives. An `extend` block is named by its target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Broken {
     pub(crate) name: Ident,
@@ -33,6 +34,8 @@ pub(crate) enum BrokenKind {
     Class,
     Enum,
     Constant,
+    Interface,
+    Extend,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +44,63 @@ pub(crate) enum Item {
     Class(Class),
     Enum(Enum),
     Const(Const),
+    Interface(Interface),
+    Extend(Extend),
+}
+
+/// A type parameter and its bounds: `T`, or `T: Shape & Same`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TypeParam {
+    pub(crate) name: Ident,
+    /// The interfaces after the `:`, as types; empty when none is written.
+    pub(crate) bounds: Vec<TypeExpr>,
+}
+
+/// `type Item = i64`, the choice of an associated type in a class, an enum or an `extend` block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AssocChoice {
+    pub(crate) name: Ident,
+    pub(crate) ty: TypeExpr,
+}
+
+/// `type Item` or `type Item: Same & Named`, an associated type of an interface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AssocType {
+    pub(crate) name: Ident,
+    pub(crate) bounds: Vec<TypeExpr>,
+}
+
+/// `interface Name<T>: Inherited { type Item; fn name(self) -> T }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Interface {
+    pub(crate) name: Ident,
+    /// `<T, U>` after the name; empty when the interface is not generic.
+    pub(crate) type_params: Vec<TypeParam>,
+    /// The interfaces after the `:`, as types.
+    pub(crate) inherits: Vec<TypeExpr>,
+    pub(crate) assoc: Vec<AssocType>,
+    pub(crate) methods: Vec<Requirement>,
+    /// The names of the requirements that hold a syntax error; the interface itself is intact.
+    pub(crate) broken_methods: Vec<Ident>,
+    /// `interface` through `}`.
+    pub(crate) span: Span,
+}
+
+/// `extend<T> Target: Interface { type Item = i64; fn name(self) {} }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Extend {
+    /// `<T, U>` after `extend`; empty when there are none.
+    pub(crate) type_params: Vec<TypeParam>,
+    /// The type the block extends, as written; the checker says whether it can be.
+    pub(crate) target: TypeExpr,
+    /// The type after the `:`, as written.
+    pub(crate) interface: Option<TypeExpr>,
+    pub(crate) assoc: Vec<AssocChoice>,
+    pub(crate) methods: Vec<Function>,
+    /// The names of the methods that hold a syntax error; the block itself is intact.
+    pub(crate) broken_methods: Vec<Ident>,
+    /// `extend` through `}`.
+    pub(crate) span: Span,
 }
 
 /// `const name: ty = value`, at the top level.
@@ -55,7 +115,10 @@ pub(crate) struct Const {
 pub(crate) struct Class {
     pub(crate) name: Ident,
     /// `<T, U>` after the name; empty when the class is not generic.
-    pub(crate) type_params: Vec<Ident>,
+    pub(crate) type_params: Vec<TypeParam>,
+    /// The interfaces after the `:`, as types.
+    pub(crate) conforms: Vec<TypeExpr>,
+    pub(crate) assoc: Vec<AssocChoice>,
     pub(crate) members: Vec<Member>,
     /// The names of the methods that hold a syntax error; the class itself is intact.
     pub(crate) broken_methods: Vec<Ident>,
@@ -66,7 +129,10 @@ pub(crate) struct Class {
 pub(crate) struct Enum {
     pub(crate) name: Ident,
     /// `<T, U>` after the name; empty when the enum is not generic.
-    pub(crate) type_params: Vec<Ident>,
+    pub(crate) type_params: Vec<TypeParam>,
+    /// The interfaces after the `:`, as types.
+    pub(crate) conforms: Vec<TypeExpr>,
+    pub(crate) assoc: Vec<AssocChoice>,
     pub(crate) variants: Vec<Variant>,
     pub(crate) methods: Vec<Function>,
     /// The names of the methods that hold a syntax error; the enum itself is intact.
@@ -104,15 +170,42 @@ pub(crate) struct FieldDecl {
 pub(crate) struct Function {
     pub(crate) name: Ident,
     /// `<T, U>` after the name; empty when the function is not generic.
-    pub(crate) type_params: Vec<Ident>,
+    pub(crate) type_params: Vec<TypeParam>,
     /// `<` through `>` of `type_params`; empty, after the name, when there are none.
     pub(crate) angles: Span,
     /// The `self` token of a method's first parameter.
     pub(crate) self_param: Option<Span>,
+    /// The `mut self` of a method of an `extend` block, which the checker reports once it knows
+    /// whether the target is a class or an enum. A declaration's parser reports it at once.
+    pub(crate) mut_self: Option<MutSelf>,
     pub(crate) params: Vec<Param>,
     pub(crate) ret: Option<TypeExpr>,
     pub(crate) body: Block,
     /// `fn` through `}`.
+    pub(crate) span: Span,
+}
+
+/// A `mut` in front of a method's `self`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MutSelf {
+    pub(crate) keyword: Span,
+    pub(crate) receiver: Span,
+    /// The `: Type` after `self`, if written. Removing the `mut` is a safe fix only without it.
+    pub(crate) annotation: Option<Span>,
+}
+
+/// A method of an interface: a signature with no body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Requirement {
+    pub(crate) name: Ident,
+    /// `<T, U>` after the name; empty when the requirement is not generic.
+    pub(crate) type_params: Vec<TypeParam>,
+    /// `<` through `>` of `type_params`; empty, after the name, when there are none.
+    pub(crate) angles: Span,
+    pub(crate) self_param: Span,
+    pub(crate) params: Vec<Param>,
+    pub(crate) ret: Option<TypeExpr>,
+    /// `fn` through the return type.
     pub(crate) span: Span,
 }
 
@@ -144,6 +237,13 @@ pub(crate) enum TypeKind {
     Applied(Box<Applied>),
     /// `[T]`; the element type may itself be optional or an array.
     Array(Box<TypeExpr>),
+    /// `Self`.
+    SelfType,
+    /// `Base.Name`, an associated type, as in `S.Item`; `Base` may be another one.
+    Member {
+        base: Box<TypeExpr>,
+        name: Ident,
+    },
 }
 
 /// `Name<A, B>`; at least one argument. `angles` is `<` through `>`.
@@ -579,6 +679,8 @@ impl fmt::Display for TypeExpr {
             TypeKind::Name(name) => f.write_str(name.as_str())?,
             TypeKind::Applied(applied) => write!(f, "{}{}", applied.name, angled(&applied.args))?,
             TypeKind::Array(element) => write!(f, "[{element}]")?,
+            TypeKind::SelfType => f.write_str("Self")?,
+            TypeKind::Member { base, name } => write!(f, "{base}.{}", name.name)?,
         }
         for _ in 0..self.optional {
             f.write_str("?")?;
@@ -612,6 +714,97 @@ pub(crate) fn angled<T>(items: &[T]) -> Angled<'_, T> {
     Angled(items)
 }
 
+/// `: A & B` after a name, or nothing for an empty list.
+struct Bounds<'a>(&'a [TypeExpr]);
+
+impl fmt::Display for Bounds<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some((first, rest)) = self.0.split_first() else {
+            return Ok(());
+        };
+        write!(f, ": {first}")?;
+        rest.iter().try_for_each(|bound| write!(f, " & {bound}"))
+    }
+}
+
+/// ` (: A B)` after a name, or nothing for an empty list: the interfaces a declaration lists.
+struct Listed<'a>(&'a [TypeExpr]);
+
+impl fmt::Display for Listed<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        f.write_str(" (:")?;
+        spaced(f, self.0)?;
+        f.write_str(")")
+    }
+}
+
+impl fmt::Display for TypeParam {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.name.name, Bounds(&self.bounds))
+    }
+}
+
+impl fmt::Display for AssocChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(type {} {})", self.name.name, self.ty)
+    }
+}
+
+impl fmt::Display for AssocType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(type {}{})", self.name.name, Bounds(&self.bounds))
+    }
+}
+
+impl fmt::Display for Requirement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "(fn {}{} (self",
+            self.name.name,
+            angled(&self.type_params)
+        )?;
+        for p in &self.params {
+            write!(f, " ({} {})", p.name.name, p.ty)?;
+        }
+        let ret = self
+            .ret
+            .as_ref()
+            .map_or("unit".to_string(), ToString::to_string);
+        write!(f, ") {ret})")
+    }
+}
+
+impl fmt::Display for Interface {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "(interface {}{}{}",
+            self.name.name,
+            angled(&self.type_params),
+            Listed(&self.inherits)
+        )?;
+        spaced(f, &self.assoc)?;
+        spaced(f, &self.methods)?;
+        f.write_str(")")
+    }
+}
+
+impl fmt::Display for Extend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(extend{} {}", angled(&self.type_params), self.target)?;
+        if let Some(interface) = &self.interface {
+            write!(f, ": {interface}")?;
+        }
+        spaced(f, &self.assoc)?;
+        spaced(f, &self.methods)?;
+        f.write_str(")")
+    }
+}
+
 impl fmt::Display for Ident {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name.as_str())
@@ -628,6 +821,8 @@ impl fmt::Display for Program {
                 Item::Function(function) => write!(f, "{function}")?,
                 Item::Class(class) => write!(f, "{class}")?,
                 Item::Enum(e) => write!(f, "{e}")?,
+                Item::Interface(interface) => write!(f, "{interface}")?,
+                Item::Extend(extend) => write!(f, "{extend}")?,
                 Item::Const(c) => {
                     write!(f, "(const {}", c.name.name)?;
                     if let Some(ty) = &c.ty {
@@ -643,7 +838,14 @@ impl fmt::Display for Program {
 
 impl fmt::Display for Class {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(class {}{}", self.name.name, angled(&self.type_params))?;
+        write!(
+            f,
+            "(class {}{}{}",
+            self.name.name,
+            angled(&self.type_params),
+            Listed(&self.conforms)
+        )?;
+        spaced(f, &self.assoc)?;
         for member in &self.members {
             match member {
                 Member::Field(field) => {
@@ -659,7 +861,14 @@ impl fmt::Display for Class {
 
 impl fmt::Display for Enum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(enum {}{}", self.name.name, angled(&self.type_params))?;
+        write!(
+            f,
+            "(enum {}{}{}",
+            self.name.name,
+            angled(&self.type_params),
+            Listed(&self.conforms)
+        )?;
+        spaced(f, &self.assoc)?;
         for variant in &self.variants {
             match &variant.payload {
                 None => write!(f, " {}", variant.name.name)?,
@@ -1047,6 +1256,7 @@ mod tests {
             type_params: Vec::new(),
             angles: sp(),
             self_param: None,
+            mut_self: None,
             params,
             ret,
             body,
@@ -1144,6 +1354,8 @@ mod tests {
         let shape = Enum {
             name: ident("Shape"),
             type_params: Vec::new(),
+            conforms: Vec::new(),
+            assoc: Vec::new(),
             variants: vec![
                 Variant {
                     name: ident("Dot"),

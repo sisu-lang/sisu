@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 10] = [
+const EXCLUDED: [(&str, &str); 16] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -40,6 +40,27 @@ const EXCLUDED: [(&str, &str); 10] = [
     (
         "ast::BrokenKind::Constant",
         "only an item with a syntax error is broken",
+    ),
+    (
+        "ast::BrokenKind::Interface",
+        "only an item with a syntax error is broken",
+    ),
+    (
+        "ast::BrokenKind::Extend",
+        "only an item with a syntax error is broken",
+    ),
+    (
+        "ast::Item::Interface",
+        "lands in Task 2 of milestone 8 part 4",
+    ),
+    (
+        "ast::TypeKind::SelfType",
+        "lands in Task 2 of milestone 8 part 4",
+    ),
+    ("ast::Item::Extend", "lands in Task 3 of milestone 8 part 4"),
+    (
+        "ast::TypeKind::Member",
+        "lands in Task 7 of milestone 8 part 4",
     ),
     (
         "ast::Bound::Name",
@@ -470,20 +491,36 @@ impl Walk {
             .iter()
             .filter_map(|item| match item {
                 ast::Item::Function(f) => Some(f.name.name.as_str().to_string()),
-                ast::Item::Class(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+                ast::Item::Class(_)
+                | ast::Item::Enum(_)
+                | ast::Item::Const(_)
+                | ast::Item::Interface(_)
+                | ast::Item::Extend(_) => None,
             })
             .collect();
         self.generic_funcs = generic_names(program, |item| match item {
             ast::Item::Function(f) => Some((&f.name, &f.type_params)),
-            ast::Item::Class(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+            ast::Item::Class(_)
+            | ast::Item::Enum(_)
+            | ast::Item::Const(_)
+            | ast::Item::Interface(_)
+            | ast::Item::Extend(_) => None,
         });
         self.generic_classes = generic_names(program, |item| match item {
             ast::Item::Class(c) => Some((&c.name, &c.type_params)),
-            ast::Item::Function(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+            ast::Item::Function(_)
+            | ast::Item::Enum(_)
+            | ast::Item::Const(_)
+            | ast::Item::Interface(_)
+            | ast::Item::Extend(_) => None,
         });
         self.generic_enums = generic_names(program, |item| match item {
             ast::Item::Enum(e) => Some((&e.name, &e.type_params)),
-            ast::Item::Function(_) | ast::Item::Class(_) | ast::Item::Const(_) => None,
+            ast::Item::Function(_)
+            | ast::Item::Class(_)
+            | ast::Item::Const(_)
+            | ast::Item::Interface(_)
+            | ast::Item::Extend(_) => None,
         });
         self.variants = program
             .items
@@ -496,7 +533,11 @@ impl Walk {
                         .map(|v| v.name.name.as_str().to_string())
                         .collect(),
                 )),
-                ast::Item::Function(_) | ast::Item::Class(_) | ast::Item::Const(_) => None,
+                ast::Item::Function(_)
+                | ast::Item::Class(_)
+                | ast::Item::Const(_)
+                | ast::Item::Interface(_)
+                | ast::Item::Extend(_) => None,
             })
             .collect();
         for broken in &program.broken {
@@ -505,6 +546,8 @@ impl Walk {
                 ast::BrokenKind::Class => "ast::BrokenKind::Class",
                 ast::BrokenKind::Enum => "ast::BrokenKind::Enum",
                 ast::BrokenKind::Constant => "ast::BrokenKind::Constant",
+                ast::BrokenKind::Interface => "ast::BrokenKind::Interface",
+                ast::BrokenKind::Extend => "ast::BrokenKind::Extend",
             });
         }
         for item in &program.items {
@@ -513,24 +556,12 @@ impl Walk {
                     self.mark("ast::Item::Function");
                     self.ast_function(f);
                 }
-                ast::Item::Class(c) => {
-                    self.mark("ast::Item::Class");
-                    for member in &c.members {
-                        match member {
-                            ast::Member::Field(field) => {
-                                self.mark("ast::Member::Field");
-                                self.mark(&format!("ast::FieldDecl.mutable = {}", field.mutable));
-                                self.type_expr(&field.ty);
-                            }
-                            ast::Member::Method(f) => {
-                                self.mark("ast::Member::Method");
-                                self.ast_function(f);
-                            }
-                        }
-                    }
-                }
+                ast::Item::Class(c) => self.ast_class(c),
+                ast::Item::Interface(interface) => self.ast_interface(interface),
+                ast::Item::Extend(extend) => self.ast_extend(extend),
                 ast::Item::Enum(e) => {
                     self.mark("ast::Item::Enum");
+                    self.bounds(&e.type_params);
                     for field in e.variants.iter().flat_map(|v| v.payload.iter().flatten()) {
                         self.type_expr(&field.ty);
                     }
@@ -572,9 +603,64 @@ impl Walk {
         }
     }
 
+    /// Walks the bounds, target and methods of `extend`.
+    fn ast_extend(&mut self, extend: &ast::Extend) {
+        self.mark("ast::Item::Extend");
+        self.bounds(&extend.type_params);
+        self.type_expr(&extend.target);
+        for f in &extend.methods {
+            self.ast_function(f);
+        }
+    }
+
+    /// Walks the bounds and members of `c`.
+    fn ast_class(&mut self, c: &ast::Class) {
+        self.mark("ast::Item::Class");
+        self.bounds(&c.type_params);
+        for member in &c.members {
+            match member {
+                ast::Member::Field(field) => {
+                    self.mark("ast::Member::Field");
+                    self.mark(&format!("ast::FieldDecl.mutable = {}", field.mutable));
+                    self.type_expr(&field.ty);
+                }
+                ast::Member::Method(f) => {
+                    self.mark("ast::Member::Method");
+                    self.ast_function(f);
+                }
+            }
+        }
+    }
+
+    /// Walks the bounds, requirements and associated types of `interface`.
+    fn ast_interface(&mut self, interface: &ast::Interface) {
+        self.mark("ast::Item::Interface");
+        self.bounds(&interface.type_params);
+        for bound in interface.assoc.iter().flat_map(|a| &a.bounds) {
+            self.type_expr(bound);
+        }
+        for requirement in &interface.methods {
+            self.bounds(&requirement.type_params);
+            for param in &requirement.params {
+                self.type_expr(&param.ty);
+            }
+            if let Some(ret) = &requirement.ret {
+                self.type_expr(ret);
+            }
+        }
+    }
+
+    /// Walks the bounds of `params`.
+    fn bounds(&mut self, params: &[ast::TypeParam]) {
+        for bound in params.iter().flat_map(|p| &p.bounds) {
+            self.type_expr(bound);
+        }
+    }
+
     fn ast_function(&mut self, f: &ast::Function) {
         self.func = f.name.name.as_str().to_string();
         self.in_generic = !f.type_params.is_empty();
+        self.bounds(&f.type_params);
         self.params.clear();
         for param in &f.params {
             self.type_expr(&param.ty);
@@ -612,6 +698,11 @@ impl Walk {
             ast::TypeKind::Array(element) => {
                 self.mark("ast::TypeKind::Array");
                 self.type_expr(element);
+            }
+            ast::TypeKind::SelfType => self.mark("ast::TypeKind::SelfType"),
+            ast::TypeKind::Member { base, .. } => {
+                self.mark("ast::TypeKind::Member");
+                self.type_expr(base);
             }
         }
     }
@@ -2067,7 +2158,7 @@ fn tail(block: &ast::Block) -> Option<&ast::Expr> {
 /// The names of the items `pick` selects, with their type parameters, that have any.
 fn generic_names<'a>(
     program: &'a ast::Program,
-    pick: impl Fn(&'a ast::Item) -> Option<(&'a ast::Ident, &'a Vec<ast::Ident>)>,
+    pick: impl Fn(&'a ast::Item) -> Option<(&'a ast::Ident, &'a Vec<ast::TypeParam>)>,
 ) -> FxHashSet<String> {
     program
         .items
@@ -2304,7 +2395,9 @@ fn main_holds_several_statements() {
                     ast::Item::Function(_)
                     | ast::Item::Class(_)
                     | ast::Item::Enum(_)
-                    | ast::Item::Const(_) => None,
+                    | ast::Item::Const(_)
+                    | ast::Item::Interface(_)
+                    | ast::Item::Extend(_) => None,
                 })
                 .expect("a program should have `main`")
         })

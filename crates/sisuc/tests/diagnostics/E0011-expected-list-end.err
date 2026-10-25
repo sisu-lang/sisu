@@ -1,0 +1,8 @@
+error[E0011]: expected `,` or `>`, found `U`
+ --> E0011-expected-list-end.sisu:1:12
+  |
+1 | fn first<T U>(xs: [T]) -> T? {
+  |            ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011
