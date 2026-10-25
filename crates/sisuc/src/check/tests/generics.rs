@@ -1918,6 +1918,11 @@ fn a_blamed_argument_should_be_the_only_error_of_its_call() {
         "{pick}fn g(n: i64) {{\n    let x: [string] = pair(panic(\"x\"), n)\n}}"
     ));
     codes(&src, &[(Code::NoValue, (5, 28)), (Code::Mismatch, (5, 40))]);
+    // A `unit` argument has no value, which its own error says.
+    let src = with_generics(&format!(
+        "{pick}fn u() {{}}\nfn g(n: i64) {{\n    let x: [string] = pair(u(), n)\n}}"
+    ));
+    codes(&src, &[(Code::NoValue, (6, 28)), (Code::Mismatch, (6, 33))]);
 }
 
 /// Type arguments that the call writes are the call's own, so a mismatch with the context stays
@@ -1996,9 +2001,6 @@ fn a_context_that_fits_or_does_not_fit_alone_should_keep_its_report() {
     // `n` converts to the `i64?` that the context makes of `T`, so no argument is to blame.
     let src = with_generics("fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}");
     diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[]);
-    // A `unit` argument has no value, which its own error says.
-    let src = with_generics("fn u() {}\nfn g() {\n    let s: string = id(u())\n}");
-    diagnostic(&src, Code::NoValue, (3, 24, "u()"), &[]);
 }
 
 /// A type parameter and a built-in type take no type arguments.

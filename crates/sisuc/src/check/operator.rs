@@ -650,8 +650,8 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         // `??` groups to the right, so a `None` that starts a right `??` has no type to take:
-        // `x ?? None ?? 0` is `x ?? (None ?? 0)`. Grouping the left side helps only when it
-        // unwraps one layer more than once, and a parenthesis before the `None` is a choice.
+        // `x ?? None ?? 0` is `x ?? (None ?? 0)`. Grouping the left side helps only when the
+        // left side has two layers to take off, and a parenthesis before the `None` is a choice.
         if let ExprKind::Coalesce {
             lhs: none,
             rhs: tail,

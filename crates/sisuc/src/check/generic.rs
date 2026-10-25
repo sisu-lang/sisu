@@ -580,7 +580,6 @@ impl Checker<'_> {
             for (found, bound) in iter::zip(&mut context.found, &call.bindings.found) {
                 *found = found.or(*bound);
             }
-            context.kept = call.bindings.kept;
             call.bindings = context;
         }
     }
@@ -731,9 +730,10 @@ impl Checker<'_> {
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
         let name = sig.name;
-        // No item or variant takes the name `Some`: it is the callee of `Some(...)`, or the
-        // variant of `Option.Some(...)`.
-        if sig.variant.unwrap_or(name).name.as_str() == "Some" {
+        // `Some(...)`, or `Option.Some(...)`. A user variant `Some`, which E0026 reports, is
+        // neither.
+        let option = sig.variant.is_none_or(|_| name.name.as_str() == "Option");
+        if option && sig.variant.unwrap_or(name).name.as_str() == "Some" {
             let (callee, at) = match sig.variant {
                 Some(variant) => (
                     format!("{}.{}", name.name, variant.name),
