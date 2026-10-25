@@ -826,7 +826,7 @@ impl Gen<'_> {
     /// `G<n><args>(g: a, ...)` or `G<n><args>.V(a, ...)`. Where the fields name every type
     /// parameter, it can also leave out the type arguments.
     fn construct(&mut self, g: usize, args: &[GTy], env: &mut Env, nesting: u32) -> Option<Solved> {
-        let generic = self.scope.generic(g).into_owned();
+        let generic = self.scope.generic(g).clone();
         let (bare, typed) = (
             generic_name(g),
             format!("{}{}", generic_name(g), angled(args)),

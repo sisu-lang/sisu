@@ -1,7 +1,7 @@
 //! What the generator knows at a point of the program: the names in scope, their types, the
 //! sizes their values can reach, and the values it knows.
 
-use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::rc::Rc;
 
 use super::DEPTHS;
@@ -358,15 +358,17 @@ pub(crate) struct Scope {
     pub(crate) conditional: usize,
     /// The last number a name took.
     names: usize,
+    /// `Generic::result()`, built on first use.
+    result: OnceCell<Generic>,
 }
 
 impl Scope {
     /// The generic `generic`, which may be `RESULT`.
-    pub(crate) fn generic(&self, generic: usize) -> Cow<'_, Generic> {
+    pub(crate) fn generic(&self, generic: usize) -> &Generic {
         if generic == RESULT {
-            Cow::Owned(Generic::result())
+            self.result.get_or_init(Generic::result)
         } else {
-            Cow::Borrowed(&self.generics[generic])
+            &self.generics[generic]
         }
     }
 
