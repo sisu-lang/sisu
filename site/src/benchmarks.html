@@ -126,7 +126,7 @@ $ RUNS=10 BENCH_CPU=4 make bench
       </ul>
       <p>It runs in CodSpeed's simulation mode, which counts instructions rather than timing the run. It measures two things:</p>
       <ul>
-        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and five programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code>, <code>compare</code> and <code>tree_rewrite</code>.</li>
+        <li>Seven of the programs above, all but <code>hello</code>, at reduced inputs, and six programs that only CodSpeed runs, in <code>bench/features/</code>: <code>strings</code>, <code>enum_match</code>, <code>shared_arrays</code>, <code>compare</code>, <code>tree_rewrite</code> and <code>interp</code>.</li>
         <li>The compiler itself: an <code>-O2</code> build of <code>bench/hello</code>, a <code>sisu check</code> and an <code>-O2</code> build of <code>bench/binary_trees</code>, a <code>sisu check</code> of a generated 200-section input that uses most of the language, and an <code>-O2</code> build of a 20-section one. Pushes to <code>main</code> also build the 200-section input, from <code>codspeed-main.yml</code>.</li>
       </ul>
       <p>Before it measures, <code>scripts/codspeed-prep.sh</code> builds every benchmark and checks what each one prints. CodSpeed comments on a pull request when a result changes.</p>

@@ -468,6 +468,35 @@ fn parameter_only_read_stays_borrowed() {
     signature(&printed, "other", "fn other(e#0: borrow Expr)");
 }
 
+const INTERP: &str = include_str!("../../../../../bench/features/interp/main.sisu");
+
+/// `simplify` and `simplify_stmt` take an owned tree apart and rebuild the nodes that do not
+/// fold, so the rebuilt `Add` and `Seq` go into the boxes their arms took apart.
+#[test]
+fn interp_simplify_should_reuse_the_boxes_it_takes_apart() {
+    let printed = built(INTERP);
+    signature(&printed, "simplify", "fn simplify(e#0: Expr)");
+    has(
+        &printed,
+        "simplify",
+        &["= variant Expr.Add(move _, move _) into [_, _]"],
+    );
+    signature(&printed, "simplify_stmt", "fn simplify_stmt(s#0: Stmt)");
+    has(
+        &printed,
+        "simplify_stmt",
+        &["= variant Stmt.Seq(move _, move _) into [_, _]"],
+    );
+}
+
+#[test]
+fn interp_evaluator_and_count_should_borrow_the_tree() {
+    let printed = built(INTERP);
+    signature(&printed, "eval", "fn eval(e#0: borrow Expr");
+    signature(&printed, "run", "fn run(s#0: borrow Stmt");
+    signature(&printed, "count", "fn count(s#0: borrow Stmt)");
+}
+
 /// The arm of `REBUILT` takes two boxes apart and builds a box of their enum.
 const REBUILT: &str = "match e {\n        Add(l, r) => Expr.Add(Expr.Num(1), Expr.Num(2))\n        _ => Expr.Num(0)\n    }";
 

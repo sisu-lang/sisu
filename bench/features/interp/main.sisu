@@ -1,0 +1,271 @@
+// A small interpreter. It scans a program text into a boxed tree with a
+// cursor over `bytes()`, simplifies the tree, runs it and counts its nodes.
+// Each round parses the text again, so each round frees one tree and builds
+// the boxes of the next. `simplify` and `simplify_stmt` take an owned tree
+// apart in a `match` and rebuild the nodes that do not fold, so their arms
+// reuse the boxes they take apart. `eval`, `run` and `count` only read the tree.
+const ROUNDS = 1000
+const SPACE: u8 = 32
+const OPEN_PAREN: u8 = 40
+const STAR: u8 = 42
+const PLUS: u8 = 43
+const MINUS: u8 = 45
+const ZERO: u8 = 48
+const NINE: u8 = 57
+const LESS: u8 = 60
+const EQUAL: u8 = 61
+const LOWER_A: u8 = 97
+const LOWER_W: u8 = 119
+const LOWER_Z: u8 = 122
+const CLOSE_BRACE: u8 = 125
+
+enum Expr {
+    Num(i64)
+    Var(i64)
+    Add(Expr, Expr)
+    Sub(Expr, Expr)
+    Mul(Expr, Expr)
+    Less(Expr, Expr)
+    Equal(Expr, Expr)
+}
+
+enum Stmt {
+    Nop
+    Set(i64, Expr)
+    While(Expr, Stmt)
+    If(Expr, Stmt, Stmt)
+    Seq(Stmt, Stmt)
+}
+
+class Parser {
+    src: [u8]
+    mut pos: i64
+
+    // The byte at `i`, or 0 past the end.
+    fn at(self, i: i64) -> u8 {
+        if i < self.src.len() { self.src[i] } else { 0 }
+    }
+
+    fn skip(self) {
+        while self.at(self.pos) == SPACE {
+            self.pos += 1
+        }
+    }
+
+    fn peek(self) -> u8 {
+        self.skip()
+        self.at(self.pos)
+    }
+
+    fn program(self) -> Stmt {
+        let mut s = Stmt.Nop
+        while self.peek() != 0 {
+            s = Stmt.Seq(s, self.stmt())
+        }
+        s
+    }
+
+    fn block(self) -> Stmt {
+        self.skip()
+        self.pos += 1
+        let mut s = Stmt.Nop
+        while self.peek() != CLOSE_BRACE {
+            s = Stmt.Seq(s, self.stmt())
+        }
+        self.pos += 1
+        s
+    }
+
+    // `x = expr`, `while expr block` or `if expr block else block`. A letter
+    // that no `=` follows starts an `if`.
+    fn stmt(self) -> Stmt {
+        let c = self.peek()
+        if c == LOWER_W {
+            self.pos += 5
+            let cond = self.expr()
+            Stmt.While(cond, self.block())
+        } else {
+            self.pos += 1
+            if self.peek() == EQUAL {
+                self.pos += 1
+                Stmt.Set(i64(c) - i64(LOWER_A), self.expr())
+            } else {
+                self.pos += 1
+                let cond = self.expr()
+                let yes = self.block()
+                self.skip()
+                self.pos += 4
+                Stmt.If(cond, yes, self.block())
+            }
+        }
+    }
+
+    fn expr(self) -> Expr {
+        let l = self.sum()
+        let c = self.peek()
+        if c == LESS {
+            self.pos += 1
+            Expr.Less(l, self.sum())
+        } else if c == EQUAL {
+            self.pos += 2
+            Expr.Equal(l, self.sum())
+        } else {
+            l
+        }
+    }
+
+    fn sum(self) -> Expr {
+        let mut l = self.term()
+        let mut c = self.peek()
+        while c == PLUS || c == MINUS {
+            self.pos += 1
+            let r = self.term()
+            l = if c == PLUS { Expr.Add(l, r) } else { Expr.Sub(l, r) }
+            c = self.peek()
+        }
+        l
+    }
+
+    fn term(self) -> Expr {
+        let mut l = self.atom()
+        while self.peek() == STAR {
+            self.pos += 1
+            l = Expr.Mul(l, self.atom())
+        }
+        l
+    }
+
+    fn atom(self) -> Expr {
+        let c = self.peek()
+        if ZERO <= c <= NINE {
+            let mut n = 0
+            while ZERO <= self.at(self.pos) <= NINE {
+                n = n * 10 + i64(self.at(self.pos)) - i64(ZERO)
+                self.pos += 1
+            }
+            Expr.Num(n)
+        } else if c == OPEN_PAREN {
+            self.pos += 1
+            let e = self.expr()
+            self.pos += 1
+            e
+        } else if LOWER_A <= c <= LOWER_Z {
+            self.pos += 1
+            Expr.Var(i64(c) - i64(LOWER_A))
+        } else {
+            Expr.Num(0)
+        }
+    }
+}
+
+fn simplify(e: Expr) -> Expr {
+    match e {
+        Add(l, Num(0)) => simplify(l)
+        Add(Num(0), r) => simplify(r)
+        Mul(l, Num(1)) => simplify(l)
+        Mul(Num(1), r) => simplify(r)
+        Add(Num(a), Num(b)) => Expr.Num(a + b)
+        Sub(Num(a), Num(b)) => Expr.Num(a - b)
+        Mul(Num(a), Num(b)) => Expr.Num(a * b)
+        Add(l, r) => Expr.Add(simplify(l), simplify(r))
+        Sub(l, r) => Expr.Sub(simplify(l), simplify(r))
+        Mul(l, r) => Expr.Mul(simplify(l), simplify(r))
+        Less(l, r) => Expr.Less(simplify(l), simplify(r))
+        Equal(l, r) => Expr.Equal(simplify(l), simplify(r))
+        Num(n) => Expr.Num(n)
+        Var(v) => Expr.Var(v)
+    }
+}
+
+fn simplify_stmt(s: Stmt) -> Stmt {
+    match s {
+        Nop => Stmt.Nop
+        Set(x, e) => Stmt.Set(x, simplify(e))
+        While(c, b) => Stmt.While(simplify(c), simplify_stmt(b))
+        If(c, a, b) => Stmt.If(simplify(c), simplify_stmt(a), simplify_stmt(b))
+        Seq(a, b) => Stmt.Seq(simplify_stmt(a), simplify_stmt(b))
+    }
+}
+
+fn eval(e: Expr, vars: [i64]) -> i64 {
+    match e {
+        Num(n) => n
+        Var(v) => vars[v]
+        Add(a, b) => eval(a, vars) + eval(b, vars)
+        Sub(a, b) => eval(a, vars) - eval(b, vars)
+        Mul(a, b) => eval(a, vars) * eval(b, vars)
+        Less(a, b) => if eval(a, vars) < eval(b, vars) { 1 } else { 0 }
+        Equal(a, b) => if eval(a, vars) == eval(b, vars) { 1 } else { 0 }
+    }
+}
+
+fn run(s: Stmt, vars: [i64]) -> [i64] {
+    let mut vs = vars
+    match s {
+        Nop => {}
+        Set(x, e) => vs[x] = eval(e, vs)
+        While(c, b) => {
+            while eval(c, vs) != 0 {
+                vs = run(b, vs)
+            }
+        }
+        If(c, a, b) => {
+            if eval(c, vs) != 0 {
+                vs = run(a, vs)
+            } else {
+                vs = run(b, vs)
+            }
+        }
+        Seq(a, b) => {
+            vs = run(a, vs)
+            vs = run(b, vs)
+        }
+    }
+    vs
+}
+
+fn size(e: Expr) -> i64 {
+    match e {
+        Num(_) => 1
+        Var(_) => 1
+        Add(a, b) => 1 + size(a) + size(b)
+        Sub(a, b) => 1 + size(a) + size(b)
+        Mul(a, b) => 1 + size(a) + size(b)
+        Less(a, b) => 1 + size(a) + size(b)
+        Equal(a, b) => 1 + size(a) + size(b)
+    }
+}
+
+fn count(s: Stmt) -> i64 {
+    match s {
+        Nop => 1
+        Set(_, e) => 1 + size(e)
+        While(c, b) => 1 + size(c) + count(b)
+        If(c, a, b) => 1 + size(c) + count(a) + count(b)
+        Seq(a, b) => 1 + count(a) + count(b)
+    }
+}
+
+fn main() {
+    let mut text = "a = 0 b = z + 0 while a < 4 \{ b = b * 3 + a a = a + 1 \} "
+    text += "c = 1 * (2 + 3) d = 0 if c == 5 \{ d = c * 1 + 0 * 7 \} else \{ d = 99 \} "
+    text += "e = 10 f = 0 g = 0 while 0 < e \{ f = f + e - 2 * 3 g = g + (e == 4) e = e - 3 \} "
+    text += "h = 1 i = 0 while i < 5 \{ if i == 2 \{ h = h * 10 \} else \{ h = h + i \} i = i + 1 \} "
+    text += "j = (h + 0) * (1 * z) - h k = 0 + (4 * 5) + z"
+    let mut sum = 0
+    let mut nodes = 0
+    for r in 0..ROUNDS {
+        let s = simplify_stmt(Parser(src: text.bytes(), pos: 0).program())
+        let mut vars = [0; 26]
+        vars[25] = r % 10
+        let out = run(s, vars)
+        for v in out {
+            sum += v
+        }
+        if r == ROUNDS - 1 {
+            nodes = count(s)
+        }
+    }
+    print(sum)
+    print(nodes)
+}

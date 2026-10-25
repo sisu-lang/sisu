@@ -331,6 +331,7 @@ This table lists each feature or path and the benchmark that measures it:
 | String `+=`, interpolation with format specs, `words`, `chars`, `bytes`, non-ASCII text | strings |
 | Enum payloads under `match`: inline in an array of optionals, whose `None` is a spare tag, and boxed in a recursive tree | enum_match |
 | A match that takes boxes apart and builds new ones of the same enum | tree_rewrite |
+| Text scanned from `bytes()` into a boxed tree, rewritten and evaluated | interp |
 | The front end | check_binary_trees, check_large |
 | An `-O2` build | build_hello, build_binary_trees, build_large_20; build_large on `main` only |
 
