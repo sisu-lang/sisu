@@ -375,6 +375,7 @@ The rules:
 - A sub-pattern follows the type of its value. It is a variant pattern for an enum. It is a literal for an integer, a `char`, a `bool` or a `string`, and a range for an integer or a `char`. A name or `_` fits every type.
 - The number of sub-patterns must be the number of values in the payload ([E0128](../diagnostics/E0128.md)).
 - A pattern takes the payload by position. It has no labels and no braces ([E0123](../diagnostics/E0123.md)).
+- A pattern has no type arguments: write `Option.Some(v)`, not `Option<i64>.Some(v)`. The type of the matched value gives them ([E0123](../diagnostics/E0123.md)).
 - A payload of the type `f64`, an array or a class takes only a name or `_` as its pattern. So does a payload of a type parameter such as `T`, in generic code ([Generics](generics.md#values-of-a-type-parameter)).
 - In such a place, a bare upper-case name is an error ([E0125](../diagnostics/E0125.md)). So is a variant pattern, with parentheses or with the enum written ([E0127](../diagnostics/E0127.md)).
 
