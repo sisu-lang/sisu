@@ -1,0 +1,14 @@
+error[E0032]: expected `string`, found `i64`
+ --> E0032-generic-call.sisu:7:24
+  |
+7 |     let a: string = id(n)
+  |                        ^
+
+error[E0032]: expected `i64`, found `string`
+ --> E0032-generic-call.sisu:8:37
+  |
+8 |     let r: Result<i64, string> = Ok("x")
+  |                                     ^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -1731,10 +1731,10 @@ fn a_generic_call_that_does_not_check_should_report_once() {
     let arguments = |at| vec![(Code::TypeArguments, at)];
     let argument = |at| vec![(Code::TypeArgument, at)];
     for (line, expected) in [
-        // The call's result meets the expected type after `n` binds `T`.
+        // The expected type fits the result alone, and `n` contradicts it.
         (
             "fn g() {\n    let n: i64 = 1\n    let x: f64 = id(n)\n}",
-            vec![(Code::Mismatch, (3, 18))],
+            vec![(Code::Mismatch, (3, 21))],
         ),
         ("fn g() {\n    let x = first([])\n}", infer((2, 13))),
         ("fn g() {\n    let t = Tree.Leaf\n}", infer((2, 13))),
@@ -1839,6 +1839,170 @@ fn cannot_infer_should_be_reported_at_the_callee_name() {
     assert!(d.help().is_some());
 }
 
+/// An argument that binds a type parameter apart from the call's context is reported at the
+/// argument, in every kind of generic call, and the call adds no error of its own.
+#[test]
+fn an_argument_that_contradicts_the_context_should_be_reported_at_the_argument() {
+    with_prelude();
+    for (line, at) in [
+        // A built-in variant, a function, a user variant, a class and a method.
+        (
+            "fn g() {\n    let r: Result<i64, string> = Ok(\"x\")\n}",
+            (2, 37, "\"x\""),
+        ),
+        (
+            "fn g() {\n    let r: Result<i64, string> = Ok(1.5)\n}",
+            (2, 37, "1.5"),
+        ),
+        ("fn g(n: i64) {\n    let b: string = id(n)\n}", (2, 24, "n")),
+        (
+            "fn g(n: i64) {\n    let o: Opt2<string> = Opt2.S(n)\n}",
+            (2, 34, "n"),
+        ),
+        (
+            "fn g(n: i64) {\n    let c: Box<string> = Box(v: n)\n}",
+            (2, 33, "n"),
+        ),
+        (
+            "fn g(b: Box<i64>, n: i64) {\n    let r: [string] = b.map_all(n)\n}",
+            (2, 33, "n"),
+        ),
+    ] {
+        let src = with_generics(line);
+        diagnostic(&src, Code::Mismatch, at, &[]);
+    }
+}
+
+/// A blamed argument leaves one error for the call: the later arguments meet the type that the
+/// context gives, and an argument that was rejected before keeps the call as it is.
+#[test]
+fn a_blamed_argument_should_be_the_only_error_of_its_call() {
+    let pick = "fn pick<T>(a: T, b: T) -> T {\n    a\n}\n";
+    for (body, at) in [
+        // `1`, `None` and `[]` meet the `T` of the context, not the `string` that `s` bound.
+        (
+            "fn g(s: string) {\n    let x: [i64] = pair(s, 1)\n}",
+            (5, 25, "s"),
+        ),
+        (
+            "fn g(s: string) {\n    let x: [i64?] = pair(s, None)\n}",
+            (5, 26, "s"),
+        ),
+        (
+            "fn g(s: string) {\n    let x: [[i64]] = pair(s, [])\n}",
+            (5, 27, "s"),
+        ),
+        // `n` was rejected beside `s` already, which is the only error.
+        (
+            "fn g(s: string, n: i64) {\n    let x: [i64] = pair(s, n)\n}",
+            (5, 28, "n"),
+        ),
+        (
+            "fn g(s: string, n: i64) {\n    let x: string = pick(n, s)\n}",
+            (5, 29, "s"),
+        ),
+    ] {
+        let src = with_generics(&format!("{pick}{body}"));
+        diagnostic(&src, Code::Mismatch, at, &[]);
+    }
+    // The context leaves `B` open, so `s` keeps it, and the literal `1` is checked against it.
+    let src = with_generics(
+        "fn two_b<A, B>(a: A, b: B, c: B) -> [A] {\n    [a]\n}\nfn g(n: i64, s: string) {\n    let x: [string] = two_b(n, s, 1)\n}",
+    );
+    codes(
+        &src,
+        &[(Code::Mismatch, (5, 29)), (Code::Mismatch, (5, 35))],
+    );
+    // `panic` never finishes, so it has no value, and no type to blame.
+    let src = with_generics(&format!(
+        "{pick}fn g(n: i64) {{\n    let x: [string] = pair(panic(\"x\"), n)\n}}"
+    ));
+    codes(&src, &[(Code::NoValue, (5, 28)), (Code::Mismatch, (5, 40))]);
+    // A `unit` argument has no value, which its own error says.
+    let src = with_generics(&format!(
+        "{pick}fn u() {{}}\nfn g(n: i64) {{\n    let x: [string] = pair(u(), n)\n}}"
+    ));
+    codes(&src, &[(Code::NoValue, (6, 28)), (Code::Mismatch, (6, 33))]);
+}
+
+/// Type arguments that the call writes are the call's own, so a mismatch with the context stays
+/// at the call.
+#[test]
+fn a_call_with_written_type_arguments_should_report_a_mismatch_at_the_call() {
+    for (body, at) in [
+        (
+            "fn g(n: i64) {\n    let x: f64 = id<i64>(n)\n}",
+            (2, 18, "id<i64>(n)"),
+        ),
+        (
+            "fn g(n: i64) {\n    let x: string = id<i64>(n)\n}",
+            (2, 21, "id<i64>(n)"),
+        ),
+        (
+            "fn g(n: i64) {\n    let x: Box<f64> = Box<i64>(v: n)\n}",
+            (2, 23, "Box<i64>(v: n)"),
+        ),
+    ] {
+        let src = with_generics(body);
+        diagnostic(&src, Code::Mismatch, at, &[]);
+    }
+}
+
+/// Only an argument that contradicts the context is reported: one that fits, or that no
+/// parameter of the context reaches, is not. The context meets the type of the call whole, or
+/// by its payload.
+#[test]
+fn an_argument_that_fits_the_context_should_not_be_reported() {
+    let two = "class Two<A, B> {\n    a: A\n    b: B\n}\nfn both<A, B>(a: A, b: B) -> Two<A, B> {\n    Two(a: a, b: b)\n}\nfn first_of<A, B>(a: A, b: B) -> [A] {\n    [a]\n}\n";
+    for (body, at) in [
+        // `s` fits `string`, which the context gives `B`.
+        (
+            "fn g(n: i64, s: string) {\n    let x: Two<f64, string> = both(n, s)\n}",
+            (12, 36, "n"),
+        ),
+        // The context gives `B` nothing, and `s` binds it.
+        (
+            "fn g(n: i64, s: string) {\n    let x: [string] = first_of(n, s)\n}",
+            (12, 32, "n"),
+        ),
+        // The type of the call meets the payload of an optional context.
+        (
+            "fn g(s: string) {\n    let x: [i64]? = wrap(s)\n}",
+            (12, 26, "s"),
+        ),
+        // The context is an optional that the argument's type is not.
+        (
+            "fn g(s: string) {\n    let x: i64? = id(s)\n}",
+            (12, 22, "s"),
+        ),
+    ] {
+        let src = with_generics(&format!("{two}{body}"));
+        diagnostic(&src, Code::Mismatch, at, &[]);
+    }
+}
+
+/// A context that the call's type can meet, whole or by its payload, leaves a call clean, and one
+/// it cannot meet by itself keeps the error at the call.
+#[test]
+fn a_context_that_fits_or_does_not_fit_alone_should_keep_its_report() {
+    clean(&with_generics(
+        "fn g(z: i64?) {\n    let y: i64?? = id(z)\n}",
+    ));
+    clean(&with_generics("fn g() {\n    let x: i64? = id(5)\n}"));
+    clean(&with_generics("fn g(n: i64) {\n    let x: i64? = id(n)\n}"));
+    // `[T]` meets no `string`, so the context says nothing of the argument.
+    let src = with_generics("fn g(n: i64) {\n    let s: string = wrap(n)\n}");
+    diagnostic(&src, Code::Mismatch, (2, 21, "wrap(n)"), &[]);
+    // `T?` meets a value that is not optional, which a result cannot: `string?` is no `string`.
+    let src = with_generics("fn g(ns: [i64]) {\n    let x: string = first(ns)\n}");
+    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[]);
+    let src = with_generics("fn g(ns: [string]) {\n    let x: string = first(ns)\n}");
+    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[]);
+    // `n` converts to the `i64?` that the context makes of `T`, so no argument is to blame.
+    let src = with_generics("fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}");
+    diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[]);
+}
+
 /// A type parameter and a built-in type take no type arguments.
 #[test]
 fn parameters_and_built_ins_should_take_no_type_arguments() {
@@ -1883,12 +2047,12 @@ fn generic_arguments_that_do_not_check_should_report_as_other_arguments() {
             "class Bad<T> {\n    v: Nope<T>\n}\nfn g() {\n    let b = Bad(v: 1)\n}".into(),
             vec![(Code::UnknownType, (2, 8))],
         ),
-        // The expected type binds `B`, and the result's `A` is reported against it.
+        // The expected type fits the result alone, and `n` for `A` is reported against it.
         (
             format!(
                 "{two}fn both<A, B>(a: A, b: B) -> Two<A, B> {{ Two(a: a, b: b) }}\nfn g(n: i64) {{\n    let x: Two<f64, [i64]> = both(n, [])\n}}"
             ),
-            vec![(Code::Mismatch, (7, 30))],
+            vec![(Code::Mismatch, (7, 35))],
         ),
         (
             "fn g() {\n    let x = Wrap.W([])\n}".into(),

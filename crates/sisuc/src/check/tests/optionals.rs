@@ -132,6 +132,95 @@ fn an_optional_of_an_optional_should_be_peeled_first() {
     assert_eq!(fixes(&src, &d), []);
 }
 
+/// `??` groups to the right, so `x ?? None ?? 0` checks `None ?? 0`, whose `None` has no type.
+/// The error is at that `None`, and its unsafe fix groups the left side instead.
+/// `tests/diagnostics/E0050-coalesce` pins the wording.
+#[test]
+fn a_none_that_starts_the_right_of_coalesce_should_offer_to_group_the_left() {
+    let src = with_body("let r = x ?? None ?? 0");
+    let d = diagnostic(&src, Code::CannotInfer, (2, 18, "None"), &[]);
+    let edit = |col, text: &str| (2, col, "", text.to_string());
+    assert_eq!(
+        fixes(&src, &d),
+        [(false, vec![edit(13, "("), edit(22, ")")])]
+    );
+    clean(&applied(&src, &d));
+    // The right side of the inner `??` is still checked.
+    let src = with_body("let r = x ?? None ?? nothing");
+    codes(
+        &src,
+        &[
+            (Code::CannotInfer, (2, 18)),
+            (Code::BindingNotFound, (2, 26)),
+        ],
+    );
+}
+
+/// Only a left side that is an optional of an optional, and a `None` that no parenthesis
+/// groups, get the fix: the others keep the help to write the type.
+#[test]
+fn a_none_beside_coalesce_should_keep_the_type_help_when_the_grouping_is_not_the_cause() {
+    for (body, expected) in [
+        // The right side is written as a group already.
+        (
+            "let r = x ?? (None ?? 0)",
+            vec![(Code::CannotInfer, (2, 19))],
+        ),
+        // A left side that is not optional.
+        (
+            "let r = c ?? None ?? 0",
+            vec![
+                (Code::CoalesceNotOptional, (2, 13)),
+                (Code::CannotInfer, (2, 18)),
+            ],
+        ),
+        // One `?` is unwrapped once, so grouping the left side removes no more.
+        ("let r = w ?? None ?? 0", vec![(Code::CannotInfer, (2, 18))]),
+    ] {
+        let src = with_body(body);
+        codes(&src, &expected);
+        let ds = diags(&src);
+        let d = ds
+            .iter()
+            .find(|d| d.code() == Code::CannotInfer)
+            .expect(body);
+        assert!(d.help().is_some(), "{body}");
+        assert_eq!(fixes(&src, d), [], "{body}");
+    }
+}
+
+/// A run of `None ??` reports its first `None` only: the fix groups the left side, and the next
+/// run finds the next `None`. The rest of the right side is still checked.
+#[test]
+fn a_run_of_none_beside_coalesce_should_report_only_the_first() {
+    let src = "fn g(a: i64???) {\n    let r = a ?? None ?? None ?? 0\n}\nfn main() {}";
+    let d = diagnostic(src, Code::CannotInfer, (2, 18, "None"), &[]);
+    assert!(d.help().is_none());
+    let src = "fn g(a: i64???) {\n    let r = a ?? None ?? None ?? nothing\n}\nfn main() {}";
+    codes(
+        src,
+        &[
+            (Code::CannotInfer, (2, 18)),
+            (Code::BindingNotFound, (2, 34)),
+        ],
+    );
+    // The run ends at an operand that is not a `None`, and that operand is checked.
+    let src = "fn g(a: i64???) {\n    let r = a ?? None ?? nothing ?? 0\n}\nfn main() {}";
+    codes(
+        src,
+        &[
+            (Code::CannotInfer, (2, 18)),
+            (Code::BindingNotFound, (2, 26)),
+        ],
+    );
+}
+
+/// An operand that is not a `None` ends the run, and a value of the right type is no mistake.
+#[test]
+fn a_coalesce_whose_right_side_starts_with_a_value_should_check_clean() {
+    clean(&with_body("let r = x ?? w ?? 0"));
+}
+
 /// An optional is a type argument like any other type, written or inferred.
 #[test]
 fn an_optional_should_be_a_type_argument() {
@@ -250,7 +339,7 @@ fn a_some_whose_argument_fails_should_keep_its_type() {
 }
 
 /// A wrong use of `Option` or `Some` gets the code of the rule it breaks, at the user's text.
-/// `tests/diagnostics/E0050-some` pins the wording for `Some(None)`.
+/// `tests/diagnostics/E0050-some` and `E0050-option-some` pin the wording for `Some(None)`.
 #[test]
 fn a_wrong_use_of_option_or_some_should_be_reported() {
     for (body, code, at) in [
@@ -272,6 +361,11 @@ fn a_wrong_use_of_option_or_some_should_be_reported() {
             (2, 12, "Option"),
         ),
         ("let r = Some(None)", Code::CannotInfer, (2, 13, "Some")),
+        (
+            "let r = Option.Some(None)",
+            Code::CannotInfer,
+            (2, 13, "Option.Some"),
+        ),
         ("let r = Option.Some", Code::VariantForm, (2, 20, "Some")),
         // `Option.Some` is no form of `None`, so `is` does not test it as one.
         (

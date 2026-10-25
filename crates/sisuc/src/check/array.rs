@@ -48,6 +48,7 @@ impl Checker<'_> {
                         literal: Literal::EmptyArray,
                         binding: self.let_binding(span),
                         at: span,
+                        regroup: None,
                     },
                     false,
                 ),

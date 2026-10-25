@@ -398,6 +398,7 @@ impl Checker<'_> {
                     literal: Literal::None,
                     binding: self.let_binding(span),
                     at: span,
+                    regroup: None,
                 },
                 false,
             ),
