@@ -44,4 +44,6 @@ newlines".
   (`b: Box<i64>`). The lexer decides, so every reader sees the same line
   break. Any other `>` at a line's end goes on, as before: a comparison
   (`a >`), a header's type parameters (`fn f<T>` then its parameters), or a
-  call's type arguments (`f<i64>` then `(x)` is one call).
+  call's type arguments (`f<i64>` then `(x)` is one call). A `??` at a line's
+  end ends the statement when it closes a type annotation (`b: i64??`), and
+  otherwise the statement continues (`x ??` then `y`).

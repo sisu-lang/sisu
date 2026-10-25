@@ -106,7 +106,7 @@ The rules:
 - A type that names a generic class or enum gives one type argument for each type parameter ([E0137](../diagnostics/E0137.md)). As a type, `Box` alone and `Box<i64, i64>` are errors.
 - A class, an enum or a function that is not generic takes no type arguments ([E0137](../diagnostics/E0137.md)).
 - The type arguments of a variant go on its enum: `Tree<i64>.Node(...)`, not `Tree.Node<i64>(...)` ([E0137](../diagnostics/E0137.md)).
-- A type argument cannot be `unit`, `never` or an optional ([E0138](../diagnostics/E0138.md)). The type of a call that gives no value, such as `print(1)`, is `unit`. An array of optionals, such as `[i64?]`, is valid. The sections [Optionals of optionals](types.md#optionals-of-optionals) and [unit](types.md#unit) are in development, and they lift the rule for optionals and for `unit`.
+- A type argument cannot be `unit` or `never` ([E0138](../diagnostics/E0138.md)). The type of a call that gives no value, such as `print(1)`, is `unit`. A type argument can be an optional, such as `i64?` in `Box<i64?>`. The section [unit](types.md#unit) is in development, and it lifts the rule for `unit`.
 
 ```sisu
 class Box<T> {

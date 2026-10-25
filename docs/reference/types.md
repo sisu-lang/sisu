@@ -358,7 +358,7 @@ The rules:
 - A plain value becomes an optional through one layer only. The middle state of an `i64??` is written `Some(None)`.
 - `??` and `if let` peel one layer. On an `i64??` named `x`, `x ?? 5` gives an `i64?`, and `(x ?? None) ?? 0` gives an `i64`. `if let y = x` binds `y` with the type `i64?`.
 - `?.` removes one layer, as it does now. If `a?.b` has a `b` of the type `i64?`, it gives an `i64?`, not an `i64??`.
-- A type argument can be an optional. This lifts the rule in [Type arguments](generics.md#type-arguments).
+- A type argument can be an optional ([Type arguments](generics.md#type-arguments)).
 - `None` prints as `None` at every depth. A `T?` that holds `x` prints the text of `x`. When `x` is itself an optional that holds `None` at its innermost layer, the text is `Some(`, the text of `x`, and `)`. So every state of a nested optional prints in its own way. A `print` of an optional still builds with the warning; `to_string` does not.
 
 ```sisu pending

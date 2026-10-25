@@ -45,7 +45,10 @@ enums with `match`.
   the constructor, or `mut`
 - `==` that compares objects field by field, and `is` that tests identity
 - optionals such as `i64?` and `Node?`, with `None`, `?.`, `??`, `if let` and
-  `while let`
+  `while let`; `T?` is short for the prelude enum `Option<T>`, with the bare
+  names `Some` and `None`; an optional can hold an optional, such as `i64??`,
+  and `??`, `?.` and `if let` take off one layer at a time
+- the prelude enum `Result<T, E>`, with the bare names `Ok` and `Err`
 - enums, declared with `enum` and a list of variants, each with no payload,
   labeled fields (`Rect(w: i64, h: i64)`) or unlabeled ones (`Num(i64)`);
   `Expr.Num(2)` builds a value, an enum has methods and compares with `==`,
@@ -57,9 +60,9 @@ enums with `match`.
   written out (`first<i64>([])`, `Stack<string>(top: None)`); a generic body
   is checked once, at its definition, and compiled once for each list of type
   arguments the program reaches. A type parameter takes no bound yet, so a
-  value of one has no operators (`E0139`), and an optional is not a type
-  argument (`E0138`); a use that would need copies without end is an error
-  (`E0140`)
+  value of one has no operators (`E0139`), and `unit` and `never` are not
+  type arguments (`E0138`); a use that would need copies without end is an
+  error (`E0140`)
 - `match` on an enum, `i64`, `u8`, `bool`, `char` or `string`, as an
   expression or a statement, with one arm per line or a `;` between arms; a
   pattern is a variant, bare or through its enum (`Num(n)`, `Expr.Num(n)`),
@@ -67,7 +70,9 @@ enums with `match`.
   literal (`0`, `'a'`,
   `"x"`, `true`) on `i64`, `u8`, `char`, `bool` and `string`,
   or a range (`'A'..='Z'`, `0..10`) on `i64`, `u8` and `char`, while at a
-  class, array or optional position it is only a name or `_`; patterns may
+  class or array position it is only a name or `_`; at an optional position,
+  `Some(p)` and `None` match the optional, and a variant, a literal or a
+  range matches the value inside; patterns may
   be alternatives
   (`Add(Num(0), x) | Add(x, Num(0))`), and an arm may add a guard,
   `n if n > 0 =>`; a `match` that misses a value does not compile and names
@@ -154,8 +159,8 @@ These came out of the review of the milestone 1 spec and are now part of it:
 These came out of the milestone 2 design and are now part of its spec:
 
 - Optionals for every type, `i64?` and `bool?` included, with `?.`, `??` and
-  `None` as the empty value. `None` becomes the `Option<T>` case in
-  milestone 8.
+  `None` as the empty value. `None` is the `None` variant of `Option<T>`
+  (milestone 8).
 - `if let` and `while let` for optionals, brought forward from milestone 7.
 - `==` compares classes structurally; `a is b` compares identity. Reversed in
   milestone 8: classes compare by identity
@@ -276,9 +281,11 @@ These came out of the milestone 2 design and are now part of its spec:
 - Alternatives bind the same names with the same types, and a guard runs once
   per alternative tried, so its side effects repeat.
 - `Option`, `Result`, `Some`, `None`, `Ok` and `Err` are reserved, so
-  milestone 8 can make them bare prelude names without breaking a program.
-- `if let x = opt` on a `T?` is an implicit `Some`: only a name or `_` may
-  stand there until milestone 8 settles the `Some` and `None` pattern rule.
+  milestone 8 made them bare prelude names without breaking a program.
+- `if let x = opt` on a `T?` is an implicit `Some`. Milestone 8 settled the
+  pattern rule: `Some(p)` and `None` match the optional itself, and only the
+  top of an `if let` or `while let` takes off one layer
+  ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)).
 - Order (`<`) on an enum is an error, as on a class.
 - The proof programs are `expr.sisu` and `state.sisu` in
   `crates/sisuc/tests/run/`.
@@ -506,7 +513,7 @@ The compiler is fuzzed in two stages:
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| 8 | Generics (monomorphization) and interfaces, with `print` generic through a `Display`-like interface; `Option` and `Result` join the prelude, with the bare names `Some`, `None`, `Ok` and `Err` in expressions and patterns, and on a `T?` a pattern whose outermost name is `Some` or `None` matches the optional itself while any other pattern matches the value inside it | `print(x)` works for any printable type; `T?` is shorthand for a library `Option<T>` |
+| 8 | Generics (monomorphization) and interfaces, with `print` generic through a `Display`-like interface; `Option` and `Result` join the prelude, with the bare names `Some`, `None`, `Ok` and `Err` in expressions and patterns, and on a `T?` the patterns `Some(p)` and `None` match the optional itself, a variant, a literal or a range matches the value inside it, and a name or `_` matches the whole optional | `print(x)` works for any printable type; `T?` is shorthand for a library `Option<T>` |
 | 9 | Closures and lazy iterator methods (`map`, `filter`, `count`, `sum`), plus a `filter_some`-style method on `[T?]` | Closures first: a function that takes an `(i64) -> bool` runs with a closure that captures a local. Then `words.filter(w => w.len() > 3).count()` runs |
 | 10 | Records, named arguments, default parameters, and `p as name` to bind a whole sub-pattern | A `Point` record prints and compares with no hand-written methods |
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |

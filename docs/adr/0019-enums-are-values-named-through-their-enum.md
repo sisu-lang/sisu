@@ -85,7 +85,8 @@ variants, and a `match` must cover all of them.
   `switch` does. Only the top of an `if let` or `while let` peels one layer,
   so `if let x = opt` binds the payload. The user ruled on 2026-10-16,
   amending the rule of 2026-10-15, which left `None` uncovered in
-  `match o { Some(n) => n\n _ => 0 }`. No enum can have a variant named `Some` or `None`
+  `match o { Some(n) => n\n _ => 0 }`. No enum can have a variant named
+  `Some` or `None`
   ([ADR 0015](0015-the-prelude-holds-only-what-almost-every-program-uses.md)),
   so the rule never has to choose.
 

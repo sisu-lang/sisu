@@ -64,8 +64,8 @@ notes = [["ADR 0023", "docs/adr/0023-generics-are-monomorphized-and-checked-at-t
 
 [[area.feature]]
 text = "Optionals that nest, such as <code>i64??</code>"
-state = "planned"
-notes = [["ADR 0024", "docs/adr/0024-optionals-nest.md"]]
+state = "works"
+notes = [["ADR 0024", "docs/adr/0024-optionals-nest.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
 text = "Interfaces"
