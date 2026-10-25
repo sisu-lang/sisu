@@ -1,0 +1,10 @@
+error[E0067]: every element would be the same `Node` object
+ --> E0067-nested.sisu:7:18
+  |
+7 |     let nodes = [node; 3]
+  |                  ^^^^
+  |
+  = help: start from `[None; n]` with type `[Node?]` and fill it in a loop
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0067

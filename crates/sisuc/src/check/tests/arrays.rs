@@ -298,6 +298,32 @@ fn fill_with_one_object() {
     );
 }
 
+/// A fill reports an object under any layers of optional, of a class or a type parameter.
+/// Every spelling of `None` holds no object, so it fills.
+#[test]
+fn fill_should_report_an_object_under_every_layer_of_optional() {
+    for (src, expected) in [
+        (
+            "fn f(m: Node??) { let a = [m; 3] }",
+            vec![(Code::SameObject, (4, 28))],
+        ),
+        (
+            "fn f(m: Node???) { let a = [m; 3] }",
+            vec![(Code::SameObject, (4, 29))],
+        ),
+        (
+            "fn f<T>(m: T??) { let a = [m; 3] }",
+            vec![(Code::SameObject, (4, 28))],
+        ),
+        ("fn f() { let a: [Node??] = [None; 3] }", vec![]),
+        ("fn f() { let a: [Node?] = [Option.None; 3] }", vec![]),
+        ("fn f() { let a = [Option<Node>.None; 3] }", vec![]),
+        ("fn f<T>() { let a = [Option<T??>.None; 3] }", vec![]),
+    ] {
+        codes(&with_node(src), &expected);
+    }
+}
+
 #[test]
 fn fill_applies_the_class_rule_before_the_element_type() {
     codes(

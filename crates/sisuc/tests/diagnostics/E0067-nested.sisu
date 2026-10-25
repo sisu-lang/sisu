@@ -1,0 +1,9 @@
+class Node {
+    value: i64
+}
+
+fn main() {
+    let node: Node?? = Some(Node(value: 0))
+    let nodes = [node; 3]
+    print(nodes.len())
+}

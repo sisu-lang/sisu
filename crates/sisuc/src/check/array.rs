@@ -164,9 +164,9 @@ impl Checker<'_> {
     }
 
     /// `[value; len]`: `value` is checked with the expected element type as its hint, then
-    /// against it, and `len` against `i64`. A `value` of a class or a class optional is
-    /// reported, as every slot would hold the same object; the literal `None` is not. That rule
-    /// sees `value`'s own type, before a mismatch with the element type erases it.
+    /// against it, and `len` against `i64`. A `value` of a class, under any layers of optional,
+    /// is reported, as every slot would hold the same object; the literal `None` is not. That
+    /// rule sees `value`'s own type, before a mismatch with the element type erases it.
     pub(super) fn array_fill(
         &mut self,
         span: Span,
@@ -182,7 +182,7 @@ impl Checker<'_> {
         // `operand`, split so the class rule runs between the check and the wrap.
         let checked = self.value(value, hint);
         self.body.quiet_at = outer;
-        let class = type_of(&checked).map(payload).filter(|ty| {
+        let class = type_of(&checked).map(innermost).filter(|ty| {
             matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Param(..)) && !none_literal(value)
         });
         if let Some(class) = class {
@@ -359,4 +359,12 @@ pub(super) fn pair(operands: Vec<tir::Expr>) -> (Box<tir::Expr>, Box<tir::Expr>)
         .try_into()
         .expect("`spilled` should hand its closure one operand per input, and there are two");
     (Box::new(a), Box::new(b))
+}
+
+/// `ty` with every layer of optional taken off.
+fn innermost(mut ty: Type) -> Type {
+    while let TypeKind::Optional(inner) = ty.kind() {
+        ty = inner;
+    }
+    ty
 }
