@@ -1,0 +1,4 @@
+fn main() {
+    let x: i64?? = None
+    print(x ?? None ?? 0)
+}

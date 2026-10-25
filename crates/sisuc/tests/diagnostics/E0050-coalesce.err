@@ -1,0 +1,13 @@
+error[E0050]: cannot infer the type of `None`
+ --> E0050-coalesce.sisu:3:16
+  |
+3 |     print(x ?? None ?? 0)
+  |                ^^^^
+  |
+help: `??` groups to the right; to unwrap the left side twice, use parentheses
+  |
+3 |     print((x ?? None) ?? 0)
+  |           +         +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

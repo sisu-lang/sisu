@@ -1,0 +1,7 @@
+enum Foo<T> {
+    Some(T)
+}
+
+fn main() {
+    let x = Foo.Some(None)
+}

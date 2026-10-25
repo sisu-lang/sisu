@@ -9,7 +9,7 @@ use super::{
     type_of, wrap,
 };
 use crate::ast::{self, CompareOp, ExprKind};
-use crate::diagnostic::{Diagnostic, DiagnosticKind};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
@@ -649,6 +649,37 @@ impl Checker<'_> {
             let _ = self.fallback(rhs, UNKNOWN);
             return Err(Poisoned::error());
         };
+        // `??` groups to the right, so a `None` that starts a right `??` has no type to take:
+        // `x ?? None ?? 0` is `x ?? (None ?? 0)`. Grouping the left side helps only when the
+        // left side has two layers to take off, and a parenthesis before the `None` is a choice.
+        if let ExprKind::Coalesce {
+            lhs: none,
+            rhs: tail,
+        } = &rhs.kind
+            && matches!(none.kind, ExprKind::NoneLit)
+            && none.span.start() == rhs.span.start()
+            && matches!(payload.kind(), TypeKind::Optional(_))
+        {
+            self.report(DiagnosticKind::CannotInfer {
+                literal: Literal::None,
+                binding: None,
+                at: none.span,
+                regroup: Some(lhs.span.start()),
+            });
+            // The next `None` of a run is for the next fix to report.
+            let mut tail: &ast::Expr = tail;
+            while let ExprKind::Coalesce {
+                lhs: next,
+                rhs: after,
+            } = &tail.kind
+                && matches!(next.kind, ExprKind::NoneLit)
+            {
+                tail = after;
+            }
+            // Only its own diagnostics matter.
+            let _ = self.fallback(tail, UNKNOWN);
+            return Err(Poisoned::error());
+        }
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through
         // one `?` only.
         let other = self.fallback(rhs, as_optional(payload));

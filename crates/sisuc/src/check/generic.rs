@@ -12,7 +12,7 @@ use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN,
-    built_in_type, payload, type_of,
+    built_in_type, optional_of, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
@@ -163,9 +163,10 @@ impl Bindings {
     }
 
     /// As `unify`, but what of `pattern` meets `value` stays bound when the rest does not.
-    pub(super) fn constrain(&mut self, pattern: Type, value: Type) {
+    /// Whether all of `pattern` meets it.
+    pub(super) fn constrain(&mut self, pattern: Type, value: Type) -> bool {
         self.fresh.clear();
-        let _ = self.bind(pattern, value);
+        self.bind(pattern, value)
     }
 
     /// Binds each unbound parameter `pattern` names where it meets `value`, recording it in
@@ -363,7 +364,9 @@ impl Checker<'_> {
     /// 1. The arguments that are neither literal-like nor need context. Each is checked against
     ///    its parameter's type once that type names no unbound parameter, and on its own before.
     /// 2. `expected` against the return type, whole. When the return type cannot meet an
-    ///    optional `expected` whole, it meets its payload.
+    ///    optional `expected` whole, it meets its payload. When it meets neither with the help
+    ///    of pass 1, but does meet one alone, each argument of pass 1 that contradicts it is
+    ///    reported at the argument.
     /// 3. The literal-like arguments, as in pass 1.
     /// 4. The arguments that need context, against their parameter's type.
     ///
@@ -436,9 +439,14 @@ impl Checker<'_> {
         if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
             // The return type meets `want` whole if it can: `let x: i64? = id(5)` binds
             // `T = i64?`. Else it meets the payload of an optional `want`, and the call's value
-            // is wrapped. What of it cannot meet either is reported where the value is used.
-            if !call.bindings.unify(ret, want) {
-                call.bindings.constrain(ret, payload(want));
+            // is wrapped. What of it cannot meet either is reported where the value is used,
+            // unless the context fits alone: then the arguments that contradict it are
+            // reported, each at its own place. Type arguments that the call writes are its own.
+            if !call.bindings.unify(ret, want)
+                && !call.bindings.constrain(ret, payload(want))
+                && written.is_empty()
+            {
+                self.blame_arguments(&mut call, sig, args, ret, want);
             }
             self.report_fresh(&mut call, span);
         }
@@ -513,6 +521,67 @@ impl Checker<'_> {
             })
             .collect();
         Some((checked, list, sig.ret.map(|ret| ret.subst(list.get()))))
+    }
+
+    /// Reports each argument already checked whose type is not what `want`, the call's context,
+    /// makes of its parameter, once `ret` meets `want` or its payload with no argument's help.
+    /// Such an argument is rejected, as a rule rejects its operand, and the later arguments
+    /// meet the context's types in place of the blamed arguments'. Reports nothing, and leaves
+    /// the bindings, when the context does not fit `ret` alone as a value of `ret` fits it, when
+    /// an argument was rejected already, or when every argument fits.
+    fn blame_arguments(
+        &mut self,
+        call: &mut Inference,
+        sig: &GenericSig<'_>,
+        args: &[ast::Arg],
+        ret: Type,
+        want: Type,
+    ) {
+        let mut context = Bindings::new(sig.declared.len(), sig.owner);
+        if !context.unify(ret, want) && !context.unify(ret, payload(want)) {
+            return;
+        }
+        // `unify` lets a `T?` take a value that is not optional, which the result cannot do.
+        let result = context.known(ret);
+        if result != Some(want) && result.map(optional_of) != Some(want) {
+            return;
+        }
+        // The error of an earlier argument is the call's error, as it is without a context.
+        if call.slots.iter().flatten().any(mismatched) {
+            return;
+        }
+        let mut blamed = false;
+        for (i, arg) in args.iter().enumerate() {
+            // An argument of type `unit` or `never` binds only what no other does (see `last`).
+            let got = call.slots[i].as_ref().and_then(type_of);
+            let (Some(param), Some(got)) = (sig.params[i], got) else {
+                continue;
+            };
+            let Some(fit) = context.known(param) else {
+                continue;
+            };
+            // As `against`: the type, or its payload wrapped.
+            if got == fit
+                || matches!(got, Type::UNIT | Type::NEVER)
+                || matches!(fit.kind(), TypeKind::Optional(inner) if inner == got)
+            {
+                continue;
+            }
+            let d = self.mismatch(arg.value.span, Some(&arg.value), fit, got);
+            self.diagnostics.push(d);
+            call.slots[i] = Some(Err(Poisoned {
+                ty: None,
+                mismatch: true,
+            }));
+            blamed = true;
+        }
+        if blamed {
+            // A parameter that the context leaves open keeps what an argument bound.
+            for (found, bound) in iter::zip(&mut context.found, &call.bindings.found) {
+                *found = found.or(*bound);
+            }
+            call.bindings = context;
+        }
     }
 
     /// Checks `e`, the argument at `i` for `param`: against `param` once the call binds what it
@@ -661,8 +730,18 @@ impl Checker<'_> {
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
         let name = sig.name;
-        if name.name.as_str() == "Some" && sig.variant.is_none() {
-            self.report(DiagnosticKind::CannotInferSome { at: name.span });
+        // `Some(...)`, or `Option.Some(...)`. A user variant `Some`, which E0026 reports, is
+        // neither.
+        let option = sig.variant.is_none_or(|_| name.name.as_str() == "Option");
+        if option && sig.variant.unwrap_or(name).name.as_str() == "Some" {
+            let (callee, at) = match sig.variant {
+                Some(variant) => (
+                    format!("{}.{}", name.name, variant.name),
+                    name.span.to(variant.span),
+                ),
+                None => (name.name.to_string(), name.span),
+            };
+            self.report(DiagnosticKind::CannotInferSome { callee, at });
             return;
         }
         // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
