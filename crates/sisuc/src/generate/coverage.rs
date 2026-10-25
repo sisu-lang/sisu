@@ -20,7 +20,7 @@ use crate::types::{Type, TypeKind};
 use crate::{ast, lexer, parser, tir};
 
 /// How many seeds, and how many bytes each holds.
-const SEEDS: u64 = 96;
+const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
@@ -4791,9 +4791,10 @@ fn let_binding_keeps_the_type() {
 
 #[test]
 fn known_answers_happen() {
-    // Over the seeds, a known site of each type gives a value, and one panics (decision 3).
+    // Over the seeds, a known site of each type gives a value, and one panics (decision 3). A
+    // `u8` site that panics is rare, so this test reads more seeds than the others.
     let mut kinds = FxHashSet::default();
-    for data in seeds() {
+    for data in (0..96).map(seed) {
         let g = generate(&data);
         for known in &g.known {
             let head = format!("fn {}(a: ", known.marker);

@@ -1220,16 +1220,24 @@ fn generics_should_name_each_instance_once_among_the_types() {
         let mut g = Gen::new(&data);
         g.generics();
         let types = &g.scope.generic_types;
-        instances += types.len();
         for (i, ty) in types.iter().enumerate() {
             assert!(!types[..i].contains(ty), "{ty} twice");
-            assert!(
-                ty.to_string().starts_with('G') || ty.to_string().starts_with("Result<"),
-                "{ty}"
-            );
+            // `Result` is always among the instances; the check counts only the declared generics.
+            let name = ty.to_string();
+            assert!(name.starts_with('G') || name.starts_with("Result<"), "{ty}");
+            instances += usize::from(name.starts_with('G'));
         }
     }
     assert!(instances > 0, "no seed names an instance");
+}
+
+#[test]
+fn an_optional_of_an_optional_should_be_built_with_some() {
+    // An `if` over an optional takes one `?` layer, so a second layer needs `Some`.
+    let mut g = Gen::new(&[]);
+    let target = optional(optional(plain(Ty::I64)));
+    let text = g.solve(&target, &mut Vec::new(), 0).unwrap().text;
+    assert!(text.starts_with("Some("), "{text}");
 }
 
 #[test]
