@@ -1888,7 +1888,7 @@ fn separated(n: i64) -> String {
 mod tests {
     use arbitrary::Unstructured;
 
-    use super::{Gen, MAX_SIZE, Rule, Ty, arithmetic_value};
+    use super::{Gen, MAX_SIZE, Rule, Ty, Var, arithmetic_value};
     use crate::generate::writer::Rewrite;
 
     #[test]
@@ -1979,6 +1979,53 @@ mod tests {
         );
         assert_eq!(g.w.out.program, "0");
         assert!(!info.folds);
+    }
+
+    #[test]
+    fn a_wrapped_optional_of_an_optional_should_be_a_name_of_its_payload() {
+        // The generator builds no `i64?` from nothing, so an `i64??` wraps only a name.
+        let (payload, nested) = (
+            Ty::Optional(Box::new(Ty::I64)),
+            Ty::Optional(Box::new(Ty::Optional(Box::new(Ty::I64)))),
+        );
+        let mut g = Gen::new(&[]);
+        let wraps = |g: &mut Gen<'_>| {
+            let mut rules = Vec::new();
+            g.compound_rules(&nested, MAX_SIZE, false, &mut rules);
+            rules.iter().any(|r| matches!(r, Rule::Wrap))
+        };
+        assert!(!wraps(&mut g));
+        g.scope
+            .vars
+            .push(Var::new("w".to_string(), payload, false, 0, 0, 0));
+        assert!(wraps(&mut g));
+        g.rule(Rule::Wrap, &nested, MAX_SIZE, false);
+        assert_eq!(g.w.out.program, "w");
+    }
+
+    #[test]
+    fn a_panicking_branch_should_take_each_form_but_index_no_optional_of_an_optional() {
+        // A first byte of 63 makes the branch panic; the second picks the form.
+        let nested = Ty::Optional(Box::new(Ty::Optional(Box::new(Ty::I64))));
+        for (ty, form, text) in [
+            (&Ty::I64, 0, "panic(\"\")"),
+            (&Ty::I64, 1, "todo"),
+            (&Ty::I64, 2, "([0][1])"),
+            (&nested, 2, "panic(\"\")"),
+        ] {
+            let bytes = [63, form];
+            let mut g = Gen::new(&bytes);
+            g.branch(ty, MAX_SIZE);
+            assert_eq!(g.w.out.program, text, "{ty}, form {form}");
+        }
+    }
+
+    #[test]
+    fn a_safe_member_should_take_a_layer_off_one_layer_only() {
+        let payload = Ty::Optional(Box::new(Ty::I64));
+        let nested = Ty::Optional(Box::new(payload.clone()));
+        assert_eq!(super::safe_member(&payload), &Ty::I64);
+        assert_eq!(super::safe_member(&nested), &nested);
     }
 
     #[test]

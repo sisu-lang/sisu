@@ -1,0 +1,7 @@
+fn deep<T>(x: T??) -> i64 {
+    0
+}
+
+fn main() {
+    print(deep(5))
+}
