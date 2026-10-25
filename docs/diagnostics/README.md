@@ -111,7 +111,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0102](E0102.md) | error | exponent without digits |
 | [E0103](E0103.md) | error | float literal out of range for `f64` |
 | [E0104](E0104.md) | error | integer literal not exactly an `f64` |
-| [E0105](E0105.md) | error | a type or a function used as a value |
+| [E0105](E0105.md) | error | a type, an interface or a function used as a value |
 | [E0106](E0106.md) | error | math written another way |
 | [E0107](E0107.md) | error | `**` |
 | [E0108](E0108.md) | error | malformed format spec |
@@ -153,6 +153,11 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0144](E0144.md) | error | `break` or `continue` naming no loop label around it |
 | [E0145](E0145.md) | error | loop label on something that is not a loop |
 | [E0146](E0146.md) | error | body or field in an interface |
+| [E0147](E0147.md) | error | interface used as a type |
+| [E0148](E0148.md) | error | bound that is not an interface |
+| [E0149](E0149.md) | error | `Self` outside a type or an interface |
+| [E0150](E0150.md) | error | interface that inherits from itself |
+| [E0151](E0151.md) | error | inherited interface with a built argument |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

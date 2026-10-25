@@ -1200,10 +1200,6 @@ impl Checker<'_> {
             if !self.built_in(&param.name) {
                 self.first_definition(&mut first, Definition::Type, None, &param.name);
             }
-            // The checker takes no bound yet; a later task of milestone 8 does.
-            for bound in &param.bounds {
-                self.unsupported(bound);
-            }
         }
         owner
             .iter()
@@ -1213,21 +1209,23 @@ impl Checker<'_> {
     }
 
     /// Reports the written type `ty`, which the checker cannot take yet (a bound, a conformance
-    /// or an `extend` target, `Self`, a member type): E0030 at it, without its `?`. A later task
+    /// or an `extend` target, a member type): E0030 at it, without its `?`. A later task
     /// of milestone 8 replaces each use.
     pub(super) fn unsupported(&mut self, ty: &ast::TypeExpr) {
         self.unsupported_at(ty.bare);
     }
 
     /// `unsupported` for the interfaces a class or an enum lists and the associated types it
-    /// chooses.
+    /// chooses; a listed type that is no interface is reported as that.
     pub(super) fn unsupported_conformances(
         &mut self,
         listed: &[ast::TypeExpr],
         assoc: &[ast::AssocChoice],
     ) {
         for ty in listed {
-            self.unsupported(ty);
+            if self.bound(ty).is_some() {
+                self.unsupported(ty);
+            }
         }
         for choice in assoc {
             self.unsupported_at(choice.name.span);

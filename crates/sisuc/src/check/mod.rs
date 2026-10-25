@@ -10,6 +10,7 @@ mod enums;
 mod exhaust;
 mod expr;
 mod generic;
+mod interface;
 mod member;
 mod number;
 mod operator;
@@ -35,6 +36,7 @@ use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{Head, write_type};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
+use interface::InterfaceInfo;
 use prelude::PRELUDE;
 use unused_names::{Owner, Pending, Use};
 
@@ -306,6 +308,10 @@ struct Checker<'src> {
     enums: Vec<EnumInfo>,
     /// The first enum of each name, and every broken one.
     enum_ids: FxHashMap<Symbol, Declared<tir::EnumId>>,
+    /// Indexed by `InterfaceId`, so a duplicate interface has requirements of its own.
+    interfaces: Vec<InterfaceInfo>,
+    /// The first interface of each name, and every broken one.
+    interface_ids: FxHashMap<Symbol, Declared<tir::InterfaceId>>,
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
@@ -503,6 +509,7 @@ pub(crate) fn check<'src>(
         .chain(prelude.items.iter().filter(|item| !option(item)))
         .collect();
     checker.collect_names(&items, program.items.len(), &program.broken);
+    checker.interface_signatures(&items);
     let declared = checker.collect_signatures(&items);
     checker.fold_constants(&items);
     let cyclic = checker.never_constructed();
@@ -671,6 +678,8 @@ impl<'src> Checker<'src> {
             class_ids: FxHashMap::default(),
             enums: Vec::new(),
             enum_ids: FxHashMap::default(),
+            interfaces: Vec::new(),
+            interface_ids: FxHashMap::default(),
             lowered_enums: Vec::new(),
             written: None,
             constants: FxHashMap::default(),
@@ -717,7 +726,6 @@ impl Checker<'_> {
             match item {
                 ast::Item::Class(class) => {
                     let type_params = self.type_params(&[], &class.type_params);
-                    self.unsupported_conformances(&class.conforms, &class.assoc);
                     let id = tir::ClassId(self.classes.len());
                     self.classes.push(ClassInfo {
                         name: class.name.clone(),
@@ -748,7 +756,6 @@ impl Checker<'_> {
                 }
                 ast::Item::Enum(e) => {
                     let type_params = self.type_params(&[], &e.type_params);
-                    self.unsupported_conformances(&e.conforms, &e.assoc);
                     let id = tir::EnumId(self.enums.len());
                     self.enums.push(EnumInfo {
                         name: e.name.clone(),
@@ -775,9 +782,25 @@ impl Checker<'_> {
                     }
                     order += 1;
                 }
-                // Task 2 takes an interface; Task 3 takes an `extend` block, whose methods this
-                // pass, the signatures and the bodies skip until then.
-                ast::Item::Interface(_) => {}
+                ast::Item::Interface(interface) => {
+                    let mut type_params = self.type_params(&[], &interface.type_params);
+                    type_params.insert(0, Symbol::intern("Self"));
+                    let id = tir::InterfaceId(self.interfaces.len());
+                    self.interfaces.push(InterfaceInfo {
+                        name: interface.name.clone(),
+                        type_params,
+                        inherits: Vec::new(),
+                        requirements: Vec::new(),
+                    });
+                    let name = &interface.name;
+                    if !self.built_in(name)
+                        && self.first_callable(&mut first, Definition::Interface, name)
+                    {
+                        self.interface_ids.insert(name.name, Declared::Known(id));
+                    }
+                }
+                // Task 3 takes an `extend` block, whose methods this pass, the signatures and
+                // the bodies skip until then.
                 ast::Item::Extend(extend) => self.unsupported(&extend.target),
             }
         }
@@ -795,11 +818,11 @@ impl Checker<'_> {
                 ast::BrokenKind::Function => {
                     self.function_ids.insert(*name, Declared::Broken);
                 }
-                // The name of an interface joins the type namespace in Task 2, where a broken
-                // interface poisons it; until then it poisons the class namespace, as a broken
-                // class does.
-                ast::BrokenKind::Class | ast::BrokenKind::Interface => {
+                ast::BrokenKind::Class => {
                     self.class_ids.insert(*name, Declared::Broken);
+                }
+                ast::BrokenKind::Interface => {
+                    self.interface_ids.insert(*name, Declared::Broken);
                 }
                 ast::BrokenKind::Enum => {
                     self.enum_ids.insert(*name, Declared::Broken);
@@ -811,8 +834,11 @@ impl Checker<'_> {
                 // a method the block lost gives `NoMember` until Task 3 makes it poison.
                 ast::BrokenKind::Extend => continue,
             }
-            // Functions, classes, enums and constants share a namespace, so an intact item of
-            // another kind and this name is poisoned too.
+            // Functions, classes, enums, interfaces and constants share a namespace, so an intact
+            // item of another kind and this name is poisoned too.
+            if let Some(interface) = self.interface_ids.get_mut(name) {
+                *interface = Declared::Broken;
+            }
             if let Some(class) = self.class_ids.get_mut(name) {
                 *class = Declared::Broken;
             }
@@ -925,6 +951,11 @@ impl Checker<'_> {
             next_class += 1;
             let owner = self.classes[id.0].type_params.clone();
             let receiver = Type::intern(TypeKind::Class(id, own_args(&owner)));
+            self.body.self_type = Some(receiver);
+            self.body.set_type_params(&owner);
+            self.bounds_of(&class.type_params);
+            self.unsupported_conformances(&class.conforms, &class.assoc);
+            self.body.set_type_params(&[]);
             let mut first = FxHashMap::default();
             for member in &class.members {
                 match member {
@@ -970,6 +1001,7 @@ impl Checker<'_> {
                     .methods
                     .insert(method.name, Declared::Broken);
             }
+            self.body.self_type = None;
         }
         declared
     }
@@ -979,6 +1011,7 @@ impl Checker<'_> {
     fn signature(&mut self, f: &ast::Function, name: String, owner: &[ast::TypeParam]) {
         let type_params = self.type_params(owner, &f.type_params);
         self.body.set_type_params(&type_params);
+        self.bounds_of(&f.type_params);
         let params = f.params.iter().map(|p| self.resolve(&p.ty)).collect();
         let ret = f
             .ret
@@ -1105,8 +1138,15 @@ impl Checker<'_> {
                 self.named_type(ty, applied.name, &applied.args, applied.angles)?
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
-            // Task 2 takes `Self`, Task 7 a member type.
-            ast::TypeKind::SelfType | ast::TypeKind::Member { .. } => {
+            ast::TypeKind::SelfType => {
+                let Some(declared) = self.body.self_type else {
+                    self.report(DiagnosticKind::SelfOutside { at: ty.bare });
+                    return None;
+                };
+                declared
+            }
+            // Task 7 takes a member type.
+            ast::TypeKind::Member { .. } => {
                 self.unsupported(ty);
                 return None;
             }
@@ -1153,6 +1193,16 @@ impl Checker<'_> {
         if let (Some(Declared::Broken), _) | (_, Some(Declared::Broken)) = declared {
             return None;
         }
+        if let Some(found) = self.interface_ids.get(&name) {
+            if matches!(found, Declared::Known(_)) {
+                self.report(DiagnosticKind::InterfaceAsType {
+                    name: name.to_string(),
+                    written: self.source.file.slice(ty.bare.range()).to_string(),
+                    at: ident().span,
+                });
+            }
+            return None;
+        }
         if let Some(named) = built_in_type(name.as_str()) {
             return plain(self, named);
         }
@@ -1185,7 +1235,9 @@ impl Checker<'_> {
                     ["i64", "u8", "f64", "bool", "char", "string"].map(|ty| (ty, Definition::Type));
                 let classes = self.class_names();
                 let enums = self.enum_ids.keys().map(|e| (e.as_str(), Definition::Enum));
-                let candidates = types.into_iter().chain(classes).chain(enums);
+                let interfaces =
+                    (self.interface_ids.keys()).map(|i| (i.as_str(), Definition::Interface));
+                let candidates = (types.into_iter().chain(classes).chain(enums)).chain(interfaces);
                 self.report(DiagnosticKind::UnknownType {
                     name: name.to_string(),
                     at: ident().span,
@@ -1342,6 +1394,13 @@ impl Checker<'_> {
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
+        if self.interface_ids.contains_key(&name) {
+            return DiagnosticKind::InterfaceAsValue {
+                name: name.to_string(),
+                at: span,
+            }
+            .into();
+        }
         if built_in_type(name.as_str()).is_some()
             || name.as_str() == "Option"
             || self.class_ids.contains_key(&name)

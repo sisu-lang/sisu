@@ -112,6 +112,12 @@ impl Checker<'_> {
                 at: e.name.span,
             });
         }
+        let receiver = Type::intern(TypeKind::Enum(id, own_args(&self.enums[id.0].type_params)));
+        self.body.self_type = Some(receiver);
+        self.body.set_type_params(&self.enums[id.0].type_params);
+        self.bounds_of(&e.type_params);
+        self.unsupported_conformances(&e.conforms, &e.assoc);
+        self.body.set_type_params(&[]);
         let mut first = FxHashMap::default();
         for variant in &e.variants {
             let name = &variant.name;
@@ -162,7 +168,6 @@ impl Checker<'_> {
                 });
             }
         }
-        let receiver = Type::intern(TypeKind::Enum(id, own_args(&self.enums[id.0].type_params)));
         for method in &e.methods {
             let func = tir::FuncId(self.signatures.len());
             if self.first_definition(&mut first, Definition::Method, Some(owner), &method.name) {
@@ -182,6 +187,7 @@ impl Checker<'_> {
                 .methods
                 .insert(method.name, Declared::Broken);
         }
+        self.body.self_type = None;
     }
 
     /// `Enum.member`, or `Enum.member(args)` when `call` gives the arguments and the span of their

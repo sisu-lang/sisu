@@ -1,0 +1,7 @@
+interface Loop: Loop {
+    fn run(self)
+}
+
+fn main() {
+    print(1)
+}

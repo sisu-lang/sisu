@@ -22,6 +22,9 @@ pub(crate) const MAX_FIELDS: usize = 3;
 const MAX_TYPES: usize = 3;
 /// The most methods of a class.
 const MAX_METHODS: usize = 2;
+/// The most interfaces a program declares, and the most requirements of one.
+const MAX_INTERFACES: usize = 3;
+const MAX_REQUIREMENTS: usize = 2;
 /// The most variants of an enum.
 const MAX_VARIANTS: usize = 4;
 /// The room a field of a size has beyond its floor.
@@ -120,6 +123,8 @@ impl Gen<'_> {
                 g.w.line();
             });
         }
+        // After `main`, so that the interfaces move no choice of the items before them.
+        self.interfaces();
         // The stdin comes last, so the first bytes choose the program's shape.
         for _ in 0..self.pick(MAX_LINES + 1) {
             let line = self.stdin_line();
@@ -237,12 +242,12 @@ impl Gen<'_> {
         let receiver = if owner.is_some() { "self, " } else { "" };
         self.w.text(&format!("fn {name}({receiver}depth: i64"));
         for (param, ty, _) in &params {
-            let written = self.spell(ty);
+            let written = self.spelled_in(ty, owner.as_ref());
             self.w.text(&format!(", {param}: {written}"));
         }
         self.w.text(")");
         if ret != Ty::Unit {
-            let written = self.spell(&ret);
+            let written = self.spelled_in(&ret, owner.as_ref());
             self.w.text(&format!(" -> {written}"));
         }
         self.w.text(" ");
@@ -297,6 +302,88 @@ impl Gen<'_> {
             .last_mut()
             .expect("the function should have been pushed")
             .cost = cost;
+    }
+
+    /// `spell`, except that the class `owner` of the method being written is now and then
+    /// `Self`.
+    fn spelled_in(&mut self, ty: &Ty, owner: Option<&Ty>) -> String {
+        if owner == Some(ty) && self.pick(2) == 0 {
+            return "Self".to_string();
+        }
+        self.spell(ty)
+    }
+
+    /// `interface I<n>[<T>][: I<m>[<A>], ...] { fn r(self, ...) ... }`: requirements over `Self`,
+    /// `i64`, `string`, a declared type and the interface's parameter, and some earlier interfaces
+    /// inherited, each with an argument that is the parameter alone or names none. Nothing
+    /// conforms to them yet, which is legal.
+    fn interfaces(&mut self) {
+        // Whether each declared interface takes a type parameter.
+        let mut generic: Vec<bool> = Vec::new();
+        for id in 0..self.pick(MAX_INTERFACES + 1) {
+            let takes = self.pick(3) == 0;
+            let mut inherits: Vec<usize> = Vec::new();
+            if id > 0 {
+                for _ in 0..self.pick(3) {
+                    let earlier = self.pick(id);
+                    if !inherits.contains(&earlier) {
+                        inherits.push(earlier);
+                    }
+                }
+            }
+            let param = if takes { "<T>" } else { "" };
+            self.w.text(&format!("interface I{id}{param}"));
+            if !inherits.is_empty() {
+                let list: Vec<String> = inherits
+                    .iter()
+                    .map(|&m| match (generic[m], takes) {
+                        (false, _) => format!("I{m}"),
+                        (true, true) => format!("I{m}<T>"),
+                        (true, false) => format!("I{m}<i64>"),
+                    })
+                    .collect();
+                self.w.text(&format!(": {}", list.join(", ")));
+            }
+            self.w.text(" ");
+            self.w.open();
+            for _ in 0..self.pick(MAX_REQUIREMENTS + 1) {
+                let name = self.scope.fresh("r");
+                let mut signature = format!("fn {name}(self");
+                for _ in 0..self.pick(3) {
+                    let param = self.scope.fresh("p");
+                    let ty = self.requirement_type(takes);
+                    write!(signature, ", {param}: {ty}")
+                        .expect("writing to a `String` should succeed");
+                }
+                signature += ")";
+                if self.pick(3) != 0 {
+                    let ty = self.requirement_type(takes);
+                    write!(signature, " -> {ty}").expect("writing to a `String` should succeed");
+                }
+                self.w.line();
+                self.w.text(&signature);
+            }
+            self.w.close();
+            self.w.line();
+            generic.push(takes);
+        }
+    }
+
+    /// A type a requirement of an interface may name: `Self`, `T` when it has a parameter, or one
+    /// that names neither.
+    fn requirement_type(&mut self, takes: bool) -> String {
+        let mut choices: Vec<String> = ["i64", "string", "Self", "[Self]", "Self?"]
+            .map(String::from)
+            .into();
+        if takes {
+            choices.push("T".to_string());
+        }
+        if !self.scope.types.is_empty() {
+            let declared = self.pick(self.scope.types.len());
+            choices.push(self.scope.types[declared].to_string());
+        }
+        let choice = self.pick(choices.len());
+        choices.swap_remove(choice)
     }
 
     /// The most size for a value of `ty` (decision 5): a class object's own, else its floor

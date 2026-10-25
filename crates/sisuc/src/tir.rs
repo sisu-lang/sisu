@@ -23,6 +23,9 @@ pub(crate) struct ClassId(pub(crate) usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EnumId(pub(crate) usize);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct InterfaceId(pub(crate) usize);
+
 /// `==` and `!=` are `ExprKind::Equal`, comparisons are `ExprKind::Compare`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BinaryOp {

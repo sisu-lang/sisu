@@ -43,6 +43,7 @@ impl Checker<'_> {
             declared,
             (Some(Declared::Broken), _) | (_, Some(Declared::Broken))
         ) || matches!(self.constants.get(&callee.name), Some(Declared::Broken))
+            || matches!(self.interface_ids.get(&callee.name), Some(Declared::Broken))
         {
             self.stray(args);
             return Err(Poisoned::error());
@@ -58,6 +59,14 @@ impl Checker<'_> {
         match declared {
             (Some(Declared::Known(class)), _) => self.construct_class(span, class, site, args),
             (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
+            _ if self.interface_ids.contains_key(&callee.name) => {
+                self.report(DiagnosticKind::InterfaceAsValue {
+                    name: callee.name.to_string(),
+                    at: callee.span,
+                });
+                self.stray(args);
+                Err(Poisoned::error())
+            }
             // Here `Some` is the prelude's. A user item named `Some` is reported, and the two arms
             // above call it.
             _ if callee.name.as_str() == "Some" => self.some(span, site, None, args),

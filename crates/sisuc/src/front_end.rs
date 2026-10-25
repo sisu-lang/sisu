@@ -1047,24 +1047,48 @@ fn main() {
         }
     }
 
-    /// The checker takes no bound, conformance, `extend` block, `Self` or member type yet: each
-    /// is E0030 at the type it cannot take, and an interface is skipped.
+    /// A broken interface poisons its name for every use, as a broken class does, and so does a
+    /// broken function of the name an intact interface has.
+    #[test]
+    fn a_broken_interface_should_poison_its_name() {
+        for (src, at) in [
+            (
+                "interface Shape: {}\nfn f<T: Shape>(x: T, y: Shape) { Shape(1) }\nfn main() {}\n",
+                (1, 18),
+            ),
+            (
+                "interface Shape {}\nfn Shape() {\n    let = 1\n}\nfn f(s: Shape) {}\nfn main() {}\n",
+                (3, 9),
+            ),
+        ] {
+            assert_eq!(codes(src), [(Code::Expected, at)], "{src}");
+        }
+    }
+
+    /// The checker takes no conformance, `extend` block or member type yet: each is E0030 at the
+    /// type it cannot take.
     #[test]
     fn what_the_checker_cannot_take_yet_should_be_an_unknown_type() {
         for (src, at) in [
             ("fn f<T: Ord>(x: T) {}\nfn main() {}\n", (1, 9)),
-            ("class C: Shape {}\nfn main() {}\n", (1, 10)),
-            ("enum E: Shape {\n    A\n}\nfn main() {}\n", (1, 9)),
             (
-                "class C: Source {\n    type Item = i64\n}\nfn main() {}\n",
-                (1, 10),
+                "interface Shape {}\nclass C: Shape {}\nfn main() {}\n",
+                (2, 10),
+            ),
+            (
+                "interface Shape {}\nenum E: Shape {\n    A\n}\nfn main() {}\n",
+                (2, 9),
+            ),
+            (
+                "interface Source {}\nclass C: Source {\n    type Item = i64\n}\nfn main() {}\n",
+                (2, 10),
             ),
             ("extend C {}\nfn main() {}\n", (1, 8)),
-            (
-                "class C {\n    fn f(self, x: Self) {}\n}\nfn main() {}\n",
-                (2, 19),
-            ),
             ("fn f<S>(x: S.Item) {}\nfn main() {}\n", (1, 12)),
+            (
+                "interface Source {\n    type Item: Same\n}\nfn main() {}\n",
+                (2, 10),
+            ),
         ] {
             let found = codes(src);
             assert_eq!(found.first(), Some(&(Code::UnknownType, at)), "{src}");
@@ -1072,24 +1096,37 @@ fn main() {
         // An unknown type is reported without its `?`.
         let src = "fn f<T: Ord?>(x: T) {}\nfn main() {}\n";
         assert_eq!(front_end(src).1[0].span(), Span::new(8, 11));
-        let src =
-            "interface Shape {\n    type Item: Same\n    fn area(self) -> f64\n}\nfn main() {}\n";
-        assert_eq!(codes(src), [], "{src}");
     }
 
     /// A line break or a space before a `?` is no part of the type: the report covers the type
     /// alone and renders (the renderer rejects a span that ends with a line break).
     #[test]
     fn an_unsupported_type_should_be_reported_without_the_question_marks_after_it() {
-        for (src, text) in [
-            ("fn f(x: Self\n?) {}\nfn main() {}\n", "Self"),
-            ("fn f<S>(x: S.Item\n?) {}\nfn main() {}\n", "S.Item"),
-            ("fn f<T: Ord ? ?>(x: T) {}\nfn main() {}\n", "Ord"),
-            ("fn f<T: [i64] ?>(x: T) {}\nfn main() {}\n", "[i64]"),
+        for (src, code, text) in [
+            (
+                "fn f(x: Self\n?) {}\nfn main() {}\n",
+                Code::SelfOutside,
+                "Self",
+            ),
+            (
+                "fn f<S>(x: S.Item\n?) {}\nfn main() {}\n",
+                Code::UnknownType,
+                "S.Item",
+            ),
+            (
+                "fn f<T: Ord ? ?>(x: T) {}\nfn main() {}\n",
+                Code::UnknownType,
+                "Ord",
+            ),
+            (
+                "fn f<T: [i64] ?>(x: T) {}\nfn main() {}\n",
+                Code::NotAnInterface,
+                "[i64] ?",
+            ),
         ] {
             let diagnostics = front_end(src).1;
             let first = diagnostics.first().expect("the type should be reported");
-            assert_eq!(first.code(), Code::UnknownType, "{src}");
+            assert_eq!(first.code(), code, "{src}");
             assert_eq!(&src[first.span().range()], text, "{src}");
             first.render("t.sisu", src, &crate::source::LineIndex::new(src), false);
         }

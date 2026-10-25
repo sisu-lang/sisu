@@ -87,7 +87,7 @@ codes! {
     BodyHasNoValue = "E0031",
     Mismatch | PatternMismatch = "E0032",
     BindingNotFound = "E0033",
-    DefinedTwice = "E0034",
+    DefinedTwice | InheritedRequirement = "E0034",
     ForNeedsArray = "E0035",
     ReturnNeedsValue = "E0036",
     UnexpectedReturnValue = "E0037",
@@ -158,7 +158,7 @@ codes! {
     ExponentNeedsDigits = "E0102",
     FloatOutOfRange = "E0103",
     NotExactlyF64 = "E0104",
-    TypeAsValue | FunctionAsValue = "E0105",
+    TypeAsValue | FunctionAsValue | InterfaceAsValue = "E0105",
     MathIdiom = "E0106",
     PowerOperator = "E0107",
     MalformedFormatSpec = "E0108",
@@ -200,6 +200,11 @@ codes! {
     MissingLabel = "E0144",
     LabelNotOnLoop | UnnamedLabel = "E0145",
     InterfaceBody = "E0146",
+    InterfaceAsType = "E0147",
+    NotAnInterface = "E0148",
+    SelfOutside = "E0149",
+    InheritanceCycle = "E0150",
+    InheritedArgument = "E0151",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -327,6 +332,44 @@ pub(crate) enum DiagnosticKind {
     },
     /// A body or a field at `at` in an interface, which holds signatures only.
     InterfaceBody { at: Span, form: InterfaceBodyForm },
+    /// The interface `name`, written as `written` at `at`, where a type belongs.
+    InterfaceAsType {
+        name: String,
+        written: String,
+        at: Span,
+    },
+    /// The type `written` at `at`, which is a `kind` and no interface, where a bound, a
+    /// conformance or an inherited interface belongs.
+    NotAnInterface {
+        written: String,
+        at: Span,
+        kind: NotInterface,
+    },
+    /// A `Self` at `at`, outside a class, an enum, an interface and an `extend` block.
+    SelfOutside { at: Span },
+    /// The interface `name` inherits from itself, `through` the interfaces in between; `at` is
+    /// its inheritance list.
+    InheritanceCycle {
+        name: String,
+        at: Span,
+        through: Vec<String>,
+    },
+    /// The argument `arg`, at `at`, of an inherited interface of `interface`, which is built from
+    /// a type parameter.
+    InheritedArgument {
+        arg: String,
+        interface: String,
+        at: Span,
+    },
+    /// The requirement `name` of `interface`, at `at`, which `owner`, an interface that
+    /// `interface` inherits, has at `first` already.
+    InheritedRequirement {
+        name: String,
+        interface: String,
+        owner: String,
+        at: Span,
+        first: Span,
+    },
     /// A `mut` at `at` in front of the parameter `name`.
     MutParameter { name: String, at: Span },
     /// A `self` at `at` that is not a method's first parameter.
@@ -733,6 +776,8 @@ pub(crate) enum DiagnosticKind {
     },
     /// The built-in type or class `name`, at `at`, read as a value.
     TypeAsValue { name: String, at: Span },
+    /// The interface `name`, at `at`, read as a value.
+    InterfaceAsValue { name: String, at: Span },
     /// The function `name`, at `at`, read as a value. `takes_arguments` when it has parameters.
     FunctionAsValue {
         name: String,
@@ -1259,13 +1304,14 @@ pub(crate) enum Definition {
     Enum,
     Variant,
     LoopLabel,
+    Interface,
 }
 
 impl Definition {
     /// The indefinite article before `word`.
     fn article(self) -> &'static str {
         match self {
-            Definition::Enum => "an",
+            Definition::Enum | Definition::Interface => "an",
             _ => "a",
         }
     }
@@ -1282,6 +1328,7 @@ impl Definition {
             Definition::Enum => "enum",
             Definition::Variant => "variant",
             Definition::LoopLabel => "loop label",
+            Definition::Interface => "interface",
         }
     }
 
@@ -1294,7 +1341,30 @@ impl Definition {
             Definition::Constant
             | Definition::Binding
             | Definition::Type
-            | Definition::LoopLabel => "used",
+            | Definition::LoopLabel
+            | Definition::Interface => "used",
+        }
+    }
+}
+
+/// What a name is that a bound, a conformance or an inherited interface names, and that is no
+/// interface.
+#[derive(Clone, Copy)]
+pub(crate) enum NotInterface {
+    Class,
+    Enum,
+    BuiltIn,
+    TypeParam,
+}
+
+impl NotInterface {
+    /// The kind with its article: `a class`.
+    fn named(self) -> &'static str {
+        match self {
+            NotInterface::Class => "a class",
+            NotInterface::Enum => "an enum",
+            NotInterface::BuiltIn => "a built-in type",
+            NotInterface::TypeParam => "a type parameter",
         }
     }
 }
@@ -1844,6 +1914,61 @@ impl From<DiagnosticKind> for Diagnostic {
                     InterfaceBodyForm::Field => d,
                 }
             }
+            DiagnosticKind::InterfaceAsType { name, written, at } => Diagnostic::coded(
+                code,
+                at,
+                format!("`{name}` is an interface, not a type"),
+            )
+            .with_help(format!("use a type parameter: `T: {written}`")),
+            DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
+                code,
+                at,
+                format!("`{written}` is {}, not an interface", kind.named()),
+            ),
+            DiagnosticKind::SelfOutside { at } => Diagnostic::coded(
+                code,
+                at,
+                "`Self` is valid only inside a class, enum, interface or `extend` block",
+            ),
+            DiagnosticKind::InheritanceCycle { name, at, through } => {
+                let message = if through.is_empty() {
+                    format!("`{name}` inherits from itself")
+                } else {
+                    format!(
+                        "`{name}` inherits from itself, through {}",
+                        listed(&through, "and")
+                    )
+                };
+                Diagnostic::coded(code, at, message)
+            }
+            DiagnosticKind::InheritedArgument {
+                arg,
+                interface,
+                at,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!("`{arg}` cannot be an argument of an inherited interface"),
+            )
+            .with_help(format!(
+                "write a type parameter of `{interface}` alone, or a type with no type \
+                 parameter. With arguments built from type parameters, the inherited \
+                 interfaces of a bound can double at each level of inheritance."
+            )),
+            DiagnosticKind::InheritedRequirement {
+                name,
+                interface,
+                owner,
+                at,
+                first,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!(
+                    "`{name}` is already a requirement of `{owner}`, which `{interface}` inherits"
+                ),
+            )
+            .with_secondary(first, "first declared here"),
             DiagnosticKind::MutParameter { name, at } => {
                 Diagnostic::coded(code, at, "a parameter cannot be `mut`").with_help(format!(
                     "copy it into a variable: `let mut {name} = {name}`"
@@ -2873,6 +2998,9 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::TypeAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a type, not a value"))
+            }
+            DiagnosticKind::InterfaceAsValue { name, at } => {
+                Diagnostic::coded(code, at, format!("`{name}` is an interface, not a value"))
             }
             DiagnosticKind::FunctionAsValue {
                 name,

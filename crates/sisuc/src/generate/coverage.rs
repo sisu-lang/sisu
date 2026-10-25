@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 16] = [
+const EXCLUDED: [(&str, &str); 14] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -48,14 +48,6 @@ const EXCLUDED: [(&str, &str); 16] = [
     (
         "ast::BrokenKind::Extend",
         "only an item with a syntax error is broken",
-    ),
-    (
-        "ast::Item::Interface",
-        "lands in Task 2 of milestone 8 part 4",
-    ),
-    (
-        "ast::TypeKind::SelfType",
-        "lands in Task 2 of milestone 8 part 4",
     ),
     ("ast::Item::Extend", "lands in Task 3 of milestone 8 part 4"),
     (
@@ -113,7 +105,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 62] = [
+const REACH: [&str; 63] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -176,6 +168,7 @@ const REACH: [&str; 62] = [
     "reach: an optional of an optional of `char` or `bool` is stored",
     "reach: an `Option`-shaped enum has a niche",
     "reach: an `Option`-shaped enum holds itself",
+    "reach: an interface inherits another",
 ];
 
 /// Whether a program's text holds a form.
@@ -632,10 +625,16 @@ impl Walk {
         }
     }
 
-    /// Walks the bounds, requirements and associated types of `interface`.
+    /// Walks the bounds, inherited interfaces, requirements and associated types of `interface`.
     fn ast_interface(&mut self, interface: &ast::Interface) {
         self.mark("ast::Item::Interface");
+        if !interface.inherits.is_empty() {
+            self.mark("reach: an interface inherits another");
+        }
         self.bounds(&interface.type_params);
+        for inherited in &interface.inherits {
+            self.type_expr(inherited);
+        }
         for bound in interface.assoc.iter().flat_map(|a| &a.bounds) {
             self.type_expr(bound);
         }
@@ -2377,12 +2376,12 @@ fn every_variant_is_generated() {
     );
 }
 
-/// What no generated program writes yet, the walk marks all the same: an interface, an
-/// `extend` block, bounds, `Self`, a member type, and a broken item of each new kind. Without
+/// What no generated program writes yet, the walk marks all the same: an `extend` block,
+/// bounds, a member type, and a broken item of each new kind. Without
 /// this, the walk's arms for them would never run until the generator writes them.
 #[test]
 fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
-    let src = "interface Shape<T: Same> {\n    type Item: Same\n    fn area<U: Same>(self, x: U) -> Self\n    fn done(self)\n}\nclass Box<T: Same> {}\nextend<T: Same> Stack<T> {\n    fn first(self, x: S.Item) {}\n}\ninterface Bad: {}\nextend C: {}\n";
+    let src = "interface Shape<T: Same>: Named {\n    type Item: Same\n    fn area<U: Same>(self, x: U) -> Self\n    fn done(self)\n}\nclass Box<T: Same> {}\nextend<T: Same> Stack<T> {\n    fn first(self, x: S.Item) {}\n}\ninterface Bad: {}\nextend C: {}\n";
     let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
     let mut walk = Walk::default();
     walk.ast(&parsed.program);
@@ -2394,6 +2393,7 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
         "ast::TypeKind::Member",
         "ast::BrokenKind::Interface",
         "ast::BrokenKind::Extend",
+        "reach: an interface inherits another",
     ] {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
     }
@@ -2405,6 +2405,7 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
         "interface I<T: Same?> {}\n",
         "interface I {\n    type Item: Same?\n}\n",
         "interface I {\n    fn f<U: Same?>(self)\n}\n",
+        "interface I: Same? {}\n",
         "extend<T: Same?> Stack<T> {}\n",
         "fn f<T: Same?>() {}\n",
     ] {

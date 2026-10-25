@@ -1,0 +1,11 @@
+class Circle {
+    r: f64
+}
+
+fn _area<T: Circle>(_shape: T) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

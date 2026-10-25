@@ -1,0 +1,8 @@
+error[E0148]: `T` is a type parameter, not an interface
+ --> E0148-type-param.sisu:1:16
+  |
+1 | fn _pick<T, U: T>(x: U) {
+  |                ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0148

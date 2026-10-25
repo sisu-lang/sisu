@@ -1,0 +1,8 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+fn main() {
+    let x: Shap = 1
+    print(x)
+}

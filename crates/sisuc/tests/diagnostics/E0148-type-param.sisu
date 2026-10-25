@@ -1,0 +1,7 @@
+fn _pick<T, U: T>(x: U) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

@@ -1,0 +1,7 @@
+fn first(x: i64) -> Self {
+    x
+}
+
+fn main() {
+    print(1)
+}
