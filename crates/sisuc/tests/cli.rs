@@ -175,7 +175,7 @@ fn emit_tokens_should_print_reserved_and_const_words_as_their_own_tokens() {
     assert!(stdout.contains("\n2:1 Const const\n"), "{stdout}");
 }
 
-/// GIVEN a source that holds `a & b`
+/// GIVEN a source that holds `a $ b`
 /// WHEN it is built with `--emit tokens`
 /// THEN the exit code is 1, the first diagnostic is an error, and it is E0010 at 1:3 of the file
 #[test]

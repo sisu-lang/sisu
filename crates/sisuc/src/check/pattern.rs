@@ -1075,6 +1075,7 @@ impl Checker<'_> {
                     kind: ast::TypeKind::Name(q.name),
                     optional: 0,
                     span: q.span,
+                    bare: q.span,
                 })?;
                 false
             }

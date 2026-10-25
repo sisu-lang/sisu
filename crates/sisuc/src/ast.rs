@@ -228,6 +228,8 @@ pub(crate) struct TypeExpr {
     pub(crate) optional: u16,
     /// The name, or `[` through `]`, then through the last `?`, if any.
     pub(crate) span: Span,
+    /// The type without its `?`: `span` when `optional` is 0. A line break may lie before a `?`.
+    pub(crate) bare: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1224,6 +1226,7 @@ mod tests {
             kind: TypeKind::Name(Symbol::intern(name)),
             optional: 0,
             span: sp(),
+            bare: sp(),
         }
     }
 

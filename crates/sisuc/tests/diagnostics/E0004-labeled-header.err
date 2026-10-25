@@ -1,4 +1,4 @@
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
  --> E0004-labeled-header.sisu:4:5
   |
 4 |     {

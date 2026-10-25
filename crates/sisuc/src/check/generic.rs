@@ -1137,8 +1137,7 @@ impl Checker<'_> {
     /// or an `extend` target, `Self`, a member type): E0030 at it, without its `?`. A later task
     /// of milestone 8 replaces each use.
     pub(super) fn unsupported(&mut self, ty: &ast::TypeExpr) {
-        let at = Span::new(ty.span.start(), ty.span.end() - usize::from(ty.optional));
-        self.unsupported_at(at);
+        self.unsupported_at(ty.bare);
     }
 
     /// `unsupported` for the interfaces a class or an enum lists and the associated types it

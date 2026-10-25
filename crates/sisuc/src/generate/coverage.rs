@@ -2397,6 +2397,25 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
     ] {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
     }
+    // A bound is a type of its own: the only `?` in each source is on a bound, so the key shows
+    // that the walk read it there.
+    for src in [
+        "class Box<T: Same?> {}\n",
+        "enum E<T: Same?> {\n    A\n}\n",
+        "interface I<T: Same?> {}\n",
+        "interface I {\n    type Item: Same?\n}\n",
+        "interface I {\n    fn f<U: Same?>(self)\n}\n",
+        "extend<T: Same?> Stack<T> {}\n",
+        "fn f<T: Same?>() {}\n",
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert!(
+            walk.seen.contains("reach: a type has one `?` layer"),
+            "the walk should read the bound in {src}"
+        );
+    }
 }
 
 #[test]

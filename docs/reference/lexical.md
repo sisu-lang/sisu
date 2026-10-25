@@ -99,8 +99,8 @@ These words are keywords. A keyword cannot be a name.
 | --- | --- |
 | Declarations | `fn`, `class`, `enum`, `interface`, `extend`, `const`, `let`, `mut` |
 | Control flow | `if`, `else`, `while`, `for`, `in`, `loop`, `match`, `break`, `continue`, `return` |
-| Values | `true`, `false`, `None`, `self`, `Self` |
-| Other | `is`, `todo`, `_` |
+| Values | `true`, `false`, `None`, `self` |
+| Other | `is`, `todo`, `_`, `Self` (a type) |
 
 `var` is a keyword that Sisu does not use. Write `let mut` ([E0013](../diagnostics/E0013.md)).
 
@@ -231,7 +231,7 @@ fn main() {
 
 The other layout rules:
 
-- The `{` of a `fn`, `class`, `enum`, `if`, `else`, `match`, `while`, `for` or `loop` is on the line of its header ([E0004](../diagnostics/E0004.md)).
+- The `{` of a `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop` is on the line of its header ([E0004](../diagnostics/E0004.md)).
 - An `else` is on the line of the `}` before it: `} else {` ([E0006](../diagnostics/E0006.md)).
 - Inside `(` or `[`, a `[` cannot start a line after an expression ([E0005](../diagnostics/E0005.md)). Outside brackets, a `[` at the start of a line starts a new statement. It never indexes the line above.
 

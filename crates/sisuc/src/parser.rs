@@ -467,7 +467,8 @@ impl<'a> Parser<'a> {
     }
 
     /// "expected <what>, found <the next token>", pointing at the next token.
-    /// A stray `var` or reserved word always gets its own diagnostic, wherever it appears.
+    /// A stray `var` or reserved word always gets its own diagnostic, wherever it appears, and so
+    /// does a lone `&`: only a bound reads one, so anywhere else it is the unexpected character.
     fn expected(&self, what: &str) -> Diagnostic {
         self.expected_at(self.peek(), what)
     }
@@ -481,6 +482,10 @@ impl<'a> Parser<'a> {
             },
             TokenKind::Reserved(word) => DiagnosticKind::ReservedWord {
                 word,
+                at: found.span,
+            },
+            TokenKind::Amp => DiagnosticKind::UnexpectedCharacter {
+                c: '&',
                 at: found.span,
             },
             TokenKind::Int(_) => DiagnosticKind::Expected {
@@ -587,6 +592,7 @@ impl<'a> Parser<'a> {
                 kind,
                 optional: 0,
                 span,
+                bare: span,
             };
             span = span.to(name.span);
             kind = TypeKind::Member {
@@ -595,6 +601,7 @@ impl<'a> Parser<'a> {
             };
         }
         // Each `?` is one layer and one level of depth; `??` is one token of two.
+        let bare = span;
         let mut optional = 0;
         loop {
             let layers = match self.peek().kind {
@@ -612,6 +619,7 @@ impl<'a> Parser<'a> {
             kind,
             optional,
             span,
+            bare,
         })
     }
 
@@ -945,7 +953,8 @@ impl<'a> Parser<'a> {
     }
 
     /// Where the target of the `extend` at `start` starts: after its type-parameter list, which
-    /// runs to the `>` that matches the `<`. `None` when that `>` is not on the line.
+    /// runs to the `>` that matches the `<`. `None` when that `>` is not on the line, or the next
+    /// item starts first: the scan never reads past `item_end`, so each item costs its own tokens.
     fn extend_target(&self, start: usize) -> Option<usize> {
         let mut at = start + 1;
         if self.tokens[at].kind != TokenKind::Lt {
@@ -962,6 +971,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TokenKind::Eof | TokenKind::LBrace | TokenKind::Newline => return None,
+                _ if self.starts_item_line(at) => return None,
                 _ => {}
             }
             at += 1;
@@ -1121,6 +1131,39 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The lines of a block through its last, up to its `}`, which stays: `line` parses the one
+    /// that starts here and runs to the given end, and pushes what it holds. A method whose error
+    /// follows its name is broken alone: its error goes to `errors`, its bytes to `methods`, and
+    /// its name to the result. Any other error breaks the whole item.
+    fn member_lines(
+        &mut self,
+        errors: &mut Vec<Diagnostic>,
+        methods: &mut Vec<Range<usize>>,
+        mut line: impl FnMut(&mut Self, usize) -> Result<(), Diagnostic>,
+    ) -> Result<Vec<Ident>, Diagnostic> {
+        let mut broken_methods = Vec::new();
+        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) {
+            self.depth = 0;
+            let start = self.pos;
+            let end = self.item_end(start);
+            if let Err(error) = line(self, end) {
+                let Some(Broken {
+                    name,
+                    kind: BrokenKind::Function,
+                }) = self.header(start)
+                else {
+                    return Err(error);
+                };
+                methods.push(self.bytes(start, end));
+                broken_methods.push(name);
+                errors.push(error);
+            }
+            self.skip_newlines();
+        }
+        Ok(broken_methods)
+    }
+
     /// The class itself, adding each broken method's error to `errors` and its bytes to
     /// `methods`.
     fn class_body(
@@ -1135,31 +1178,15 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::LBrace)?;
         let mut members = Vec::new();
         let mut assoc = Vec::new();
-        let mut broken_methods = Vec::new();
-        self.skip_newlines();
-        while !self.at(&TokenKind::RBrace) {
-            self.depth = 0;
-            let start = self.pos;
-            let end = self.item_end(start);
-            // Only a class that lists an interface may choose an associated type.
-            let chooses = !conforms.is_empty();
-            match self.checked(end, |p| p.class_line(chooses)) {
-                Ok(ClassLine::Member(member)) => members.push(member),
-                Ok(ClassLine::Assoc(choice)) => assoc.push(choice),
-                Err(error) => match self.header(start) {
-                    Some(Broken {
-                        name,
-                        kind: BrokenKind::Function,
-                    }) => {
-                        methods.push(self.bytes(start, end));
-                        broken_methods.push(name);
-                        errors.push(error);
-                    }
-                    _ => return Err(error),
-                },
+        // Only a class that lists an interface may choose an associated type.
+        let chooses = !conforms.is_empty();
+        let broken_methods = self.member_lines(errors, methods, |p, end| {
+            match p.checked(end, |p| p.class_line(chooses))? {
+                ClassLine::Member(member) => members.push(member),
+                ClassLine::Assoc(choice) => assoc.push(choice),
             }
-            self.skip_newlines();
-        }
+            Ok(())
+        })?;
         self.bump();
         Ok(Class {
             name,
@@ -1316,37 +1343,21 @@ impl<'a> Parser<'a> {
         let mut variants = Vec::new();
         let mut assoc = Vec::new();
         let mut fns = Vec::new();
-        let mut broken_methods = Vec::new();
         // The `fn` of the first method, broken or not.
         let mut first_method = None;
-        self.skip_newlines();
-        while !self.at(&TokenKind::RBrace) {
-            self.depth = 0;
-            let start = self.pos;
-            let end = self.item_end(start);
-            if first_method.is_none() && self.at(&TokenKind::Fn) {
-                first_method = Some(self.peek().span);
+        // Only an enum that lists an interface may choose an associated type.
+        let chooses = !conforms.is_empty();
+        let broken_methods = self.member_lines(errors, methods, |p, end| {
+            if first_method.is_none() && p.at(&TokenKind::Fn) {
+                first_method = Some(p.peek().span);
             }
-            // Only an enum that lists an interface may choose an associated type.
-            let chooses = !conforms.is_empty();
-            match self.checked(end, |p| p.enum_line(&owner, first_method, chooses)) {
-                Ok(EnumMember::Variant(variant)) => variants.push(variant),
-                Ok(EnumMember::Method(method)) => fns.push(method),
-                Ok(EnumMember::Assoc(choice)) => assoc.push(choice),
-                Err(error) => match self.header(start) {
-                    Some(Broken {
-                        name,
-                        kind: BrokenKind::Function,
-                    }) => {
-                        methods.push(self.bytes(start, end));
-                        broken_methods.push(name);
-                        errors.push(error);
-                    }
-                    _ => return Err(error),
-                },
+            match p.checked(end, |p| p.enum_line(&owner, first_method, chooses))? {
+                EnumMember::Variant(variant) => variants.push(variant),
+                EnumMember::Method(method) => fns.push(method),
+                EnumMember::Assoc(choice) => assoc.push(choice),
             }
-            self.skip_newlines();
-        }
+            Ok(())
+        })?;
         self.bump();
         Ok(Enum {
             name,
@@ -1642,29 +1653,13 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::LBrace)?;
         let mut assoc = Vec::new();
         let mut requirements = Vec::new();
-        let mut broken_methods = Vec::new();
-        self.skip_newlines();
-        while !self.at(&TokenKind::RBrace) {
-            self.depth = 0;
-            let start = self.pos;
-            let end = self.item_end(start);
-            match self.checked(end, Self::interface_line) {
-                Ok(InterfaceLine::Requirement(requirement)) => requirements.push(requirement),
-                Ok(InterfaceLine::Assoc(ty)) => assoc.push(ty),
-                Err(error) => match self.header(start) {
-                    Some(Broken {
-                        name,
-                        kind: BrokenKind::Function,
-                    }) => {
-                        methods.push(self.bytes(start, end));
-                        broken_methods.push(name);
-                        errors.push(error);
-                    }
-                    _ => return Err(error),
-                },
+        let broken_methods = self.member_lines(errors, methods, |p, end| {
+            match p.checked(end, Self::interface_line)? {
+                InterfaceLine::Requirement(requirement) => requirements.push(requirement),
+                InterfaceLine::Assoc(ty) => assoc.push(ty),
             }
-            self.skip_newlines();
-        }
+            Ok(())
+        })?;
         let close = self.bump().span;
         Ok(Interface {
             name,
@@ -1751,31 +1746,15 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::LBrace)?;
         let mut assoc = Vec::new();
         let mut fns = Vec::new();
-        let mut broken_methods = Vec::new();
-        self.skip_newlines();
-        while !self.at(&TokenKind::RBrace) {
-            self.depth = 0;
-            let start = self.pos;
-            let end = self.item_end(start);
-            // Only a block that makes the target meet an interface may choose an associated type.
-            let chooses = interface.is_some();
-            match self.checked(end, |p| p.extend_line(chooses)) {
-                Ok(ExtendLine::Method(method)) => fns.push(method),
-                Ok(ExtendLine::Assoc(choice)) => assoc.push(choice),
-                Err(error) => match self.header(start) {
-                    Some(Broken {
-                        name,
-                        kind: BrokenKind::Function,
-                    }) => {
-                        methods.push(self.bytes(start, end));
-                        broken_methods.push(name);
-                        errors.push(error);
-                    }
-                    _ => return Err(error),
-                },
+        // Only a block that makes the target meet an interface may choose an associated type.
+        let chooses = interface.is_some();
+        let broken_methods = self.member_lines(errors, methods, |p, end| {
+            match p.checked(end, |p| p.extend_line(chooses))? {
+                ExtendLine::Method(method) => fns.push(method),
+                ExtendLine::Assoc(choice) => assoc.push(choice),
             }
-            self.skip_newlines();
-        }
+            Ok(())
+        })?;
         let close = self.bump().span;
         Ok(Extend {
             type_params,
@@ -2507,13 +2486,6 @@ impl<'a> Parser<'a> {
         DiagnosticKind::UnexpectedCharacter { c: '|', at }.into()
     }
 
-    /// A lone `&` where an expression stands: logical and is `&&`. Only a bound's interface list
-    /// reads a `&`.
-    fn lone_amp(&self) -> Diagnostic {
-        let at = self.peek().span;
-        DiagnosticKind::UnexpectedCharacter { c: '&', at }.into()
-    }
-
     /// The sub-patterns after the `(` or `{` at the next token, through `close`; the label
     /// before each one that has it, with the span its fix deletes; and the span from the opening
     /// token through `close`.
@@ -2986,8 +2958,6 @@ impl<'a> Parser<'a> {
                 }
             } else if *kind == TokenKind::Pipe {
                 return Err(self.lone_pipe());
-            } else if *kind == TokenKind::Amp {
-                return Err(self.lone_amp());
             } else {
                 return Ok(lhs);
             }
@@ -3355,7 +3325,6 @@ impl<'a> Parser<'a> {
                 .into());
             }
             TokenKind::Pipe => return Err(self.lone_pipe()),
-            TokenKind::Amp => return Err(self.lone_amp()),
             _ => return Err(self.expected("an expression")),
         };
         Ok(Expr {
@@ -4930,7 +4899,13 @@ mod tests {
         ] {
             assert_eq!(program(same_line), program(line), "{same_line}");
         }
-        for src in ["interface I {};", "extend C {};"] {
+        // The words before `fn` stand on one line, so only `between_items` makes the `;` redundant.
+        for src in [
+            "interface I {};",
+            "extend C {};",
+            "interface I {}; fn main() {}",
+            "extend C {}; fn main() {}",
+        ] {
             let ds = parsed(src).diagnostics;
             assert_eq!(
                 ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
@@ -5033,13 +5008,17 @@ mod tests {
         }
     }
 
-    /// A lone `&` is a token for a bound's list only: anywhere an expression stands it is the
-    /// lexer's old E0010, with the unsafe fix to `&&`.
+    /// A lone `&` is a token for a bound's list only: anywhere else it is the lexer's old E0010,
+    /// with the unsafe fix to `&&`. The rows are an operator, an operand, an item, a binding and
+    /// a type, each a different "expected" path.
     #[test]
-    fn a_lone_amp_in_an_expression_should_be_an_unexpected_character() {
+    fn a_lone_amp_outside_a_bound_should_be_an_unexpected_character() {
         for (src, at, edit) in [
             ("fn main() {\n    print(a & b)\n}", (2, 13), (24, 25)),
             ("fn main() {\n    print(&a)\n}", (2, 11), (22, 23)),
+            ("&\nfn main() {}", (1, 1), (0, 1)),
+            ("fn main() {\n    let & = 1\n}", (2, 9), (20, 21)),
+            ("fn f(x: A & B) {}\nfn main() {}", (1, 11), (10, 11)),
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::UnexpectedCharacter, "{src}");
@@ -5086,6 +5065,19 @@ mod tests {
             assert_eq!(parsed.diagnostics.len(), 1, "{src}");
             assert_eq!(parsed.program.items.len(), 1, "{src}");
         }
+    }
+
+    /// The scan for an `extend` target stops at the next item line. An open `<` that no `>` closes
+    /// before it leaves the block unnamed, so each `extend<` line costs its own tokens and not the
+    /// rest of the file. The `>` after the second `extend` must not close the first one's list.
+    #[test]
+    fn the_scan_for_an_extend_target_should_stop_at_the_next_item_line() {
+        let parsed = parsed("extend<\nextend C> D {}\nfn main() {}");
+        let named: Vec<_> = (parsed.program.broken.iter())
+            .map(|b| b.name.name.as_str())
+            .collect();
+        assert_eq!(named, ["C"]);
+        assert!(!parsed.checkable);
     }
 
     /// A method that holds an error is broken alone: its interface or `extend` block stays

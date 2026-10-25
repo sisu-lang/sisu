@@ -1077,6 +1077,24 @@ fn main() {
         assert_eq!(codes(src), [], "{src}");
     }
 
+    /// A line break or a space before a `?` is no part of the type: the report covers the type
+    /// alone and renders (the renderer rejects a span that ends with a line break).
+    #[test]
+    fn an_unsupported_type_should_be_reported_without_the_question_marks_after_it() {
+        for (src, text) in [
+            ("fn f(x: Self\n?) {}\nfn main() {}\n", "Self"),
+            ("fn f<S>(x: S.Item\n?) {}\nfn main() {}\n", "S.Item"),
+            ("fn f<T: Ord ? ?>(x: T) {}\nfn main() {}\n", "Ord"),
+            ("fn f<T: [i64] ?>(x: T) {}\nfn main() {}\n", "[i64]"),
+        ] {
+            let diagnostics = front_end(src).1;
+            let first = diagnostics.first().expect("the type should be reported");
+            assert_eq!(first.code(), Code::UnknownType, "{src}");
+            assert_eq!(&src[first.span().range()], text, "{src}");
+            first.render("t.sisu", src, &crate::source::LineIndex::new(src), false);
+        }
+    }
+
     #[test]
     fn broken_name_poisons_the_other_kind() {
         // Functions and classes share a namespace: the broken function `Tree` poisons the type.

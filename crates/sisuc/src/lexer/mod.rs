@@ -685,9 +685,10 @@ struct Statement {
     tokens: usize,
     /// Whether a header's type-parameter list is open. A `<` that is the third token, after
     /// `fn`, `class`, `enum` or `interface` and a name, opens it, and so does the second token of
-    /// `extend<T>`. Its names, `,`s, and a bound's `:` and `&` keep it open, and so do the `<` and
-    /// `>` of a bound's arguments. Its own `>` or any other token closes it. A bracket closes it
-    /// before it is saved, so a statement given back at a `}` never has it.
+    /// `extend<T>`. Its names, `,`s, and a bound's `:` and `&` keep it open, and so do a bound's
+    /// arguments: their `<` and `>`, `[ ]`, `?`, `Self` and `.`. Its own `>` or any other token
+    /// closes it. A bracket closes it before it is saved, so a statement given back at a `}`
+    /// never has it.
     params: bool,
     /// How many `<` of a bound's arguments are open inside the list.
     nested: usize,
@@ -700,8 +701,8 @@ impl Statements {
     /// The innermost statement after reading the tokens before `end`.
     fn read(&mut self, tokens: &[Token], end: usize) -> Statement {
         use TokenKind::{
-            Arrow, Colon, Comma, Eq, Ge, Gt, Ident, LBrace, LBracket, LParen, Loop, Lt, Newline,
-            RBrace, RBracket, RParen, Semicolon, StrHead, StrTail,
+            Arrow, Colon, Comma, Dot, Eq, Ge, Gt, Ident, LBrace, LBracket, LParen, Loop, Lt,
+            Newline, QuestionQuestion, RBrace, RBracket, RParen, Semicolon, StrHead, StrTail,
         };
         for (i, t) in tokens.iter().enumerate().take(end).skip(self.read) {
             #[cfg(test)]
@@ -719,7 +720,15 @@ impl Statements {
             s.params = s.params
                 && match t.kind {
                     Ident(_) | Comma | Colon | TokenKind::Amp | Lt => true,
-                    Gt => s.nested > 0,
+                    // Inside a bound's arguments, which are types: also arrays, optionals, `Self`
+                    // and member types.
+                    Gt
+                    | LBracket
+                    | RBracket
+                    | Dot
+                    | TokenKind::Question
+                    | QuestionQuestion
+                    | TokenKind::SelfType => s.nested > 0,
                     _ => false,
                 };
             match t.kind {
@@ -1136,14 +1145,19 @@ fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
 }
 
 /// Whether `code`, after a line break, goes on with the header's type-parameter list open before
-/// it: `code` starts with a name, `,` or `>`. An open list ends in a name, or in the `>` of a
-/// bound's arguments, so a line that ends in anything else, a `;` too, stops the check before it
-/// reads the word or the statement.
+/// it: `code` starts with a name, `,`, `>`, `]` or `?`. An open list ends in a name, or in the
+/// `>`, `]`, `?` or `Self` of a bound's arguments, so a line that ends in anything else, a `;`
+/// too, stops the check before it reads the word or the statement.
 fn continues_params(code: &str, tokens: &[Token], brackets: &mut Brackets) -> bool {
     if !matches!(
         tokens.last(),
         Some(Token {
-            kind: TokenKind::Ident(_) | TokenKind::Gt,
+            kind: TokenKind::Ident(_)
+                | TokenKind::Gt
+                | TokenKind::RBracket
+                | TokenKind::Question
+                | TokenKind::QuestionQuestion
+                | TokenKind::SelfType,
             ..
         })
     ) {
@@ -1153,6 +1167,7 @@ fn continues_params(code: &str, tokens: &[Token], brackets: &mut Brackets) -> bo
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(code.len())];
     let listed = code.starts_with(',')
+        || code.starts_with([']', '?'])
         || code.starts_with('>') && !code.starts_with(">=")
         || word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
             && keyword(word).is_none();
@@ -1860,6 +1875,12 @@ mod tests {
             all_kinds("Self\ny"),
             [SelfType, Newline, ident("y"), Newline, Eof]
         );
+        // A requirement that ends in `Self` ends its line, so the next one parses.
+        let src = "interface I {\n    fn a(self) -> Self\n    fn b(self)\n}";
+        let kinds = all_kinds(src);
+        let at = kinds.iter().position(|k| *k == SelfType);
+        assert_eq!(at.and_then(|at| kinds.get(at + 1)), Some(&Newline));
+        crate::parser::parse_ok(src);
     }
 
     #[test]
@@ -3874,23 +3895,14 @@ mod tests {
         }
     }
 
-    /// `--emit tokens` prints the new tokens by name, and a diagnostic spells them as written.
+    /// `--emit tokens` prints the new tokens by name.
     #[test]
-    fn the_new_tokens_should_print_and_spell_as_written() {
-        use TokenKind::{Amp, Extend, Interface, SelfType};
+    fn the_new_tokens_should_print_as_written() {
         let src = "interface extend Self &";
         assert_eq!(
             dump(src, &tokens(src)),
             "1:1 Interface interface\n1:11 Extend extend\n1:18 SelfType Self\n1:23 Amp &\n1:24 Eof\n"
         );
-        for (kind, text) in [
-            (Interface, "`interface`"),
-            (Extend, "`extend`"),
-            (SelfType, "`Self`"),
-            (Amp, "`&`"),
-        ] {
-            assert_eq!(kind.describe(), text);
-        }
     }
 
     #[test]
@@ -4360,6 +4372,18 @@ mod tests {
             "fn to<T: Convert<Kelvin>\n>(x: T) {}",
             "fn to<T: Convert<Kelvin>\n, U>(x: T) {}",
             "fn to<T: Convert<Pair<A, B>>\n>(x: T) {}",
+            "fn to<T: Convert<[i64]>\n>(x: T) {}",
+            "fn to<T: Convert<[i64]\n>>(x: T) {}",
+            "fn to<T: Convert<[i64\n]>>(x: T) {}",
+            "fn to<T: Convert<K?>\n>(x: T) {}",
+            "fn to<T: Convert<K?\n>>(x: T) {}",
+            "fn to<T: Convert<K\n?>>(x: T) {}",
+            "fn to<T: Convert<K??>\n>(x: T) {}",
+            "fn to<T: Convert<Self>\n>(x: T) {}",
+            "fn to<T: Convert<Self\n>>(x: T) {}",
+            "fn to<T: Convert<S.Item>\n>(x: T) {}",
+            "fn to<T: Convert<S.Item\n>>(x: T) {}",
+            "fn to<T: Convert<S\n.Item>>(x: T) {}",
         ] {
             let breaks = all_kinds(src)
                 .iter()

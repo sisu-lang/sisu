@@ -1607,7 +1607,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    "`{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while`, `for` or `loop`",
+                    "`{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`",
                 );
                 match join {
                     Some(join) => d.with_fix(join_fix(
@@ -1782,42 +1782,42 @@ impl From<DiagnosticKind> for Diagnostic {
                 owner,
             } => {
                 let remove = Span::new(keyword.start(), receiver.start());
-                match owner {
-                    Owner::Class | Owner::Interface => {
-                        let d = if matches!(owner, Owner::Class) {
-                            Diagnostic::coded(
-                                code,
-                                keyword,
-                                "a class method takes `self`, not `mut self`",
-                            )
-                            .with_help(
-                                "an object is shared: `self` can already write every `mut` field",
-                            )
+                // The fix of a class or an interface method: safe when only `,` or `)` follows
+                // `self`.
+                let drop_mut = |d: Diagnostic| {
+                    d.with_fix(Fix {
+                        message: if safe {
+                            "remove the `mut`"
                         } else {
-                            Diagnostic::coded(
-                                code,
-                                keyword,
-                                "an interface method cannot take `mut self`",
-                            )
-                            .with_help(
-                                "a class method changes its object's `mut` fields through plain \
-                                 `self`",
-                            )
-                        };
-                        d.with_fix(Fix {
-                            message: if safe {
-                                "remove the `mut`"
-                            } else {
-                                "try removing the `mut`; the receiver may need another change"
-                            }
-                            .to_string(),
-                            safe,
-                            edits: vec![Edit {
-                                span: remove,
-                                replacement: String::new(),
-                            }],
-                        })
-                    }
+                            "try removing the `mut`; the receiver may need another change"
+                        }
+                        .to_string(),
+                        safe,
+                        edits: vec![Edit {
+                            span: remove,
+                            replacement: String::new(),
+                        }],
+                    })
+                };
+                match owner {
+                    Owner::Class => drop_mut(
+                        Diagnostic::coded(
+                            code,
+                            keyword,
+                            "a class method takes `self`, not `mut self`",
+                        )
+                        .with_help("an object is shared: `self` can already write every `mut` field"),
+                    ),
+                    Owner::Interface => drop_mut(
+                        Diagnostic::coded(
+                            code,
+                            keyword,
+                            "an interface method cannot take `mut self`",
+                        )
+                        .with_help(
+                            "a class method changes its object's `mut` fields through plain `self`",
+                        ),
+                    ),
                     // The body may still assign `self`, so the fix is never safe.
                     Owner::Enum(name) => Diagnostic::coded(
                         code,
