@@ -92,7 +92,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 56] = [
+const REACH: [&str; 60] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -149,6 +149,10 @@ const REACH: [&str; 56] = [
     "reach: `Ok` builds a `Result`",
     "reach: `Err` builds a `Result`",
     "reach: a `match` on a `Result`",
+    "reach: a `char?` is stored",
+    "reach: a `bool?` is stored",
+    "reach: an optional of an enum is stored",
+    "reach: an optional of an optional of `char` or `bool` is stored",
 ];
 
 /// Whether a program's text holds a form.
@@ -1469,8 +1473,30 @@ impl Walk {
             self.ty(function.ret);
             for local in &function.locals {
                 self.ty(local.ty);
+                self.stored(local.ty);
             }
             self.tir_block(&function.body);
+        }
+    }
+
+    /// Records the optionals with a niche that a local of `ty` holds, itself or as its elements.
+    fn stored(&mut self, mut ty: Type) {
+        while let TypeKind::Array(element) = ty.kind() {
+            ty = element;
+        }
+        let TypeKind::Optional(payload) = ty.kind() else {
+            return;
+        };
+        match payload.kind() {
+            TypeKind::Char => self.mark("reach: a `char?` is stored"),
+            TypeKind::Bool => self.mark("reach: a `bool?` is stored"),
+            TypeKind::Enum(..) => self.mark("reach: an optional of an enum is stored"),
+            TypeKind::Optional(inner)
+                if matches!(inner.kind(), TypeKind::Char | TypeKind::Bool) =>
+            {
+                self.mark("reach: an optional of an optional of `char` or `bool` is stored");
+            }
+            _ => {}
         }
     }
 

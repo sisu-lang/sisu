@@ -1,0 +1,393 @@
+// Niches: an empty optional is kept in a spare value of its payload. A `char?` is an `i32` with
+// `None` as 0x110000, a `bool?` is a byte with `None` as 2, and an enum optional uses the tag
+// after the last variant. A nested optional uses the next spare value. Each value is made in
+// each way, kept in an array, read back, and tested with `== None`, `if let` and `match`. A
+// `None` never reads as a value, and no value reads as `None`.
+class Holder<T> {
+    v: T
+}
+
+enum E {
+    A
+    B
+}
+
+// `F` holds a string, so its optional is counted.
+enum F {
+    S(string)
+    N
+    M
+}
+
+enum G {
+    A(f64)
+    B
+    C
+}
+
+// The ways to make a `None`, other than the literal.
+fn nothing<T>() -> T? {
+    None
+}
+
+fn filled<T>() -> T? {
+    let xs: [T?] = [None; 3]
+    xs[2]
+}
+
+fn or_none<T>(x: T?) -> T? {
+    x ?? None
+}
+
+fn through<T>(h: Holder<T?>?) -> T? {
+    h?.v
+}
+
+fn arm<T>(k: i64, x: T) -> T? {
+    match k {
+        0 => None
+        _ => x
+    }
+}
+
+// A string in a new block on each call.
+fn text(n: i64) -> string {
+    "s{n}"
+}
+
+// Each `show` function gives `== None`, then `if let`, then `match`, then a `??`.
+fn show_char(c: char?) -> string {
+    let by_if = if let v = c { "{i64(v)}" } else { "None" }
+    let by_match = match c {
+        None => "None"
+        Some(v) => "{i64(v)}"
+    }
+    "{c == None} {by_if} {by_match} {i64(c ?? '?')}"
+}
+
+fn show_char2(c: char??) -> string {
+    let by_if = if let v = c {
+        if let w = v { "{i64(w)}" } else { "Some(None)" }
+    } else {
+        "None"
+    }
+    let by_match = match c {
+        None => "None"
+        Some(None) => "Some(None)"
+        Some(Some(w)) => "{i64(w)}"
+    }
+    "{c == None} {by_if} {by_match} {i64((c ?? None) ?? '?')}"
+}
+
+fn show_bool(b: bool?) -> string {
+    let by_if = if let v = b { "{v}" } else { "None" }
+    let by_match = match b {
+        None => "None"
+        Some(true) => "true"
+        Some(false) => "false"
+    }
+    "{b == None} {by_if} {by_match} {b ?? true}"
+}
+
+fn show_bool2(b: bool??) -> string {
+    let by_if = if let v = b {
+        if let w = v { "{w}" } else { "Some(None)" }
+    } else {
+        "None"
+    }
+    let by_match = match b {
+        None => "None"
+        Some(None) => "Some(None)"
+        Some(Some(w)) => "{w}"
+    }
+    "{b == None} {by_if} {by_match} {(b ?? None) ?? true}"
+}
+
+fn name_e(e: E) -> string {
+    match e {
+        A => "A"
+        B => "B"
+    }
+}
+
+fn show_e(e: E?) -> string {
+    let by_if = if let v = e { name_e(v) } else { "None" }
+    let by_match = match e {
+        None => "None"
+        A => "A"
+        B => "B"
+    }
+    "{e == None} {by_if} {by_match} {name_e(e ?? E.A)}"
+}
+
+fn show_e2(e: E??) -> string {
+    let by_if = if let v = e {
+        if let w = v { name_e(w) } else { "Some(None)" }
+    } else {
+        "None"
+    }
+    let by_match = match e {
+        None => "None"
+        Some(None) => "Some(None)"
+        Some(Some(w)) => name_e(w)
+    }
+    "{e == None} {by_if} {by_match} {name_e((e ?? None) ?? E.A)}"
+}
+
+fn name_f(f: F) -> string {
+    match f {
+        S(s) => "S({s})"
+        N => "N"
+        M => "M"
+    }
+}
+
+fn show_f(f: F?) -> string {
+    let by_if = if let v = f { name_f(v) } else { "None" }
+    let by_match = match f {
+        None => "None"
+        S(s) => "S({s})"
+        N => "N"
+        M => "M"
+    }
+    "{f == None} {by_if} {by_match} {name_f(f ?? F.N)}"
+}
+
+fn name_g(g: G) -> string {
+    match g {
+        A(x) => "A({x})"
+        B => "B"
+        C => "C"
+    }
+}
+
+fn show_g(g: G?) -> string {
+    let by_if = if let v = g { name_g(v) } else { "None" }
+    let by_match = match g {
+        None => "None"
+        A(x) => "A({x})"
+        B => "B"
+        C => "C"
+    }
+    "{g == None} {by_if} {by_match} {name_g(g ?? G.B)}"
+}
+
+// An `F?` that one branch moves out of `f`. On the other path the end of the scope releases
+// `f`; on this one, `f`'s slot holds its zero value, an `F.S` with no string.
+fn keep_if(keep: bool) -> F? {
+    let f: F? = F.S(text(3))
+    let mut out: F? = None
+    if keep {
+        out = f
+    }
+    out
+}
+
+fn main() {
+    let chars: [char?] = [
+        None,
+        nothing<char>(),
+        filled<char>(),
+        or_none<char>(None),
+        through<char>(None),
+        arm(0, 'a'),
+        char(0x110000),
+        char(-1),
+        char(0xD800),
+        '\0',
+        '\u{10FFFF}',
+        arm(1, '\u{10FFFF}'),
+        or_none<char>('\0'),
+        char(0),
+        char(0x10FFFF),
+        through<char>(Holder<char?>(v: '\u{10FFFF}')),
+    ]
+    print(show_char(chars[0]))                 // true None None 63
+    print(show_char(chars[1]))                 // true None None 63
+    print(show_char(chars[2]))                 // true None None 63
+    print(show_char(chars[3]))                 // true None None 63
+    print(show_char(chars[4]))                 // true None None 63
+    print(show_char(chars[5]))                 // true None None 63
+    print(show_char(chars[6]))                 // true None None 63
+    print(show_char(chars[7]))                 // true None None 63
+    print(show_char(chars[8]))                 // true None None 63
+    print(show_char(chars[9]))                 // false 0 0 0
+    print(show_char(chars[10]))                // false 1114111 1114111 1114111
+    print(show_char(chars[11]))                // false 1114111 1114111 1114111
+    print(show_char(chars[12]))                // false 0 0 0
+    print(show_char(chars[13]))                // false 0 0 0
+    print(show_char(chars[14]))                // false 1114111 1114111 1114111
+    print(show_char(chars[15]))                // false 1114111 1114111 1114111
+
+    // `char(0x110000)` is a `char?` `None`, so as a `char??` it is `Some(None)`.
+    let chars2: [char??] = [
+        None,
+        nothing<char?>(),
+        filled<char?>(),
+        or_none<char?>(None),
+        through<char?>(None),
+        arm(0, Some('a')),
+        Some(None),
+        char(0x110000),
+        Some('\0'),
+        Some('\u{10FFFF}'),
+        arm(1, Some('\0')),
+    ]
+    print(show_char2(chars2[0]))               // true None None 63
+    print(show_char2(chars2[1]))               // true None None 63
+    print(show_char2(chars2[2]))               // true None None 63
+    print(show_char2(chars2[3]))               // true None None 63
+    print(show_char2(chars2[4]))               // true None None 63
+    print(show_char2(chars2[5]))               // true None None 63
+    print(show_char2(chars2[6]))               // false Some(None) Some(None) 63
+    print(show_char2(chars2[7]))               // false Some(None) Some(None) 63
+    print(show_char2(chars2[8]))               // false 0 0 0
+    print(show_char2(chars2[9]))               // false 1114111 1114111 1114111
+    print(show_char2(chars2[10]))              // false 0 0 0
+
+    let bools: [bool?] = [
+        None,
+        nothing<bool>(),
+        filled<bool>(),
+        or_none<bool>(None),
+        through<bool>(None),
+        arm(0, true),
+        false,
+        true,
+        arm(1, false),
+    ]
+    print(show_bool(bools[0]))                 // true None None true
+    print(show_bool(bools[1]))                 // true None None true
+    print(show_bool(bools[2]))                 // true None None true
+    print(show_bool(bools[3]))                 // true None None true
+    print(show_bool(bools[4]))                 // true None None true
+    print(show_bool(bools[5]))                 // true None None true
+    print(show_bool(bools[6]))                 // false false false false
+    print(show_bool(bools[7]))                 // false true true true
+    print(show_bool(bools[8]))                 // false false false false
+
+    let bools2: [bool??] = [
+        None,
+        nothing<bool?>(),
+        filled<bool?>(),
+        or_none<bool?>(None),
+        through<bool?>(None),
+        arm(0, Some(true)),
+        Some(None),
+        Some(false),
+        Some(true),
+    ]
+    print(show_bool2(bools2[0]))               // true None None true
+    print(show_bool2(bools2[1]))               // true None None true
+    print(show_bool2(bools2[2]))               // true None None true
+    print(show_bool2(bools2[3]))               // true None None true
+    print(show_bool2(bools2[4]))               // true None None true
+    print(show_bool2(bools2[5]))               // true None None true
+    print(show_bool2(bools2[6]))               // false Some(None) Some(None) true
+    print(show_bool2(bools2[7]))               // false false false false
+    print(show_bool2(bools2[8]))               // false true true true
+
+    let es: [E?] = [
+        None,
+        nothing<E>(),
+        filled<E>(),
+        or_none<E>(None),
+        through<E>(None),
+        arm(0, E.B),
+        E.A,
+        E.B,
+    ]
+    print(show_e(es[0]))                       // true None None A
+    print(show_e(es[1]))                       // true None None A
+    print(show_e(es[2]))                       // true None None A
+    print(show_e(es[3]))                       // true None None A
+    print(show_e(es[4]))                       // true None None A
+    print(show_e(es[5]))                       // true None None A
+    print(show_e(es[6]))                       // false A A A
+    print(show_e(es[7]))                       // false B B B
+
+    let es2: [E??] = [
+        None,
+        nothing<E?>(),
+        filled<E?>(),
+        or_none<E?>(None),
+        through<E?>(None),
+        arm(0, Some(E.B)),
+        Some(None),
+        Some(E.A),
+        Some(E.B),
+    ]
+    print(show_e2(es2[0]))                     // true None None A
+    print(show_e2(es2[1]))                     // true None None A
+    print(show_e2(es2[2]))                     // true None None A
+    print(show_e2(es2[3]))                     // true None None A
+    print(show_e2(es2[4]))                     // true None None A
+    print(show_e2(es2[5]))                     // true None None A
+    print(show_e2(es2[6]))                     // false Some(None) Some(None) A
+    print(show_e2(es2[7]))                     // false A A A
+    print(show_e2(es2[8]))                     // false B B B
+
+    let fs: [F?] = [
+        None,
+        nothing<F>(),
+        filled<F>(),
+        or_none<F>(None),
+        through<F>(None),
+        arm(0, F.M),
+        F.S(text(1)),
+        F.M,
+    ]
+    print(show_f(fs[0]))                       // true None None N
+    print(show_f(fs[1]))                       // true None None N
+    print(show_f(fs[2]))                       // true None None N
+    print(show_f(fs[3]))                       // true None None N
+    print(show_f(fs[4]))                       // true None None N
+    print(show_f(fs[5]))                       // true None None N
+    print(show_f(fs[6]))                       // false S(s1) S(s1) S(s1)
+    print(show_f(fs[7]))                       // false M M M
+    print(show_f(keep_if(true)))               // false S(s3) S(s3) S(s3)
+    print(show_f(keep_if(false)))              // true None None N
+
+    let gs: [G?] = [
+        None,
+        nothing<G>(),
+        filled<G>(),
+        or_none<G>(None),
+        through<G>(None),
+        arm(0, G.C),
+        G.A(1.5),
+        G.C,
+    ]
+    print(show_g(gs[0]))                       // true None None B
+    print(show_g(gs[1]))                       // true None None B
+    print(show_g(gs[2]))                       // true None None B
+    print(show_g(gs[3]))                       // true None None B
+    print(show_g(gs[4]))                       // true None None B
+    print(show_g(gs[5]))                       // true None None B
+    print(show_g(gs[6]))                       // false A(1.5) A(1.5) A(1.5)
+    print(show_g(gs[7]))                       // false C C C
+
+    // `==` tests presence first, then compares the payloads as the payload type does.
+    let no_bool: bool? = None
+    let no: bool? = false
+    print(no_bool == no)                       // false
+    print(no == no_bool)                       // false
+    let zero: char? = '\0'
+    print(zero == chars[0])                    // false
+    let first: E? = E.A
+    print(first == es[0])                      // false
+    let s1: string? = text(7)
+    let s2: string? = text(7)
+    print(s1 == s2)                            // true
+    let t1: string?? = Some(text(8))
+    let t2: string?? = Some(text(8))
+    print(t1 == t2)                            // true
+    let a1: [i64]? = [1, 2]
+    let a2: [i64]? = [1, 2]
+    print(a1 == a2)                            // true
+    let nan: G? = G.A(f64.nan)
+    print(nan == nan)                          // false
+    let plus: G? = G.A(0.0)
+    let minus: G? = G.A(-0.0)
+    print(plus == minus)                       // true
+}

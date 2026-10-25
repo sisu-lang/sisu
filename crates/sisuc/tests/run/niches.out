@@ -1,0 +1,89 @@
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+false 0 0 0
+false 1114111 1114111 1114111
+false 1114111 1114111 1114111
+false 0 0 0
+false 0 0 0
+false 1114111 1114111 1114111
+false 1114111 1114111 1114111
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+true None None 63
+false Some(None) Some(None) 63
+false Some(None) Some(None) 63
+false 0 0 0
+false 1114111 1114111 1114111
+false 0 0 0
+true None None true
+true None None true
+true None None true
+true None None true
+true None None true
+true None None true
+false false false false
+false true true true
+false false false false
+true None None true
+true None None true
+true None None true
+true None None true
+true None None true
+true None None true
+false Some(None) Some(None) true
+false false false false
+false true true true
+true None None A
+true None None A
+true None None A
+true None None A
+true None None A
+true None None A
+false A A A
+false B B B
+true None None A
+true None None A
+true None None A
+true None None A
+true None None A
+true None None A
+false Some(None) Some(None) A
+false A A A
+false B B B
+true None None N
+true None None N
+true None None N
+true None None N
+true None None N
+true None None N
+false S(s1) S(s1) S(s1)
+false M M M
+false S(s3) S(s3) S(s3)
+true None None N
+true None None B
+true None None B
+true None None B
+true None None B
+true None None B
+true None None B
+false A(1.5) A(1.5) A(1.5)
+false C C C
+false
+false
+false
+false
+true
+true
+true
+false
+true

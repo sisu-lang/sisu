@@ -1721,11 +1721,11 @@ fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
     );
     let ir = String::from_utf8_lossy(&out.stdout);
     // The smallest tag that holds the variant count; storage sized and aligned for the largest
-    // payload, `{ i1, %sisu.Pair }` and `%sisu.Trio` at 32 bytes; no storage when no variant
-    // has a field.
+    // payload, a `Pair?` at the 24 bytes of `%sisu.Pair` (its `None` is a spare tag) and a
+    // `%sisu.Trio` at 32 bytes; no storage when no variant has a field.
     for wanted in [
         "%sisu.Pair = type { i8, [2 x i64] }",
-        "%sisu.Outer = type { i8, [4 x i64] }",
+        "%sisu.Outer = type { i8, [3 x i64] }",
         "%sisu.Trio = type { i8, [3 x i64] }",
         "%sisu.Holder = type { i8, [4 x i64] }",
         "%sisu.Light = type { i8 }",

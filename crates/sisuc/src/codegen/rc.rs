@@ -12,7 +12,7 @@ use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
 
 use super::abi::{RC_FAULT_MOVED, RC_FAULT_RELEASE, RC_FAULT_RETAIN};
-use super::layout::{HeapBlock, is_pointer_optional};
+use super::layout::{HeapBlock, Niche, Storage, niche};
 use super::{Codegen, POSITIONED};
 use crate::graph::components;
 use crate::tir::{ClassId, LocalId, Program, Type, TypeArgs, TypeKind};
@@ -68,8 +68,8 @@ impl ClassCycles {
 
     /// The index among the classes of the cycle of `holder` of the class that a field of type
     /// `field` holds, when `holder` is in a cycle and that class is in it too.
-    fn link(&self, holder: ClassId, field: Type) -> Option<usize> {
-        let TypeKind::Class(held, _) = counted_core(field)?.kind() else {
+    fn link(&self, program: &Program, holder: ClassId, field: Type) -> Option<usize> {
+        let TypeKind::Class(held, _) = counted_core(program, field)?.kind() else {
             return None;
         };
         let cycle = self.cycle[holder.0]?;
@@ -80,7 +80,7 @@ impl ClassCycles {
 /// The `ClassCycles` of `program`, by `components` of the graph with an edge from each class to
 /// each class it holds in a field. It reads every field once.
 pub(super) fn class_cycles(program: &Program) -> ClassCycles {
-    let held = |ty| match counted_core(ty)?.kind() {
+    let held = |ty| match counted_core(program, ty)?.kind() {
         TypeKind::Class(id, _) => Some(id.0),
         _ => None,
     };
@@ -115,12 +115,19 @@ pub(super) fn class_cycles(program: &Program) -> ClassCycles {
 }
 
 /// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with
-/// one `?` removed. `None` for every other type, an enum, its optional and an optional of an
-/// optional included: those are not pointers, and a `None` of theirs is not `null`.
-pub(super) fn counted_core(ty: Type) -> Option<Type> {
+/// the `?` of a `null` niche removed. `None` for every other type, an enum, its optional and an
+/// optional of an optional included: those are not pointers, and a `None` of theirs is not
+/// `null`.
+pub(super) fn counted_core(program: &Program, ty: Type) -> Option<Type> {
     match ty.kind() {
         TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => Some(ty),
-        TypeKind::Optional(payload) if is_pointer_optional(ty) => Some(payload),
+        TypeKind::Optional(payload) => match niche(program, payload) {
+            Some(Niche {
+                storage: Storage::Pointer,
+                ..
+            }) => Some(payload),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -378,7 +385,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         for (index, field) in self.program.classes[id.0].fields.iter().enumerate() {
             let place = self.field_ptr(id, object, index);
             let Some(((heads_type, heads), position)) =
-                heads.zip(self.class_cycles.link(id, field.ty))
+                heads.zip(self.class_cycles.link(self.program, id, field.ty))
             else {
                 if field.ty.is_counted(&self.program.enums) {
                     self.release_at(place, field.ty);
@@ -592,7 +599,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         lhs: BasicValueEnum<'ctx>,
         rhs: BasicValueEnum<'ctx>,
     ) -> IntValue<'ctx> {
-        if let Some(core) = counted_core(ty) {
+        if let Some(core) = counted_core(self.program, ty) {
             return self.call_eq(core, lhs, rhs);
         }
         let payload = match ty.kind() {
@@ -741,7 +748,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// optionals are not checked: an enum is not a pointer, and `None` is `null`.
     pub(super) fn check_not_moved(&self, local: LocalId) {
         let ty = self.types[local.0];
-        if self.rc_fault.is_none() || counted_core(ty) != Some(ty) {
+        if self.rc_fault.is_none() || counted_core(self.program, ty) != Some(ty) {
             return;
         }
         let slot = self.load_local(local).into_pointer_value();
@@ -853,9 +860,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `retain` or `release`, as `kind` says. A string, object or array is the pointer itself,
     /// `null` for `None`; an enum goes to its helper by address; the payload of any other
-    /// optional is counted only when its flag is set, one layer at a time.
+    /// optional is counted only when the optional holds a value, one layer at a time.
     fn retain_or_release(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
-        if let Some(core) = counted_core(ty) {
+        if let Some(core) = counted_core(self.program, ty) {
             let function = match kind {
                 Helper::Retain => self.rc_retain,
                 _ => self.helper(Helper::Release, core),

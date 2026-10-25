@@ -27,7 +27,7 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PhiValue, PointerValue,
 };
 
-use super::layout::{HeapBlock, is_pointer_optional};
+use super::layout::HeapBlock;
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, enum_of};
 use crate::mir::{Place, Projection};
@@ -47,6 +47,19 @@ pub(super) struct EnumLayout<'ctx> {
     pub(super) payloads: Vec<StructType<'ctx>>,
     /// `%sisu.box.<Name> = { i64 count, %sisu.<Name> }`, a box that holds a value of this enum.
     pub(super) boxed: StructType<'ctx>,
+}
+
+/// The width in bits of the tag of an enum of `count` variants: 8, 16 or 32, the smallest
+/// that holds the variant count. The tags past the last variant are spare, and an optional of
+/// the enum keeps its `None` in the first of them (`layout::niche`).
+pub(super) fn tag_bits(count: usize) -> u32 {
+    if count <= 1 << 8 {
+        8
+    } else if count <= 1 << 16 {
+        16
+    } else {
+        32
+    }
 }
 
 /// The enum a boxed field holds: its type is `F` or `F?`.
@@ -99,14 +112,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             .enums
             .iter()
             .map(|e| {
-                let count = e.variants.len();
-                let tag = if count <= 1 << 8 {
-                    context.i8_type()
-                } else if count <= 1 << 16 {
-                    context.i16_type()
-                } else {
-                    context.i32_type()
-                };
+                let tag = NonZeroU32::new(tag_bits(e.variants.len()))
+                    .and_then(|bits| context.custom_width_int_type(bits).ok())
+                    .expect("a tag should be an `i8`, an `i16` or an `i32`, which LLVM has");
                 EnumLayout {
                     ty: context.opaque_struct_type(&format!("sisu.{}", e.name)),
                     tag,
@@ -362,12 +370,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             unreachable!("mir should project `some` only out of an optional")
         };
         if !boxed {
-            let inside = if is_pointer_optional(ty) {
-                address
-            } else {
-                self.optional_value_place(ty, address)
-            };
-            return (inside, payload, false);
+            return (self.optional_value_place(ty, address), payload, false);
         }
         if nested(ty).is_some() {
             return (self.layer_place(ty, address, 1), payload, true);
@@ -395,6 +398,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         if boxed && nested(ty).is_some() {
             return self.load_layer_flag(ty, address);
         }
+        // A boxed `F?` is its box pointer, whatever the layout of a value of `F?` is.
         let llvm_ty = if boxed {
             self.context.ptr_type(AddressSpace::default()).into()
         } else {
@@ -405,13 +409,19 @@ impl<'ctx> Codegen<'ctx, '_> {
             .builder
             .build_load(llvm_ty, address, "optional")
             .expect(POSITIONED);
+        if boxed {
+            return self
+                .builder
+                .build_is_not_null(value.into_pointer_value(), "some")
+                .expect(POSITIONED);
+        }
         self.has_value(ty, value, "some")
     }
 
     /// The value of payload field `field` of variant `variant` in the enum `id` at
     /// `value_addr`, borrowed: not retained. A boxed `F` is the value in its box; a boxed `F?`
-    /// is `{ false, zero }` when its box is `null` and `{ true, value }` otherwise, and never
-    /// reads through a `null` box.
+    /// is `None` when its box is `null` and the value in its box otherwise, and never reads
+    /// through a `null` box.
     pub(super) fn payload_value(
         &self,
         value_addr: PointerValue<'ctx>,

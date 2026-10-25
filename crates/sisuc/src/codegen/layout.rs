@@ -1,18 +1,21 @@
 //! How a Sisu value sits in memory: the LLVM type of each Sisu type, the layouts of classes,
 //! array blocks and string blocks, the count word (`load_count`, `store_count`, `init_count`),
-//! the optional accessors (`empty`, `has_value`, `optional`, `optional_value`), the size of
-//! every heap block (`heap_size`), and the TBAA tags that describe them.
+//! the optional accessors (`empty`, `has_value`, `optional`, `optional_value`) and the niches
+//! they read (`niche`), the size of every heap block (`heap_size`), and the TBAA tags that
+//! describe them.
 
 use std::cmp::Reverse;
+use std::num::NonZeroU32;
 
 use inkwell::context::Context;
 use inkwell::types::{BasicTypeEnum, StructType};
 use inkwell::values::{BasicValue, BasicValueEnum, IntValue, MetadataValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
+use super::enums::tag_bits;
 use super::{Codegen, POSITIONED};
 use crate::source::Span;
-use crate::tir::{Class, ClassId, EnumId, Type, TypeKind};
+use crate::tir::{Class, ClassId, EnumId, Program, Type, TypeKind};
 
 /// The tag of a TBAA type `name` under `root`. Every type sits directly under the root, so LLVM
 /// assumes that an access tagged with one never touches memory that an access tagged with
@@ -82,11 +85,55 @@ pub(super) enum HeapBlock<'a, 'ctx> {
     Pending { cap: IntValue<'ctx> },
 }
 
-/// Whether the optional `ty` is one layer around a string, a class or an array: the block's
-/// pointer, `null` for `None`. Every other optional is a `{ flag, value }` pair.
-pub(super) fn is_pointer_optional(ty: Type) -> bool {
-    matches!(ty.kind(), TypeKind::Optional(payload)
-        if matches!(payload.kind(), TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_)))
+/// Where an optional keeps its `None`: a bit pattern that its payload never holds, in the
+/// payload's own storage. An optional with no niche is a `{ flag, value }` pair.
+#[derive(Clone, Copy)]
+pub(super) struct Niche {
+    pub(super) storage: Storage,
+    /// The bit pattern of the empty value.
+    pub(super) empty: u64,
+}
+
+/// The storage that holds a niche.
+#[derive(Clone, Copy)]
+pub(super) enum Storage {
+    /// The pointer to a block, `null` when empty. It has no other spare value.
+    Pointer,
+    /// An integer of this many bits: an `i32` for a `char`, an `i8` for a `bool`.
+    Int(u32),
+    /// The layout of the enum, with the empty value in its tag.
+    Tag(EnumId),
+}
+
+/// The niche of an optional of `payload`, if its storage has a spare value: `null` for a
+/// string, a class or an array, 0x110000 for a `char`, 2 for a `bool` in an `i8`, and the tag
+/// after the last variant for an enum. An optional with a niche gives the next value of its
+/// niche. When that value does not fit the storage, there is no niche.
+pub(super) fn niche(program: &Program, payload: Type) -> Option<Niche> {
+    let (storage, empty) = match payload.kind() {
+        TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => (Storage::Pointer, 0),
+        TypeKind::Char => (Storage::Int(32), 0x11_0000),
+        TypeKind::Bool => (Storage::Int(8), 2),
+        TypeKind::Enum(id, _) => {
+            let count = program.enums[id.0].variants.len();
+            let count = u64::try_from(count).expect("a variant count should fit in a `u64`");
+            (Storage::Tag(id), count)
+        }
+        TypeKind::Optional(inner) => match niche(program, inner)? {
+            Niche {
+                storage: Storage::Pointer,
+                ..
+            } => return None,
+            Niche { storage, empty } => (storage, empty + 1),
+        },
+        _ => return None,
+    };
+    let fits = match storage {
+        Storage::Pointer => true,
+        Storage::Int(bits) => empty < 1 << bits,
+        Storage::Tag(id) => empty < 1 << tag_bits(program.enums[id.0].variants.len()),
+    };
+    fits.then_some(Niche { storage, empty })
 }
 
 impl<'ctx> Codegen<'ctx, '_> {
@@ -107,110 +154,189 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Param(..) => {
                 panic!("mono should replace every type parameter before codegen")
             }
-            TypeKind::Optional(payload) => {
-                let value = self
-                    .llvm_type(payload)
-                    .expect("the checker should reject an optional of `unit` or `never`, so its payload has a value type");
-                if is_pointer_optional(ty) {
-                    // A string, class or array optional is the block's pointer, `null` for
-                    // `None`.
-                    return Some(value);
-                }
-                // Any other optional, an optional of an optional too, is `{ i1, T }`: whether it
-                // holds a value, then the value.
-                let flag = self.context.bool_type().into();
-                Some(self.context.struct_type(&[flag, value], false).into())
+            // An optional with a niche is its payload's storage, and any other is `{ i1, T }`:
+            // whether it holds a value, then the value.
+            TypeKind::Optional(payload) => match niche(self.program, payload) {
+                Some(niche) => Some(self.niche_type(niche.storage)),
+                None => Some(self.optional_pair(payload).into()),
+            },
+        }
+    }
+
+    /// The niche of the optional `ty`, if it has one.
+    fn optional_niche(&self, ty: Type) -> Option<Niche> {
+        let TypeKind::Optional(payload) = ty.kind() else {
+            unreachable!("only an optional should be read as an optional")
+        };
+        niche(self.program, payload)
+    }
+
+    /// The LLVM type of `storage`.
+    fn niche_type(&self, storage: Storage) -> BasicTypeEnum<'ctx> {
+        match storage {
+            Storage::Pointer => self.context.ptr_type(AddressSpace::default()).into(),
+            Storage::Int(bits) => NonZeroU32::new(bits)
+                .and_then(|bits| self.context.custom_width_int_type(bits).ok())
+                .expect("a niche should be an `i8` or an `i32`, which LLVM has")
+                .into(),
+            Storage::Tag(id) => self.enum_layout(id).ty.into(),
+        }
+    }
+
+    /// The `{ i1, T }` type of an optional of `payload` with no niche.
+    fn optional_pair(&self, payload: Type) -> StructType<'ctx> {
+        let value = self
+            .llvm_type(payload)
+            .expect("the checker should reject an optional of `unit` or `never`, so its payload has a value type");
+        let flag = self.context.bool_type().into();
+        self.context.struct_type(&[flag, value], false)
+    }
+
+    /// The payload type of the optional `ty`.
+    fn payload_of(ty: Type) -> Type {
+        let TypeKind::Optional(payload) = ty.kind() else {
+            unreachable!("only an optional should be read as an optional")
+        };
+        payload
+    }
+
+    /// The `None` of the optional `ty`: its niche's empty value, or `{ false, 0 }`. The empty
+    /// value of an enum's tag has zero storage after it.
+    pub(super) fn empty(&self, ty: Type) -> BasicValueEnum<'ctx> {
+        let Some(Niche { storage, empty }) = self.optional_niche(ty) else {
+            return self.optional_pair(Self::payload_of(ty)).const_zero().into();
+        };
+        match storage {
+            Storage::Pointer => self.niche_type(storage).const_zero(),
+            Storage::Int(_) => self
+                .niche_type(storage)
+                .into_int_type()
+                .const_int(empty, false)
+                .into(),
+            Storage::Tag(id) => {
+                let layout = self.enum_layout(id);
+                let fields: Vec<BasicValueEnum> =
+                    std::iter::once(layout.tag.const_int(empty, false).into())
+                        .chain(
+                            layout
+                                .ty
+                                .get_field_types()
+                                .into_iter()
+                                .skip(1)
+                                .map(BasicTypeEnum::const_zero),
+                        )
+                        .collect();
+                layout.ty.const_named_struct(&fields).into()
             }
         }
     }
 
-    /// The `{ i1, T }` type of the optional `ty`, or `None` when `ty` is a pointer optional.
-    /// It classifies by LLVM shape, which a niche enum optional (its own named struct) would
-    /// break; milestone 8 part 3 replaces it, and the readers' `ty` parameter is for that.
-    fn optional_pair(&self, ty: Type) -> Option<StructType<'ctx>> {
-        match self.llvm_type(ty) {
-            Some(BasicTypeEnum::StructType(pair)) => Some(pair),
-            _ => None,
-        }
-    }
-
-    /// The `None` of the optional `ty`: `null`, or `{ false, 0 }`.
-    pub(super) fn empty(&self, ty: Type) -> BasicValueEnum<'ctx> {
-        self.llvm_type(ty)
-            .expect("the checker should reject an optional of `unit` or `never`, so it has an LLVM type")
-            .const_zero()
-    }
-
-    /// Whether `value`, of the optional `ty`, holds a value: a pointer that is not `null`, or a
-    /// pair's flag. It reads the representation off `value`, so it builds no LLVM type.
+    /// Whether `value`, of the optional `ty`, holds a value: a pointer that is not `null`, bits
+    /// that are not the niche's empty value, or a pair's flag.
     pub(super) fn has_value(
         &self,
-        _ty: Type,
+        ty: Type,
         value: BasicValueEnum<'ctx>,
         name: &str,
     ) -> IntValue<'ctx> {
-        if let BasicValueEnum::PointerValue(ptr) = value {
-            return self.builder.build_is_not_null(ptr, name).expect(POSITIONED);
-        }
-        self.builder
-            .build_extract_value(value.into_struct_value(), 0, name)
-            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair")
-            .into_int_value()
+        let Some(Niche { storage, empty }) = self.optional_niche(ty) else {
+            return self
+                .builder
+                .build_extract_value(value.into_struct_value(), 0, name)
+                .expect("an optional with no niche should be a `{ flag, value }` pair")
+                .into_int_value();
+        };
+        let bits = match storage {
+            Storage::Pointer => {
+                return self
+                    .builder
+                    .build_is_not_null(value.into_pointer_value(), name)
+                    .expect(POSITIONED);
+            }
+            Storage::Int(_) => value.into_int_value(),
+            Storage::Tag(_) => self
+                .builder
+                .build_extract_value(value.into_struct_value(), 0, "tag")
+                .expect("an enum's struct should have the tag at element 0")
+                .into_int_value(),
+        };
+        let empty = bits.get_type().const_int(empty, false);
+        self.int_compare(IntPredicate::NE, bits, empty)
     }
 
-    /// The optional `ty` that holds `value` when `flag` is set. A pointer optional is the
-    /// pointer itself, which is never `null`, so only a constant `true` flag can build one.
+    /// The optional `ty` that holds `value` when `flag` is set. With a niche, `value` keeps
+    /// its bits, a `bool` widened to `i8`, and a clear `flag` selects the empty value.
     pub(super) fn optional(
         &self,
         ty: Type,
         flag: IntValue<'ctx>,
         value: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
-        let Some(pair) = self.optional_pair(ty) else {
-            if flag.get_zero_extended_constant() != Some(1) {
-                unreachable!("no site builds a pointer optional from a run-time flag");
-            }
-            return value;
+        let payload = Self::payload_of(ty);
+        if self.optional_niche(ty).is_none() {
+            let pair = self.optional_pair(payload).const_zero();
+            let pair = self
+                .builder
+                .build_insert_value(pair, flag, 0, "some")
+                .expect("an optional with no niche should be a `{ flag, value }` pair");
+            let pair = self
+                .builder
+                .build_insert_value(pair, value, 1, "wrap")
+                .expect("an optional with no niche should be a `{ flag, value }` pair");
+            return pair.as_basic_value_enum();
+        }
+        let value = if payload == Type::BOOL {
+            self.builder
+                .build_int_z_extend(value.into_int_value(), self.context.i8_type(), "wrap")
+                .expect(POSITIONED)
+                .into()
+        } else {
+            value
         };
-        let pair = self
-            .builder
-            .build_insert_value(pair.const_zero(), flag, 0, "some")
-            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair");
-        let pair = self
-            .builder
-            .build_insert_value(pair, value, 1, "wrap")
-            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair");
-        pair.as_basic_value_enum()
+        if flag.get_zero_extended_constant() == Some(1) {
+            return value;
+        }
+        self.builder
+            .build_select(flag, value, self.empty(ty), "wrap")
+            .expect(POSITIONED)
     }
 
     /// The value that `value`, of the optional `ty`, holds; meaningful only when `has_value`.
-    /// Like `has_value`, it reads the representation off `value`.
+    /// With a niche it is `value`'s bits, a `bool` narrowed back from `i8`.
     pub(super) fn optional_value(
         &self,
-        _ty: Type,
+        ty: Type,
         value: BasicValueEnum<'ctx>,
         name: &str,
     ) -> BasicValueEnum<'ctx> {
-        let BasicValueEnum::StructValue(pair) = value else {
-            return value;
-        };
-        self.builder
-            .build_extract_value(pair, 1, name)
-            .expect("a scalar or enum optional should be lowered to a `{ flag, value }` pair")
+        if self.optional_niche(ty).is_none() {
+            return self
+                .builder
+                .build_extract_value(value.into_struct_value(), 1, name)
+                .expect("an optional with no niche should be a `{ flag, value }` pair");
+        }
+        if Self::payload_of(ty) == Type::BOOL {
+            return self
+                .builder
+                .build_int_truncate(value.into_int_value(), self.context.bool_type(), name)
+                .expect(POSITIONED)
+                .into();
+        }
+        value
     }
 
-    /// The address of the value in the optional `ty` at `place`, a `{ flag, value }` pair:
-    /// meaningful only when it has a value.
+    /// The address of the value in the optional `ty` at `place`: `place` itself with a niche,
+    /// else element 1 of the pair. Meaningful only when it has a value.
     pub(super) fn optional_value_place(
         &self,
         ty: Type,
         place: PointerValue<'ctx>,
     ) -> PointerValue<'ctx> {
-        let pair = self
-            .optional_pair(ty)
-            .expect("an optional held in place should be a `{ flag, value }` pair");
+        if self.optional_niche(ty).is_some() {
+            return place;
+        }
         self.builder
-            .build_struct_gep(pair, place, 1, "value")
+            .build_struct_gep(self.optional_pair(Self::payload_of(ty)), place, 1, "value")
             .expect("an optional pair should have its value at element 1")
     }
 

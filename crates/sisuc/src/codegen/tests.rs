@@ -875,6 +875,78 @@ fn scalar_optional_is_a_pair() {
     );
 }
 
+/// Each layer of a niche takes the next spare value while its storage holds it: a `bool` with
+/// 254 layers is an `i8` whose empty value is 255, and the 255th layer is a pair. An enum of 255
+/// variants has one spare tag, so `E?` is `E` and `E??` is a pair.
+#[test]
+fn niche_should_run_out_past_its_storage() {
+    let context = Context::create();
+    let variants = (0..255)
+        .map(|v| format!("    V{v}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let src = format!("enum E {{\n{variants}}}\nfn main() {{\n    let _ = E.V0\n}}\n");
+    let (program, diagnostics) = check_alone(&parse_ok(&src), &src, &[]);
+    let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let mut codegen = Codegen::new(&context, &program, "test.sisu", &src, &machine, false);
+    codegen.lay_out_types();
+    let layers = |ty, k| (0..k).fold(ty, |ty, _| Type::optional(ty));
+    let pair = |value| {
+        Some(
+            context
+                .struct_type(&[context.bool_type().into(), value], false)
+                .into(),
+        )
+    };
+    let i8_type = context.i8_type().into();
+    assert_eq!(codegen.llvm_type(layers(Type::BOOL, 254)), Some(i8_type));
+    assert_eq!(codegen.llvm_type(layers(Type::BOOL, 255)), pair(i8_type));
+    let e = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
+    let e_type = codegen.enum_layout(EnumId(0)).ty.into();
+    assert_eq!(codegen.llvm_type(layers(e, 1)), Some(e_type));
+    assert_eq!(codegen.llvm_type(layers(e, 2)), pair(e_type));
+}
+
+/// The LLVM type of each optional local, from its `alloca`, and the empty value that a `None`
+/// stores: a spare value of the payload where it has one, `null` for one layer around a
+/// pointer, and a `{ i1, T }` pair for every other payload.
+#[test]
+fn niche_layouts_should_follow_the_payload() {
+    let rows = [
+        ("char?", "i32", "i32 1114112"),
+        ("char??", "i32", "i32 1114113"),
+        ("bool?", "i8", "i8 2"),
+        ("bool??", "i8", "i8 3"),
+        ("E?", "%sisu.E", "%sisu.E { i8 2 }"),
+        ("Node?", "ptr", "ptr null"),
+        ("Node??", "{ i1, ptr }", "{ i1, ptr } zeroinitializer"),
+        ("i64?", "{ i1, i64 }", "{ i1, i64 } zeroinitializer"),
+        ("u8?", "{ i1, i8 }", "{ i1, i8 } zeroinitializer"),
+        ("f64?", "{ i1, double }", "{ i1, double } zeroinitializer"),
+    ];
+    let context = Context::create();
+    let lets = (rows.iter().enumerate())
+        .map(|(i, (ty, ..))| format!("    let x{i}: {ty} = None\n    print(x{i} == None)\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let src = format!(
+        "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\nfn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
+    );
+    let ir = compiled(&context, &src).print_to_string().to_string();
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    for (i, (ty, llvm, empty)) in rows.iter().enumerate() {
+        assert!(
+            main.contains(&format!("%x{i} = alloca {llvm}, align")),
+            "{ty} should be {llvm} in\n{main}"
+        );
+        assert!(
+            main.contains(&format!("store {empty}, ptr %x{i},")),
+            "the `None` of {ty} should be {empty} in\n{main}"
+        );
+    }
+}
+
 /// `!=` on an `i64` or a `bool` is one `icmp ne`, not an `icmp eq` and a `not`.
 #[test]
 fn scalar_not_equal_is_one_icmp_ne() {
