@@ -1484,8 +1484,11 @@ impl Walk {
         }
     }
 
-    /// Records an enum `id` of two variants, one with no payload and one with one field whose
-    /// storage has a spare value for the other: a box, or a `char`, `bool` or pointer type.
+    /// Records an enum `id` of two variants, one with no payload and one with one field. The
+    /// field's storage has a spare value: it is a box, or a `char`, `bool` or pointer type. This
+    /// rule is a subset of codegen's `option_shape`, which also accepts an enum or optional
+    /// field with a niche. Thus the walker can miss such an enum, but it never marks an enum
+    /// that codegen lays out tagged.
     fn option_shaped(&mut self, id: usize, e: &tir::Enum) {
         let [first, second] = e.variants.as_slice() else {
             return;
@@ -2913,8 +2916,8 @@ fn main() {}
     }
 }
 
-/// An enum is `Option`-shaped in either order of its variants, and only when its field's storage
-/// has a spare value: a `Link?` box and an `i64` have none.
+/// An enum is `Option`-shaped in either order of its variants. It is `Option`-shaped only when
+/// its field's storage has a spare value: a `Link?` box and an `i64` have none.
 #[test]
 fn the_walker_should_mark_an_option_shaped_enum_by_its_niche() {
     let shaped = "enum Rev {\n    Just(char)\n    Nothing\n}\nenum Chain {\n    End\n    Next(Chain)\n}\nfn main() {}\n";

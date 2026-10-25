@@ -145,10 +145,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// The niche of an optional of `payload`, if its storage has a spare value: `null` for a
-    /// string, a class or an array, 0x110000 for a `char`, 2 for a `bool` in an `i8`, and the
-    /// enum's own niche (`EnumLayout::niche`) for an enum. An optional with a niche gives the
-    /// next value of its niche (`next_niche`).
+    /// The niche of an optional of `payload`, if its storage has a spare value. It is `null`
+    /// for a string, a class or an array, 0x110000 for a `char` and 2 for a `bool` in an `i8`.
+    /// For an enum, it is the enum's own niche (`EnumLayout::niche`). An optional with a niche
+    /// gives the next value of its niche (`next_niche`).
     pub(super) fn niche(&self, payload: Type) -> Option<Niche> {
         let (storage, empty) = match payload.kind() {
             TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => (Storage::Pointer, 0),

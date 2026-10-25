@@ -3,10 +3,11 @@
 //! laid over the payload storage. A field that closes a cycle holds a box instead,
 //! `%sisu.box.<F> = { i64 count, %sisu.<F> }`. A boxed field of type `F` with k ≥ 1 `?` layers
 //! is k − 1 flags around a box pointer that is `null` for the innermost `None`: `{ i1, ptr }`
-//! for an `F??`. When a flag is clear, the storage inside it is zero. An `Option`-shaped enum,
-//! with one variant with no payload and one with one field whose storage has a niche, is that
-//! field's storage, with the payload-free variant in the niche's empty value: `enum Chain { End
-//! Next(Chain) }` is the pointer to its box, `null` for `End` (`Shape`). This module owns the
+//! for an `F??`. When a flag is clear, the storage inside it is zero. An `Option`-shaped enum
+//! has one variant with no payload and one with one field whose storage has a niche. Such an
+//! enum is that field's storage, with the payload-free variant in the niche's empty value
+//! (`Shape`): `enum Chain { End  Next(Chain) }` is the pointer to its box, `null` for `End`.
+//! This module owns the
 //! layouts, building a variant, and the bodies of the enum helpers, which `define_helpers`
 //! reaches through `define_enum_helper`.
 //!
@@ -54,8 +55,9 @@ pub(super) struct EnumLayout<'ctx> {
     pub(super) boxed: StructType<'ctx>,
     /// For an `Option`-shaped enum, where it keeps its payload-free variant.
     pub(super) shape: Option<Shape>,
-    /// The niche of an optional of this enum: the tag after the last variant, or for an
-    /// `Option`-shaped enum the next value of its field's niche; `None` when that does not fit.
+    /// The niche of an optional of this enum: the tag after the last variant. For an
+    /// `Option`-shaped enum, it is the next value of its field's niche. `None` when that does
+    /// not fit.
     pub(super) niche: Option<Niche>,
 }
 
@@ -128,12 +130,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         &self.enums[id.0]
     }
 
-    /// Builds every enum's layout: each enum's type and its payload structs, named first so
-    /// that a payload can name any enum, then for each enum its shape and niche, its payloads'
-    /// bodies and its body. These need the layouts of the enums it holds inline, so an enum held
-    /// inline is laid out before its holder: post-order over the inline fields, with an explicit
-    /// stack. `tir::layout_enums` boxes a field on every cycle, so the inline fields form no
-    /// cycle and the walk ends.
+    /// Builds every enum's layout. First it names each enum's type and its payload structs, so
+    /// that a payload can name any enum. Then it gives each enum its shape and niche, its
+    /// payloads' bodies and its body. These need the layouts of the enums it holds inline. Thus
+    /// an enum held inline is laid out before its holder, in post-order over the inline fields,
+    /// with an explicit stack. `tir::layout_enums` boxes a field on every cycle, so the inline
+    /// fields form no cycle and the walk ends.
     pub(super) fn lay_out_enums(&mut self) {
         let program = self.program;
         let context = self.context;
@@ -190,8 +192,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// Lays out enum `id`, whose inline-held enums are laid out: its shape and type when it is
-    /// `Option`-shaped, else its payloads' bodies and its body; then its niche.
+    /// Lays out enum `id`, whose inline-held enums are laid out. An `Option`-shaped enum gets
+    /// its shape and type; another enum gets its payloads' bodies and its body. Then each gets
+    /// its niche.
     fn lay_out_enum(&mut self, id: usize) {
         let program = self.program;
         let e = &program.enums[id];
@@ -635,9 +638,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
-    /// `variant` of the `Option`-shaped enum `id`: the empty value of its field's niche for the
-    /// payload-free variant, else the field's storage: a `bool` widened to `i8`, and a boxed
-    /// field's value in a new box, as `variant` builds it.
+    /// `variant` of the `Option`-shaped enum `id`. The payload-free variant is the empty value
+    /// of its field's niche. The other variant is the field's storage: a `bool` widened to
+    /// `i8`, or a boxed field's value in a new box, as `variant` builds it.
     fn shaped_variant(
         &self,
         id: EnumId,
@@ -1213,7 +1216,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Whether payload field `field` of variant `variant` is `==` in the values of the enum `id`
-    /// at `a` and `b`, which are of that variant: an enum by address, any other type by value.
+    /// at `a` and `b`, which are of that variant. An enum field is read by address, and a field
+    /// of any other type by value.
     fn fields_equal(
         &self,
         (id, variant, field): (EnumId, usize, usize),

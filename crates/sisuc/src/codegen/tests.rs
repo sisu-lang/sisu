@@ -916,11 +916,11 @@ fn niche_should_run_out_past_its_storage() {
     assert_eq!(codegen.llvm_type(layers(e, 2)), pair(e_type));
 }
 
-/// The LLVM type of each local, from its `alloca`, and the value that its first value stores:
-/// a spare value of the payload where it has one, `null` for one layer around a pointer, and a
-/// `{ i1, T }` pair for every other optional. An `Option`-shaped enum, with one variant with no
-/// payload and one with one field, is that field's storage in either order of its variants, and
-/// its payload-free variant is the field's spare value. Every other enum is tagged.
+/// The LLVM type of each local, from its `alloca`, and the value that its first value stores.
+/// An optional is a spare value of the payload where it has one, and `null` for one layer around
+/// a pointer. Every other optional is a `{ i1, T }` pair. An `Option`-shaped enum has one variant
+/// with no payload and one with one field. It is that field's storage in either order of its
+/// variants, and its payload-free variant is the field's spare value. Every other enum is tagged.
 #[test]
 fn niche_layouts_should_follow_the_payload() {
     let rows = [

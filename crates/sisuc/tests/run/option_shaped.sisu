@@ -54,6 +54,18 @@ enum Opt<T> {
     Yes(T)
 }
 
+// A `Step` holds a `Hop` and a `Hop` holds a `Step`, so the field of `Go` is a box. A `Hop` is
+// that box's pointer with `Stop` as `null`, and its `Step` is the value in the box.
+enum Step {
+    Again(Hop)
+    Land(i64)
+}
+
+enum Hop {
+    Stop
+    Go(Step)
+}
+
 class Holder {
     m: Maybe
     f: Flag
@@ -130,6 +142,16 @@ fn chain(n: i64) -> Chain {
         c = Chain.Next(c)
     }
     c
+}
+
+fn hops(h: Hop) -> i64 {
+    match h {
+        Stop => 0
+        Go(s) => match s {
+            Again(inner) => 1 + hops(inner)
+            Land(n) => n
+        }
+    }
 }
 
 // Takes an owned `c` apart and builds each `Next` again, in the box it took apart.
@@ -270,6 +292,20 @@ fn main() {
     print(words[1] == Opt.Yes(text(2)))            // true
     print(numbers[0] == Opt.Yes(0))                // false
     print(numbers[1] == Opt.Yes(0))                // true
+
+    let trips = [Hop.Stop, Hop.Go(Step.Land(5)), Hop.Go(Step.Again(Hop.Go(Step.Land(5))))]
+    for t in trips {
+        print(hops(t))
+    }
+    // 0
+    // 5
+    // 6
+    print(trips[0] == Hop.Stop)                    // true
+    print(trips[0] == Hop.Go(Step.Land(0)))        // false
+    print(trips[1] == Hop.Go(Step.Land(5)))        // true
+    print(trips[1] == Hop.Go(Step.Land(6)))        // false
+    print(trips[2] == Hop.Go(Step.Again(Hop.Go(Step.Land(5)))))  // true
+    print(trips[2] == Hop.Go(Step.Again(Hop.Stop)))              // false
 
     let h = Holder(m: Maybe.Just('h'), f: Flag.Set(true), n: Named.Name(text(3)), c: chain(2))
     print(show_maybe(h.m))                         // Just(104)

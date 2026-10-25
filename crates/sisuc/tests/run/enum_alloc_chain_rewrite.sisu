@@ -28,5 +28,5 @@ fn main() {
     for _ in 0..iterations() {
         c = rebuild(c)
     }
-    print(depth(c)) // 3 (3 with no iterations)
+    print(depth(c)) // 3: the rewrite keeps the depth
 }

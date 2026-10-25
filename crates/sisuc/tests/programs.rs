@@ -359,8 +359,8 @@ fn deep_inline_links_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("deeppair", "true\nfalse\n");
 }
 
-/// GIVEN the `deepchain2` program, which compares and drops two pairs of 1 000 000-deep `Chain`s,
-/// an `Option`-shaped enum that holds itself
+/// GIVEN the `deepchain2` program, which compares and drops two pairs of 1 000 000-deep `Chain`s
+/// (a `Chain` is an `Option`-shaped enum that holds itself)
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
 ///
