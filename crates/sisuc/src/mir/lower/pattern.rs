@@ -27,6 +27,8 @@
 
 use std::mem;
 
+use rustc_hash::FxHashSet;
+
 #[cfg(test)]
 use super::{DEDUPED, SEEDED};
 use super::{Lowered, Lowering, valued, whole};
@@ -515,7 +517,7 @@ impl Lowering<'_> {
             // The box of a boxed `F?` stays in its value, never a token: each counted binding
             // under it copies its part.
             PatternKind::Some(_) if boxed => {
-                self.copied_under(pattern, &mut parts.copied);
+                self.copied_under(pattern, &mut FxHashSet::default(), &mut parts.copied);
                 parts.kept[value] = true;
             }
             // An inline optional's value is a step of the path, as a payload is.
@@ -539,20 +541,26 @@ impl Lowering<'_> {
         Some(())
     }
 
-    /// Adds each counted binding in `pattern` to `copied`, once.
-    fn copied_under(&self, pattern: &Pattern, copied: &mut Vec<LocalId>) {
+    /// Adds each counted binding in `pattern` to `copied`, once, in order: `seen` holds those
+    /// added, as each alternative of an `|` binds the same names.
+    fn copied_under(
+        &self,
+        pattern: &Pattern,
+        seen: &mut FxHashSet<LocalId>,
+        copied: &mut Vec<LocalId>,
+    ) {
         match &pattern.kind {
             PatternKind::Bind(binding) => {
-                if self.locals[binding.0].counted && !copied.contains(binding) {
+                if self.locals[binding.0].counted && seen.insert(*binding) {
                     copied.push(*binding);
                 }
             }
             PatternKind::Variant { fields: subs, .. } | PatternKind::Or(subs) => {
                 for sub in subs {
-                    self.copied_under(sub, copied);
+                    self.copied_under(sub, seen, copied);
                 }
             }
-            PatternKind::Some(sub) => self.copied_under(sub, copied),
+            PatternKind::Some(sub) => self.copied_under(sub, seen, copied),
             PatternKind::Wild
             | PatternKind::None
             | PatternKind::Bool(_)
