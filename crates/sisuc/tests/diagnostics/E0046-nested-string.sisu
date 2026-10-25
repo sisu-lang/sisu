@@ -1,0 +1,5 @@
+fn main() {
+    let a: string?? = None
+    let b: string?? = None
+    print(a is b)
+}

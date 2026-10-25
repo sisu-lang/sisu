@@ -268,7 +268,7 @@ The rules:
 - `None` needs an expected optional type. Where the context expects a type that is not optional, `None` is an error ([E0032](../diagnostics/E0032.md)).
 - An optional is not its value. An arithmetic operator, a comparison, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or [`if let`](enums.md#if-let-and-while-let).
 - `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
-- An optional of an optional, such as `i64??`, is not a type ([E0014](../diagnostics/E0014.md)). The section [Option and Result](#option-and-result) is in development, and it changes this rule.
+- An optional of an optional, such as `i64??`, is a type. A value becomes an optional through one `?` layer only, and `??`, `if let` and `?.` take off one layer at a time. See [Optionals of optionals](#optionals-of-optionals).
 - `print` and interpolation do not take an optional ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)). The section [Option and Result](#option-and-result) is in development, and it changes this rule.
 
 ```sisu

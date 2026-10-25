@@ -4061,7 +4061,7 @@ fn declared_types_keep_their_sizes_256() {
 }
 
 #[test]
-fn a_class_optional_field_keeps_its_size() {
+fn a_class_optional_field_should_keep_its_size() {
     // A class field that holds a class optional is rare: seed 0 has one.
     let (optional_classes, _) = check_declared_types(0);
     assert!(

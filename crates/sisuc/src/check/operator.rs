@@ -518,8 +518,8 @@ impl Checker<'_> {
     }
 
     /// `lhs is rhs`: each a class or its optional, of one class. An enum value has no identity
-    /// to test: two equal ones are the same value. An optional of an optional is no object: one
-    /// layer comes off first.
+    /// to test: two equal ones are the same value. An optional of an optional class is no
+    /// object: one layer comes off first.
     pub(super) fn is(&mut self, span: Span, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
         if none_literal(lhs) || none_literal(rhs) {
             let other = if none_literal(lhs) { rhs } else { lhs };
@@ -538,8 +538,15 @@ impl Checker<'_> {
         for (side, checked) in [(lhs, &l), (rhs, &r)] {
             // Once an operand is `Error`, the later one is not held to `is`.
             let Some(ty) = type_of(checked) else { break };
+            // The type under every `?` layer.
+            let mut base = ty;
+            while let TypeKind::Optional(inner) = base.kind() {
+                base = inner;
+            }
+            // Peeling a layer helps only when an object is under the rest.
             if let TypeKind::Optional(payload) = ty.kind()
                 && matches!(payload.kind(), TypeKind::Optional(_))
+                && matches!(base.kind(), TypeKind::Class(..))
             {
                 let text = |e: &ast::Expr| self.source.file.text(e.span).to_string();
                 let peeled = |e: &ast::Expr| {
@@ -559,7 +566,7 @@ impl Checker<'_> {
                 return Err(Poisoned::error());
             }
             if matches!(
-                payload(ty).kind(),
+                base.kind(),
                 TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(..)
             ) || !ty.is_counted(&self.lowered_enums)
             {
