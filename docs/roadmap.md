@@ -702,7 +702,7 @@ settle before work starts.
 | Milestone 10: named arguments, default parameters | Decision: argument labels | Records (10) |
 | Milestone 10: records, tuples, newtypes | 4 for `print`. Decisions: values with fields, argument labels | Generated conformances on request, tuple patterns in closure parameters (9) |
 | Milestone 10: generated conformances on request | 7, 8, records. Decision: equality and hashing | `Map` keys of user types (11) |
-| Milestone 11: modules and `pub` | Keywords reserved, a build of more than one file. Decision: names and namespaces | The standard library (11), opaque types (11) |
+| Milestone 11: modules and `pub` | Keywords reserved, a build of more than one file | The standard library (11), opaque types (11) |
 | Milestone 11: standard library in Sisu | 8, 12, iterator methods (9), modules | Concurrency |
 | Concurrency | 8, 9, 11, 12 | |
 
@@ -713,9 +713,8 @@ once the decisions it needs are settled:
 
 - **Decisions**: every entry in "Open decisions" is design work with no
   code. Settle the shared ones first, because several tracks build on each:
-  what is left of argument labels (records and named arguments), names and
-  namespaces for modules, closure syntax for closures, and values with fields
-  for records.
+  what is left of argument labels (records and named arguments), closure
+  syntax for closures, and values with fields for records.
 - **Closures**: `weak` fields, then closures and function types from
   milestone 9. A function type names concrete types, such as
   `(i64) -> bool`, so closures need no generics.
@@ -922,7 +921,7 @@ library.
   `pub mut` lets other modules assign a field. A `pub` type with a private
   field can be built and taken apart only in its own module.
 - A conformance lives in the project that declares its type, its interface
-  or a type argument, as Rust's orphan rule asks. A plain `extend T`, and a
+  or an argument of its interface, as Rust's orphan rule asks. A plain `extend T`, and a
   conformance that replaces a generated one, live in `T`'s module.
 - Modules may import each other in a cycle. The checker sees the whole
   program at once, with one scope per module, so this costs nothing.

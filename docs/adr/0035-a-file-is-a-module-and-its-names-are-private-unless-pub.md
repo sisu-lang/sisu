@@ -66,8 +66,8 @@ and each name is private to its file unless it is `pub`.
 - **Public by default, as in Python.** Every helper becomes part of the
   module's interface, and an agent's change inside a module can break code
   outside it. Rejected: ADR 0027 asks for code that is safe to accept.
-- **Rename the names and merge the files before the checker.** It is faster
-  to build, but it makes a second resolver that must agree with the
+- **Rename the names and merge the files before the checker.** It takes less
+  work to build first, but it makes a second resolver that must agree with the
   checker, and the checker loses each item's module. Rejected for module
   scopes in the checker.
 - **Check each module against the `pub` signatures of the others.**

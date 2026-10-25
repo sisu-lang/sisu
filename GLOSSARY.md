@@ -332,7 +332,8 @@ A type's declaration that it meets an interface, with the methods the
 interface requires: `class Circle: Shape { ... }` or
 `extend Celsius: Convert<Kelvin> { ... }`. A type conforms to an interface
 with the same arguments at most once. From milestone 11, a conformance lives
-in the project that declares its type, its interface or a type argument.
+in the project that declares its type, its interface or an argument of its
+interface.
 _Avoid_: impl, implementation
 
 **Generated conformance**:
