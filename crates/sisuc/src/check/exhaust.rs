@@ -1146,7 +1146,7 @@ mod tests {
         clippy::too_many_lines,
         reason = "one row per witness, so the table reads in one place"
     )]
-    fn witnesses() {
+    fn witnesses_should_name_the_missing_pattern_of_each_row() {
         let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n    Mul(Expr, Expr)\n}\nenum Name {\n    Named(string)\n    Anon\n}\nenum Shape {\n    Circle(f64)\n    Square(f64)\n}\nenum Holder {\n    V(Shape??)\n    W(i64?, bool)\n}\nfn main() {}";
         // Each row: the scrutinee, the arms before `_ => 0`, the missing pattern, the texts of
         // the arm that covers part of its variant, and whether a guarded arm may not match.

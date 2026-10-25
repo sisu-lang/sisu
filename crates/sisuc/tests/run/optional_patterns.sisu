@@ -45,6 +45,15 @@ enum K {
     Node(K, string?)
 }
 
+enum Chain {
+    Stop
+    Link(i64, Chain)
+}
+
+enum Slot {
+    S(Chain?)
+}
+
 enum Mark {
     Dot(string)
     Dash(string)
@@ -116,7 +125,7 @@ fn layers(x: i64??) -> i64 {
 fn spelled(o: i64?) -> i64 {
     match o {
         Option.Some(m) => m
-        None => 0
+        Option.None => 0
     }
 }
 
@@ -294,71 +303,94 @@ fn second(i: i64) -> string {
     }
 }
 
+fn make_slot(i: i64) -> Slot {
+    match i {
+        0 => Slot.S(None)
+        1 => Slot.S(Chain.Link(1, Chain.Stop))
+        _ => Slot.S(Chain.Link(1, Chain.Link(7, Chain.Stop)))
+    }
+}
+
+// The binding `n` is under a box (the tail of the first link) that is under a `Some`.
+fn second_link(i: i64) -> i64 {
+    let slot = make_slot(i)
+    match slot {
+        S(Some(Link(_, Link(n, _)))) => n
+        _ => -1
+    }
+}
+
 fn main() {
     let none: i64? = None
     for o in [Some(0), Some(7), none] {
-        print(int_kind(o))
+        print(int_kind(o))               // zero, value 7, none
     }
     for o in [Some(0), none, Some(5)] {
-        print(literal(o))
+        print(literal(o))                // 1, 2, 3
     }
     for o in [Some(3), Some(11), Some(20), none] {
-        print(ranges(o))
+        print(ranges(o))                 // 1, 2, 3, 4
     }
     for o in [Some(0), none, Some(1)] {
-        print(zero_or_none(o))
+        print(zero_or_none(o))           // 1, 1, 2
     }
-    print(whole(Some(4)))
-    print(whole(none))
-    print(wild(Some(4)))
-    print(wild(none))
+    print(whole(Some(4)))                // 4
+    print(whole(none))                   // -1
+    print(wild(Some(4)))                 // 0
+    print(wild(none))                    // 0
     let nn: i64?? = None
     let middle: i64?? = Some(None)
-    print(layers(Some(Some(6))))
-    print(layers(middle))
-    print(layers(nn))
-    print(spelled(Some(8)))
-    print(spelled(none))
+    print(layers(Some(Some(6))))         // 6
+    print(layers(middle))                // -1
+    print(layers(nn))                    // -2
+    print(spelled(Some(8)))              // 8
+    print(spelled(none))                 // 0
     let no_string: string? = None
-    print(describe_string("a"))
-    print(describe_string("b"))
-    print(describe_string(no_string))
+    print(describe_string("a"))          // the letter a
+    print(describe_string("b"))          // string b
+    print(describe_string(no_string))    // no string
     let no_node: Node? = None
-    print(describe_node(Node(n: 9)))
-    print(describe_node(no_node))
+    print(describe_node(Node(n: 9)))     // 9
+    print(describe_node(no_node))        // -1
     let no_shape: Shape? = None
-    print(shape(Shape.Circle("red")))
-    print(shape(Shape.Square(2)))
-    print(shape(no_shape))
-    print(held(Holder.V(None)))
-    print(held(Holder.V(Shape.Circle("blue"))))
-    print(held(Holder.V(Shape.Square(3))))
-    print(held(Holder.W(2)))
-    print(held(Holder.W(None)))
-    print(held(Holder.W(10)))
-    print(payload(Holder.V(Shape.Circle("green"))))
-    print(payload(Holder.V(None)))
-    print(payload(Holder.W(1)))
-    print(owned_shape("owned"))
-    print(owned_string("owned string"))
-    print(owned_holder("owned holder"))
-    if_lets(Shape.Circle("pink"), Some(1))
-    if_lets(Shape.Square(1), none)
+    print(shape(Shape.Circle("red")))    // circle red
+    print(shape(Shape.Square(2)))        // square 2
+    print(shape(no_shape))               // nothing
+    print(held(Holder.V(None)))          // V(None)
+    print(held(Holder.V(Shape.Circle("blue"))))   // V(Circle(blue))
+    print(held(Holder.V(Shape.Square(3))))        // V(Some(square 3))
+    print(held(Holder.W(2)))             // W small or none
+    print(held(Holder.W(None)))          // W small or none
+    print(held(Holder.W(10)))            // W 10
+    print(payload(Holder.V(Shape.Circle("green"))))   // circle green
+    print(payload(Holder.V(None)))       // nothing
+    print(payload(Holder.W(1)))          // W
+    print(owned_shape("owned"))          // owned
+    print(owned_string("owned string"))  // owned string
+    print(owned_holder("owned holder"))  // owned holder
+    if_lets(Shape.Circle("pink"), Some(1))   // if let Circle(pink), if let Some(1), if let y = 1
+    if_lets(Shape.Square(1), none)           // not a circle
     let pile = Pile(n: 3)
     while let Some(item) = pile.pop() {
-        print(item)
+        print(item)                      // item 2, item 1, item 0
     }
     for i in 0..5 {
         print("{deep(make(i))} {deep_owned(i)} {under_box(make(i))} {under_box_owned(i)}")
+        // 0 0 false false, 0 0 false false, 1 1 false false, 2 2 false false, 2 2 true true
     }
     for i in 0..5 {
         print("{d_kind(make_d(i))} {d_kind_owned(i)}")
+        // End End, Next(None) Next(None), Next(Some(None)) Next(Some(None)), Next(End) Next(End),
+        // Next(Next(_)) Next(Next(_))
     }
-    print(inner_name(K.Node(K.Node(K.Leaf, "inner"), None)))
-    print(inner_name(K.Node(K.Node(K.Leaf, None), "outer")))
-    print(mark(Mark.Dot("dot")))
-    print(mark(Mark.Dash("dash")))
-    print(mark(Mark.Gap))
-    print(second(0))
-    print(second(1))
+    print(inner_name(K.Node(K.Node(K.Leaf, "inner"), None)))   // inner
+    print(inner_name(K.Node(K.Node(K.Leaf, None), "outer")))   // no inner name
+    print(mark(Mark.Dot("dot")))         // dot
+    print(mark(Mark.Dash("dash")))       // dash
+    print(mark(Mark.Gap))                // gap
+    print(second(0))                     // no second
+    print(second(1))                     // second
+    for i in 0..3 {
+        print(second_link(i))            // -1, -1, 7
+    }
 }

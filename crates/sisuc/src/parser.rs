@@ -1766,7 +1766,8 @@ impl<'a> Parser<'a> {
     }
 
     /// One alternative of a pattern: `_`, `None`, a name, `Num(p, ...)`, `Expr.Num(p, ...)`,
-    /// `Expr.Idle`, a literal, or a range of two literals. The caller has counted its level.
+    /// `Expr.Idle`, `Option.None`, a literal, or a range of two literals. The caller has counted
+    /// its level.
     fn single(&mut self) -> Result<Pattern, Diagnostic> {
         let base = self.depth;
         let mut reach = base;
@@ -1795,7 +1796,17 @@ impl<'a> Parser<'a> {
                     return Err(error);
                 }
                 let (qualifier, name) = if self.eat(&TokenKind::Dot).is_some() {
-                    (Some(first), self.ident("a variant name")?)
+                    // `Option.None`, as in an expression; the checker rejects the `None` member
+                    // of anything else.
+                    let name = if self.at(&TokenKind::NoneKw) {
+                        Ident {
+                            name: Symbol::intern("None"),
+                            span: self.bump().span,
+                        }
+                    } else {
+                        self.ident("a variant name")?
+                    };
+                    (Some(first), name)
                 } else {
                     (None, first)
                 };
@@ -4825,7 +4836,7 @@ mod tests {
     }
 
     #[test]
-    fn match_forms() {
+    fn match_arms_should_parse_each_form_to_its_tree() {
         let rows = [
             (
                 "match e {\n    Num(n) => n\n    Add(a, b) => a\n    Expr.Num(_) => 0\n    State.Idle => 1\n    _ => 2\n}",
@@ -4858,6 +4869,10 @@ mod tests {
                 "match e {\n    Idle() => 1\n    Expr.Idle() => 2\n    Add(a, b,) => 3\n    None => 4\n}",
                 "(match e (arm (Idle ()) 1) (arm (Expr.Idle ()) 2) (arm (Add a b) 3) \
                  (arm None 4))",
+            ),
+            (
+                "match o {\n    Option.None => 1\n    Option.Some(n) => n\n}",
+                "(match o (arm Option.None 1) (arm (Option.Some n) n))",
             ),
             (
                 "match a {\n    A => match b {\n        B => 1\n        _ => 2\n    }\n    _ => 3\n}",

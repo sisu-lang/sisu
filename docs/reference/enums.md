@@ -375,8 +375,8 @@ The rules:
 - A sub-pattern follows the type of its value. It is a variant pattern for an enum. It is a literal for an integer, a `char`, a `bool` or a `string`, and a range for an integer or a `char`. A name or `_` fits every type.
 - The number of sub-patterns must be the number of values in the payload ([E0128](../diagnostics/E0128.md)).
 - A pattern takes the payload by position. It has no labels and no braces ([E0123](../diagnostics/E0123.md)).
-- A payload of the type `f64`, an optional, an array or a class takes only a name or `_` as its pattern. So does a payload of a type parameter such as `T`, in generic code ([Generics](generics.md#values-of-a-type-parameter)).
-- In such a place, a bare upper-case name is an error ([E0125](../diagnostics/E0125.md)). So is a variant pattern, with parentheses or with the enum written, and so is `None` ([E0127](../diagnostics/E0127.md)).
+- A payload of the type `f64`, an array or a class takes only a name or `_` as its pattern. So does a payload of a type parameter such as `T`, in generic code ([Generics](generics.md#values-of-a-type-parameter)).
+- In such a place, a bare upper-case name is an error ([E0125](../diagnostics/E0125.md)). So is a variant pattern, with parentheses or with the enum written ([E0127](../diagnostics/E0127.md)).
 
 ```sisu
 enum Shape {
@@ -627,7 +627,7 @@ The rules:
 
 - The value is an enum or an optional ([E0051](../diagnostics/E0051.md)).
 - For an enum, the pattern is any pattern. When the pattern accepts every value of the enum, the test means nothing and the use is an error ([E0131](../diagnostics/E0131.md)). Use a `match`.
-- For an optional `T?`, the pattern is a name or `_`. A name is bound to the value of the optional when it has one ([Types](types.md#optionals)).
+- For an optional `T?`, the pattern follows the rules of [Patterns on an optional](#patterns-on-an-optional). At the top, a name is bound to the value inside the optional, and the block does not run for `None` ([Types](types.md#optionals)).
 - The names of the pattern are in scope in the first block only, and not in the `else` block.
 - An `if let` with an `else` is an expression, as an `if` is. Without an `else`, it has no value ([E0043](../diagnostics/E0043.md)).
 
@@ -657,7 +657,7 @@ fn main() {
 
 A `match`, an `if let` and a `while let` take an optional `T?` ([Option and Result](types.md#option-and-result)). At each position of an optional type, in the scrutinee or in a field of a variant:
 
-- `Some(p)` matches an optional that holds a value that `p` matches. `None` matches the optional that holds no value.
+- `Some(p)` matches an optional that holds a value that `p` matches. `None` matches the optional that holds no value. `Option.Some(p)` and `Option.None` mean the same.
 - A variant, a literal or a range matches the value inside: `Circle(r)` on a `Shape?` is `Some(Circle(r))`.
 - An `|` applies these rules to each alternative: `Some(0) | None`.
 - A name or `_` matches the whole optional, `None` too. In a `match` arm, `x` binds the `T?`.

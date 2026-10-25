@@ -641,6 +641,24 @@ impl Checker<'_> {
             ast::PatternKind::Variant {
                 qualifier: Some(q),
                 name,
+                fields,
+                parens,
+            } if q.name.as_str() == "Option" && name.name.as_str() == "None" => {
+                let Some(parens) = parens else {
+                    return Some(pattern(tir::PatternKind::None));
+                };
+                self.report(DiagnosticKind::VariantForm {
+                    path: written(Some(q), name),
+                    payload: false,
+                    held: !fields.is_empty() || self.comment_in(&[parens.range()]),
+                    at: *parens,
+                });
+                self.poison(p, keyword, bound);
+                None
+            }
+            ast::PatternKind::Variant {
+                qualifier: Some(q),
+                name,
                 ..
             } if q.name.as_str() == "Option" => {
                 let variants = [("None", Definition::Variant), ("Some", Definition::Variant)];

@@ -1774,6 +1774,96 @@ mod tests {
         );
     }
 
+    /// A writer that refuses the write number `at`, and takes every other one.
+    struct FailsAt {
+        at: usize,
+        writes: usize,
+    }
+
+    impl fmt::Write for FailsAt {
+        fn write_str(&mut self, _: &str) -> fmt::Result {
+            self.writes += 1;
+            if self.writes - 1 == self.at {
+                return Err(fmt::Error);
+            }
+            Ok(())
+        }
+    }
+
+    /// `match o { Some(_) => 1  None => 0 }` over an `i64?`: the patterns of an optional.
+    #[test]
+    fn print_should_give_the_error_of_a_write_that_fails_in_an_optional_pattern() {
+        use fmt::Write as _;
+
+        let optional = Type::intern(TypeKind::Optional(Type::I64));
+        let arm = |kind, value| Arm {
+            pattern: Pattern {
+                kind,
+                span: Span::new(0, 0),
+            },
+            bindings: vec![],
+            guard: None,
+            body: Block {
+                stmts: vec![],
+                value: Some(Box::new(int(value))),
+                ty: Type::I64,
+            },
+            reachable: true,
+        };
+        let wild = Pattern {
+            kind: PatternKind::Wild,
+            span: Span::new(0, 0),
+        };
+        let matched = expr(
+            ExprKind::Match {
+                scrutinee: Box::new(expr(ExprKind::Local(LocalId(0)), optional)),
+                temp: LocalId(1),
+                arms: vec![
+                    arm(PatternKind::Some(Box::new(wild)), 1),
+                    arm(PatternKind::None, 0),
+                ],
+            },
+            Type::I64,
+        );
+        let program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
+                params: vec![LocalId(0)],
+                ret: Type::I64,
+                locals: vec![
+                    param("o", optional),
+                    Local {
+                        name: None,
+                        ty: optional,
+                        mutable: false,
+                    },
+                ],
+                body: Block {
+                    stmts: vec![],
+                    value: Some(Box::new(matched)),
+                    ty: Type::I64,
+                },
+            }],
+            ..Program::default()
+        };
+        assert_eq!(
+            program.to_string(),
+            "(fn f ((o#0 i64?)) i64 (block (match o#0 (arm (Some _) (block 1)) (arm None (block 0)))))"
+        );
+        // Whichever single write fails, the print gives that error and does not go on.
+        let mut counter = FailsAt {
+            at: usize::MAX,
+            writes: 0,
+        };
+        write!(counter, "{program}").expect("a writer that never fails takes the print");
+        for at in 0..counter.writes {
+            let mut writer = FailsAt { at, writes: 0 };
+            assert!(write!(writer, "{program}").is_err(), "write {at}");
+        }
+    }
+
     fn binary(op: BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
         expr(
             ExprKind::Binary {

@@ -359,6 +359,22 @@ fn a_pattern_on_an_optional_should_match_the_optional_or_the_value_inside() {
     }
 }
 
+/// `Option.None` is the pattern `None`, at the top and under a `Some`; it covers the `None` of a
+/// `match`.
+#[test]
+fn an_option_none_pattern_should_mean_none() {
+    contains(
+        &with_shapes(
+            "let r = match oo {\n        Some(Some(n)) => n\n        Some(Option.None) => 1\n        Option.None => 0\n    }",
+        ),
+        &[
+            "(arm (Some (Some n#7)) (block n#7))",
+            "(arm (Some None) (block 1))",
+            "(arm None (block 0))",
+        ],
+    );
+}
+
 /// The `tir` prints a `Some` pattern with its inner pattern, the implicit `Some` too.
 #[test]
 fn a_some_pattern_should_print_with_its_inner_pattern() {
@@ -375,8 +391,8 @@ fn a_some_pattern_should_print_with_its_inner_pattern() {
 }
 
 /// A `match` on an optional that leaves a value out is not exhaustive: `None`, a value, a
-/// variant of the payload, or the `None` of a middle layer. The `witnesses` table of
-/// `check::exhaust` pins what each one misses.
+/// variant of the payload, or the `None` of a middle layer. The `witnesses_should_name...` table
+/// of `check::exhaust` pins what each one misses.
 #[test]
 fn a_match_on_an_optional_should_cover_none_and_every_value() {
     for body in [

@@ -254,7 +254,7 @@ fn pattern_names() {
 }
 
 #[test]
-fn pattern_errors() {
+fn a_bad_pattern_should_report_its_code_at_its_position() {
     // Each row: the scrutinee, the arm on line 15, and the code it reports there.
     let rows = [
         ("e", "Shape.Circle(r) => 1", Code::Mismatch, 9),
@@ -271,6 +271,8 @@ fn pattern_errors() {
         ("maybe", "Some => 1", Code::VariantForm, 9),
         ("maybe", "Option.Some => 1", Code::VariantForm, 16),
         ("maybe", "Some(x, y) => 1", Code::SubpatternCount, 9),
+        // `Option.None` holds nothing.
+        ("maybe", "Option.None() => 1", Code::VariantForm, 20),
         ("maybe", "Option.Sone(x) => 1", Code::UnknownVariant, 16),
         ("s", "Idle() => 1", Code::VariantForm, 13),
         ("e", "Expr.Num => 1", Code::VariantForm, 14),
@@ -366,6 +368,25 @@ fn variant_form_fix_is_safe_only_when_empty() {
         fixes(&src, &d),
         [(false, vec![(15, 13, text, String::new())])]
     );
+}
+
+/// The fix deletes the parentheses of `Option.None()`, so a name or a comment in them makes it
+/// unsafe.
+#[test]
+fn option_none_parentheses_should_have_a_safe_fix_only_when_empty() {
+    for (written, text, safe) in [
+        ("()", "()", true),
+        ("(x)", "(x)", false),
+        ("(// keep\n        )", "(// keep\n        )", false),
+    ] {
+        let src = arm_on_15("maybe", &format!("Option.None{written} => 1"));
+        let d = diagnostic(&src, Code::VariantForm, (15, 20, text), &[]);
+        assert_eq!(
+            fixes(&src, &d),
+            [(safe, vec![(15, 20, text, String::new())])],
+            "{written}"
+        );
+    }
 }
 
 #[test]
@@ -1253,7 +1274,7 @@ fn reachability() {
 }
 
 #[test]
-fn cut_takes_unexpanded_alternatives() {
+fn cut_should_take_unexpanded_alternatives() {
     let vbb = "enum P { V(bool, bool) }\n";
     // Where the first arm has only wildcards left, it takes the `|` below it unexpanded: `true` is
     // the first arm's there and the second's where the `|` is expanded, so no one arm covers it.
@@ -1341,7 +1362,7 @@ fn guards_cover_nothing() {
     let ab = "enum AB {\n    A\n    B\n}\nenum P { P(AB, i64) }\n";
     let (src, line) = typed(ab, "P", &["P(B, _) => 2", "P(A, x) if x > 0 => 1"]);
     // The first arm with `P` at the top covers only part of it; `P(A, _)` is missing, and a
-    // guarded arm may not match it (`check::exhaust::tests::witnesses`).
+    // guarded arm may not match it (`check::exhaust::tests`, the `witnesses_should_name...` row).
     diagnostic(
         &src,
         Code::NonExhaustive,
