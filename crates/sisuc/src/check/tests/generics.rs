@@ -1873,6 +1873,39 @@ fn an_argument_that_contradicts_the_context_should_be_reported_at_the_argument()
     }
 }
 
+/// Only an argument that contradicts the context is reported: one that fits, or that no
+/// parameter of the context reaches, is not. The context meets the type of the call whole, or
+/// by its payload.
+#[test]
+fn an_argument_that_fits_the_context_should_not_be_reported() {
+    let two = "class Two<A, B> {\n    a: A\n    b: B\n}\nfn both<A, B>(a: A, b: B) -> Two<A, B> {\n    Two(a: a, b: b)\n}\nfn first_of<A, B>(a: A, b: B) -> [A] {\n    [a]\n}\n";
+    for (body, at) in [
+        // `s` fits `string`, which the context gives `B`.
+        (
+            "fn g(n: i64, s: string) {\n    let x: Two<f64, string> = both(n, s)\n}",
+            (12, 36, "n"),
+        ),
+        // The context gives `B` nothing, and `s` binds it.
+        (
+            "fn g(n: i64, s: string) {\n    let x: [string] = first_of(n, s)\n}",
+            (12, 32, "n"),
+        ),
+        // The type of the call meets the payload of an optional context.
+        (
+            "fn g(s: string) {\n    let x: [i64]? = wrap(s)\n}",
+            (12, 26, "s"),
+        ),
+        // The context is an optional that the argument's type is not.
+        (
+            "fn g(s: string) {\n    let x: i64? = id(s)\n}",
+            (12, 22, "s"),
+        ),
+    ] {
+        let src = with_generics(&format!("{two}{body}"));
+        diagnostic(&src, Code::Mismatch, at, &[]);
+    }
+}
+
 /// A context that the call's type can meet, whole or by its payload, leaves a call clean, and one
 /// it cannot meet by itself keeps the error at the call.
 #[test]
