@@ -33,8 +33,9 @@ pub(crate) struct Parsed {
 /// Parses `lexed`, whose tokens end with `Eof` and whose brackets balance. An item with a
 /// syntax error, its own or the lexer's, is broken: it reports its earliest error, and the
 /// parser resumes after it. A bad format spec alone does not break its item: the parser reports
-/// it and reads its part without a spec. A lexer warning breaks nothing.
-pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
+/// it and reads its part without a spec. A lexer warning breaks nothing. The prelude (`prelude`)
+/// may declare a variant `None`, which no other source may.
+pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
     let Lexed {
         source,
         tokens,
@@ -62,6 +63,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         specs: Vec::new(),
         warnings,
         labels: Vec::new(),
+        prelude,
     }
     .program()
 }
@@ -69,7 +71,10 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
 /// The program of `source`, which must lex and parse without a diagnostic.
 #[cfg(test)]
 pub(crate) fn parse_ok(source: &str) -> Program {
-    let parsed = parse(crate::lexer::lex(source).expect("the source should lex"));
+    let parsed = parse(
+        crate::lexer::lex(source).expect("the source should lex"),
+        false,
+    );
     assert!(
         parsed.diagnostics.is_empty() && parsed.checkable,
         "{source}: {:?}",
@@ -291,6 +296,8 @@ struct Parser<'a> {
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
     labels: Vec<Ident>,
+    /// Whether this is the prelude, which may declare a variant `None`.
+    prelude: bool,
     /// `tokens`, or once a type-argument list takes the `>` of a `>=` (a split), the tokens before
     /// it. `peek` reads it with the bounds check it needs anyway, so only a split pays for one.
     window: &'a [Token],
@@ -1158,17 +1165,23 @@ impl<'a> Parser<'a> {
         Ok(member)
     }
 
-    /// `Name`, or `Name(payload)`.
+    /// `Name`, or `Name(payload)`. Only the prelude names a variant `None`.
     fn variant(&mut self) -> Result<Variant, Diagnostic> {
-        if self.at(&TokenKind::NoneKw) {
+        let name = if self.prelude && self.at(&TokenKind::NoneKw) {
+            Ident {
+                name: Symbol::intern("None"),
+                span: self.bump().span,
+            }
+        } else if self.at(&TokenKind::NoneKw) {
             return Err(DiagnosticKind::BuiltInName {
                 name: "None".to_string(),
                 at: self.peek().span,
                 kind: BuiltIn::Keyword,
             }
             .into());
-        }
-        let name = self.ident("a variant or `fn`")?;
+        } else {
+            self.ident("a variant or `fn`")?
+        };
         let payload = match self.eat(&TokenKind::LParen) {
             Some(_) => Some(self.payload()?),
             None => None,
@@ -1217,6 +1230,7 @@ impl<'a> Parser<'a> {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            prelude: self.prelude,
             window: self.tokens,
             halves: self.halves,
             halved: None,
@@ -2639,7 +2653,16 @@ impl<'a> Parser<'a> {
             self.reach(wrapped)?;
             let access = self.bump();
             let safe = access.kind == TokenKind::QuestionDot;
-            let name = self.ident("a field or method name")?;
+            // `Option.None` names the variant of the prelude's `Option`; the checker rejects the
+            // `None` member of anything else.
+            let name = if !safe && self.at(&TokenKind::NoneKw) {
+                Ident {
+                    name: Symbol::intern("None"),
+                    span: self.bump().span,
+                }
+            } else {
+                self.ident("a field or method name")?
+            };
             // The type arguments and the value arguments are siblings of the receiver: each
             // starts at the receiver's own level and only the deepest counts.
             let written = if self.at(&TokenKind::Lt) && self.type_args_follow() {
@@ -3147,7 +3170,7 @@ mod tests {
 
     /// The parse of `src`, which must lex without a bracket error.
     fn parsed(src: &str) -> Parsed {
-        parse(lex(src).expect("source lexes"))
+        parse(lex(src).expect("source lexes"), false)
     }
 
     /// The one diagnostic `src` reports.
@@ -4160,6 +4183,19 @@ mod tests {
         }
     }
 
+    /// Only the prelude may declare a variant `None`, and so name `Option`'s.
+    #[test]
+    fn none_variant_should_parse_only_in_the_prelude() {
+        let src = "enum Option<T> {\n    None\n    Some(T)\n}";
+        assert_eq!(
+            parse(lex(src).expect("source lexes"), true)
+                .program
+                .to_string(),
+            "(enum Option<T> None (Some T))"
+        );
+        assert_eq!(parse_err(src), (Code::BuiltInName, 2, 5));
+    }
+
     #[test]
     fn broken_enum_keeps_its_name() {
         let parsed = parsed("enum E {\n    None\n}\nfn main() {}");
@@ -4550,6 +4586,9 @@ mod tests {
             ),
             ("Tree<i64>.Leaf", "(. Tree<i64> Leaf)"),
             ("Tree<i64>.Node(x)", "(call (. Tree<i64> Node) x)"),
+            ("Option.None", "(. Option None)"),
+            ("Option<i64>.None", "(. Option<i64> None)"),
+            ("Option.Some(x)", "(call (. Option Some) x)"),
             ("s.map_all<f64>(1.5)", "(call (. s map_all<f64>) 1.5)"),
             ("largest<[i64]>([])", "(call largest<[i64]> (array))"),
             ("a < b > (c)", "(call a<b> c)"),
@@ -4603,6 +4642,7 @@ mod tests {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            prelude: false,
             window: &lexed.tokens,
             halves: &OnceCell::new(),
             halved: None,

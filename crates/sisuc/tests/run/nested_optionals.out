@@ -2,6 +2,11 @@ Some(None)
 false
 true
 None
+Some(None)
+Some(Some(5))
+Some(None)
+Some(None)
+None
 None
 0
 7

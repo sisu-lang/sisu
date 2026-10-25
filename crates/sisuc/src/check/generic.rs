@@ -576,6 +576,10 @@ impl Checker<'_> {
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
         let name = sig.name;
+        if name.name.as_str() == "Some" && sig.variant.is_none() {
+            self.report(DiagnosticKind::CannotInferSome { at: name.span });
+            return;
+        }
         let dots = vec!["..."; sig.declared.len() - sig.owner.len()].join(", ");
         let (callee, example, at) = match sig.variant {
             Some(variant) => {
@@ -926,6 +930,10 @@ impl Checker<'_> {
                     !sig.type_params.is_empty(),
                     sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args),
                 )
+            }
+            // `Some<T>(x: T) -> T?`, which no user item can take the name of.
+            (None, None) if name.as_str() == "Some" => {
+                (true, matches!(args, [arg] if arg.label.is_none()))
             }
             _ => (false, false),
         }

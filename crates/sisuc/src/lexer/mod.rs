@@ -4115,17 +4115,20 @@ mod tests {
                 // The lexer's diagnostic stays the only one, and the tokens parse as lexed.
                 let lexed = lex(&fixed).expect("the lexer recovers");
                 let tokens = lexed.tokens.clone();
-                let parsed = crate::parser::parse(lexed);
+                let parsed = crate::parser::parse(lexed, false);
                 let reported: Vec<_> = parsed.diagnostics.iter().map(|d| at(&fixed, d)).collect();
                 assert_eq!(reported, [want], "{fixed}");
-                let parsed = crate::parser::parse(Lexed {
-                    source: Source::new(&fixed, 0),
-                    tokens,
-                    diagnostics: Vec::new(),
-                    warnings: Vec::new(),
-                    comments: Vec::new(),
-                    breaks: Vec::new(),
-                });
+                let parsed = crate::parser::parse(
+                    Lexed {
+                        source: Source::new(&fixed, 0),
+                        tokens,
+                        diagnostics: Vec::new(),
+                        warnings: Vec::new(),
+                        comments: Vec::new(),
+                        breaks: Vec::new(),
+                    },
+                    false,
+                );
                 assert!(
                     parsed.diagnostics.is_empty() && parsed.checkable,
                     "{fixed}: {:?}",

@@ -3,6 +3,8 @@ error[E0032]: expected `i64??`, found `i64`
   |
 2 |     let x: i64?? = 5
   |                    ^
+  |
+  = help: a value converts through one `?` only: wrap it in `Some(...)` for each further layer
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

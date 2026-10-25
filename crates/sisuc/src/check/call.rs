@@ -58,6 +58,8 @@ impl Checker<'_> {
         match declared {
             (Some(Declared::Known(class)), _) => self.construct_class(span, class, site, args),
             (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
+            // `Some` is the prelude's: a user item with that name is reported, and called above.
+            _ if callee.name.as_str() == "Some" => self.some(span, site, None, args),
             _ => match self.bare_variant(callee.name, callee.span) {
                 Some(d) => {
                     self.diagnostics.push(d);

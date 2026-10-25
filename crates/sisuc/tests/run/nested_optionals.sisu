@@ -84,6 +84,15 @@ fn main() {
     let empty: [i64?] = []
     print(describe(first(empty)))        // None
 
+    // `Some` and `Option` spell the layers out.
+    let spelled: [i64?] = [None, Some(1)]
+    print(describe(first(spelled)))      // Some(None)
+    let deep: Option<Option<i64>> = Some(Some(5))
+    print(describe(deep))                // Some(Some(5))
+    print(describe(Some(None)))          // Some(None)
+    print(describe(Option.Some(Option<i64>.None)))  // Some(None)
+    print(describe(Option.None))         // None
+
     let middle: i64? = None
     let five: i64? = 5
     let n0: i64?? = None

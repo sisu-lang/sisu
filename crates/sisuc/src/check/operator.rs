@@ -432,6 +432,7 @@ impl Checker<'_> {
             source: None,
             fix: None,
             conversion: false,
+            layers: false,
         }
         .into()
     }

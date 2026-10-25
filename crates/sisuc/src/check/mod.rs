@@ -13,6 +13,7 @@ mod generic;
 mod member;
 mod number;
 mod operator;
+mod optional;
 mod pattern;
 mod place;
 mod prelude;
@@ -486,7 +487,8 @@ impl Body {
 /// holds the parser's diagnostics, sorted by span start: their errors count against a function too.
 /// The items of `prelude` follow those of `program`, so that every id of a user's item is what it
 /// would be without a prelude. The prelude has no broken item, and no diagnostic should point into
-/// it: `front_end` takes one that does for an internal error. `source` is the user's text.
+/// it: `front_end` takes one that does for an internal error. `source` is the user's text. The
+/// prelude's `Option` is no item here: it defines the optional type, which has no enum.
 pub(crate) fn check<'src>(
     program: &'src ast::Program,
     prelude: &'src ast::Program,
@@ -495,7 +497,11 @@ pub(crate) fn check<'src>(
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
     let mut checker = Checker::new(program, source);
     checker.parse_errors = error_spans(parsed);
-    let items: Vec<&ast::Item> = program.items.iter().chain(&prelude.items).collect();
+    let option =
+        |item: &&ast::Item| matches!(item, ast::Item::Enum(e) if e.name.name.as_str() == "Option");
+    let items: Vec<&ast::Item> = (program.items.iter())
+        .chain(prelude.items.iter().filter(|item| !option(item)))
+        .collect();
     checker.collect_names(&items, program.items.len(), &program.broken);
     let declared = checker.collect_signatures(&items);
     checker.fold_constants(&items);
@@ -1142,6 +1148,11 @@ impl Checker<'_> {
                 };
                 Some(Type::intern(TypeKind::Enum(id, args)))
             }
+            // `Option<T>` is `T?`: the prelude's declaration of it makes no enum.
+            _ if name.as_str() == "Option" => {
+                let args = self.type_args(&ident(), &[Symbol::intern("T")], args, angles)?;
+                Some(optional_of(args.get()[0]))
+            }
             _ => {
                 let types =
                     ["i64", "u8", "f64", "bool", "char", "string"].map(|ty| (ty, Definition::Type));
@@ -1305,6 +1316,7 @@ impl Checker<'_> {
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
         if built_in_type(name.as_str()).is_some()
+            || name.as_str() == "Option"
             || self.class_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
         {
@@ -1441,6 +1453,7 @@ impl Checker<'_> {
                     })
                 }),
             conversion,
+            layers: beyond_one_layer(want, got),
         }
         .into()
     }

@@ -298,7 +298,7 @@ fn main() {
 
 `T?` is short for `Option<T>`, and `T | E` is short for `Result<T, E>`. `Option` and `Result` are enums that a program uses with no declaration. Both spellings of a type are the same type.
 
-```sisu pending
+```sisu
 fn half(n: i64) -> Option<i64> {
     if n % 2 == 1 {
         return None
@@ -308,9 +308,10 @@ fn half(n: i64) -> Option<i64> {
 
 fn main() {
     let a: i64? = half(8)
-    match a {
-        Some(n) => print(n)            // 4
-        None => print("odd")
+    if let n = a {
+        print(n)                       // 4
+    } else {
+        print("odd")
     }
 }
 ```
@@ -327,7 +328,7 @@ The rules:
 
 An optional can hold an optional. `i64??` is `Option<Option<i64>>`. So generic code that finds the first element of a `[i64?]` gives an `i64??`. `None` tells that the array is empty. `Some(None)` tells that the first element is `None`.
 
-```sisu pending
+```sisu
 fn first<T>(xs: [T]) -> T? {
     if xs.len() > 0 { xs[0] } else { None }
 }

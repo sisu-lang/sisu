@@ -428,10 +428,7 @@ impl Gen<'_> {
             Rule::Literal => match ty {
                 Ty::Array(element) => self.array_literal(element, max, synth),
                 Ty::Optional(payload) if synth => self.maybe(payload, max),
-                Ty::Optional(_) => {
-                    self.w.text("None");
-                    Info::leaf(0)
-                }
+                Ty::Optional(payload) => self.none(payload),
                 _ => self.literal(ty, max),
             },
             Rule::Name => self.name(ty, max),
@@ -776,6 +773,17 @@ impl Gen<'_> {
             len,
             ..Info::of(&[value], array_size(len, value.size), true)
         }
+    }
+
+    /// A `None` of an optional of `payload`. `Option<T>.None` writes its type, and the others take
+    /// it from their context.
+    fn none(&mut self, payload: &Ty) -> Info {
+        match self.pick(3) {
+            0 => self.w.text("None"),
+            1 => self.w.text("Option.None"),
+            _ => self.w.text(&format!("Option<{payload}>.None")),
+        }
+        Info::leaf(0)
     }
 
     /// `(if c { v } else { None })`, an optional of its own type.
@@ -1464,13 +1472,21 @@ impl Gen<'_> {
         let Ty::Optional(payload) = ty else {
             unreachable!("only an optional wraps")
         };
-        if matches!(**payload, Ty::Optional(_)) {
-            return self.name(payload, max);
+        // `Some(x)` and `Option.Some(x)` convert as `x` does.
+        let open = ["", "Some(", "Option.Some("][self.pick(3)];
+        self.w.text(open);
+        let value = if matches!(**payload, Ty::Optional(_)) {
+            self.name(payload, max)
+        } else {
+            self.expr(payload, max)
+        };
+        if !open.is_empty() {
+            self.w.text(")");
         }
         // A constant of an optional type does not fold.
         Info {
             folds: false,
-            ..self.expr(payload, max)
+            ..value
         }
     }
 

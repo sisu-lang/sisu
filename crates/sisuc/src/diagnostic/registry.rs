@@ -103,7 +103,7 @@ codes! {
     CannotCompare = "E0047",
     CoalesceNotOptional = "E0048",
     SafeAccessNotOptional = "E0049",
-    CannotInfer | CannotInferParam = "E0050",
+    CannotInfer | CannotInferParam | CannotInferSome = "E0050",
     UnwrapNeedsOptional = "E0051",
     FunctionNotFound = "E0052",
     ArgumentCount = "E0053",
@@ -370,7 +370,8 @@ pub(crate) enum DiagnosticKind {
     /// A value of type `got`, at `at`, where one of the types `want` is expected; `fix` is the
     /// rewrite that would fit. `source` is the place the expectation came from, if the report
     /// points at it. `conversion` is whether the value is a conversion that can fail, whose
-    /// optional stands where its payload is expected.
+    /// optional stands where its payload is expected. `layers` is whether `got` is `want` with
+    /// two or more `?` layers taken off: a value converts through one `?` only.
     Mismatch {
         want: Vec<String>,
         got: String,
@@ -378,6 +379,7 @@ pub(crate) enum DiagnosticKind {
         source: Option<MismatchSource>,
         fix: Option<MismatchFix>,
         conversion: bool,
+        layers: bool,
     },
     /// The binding `name`, at `at`, which no scope holds.
     BindingNotFound {
@@ -472,6 +474,8 @@ pub(crate) enum DiagnosticKind {
         /// fixes.
         in_result: bool,
     },
+    /// A call of `Some` at `at` whose argument does not fix the type of its payload.
+    CannotInferSome { at: Span },
     /// The value at `at`, of type `found`, that `keyword` unwraps, and which is not optional.
     UnwrapNeedsOptional {
         keyword: Unwrap,
@@ -1897,6 +1901,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 source,
                 fix,
                 conversion,
+                layers,
             } => {
                 let want = listed(&want, "or");
                 let mut d =
@@ -1916,6 +1921,11 @@ impl From<DiagnosticKind> for Diagnostic {
                 if conversion {
                     d = d.with_help(
                         "a conversion that can fail gives an optional: give a default with `??`, or unwrap it with `if let`",
+                    );
+                }
+                if layers {
+                    d = d.with_help(
+                        "a value converts through one `?` only: wrap it in `Some(...)` for each further layer",
                     );
                 }
                 match fix {
@@ -2178,6 +2188,10 @@ impl From<DiagnosticKind> for Diagnostic {
                 };
                 Diagnostic::coded(code, at, format!("cannot infer `{param}` for `{callee}`"))
                     .with_help(format!("{annotate}write the type: `{example}`"))
+            }
+            DiagnosticKind::CannotInferSome { at } => {
+                Diagnostic::coded(code, at, "cannot infer `T` for `Some`")
+                    .with_help("annotate the optional's type, as in `let x: i64?? = Some(None)`")
             }
             DiagnosticKind::UnwrapNeedsOptional {
                 keyword,

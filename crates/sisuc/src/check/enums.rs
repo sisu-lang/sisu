@@ -351,7 +351,7 @@ impl Checker<'_> {
     /// Reports the labels of `path(args)`, a variant whose payload declares none, and a count
     /// of `args` that is not `want`. `None` when the count is wrong, else whether there was a
     /// label.
-    fn positional_shape(
+    pub(super) fn positional_shape(
         &mut self,
         span: Span,
         path: &dyn fmt::Display,

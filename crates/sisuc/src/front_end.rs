@@ -57,7 +57,7 @@ pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>
         Ok(lexed) => lexed,
         Err(d) => return (None, vec![d]),
     };
-    let parsed = parser::parse(lexed);
+    let parsed = parser::parse(lexed, false);
     if !parsed.checkable {
         return (None, parsed.diagnostics);
     }
@@ -77,7 +77,7 @@ pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>
 pub(crate) fn prelude_program(prelude: &str) -> ast::Program {
     let lexed =
         lexer::lex_at(prelude, PRELUDE_BASE as usize).unwrap_or_else(|d| internal_error(&d));
-    let parsed = parser::parse(lexed);
+    let parsed = parser::parse(lexed, true);
     if let Some(d) = parsed.diagnostics.first() {
         internal_error(d);
     }
@@ -162,7 +162,7 @@ fn marks(source: &str) -> Vec<usize> {
 /// What the lexer and the parser report about `source`; `Err` holds the bracket error that
 /// stops the lexer.
 fn syntax(source: &str) -> Result<Vec<Diagnostic>, Diagnostic> {
-    lexer::lex(source).map(|lexed| parser::parse(lexed).diagnostics)
+    lexer::lex(source).map(|lexed| parser::parse(lexed, false).diagnostics)
 }
 
 /// How badly a source fails to lex or to parse, given its `syntax`: a lexer error, which stops

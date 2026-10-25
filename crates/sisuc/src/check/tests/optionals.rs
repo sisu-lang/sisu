@@ -2,6 +2,7 @@
 
 use super::generics::{infers, with_decls};
 use super::*;
+use crate::front_end::{PRELUDE_SOURCE, prelude_program};
 
 /// `body` on lines 2 on of `fn g` over `x: i64??`, `w: i64?`, `c: bool`, `a: C?`, `aa: C??`
 /// and `p, q: Node??`, then the classes `C`, whose field `b` is an `i64??`, and `Node`, and an
@@ -116,5 +117,86 @@ fn an_optional_should_be_a_type_argument() {
             "id",
             &["i64?", "i64?"],
         ),
+        // `Some(None)` waits for its context, as a call of a generic function does.
+        (
+            "fn g() {\n    let x: i64?? = id(Some(None))\n}",
+            "id",
+            &["i64??", "i64??"],
+        ),
     ]);
+}
+
+/// `Option<T>` is `T?`, and `Some`, `Option.Some`, `Option.None` and `Option<T>.None` build one.
+#[test]
+fn option_should_spell_an_optional() {
+    for (body, text, ty) in [
+        ("let r: Option<i64> = 5", "5", "i64?"),
+        ("let r: Option<i64?> = None", "None", "i64??"),
+        ("let r = Some(5)", "Some(5)", "i64?"),
+        ("let r: i64?? = Some(None)", "Some(None)", "i64??"),
+        ("let r = Some(Some(5))", "Some(Some(5))", "i64??"),
+        ("let r = Some(w)", "Some(w)", "i64??"),
+        ("let r = Option.Some(5)", "Option.Some(5)", "i64?"),
+        ("let r: i64? = Option.None", "Option.None", "i64?"),
+        ("let r = Option<i64>.None", "Option<i64>.None", "i64?"),
+        ("let r = Option<i64>.Some(5)", "Option<i64>.Some(5)", "i64?"),
+        // The expected payload types the literals inside, as a conversion's does.
+        (
+            "let r: u8? = Some(if c { 1 } else { 2 })",
+            "Some(if c { 1 } else { 2 })",
+            "u8?",
+        ),
+    ] {
+        assert_eq!(type_at(&with_body(body), text), ty, "{body}");
+    }
+    clean("fn f(x: i64?) -> Option<i64> {\n    x\n}\nfn main() {}");
+}
+
+/// `src` checked with the embedded prelude, which declares `Option`.
+fn with_prelude(src: &str) -> tir::Program {
+    let prelude = prelude_program(PRELUDE_SOURCE);
+    let (program, ds) = check(&parse_ok(src), &prelude, src, &[]);
+    assert!(ds.is_empty(), "{ds:?}");
+    program.expect("a program without diagnostics should have a tir")
+}
+
+/// `Some(5)` is the conversion of `5`, and the prelude's `Option` makes no enum of its own.
+#[test]
+fn some_should_lower_as_the_conversion_does() {
+    let main =
+        |init: &str| format!("fn main() {{\n    let x: i64? = {init}\n    print(x ?? 0)\n}}");
+    let converted = with_prelude(&main("5"));
+    for init in ["Some(5)", "Option.Some(5)"] {
+        let spelled = with_prelude(&main(init));
+        assert_eq!(spelled.to_string(), converted.to_string(), "{init}");
+        assert!(spelled.enums.iter().all(|e| e.name != "Option"), "{init}");
+    }
+}
+
+/// A wrong use of `Option` or `Some` gets the code of the rule it breaks, at the user's text.
+/// `tests/diagnostics/E0050-some` pins the wording of the last.
+#[test]
+fn a_wrong_use_of_option_or_some_should_be_reported() {
+    for (body, code, at) in [
+        (
+            "let r = Some(1, 2)",
+            Code::ArgumentCount,
+            (2, 13, "Some(1, 2)"),
+        ),
+        ("let r = Some", Code::VariantForm, (2, 13, "Some")),
+        ("let r = x ?? Some(None)", Code::Mismatch, (2, 23, "None")),
+        (
+            "let r: Option<i64, i64> = None",
+            Code::TypeArguments,
+            (2, 18, "<i64, i64>"),
+        ),
+        (
+            "let r: Option = None",
+            Code::TypeArguments,
+            (2, 12, "Option"),
+        ),
+        ("let r = Some(None)", Code::CannotInfer, (2, 13, "Some")),
+    ] {
+        diagnostic(&with_body(body), code, at, &[]);
+    }
 }

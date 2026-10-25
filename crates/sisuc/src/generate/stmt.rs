@@ -260,7 +260,8 @@ impl Gen<'_> {
         self.w.text(&format!("{keyword} {name}"));
         // A value of a type the checker infers needs one where it is not written.
         if ty.inferred() || self.pick(2) == 1 {
-            self.w.text(&format!(": {ty}"));
+            let written = self.spell(&ty);
+            self.w.text(&format!(": {written}"));
         }
         self.w.text(" = ");
         if mutable && let Ty::Array(element) = &ty {

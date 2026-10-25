@@ -16,7 +16,7 @@ pub(crate) mod coverage;
 
 use arbitrary::Unstructured;
 
-use scope::Scope;
+use scope::{Scope, Ty};
 use writer::Writer;
 
 pub(crate) struct Generated {
@@ -182,6 +182,22 @@ impl<'a> Gen<'a> {
     /// One of `0..n`, `n > 0`.
     fn pick(&mut self, n: usize) -> usize {
         self.u.choose_index(n).unwrap_or(0)
+    }
+
+    /// `ty` as a declaration writes it: each optional is `T?`, or now and then `Option<T>`.
+    fn spell(&mut self, ty: &Ty) -> String {
+        match ty {
+            Ty::Optional(payload) => {
+                let payload = self.spell(payload);
+                if self.pick(2) == 0 {
+                    format!("{payload}?")
+                } else {
+                    format!("Option<{payload}>")
+                }
+            }
+            Ty::Array(element) => format!("[{}]", self.spell(element)),
+            _ => ty.to_string(),
+        }
     }
 
     /// One of `lo..=hi`.

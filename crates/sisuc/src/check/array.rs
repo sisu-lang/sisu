@@ -39,6 +39,7 @@ impl Checker<'_> {
                         source: self.expected_from(span),
                         fix: None,
                         conversion: false,
+                        layers: false,
                     },
                     true,
                 ),

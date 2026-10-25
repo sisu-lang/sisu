@@ -149,6 +149,15 @@ impl Checker<'_> {
                 self.stray(call.map_or(&[], |(args, _)| args));
                 return Some(Err(Poisoned::error()));
             }
+            None if name.as_str() == "Option" => {
+                let site = Site {
+                    name: &ident,
+                    written,
+                    angles: angles.unwrap_or(base.span),
+                    expected,
+                };
+                return Some(self.option_path(span, site, member, call));
+            }
             None => {}
         }
         // Any other base with type arguments is checked as a value, which reports them.

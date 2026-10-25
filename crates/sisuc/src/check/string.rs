@@ -183,6 +183,7 @@ impl Checker<'_> {
                 rhs: operand(rhs),
             }),
             conversion: false,
+            layers: false,
         }
         .into()
     }
@@ -208,6 +209,7 @@ impl Checker<'_> {
                     source: Some(MismatchSource::Concat(other.span)),
                     fix: None,
                     conversion: false,
+                    layers: false,
                 }
                 .into();
             }
@@ -381,6 +383,7 @@ impl Checker<'_> {
                     source: None,
                     fix: None,
                     conversion: false,
+                    layers: false,
                 }
                 .into(),
             },
@@ -447,6 +450,7 @@ impl Checker<'_> {
                 arg: arg.span,
             }),
             conversion: false,
+            layers: false,
         }
         .into()
     }

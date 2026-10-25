@@ -254,9 +254,19 @@ impl Checker<'_> {
                 }
             }
             None => self.constant_use(name, span).unwrap_or_else(|| {
-                let d = self
-                    .bare_variant(name, span)
-                    .unwrap_or_else(|| self.not_found(name, span));
+                let d = if name.as_str() == "Some" {
+                    // The prelude's `Option` makes no enum for `bare_variant` to find.
+                    DiagnosticKind::VariantForm {
+                        path: "Some".to_string(),
+                        payload: true,
+                        held: false,
+                        at: span,
+                    }
+                    .into()
+                } else {
+                    self.bare_variant(name, span)
+                        .unwrap_or_else(|| self.not_found(name, span))
+                };
                 self.diagnostics.push(d);
                 Err(Poisoned::error())
             }),
@@ -359,7 +369,7 @@ impl Checker<'_> {
     }
 
     /// A `None`, of the optional type `expected`.
-    fn none(&mut self, span: Span, expected: Option<Type>) -> Checked {
+    pub(super) fn none(&mut self, span: Span, expected: Option<Type>) -> Checked {
         let (kind, mismatch) = match expected {
             _ if self.quiet(span, expected) => return Err(Poisoned::error()),
             Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
@@ -378,6 +388,7 @@ impl Checker<'_> {
                     source: self.expected_from(span),
                     fix: None,
                     conversion: false,
+                    layers: false,
                 },
                 true,
             ),

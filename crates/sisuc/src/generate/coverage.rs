@@ -96,7 +96,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 47] = [
+const REACH: [&str; 50] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -144,6 +144,9 @@ const REACH: [&str; 47] = [
     "reach: a type has one `?` layer",
     "reach: a type has two or more `?` layers",
     "reach: `??` on an optional of an optional",
+    "reach: `Some` builds an optional",
+    "reach: a type is spelled `Option<..>`",
+    "reach: `Option.None` or `Option<..>.None`",
 ];
 
 /// Whether a program's text holds a form.
@@ -234,7 +237,7 @@ fn checked(source: &str) -> (ast::Program, tir::Program) {
         panic!("a generated program fails to check: {errors:?}\n{numbered}")
     });
     let lexed = lexer::lex(source).expect("a program that checks should lex");
-    (parser::parse(lexed).program, program)
+    (parser::parse(lexed, false).program, program)
 }
 
 /// Everything the generated programs should hold between them.
@@ -583,6 +586,9 @@ impl Walk {
             ast::TypeKind::Name(_) => self.mark("ast::TypeKind::Name"),
             ast::TypeKind::Applied(applied) => {
                 self.mark("ast::TypeKind::Applied");
+                if applied.name.as_str() == "Option" {
+                    self.mark("reach: a type is spelled `Option<..>`");
+                }
                 for arg in &applied.args {
                     if matches!(arg.kind, ast::TypeKind::Applied(_)) {
                         self.mark("reach: a generic type is a type argument");
@@ -1146,6 +1152,9 @@ impl Walk {
             } => {
                 self.mark("ast::ExprKind::Call");
                 let callee = callee.name.as_str();
+                if callee == "Some" {
+                    self.mark("reach: `Some` builds an optional");
+                }
                 self.generic_call(callee, types.is_empty());
                 self.mark(&format!("prelude {callee}"));
                 if callee == "panic" {
@@ -1172,6 +1181,9 @@ impl Walk {
             ast::ExprKind::Field { base, name, safe } => {
                 self.mark("ast::ExprKind::Field");
                 self.mark(&format!("ast::ExprKind::Field.safe = {safe}"));
+                if enum_name(base) == Some("Option") && name.name.as_str() == "None" {
+                    self.mark("reach: `Option.None` or `Option<..>.None`");
+                }
                 if matches!(&base.kind, ast::ExprKind::Name(n) if n.as_str() == "f64") {
                     self.mark(&format!("f64.{}", name.name.as_str()));
                 }
@@ -1186,6 +1198,9 @@ impl Walk {
             } => {
                 self.mark("ast::ExprKind::MethodCall");
                 self.mark(&format!("ast::ExprKind::MethodCall.safe = {safe}"));
+                if enum_name(receiver) == Some("Option") && method.name.as_str() == "Some" {
+                    self.mark("reach: `Some` builds an optional");
+                }
                 let built = enum_name(receiver)
                     .and_then(|receiver| self.variants.get(receiver))
                     .is_some_and(|variants| variants.iter().any(|v| v == method.name.as_str()));
@@ -3499,7 +3514,7 @@ fn declare(g: &mut Gen) {
 fn first_init(text: &str) -> ast::Expr {
     let source = format!("fn main() {{\n{text}\n}}\n");
     let lexed = lexer::lex(&source).expect("a generated expression should lex");
-    let mut items = parser::parse(lexed).program.items.into_iter();
+    let mut items = parser::parse(lexed, false).program.items.into_iter();
     let Some(ast::Item::Function(main)) = items.next() else {
         panic!("`main` should be the only item: {source}")
     };
