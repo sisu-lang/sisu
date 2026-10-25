@@ -1,0 +1,7 @@
+fn main() {
+    let mut f = 1
+    for n in 1..=25 {
+        f *= n
+        print("{n}! = {f}")
+    }
+}
