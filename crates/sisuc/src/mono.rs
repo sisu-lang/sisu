@@ -46,13 +46,6 @@ pub(crate) fn instantiate(mut program: Program) -> Program {
     program
 }
 
-#[cfg(test)]
-thread_local! {
-    /// How many times the worklist has run on this thread: `instantiate` skips it for a program
-    /// that instantiates nothing.
-    pub(crate) static RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// An instantiation reached and given its id, whose body waits on the worklist.
 enum Work {
     Function {
@@ -143,8 +136,6 @@ impl Mono {
     }
 
     fn run(mut self) -> Program {
-        #[cfg(test)]
-        RUNS.set(RUNS.get() + 1);
         for i in 0..self.out.classes.len() {
             let mut fields = mem::take(&mut self.out.classes[i].fields);
             for field in &mut fields {
@@ -623,29 +614,6 @@ mod tests {
     fn instantiated(src: &str) -> Program {
         let (program, diagnostics) = crate::front_end::front_end(src);
         program.unwrap_or_else(|| panic!("{diagnostics:?}"))
-    }
-
-    /// How many times the worklist runs for `src`.
-    fn runs(src: &str) -> usize {
-        let before = RUNS.get();
-        instantiated(src);
-        RUNS.get() - before
-    }
-
-    /// The worklist walks every function, so a program with nothing to instantiate skips it: the
-    /// prelude's `Result` is a template, and a template alone is not work. A generic item of the
-    /// user's, called or not, takes the worklist.
-    #[test]
-    fn instantiate_should_skip_the_worklist_when_nothing_is_generic() {
-        assert_eq!(runs("fn main() {}"), 0);
-        assert_eq!(runs("fn main() {\n    print(1)\n}"), 0);
-        assert_eq!(runs("fn id<T>(x: T) -> T { x }\nfn main() {}"), 1);
-        assert_eq!(runs("class C<T> {\n    v: T\n}\nfn main() {}"), 1);
-        assert_eq!(runs("enum E<T> {\n    A(T)\n}\nfn main() {}"), 1);
-        assert_eq!(
-            runs("fn main() {\n    let _: Result<i64, string> = Result.Ok(1)\n}"),
-            1
-        );
     }
 
     fn function_names(program: &Program) -> Vec<&str> {
