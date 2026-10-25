@@ -1731,10 +1731,10 @@ fn a_generic_call_that_does_not_check_should_report_once() {
     let arguments = |at| vec![(Code::TypeArguments, at)];
     let argument = |at| vec![(Code::TypeArgument, at)];
     for (line, expected) in [
-        // The call's result meets the expected type after `n` binds `T`.
+        // The expected type fits the result alone, and `n` contradicts it.
         (
             "fn g() {\n    let n: i64 = 1\n    let x: f64 = id(n)\n}",
-            vec![(Code::Mismatch, (3, 18))],
+            vec![(Code::Mismatch, (3, 21))],
         ),
         ("fn g() {\n    let x = first([])\n}", infer((2, 13))),
         ("fn g() {\n    let t = Tree.Leaf\n}", infer((2, 13))),
@@ -1839,6 +1839,60 @@ fn cannot_infer_should_be_reported_at_the_callee_name() {
     assert!(d.help().is_some());
 }
 
+/// An argument that binds a type parameter apart from the call's context is reported at the
+/// argument, in every kind of generic call, and the call adds no error of its own.
+#[test]
+fn an_argument_that_contradicts_the_context_should_be_reported_at_the_argument() {
+    with_prelude();
+    for (line, at) in [
+        // A built-in variant, a function, a user variant, a class and a method.
+        (
+            "fn g() {\n    let r: Result<i64, string> = Ok(\"x\")\n}",
+            (2, 37, "\"x\""),
+        ),
+        (
+            "fn g() {\n    let r: Result<i64, string> = Ok(1.5)\n}",
+            (2, 37, "1.5"),
+        ),
+        ("fn g(n: i64) {\n    let b: string = id(n)\n}", (2, 24, "n")),
+        (
+            "fn g(n: i64) {\n    let o: Opt2<string> = Opt2.S(n)\n}",
+            (2, 34, "n"),
+        ),
+        (
+            "fn g(n: i64) {\n    let c: Box<string> = Box(v: n)\n}",
+            (2, 33, "n"),
+        ),
+        (
+            "fn g(b: Box<i64>, n: i64) {\n    let r: [string] = b.map_all(n)\n}",
+            (2, 33, "n"),
+        ),
+    ] {
+        let src = with_generics(line);
+        diagnostic(&src, Code::Mismatch, at, &[]);
+    }
+}
+
+/// A context that the call's type can meet, whole or by its payload, leaves a call clean, and one
+/// it cannot meet by itself keeps the error at the call.
+#[test]
+fn a_context_that_fits_or_does_not_fit_alone_should_keep_its_report() {
+    clean(&with_generics(
+        "fn g(z: i64?) {\n    let y: i64?? = id(z)\n}",
+    ));
+    clean(&with_generics("fn g() {\n    let x: i64? = id(5)\n}"));
+    clean(&with_generics("fn g(n: i64) {\n    let x: i64? = id(n)\n}"));
+    // `[T]` meets no `string`, so the context says nothing of the argument.
+    let src = with_generics("fn g(n: i64) {\n    let s: string = wrap(n)\n}");
+    diagnostic(&src, Code::Mismatch, (2, 21, "wrap(n)"), &[]);
+    // `n` converts to the `i64?` that the context makes of `T`, so no argument is to blame.
+    let src = with_generics("fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}");
+    diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[]);
+    // A `unit` argument has no value, which its own error says.
+    let src = with_generics("fn u() {}\nfn g() {\n    let s: string = id(u())\n}");
+    diagnostic(&src, Code::NoValue, (3, 24, "u()"), &[]);
+}
+
 /// A type parameter and a built-in type take no type arguments.
 #[test]
 fn parameters_and_built_ins_should_take_no_type_arguments() {
@@ -1883,12 +1937,12 @@ fn generic_arguments_that_do_not_check_should_report_as_other_arguments() {
             "class Bad<T> {\n    v: Nope<T>\n}\nfn g() {\n    let b = Bad(v: 1)\n}".into(),
             vec![(Code::UnknownType, (2, 8))],
         ),
-        // The expected type binds `B`, and the result's `A` is reported against it.
+        // The expected type fits the result alone, and `n` for `A` is reported against it.
         (
             format!(
                 "{two}fn both<A, B>(a: A, b: B) -> Two<A, B> {{ Two(a: a, b: b) }}\nfn g(n: i64) {{\n    let x: Two<f64, [i64]> = both(n, [])\n}}"
             ),
-            vec![(Code::Mismatch, (7, 30))],
+            vec![(Code::Mismatch, (7, 35))],
         ),
         (
             "fn g() {\n    let x = Wrap.W([])\n}".into(),

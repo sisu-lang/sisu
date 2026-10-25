@@ -1,0 +1,9 @@
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let n = 5
+    let a: string = id(n)
+    let r: Result<i64, string> = Ok("x")
+}
