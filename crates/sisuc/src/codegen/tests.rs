@@ -875,6 +875,14 @@ fn scalar_optional_is_a_pair() {
     );
 }
 
+/// A tag is the smallest of 8, 16 and 32 bits that holds the variant count.
+#[test]
+fn tag_bits_should_hold_the_variant_count() {
+    for (count, bits) in [(1, 8), (256, 8), (257, 16), (65_536, 16), (65_537, 32)] {
+        assert_eq!(enums::tag_bits(count), bits, "{count} variants");
+    }
+}
+
 /// Each layer of a niche takes the next spare value while its storage holds it: a `bool` with
 /// 254 layers is an `i8` whose empty value is 255, and the 255th layer is a pair. An enum of 255
 /// variants has one spare tag, so `E?` is `E` and `E??` is a pair.
