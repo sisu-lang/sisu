@@ -4956,6 +4956,10 @@ mod tests {
             ),
             // `extend` and `Self` are keywords, not names.
             ("fn main() {\n    let extend = 1\n}", (Code::Expected, 2, 9)),
+            (
+                "fn main() {\n    let interface = 1\n}",
+                (Code::Expected, 2, 9),
+            ),
             ("class Self {}", (Code::Expected, 1, 7)),
             (
                 "class C {\n    fn f(self) {\n        Self(r: 1)\n    }\n}",
@@ -5064,6 +5068,13 @@ mod tests {
             assert!(!parsed.checkable, "{src}");
             assert_eq!(parsed.diagnostics.len(), 1, "{src}");
             assert_eq!(parsed.program.items.len(), 1, "{src}");
+        }
+        // The last item: the scan meets `Eof`, a `{` or a line break, not another item.
+        for src in ["extend<", "extend<T {}", "extend<T\n"] {
+            let parsed = parsed(src);
+            assert!(parsed.program.broken.is_empty(), "{src}");
+            assert!(!parsed.checkable, "{src}");
+            assert_eq!(parsed.diagnostics.len(), 1, "{src}");
         }
     }
 
