@@ -1998,6 +1998,45 @@ mod tests {
     }
 
     #[test]
+    fn a_wrap_should_be_written_with_or_without_some() {
+        // The first byte picks the spelling.
+        let ty = Ty::Optional(Box::new(Ty::I64));
+        for (byte, text) in [(0, "0"), (1, "Some(0)"), (2, "Option.Some(0)")] {
+            let bytes = [byte];
+            let mut g = Gen::new(&bytes);
+            g.rule(Rule::Wrap, &ty, MAX_SIZE, false);
+            assert_eq!(g.w.out.program, text);
+        }
+    }
+
+    #[test]
+    fn a_none_should_be_written_with_or_without_its_enum() {
+        for (byte, text) in [(0, "None"), (1, "Option.None"), (2, "Option<i64>.None")] {
+            let bytes = [byte];
+            let mut g = Gen::new(&bytes);
+            g.none(&Ty::I64);
+            assert_eq!(g.w.out.program, text);
+        }
+    }
+
+    #[test]
+    fn a_type_should_be_spelled_with_a_question_mark_or_with_option() {
+        // The first byte picks the spelling of the inner optional, the second the outer's.
+        let ty = Ty::Array(Box::new(Ty::Optional(Box::new(Ty::Optional(Box::new(
+            Ty::I64,
+        ))))));
+        for (bytes, text) in [
+            ([0, 0], "[i64??]"),
+            ([1, 0], "[Option<i64>?]"),
+            ([0, 1], "[Option<i64?>]"),
+            ([1, 1], "[Option<Option<i64>>]"),
+        ] {
+            let mut g = Gen::new(&bytes);
+            assert_eq!(g.spell(&ty), text, "{bytes:?}");
+        }
+    }
+
+    #[test]
     fn a_wrapped_optional_of_an_optional_should_be_a_name_of_its_payload() {
         // The generator builds no `i64?` from nothing, so an `i64??` wraps only a name.
         let (payload, nested) = (

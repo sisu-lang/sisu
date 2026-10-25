@@ -815,7 +815,7 @@ fn an_unknown_member_should_be_reported_alone() {
 const GENERIC: &str = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T? {\n    if xs.len() == 0 { return None }\n    xs[0]\n}\nfn pair<T>(a: T, b: T) -> [T] { [a, b] }\nfn opt<T>(x: T?) -> T? { x }\nfn wrap<T>(x: T) -> [T] { [x] }\nfn make<T>() -> [T] { [] }\nfn make_ints() -> [i64] { [1] }\nfn fill<T>(xs: [T], s: Stack<T>) {}\nfn take<U>(x: U, n: i64) {}\nclass Pile<T> {\n    mut top: Cell<T>?\n    fn push(self, x: T) { self.top = Cell(value: x, next: self.top) }\n}\nclass Box<T> {\n    v: T\n    fn map_all<U>(self, u: U) -> [U] { [u] }\n    fn make<U>(self) -> [U] { [] }\n}\nenum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}\nenum Opt2<T> {\n    S(T)\n    N\n}\nenum Wrap<T> { W(T) }\nenum E<T> {\n    A(T)\n    fn map<U>(self, u: U) -> [U] { [u] }\n}";
 
 /// `line` on line 1, then `GENERIC` and `DECLS`.
-fn with_generics(line: &str) -> String {
+pub(super) fn with_generics(line: &str) -> String {
     format!("{line}\n{GENERIC}\n{DECLS}")
 }
 

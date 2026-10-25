@@ -1,6 +1,6 @@
 //! Optionals of optionals: each operation takes one layer at a time.
 
-use super::generics::{infers, with_decls};
+use super::generics::{infers, with_decls, with_generics};
 use super::*;
 use crate::front_end::{PRELUDE_SOURCE, prelude_program};
 
@@ -173,6 +173,37 @@ fn some_should_lower_as_the_conversion_does() {
     }
 }
 
+/// `Option.None()` holds nothing: the fix removes the parentheses, and it is unsafe when they hold
+/// anything.
+#[test]
+fn a_none_that_is_called_should_get_the_fix_that_removes_the_parentheses() {
+    for (body, parens, safe) in [
+        ("let r: i64? = Option.None()", "()", true),
+        ("let r: i64? = Option.None(1)", "(1)", false),
+        (
+            "let r: i64? = Option.None(// 1\n    )",
+            "(// 1\n    )",
+            false,
+        ),
+    ] {
+        let src = with_body(body);
+        let d = diagnostic(&src, Code::VariantForm, (2, 30, parens), &[]);
+        let [(is_safe, edits)] = &fixes(&src, &d)[..] else {
+            panic!("`{body}` should have one fix");
+        };
+        assert_eq!((*is_safe, edits.len()), (safe, 1), "{body}");
+    }
+}
+
+/// An argument that fails still gives `Some` the type it has, so a use of it is checked.
+#[test]
+fn a_some_whose_argument_fails_should_keep_its_type() {
+    codes(
+        &with_body("let r: i64 = Some(nothing)"),
+        &[(Code::Mismatch, (2, 18)), (Code::BindingNotFound, (2, 23))],
+    );
+}
+
 /// A wrong use of `Option` or `Some` gets the code of the rule it breaks, at the user's text.
 /// `tests/diagnostics/E0050-some` pins the wording of the last.
 #[test]
@@ -196,7 +227,39 @@ fn a_wrong_use_of_option_or_some_should_be_reported() {
             (2, 12, "Option"),
         ),
         ("let r = Some(None)", Code::CannotInfer, (2, 13, "Some")),
+        ("let r = Option.Some", Code::VariantForm, (2, 20, "Some")),
+        ("let r = Option.map", Code::UnknownVariant, (2, 20, "map")),
+        (
+            "let r = Option.map(1)",
+            Code::UnknownVariant,
+            (2, 20, "map"),
+        ),
+        (
+            "let r = Option<i64, i64>.None",
+            Code::TypeArguments,
+            (2, 19, "<i64, i64>"),
+        ),
+        // A written type argument is not overridden by the expected type.
+        (
+            "let r: u8? = Some<i64>(5)",
+            Code::Mismatch,
+            (2, 18, "Some<i64>(5)"),
+        ),
+        // The call fails with its label, so it gives no value to mismatch.
+        (
+            "let r: i64 = Some(a: 1)",
+            Code::LabeledArgument,
+            (2, 23, "a"),
+        ),
     ] {
         diagnostic(&with_body(body), code, at, &[]);
     }
+}
+
+/// A call of a name that is not `Some` and names nothing waits for no context: it is the one
+/// error, with no failed inference after it.
+#[test]
+fn an_unknown_call_should_not_wait_for_context_in_a_generic_call() {
+    let src = with_generics("fn g() {\n    let x = id(unknown(None))\n}");
+    codes(&src, &[(Code::FunctionNotFound, (2, 16))]);
 }
