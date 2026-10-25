@@ -47,12 +47,14 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 17] = [
+const SMALL_STACK: [&str; 19] = [
     "longlist",
     "rightskew",
     "deepchain",
     "deepchain2",
     "dropmutual",
+    "dropoptional",
+    "dropmutualoptional",
     "eqlist",
     "enumlist",
     "enumfold",
@@ -409,6 +411,29 @@ fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
 #[test]
 fn class_drop_should_free_chains_of_classes_that_hold_each_other_in_a_small_stack() {
     assert_small_stack_prints_at_both("dropmutual", "1000000\n300000\n");
+}
+
+/// GIVEN the `dropoptional` program, which builds a list of 1 000 000 nodes through a field of
+/// type `Node??`, the last link `Some(None)`
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints 1000000
+///
+/// The drop follows a field with more than one `?` in a loop, as it follows `Node?`.
+#[test]
+fn nested_optional_link_should_free_a_million_nodes_in_a_small_stack() {
+    assert_small_stack_prints_at_both("dropoptional", "1000000\n");
+}
+
+/// GIVEN the `dropmutualoptional` program, which builds a chain of 1 000 000 pairs of two
+/// classes that hold each other through fields of type `A??` and `B??`
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints 1000000
+///
+/// The drop of a cycle of classes frees the objects from pending lists, whatever the number of
+/// `?` of the fields that link them.
+#[test]
+fn nested_optional_links_between_classes_should_free_in_a_small_stack() {
+    assert_small_stack_prints_at_both("dropmutualoptional", "1000000\n");
 }
 
 /// GIVEN the `eqtrail` program, which compares two pairs of left-deep values of 1 000 000 nodes

@@ -1,0 +1,20 @@
+// A chain of 1 000 000 pairs of two classes that hold each other through fields of type `A??`
+// and `B??`, run under a 256 KiB stack. The last link is `Some(None)`. The drop frees the
+// chain from pending lists, in one frame, however many `?` the fields have.
+class A {
+    _b: B??
+}
+
+class B {
+    _a: A??
+}
+
+fn main() {
+    let mut head: A?? = Some(None)
+    let mut i = 0
+    while i < 1_000_000 {
+        i += 1
+        head = Some(Some(A(_b: Some(Some(B(_a: head))))))
+    }
+    print(i)
+}

@@ -34,7 +34,8 @@ same way. See the milestone 2 spec, "Reference counting".
   objects (ADR 0010, proposed).
 - Drop follows a field that holds a class of the same cycle in a loop, so a
   list, or a chain that alternates between classes, frees in constant stack. A
-  cycle is a set of classes that hold each other in direct fields, `X` or
-  `X?`. A list's `next` is a cycle of one class. Other references recurse: a
-  field of an array or an enum, a field of type `X??` or deeper, and a class
-  outside the cycle.
+  cycle is a set of classes that hold each other in direct fields, `X` with any
+  number of `?` around it. A list's `next` is a cycle of one class. Other
+  references recurse: a field of an array or an enum, and a class outside the
+  cycle. `==` loops only on the last field of a class's own type, `X` or `X?`. It
+  recurses on every other link until milestone 8 part 5 removes class `==`.
