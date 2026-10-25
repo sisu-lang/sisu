@@ -1414,6 +1414,9 @@ pub(crate) enum ForeignPattern {
         replace: Span,
         fields: String,
     },
+    /// Type arguments, `Option<i64>.Some(v)`; the fix deletes them. The type of the matched
+    /// value gives them.
+    TypeArgs,
 }
 
 /// A range written another language's way. `start` and `end` are its bounds as written; `end` is
@@ -3107,6 +3110,11 @@ impl From<DiagnosticKind> for Diagnostic {
                     replace,
                     &fields,
                 )),
+                ForeignPattern::TypeArgs => {
+                    Diagnostic::coded(code, at, "a pattern takes no type arguments")
+                        .with_help("the type of the matched value gives the type arguments")
+                        .with_fix(safe_fix("remove the type arguments", at, ""))
+                }
             },
             DiagnosticKind::CannotMatch { ty, at } => {
                 Diagnostic::coded(code, at, format!("cannot `match` on `{ty}`"))

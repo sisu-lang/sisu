@@ -1506,7 +1506,6 @@ crates/sisuc/src/parser.rs::optional_types
 crates/sisuc/src/parser.rs::params_and_return_type
 crates/sisuc/src/parser.rs::parenthesized_primary
 crates/sisuc/src/parser.rs::pattern_forms
-crates/sisuc/src/parser.rs::pattern_parse_errors
 crates/sisuc/src/parser.rs::pattern_spans
 crates/sisuc/src/parser.rs::power_operator
 crates/sisuc/src/parser.rs::redundant_semicolon_fix

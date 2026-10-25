@@ -1765,6 +1765,20 @@ impl<'a> Parser<'a> {
         Ok(pattern)
     }
 
+    /// An error for the type arguments at the next token, if a list follows that a `(` or `.` ends.
+    /// A pattern takes none.
+    fn no_type_args(&mut self) -> Result<(), Diagnostic> {
+        if !self.at(&TokenKind::Lt) || !self.type_args_follow() {
+            return Ok(());
+        }
+        let (_, at) = self.type_args()?;
+        Err(DiagnosticKind::PatternForm {
+            form: ForeignPattern::TypeArgs,
+            at,
+        }
+        .into())
+    }
+
     /// One alternative of a pattern: `_`, `None`, a name, `Num(p, ...)`, `Expr.Num(p, ...)`,
     /// `Expr.Idle`, `Option.None`, a literal, or a range of two literals. The caller has counted
     /// its level.
@@ -1795,6 +1809,8 @@ impl<'a> Parser<'a> {
                 if let Some(error) = self.path_idiom(first.span) {
                     return Err(error);
                 }
+                // `Option<i64>.Some(v)` or `Wrap<i64>(v)`: the matched value gives the types.
+                self.no_type_args()?;
                 let (qualifier, name) = if self.eat(&TokenKind::Dot).is_some() {
                     // `Option.None`, as in an expression; the checker rejects the `None` member
                     // of anything else.
@@ -4728,6 +4744,30 @@ mod tests {
         assert_eq!(codes, [(0, Code::NestingTooDeep); 2]);
     }
 
+    /// The type arguments of a pattern can be too deep to parse though they scan as a list, and
+    /// that is the error, not E0123.
+    #[test]
+    fn pattern_type_arguments_should_count_toward_the_nesting_limit() {
+        let source = |types: &str| {
+            let n = MAX_DEPTH - 8;
+            format!(
+                "fn main() {{ {}match e {{ A<{types}>.B(x) => 1 }}{} }}",
+                "(".repeat(n),
+                ")".repeat(n)
+            )
+        };
+        let nested = format!("{}i64{}", "[".repeat(9), "]".repeat(9));
+        // The parser recurses as deep as the limit allows, which the compiler's own stack holds.
+        let codes = std::thread::Builder::new()
+            .stack_size(crate::STACK_SIZE)
+            .spawn(move || [source("i64"), source(&nested)].map(|src| parse_err(&src).0))
+            .expect("the thread should start")
+            .join()
+            .expect("the parse should not overflow the stack");
+        // One `i64` fits where nine brackets around it do not.
+        assert_eq!(codes, [Code::PatternForm, Code::NestingTooDeep]);
+    }
+
     /// Type arguments and value arguments are siblings in the tree, so the deepest of them counts,
     /// whichever way the call is written, and what follows the call sits above both.
     #[test]
@@ -5246,7 +5286,7 @@ mod tests {
         clippy::too_many_lines,
         reason = "one row per error, so the table reads in one place"
     )]
-    fn pattern_parse_errors() {
+    fn pattern_errors_should_report_the_code_position_and_fix() {
         let main = |body: &str| format!("fn main() {{\n    {body}\n}}");
         let arm = |arm: &str| main(&format!("match e {{\n        {arm}\n    }}"));
         // Each row: the source, the code and position of the error, and its fix: whether it is
@@ -5385,6 +5425,27 @@ mod tests {
             (arm("\"{x y}\" => 1"), Code::Expected, (3, 13), None),
             // A line that does not continue the arm leaves its `=>` missing.
             (arm("A\n        B => 1"), Code::Expected, (3, 10), None),
+            // A pattern takes no type arguments; the fix removes them, whatever the pattern is.
+            (
+                arm("Option<i64>.Some(v) => 1"),
+                Code::PatternForm,
+                (3, 15),
+                Some((true, arm("Option.Some(v) => 1"))),
+            ),
+            (
+                arm("Wrap<i64>(v) => 1"),
+                Code::PatternForm,
+                (3, 13),
+                Some((true, arm("Wrap(v) => 1"))),
+            ),
+            (
+                arm("Option<Map<i64, string>>.Some(v) => 1"),
+                Code::PatternForm,
+                (3, 15),
+                Some((true, arm("Option.Some(v) => 1"))),
+            ),
+            // A `<` that no type-argument list explains keeps the `=>` error.
+            (arm("A<B => 1"), Code::Expected, (3, 10), None),
         ];
         for (src, code, position, fix) in rows {
             let d = parse_diagnostic(&src);
