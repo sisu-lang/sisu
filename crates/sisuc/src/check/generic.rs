@@ -30,16 +30,96 @@ fn optional_element(mut ty: Type) -> bool {
     matches!(ty.kind(), TypeKind::Optional(_))
 }
 
-/// Whether `ty` names the type parameter at `i`.
-fn names_param(ty: Type, i: usize) -> bool {
-    match ty.kind() {
-        TypeKind::Param(_, j) => j as usize == i,
-        TypeKind::Array(inner) | TypeKind::Optional(inner) => names_param(inner, i),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
-            args.get().iter().any(|&arg| names_param(arg, i))
-        }
-        _ => false,
+/// Marks in `named` each type parameter that `ty` names, by its place; `named` has a place for
+/// each type parameter in scope. Each type of `ty` is visited once.
+fn mark_params(ty: Type, named: &mut [bool]) {
+    #[cfg(test)]
+    MARKED.set(MARKED.get() + 1);
+    // A type without a parameter names none: its subtree is not walked again at each call.
+    if !ty.has_param() {
+        return;
     }
+    match ty.kind() {
+        TypeKind::Param(_, j) => named[j as usize] = true,
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => mark_params(inner, named),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            for &arg in args.get() {
+                mark_params(arg, named);
+            }
+        }
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
+/// Which of the first `len` type parameters `types` name. A type that did not resolve names
+/// nothing.
+fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
+    let mut named = vec![false; len];
+    for ty in types.flatten() {
+        mark_params(ty, &mut named);
+    }
+    named
+}
+
+/// Whether the type parameter `name` is broken, as `type_params` reports it: it takes the name
+/// of one in `seen`, which then holds it, or of a built-in type. A call poisons such a parameter
+/// rather than leave it uninferred, and no call waits for it.
+fn broken_param(seen: &mut FxHashSet<Symbol>, name: Symbol) -> bool {
+    !seen.insert(name) || built_in_type(name.as_str()).is_some()
+}
+
+/// Which of `names`, a declaration's type parameters, are broken (see `broken_param`).
+fn broken_params(names: &[Symbol]) -> Vec<bool> {
+    let mut seen = FxHashSet::default();
+    names
+        .iter()
+        .map(|&name| broken_param(&mut seen, name))
+        .collect()
+}
+
+/// Whether one of the type parameters in `names` from `owner` on has no type in `params` that
+/// names it, so that no argument can bind it. For a construction, whose built type names all
+/// of them: the call needs its context, whatever its arguments are. A broken parameter is
+/// not open.
+fn leaves_open(params: impl Iterator<Item = Option<Type>>, names: &[Symbol], owner: usize) -> bool {
+    let bound = named_params(params, names.len());
+    let broken = broken_params(names);
+    (owner..names.len()).any(|i| !bound[i] && !broken[i])
+}
+
+/// `leaves_open` for a call of a function or method, which returns `ret`: the context binds only
+/// what the type of the call names, so the call is open if `ret` names a parameter that no
+/// parameter type does. It is not open, whatever else it leaves, if one parameter is named by
+/// no type at all: nothing can bind that one, and the call reports it.
+fn leaves_open_in(
+    params: impl Iterator<Item = Option<Type>>,
+    ret: Type,
+    names: &[Symbol],
+    owner: usize,
+) -> bool {
+    let bound = named_params(params, names.len());
+    let built = named_params(iter::once(Some(ret)), names.len());
+    let broken = broken_params(names);
+    let mut open = false;
+    for i in (owner..names.len()).filter(|&i| !bound[i] && !broken[i]) {
+        if !built[i] {
+            return false;
+        }
+        open = true;
+    }
+    open
+}
+
+/// A call of a generic callee as ranking sees it (see `Checker::waits`).
+#[derive(Default)]
+struct CallShape {
+    /// Whether the callee has type parameters of its own to infer.
+    generic: bool,
+    /// Whether the arguments fit the callee's declaration, whose return type resolved.
+    shaped: bool,
+    /// Whether no argument can bind one of its type parameters, and the type of the call names
+    /// it, so only the call's context can bind it.
+    open: bool,
 }
 
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
@@ -166,6 +246,9 @@ thread_local! {
     /// How many type parameter names the search for reported ones has looked at on this
     /// thread.
     pub(super) static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types the walk for the type parameters that types name has visited on this
+    /// thread.
+    pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many lookups of `body.ahead` have found an entry on this thread.
     pub(super) static INSPECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -389,10 +472,8 @@ impl Checker<'_> {
             for (i, &name) in sig.declared.iter().enumerate() {
                 #[cfg(test)]
                 SCANNED.set(SCANNED.get() + 1);
-                let repeated = !seen.insert(name);
-                if call.bindings.found[i].is_none()
-                    && (repeated || built_in_type(name.as_str()).is_some())
-                {
+                let broken_name = broken_param(&mut seen, name);
+                if call.bindings.found[i].is_none() && broken_name {
                     call.bindings.found[i] = Some(UNKNOWN);
                     broken = true;
                 }
@@ -614,7 +695,7 @@ impl Checker<'_> {
             callee,
             example,
             at,
-            in_result: sig.ret.is_some_and(|ret| names_param(ret, param)),
+            in_result: named_params(iter::once(sig.ret), sig.declared.len())[param],
         });
     }
 
@@ -623,9 +704,11 @@ impl Checker<'_> {
     /// `if let` or a `match` whose every value branch does, or a block whose value does; or a
     /// call of a generic function or method, or a construction of a generic class or variant,
     /// its type arguments not written, whose arguments fit its declaration and all need
-    /// context. A name resolves as the checker resolves it: a call's callee by its declaration,
-    /// whatever local takes it. A method's receiver, an `if let`'s value and a `match`'s
-    /// scrutinee are checked here, ahead of their turn, and kept for it (see `Ahead`).
+    /// context, or, if they fit, whose parameter types leave one of its own type parameters
+    /// unnamed that the call's type names, which no argument can bind. A name resolves as the
+    /// checker resolves it: a call's callee by its declaration, whatever local takes it. A
+    /// method's receiver, an `if let`'s value and a `match`'s scrutinee are checked here, ahead of
+    /// their turn, and kept for it (see `Ahead`).
     // shortcut: a nested generic call scans its arguments again, quadratic in the depth of the
     // nesting; remember the answer by span if deep nests appear.
     pub(super) fn needs_context(&mut self, e: &ast::Expr) -> bool {
@@ -636,7 +719,14 @@ impl Checker<'_> {
     /// declaration: count, labels, and every parameter's and the return type resolved.
     fn waits(&mut self, e: &ast::Expr, fit: &mut bool) -> bool {
         use ast::ExprKind as K;
-        let (generic, shaped, args) = match &e.kind {
+        let (
+            CallShape {
+                generic,
+                shaped,
+                open,
+            },
+            args,
+        ) = match &e.kind {
             _ if bare_none(e) => return true,
             K::ArrayLit(elements) => return elements.iter().all(|e| self.waits(e, fit)),
             K::Field {
@@ -646,7 +736,7 @@ impl Checker<'_> {
             } => {
                 return self
                     .generic_variant(base, name)
-                    .is_some_and(|v| v.fields.is_empty());
+                    .is_some_and(|(_, v)| v.fields.is_empty());
             }
             K::MethodCall {
                 receiver,
@@ -657,33 +747,38 @@ impl Checker<'_> {
                 ..
             } if types.is_empty() => {
                 let variant = self.generic_variant(receiver, method).filter(|_| !safe);
-                let (generic, shaped) = if let Some(v) = variant {
+                let shape = if let Some((names, v)) = variant {
                     // Mixed labels are reported at the declaration.
                     let shaped = !v.fields.is_empty()
                         && (v.labels.iter().all(Option::is_some)
                             || v.labels.iter().all(Option::is_none))
                         && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
-                    (true, shaped)
+                    CallShape {
+                        generic: true,
+                        shaped,
+                        open: shaped && leaves_open(v.fields.iter().copied(), names, 0),
+                    }
                 } else if !safe
                     && method.name.as_str() == "Some"
                     && option_written(receiver) == Some(false)
                 {
                     // `Option.Some` is `Some`, as `generic_callee` takes it.
-                    (true, matches!(&args[..], [arg] if arg.label.is_none()))
+                    CallShape {
+                        generic: true,
+                        shaped: matches!(&args[..], [arg] if arg.label.is_none()),
+                        open: false,
+                    }
                 } else {
                     self.generic_method(receiver, method, args, *safe)
                 };
-                (generic, shaped, args)
+                (shape, args)
             }
             K::Call {
                 callee,
                 types,
                 args,
                 ..
-            } if types.is_empty() => {
-                let (generic, shaped) = self.generic_callee(callee.name, args);
-                (generic, shaped, args)
-            }
+            } if types.is_empty() => (self.generic_callee(callee.name, args), args),
             K::If {
                 then_block,
                 else_block: Some(else_block),
@@ -716,7 +811,7 @@ impl Checker<'_> {
             K::Block(block) => return self.block_waits(block, fit, |_| None) == Some(true),
             _ => return false,
         };
-        let waits = generic && args.iter().all(|arg| self.waits(&arg.value, fit));
+        let waits = generic && (open || args.iter().all(|arg| self.waits(&arg.value, fit)));
         *fit &= !waits || shaped;
         waits
     }
@@ -836,12 +931,13 @@ impl Checker<'_> {
         index
     }
 
-    /// The variant `base.member` of a generic enum that `base` names without type arguments.
+    /// The variant `base.member` of a generic enum that `base` names without type arguments,
+    /// and the enum's type parameters.
     pub(super) fn generic_variant(
         &self,
         base: &ast::Expr,
         member: &ast::Ident,
-    ) -> Option<&VariantInfo> {
+    ) -> Option<(&[Symbol], &VariantInfo)> {
         let ast::ExprKind::Name(name) = base.kind else {
             return None;
         };
@@ -850,19 +946,18 @@ impl Checker<'_> {
         };
         let info = &self.enums[id.0];
         let &variant = info.index.get(&member.name)?;
-        (!info.type_params.is_empty()).then(|| &info.variants[variant])
+        (!info.type_params.is_empty()).then(|| (&info.type_params[..], &info.variants[variant]))
     }
 
-    /// Whether `receiver.method(args)`, or `receiver?.method(args)` with `safe`, calls a method
-    /// with type parameters of its own, and whether `args` fit its declaration, whose return
-    /// type resolved.
+    /// The shape of `receiver.method(args)`, or of `receiver?.method(args)` with `safe`, a call
+    /// of a method with type parameters of its own.
     fn generic_method(
         &mut self,
         receiver: &ast::Expr,
         method: &ast::Ident,
         args: &[ast::Arg],
         safe: bool,
-    ) -> (bool, bool) {
+    ) -> CallShape {
         let mut ty = self.receiver_ahead(receiver);
         if safe {
             // `?.` calls the method on the payload; on a value that is not optional, which is
@@ -881,16 +976,22 @@ impl Checker<'_> {
                 let info = &self.enums[id.0];
                 (&info.methods, info.type_params.len())
             }
-            _ => return (false, false),
+            _ => return CallShape::default(),
         };
         let Some(&Declared::Known(func)) = methods.get(&method.name) else {
-            return (false, false);
+            return CallShape::default();
         };
         let sig = &self.signatures[func.0];
-        (
-            sig.type_params.len() > owner,
-            sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args),
-        )
+        let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
+        CallShape {
+            generic: sig.type_params.len() > owner,
+            shaped,
+            // The receiver binds the owner's type parameters.
+            open: shaped
+                && sig.ret.is_some_and(|ret| {
+                    leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, owner)
+                }),
+        }
     }
 
     /// The type of `receiver`, a method's, checked ahead of the call and kept for `member`.
@@ -932,30 +1033,57 @@ impl Checker<'_> {
         ty
     }
 
-    /// Whether a call of `name` with `args` calls a generic function or constructs a generic
-    /// class, and whether `args` fit its declaration, a function's return type resolved.
-    fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> (bool, bool) {
+    /// The shape of a call of `name` with `args` that calls a generic function, constructs a
+    /// generic class, or builds `Some`, `Ok` or `Err`.
+    fn generic_callee(&self, name: Symbol, args: &[ast::Arg]) -> CallShape {
         match (self.class_ids.get(&name), self.function_ids.get(&name)) {
             (Some(&Declared::Known(class)), _) => {
                 let info = &self.classes[class.0];
-                (
-                    !info.type_params.is_empty(),
-                    fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args),
-                )
+                let shaped = fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args);
+                CallShape {
+                    generic: !info.type_params.is_empty(),
+                    shaped,
+                    open: shaped
+                        && leaves_open(info.fields.iter().map(|f| f.ty), &info.type_params, 0),
+                }
             }
             (None, Some(&Declared::Known(func))) => {
                 let sig = &self.signatures[func.0];
-                (
-                    !sig.type_params.is_empty(),
-                    sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args),
-                )
+                let shaped =
+                    sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
+                CallShape {
+                    generic: !sig.type_params.is_empty(),
+                    shaped,
+                    open: shaped
+                        && sig.ret.is_some_and(|ret| {
+                            leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, 0)
+                        }),
+                }
             }
             // `Some<T>(x: T) -> T?`, and the prelude's `Ok` and `Err`, which no user item can
             // take the name of.
-            (None, None) if name.as_str() == "Some" || self.result_variant(name).is_some() => {
-                (true, matches!(args, [arg] if arg.label.is_none()))
-            }
-            _ => (false, false),
+            (None, None) if name.as_str() == "Some" => CallShape {
+                generic: true,
+                shaped: matches!(args, [arg] if arg.label.is_none()),
+                open: false,
+            },
+            (None, None) => self
+                .result_variant(name)
+                .map_or_else(CallShape::default, |(id, v)| {
+                    let info = &self.enums[id.0];
+                    let shaped = matches!(args, [arg] if arg.label.is_none());
+                    CallShape {
+                        generic: true,
+                        shaped,
+                        open: shaped
+                            && leaves_open(
+                                info.variants[v].fields.iter().copied(),
+                                &info.type_params,
+                                0,
+                            ),
+                    }
+                }),
+            _ => CallShape::default(),
         }
     }
 

@@ -1,6 +1,7 @@
 //! The prelude: `print`, `eprint`, `panic` and `read_line`, the names no top-level item can take,
 //! and `todo`.
 
+use super::generics::infers;
 use super::*;
 use crate::source::PRELUDE_BASE;
 
@@ -423,6 +424,42 @@ fn result_should_be_built_with_bare_names() {
         let printed = lowered(&src);
         assert!(printed.contains(part), "{part} in {printed}");
     }
+}
+
+/// `Ok` and `Err` need their context whatever their argument is, as each variant names one of
+/// the two parameters of `Result`: inside a generic call, or inside another `Result`.
+#[test]
+fn result_should_wait_for_its_context_whatever_its_argument() {
+    with_prelude();
+    let r = "Result<i64, string>";
+    infers(&[
+        (
+            &format!("fn g() {{\n    let r: {r} = id(Ok(1))\n}}"),
+            "id",
+            &[r, r],
+        ),
+        (
+            &format!("fn g() {{\n    let r: {r} = id(Err(\"x\"))\n}}"),
+            "id",
+            &[r, r],
+        ),
+    ]);
+    let nested = "let r: Result<Result<i64, string>, string> = Ok(Err(\"x\"))";
+    contains(
+        &body("", nested),
+        &["(variant Result.Ok (variant Result.Err \"x\"))"],
+    );
+}
+
+/// With no annotation, `id(Ok(1))` has no context to fix `E`, and `id` cannot infer `T`.
+#[test]
+fn result_should_not_be_inferred_from_its_argument_alone() {
+    with_prelude();
+    let src = format!(
+        "{}\nfn id<T>(x: T) -> T {{ x }}",
+        body("", "let r = id(Ok(1))")
+    );
+    codes(&src, &[(Code::CannotInfer, (2, 13))]);
 }
 
 /// A `match` takes `Ok` and `Err` as the variants of the `Result` it matches.

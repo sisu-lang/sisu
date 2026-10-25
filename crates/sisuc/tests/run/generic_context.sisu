@@ -1,0 +1,32 @@
+// A generic call whose arguments cannot bind one of its type parameters takes it from its
+// context: the `Result` that `Ok(1)` builds has an `E` that only the annotation or the outer
+// call fixes. A class constructor and a method of a generic class do the same.
+fn id<T>(x: T) -> T { x }
+fn first<T>(xs: [T]) -> T { xs[0] }
+class Tag<T, U> {
+    a: T
+}
+class Bag<T> {
+    v: T
+    fn conv<U>(self, _n: i64) -> [U] { [] }
+}
+
+fn show(r: Result<i64, string>) {
+    match r {
+        Ok(v) => print("ok {v}")
+        Err(e) => print("err {e}")
+    }
+}
+
+fn main() {
+    let a: Result<i64, string> = id(Ok(1))
+    show(a) // ok 1
+    let b: Result<i64, string> = first([Err("x"), Ok(2)])
+    show(b) // err x
+    let t: Tag<i64, string> = id(Tag(a: 7))
+    print("{t.a}") // 7
+    let bag = Bag(v: 1)
+    print("{bag.v}") // 1
+    let xs: [string] = id(bag.conv(3))
+    print("{xs.len()}") // 0
+}
