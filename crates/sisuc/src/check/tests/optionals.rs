@@ -237,7 +237,7 @@ fn an_optional_should_be_a_type_argument() {
             &["i64?", "i64?"],
         ),
         (
-            "fn g() {\n    let x: i64? = id(5)\n}",
+            "fn g() {\n    let x: i64? = id(None)\n}",
             "id",
             &["i64?", "i64?"],
         ),
