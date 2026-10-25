@@ -20,6 +20,8 @@ probe only inside the scratch directory your launch names.
   its authoring gate, value bar and coverage gaps.
 - `<codebase-design SKILL.md path>`. Use its vocabulary (deep modules,
   interfaces, seams) to judge where code goes and what each module hides.
+- `<rust-best-practices SKILL.md path>`. Judge the Rust idiom with it, as
+  "Reviewing" in `CODING_STANDARDS.md` says.
 
 # Values
 
