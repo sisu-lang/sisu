@@ -78,9 +78,14 @@ variants, and a `match` must cover all of them.
   short form breaks no program.
 - **`if let` on `T?` is an implicit `Some`.** `if let x = opt` binds the
   payload, as today; in milestone 7 only a binding or `_` may stand there.
-  Milestone 8 settles the rule: a pattern whose outermost name is `Some` or
-  `None` matches the optional itself, and any other pattern matches the value
-  inside it. No enum can have a variant named `Some` or `None`
+  Milestone 8 settles the rule, at any position of optional type: `Some(p)`
+  and `None` match the optional itself; a variant, literal or range pattern
+  matches the value inside; an alternative applies the rule to each
+  alternative; and a bare binding or `_` covers the whole optional, as Swift's
+  `switch` does. Only the top of an `if let` or `while let` peels one layer,
+  so `if let x = opt` binds the payload. The user ruled on 2026-10-16,
+  amending the rule of 2026-10-15, which left `None` uncovered in
+  `match o { Some(n) => n\n _ => 0 }`. No enum can have a variant named `Some` or `None`
   ([ADR 0015](0015-the-prelude-holds-only-what-almost-every-program-uses.md)),
   so the rule never has to choose.
 

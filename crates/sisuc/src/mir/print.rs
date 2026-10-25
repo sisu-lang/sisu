@@ -278,6 +278,12 @@ impl Printer<'_> {
                 some.0,
                 none.0
             ),
+            Terminator::TestPresent { place, some, none } => format!(
+                "test_present {} bb{} bb{}",
+                self.place(place),
+                some.0,
+                none.0
+            ),
             Terminator::SwitchTag {
                 place,
                 arms,

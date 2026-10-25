@@ -500,6 +500,10 @@ pub(crate) enum PatternKind {
     Str(String),
     /// Any of the alternatives, tried in order; none of them is an `Or`.
     Or(Vec<Pattern>),
+    /// A value of the optional at its position, the pattern against the value inside.
+    Some(Box<Pattern>),
+    /// The `None` of the optional at its position.
+    None,
 }
 
 impl Type {
@@ -1163,8 +1167,8 @@ impl Printer<'_> {
         }
     }
 
-    /// `_`, a local, a payload-free variant's name, `(Name field ...)`, a literal, `lo..=hi`, or
-    /// `(| alternative ...)`, at a position of type `ty`.
+    /// `_`, a local, a payload-free variant's name, `(Name field ...)`, a literal, `lo..=hi`,
+    /// `(| alternative ...)`, `(Some pattern)` or `None`, at a position of type `ty`.
     fn pattern(&self, f: &mut fmt::Formatter<'_>, pattern: &Pattern, ty: Type) -> fmt::Result {
         match &pattern.kind {
             PatternKind::Wild => f.write_str("_"),
@@ -1211,6 +1215,17 @@ impl Printer<'_> {
                 }
                 f.write_str(")")
             }
+            PatternKind::Some(inner) => {
+                let TypeKind::Optional(payload) = ty.kind() else {
+                    panic!(
+                        "the checker should only emit a `Some` pattern at an optional position, not `{ty}`"
+                    )
+                };
+                f.write_str("(Some ")?;
+                self.pattern(f, inner, payload)?;
+                f.write_str(")")
+            }
+            PatternKind::None => f.write_str("None"),
         }
     }
 

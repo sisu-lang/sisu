@@ -346,6 +346,7 @@ impl Walk {
             Terminator::Goto(_)
             | Terminator::IfPresent { .. }
             | Terminator::SwitchTag { .. }
+            | Terminator::TestPresent { .. }
             | Terminator::Return(None)
             | Terminator::Unreachable => {}
         }

@@ -2197,6 +2197,59 @@ fn leak_on_the_some_edge() {
     rejects(&b.finish(), 1, o, Rule::Return);
 }
 
+/// A presence test reads `o` in place and moves nothing, so `o` is still owned on both edges:
+/// a read and a release there certify, and a `return` without the release leaks.
+#[test]
+fn test_present_should_leave_its_place_owned_on_both_edges() {
+    for leak in [None, Some(1), Some(2)] {
+        let mut b = Builder::new("f");
+        let o = b.local("o", Type::optional(Type::STRING));
+        b.block(
+            vec![fresh(o)],
+            Terminator::TestPresent {
+                place: whole(o),
+                some: BlockId(1),
+                none: BlockId(2),
+            },
+        );
+        for edge in [1, 2] {
+            let mut stmts = vec![show(read(o))];
+            if leak != Some(edge) {
+                stmts.push(Statement::Release(o));
+            }
+            b.block(stmts, ret());
+        }
+        let f = b.finish();
+        match leak {
+            None => assert_eq!(certify(&f), Ok(())),
+            Some(edge) => rejects(&f, edge, o, Rule::Return),
+        }
+    }
+}
+
+/// A binding under `Some` in the middle of a path borrows as one under a payload does, from an
+/// owned scrutinee and from a borrowed one.
+#[test]
+fn a_borrow_through_a_mid_path_some_should_certify() {
+    let program = certifies(
+        "enum Shape {\n    Circle(string)\n    Square(i64)\n}\nfn f(s: Shape?) -> i64 {\n    match s {\n        Circle(r) => r.len()\n        Square(n) => n\n        None => 0\n    }\n}\nfn g() -> i64 {\n    let s: Shape? = Shape.Circle(\"ab\")\n    match s {\n        Circle(r) => r.len()\n        _ => 0\n    }\n}",
+    );
+    for name in ["f", "g"] {
+        let f = program
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .expect("the program should have the function");
+        let r = named(f, "r");
+        let mid_path = f.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+            matches!(stmt, Statement::Assign { dest: Some(dest), value: Rvalue::Borrow(place) }
+                if *dest == r && place.projections.first() == Some(&Projection::Some)
+                    && place.projections.len() == 2)
+        });
+        assert!(mid_path, "fn {name} should borrow `r` through `Some`");
+    }
+}
+
 /// `release x` of a borrowed binding, and of an ended one: neither owns a reference.
 #[test]
 fn release_of_a_borrowed_or_ended_binding() {

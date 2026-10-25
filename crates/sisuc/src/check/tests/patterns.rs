@@ -265,8 +265,13 @@ fn pattern_errors() {
         ("e", "Add(x, x) => 1", Code::BoundTwice, 16),
         ("s", "Running(Idle) => 1", Code::NotVariantHere, 17),
         ("s", "Running(Num(m)) => 1", Code::OnlyNamePosition, 17),
-        ("o", "V(None) => 1", Code::OnlyNamePosition, 11),
-        ("o", "V(Num(m)) => 1", Code::OnlyNamePosition, 11),
+        // A variant pattern at an optional position matches the value inside.
+        ("o", "V(Num(m)) => 1", Code::Mismatch, 11),
+        // `Some` at an optional position needs its one payload.
+        ("maybe", "Some => 1", Code::VariantForm, 9),
+        ("maybe", "Option.Some => 1", Code::VariantForm, 16),
+        ("maybe", "Some(x, y) => 1", Code::SubpatternCount, 9),
+        ("maybe", "Option.Sone(x) => 1", Code::UnknownVariant, 16),
         ("s", "Idle() => 1", Code::VariantForm, 13),
         ("e", "Expr.Num => 1", Code::VariantForm, 14),
         ("e", "Num => 1", Code::VariantForm, 9),
@@ -299,8 +304,6 @@ fn pattern_errors() {
     let rows = [
         ("    let _ = match p {}", Code::CannotMatch, 19),
         ("    if let m = 5 {}", Code::UnwrapNeedsOptional, 16),
-        ("    if let Num(m) = maybe {}", Code::OnlyNamePosition, 12),
-        ("    if let None = maybe {}", Code::OnlyNamePosition, 12),
         ("    while let Num(m) = 5 {}", Code::UnwrapNeedsOptional, 24),
         ("    if let m = p {}", Code::UnwrapNeedsOptional, 16),
         ("    while let Nmu(m) = e {}", Code::UnknownVariant, 15),

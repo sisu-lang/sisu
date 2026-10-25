@@ -308,10 +308,9 @@ fn half(n: i64) -> Option<i64> {
 
 fn main() {
     let a: i64? = half(8)
-    if let n = a {
-        print(n)                       // 4
-    } else {
-        print("odd")
+    match a {
+        Some(n) => print(n)            // 4
+        None => print("odd")
     }
 }
 ```
@@ -320,8 +319,7 @@ The rules:
 
 - `Option<T>` is the enum with the variants `None` and `Some(T)`. `Result<T, E>` is the enum with the variants `Ok(T)` and `Err(E)`. [Errors and Result](errors.md#results) tells how a result is used.
 - `Some`, `None`, `Ok` and `Err` are names in expressions and in patterns, without the name of the enum.
-- A pattern whose outermost name is `Some` or `None` matches the optional itself. Any other pattern matches the value inside it. So `if let` takes any pattern for the type of the value inside.
-- A `match` on an optional takes the arms `Some(...)` and `None`.
+- `Some(p)` and `None` match the optional itself. A variant, a literal or a range matches the value inside it, and a name or `_` matches the whole optional. Only the top of an `if let` or a `while let` takes off one layer. [Patterns on an optional](enums.md#patterns-on-an-optional) has the rules.
 - A `print`, `eprint` or interpolation of an optional builds with a warning, because the text can be `None`. `x.to_string()` gives the same text with no warning, for a program that wants `None` in its output.
 
 ### Optionals of optionals

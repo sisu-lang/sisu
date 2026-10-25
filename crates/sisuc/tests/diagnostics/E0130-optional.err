@@ -1,0 +1,13 @@
+error[E0130]: `match` does not cover `Square(_)`
+  --> E0130-optional.sisu:7:5
+   |
+ 7 |     match s {
+   |     ^^^^^
+   |
+help: add a `_ =>` arm
+   |
+10 +         _ => todo
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0130

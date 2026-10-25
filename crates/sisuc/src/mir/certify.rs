@@ -829,7 +829,10 @@ pub(super) fn terminator<'a>(
             consumed(op, lowered, f);
         }
         Terminator::IfPresent { optional, .. } => f(*optional, Effect::Read, None),
-        Terminator::SwitchTag { place, .. } => self::place(place, Effect::ReadInPlace, lowered, f),
+        // A presence test reads in place too, and sets no state on either edge.
+        Terminator::SwitchTag { place, .. } | Terminator::TestPresent { place, .. } => {
+            self::place(place, Effect::ReadInPlace, lowered, f);
+        }
         Terminator::Goto(_) | Terminator::Return(None) | Terminator::Unreachable => {}
     }
 }

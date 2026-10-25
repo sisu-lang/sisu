@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 11] = [
+const EXCLUDED: [(&str, &str); 10] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -44,10 +44,6 @@ const EXCLUDED: [(&str, &str); 11] = [
     (
         "ast::Bound::Name",
         "a named range bound is an error (E0126)",
-    ),
-    (
-        "ast::PatternKind::None",
-        "a `None` pattern is an error in every position (E0127)",
     ),
     (
         "types::Step::Type",
@@ -96,7 +92,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 50] = [
+const REACH: [&str; 53] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -147,6 +143,9 @@ const REACH: [&str; 50] = [
     "reach: `Some` builds an optional",
     "reach: a type is spelled `Option<..>`",
     "reach: `Option.None` or `Option<..>.None`",
+    "reach: a variant, literal or range pattern stands at an optional position",
+    "reach: a binding or `_` covers a whole optional in a `match` arm",
+    "reach: a `match` on an optional of an optional",
 ];
 
 /// Whether a program's text holds a form.
@@ -1812,6 +1811,24 @@ impl Walk {
                 self.mark("tir::ExprKind::Match");
                 self.some_value(scrutinee);
                 self.tir_expr(scrutinee, Parent::Other);
+                if let TypeKind::Optional(payload) = scrutinee.ty.kind() {
+                    if let TypeKind::Optional(_) = payload.kind() {
+                        self.mark("reach: a `match` on an optional of an optional");
+                    }
+                    // An `if let` lowers to a `match` whose `_` arm has the span of its pattern.
+                    let first = arms.first().map(|arm| arm.pattern.span);
+                    let covers = arms.iter().enumerate().any(|(i, arm)| {
+                        matches!(
+                            arm.pattern.kind,
+                            tir::PatternKind::Wild | tir::PatternKind::Bind(_)
+                        ) && (i == 0 || Some(arm.pattern.span) != first)
+                    });
+                    if covers {
+                        self.mark(
+                            "reach: a binding or `_` covers a whole optional in a `match` arm",
+                        );
+                    }
+                }
                 for arm in arms {
                     self.tir_pattern(&arm.pattern);
                     if let Some(guard) = &arm.guard {
@@ -1891,6 +1908,17 @@ impl Walk {
                     self.tir_pattern(alternative);
                 }
             }
+            tir::PatternKind::Some(inner) => {
+                self.mark("tir::PatternKind::Some");
+                // The checker gives the `Some` it writes out the span of the pattern inside.
+                if inner.span == pattern.span {
+                    self.mark(
+                        "reach: a variant, literal or range pattern stands at an optional position",
+                    );
+                }
+                self.tir_pattern(inner);
+            }
+            tir::PatternKind::None => self.mark("tir::PatternKind::None"),
         }
     }
 }
@@ -3824,17 +3852,21 @@ fn an_enum_match_ends_in_a_catch_all_only_where_its_arms_leave_a_value() {
 /// Whether a pattern's text is of some kind.
 type Is = fn(&str) -> bool;
 
-/// How deep the parentheses of `pattern` nest.
+/// How deep the variants of `pattern` nest: its parentheses, but those of a `Some`, which is
+/// a layer of an optional.
 fn depth(pattern: &str) -> usize {
-    let mut open = 0usize;
+    // Whether each open parenthesis is a variant's.
+    let mut open: Vec<bool> = Vec::new();
     let mut deepest = 0;
-    for c in pattern.chars() {
+    for (at, c) in pattern.char_indices() {
         match c {
             '(' => {
-                open += 1;
-                deepest = deepest.max(open);
+                open.push(!pattern[..at].ends_with("Some"));
+                deepest = deepest.max(open.iter().filter(|&&variant| variant).count());
             }
-            ')' => open -= 1,
+            ')' => {
+                open.pop();
+            }
             _ => {}
         }
     }

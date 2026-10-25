@@ -263,3 +263,108 @@ fn an_unknown_call_should_not_wait_for_context_in_a_generic_call() {
     let src = with_generics("fn g() {\n    let x = id(unknown(None))\n}");
     codes(&src, &[(Code::FunctionNotFound, (2, 16))]);
 }
+
+/// `body` on lines 2 on of `fn g` over `o: i64?`, `s: Shape?`, `oo: i64??`, `h: Holder`,
+/// `k: Num` and `p: Pile`, then the enums `Shape`, `Holder`, whose `V` holds a `Shape?`, and
+/// `Num`, whose `N` holds an `i64?`, the class `Pile`, whose `pop` gives an `i64?`, and an empty
+/// `main`.
+fn with_shapes(body: &str) -> String {
+    format!(
+        "fn g(o: i64?, s: Shape?, oo: i64??, h: Holder, k: Num, p: Pile) {{\n    {body}\n}}\nenum Shape {{\n    Circle(f64)\n    Square(f64)\n}}\nenum Holder {{\n    V(Shape?)\n}}\nenum Num {{\n    N(i64?)\n}}\nclass Pile {{\n    mut items: [i64]\n    fn pop(self) -> i64? {{ None }}\n}}\nfn main() {{}}"
+    )
+}
+
+/// At an optional position, `Some(p)` and `None` match the optional itself, a variant, literal
+/// or range pattern matches the value inside, an `|` takes the rule for each alternative, and a
+/// name or `_` covers the whole optional; only the top of an `if let` or `while let` unwraps.
+#[test]
+fn a_pattern_on_an_optional_should_match_the_optional_or_the_value_inside() {
+    for (body, text, ty) in [
+        (
+            "let r = match o {\n        Some(0) => 1\n        Some(n) => n\n        None => 0\n    }",
+            "n",
+            "i64",
+        ),
+        (
+            "let r = match o {\n        0 => 1\n        None => 2\n        _ => 3\n    }",
+            "2",
+            "i64",
+        ),
+        (
+            "let r = match s {\n        Circle(r) => r\n        Square(w) => w\n        None => 0.0\n    }",
+            "w",
+            "f64",
+        ),
+        (
+            "let r = match oo {\n        Some(Some(n)) => n\n        Some(None) => 1\n        None => 0\n    }",
+            "n",
+            "i64",
+        ),
+        ("let r = match o {\n        _ => 0\n    }", "0", "i64"),
+        (
+            "let r = match o {\n        Some(n) => n\n        x => x ?? 0\n    }",
+            "x",
+            "i64?",
+        ),
+        (
+            "if let Circle(r) = s {\n        let t = r\n    }",
+            "r",
+            "f64",
+        ),
+        ("if let Some(n) = o {\n        let t = n\n    }", "n", "i64"),
+        ("if let y = o {\n        let t = y\n    }", "y", "i64"),
+        (
+            "while let Some(n) = p.pop() {\n        let t = n\n    }",
+            "n",
+            "i64",
+        ),
+        (
+            "let r = match h {\n        V(None) => 0\n        V(Some(q)) => {\n            let t = q\n            1\n        }\n    }",
+            "q",
+            "Shape",
+        ),
+        (
+            "let r = match h {\n        V(Circle(r)) => r\n        _ => 0.0\n    }",
+            "r",
+            "f64",
+        ),
+        ("let r = match h {\n        V(z) => z\n    }", "z", "Shape?"),
+        (
+            "let r = match o {\n        0..=9 => 1\n        10 | 11 => 2\n        Some(_) => 3\n        None => 4\n    }",
+            "4",
+            "i64",
+        ),
+        (
+            "let r = match o {\n        Some(0) | None => 1\n        _ => 2\n    }",
+            "1",
+            "i64",
+        ),
+        (
+            "let r = match k {\n        N(1..=3 | None) => 1\n        _ => 2\n    }",
+            "1",
+            "i64",
+        ),
+        (
+            "let r = match o {\n        Option.Some(m) => m\n        None => 0\n    }",
+            "m",
+            "i64",
+        ),
+    ] {
+        assert_eq!(type_at(&with_shapes(body), text), ty, "{body}");
+    }
+}
+
+/// A `match` on an optional that leaves a value out is not exhaustive: `None`, a value, a
+/// variant of the payload, or the `None` of a middle layer. The `witnesses` table of
+/// `check::exhaust` pins what each one misses.
+#[test]
+fn a_match_on_an_optional_should_cover_none_and_every_value() {
+    for body in [
+        "let r = match o {\n        Some(n) => n\n    }",
+        "let r = match o {\n        None => 0\n    }",
+        "let r = match s {\n        Circle(r) => 1\n        None => 0\n    }",
+        "let r = match oo {\n        Some(Some(n)) => n\n        None => 0\n    }",
+    ] {
+        codes(&with_shapes(body), &[(Code::NonExhaustive, (2, 13))]);
+    }
+}

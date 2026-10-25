@@ -3097,7 +3097,7 @@ impl From<DiagnosticKind> for Diagnostic {
             },
             DiagnosticKind::CannotMatch { ty, at } => {
                 Diagnostic::coded(code, at, format!("cannot `match` on `{ty}`"))
-                    .with_help("`match` takes enums, integers, `bool`, `char` and `string`")
+                    .with_help("`match` takes enums, optionals, integers, `bool`, `char` and `string`")
             }
             DiagnosticKind::NotVariantHere { name, at } => {
                 let mut lower = name.clone();

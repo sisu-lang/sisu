@@ -154,7 +154,8 @@ pub(crate) enum Projection {
         index: Operand,
         span: Span,
     },
-    /// The payload of an optional that holds one; only ever the last projection.
+    /// The payload of an optional that holds one; anywhere in a path, after a `TestPresent`
+    /// that proved the optional holds one, or as the last projection of `IfPresent`'s binding.
     Some,
 }
 
@@ -367,6 +368,13 @@ pub(crate) enum Terminator {
         arms: Vec<(usize, BlockId)>,
         otherwise: Option<BlockId>,
     },
+    /// Branches on whether the optional at `place` holds a value. It reads the place where it
+    /// is, as `SwitchTag` does, and moves nothing.
+    TestPresent {
+        place: Place,
+        some: BlockId,
+        none: BlockId,
+    },
     SwitchValue {
         operand: Operand,
         arms: Vec<(Const, BlockId)>,
@@ -387,7 +395,8 @@ impl Terminator {
         let (fixed, tags, values, otherwise): ([Option<BlockId>; 2], &[_], &[_], _) = match self {
             Terminator::Goto(to) => ([Some(*to), None], &[], &[], None),
             Terminator::Branch { then, else_, .. } => ([Some(*then), Some(*else_)], &[], &[], None),
-            Terminator::IfPresent { some, none, .. } => {
+            Terminator::IfPresent { some, none, .. }
+            | Terminator::TestPresent { some, none, .. } => {
                 ([Some(*some), Some(*none)], &[], &[], None)
             }
             Terminator::SwitchTag {

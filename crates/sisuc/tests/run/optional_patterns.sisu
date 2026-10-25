@@ -1,0 +1,313 @@
+// Patterns on optionals. At an optional position, `Some(p)` and `None` match the optional
+// itself, a variant, literal or range pattern matches the value inside, an `|` applies the rule
+// to each alternative, and a name or `_` covers the whole optional. Only the top of an `if let`
+// or `while let` unwraps. Counted payloads are matched and released, from owned scrutinees and
+// from borrowed ones, also under the box of a recursive optional field.
+class Node {
+    n: i64
+}
+
+class Pile {
+    mut n: i64
+
+    fn pop(self) -> string? {
+        if self.n == 0 {
+            return None
+        }
+        self.n = self.n - 1
+        "item {self.n}"
+    }
+}
+
+enum Shape {
+    Circle(string)
+    Square(i64)
+}
+
+enum Holder {
+    V(Shape?)
+    W(i64?)
+}
+
+enum E {
+    End
+    Next(E?)
+}
+
+enum D {
+    End
+    Next(D??)
+}
+
+fn int_kind(o: i64?) -> string {
+    match o {
+        Some(0) => "zero"
+        Some(n) => "value {n}"
+        None => "none"
+    }
+}
+
+fn literal(o: i64?) -> i64 {
+    match o {
+        0 => 1
+        None => 2
+        _ => 3
+    }
+}
+
+fn ranges(o: i64?) -> i64 {
+    match o {
+        0..=9 => 1
+        10 | 11 => 2
+        Some(_) => 3
+        None => 4
+    }
+}
+
+fn zero_or_none(o: i64?) -> i64 {
+    match o {
+        Some(0) | None => 1
+        _ => 2
+    }
+}
+
+fn whole(o: i64?) -> i64 {
+    match o {
+        Some(n) => n
+        x => x ?? -1
+    }
+}
+
+fn wild(o: i64?) -> i64 {
+    match o {
+        _ => 0
+    }
+}
+
+fn layers(x: i64??) -> i64 {
+    match x {
+        Some(Some(n)) => n
+        Some(None) => -1
+        None => -2
+    }
+}
+
+fn spelled(o: i64?) -> i64 {
+    match o {
+        Option.Some(m) => m
+        None => 0
+    }
+}
+
+fn describe_string(s: string?) -> string {
+    match s {
+        "a" => "the letter a"
+        Some(t) => "string {t}"
+        None => "no string"
+    }
+}
+
+fn describe_node(n: Node?) -> i64 {
+    match n {
+        Some(node) => node.n
+        None => -1
+    }
+}
+
+fn shape(s: Shape?) -> string {
+    match s {
+        Circle(name) => "circle {name}"
+        Square(w) => "square {w}"
+        None => "nothing"
+    }
+}
+
+fn held(h: Holder) -> string {
+    match h {
+        V(None) => "V(None)"
+        V(Circle(r)) => "V(Circle({r}))"
+        V(Some(x)) => "V(Some({shape(x)}))"
+        W(1..=3 | None) => "W small or none"
+        W(z) => "W {z ?? 0}"
+    }
+}
+
+fn payload(h: Holder) -> string {
+    match h {
+        V(x) => shape(x)
+        W(_) => "W"
+    }
+}
+
+fn owned_shape(name: string) -> string {
+    let s: Shape? = Shape.Circle(name)
+    match s {
+        Circle(n) => n
+        _ => "other"
+    }
+}
+
+fn owned_string(text: string) -> string {
+    let s: string? = text
+    match s {
+        Some(t) => t
+        None => "none"
+    }
+}
+
+fn owned_holder(name: string) -> string {
+    let h = Holder.V(Shape.Circle(name))
+    match h {
+        V(Circle(r)) => r
+        _ => "other"
+    }
+}
+
+fn if_lets(s: Shape?, o: i64?) {
+    if let Circle(r) = s {
+        print("if let Circle({r})")
+    } else {
+        print("not a circle")
+    }
+    if let Some(n) = o {
+        print("if let Some({n})")
+    }
+    if let y = o {
+        print("if let y = {y}")
+    }
+}
+
+fn make(i: i64) -> E {
+    match i {
+        0 => E.End
+        1 => E.Next(None)
+        2 => E.Next(E.End)
+        3 => E.Next(E.Next(None))
+        _ => E.Next(E.Next(E.End))
+    }
+}
+
+fn deep(e: E) -> i64 {
+    match e {
+        Next(Some(Next(_))) => 2
+        Next(Some(End)) => 1
+        _ => 0
+    }
+}
+
+fn deep_owned(i: i64) -> i64 {
+    let e = make(i)
+    match e {
+        Next(Some(Next(_))) => 2
+        Next(Some(End)) => 1
+        _ => 0
+    }
+}
+
+fn under_box(e: E) -> bool {
+    match e {
+        Next(Some(Next(x))) => x == E.End
+        _ => false
+    }
+}
+
+fn under_box_owned(i: i64) -> bool {
+    let e = make(i)
+    match e {
+        Next(Some(Next(x))) => x == E.End
+        _ => false
+    }
+}
+
+fn make_d(i: i64) -> D {
+    match i {
+        0 => D.End
+        1 => D.Next(None)
+        2 => D.Next(Some(None))
+        3 => D.Next(Some(D.End))
+        _ => D.Next(Some(D.Next(Some(D.End))))
+    }
+}
+
+fn d_kind(d: D) -> string {
+    match d {
+        Next(Some(Some(Next(_)))) => "Next(Next(_))"
+        Next(Some(Some(End))) => "Next(End)"
+        Next(Some(None)) => "Next(Some(None))"
+        Next(None) => "Next(None)"
+        End => "End"
+    }
+}
+
+fn d_kind_owned(i: i64) -> string {
+    let d = make_d(i)
+    match d {
+        Next(Some(Some(Next(_)))) => "Next(Next(_))"
+        Next(Some(Some(End))) => "Next(End)"
+        Next(Some(None)) => "Next(Some(None))"
+        Next(None) => "Next(None)"
+        End => "End"
+    }
+}
+
+fn main() {
+    let none: i64? = None
+    for o in [Some(0), Some(7), none] {
+        print(int_kind(o))
+    }
+    for o in [Some(0), none, Some(5)] {
+        print(literal(o))
+    }
+    for o in [Some(3), Some(11), Some(20), none] {
+        print(ranges(o))
+    }
+    for o in [Some(0), none, Some(1)] {
+        print(zero_or_none(o))
+    }
+    print(whole(Some(4)))
+    print(whole(none))
+    print(wild(Some(4)))
+    print(wild(none))
+    let nn: i64?? = None
+    let middle: i64?? = Some(None)
+    print(layers(Some(Some(6))))
+    print(layers(middle))
+    print(layers(nn))
+    print(spelled(Some(8)))
+    print(spelled(none))
+    let no_string: string? = None
+    print(describe_string("a"))
+    print(describe_string("b"))
+    print(describe_string(no_string))
+    let no_node: Node? = None
+    print(describe_node(Node(n: 9)))
+    print(describe_node(no_node))
+    let no_shape: Shape? = None
+    print(shape(Shape.Circle("red")))
+    print(shape(Shape.Square(2)))
+    print(shape(no_shape))
+    print(held(Holder.V(None)))
+    print(held(Holder.V(Shape.Circle("blue"))))
+    print(held(Holder.V(Shape.Square(3))))
+    print(held(Holder.W(2)))
+    print(held(Holder.W(None)))
+    print(held(Holder.W(10)))
+    print(payload(Holder.V(Shape.Circle("green"))))
+    print(payload(Holder.V(None)))
+    print(payload(Holder.W(1)))
+    print(owned_shape("owned"))
+    print(owned_string("owned string"))
+    print(owned_holder("owned holder"))
+    if_lets(Shape.Circle("pink"), Some(1))
+    if_lets(Shape.Square(1), none)
+    let pile = Pile(n: 3)
+    while let Some(item) = pile.pop() {
+        print(item)
+    }
+    for i in 0..5 {
+        print("{deep(make(i))} {deep_owned(i)} {under_box(make(i))} {under_box_owned(i)}")
+    }
+    for i in 0..5 {
+        print("{d_kind(make_d(i))} {d_kind_owned(i)}")
+    }
+}

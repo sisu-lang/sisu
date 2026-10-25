@@ -257,6 +257,8 @@ fn always_matches(pattern: &tir::Pattern) -> bool {
         tir::PatternKind::Variant { .. }
         | tir::PatternKind::Bool(_)
         | tir::PatternKind::Range { .. }
-        | tir::PatternKind::Str(_) => false,
+        | tir::PatternKind::Str(_)
+        | tir::PatternKind::Some(_)
+        | tir::PatternKind::None => false,
     }
 }

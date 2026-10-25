@@ -27,7 +27,7 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PhiValue, PointerValue,
 };
 
-use super::layout::HeapBlock;
+use super::layout::{HeapBlock, is_pointer_optional};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, enum_of};
 use crate::mir::{Place, Projection};
@@ -311,8 +311,8 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The address of the value of payload field `field` of variant `variant` in the enum `id`
     /// at `value_addr`: the field's slot when it is inline, the value in its box when it is a
-    /// boxed `F`. Never for a boxed `F?`, whose box may be `null`: a pattern there is only a
-    /// name or `_`, which `payload_value` reads.
+    /// boxed `F`. Never for a boxed `F?`, whose box may be `null`: `field_place` gives its
+    /// storage, and `payload_value` reads it.
     pub(super) fn payload_place(
         &self,
         value_addr: PointerValue<'ctx>,
@@ -326,10 +326,86 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
         assert!(
             !matches!(payload.ty.kind(), TypeKind::Optional(_)),
-            "a boxed `F?` field should have no place: the checker allows only a name or `_` there"
+            "a boxed `F?` field should have no place, only the storage that `field_place` gives"
         );
         let boxed = self.load_box(value_addr, id, variant, field);
         self.box_value(boxed_enum(payload.ty), boxed)
+    }
+
+    /// The address of payload field `field` of variant `variant` in the enum `id` at
+    /// `value_addr`, and whether it is the storage of a boxed `F?`, whose box may be `null`:
+    /// `payload_place`'s address for every other field.
+    pub(super) fn field_place(
+        &self,
+        value_addr: PointerValue<'ctx>,
+        id: EnumId,
+        variant: usize,
+        field: usize,
+    ) -> (PointerValue<'ctx>, bool) {
+        let payload = &self.program.enums[id.0].variants[variant].fields[field];
+        if payload.boxed && matches!(payload.ty.kind(), TypeKind::Optional(_)) {
+            return (self.field_slot(value_addr, id, variant, field), true);
+        }
+        (self.payload_place(value_addr, id, variant, field), false)
+    }
+
+    /// The address of the value inside the optional `ty` at `address`, its payload type, and
+    /// whether it is still the storage of a boxed field, as `boxed` says `address` is. Meaningful
+    /// only after a test that the optional holds a value.
+    pub(super) fn some_place(
+        &self,
+        address: PointerValue<'ctx>,
+        ty: Type,
+        boxed: bool,
+    ) -> (PointerValue<'ctx>, Type, bool) {
+        let TypeKind::Optional(payload) = ty.kind() else {
+            unreachable!("mir should project `some` only out of an optional")
+        };
+        if !boxed {
+            let inside = if is_pointer_optional(ty) {
+                address
+            } else {
+                self.optional_value_place(ty, address)
+            };
+            return (inside, payload, false);
+        }
+        if nested(ty).is_some() {
+            return (self.layer_place(ty, address, 1), payload, true);
+        }
+        let boxed = self
+            .builder
+            .build_load(
+                self.context.ptr_type(AddressSpace::default()),
+                address,
+                "box",
+            )
+            .expect(POSITIONED)
+            .into_pointer_value();
+        (self.box_value(boxed_enum(ty), boxed), payload, false)
+    }
+
+    /// Whether the optional `ty` at `address` holds a value; `boxed` says whether `address` is
+    /// the storage of a boxed field: its flag, or a box pointer that is not `null`.
+    pub(super) fn present_at(
+        &self,
+        address: PointerValue<'ctx>,
+        ty: Type,
+        boxed: bool,
+    ) -> IntValue<'ctx> {
+        if boxed && nested(ty).is_some() {
+            return self.load_layer_flag(ty, address);
+        }
+        let llvm_ty = if boxed {
+            self.context.ptr_type(AddressSpace::default()).into()
+        } else {
+            self.llvm_type(ty)
+                .expect("the checker should give every optional a value type")
+        };
+        let value = self
+            .builder
+            .build_load(llvm_ty, address, "optional")
+            .expect(POSITIONED);
+        self.has_value(ty, value, "some")
     }
 
     /// The value of payload field `field` of variant `variant` in the enum `id` at
@@ -922,8 +998,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         let mut node = Some(0);
         let mut value = 0;
         for projection in projections {
+            // A `some` here is inline: the box of a boxed `F?` is never taken apart.
             let &Projection::Payload { variant, field } = projection else {
-                unreachable!("a take-apart's places should hold only payload projections")
+                (address, ty, _) = self.some_place(address, ty, false);
+                continue;
             };
             let id = enum_of(ty);
             ty = self.program.enums[id.0].variants[variant].fields[field].ty;
@@ -1718,8 +1796,9 @@ impl<'ctx> Unboxed<'ctx> {
     fn insert(&mut self, projections: &[Projection], out: PointerValue<'ctx>) {
         let mut node = 0;
         for projection in projections {
+            // An inline `some` stays at its optional's node.
             let &Projection::Payload { variant, field } = projection else {
-                unreachable!("a take-apart's places should hold only payload projections")
+                continue;
             };
             #[cfg(test)]
             super::TAKE_APART_PROBES.set(super::TAKE_APART_PROBES.get() + 1);

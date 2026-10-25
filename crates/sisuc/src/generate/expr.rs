@@ -1501,8 +1501,8 @@ impl Gen<'_> {
         }
     }
 
-    /// The head of an `if`: a condition, or `let p = e` of an optional `e`, and what the first
-    /// branch binds.
+    /// The head of an `if`: a condition, or `let p = e` of an optional `e` (`let_pattern`), and
+    /// what the first branch binds.
     pub(crate) fn condition(&mut self) -> (Info, Option<Var>) {
         if self.pick(4) != 3 || !self.spend(1) {
             return (self.expr(&Ty::Bool, 0), None);
@@ -1511,13 +1511,8 @@ impl Gen<'_> {
             Ty::Optional(payload) => *payload,
             ty => ty,
         };
-        let name = if self.pick(4) == 0 {
-            None
-        } else {
-            Some(self.scope.fresh("v"))
-        };
-        self.w
-            .text(&format!("let {} = ", name.as_deref().unwrap_or("_")));
+        let (pattern, name) = self.let_pattern(&payload, true);
+        self.w.text(&format!("let {pattern} = "));
         self.synth = true;
         let value = self.expr(&Ty::Optional(Box::new(payload.clone())), MAX_SIZE);
         let loops = self.cost.depth();
@@ -1562,25 +1557,45 @@ impl Gen<'_> {
 
 impl Gen<'_> {
     /// `(match s { p [if g] => e ... })`, an arm a line, of a `bool`, a number, a `char`, a
-    /// `string` or an enum value: arms whose patterns do not overlap, so none is unreachable,
-    /// then `_` or a binding where they leave a value unmatched.
+    /// `string`, an enum value, or an optional of one of these, or of an optional of one: arms
+    /// whose patterns do not overlap, so none is unreachable, then `_` or a binding where they
+    /// leave a value unmatched.
     pub(crate) fn match_expr(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
-        let enums = self.scope.enums.len();
-        // The enums share one choice with the other types.
-        let choice = self.pick(MATCHED.len() + usize::from(enums > 0));
-        let tested = if choice < MATCHED.len() {
-            MATCHED[choice].clone()
+        let tested = if self.pick(4) == 0 {
+            let optional = Ty::Optional(Box::new(self.matched()));
+            if self.pick(3) == 0 {
+                Ty::Optional(Box::new(optional))
+            } else {
+                optional
+            }
         } else {
-            let id = self.pick(enums);
-            self.scope.enum_ty(id)
+            self.matched()
         };
         self.w.text("(match ");
-        self.synth = true;
-        let scrutinee = self.expr(&tested, MAX_SIZE);
+        let scrutinee = match &tested {
+            // An optional of an optional has no value of its own type: a name of it, or
+            // `Some` of an optional, is one.
+            Ty::Optional(optional) if tested.least() == u64::MAX => {
+                if self.has_name(&tested, MAX_SIZE) && self.pick(2) == 0 {
+                    self.name(&tested, MAX_SIZE)
+                } else {
+                    self.w.text("Some(");
+                    self.synth = true;
+                    let value = self.expr(optional, MAX_SIZE);
+                    self.w.text(")");
+                    value
+                }
+            }
+            _ => {
+                self.synth = true;
+                self.expr(&tested, MAX_SIZE)
+            }
+        };
         self.w.text(" ");
         self.blocks += 1;
         self.w.open();
         let (mut arms, exhaustive) = match tested {
+            Ty::Optional(_) => self.optional_arms(&tested),
             Ty::Bool => self.bool_arms(),
             Ty::String => (self.word_arms(), false),
             Ty::Enum { .. } => self.variant_arms(&tested),
@@ -1629,6 +1644,106 @@ impl Gen<'_> {
         self.blocks -= 1;
         self.w.text(")");
         Info::of(&parts, size, true)
+    }
+
+    /// A type that a `match` tests by value: a `bool`, a number, a `char`, a `string` or an
+    /// enum.
+    fn matched(&mut self) -> Ty {
+        let enums = self.scope.enums.len();
+        // The enums share one choice with the other types.
+        let choice = self.pick(MATCHED.len() + usize::from(enums > 0));
+        if choice < MATCHED.len() {
+            MATCHED[choice].clone()
+        } else {
+            let id = self.pick(enums);
+            self.scope.enum_ty(id)
+        }
+    }
+
+    /// Arms of the optional `ty`: the arms of its payload, each as written, which matches the
+    /// value inside, or in `Some(..)`, which an optional payload needs; then, where they leave a
+    /// value, now and then `Some(v)` or `Some(_)`; and now and then `None` among them. Exhaustive
+    /// when `None` and each value are in arms without a guard.
+    fn optional_arms(&mut self, ty: &Ty) -> (Vec<Arm>, bool) {
+        let Ty::Optional(payload) = ty else {
+            unreachable!("only an optional has a payload")
+        };
+        let (inner, mut covered) = match &**payload {
+            Ty::Optional(_) => self.optional_arms(payload),
+            Ty::Bool => self.bool_arms(),
+            Ty::String => (self.word_arms(), false),
+            Ty::Enum { .. } => self.variant_arms(payload),
+            _ => (self.range_arms(payload), false),
+        };
+        let nested = matches!(**payload, Ty::Optional(_));
+        let mut arms = Vec::new();
+        for arm in inner {
+            let pattern = if nested || self.pick(2) == 0 {
+                format!("Some({})", arm.pattern)
+            } else {
+                arm.pattern
+            };
+            arms.push(Arm { pattern, ..arm });
+        }
+        if !covered && self.pick(3) == 0 {
+            let guard = self.pick(4) == 0;
+            let mut binds = Vec::new();
+            let inside = if self.pick(2) == 0 {
+                "_".to_string()
+            } else {
+                let name = self.scope.fresh("v");
+                binds.push((name.clone(), (**payload).clone()));
+                name
+            };
+            arms.push(Arm {
+                pattern: format!("Some({inside})"),
+                binds,
+                guard,
+            });
+            covered = !guard;
+        }
+        let none = self.pick(4) != 0;
+        let guard = self.pick(4) == 0;
+        if none {
+            let at = self.pick(arms.len() + 1);
+            let pattern = "None".to_string();
+            let binds = Vec::new();
+            arms.insert(
+                at,
+                Arm {
+                    pattern,
+                    binds,
+                    guard,
+                },
+            );
+        }
+        (arms, covered && none && !guard)
+    }
+
+    /// The pattern of an `if let` or a `while let` on an optional of `payload`, and the name it
+    /// binds to the payload, if any: a name or `_`, which unwraps; `Some(..)`; `None` when
+    /// `none`; or a pattern of the value inside, as written or in `Some(..)`.
+    pub(crate) fn let_pattern(&mut self, payload: &Ty, none: bool) -> (String, Option<String>) {
+        match self.pick(8) {
+            0 => ("_".to_string(), None),
+            5 => {
+                let name = self.scope.fresh("v");
+                (format!("Some({name})"), Some(name))
+            }
+            6 if none && self.pick(2) == 0 => ("None".to_string(), None),
+            6 => ("Some(_)".to_string(), None),
+            7 => match self.refutable(payload, 0) {
+                Some(inside) if self.pick(2) == 0 => (inside, None),
+                inside => {
+                    let inside = inside.unwrap_or_else(|| "_".to_string());
+                    (format!("Some({inside})"), None)
+                }
+            },
+            _ => {
+                let name = self.scope.fresh("v");
+                (name.clone(), Some(name))
+            }
+        }
     }
 
     /// Arms of `true`, `false` or both, each at most once; exhaustive when both come without
@@ -1819,8 +1934,9 @@ impl Gen<'_> {
         (text, total)
     }
 
-    /// A pattern that matches some values of `ty` but not all: a literal, a range or a
-    /// variant; none for a type only names and `_` match.
+    /// A pattern that matches some values of `ty` but not all: a literal, a range, a variant,
+    /// or for an optional `None`, `Some(..)` or a pattern of the value inside; none for a type
+    /// only names and `_` match.
     fn refutable(&mut self, ty: &Ty, depth: u32) -> Option<String> {
         match ty {
             Ty::I64 | Ty::U8 | Ty::Char => {
@@ -1838,6 +1954,14 @@ impl Gen<'_> {
                 let v = self.pick(self.scope.enums[*id].variants.len());
                 Some(self.variant_pattern(ty, v, None, depth + 1).0)
             }
+            Ty::Optional(payload) if depth < MAX_PATTERN_DEPTH => Some(match self.pick(3) {
+                0 => "None".to_string(),
+                pick => match self.refutable(payload, depth + 1) {
+                    // A `None` inside would match the outer `None`, so only `Some` writes it.
+                    Some(inside) if pick == 2 && !matches!(**payload, Ty::Optional(_)) => inside,
+                    inside => format!("Some({})", inside.unwrap_or_else(|| "_".to_string())),
+                },
+            }),
             Ty::Enum { .. }
             | Ty::F64
             | Ty::Unit

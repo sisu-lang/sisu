@@ -1,0 +1,15 @@
+enum Shape {
+    Circle(f64)
+    Square(f64)
+}
+
+fn area(s: Shape?) -> f64 {
+    match s {
+        Circle(r) => 3.0 * r * r
+        None => 0.0
+    }
+}
+
+fn main() {
+    print(area(Shape.Square(2.0)))
+}

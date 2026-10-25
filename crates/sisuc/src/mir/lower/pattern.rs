@@ -3,7 +3,9 @@
 //! while the patterns and the guard run, and is not on the scope stack. An `|` is a choice
 //! point: a local `tried` holds the alternative being tried, a dispatch block switches on it to
 //! that alternative's test, and a retry block switches on it to the retry target of the
-//! alternative that matched, so a later failure resumes the innermost choice point first. The
+//! alternative that matched, so a later failure resumes the innermost choice point first.
+//! `Some(p)` and `None` test an optional with `test_present`, which reads it in place, and `p`
+//! tests the value inside through `Projection::Some`. The
 //! first arm whose pattern and guard hold commits. When `temp` is a counted enum and the arm
 //! binds a counted name or tests a box, outside any `|` that would, the commit takes `temp`
 //! apart: each binding moves its part out (one of a boxed `F?`, whose box may be `null`, copies
@@ -512,15 +514,53 @@ impl Lowering<'_> {
                 }
                 parts.kept[value] |= self.counted(ty);
             }
-            // A part nothing moves stays in its value: `_`, a string literal, an uncounted
-            // binding or test, which leave nothing counted.
+            // The box of a boxed `F?` stays in its value, never a token: each counted binding
+            // under it copies its part.
+            PatternKind::Some(_) if boxed => {
+                self.copied_under(pattern, &mut parts.copied);
+                parts.kept[value] = true;
+            }
+            // An inline optional's value is a step of the path, as a payload is.
+            PatternKind::Some(inner) => {
+                let TypeKind::Optional(payload) = ty.kind() else {
+                    unreachable!("the checker should allow a `Some` pattern only at an optional")
+                };
+                let mut at = place.clone();
+                at.projections.push(Projection::Some);
+                self.walk_parts(inner, &at, payload, false, value, parts)?;
+            }
+            // A part nothing moves stays in its value: `_`, `None`, a string literal, an
+            // uncounted binding or test, which leave nothing counted.
             PatternKind::Wild
             | PatternKind::Bind(_)
+            | PatternKind::None
             | PatternKind::Bool(_)
             | PatternKind::Range { .. }
             | PatternKind::Str(_) => parts.kept[value] |= self.counted(ty),
         }
         Some(())
+    }
+
+    /// Adds each counted binding in `pattern` to `copied`, once.
+    fn copied_under(&self, pattern: &Pattern, copied: &mut Vec<LocalId>) {
+        match &pattern.kind {
+            PatternKind::Bind(binding) => {
+                if self.locals[binding.0].counted && !copied.contains(binding) {
+                    copied.push(*binding);
+                }
+            }
+            PatternKind::Variant { fields: subs, .. } | PatternKind::Or(subs) => {
+                for sub in subs {
+                    self.copied_under(sub, copied);
+                }
+            }
+            PatternKind::Some(sub) => self.copied_under(sub, copied),
+            PatternKind::Wild
+            | PatternKind::None
+            | PatternKind::Bool(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Str(_) => {}
+        }
     }
 
     /// Whether `pattern`, of type `ty`, an alternative of an `|` or a part of one, binds a
@@ -542,7 +582,14 @@ impl Lowering<'_> {
             PatternKind::Or(alternatives) => alternatives
                 .iter()
                 .any(|alternative| self.binds_or_tests(alternative, ty)),
+            PatternKind::Some(sub) => {
+                let TypeKind::Optional(payload) = ty.kind() else {
+                    unreachable!("the checker should allow a `Some` pattern only at an optional")
+                };
+                self.binds_or_tests(sub, payload)
+            }
             PatternKind::Wild
+            | PatternKind::None
             | PatternKind::Bool(_)
             | PatternKind::Range { .. }
             | PatternKind::Str(_) => false,
@@ -648,7 +695,46 @@ impl Lowering<'_> {
                 fail
             }
             PatternKind::Or(alternatives) => self.alternatives(alternatives, place, ty, fail),
+            PatternKind::Some(_) | PatternKind::None => {
+                self.test_optional(pattern, place, ty, fail)
+            }
         }
+    }
+
+    /// `test` of a `Some(p)` or `None` pattern: `test_present`, then `p` against the value
+    /// inside, which the `some` projection reaches.
+    fn test_optional(
+        &mut self,
+        pattern: &Pattern,
+        place: &Place,
+        ty: Type,
+        fail: Target,
+    ) -> Target {
+        let TypeKind::Optional(payload) = ty.kind() else {
+            unreachable!("the checker should allow a `Some` or `None` pattern only at an optional")
+        };
+        let (next, other) = (self.new_block(), self.realize(fail));
+        let PatternKind::Some(inner) = &pattern.kind else {
+            self.terminate(Terminator::TestPresent {
+                place: place.clone(),
+                some: other,
+                none: next,
+            });
+            self.current = Some(next);
+            return fail;
+        };
+        self.terminate(Terminator::TestPresent {
+            place: place.clone(),
+            some: next,
+            none: other,
+        });
+        self.current = Some(next);
+        if matches!(inner.kind, PatternKind::Wild) {
+            return fail;
+        }
+        let mut at = place.clone();
+        at.projections.push(Projection::Some);
+        self.test(inner, &at, payload, fail)
     }
 
     /// `switch place [literal: next] otherwise fail`, leaving `current` at `next`.

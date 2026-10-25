@@ -74,7 +74,17 @@ pub(super) fn matchable(ty: Type) -> bool {
             | TypeKind::Bool
             | TypeKind::Char
             | TypeKind::String
+            | TypeKind::Optional(_)
     )
+}
+
+/// Whether `name` is a variant of the enum inside `ty`, under any layers of optional.
+fn variant_inside(enums: &[super::EnumInfo], ty: Type, name: Symbol) -> bool {
+    match ty.kind() {
+        TypeKind::Optional(payload) => variant_inside(enums, payload, name),
+        TypeKind::Enum(id, _) => enums[id.0].index.contains_key(&name),
+        _ => false,
+    }
 }
 
 /// The key under which ranking keeps the branch of `arm` (see `Ahead::Bound`). A block is kept
@@ -345,7 +355,6 @@ impl Checker<'_> {
                 let bound = Some(payload);
                 (checked, LetValue::Unwrap { name, bound }, false)
             }
-            // `pattern_in_scope` reports any other pattern on an optional.
             (Some((_, TypeKind::Optional(_) | TypeKind::Enum(..))) | None, _) => {
                 (checked, LetValue::Match { ty }, false)
             }
@@ -421,9 +430,9 @@ impl Checker<'_> {
             },
             &LetValue::Match { ty } => {
                 let pattern = self.pattern_in_scope(pattern, ty, word, arm);
-                // An optional takes only a name or `_`, which unwraps it: only an enum gets here.
+                // A name or `_` unwraps an optional, so it never gets here.
                 if let (Some(keyword), Some(ty), Some((pattern, _))) = (keyword, ty, &pattern)
-                    && let TypeKind::Enum(..) = ty.kind()
+                    && let TypeKind::Enum(..) | TypeKind::Optional(_) = ty.kind()
                 {
                     let rows = [Row {
                         pattern,
@@ -485,6 +494,9 @@ impl Checker<'_> {
             self.poison(p, keyword, bound);
             return None;
         };
+        if let TypeKind::Optional(payload) = ty.kind() {
+            return self.optional_pattern(p, ty, payload, keyword, bound);
+        }
         let names_only = !matchable(ty);
         match &p.kind {
             ast::PatternKind::None
@@ -556,6 +568,95 @@ impl Checker<'_> {
                     variant,
                     fields: fields.into_iter().collect::<Option<_>>()?,
                 }))
+            }
+        }
+    }
+
+    /// `p` at a position of the optional type `ty`, whose payload is `payload`. `Some(p)` and
+    /// `None` match the optional itself, a variant, literal or range pattern matches the value
+    /// inside, each alternative of an `|` takes this rule, and a name or `_` covers the whole
+    /// optional. See `pattern`.
+    fn optional_pattern(
+        &mut self,
+        p: &ast::Pattern,
+        ty: Type,
+        payload: Type,
+        keyword: &'static str,
+        bound: &mut Bound<'_>,
+    ) -> Option<tir::Pattern> {
+        let pattern = |kind| tir::Pattern { kind, span: p.span };
+        let some = |inner| Some(pattern(tir::PatternKind::Some(Box::new(inner?))));
+        match &p.kind {
+            ast::PatternKind::Wild => Some(pattern(tir::PatternKind::Wild)),
+            ast::PatternKind::None => Some(pattern(tir::PatternKind::None)),
+            ast::PatternKind::Name(name) if variant_inside(&self.enums, payload, name.name) => {
+                some(self.pattern(p, Some(payload), keyword, bound))
+            }
+            ast::PatternKind::Name(name) if name.name.as_str() == "Some" => {
+                self.report(DiagnosticKind::VariantForm {
+                    path: "Some".to_string(),
+                    payload: true,
+                    held: false,
+                    at: name.span,
+                });
+                None
+            }
+            ast::PatternKind::Name(name) => {
+                self.name_pattern(name, ty, keyword, bound).map(pattern)
+            }
+            ast::PatternKind::Or(alternatives) => self
+                .alternatives(alternatives, ty, keyword, bound)
+                .map(pattern),
+            ast::PatternKind::Variant {
+                qualifier,
+                name,
+                fields,
+                parens,
+            } if name.name.as_str() == "Some"
+                && qualifier
+                    .as_ref()
+                    .is_none_or(|q| q.name.as_str() == "Option") =>
+            {
+                let kind = match (parens, &fields[..]) {
+                    (Some(_), [field]) => {
+                        return some(self.pattern(field, Some(payload), keyword, bound));
+                    }
+                    (None, _) => DiagnosticKind::VariantForm {
+                        path: written(qualifier.as_ref(), name),
+                        payload: true,
+                        held: false,
+                        at: name.span,
+                    },
+                    (Some(_), _) => DiagnosticKind::SubpatternCount {
+                        variant: name.name.to_string(),
+                        fields: 1,
+                        found: fields.len(),
+                        at: p.span,
+                    },
+                };
+                self.report(kind);
+                self.poison(p, keyword, bound);
+                None
+            }
+            ast::PatternKind::Variant {
+                qualifier: Some(q),
+                name,
+                ..
+            } if q.name.as_str() == "Option" => {
+                let variants = [("None", Definition::Variant), ("Some", Definition::Variant)];
+                self.report(DiagnosticKind::UnknownVariant {
+                    enum_name: q.name.to_string(),
+                    name: name.name.to_string(),
+                    at: name.span,
+                    suggestion: suggestion(name.name.as_str(), variants),
+                });
+                self.poison(p, keyword, bound);
+                None
+            }
+            ast::PatternKind::Variant { .. }
+            | ast::PatternKind::Literal(_)
+            | ast::PatternKind::Range { .. } => {
+                some(self.pattern(p, Some(payload), keyword, bound))
             }
         }
     }

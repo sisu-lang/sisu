@@ -1,8 +1,8 @@
-error[E0127]: a `i64?` position takes only a name or `_`
- --> E0127.sisu:8:14
-  |
-8 |         Full(None) => 0
-  |              ^^^^
+error[E0127]: a `Point` position takes only a name or `_`
+  --> E0127.sisu:12:14
+   |
+12 |         Full(Point(x)) => x
+   |              ^^^^^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0127
