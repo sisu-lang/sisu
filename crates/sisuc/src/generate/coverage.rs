@@ -2382,7 +2382,7 @@ fn every_variant_is_generated() {
 /// this, the walk's arms for them would never run until the generator writes them.
 #[test]
 fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
-    let src = "interface Shape<T: Same> {\n    type Item: Same\n    fn area<U: Same>(self, x: U) -> Self\n}\nclass Box<T: Same> {}\nextend<T: Same> Stack<T> {\n    fn first(self, x: S.Item) {}\n}\ninterface Bad: {}\nextend C: {}\n";
+    let src = "interface Shape<T: Same> {\n    type Item: Same\n    fn area<U: Same>(self, x: U) -> Self\n    fn done(self)\n}\nclass Box<T: Same> {}\nextend<T: Same> Stack<T> {\n    fn first(self, x: S.Item) {}\n}\ninterface Bad: {}\nextend C: {}\n";
     let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
     let mut walk = Walk::default();
     walk.ast(&parsed.program);

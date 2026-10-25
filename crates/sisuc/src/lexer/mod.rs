@@ -4370,6 +4370,17 @@ mod tests {
         }
     }
 
+    /// A token that is no name ends an open list, so the name after it does not go on with it.
+    #[test]
+    fn a_header_list_should_end_at_a_token_that_is_no_name() {
+        let kinds = all_kinds("fn f<T 1 x\ny");
+        let x = kinds.iter().position(|k| *k == ident("x"));
+        assert_eq!(
+            x.and_then(|at| kinds.get(at + 1)),
+            Some(&TokenKind::Newline)
+        );
+    }
+
     /// A list ends at its own `>`, also after a bound's arguments, so a name on the next line
     /// starts a new statement.
     #[test]

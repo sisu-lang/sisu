@@ -6354,6 +6354,9 @@ mod tests {
         assert!(list(MAX_DEPTH - 1, 0) && !list(MAX_DEPTH, 0));
         assert!(list(MAX_DEPTH - 2, 1) && !list(MAX_DEPTH - 2, 2));
         assert!(list(1, MAX_DEPTH - 2) && !list(2, MAX_DEPTH - 2));
+        // A list inside a list starts one level deeper.
+        let inner = |members: usize| follows(&format!("f<Pair<S{}>>(x)", ".A".repeat(members)));
+        assert!(inner(MAX_DEPTH - 2) && !inner(MAX_DEPTH - 1));
     }
 
     /// Each `?` is a level of the tree: a type with more layers than `MAX_DEPTH` allows is too
