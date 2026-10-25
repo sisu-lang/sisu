@@ -611,9 +611,9 @@ A benchmark that would push it over shrinks its input, or moves to
 
 The first candidates:
 
-- Now, since enums exist: a small interpreter that parses program text into
-  an enum tree and then runs it, so string scanning, box allocation and
-  `match` dispatch are measured together, as a real tool uses them.
+- Done: `interp`, a small interpreter that parses program text into an enum
+  tree, simplifies it and runs it, so string scanning, box reuse and `match`
+  dispatch are measured together, as a real tool uses them.
 - 8: a generic container used at two types, and a call through an interface.
 - 9: an iterator chain next to the same loop written by hand, with both
   printing the same result, so the cost of the chain shows.
