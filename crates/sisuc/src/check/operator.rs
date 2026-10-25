@@ -650,13 +650,15 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         // `??` groups to the right, so a `None` that starts a right `??` has no type to take:
-        // `x ?? None ?? 0` is `x ?? (None ?? 0)`. A parenthesis before the `None` is a choice.
+        // `x ?? None ?? 0` is `x ?? (None ?? 0)`. Grouping the left side helps only when it
+        // unwraps one layer more than once, and a parenthesis before the `None` is a choice.
         if let ExprKind::Coalesce {
             lhs: none,
             rhs: tail,
         } = &rhs.kind
             && matches!(none.kind, ExprKind::NoneLit)
             && none.span.start() == rhs.span.start()
+            && matches!(payload.kind(), TypeKind::Optional(_))
         {
             self.report(DiagnosticKind::CannotInfer {
                 literal: Literal::None,
@@ -664,6 +666,16 @@ impl Checker<'_> {
                 at: none.span,
                 regroup: Some(lhs.span.start()),
             });
+            // The next `None` of a run is for the next fix to report.
+            let mut tail: &ast::Expr = tail;
+            while let ExprKind::Coalesce {
+                lhs: next,
+                rhs: after,
+            } = &tail.kind
+                && matches!(next.kind, ExprKind::NoneLit)
+            {
+                tail = after;
+            }
             // Only its own diagnostics matter.
             let _ = self.fallback(tail, UNKNOWN);
             return Err(Poisoned::error());

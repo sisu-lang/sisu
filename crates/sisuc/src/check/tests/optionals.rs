@@ -156,7 +156,8 @@ fn a_none_that_starts_the_right_of_coalesce_should_offer_to_group_the_left() {
     );
 }
 
-/// Only an optional left side and a `None` that no parenthesis groups get the fix.
+/// Only a left side that is an optional of an optional, and a `None` that no parenthesis
+/// groups, get the fix: the others keep the help to write the type.
 #[test]
 fn a_none_beside_coalesce_should_keep_the_type_help_when_the_grouping_is_not_the_cause() {
     for (body, expected) in [
@@ -173,15 +174,42 @@ fn a_none_beside_coalesce_should_keep_the_type_help_when_the_grouping_is_not_the
                 (Code::CannotInfer, (2, 18)),
             ],
         ),
-        // A left side that is not a bare `None`.
-        ("let r = x ?? w ?? 0", vec![]),
+        // One `?` is unwrapped once, so grouping the left side removes no more.
+        ("let r = w ?? None ?? 0", vec![(Code::CannotInfer, (2, 18))]),
     ] {
         let src = with_body(body);
         codes(&src, &expected);
-        if let Some(d) = diags(&src).iter().find(|d| d.code() == Code::CannotInfer) {
-            assert_eq!(fixes(&src, d), [], "{body}");
-        }
+        let ds = diags(&src);
+        let d = ds
+            .iter()
+            .find(|d| d.code() == Code::CannotInfer)
+            .expect(body);
+        assert!(d.help().is_some(), "{body}");
+        assert_eq!(fixes(&src, d), [], "{body}");
     }
+}
+
+/// A run of `None ??` reports its first `None` only: the fix groups the left side, and the next
+/// run finds the next `None`. The rest of the right side is still checked.
+#[test]
+fn a_run_of_none_beside_coalesce_should_report_only_the_first() {
+    let src = "fn g(a: i64???) {\n    let r = a ?? None ?? None ?? 0\n}\nfn main() {}";
+    let d = diagnostic(src, Code::CannotInfer, (2, 18, "None"), &[]);
+    assert!(d.help().is_none());
+    let src = "fn g(a: i64???) {\n    let r = a ?? None ?? None ?? nothing\n}\nfn main() {}";
+    codes(
+        src,
+        &[
+            (Code::CannotInfer, (2, 18)),
+            (Code::BindingNotFound, (2, 34)),
+        ],
+    );
+}
+
+/// An operand that is not a `None` ends the run, and a value of the right type is no mistake.
+#[test]
+fn a_coalesce_whose_right_side_starts_with_a_value_should_check_clean() {
+    clean(&with_body("let r = x ?? w ?? 0"));
 }
 
 /// An optional is a type argument like any other type, written or inferred.
