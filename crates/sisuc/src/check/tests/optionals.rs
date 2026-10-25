@@ -284,6 +284,22 @@ fn a_wrong_use_of_option_or_some_should_be_reported() {
             Code::TypeArguments,
             (2, 19, "<i64, i64>"),
         ),
+        // The type arguments of a variant go on `Option`, as on an enum.
+        (
+            "let r = Option.Some<Missing>(5)",
+            Code::TypeArguments,
+            (2, 24, "<Missing>"),
+        ),
+        (
+            "let r = Option<i64>.Some<Missing>(5)",
+            Code::TypeArguments,
+            (2, 29, "<Missing>"),
+        ),
+        (
+            "let r = Option.None<i64>()",
+            Code::TypeArguments,
+            (2, 24, "<i64>"),
+        ),
         // A written type argument is not overridden by the expected type.
         (
             "let r: u8? = Some<i64>(5)",

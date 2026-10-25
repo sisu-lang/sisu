@@ -1201,14 +1201,18 @@ impl Checker<'_> {
         None
     }
 
-    /// Whether `receiver` before `.method` is a path, not a value: an enum, or `math` or a
-    /// built-in type that no local takes.
+    /// Whether `receiver` before `.method` is a path, not a value: an enum, `Option`, or `math`
+    /// or a built-in type that no local takes.
     pub(super) fn path_method(&mut self, receiver: &ast::Expr, method: &ast::Ident) -> bool {
         let name = match &receiver.kind {
             ast::ExprKind::Name(name) => *name,
             ast::ExprKind::Applied { name, .. } => name.name,
             _ => return false,
         };
+        // No item can take the name of the optional type, whose members are its variants.
+        if name.as_str() == "Option" {
+            return true;
+        }
         if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
             // A generic method's list waits for the member's report, which says it is a method.
             let info = &self.enums[id.0];

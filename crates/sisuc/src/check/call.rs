@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::expr::{fits, no_member, path, postfix};
+use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
@@ -346,7 +346,10 @@ impl Checker<'_> {
         let (method, types, angles) = (site.name, site.written, site.angles);
         let start = self.diagnostics.len();
         let path = !types.is_empty() && self.path_method(receiver, method);
-        if path && self.generic_variant(receiver, method).is_some() {
+        // `Option` is generic, as an enum with the variants `Some` and `None` would be.
+        let option_variant = option_written(receiver) == Some(false)
+            && matches!(method.name.as_str(), "Some" | "None");
+        if path && (option_variant || self.generic_variant(receiver, method).is_some()) {
             // Its arguments alone could not bind what the list was meant to.
             self.variant_args(receiver, method, types, angles);
             self.stray(args);
