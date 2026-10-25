@@ -65,3 +65,7 @@ description = "Function types, closures, captures, weak captures, iterators and 
 [[page]]
 file = "errors"
 description = "Results written T | E, fail, the ? operator, handling a failure, unused results, a main that fails and files."
+
+[[page]]
+file = "modules"
+description = "Modules, packages and the root, imports, pub and private names, and where a conformance lives."

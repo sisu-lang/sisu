@@ -1,6 +1,6 @@
 # The status board and tables, one [[area]] per area in page order. See site/build.py (status_board, status_tables).
 
-# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and "Modules", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024, 0029
+# source: docs/roadmap.md ("What works today", the sections on decided and proposed work and "Modules", "What can start now" (test blocks), "Gaps before production" (number types), "Concurrency"); docs/adr/0003, 0007, 0008, 0010, 0011, 0012, 0014, 0017, 0019-0021, 0023, 0024, 0029, 0035
 [[area]]
 id = "language"
 name = "Language"
@@ -95,7 +95,7 @@ notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0020", "docs
 [[area.feature]]
 text = "Modules"
 state = "planned"
-notes = [["Roadmap: modules", "docs/roadmap.md"]]
+notes = [["Roadmap: modules", "docs/roadmap.md"], ["ADR 0035", "docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md"]]
 
 [[area.feature]]
 text = "Tests in the source file"
