@@ -12,7 +12,7 @@ use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN,
-    built_in_type, payload, type_of,
+    built_in_type, optional_of, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
@@ -441,8 +441,11 @@ impl Checker<'_> {
             // `T = i64?`. Else it meets the payload of an optional `want`, and the call's value
             // is wrapped. What of it cannot meet either is reported where the value is used,
             // unless the context fits alone: then the arguments that contradict it are
-            // reported, each at its own place.
-            if !call.bindings.unify(ret, want) && !call.bindings.constrain(ret, payload(want)) {
+            // reported, each at its own place. Type arguments that the call writes are its own.
+            if !call.bindings.unify(ret, want)
+                && !call.bindings.constrain(ret, payload(want))
+                && written.is_empty()
+            {
                 self.blame_arguments(&mut call, sig, args, ret, want);
             }
             self.report_fresh(&mut call, span);
@@ -522,8 +525,10 @@ impl Checker<'_> {
 
     /// Reports each argument already checked whose type is not what `want`, the call's context,
     /// makes of its parameter, once `ret` meets `want` or its payload with no argument's help.
-    /// Such an argument is rejected, as a rule rejects its operand. Reports nothing when the
-    /// context does not fit `ret` alone, or when every argument fits it.
+    /// Such an argument is rejected, as a rule rejects its operand, and the later arguments
+    /// meet the context's types in place of the blamed arguments'. Reports nothing, and leaves
+    /// the bindings, when the context does not fit `ret` alone as a value of `ret` fits it, when
+    /// an argument was rejected already, or when every argument fits.
     fn blame_arguments(
         &mut self,
         call: &mut Inference,
@@ -536,6 +541,16 @@ impl Checker<'_> {
         if !context.unify(ret, want) && !context.unify(ret, payload(want)) {
             return;
         }
+        // `unify` lets a `T?` take a value that is not optional, which the result cannot do.
+        let result = context.known(ret);
+        if result != Some(want) && result.map(optional_of) != Some(want) {
+            return;
+        }
+        // The error of an earlier argument is the call's error, as it is without a context.
+        if call.slots.iter().flatten().any(mismatched) {
+            return;
+        }
+        let mut blamed = false;
         for (i, arg) in args.iter().enumerate() {
             // An argument of type `unit` or `never` binds only what no other does (see `last`).
             let got = call.slots[i].as_ref().and_then(type_of);
@@ -554,7 +569,19 @@ impl Checker<'_> {
             }
             let d = self.mismatch(arg.value.span, Some(&arg.value), fit, got);
             self.diagnostics.push(d);
-            call.slots[i] = Some(mark((Err(Poisoned::error()), true)));
+            call.slots[i] = Some(Err(Poisoned {
+                ty: None,
+                mismatch: true,
+            }));
+            blamed = true;
+        }
+        if blamed {
+            // A parameter that the context leaves open keeps what an argument bound.
+            for (found, bound) in iter::zip(&mut context.found, &call.bindings.found) {
+                *found = found.or(*bound);
+            }
+            context.kept = call.bindings.kept;
+            call.bindings = context;
         }
     }
 

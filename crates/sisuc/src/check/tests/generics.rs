@@ -1873,6 +1873,76 @@ fn an_argument_that_contradicts_the_context_should_be_reported_at_the_argument()
     }
 }
 
+/// A blamed argument leaves one error for the call: the later arguments meet the type that the
+/// context gives, and an argument that was rejected before keeps the call as it is.
+#[test]
+fn a_blamed_argument_should_be_the_only_error_of_its_call() {
+    let pick = "fn pick<T>(a: T, b: T) -> T {\n    a\n}\n";
+    for (body, at) in [
+        // `1`, `None` and `[]` meet the `T` of the context, not the `string` that `s` bound.
+        (
+            "fn g(s: string) {\n    let x: [i64] = pair(s, 1)\n}",
+            (5, 25, "s"),
+        ),
+        (
+            "fn g(s: string) {\n    let x: [i64?] = pair(s, None)\n}",
+            (5, 26, "s"),
+        ),
+        (
+            "fn g(s: string) {\n    let x: [[i64]] = pair(s, [])\n}",
+            (5, 27, "s"),
+        ),
+        // `n` was rejected beside `s` already, which is the only error.
+        (
+            "fn g(s: string, n: i64) {\n    let x: [i64] = pair(s, n)\n}",
+            (5, 28, "n"),
+        ),
+        (
+            "fn g(s: string, n: i64) {\n    let x: string = pick(n, s)\n}",
+            (5, 29, "s"),
+        ),
+    ] {
+        let src = with_generics(&format!("{pick}{body}"));
+        diagnostic(&src, Code::Mismatch, at, &[]);
+    }
+    // The context leaves `B` open, so `s` keeps it, and the literal `1` is checked against it.
+    let src = with_generics(
+        "fn two_b<A, B>(a: A, b: B, c: B) -> [A] {\n    [a]\n}\nfn g(n: i64, s: string) {\n    let x: [string] = two_b(n, s, 1)\n}",
+    );
+    codes(
+        &src,
+        &[(Code::Mismatch, (5, 29)), (Code::Mismatch, (5, 35))],
+    );
+    // `panic` never finishes, so it has no value, and no type to blame.
+    let src = with_generics(&format!(
+        "{pick}fn g(n: i64) {{\n    let x: [string] = pair(panic(\"x\"), n)\n}}"
+    ));
+    codes(&src, &[(Code::NoValue, (5, 28)), (Code::Mismatch, (5, 40))]);
+}
+
+/// Type arguments that the call writes are the call's own, so a mismatch with the context stays
+/// at the call.
+#[test]
+fn a_call_with_written_type_arguments_should_report_a_mismatch_at_the_call() {
+    for (body, at) in [
+        (
+            "fn g(n: i64) {\n    let x: f64 = id<i64>(n)\n}",
+            (2, 18, "id<i64>(n)"),
+        ),
+        (
+            "fn g(n: i64) {\n    let x: string = id<i64>(n)\n}",
+            (2, 21, "id<i64>(n)"),
+        ),
+        (
+            "fn g(n: i64) {\n    let x: Box<f64> = Box<i64>(v: n)\n}",
+            (2, 23, "Box<i64>(v: n)"),
+        ),
+    ] {
+        let src = with_generics(body);
+        diagnostic(&src, Code::Mismatch, at, &[]);
+    }
+}
+
 /// Only an argument that contradicts the context is reported: one that fits, or that no
 /// parameter of the context reaches, is not. The context meets the type of the call whole, or
 /// by its payload.
@@ -1918,6 +1988,11 @@ fn a_context_that_fits_or_does_not_fit_alone_should_keep_its_report() {
     // `[T]` meets no `string`, so the context says nothing of the argument.
     let src = with_generics("fn g(n: i64) {\n    let s: string = wrap(n)\n}");
     diagnostic(&src, Code::Mismatch, (2, 21, "wrap(n)"), &[]);
+    // `T?` meets a value that is not optional, which a result cannot: `string?` is no `string`.
+    let src = with_generics("fn g(ns: [i64]) {\n    let x: string = first(ns)\n}");
+    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[]);
+    let src = with_generics("fn g(ns: [string]) {\n    let x: string = first(ns)\n}");
+    diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[]);
     // `n` converts to the `i64?` that the context makes of `T`, so no argument is to blame.
     let src = with_generics("fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}");
     diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[]);
