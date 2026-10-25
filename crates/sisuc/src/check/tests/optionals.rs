@@ -73,15 +73,18 @@ fn one_layer_should_be_taken_at_a_time() {
 }
 
 /// A value converts through one `?` only, and the side of `??` or `==` with fewer layers is held
-/// to the other. `tests/diagnostics/E0032-nested-optional` pins the wording.
+/// to the other. A help names the rule where the types differ only in layers.
+/// `tests/diagnostics/E0032-nested-optional` pins the wording.
 #[test]
 fn a_value_should_convert_through_one_layer_only() {
-    for (body, at) in [
-        ("let r: i64?? = 5", (2, 20, "5")),
-        ("let r = x ?? \"a\"", (2, 18, "\"a\"")),
-        ("let r = x == 5", (2, 18, "5")),
+    for (body, at, layers) in [
+        ("let r: i64?? = 5", (2, 20, "5"), true),
+        ("let r: i64??? = 5", (2, 21, "5"), true),
+        ("let r = x ?? \"a\"", (2, 18, "\"a\""), false),
+        ("let r = x == 5", (2, 18, "5"), true),
     ] {
-        diagnostic(&with_body(body), Code::Mismatch, at, &[]);
+        let d = diagnostic(&with_body(body), Code::Mismatch, at, &[]);
+        assert_eq!(d.help().is_some(), layers, "{body}");
     }
 }
 
@@ -205,7 +208,7 @@ fn a_some_whose_argument_fails_should_keep_its_type() {
 }
 
 /// A wrong use of `Option` or `Some` gets the code of the rule it breaks, at the user's text.
-/// `tests/diagnostics/E0050-some` pins the wording of the last.
+/// `tests/diagnostics/E0050-some` pins the wording for `Some(None)`.
 #[test]
 fn a_wrong_use_of_option_or_some_should_be_reported() {
     for (body, code, at) in [

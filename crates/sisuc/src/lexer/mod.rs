@@ -2978,6 +2978,8 @@ mod tests {
             newlines("fn f() {\n    let r: i64?? = x ??\n        y\n}"),
             2
         );
+        // Inside `( )`, a line break ends nothing, also after a `??` that closes an annotation.
+        assert_eq!(newlines("fn f(a: i64??\n    , b: i64) {}"), 1);
     }
 
     /// A loop label's `:` does not start a type annotation, so a `>` at a line's end after it still

@@ -439,12 +439,11 @@ impl Checker<'_> {
 
     /// `lhs == rhs`, or `!=`. The side of lower `rank` is checked first, the left on a tie,
     /// and the other expects its type made optional, unless it is one. A side that is the
-    /// other's type with two or more `?` layers taken off is held to it: a value converts
+    /// other's type with two or more `?` layers taken off is held to it. A value converts
     /// through one `?` only. A bare `None` beside a value that is not optional is reported: the
-    /// answer is fixed. So is a `u8` beside an `i64`, at the side
-    /// checked second, a `char` beside another number, at the side that is not the `char`, and
-    /// an `i64` or a `u8` beside an `f64`, at the side that is not the `f64`. A side that is
-    /// `f64.nan` is warned about.
+    /// answer is fixed. So is a `u8` beside an `i64`, at the side checked second, a `char`
+    /// beside another number, at the side that is not the `char`, and an `i64` or a `u8` beside
+    /// an `f64`, at the side that is not the `f64`. A side that is `f64.nan` is warned about.
     fn equal(&mut self, span: Span, negated: bool, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
         let swapped = rank(rhs) < rank(lhs);
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };

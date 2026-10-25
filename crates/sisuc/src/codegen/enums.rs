@@ -7,9 +7,8 @@
 //! has one variant with no payload and one with one field whose storage has a niche. Such an
 //! enum is that field's storage, with the payload-free variant in the niche's empty value
 //! (`Shape`): `enum Chain { End  Next(Chain) }` is the pointer to its box, `null` for `End`.
-//! This module owns the
-//! layouts, building a variant, and the bodies of the enum helpers, which `define_helpers`
-//! reaches through `define_enum_helper`.
+//! This module owns the layouts, building a variant, and the bodies of the enum helpers, which
+//! `define_helpers` reaches through `define_enum_helper`.
 //!
 //! Boxes free from pending lists, not by recursion. Releasing a value of an enum `F` whose
 //! component has boxes keeps one list head per member of the component on its own stack.

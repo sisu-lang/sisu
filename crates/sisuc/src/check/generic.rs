@@ -273,19 +273,23 @@ pub(super) fn mismatched(checked: &Checked) -> bool {
 }
 
 impl Checker<'_> {
-    /// The arguments of a call of the generic `sig`, which the caller has matched to its
-    /// parameters by count and label, checked in four passes that bind its type parameters
-    /// (`written` gives every one the receiver does not): (1) those that are neither
-    /// literal-like nor need context, each against its parameter's type once that names no
-    /// unbound parameter and on its own before; (2) `expected` against the return type, whole,
-    /// or by its payload when it is an optional the return type cannot meet whole; (3) the
-    /// literal-like arguments, as in (1); (4) those that need context, against their
-    /// parameter's type. An argument of type `unit` or `never` binds only what none of the
-    /// others does. Returns the arguments in source order, the type arguments, and the call's
-    /// type; `None`, reported, when a parameter is left unbound or bound to a type no
-    /// parameter takes, and then an argument that needs context and has none is checked against
-    /// `UNKNOWN`, for its own mistakes only. What ranking
-    /// the arguments checked ahead (see `Ahead`) and left unused is dropped.
+    /// The arguments of a call of the generic `sig`, checked in four passes that bind its type
+    /// parameters. The caller has matched the arguments to the parameters by count and label.
+    /// `written` gives every type parameter that the receiver does not give.
+    ///
+    /// 1. The arguments that are neither literal-like nor need context. Each is checked against
+    ///    its parameter's type once that type names no unbound parameter, and on its own before.
+    /// 2. `expected` against the return type, whole. When the return type cannot meet an
+    ///    optional `expected` whole, it meets its payload.
+    /// 3. The literal-like arguments, as in pass 1.
+    /// 4. The arguments that need context, against their parameter's type.
+    ///
+    /// An argument of type `unit` or `never` binds only what none of the others binds. Returns
+    /// the arguments in source order, the type arguments and the call's type. Returns `None`,
+    /// reported, when a parameter is left unbound or bound to a type that no parameter takes.
+    /// Then an argument that needs context and has none is checked against `UNKNOWN`, for its
+    /// own mistakes only. What ranking the arguments checked ahead (see `Ahead`) and left unused
+    /// is dropped.
     pub(super) fn generic_call(
         &mut self,
         span: Span,

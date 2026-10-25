@@ -476,8 +476,8 @@ pub(crate) enum DiagnosticKind {
     },
     /// A call of `Some` at `at` whose argument does not fix the type of its payload.
     CannotInferSome { at: Span },
-    /// A call of `Ok` or `Err`, named `variant`, at `at`, whose arguments and context do not
-    /// fix the type parameter `param` of its `Result`.
+    /// A call of `Ok` or `Err`, named `variant`, at `at`. Its arguments and context do not fix
+    /// the type parameter `param` of its `Result`.
     CannotInferResult {
         param: String,
         variant: String,

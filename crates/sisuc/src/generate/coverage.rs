@@ -4875,9 +4875,9 @@ fn let_binding_keeps_the_type() {
 #[test]
 fn known_answers_happen() {
     // Over the seeds, a known site of each type gives a value, and one panics (decision 3). A
-    // `u8` site that panics is rare, so this test reads more seeds than the others.
+    // `u8` site that panics is rare, so this test reads 50% more seeds than the others.
     let mut kinds = FxHashSet::default();
-    for data in (0..96).map(seed) {
+    for data in (0..SEEDS * 3 / 2).map(seed) {
         let g = generate(&data);
         for known in &g.known {
             let head = format!("fn {}(a: ", known.marker);

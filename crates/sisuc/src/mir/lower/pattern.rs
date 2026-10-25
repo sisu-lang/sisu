@@ -1,20 +1,18 @@
-//! `if let` and `match`. The scrutinee is evaluated once into
-//! `temp`. The arms' patterns test it in order, in place; a binding borrows its part of `temp`
-//! while the patterns and the guard run, and is not on the scope stack. An `|` is a choice
-//! point: a local `tried` holds the alternative being tried, a dispatch block switches on it to
-//! that alternative's test, and a retry block switches on it to the retry target of the
-//! alternative that matched, so a later failure resumes the innermost choice point first.
-//! `Some(p)` and `None` test an optional with `test_present`, which reads it in place, and `p`
-//! tests the value inside through `Projection::Some`. The
-//! first arm whose pattern and guard hold commits. When `temp` is a counted enum and the arm
-//! binds a counted name or tests a box, outside any `|` that would, the commit takes `temp`
-//! apart: each binding moves its part out (one of a boxed `F?`, whose box may be `null`, copies
-//! it), each box the pattern tests becomes a reuse token, which the scope stack frees, and the
-//! parts nothing moved are released. Otherwise each counted binding copies its value and `temp`
-//! is released. Either way `temp` leaves the scope stack, and the counted bindings, then the
-//! tokens, join it. Each edge that leaves a test or a guard before the commit ends the arm's
-//! bindings; the edges out of a committed body do not. The last arm's failure is `unreachable`:
-//! the checker proves some arm matches.
+//! `if let` and `match`. The scrutinee is evaluated once into `temp`. The arms' patterns test it in
+//! order, in place; a binding borrows its part of `temp` while the patterns and the guard run, and
+//! is not on the scope stack. An `|` is a choice point: a local `tried` holds the alternative being
+//! tried, a dispatch block switches on it to that alternative's test, and a retry block switches on
+//! it to the retry target of the alternative that matched, so a later failure resumes the innermost
+//! choice point first. `Some(p)` and `None` test an optional with `test_present`, which reads it in
+//! place, and `p` tests the value inside through `Projection::Some`. The first arm whose pattern
+//! and guard hold commits. When `temp` is a counted enum and the arm binds a counted name or tests
+//! a box, outside any `|` that would, the commit takes `temp` apart: each binding moves its part
+//! out (one of a boxed `F?`, whose box may be `null`, copies it), each box the pattern tests
+//! becomes a reuse token, which the scope stack frees, and the parts nothing moved are released.
+//! Otherwise each counted binding copies its value and `temp` is released. Either way `temp` leaves
+//! the scope stack, and the counted bindings, then the tokens, join it. Each edge that leaves a
+//! test or a guard before the commit ends the arm's bindings; the edges out of a committed body do
+//! not. The last arm's failure is `unreachable`: the checker proves some arm matches.
 //!
 //! A scrutinee that is a borrowed place, a borrowed parameter or a field without `mut` of one,
 //! is not copied. A `match` tests the place itself; its commit copies and releases nothing, and

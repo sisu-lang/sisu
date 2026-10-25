@@ -58,7 +58,8 @@ impl Checker<'_> {
         match declared {
             (Some(Declared::Known(class)), _) => self.construct_class(span, class, site, args),
             (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
-            // `Some` is the prelude's: a user item with that name is reported, and called above.
+            // Here `Some` is the prelude's. A user item named `Some` is reported, and the two arms
+            // above call it.
             _ if callee.name.as_str() == "Some" => self.some(span, site, None, args),
             // `Ok` and `Err` are the prelude's, and no user item can take their names.
             _ if let Some((id, _)) = self.result_variant(callee.name) => {
