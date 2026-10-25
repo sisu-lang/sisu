@@ -22,6 +22,8 @@ fn generic_declarations_should_check_clean() {
         "fn none<T>(x: T?) -> bool { Option.None == x }",
         "fn none<T>(x: T?) -> bool { x == Option<T>.None }",
         "fn none<T>(x: T?) -> bool { Option<T>.None != x }",
+        // Only `Option.Some` is `Some`: a method of that name gives its own type.
+        "class C {\n    n: i64\n    fn Some(self, _x: i64?) -> i64 { self.n }\n}\nfn f(c: C) -> i64 {\n    let r = id(c.Some(None))\n    r\n}\nfn id<T>(x: T) -> T { x }",
         "enum Wrap<T> { W(T) }",
         "class Queue<T> {\n    mut front: Cell<T>?\n    fn peek(self) -> Cell<T>? { self.front }\n    fn empty(self) -> bool { self.front == None }\n}",
         "enum Tree<T> {\n    Leaf\n    Node(Tree<T>, T, Tree<T>)\n}",
@@ -1617,6 +1619,15 @@ fn a_generic_call_that_does_not_check_should_report_once() {
         (
             "fn g() {\n    let x = first<i64, string>([])\n}",
             arguments((2, 18)),
+        ),
+        // Only `Option` has the variants `Some` and `None`.
+        (
+            "fn g() {\n    let x = Tree.Some<i64>(1)\n}",
+            vec![(Code::UnknownVariant, (2, 18))],
+        ),
+        (
+            "fn g(c: Cell<i64>?) -> bool {\n    Tree<i64>.None is c\n}",
+            vec![(Code::UnknownVariant, (2, 15))],
         ),
         (
             "fn g() {\n    let x = Box(v: 1).map_all<f64, f64>(2.5)\n}",

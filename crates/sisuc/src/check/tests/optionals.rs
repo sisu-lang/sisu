@@ -273,6 +273,12 @@ fn a_wrong_use_of_option_or_some_should_be_reported() {
         ),
         ("let r = Some(None)", Code::CannotInfer, (2, 13, "Some")),
         ("let r = Option.Some", Code::VariantForm, (2, 20, "Some")),
+        // `Option.Some` is no form of `None`, so `is` does not test it as one.
+        (
+            "let r = Option.Some is a",
+            Code::VariantForm,
+            (2, 20, "Some"),
+        ),
         ("let r = Option.map", Code::UnknownVariant, (2, 20, "map")),
         (
             "let r = Option.map(1)",
