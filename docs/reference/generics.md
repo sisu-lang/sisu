@@ -154,6 +154,7 @@ The rules:
 - A type argument can be written in a call: `first<string>([])`, `Stack<i64>(items: [])`. A method call can write them too.
 - Only the arguments and the expected type give a type. A later use of the result does not.
 - An argument such as `Ok(1)`, whose own arguments give only some of its types, takes the others from the outer call. In `let r: Result<i64, string> = id(Ok(1))`, the type of `r` gives `T` for `id`, and `T` gives `E` for `Ok`.
+- When an argument does not agree with the expected type, the error is at the argument. `let r: Result<i64, string> = Ok("x")` reports `"x"`: expected `i64`, found `string` ([E0032](../diagnostics/E0032.md)). With written type arguments, as in `id<i64>(n)`, the error stays at the call.
 - A `None` or a `[]` alone has no type. When nothing else fixes a type parameter, the call is an error ([E0050](../diagnostics/E0050.md)). Annotate the result, or write the type arguments.
 
 ```sisu
