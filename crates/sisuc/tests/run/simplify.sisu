@@ -1,0 +1,29 @@
+enum Expr {
+    Num(i64)
+    Var(string)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+
+    fn show(self) -> string {
+        match self {
+            Num(n) => "{n}"
+            Var(name) => name
+            Add(a, b) => "({a.show()} + {b.show()})"
+            Mul(a, b) => "{a.show()} * {b.show()}"
+        }
+    }
+}
+
+fn simplify(e: Expr) -> Expr {
+    match e {
+        Add(Num(0), x) | Add(x, Num(0)) => simplify(x)
+        Mul(Num(1), x) | Mul(x, Num(1)) => simplify(x)
+        Mul(Num(0), _) | Mul(_, Num(0)) => Expr.Num(0)
+        other => other
+    }
+}
+
+fn main() {
+    let e = Expr.Add(Expr.Mul(Expr.Var("x"), Expr.Num(1)), Expr.Num(0))
+    print("{e.show()} is {simplify(e).show()}")    // (x * 1 + 0) is x
+}

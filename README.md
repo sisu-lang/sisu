@@ -9,6 +9,62 @@
 Sisu is a small, statically typed programming language that compiles to native
 x86-64 and ARM64 Linux code and ARM64 macOS code. Sisu is Finnish for grit.
 
+<!-- GitHub has no Sisu grammar; Rust's is the closest, so the examples use it. -->
+
+```rust
+enum Expr {
+    Num(i64)
+    Var(string)
+    Add(Expr, Expr)
+    Mul(Expr, Expr)
+
+    fn show(self) -> string {
+        match self {
+            Num(n) => "{n}"
+            Var(name) => name
+            Add(a, b) => "({a.show()} + {b.show()})"
+            Mul(a, b) => "{a.show()} * {b.show()}"
+        }
+    }
+}
+
+fn simplify(e: Expr) -> Expr {
+    match e {
+        Add(Num(0), x) | Add(x, Num(0)) => simplify(x)
+        Mul(Num(1), x) | Mul(x, Num(1)) => simplify(x)
+        Mul(Num(0), _) | Mul(_, Num(0)) => Expr.Num(0)
+        other => other
+    }
+}
+
+fn main() {
+    let e = Expr.Add(Expr.Mul(Expr.Var("x"), Expr.Num(1)), Expr.Num(0))
+    print("{e.show()} is {simplify(e).show()}")    // (x * 1 + 0) is x
+}
+```
+
+An enum holds data, and `match` takes the data apart with nested patterns and
+alternatives. To keep the example short, `simplify` rewrites only the outer
+expression. The checker makes sure that each `match` covers every value.
+Remove the `other` arm, and `sisu check` shows a value that no arm takes:
+
+```console
+$ sisu check simplify.sisu
+error[E0130]: `match` does not cover `Num(_)`
+  --> simplify.sisu:18:5
+   |
+18 |     match e {
+   |     ^^^^^
+   |
+help: add a `_ =>` arm
+   |
+22 +         _ => todo
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0130
+```
+
 Sisu takes its readable syntax from Python, its strict checks from Rust, and
 reference counting and optionals from Swift. Programs read top to
 bottom, the compiler catches mistakes before a program runs, and memory is
@@ -20,7 +76,7 @@ verify. [ADR 0027](docs/adr/0027-what-sisu-is-for.md) (proposed) records what
 Sisu is for and proposes what 1.0 means.
 
 Types are checked at compile time and inferred for local variables. There is
-no null: a value that may be missing has an optional type such as `Tree?`, and
+no null: a value that may be missing has an optional type such as `User?`, and
 the checker makes the program handle `None`.
 
 Sisu is a passion project at an early stage. Any change may break programs
@@ -52,31 +108,21 @@ Sisu leaves out lifetimes and a borrow checker, inheritance and macros; the
 
 ## A taste of Sisu
 
-Classes hold fields and methods. A `Tree?` is either a tree or `None`; `?.`
-calls through it and `??` gives a fallback. Reference counting frees an object
-when its last reference goes away.
-
-<!-- GitHub has no Sisu grammar; Rust's is the closest, so the examples use it. -->
+A `User?` is either a user or `None`. `?.` reads through it, and `??` gives a
+fallback. Reference counting frees an object when its last reference goes away.
 
 ```rust
-class Tree {
-    value: i64
-    left: Tree?
-    right: Tree?
-
-    fn sum(self) -> i64 {
-        self.value + (self.left?.sum() ?? 0) + (self.right?.sum() ?? 0)
-    }
-}
-
-fn leaf(value: i64) -> Tree {
-    Tree(value: value, left: None, right: None)
+class User {
+    name: string
+    manager: User?
 }
 
 fn main() {
-    let tree = Tree(value: 1, left: leaf(2), right: leaf(3))
-    print(tree.sum())               // 6
-    print(tree.left?.value ?? 0)    // 2
+    let ada = User(name: "Ada", manager: None)
+    let bob = User(name: "Bob", manager: ada)
+    print(bob.manager?.name ?? "nobody")    // Ada
+    print(ada.manager?.name ?? "nobody")    // nobody
+    // print(ada.manager.name) gives error[E0062]: `ada.manager` may be `None`
 }
 ```
 
@@ -90,29 +136,37 @@ fn main() {
     let primes = [2, 3, 5, 7]
     let mut copy = primes    // shared until one of them is written
     copy[0] = 11
-    print(primes.sum())      // 17
-    print(copy.sum())        // 26
-    for p in primes {
-        if 2 < p <= 5 { print(p) }    // 3, then 5
+    print(primes[0])         // 2
+    print(copy[0])           // 11
+
+    let mut lower = 0
+    for c in "Hello, World".chars() {
+        if 'a' <= c <= 'z' { lower += 1 }
     }
+    print(lower)             // 8
 }
 ```
 
 Arithmetic never wraps silently. Overflow and division by zero stop the program
-and name the line:
+and name the line. An `i64` holds 20!, but not 21!:
 
 ```rust
 fn main() {
-    let big = 9_223_372_036_854_775_807
-    print(1)
-    print(big + 1)
+    let mut f = 1
+    for n in 1..=25 {
+        f *= n
+        print("{n}! = {f}")
+    }
 }
 ```
 
 ```console
-$ sisu build overflow.sisu && ./overflow
-1
-sisu: panic at overflow.sisu:4:11: integer overflow
+$ sisu build factorial.sisu && ./factorial
+1! = 1
+2! = 2
+...
+20! = 2432902008176640000
+sisu: panic at factorial.sisu:4:9: integer overflow
 ```
 
 ## Errors that help
@@ -173,8 +227,8 @@ file goes to the program, and `sisu` exits with the program's exit code.
 $ sisu run wc.sisu words.txt
 $ sisu run -e 'fn main() { let x = 2; print(x * 21) }'
 42
-$ sisu run -e 'class P { x: i64; y: i64 } fn main() { print(P(x: 1, y: 2).y) }'
-2
+$ sisu run -e 'class P { x: i64; y: i64 } fn main() { let p = P(x: 1, y: 2); print(p.x + p.y) }'
+3
 ```
 
 `sisu explain E0001` prints why the rule exists, with a broken and a fixed
@@ -184,18 +238,23 @@ editors and agents, and marks each fix as safe or unsafe.
 
 ## Status
 
-Sisu has no releases and runs on x86-64 and ARM64 Linux and ARM64 macOS only. Today it compiles
-functions, `i64`, `f64`, `u8`, `bool` and `char`, classes with methods,
-optionals, enums with payloads and methods, generic functions, classes and
-enums, `match` with nested,
-alternative, guarded and range patterns, arrays, and strings with `+`, `+=`,
-interpolation (with width and precision specs) and `chars()`. Programs
-read standard input with `read_line()`, write standard error with `eprint`,
-take `main(args)` and stop with `panic`. Conversions that can fail return an optional. An expression
-statement whose value nothing uses warns (`W0004`); `let _ = e` drops a value
-on purpose. The
-[roadmap](docs/roadmap.md) proposes interfaces, closures,
-records, modules with a standard library, and `Result` with `?`.
+Sisu has no releases and runs on x86-64 and ARM64 Linux and ARM64 macOS only.
+Today it compiles:
+
+- functions, and the types `i64`, `f64`, `u8`, `bool` and `char`
+- classes with methods, optionals, and enums with payloads and methods
+- generic functions, classes and enums
+- `match` with nested, alternative, guarded and range patterns
+- arrays, and strings with `+`, `+=`, `chars()` and interpolation, with width
+  and precision specs
+- `main(args)`, `read_line()` from standard input, `eprint` to standard error,
+  and `panic`
+
+A conversion that can fail returns an optional. An expression statement whose
+value nothing uses gives warning `W0004`; `let _ = e` drops a value on purpose.
+
+The [roadmap](docs/roadmap.md) proposes interfaces, closures, records, modules
+with a standard library, and `Result` with `?`.
 
 The compiler, `sisu`, is written in Rust and uses LLVM for code generation.
 
