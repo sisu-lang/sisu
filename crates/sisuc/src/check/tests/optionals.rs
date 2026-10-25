@@ -54,6 +54,25 @@ fn one_layer_should_be_taken_at_a_time() {
             "i64?",
         ),
         ("let r = [w, None]", "[w, None]", "[i64?]"),
+        // Each spelling of `None` takes its type from the other side, or brings its own.
+        (
+            "let r = [Some(1), Option.None]",
+            "[Some(1), Option.None]",
+            "[i64?]",
+        ),
+        ("let r = [Option.None, w]", "[Option.None, w]", "[i64?]"),
+        (
+            "let r = [w, Option<i64>.None]",
+            "[w, Option<i64>.None]",
+            "[i64?]",
+        ),
+        ("let r = x == Option.None", "Option.None", "i64??"),
+        ("let r = Option.None == x", "Option.None", "i64??"),
+        (
+            "let r = Option<i64?>.None == x",
+            "Option<i64?>.None",
+            "i64??",
+        ),
         ("let r = w == 5", "5", "i64?"),
         ("let r = x == w", "w", "i64??"),
         ("let r = w == x", "w", "i64??"),
@@ -133,9 +152,19 @@ fn an_optional_should_be_a_type_argument() {
             "id",
             &["i64?", "i64?"],
         ),
-        // `Some(None)` waits for its context, as a call of a generic function does.
+        // `Some(None)` and `Option.Some(None)` wait for their context, as a generic call does.
         (
             "fn g() {\n    let x: i64?? = id(Some(None))\n}",
+            "id",
+            &["i64??", "i64??"],
+        ),
+        (
+            "fn g() {\n    let x: i64?? = id(Option.Some(None))\n}",
+            "id",
+            &["i64??", "i64??"],
+        ),
+        (
+            "fn g() {\n    let x: i64?? = id(Option<i64?>.Some(None))\n}",
             "id",
             &["i64??", "i64??"],
         ),

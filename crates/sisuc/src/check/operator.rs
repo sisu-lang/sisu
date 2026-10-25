@@ -25,7 +25,7 @@ impl Checker<'_> {
         operand: &ast::Expr,
         expected: Option<Type>,
     ) -> Result<(Type, (Checked, bool)), Poisoned> {
-        // A bare `None` expects an `i64`, as in `None + 1`.
+        // A `None` expects an `i64`, as in `None + 1`.
         let expected = expected.or_else(|| none_literal(operand).then_some(Type::I64));
         let before = self.diagnostics.len();
         let checked = self.value(operand, expected);
@@ -437,15 +437,16 @@ impl Checker<'_> {
         .into()
     }
 
-    /// `lhs == rhs`, or `!=`. The side of lower `rank` is checked first, the left on a tie,
-    /// and the other expects its type made optional, unless it is one. A side that is the
-    /// other's type with two or more `?` layers taken off is held to it. A value converts
-    /// through one `?` only. A bare `None` beside a value that is not optional is reported: the
-    /// answer is fixed. So is a `u8` beside an `i64`, at the side checked second, a `char`
-    /// beside another number, at the side that is not the `char`, and an `i64` or a `u8` beside
-    /// an `f64`, at the side that is not the `f64`. A side that is `f64.nan` is warned about.
+    /// `lhs == rhs`, or `!=`. The side of lower `rank` is checked first, the left on a tie
+    /// unless it is the only `none_literal`, and the other expects its type made optional,
+    /// unless it is one. A side that is the other's type with two or more `?` layers taken off
+    /// is held to it. A value converts through one `?` only. A `None` beside a value that is not
+    /// optional is reported: the answer is fixed. So is a `u8` beside an `i64`, at the side
+    /// checked second, a `char` beside another number, at the side that is not the `char`, and
+    /// an `i64` or a `u8` beside an `f64`, at the side that is not the `f64`. A side that is
+    /// `f64.nan` is warned about.
     fn equal(&mut self, span: Span, negated: bool, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
-        let swapped = rank(rhs) < rank(lhs);
+        let swapped = rank(rhs) < rank(lhs) || (none_literal(lhs) && !none_literal(rhs));
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, None);
         let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
@@ -466,7 +467,7 @@ impl Checker<'_> {
         {
             self.record(Used::Equal(ty), span);
         }
-        // `second` is the bare `None`, if either is.
+        // `second` is the `none_literal`, if either is.
         if none_literal(second)
             && let Some(ty) = type_of(&checked)
             && !matches!(ty.kind(), TypeKind::Optional(_))

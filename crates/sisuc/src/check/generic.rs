@@ -6,7 +6,7 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
-use super::expr::{int_literal, rank};
+use super::expr::{bare_none, int_literal, option_written, rank};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
@@ -637,7 +637,7 @@ impl Checker<'_> {
     fn waits(&mut self, e: &ast::Expr, fit: &mut bool) -> bool {
         use ast::ExprKind as K;
         let (generic, shaped, args) = match &e.kind {
-            K::NoneLit => return true,
+            _ if bare_none(e) => return true,
             K::ArrayLit(elements) => return elements.iter().all(|e| self.waits(e, fit)),
             K::Field {
                 base,
@@ -664,6 +664,12 @@ impl Checker<'_> {
                             || v.labels.iter().all(Option::is_none))
                         && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
                     (true, shaped)
+                } else if !safe
+                    && method.name.as_str() == "Some"
+                    && option_written(receiver) == Some(false)
+                {
+                    // `Option.Some` is `Some`, as `generic_callee` takes it.
+                    (true, matches!(&args[..], [arg] if arg.label.is_none()))
                 } else {
                     self.generic_method(receiver, method, args, *safe)
                 };

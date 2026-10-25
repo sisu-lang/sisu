@@ -465,19 +465,47 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
 }
 
 /// Which side of an `if`, `if let` or `==` with no expected type is checked first, the lower
-/// first: a concrete value is 0, an `int_literal` 1, a bare `None` or `[]` 2.
+/// first: a concrete value is 0, an `int_literal` 1, a `bare_none` or `[]` 2.
 pub(super) fn rank(e: &ast::Expr) -> u8 {
     match &e.kind {
-        ExprKind::NoneLit => 2,
+        _ if bare_none(e) => 2,
         ExprKind::ArrayLit(elements) if elements.is_empty() => 2,
         _ if int_literal(e) => 1,
         _ => 0,
     }
 }
 
-/// Whether `e` is the bare literal `None`.
+/// Whether `e` is the empty optional, as `None`, `Option.None` or `Option<T>.None`.
 pub(super) fn none_literal(e: &ast::Expr) -> bool {
-    matches!(e.kind, ExprKind::NoneLit)
+    matches!(e.kind, ExprKind::NoneLit) || option_none(e).is_some()
+}
+
+/// Whether `e` is the empty optional without a type argument: `None` or `Option.None`.
+pub(super) fn bare_none(e: &ast::Expr) -> bool {
+    matches!(e.kind, ExprKind::NoneLit) || option_none(e) == Some(false)
+}
+
+/// Whether `e` is `Option.None` or `Option<T>.None`, and if so, whether it writes a type
+/// argument.
+fn option_none(e: &ast::Expr) -> Option<bool> {
+    match &e.kind {
+        ExprKind::Field {
+            base,
+            name,
+            safe: false,
+        } if name.name.as_str() == "None" => option_written(base),
+        _ => None,
+    }
+}
+
+/// Whether `e` is `Option` or `Option<T>`, and if so, whether it writes a type argument. No item
+/// can take the name `Option`, so the name alone tells.
+pub(super) fn option_written(e: &ast::Expr) -> Option<bool> {
+    match &e.kind {
+        ExprKind::Name(name) if name.as_str() == "Option" => Some(false),
+        ExprKind::Applied { name, .. } if name.name.as_str() == "Option" => Some(true),
+        _ => None,
+    }
 }
 
 /// A read of `local`, of type `ty`.
