@@ -474,8 +474,9 @@ pub(crate) enum DiagnosticKind {
         /// fixes.
         in_result: bool,
     },
-    /// A call of `Some` at `at` whose argument does not fix the type of its payload.
-    CannotInferSome { at: Span },
+    /// A call of `Some`, or of `Option.Some`, written as `callee` at `at`, whose argument does
+    /// not fix the type of its payload.
+    CannotInferSome { callee: String, at: Span },
     /// A call of `Ok` or `Err`, named `variant`, at `at`. Its arguments and context do not fix
     /// the type parameter `param` of its `Result`.
     CannotInferResult {
@@ -2199,8 +2200,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot infer `{param}` for `{callee}`"))
                     .with_help(format!("{annotate}write the type: `{example}`"))
             }
-            DiagnosticKind::CannotInferSome { at } => {
-                Diagnostic::coded(code, at, "cannot infer `T` for `Some`")
+            DiagnosticKind::CannotInferSome { callee, at } => {
+                Diagnostic::coded(code, at, format!("cannot infer `T` for `{callee}`"))
                     .with_help("annotate the optional's type, as in `let x: i64?? = Some(None)`")
             }
             DiagnosticKind::CannotInferResult { param, variant, at } => Diagnostic::coded(

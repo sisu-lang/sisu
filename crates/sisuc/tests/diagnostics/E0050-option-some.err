@@ -1,0 +1,10 @@
+error[E0050]: cannot infer `T` for `Option.Some`
+ --> E0050-option-some.sisu:2:13
+  |
+2 |     let x = Option.Some(None)
+  |             ^^^^^^^^^^^
+  |
+  = help: annotate the optional's type, as in `let x: i64?? = Some(None)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

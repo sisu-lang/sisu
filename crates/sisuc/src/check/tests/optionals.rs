@@ -250,7 +250,7 @@ fn a_some_whose_argument_fails_should_keep_its_type() {
 }
 
 /// A wrong use of `Option` or `Some` gets the code of the rule it breaks, at the user's text.
-/// `tests/diagnostics/E0050-some` pins the wording for `Some(None)`.
+/// `tests/diagnostics/E0050-some` and `E0050-option-some` pin the wording for `Some(None)`.
 #[test]
 fn a_wrong_use_of_option_or_some_should_be_reported() {
     for (body, code, at) in [
@@ -272,6 +272,11 @@ fn a_wrong_use_of_option_or_some_should_be_reported() {
             (2, 12, "Option"),
         ),
         ("let r = Some(None)", Code::CannotInfer, (2, 13, "Some")),
+        (
+            "let r = Option.Some(None)",
+            Code::CannotInfer,
+            (2, 13, "Option.Some"),
+        ),
         ("let r = Option.Some", Code::VariantForm, (2, 20, "Some")),
         // `Option.Some` is no form of `None`, so `is` does not test it as one.
         (

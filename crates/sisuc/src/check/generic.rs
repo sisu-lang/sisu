@@ -661,8 +661,17 @@ impl Checker<'_> {
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
         let name = sig.name;
-        if name.name.as_str() == "Some" && sig.variant.is_none() {
-            self.report(DiagnosticKind::CannotInferSome { at: name.span });
+        // No item or variant takes the name `Some`: it is the callee of `Some(...)`, or the
+        // variant of `Option.Some(...)`.
+        if sig.variant.unwrap_or(name).name.as_str() == "Some" {
+            let (callee, at) = match sig.variant {
+                Some(variant) => (
+                    format!("{}.{}", name.name, variant.name),
+                    name.span.to(variant.span),
+                ),
+                None => (name.name.to_string(), name.span),
+            };
+            self.report(DiagnosticKind::CannotInferSome { callee, at });
             return;
         }
         // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
