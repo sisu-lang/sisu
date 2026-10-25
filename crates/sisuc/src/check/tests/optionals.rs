@@ -204,6 +204,15 @@ fn a_run_of_none_beside_coalesce_should_report_only_the_first() {
             (Code::BindingNotFound, (2, 34)),
         ],
     );
+    // The run ends at an operand that is not a `None`, and that operand is checked.
+    let src = "fn g(a: i64???) {\n    let r = a ?? None ?? nothing ?? 0\n}\nfn main() {}";
+    codes(
+        src,
+        &[
+            (Code::CannotInfer, (2, 18)),
+            (Code::BindingNotFound, (2, 26)),
+        ],
+    );
 }
 
 /// An operand that is not a `None` ends the run, and a value of the right type is no mistake.
