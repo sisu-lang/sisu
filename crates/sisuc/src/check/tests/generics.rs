@@ -990,6 +990,159 @@ fn the_expected_type_should_bind_the_rest() {
     ]);
 }
 
+/// A generic call whose arguments cannot bind one of its type parameters needs its context,
+/// whatever its arguments are: the context of an outer generic call fixes the parameter.
+#[test]
+fn a_call_whose_arguments_cannot_bind_a_parameter_should_wait_for_context() {
+    let pair = "class Tag<T, U> {\n    a: T\n}\n";
+    let bag = "class Bag<T> {\n    v: T\n    fn conv<U>(self, n: i64) -> [U] { [] }\n}\n";
+    infers(&[
+        // A function whose return type alone names a parameter.
+        (
+            "fn conv<T, U>(x: T) -> [U] { [] }\nfn g() {\n    let r: [string] = id(conv(1))\n}",
+            "conv",
+            &["i64", "string", "[string]"],
+        ),
+        // A class whose fields leave a parameter unnamed.
+        (
+            &format!("{pair}fn g() {{\n    let r: Tag<i64, string> = id(Tag(a: 1))\n}}"),
+            "Tag",
+            &["i64", "string", "Tag<i64, string>"],
+        ),
+        // A method names its owner's parameters through its receiver, not its own.
+        (
+            &format!("{bag}fn g(b: Bag<i64>) {{\n    let r: [string] = id(b.conv(1))\n}}"),
+            "Bag.conv",
+            &["i64", "string", "[string]"],
+        ),
+        // A variant of a generic enum, which names one of its two parameters.
+        (
+            "enum R<T, E> {\n    O(T)\n    X(E)\n}\nfn g() {\n    let r: R<i64, string> = id(R.O(1))\n}",
+            "R",
+            &["i64", "string", "R<i64, string>"],
+        ),
+    ]);
+    clean(&with_decls(
+        "enum R<T, E> {\n    O(T)\n    X(E)\n}\nfn g() {\n    let r: R<R<i64, string>, string> = R.O(R.X(\"x\"))\n}",
+    ));
+}
+
+/// The context of an outer call binds only what the type of the inner call names: a type
+/// parameter that no argument and not the type of the call names stays unbound, and is reported
+/// at the inner call, not at the outer one.
+#[test]
+fn an_unnamed_parameter_should_be_reported_at_its_own_call() {
+    let keep = "class Bag<T> {\n    v: T\n    fn keep<U, V>(self, u: U) -> U { u }\n}\n";
+    for (src, expected) in [
+        (
+            "fn f<T, U>(x: T) -> T { x }\nfn g() {\n    let r = id(f(1))\n}".to_string(),
+            vec![(Code::CannotInfer, (3, 16))],
+        ),
+        (
+            format!("{keep}fn g(b: Bag<i64>) {{\n    let s = id(b.keep(\"a\"))\n}}"),
+            vec![(Code::CannotInfer, (6, 18))],
+        ),
+        // The duplicate is reported once: the second `T` is a name nothing uses.
+        (
+            "fn f<T, T>(x: T) -> T { x }\nfn g() {\n    let r = id(f(1))\n}".to_string(),
+            vec![(Code::DefinedTwice, (1, 9))],
+        ),
+        // A parameter that only the return type names is open, but `U` is not: `f` reports it.
+        (
+            "fn f<T, U, V>(x: T) -> [V] { [] }\nfn g() {\n    let r = id(f(1))\n}".to_string(),
+            vec![(Code::CannotInfer, (3, 16))],
+        ),
+        // A broken name is skipped, so that the other `T`, which only the return type names,
+        // still waits for its context.
+        (
+            "fn f<T, T>(x: i64) -> T { todo }\nfn g() {\n    let r: i64 = id(f(1))\n}".to_string(),
+            vec![(Code::DefinedTwice, (1, 9)), (Code::TodoLeft, (1, 27))],
+        ),
+        // A broken name in a class, an enum or a built-in name is reported once, at its
+        // declaration, and no call waits for it.
+        (
+            "class Tag<T, T> {\n    a: T\n}\nfn g() {\n    let r = id(Tag(a: 1))\n}".to_string(),
+            vec![(Code::DefinedTwice, (1, 14))],
+        ),
+        (
+            "enum Pick<T, T> {\n    O(T)\n}\nfn g() {\n    let r = id(Pick.O(1))\n}".to_string(),
+            vec![(Code::DefinedTwice, (1, 14))],
+        ),
+        (
+            "class Tag<T, i64> {\n    a: T\n}\nfn g() {\n    let r = id(Tag(a: 1))\n}".to_string(),
+            vec![(Code::BuiltInName, (1, 14))],
+        ),
+    ] {
+        codes(&with_generics(&src), &expected);
+    }
+}
+
+/// A method names its owner's parameters through its receiver, and `Option.Some` is `Some`: an
+/// outer call needs no context for either.
+#[test]
+fn a_call_that_binds_its_parameters_should_not_wait_for_context() {
+    clean(&with_generics(
+        "class Bag<T> {\n    v: T\n    fn keep<U>(self, u: U) -> T { self.v }\n}\nfn g(b: Bag<i64>) {\n    let s = id(b.keep(\"a\"))\n}",
+    ));
+    clean(&with_generics(
+        "fn g() {\n    let b = id(Option.Some(1))\n}",
+    ));
+}
+
+/// Finding the type parameters that a call's parameter types name visits each type once, so it
+/// grows with the declaration, not with the square of its type parameters.
+#[test]
+fn named_parameters_should_be_found_in_one_walk() {
+    let marked = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let params: Vec<_> = (0..n).map(|i| format!("x{i}: T{i}")).collect();
+        let src = format!(
+            "fn id<T>(x: T) -> T {{ x }}\nfn f<{}>({}) -> T0 {{ x0 }}\nfn main() {{\n    let r: i64 = id(f({}))\n}}",
+            types.join(", "),
+            params.join(", "),
+            vec!["1"; n].join(", "),
+        );
+        generic::MARKED.set(0);
+        clean(&src);
+        generic::MARKED.get()
+    };
+    assert_near_linear(marked(100), marked(200), marked(300));
+    // A type without a parameter is not walked again at each call: the declaration and the
+    // number of calls grow together.
+    let repeated = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("P{i}")).collect();
+        let src = format!(
+            "fn id<T>(x: T) -> T {{ x }}\nclass C<{}> {{}}\nfn f<T>(x: T, c: C<{}>) -> T {{ x }}\nfn g(c: C<{}>) {{\n{}}}\nfn main() {{}}",
+            types.join(", "),
+            vec!["i64"; n].join(", "),
+            vec!["i64"; n].join(", "),
+            "    let _ = id(f(1, c))\n".repeat(n),
+        );
+        generic::MARKED.set(0);
+        clean(&src);
+        generic::MARKED.get()
+    };
+    assert_near_linear(repeated(100), repeated(200), repeated(300));
+    // A call that does not fit its declaration is not walked at all: a function, a method, a
+    // class and a variant.
+    let src = format!(
+        "fn id<T>(x: T) -> T {{ x }}\nfn f<T>(x: T) -> T {{ x }}\nclass Bag<T> {{\n    v: T\n    fn keep<U>(self, u: U) -> T {{ self.v }}\n}}\nenum Pick<T> {{ O(T) }}\nfn main(b: Bag<i64>) {{\n{}}}",
+        "    let r: i64 = id(f())\n    let s: i64 = id(b.keep())\n    let t: Bag<i64> = id(Bag())\n    let u: Pick<i64> = id(Pick.O())\n".repeat(20),
+    );
+    generic::MARKED.set(0);
+    checked(&src);
+    assert_eq!(generic::MARKED.get(), 0);
+    // `Ok` and `Err`, which the prelude declares, too.
+    with_prelude();
+    let src = format!(
+        "fn id<T>(x: T) -> T {{ x }}\nfn main() {{\n{}}}",
+        "    let r: Result<i64, string> = id(Ok())\n".repeat(20),
+    );
+    generic::MARKED.set(0);
+    checked(&src);
+    assert_eq!(generic::MARKED.get(), 0);
+}
+
 /// A call of a method with type parameters of its own, on a local or a field of one, waits for
 /// context as a call of a generic function does.
 #[test]
