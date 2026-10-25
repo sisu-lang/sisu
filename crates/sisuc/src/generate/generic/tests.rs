@@ -1,7 +1,7 @@
 //! Tests of the generic rules.
 
 use super::{Body, GField, GFunc, GTy, GVariant, Generic, MAX_SOLVE, Shape, unify};
-use crate::generate::scope::Ty;
+use crate::generate::scope::{RESULT, Ty};
 use crate::generate::{BUDGET, FUEL, Gen, MAX_NESTING, MAX_SIZE, STATEMENT_MOST, generate};
 use crate::tir::Rank;
 
@@ -104,14 +104,19 @@ fn unify_should_refuse_a_parameter_bound_to_two_types() {
 }
 
 #[test]
-fn unify_should_refuse_an_optional_for_a_parameter() {
-    // E0138: an optional is no type argument.
-    assert!(!unify(&param(0), &optional(plain(Ty::I64)), &mut [None]));
+fn unify_should_bind_an_optional_to_a_parameter() {
+    // An optional is a type argument like any other type.
+    let mut binds = [None];
+    assert!(unify(&param(0), &optional(plain(Ty::I64)), &mut binds));
+    assert_eq!(binds, [Some(optional(plain(Ty::I64)))]);
+    // `T?` against `i64?` takes the one layer off: `T` is `i64`.
+    let mut binds = [None];
     assert!(unify(
         &optional(param(0)),
         &optional(plain(Ty::I64)),
-        &mut [None]
+        &mut binds
     ));
+    assert_eq!(binds, [Some(plain(Ty::I64))]);
 }
 
 #[test]
@@ -595,6 +600,26 @@ fn a_variant_should_leave_out_its_type_arguments_only_with_fields_that_name_them
         "{}",
         g.w.out.program
     );
+}
+
+/// The prelude's `Result` is written by its name and variants, with its type arguments, and as
+/// `Ok(..)` or `Err(..)` only where the `let` that holds it writes its type.
+#[test]
+fn a_result_should_be_written_by_the_prelude_names() {
+    let write = |bytes: &[u8], bare: bool, max: u64, except: Option<usize>| {
+        let mut g = Gen::new(bytes);
+        let ty = g.instance(RESULT, &[Ty::I64, Ty::String]);
+        assert_eq!(ty.to_string(), "Result<i64, string>");
+        g.bare = bare;
+        g.variant(&ty, max, except);
+        g.w.out.program
+    };
+    // The `Ok` and `Err` variants, each with its type arguments.
+    assert!(write(&[0], false, 3, Some(1)).starts_with("Result<i64, string>.Ok("));
+    assert!(write(&[0], false, 3, Some(0)).starts_with("Result<i64, string>.Err("));
+    // `Ok(..)` after a first choice, and the variant with the type arguments after a second.
+    assert!(write(&[0], true, 3, Some(1)).starts_with("Ok("));
+    assert!(write(&[1], true, 3, Some(1)).starts_with("Result<i64, string>.Ok("));
 }
 
 #[test]
@@ -1195,13 +1220,24 @@ fn generics_should_name_each_instance_once_among_the_types() {
         let mut g = Gen::new(&data);
         g.generics();
         let types = &g.scope.generic_types;
-        instances += types.len();
         for (i, ty) in types.iter().enumerate() {
             assert!(!types[..i].contains(ty), "{ty} twice");
-            assert!(ty.to_string().starts_with('G'), "{ty}");
+            // `Result` is always among the instances; the check counts only the declared generics.
+            let name = ty.to_string();
+            assert!(name.starts_with('G') || name.starts_with("Result<"), "{ty}");
+            instances += usize::from(name.starts_with('G'));
         }
     }
     assert!(instances > 0, "no seed names an instance");
+}
+
+#[test]
+fn an_optional_of_an_optional_should_be_built_with_some() {
+    // An `if` over an optional takes one `?` layer, so a second layer needs `Some`.
+    let mut g = Gen::new(&[]);
+    let target = optional(optional(plain(Ty::I64)));
+    let text = g.solve(&target, &mut Vec::new(), 0).unwrap().text;
+    assert!(text.starts_with("Some("), "{text}");
 }
 
 #[test]

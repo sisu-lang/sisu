@@ -59,7 +59,6 @@ crates/runtime/src/text.rs::write_int_extremes
 crates/sisuc/src/ast.rs::display_every_node
 crates/sisuc/src/ast.rs::display_float
 crates/sisuc/src/ast.rs::display_formats
-crates/sisuc/src/check/exhaust.rs::witnesses
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
 crates/sisuc/src/check/string.rs::literal_names_lex_back
 crates/sisuc/src/check/tests/arrays.rs::array_of_t_is_not_array_of_optional_t
@@ -529,7 +528,6 @@ crates/sisuc/src/check/tests/patterns.rs::already_converted_match_stays_grouped
 crates/sisuc/src/check/tests/patterns.rs::alternatives_bind
 crates/sisuc/src/check/tests/patterns.rs::broken_pattern_skips_coverage
 crates/sisuc/src/check/tests/patterns.rs::coverage_finite
-crates/sisuc/src/check/tests/patterns.rs::cut_takes_unexpanded_alternatives
 crates/sisuc/src/check/tests/patterns.rs::default_witness_head_builds_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::failed_scrutinee_keeps_never
 crates/sisuc/src/check/tests/patterns.rs::forty_alternatives
@@ -554,7 +552,6 @@ crates/sisuc/src/check/tests/patterns.rs::match_spills
 crates/sisuc/src/check/tests/patterns.rs::non_exhaustive_note_and_fix
 crates/sisuc/src/check/tests/patterns.rs::one_named_field_per_arm_checks_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::pattern_bindings_are_immutable
-crates/sisuc/src/check/tests/patterns.rs::pattern_errors
 crates/sisuc/src/check/tests/patterns.rs::pattern_names
 crates/sisuc/src/check/tests/patterns.rs::pattern_spans
 crates/sisuc/src/check/tests/patterns.rs::range_patterns
@@ -906,7 +903,6 @@ crates/sisuc/src/generate/coverage.rs::a_call_statement_names_any_function_the_b
 crates/sisuc/src/generate/coverage.rs::a_cap_holds_the_least_value_of_its_field
 crates/sisuc/src/generate/coverage.rs::a_chain_counts_each_node_within_its_room
 crates/sisuc/src/generate/coverage.rs::a_chain_ends_in_a_variant_within_its_room
-crates/sisuc/src/generate/coverage.rs::a_class_optional_field_keeps_its_size
 crates/sisuc/src/generate/coverage.rs::a_constant_string_stays_within_its_most
 crates/sisuc/src/generate/coverage.rs::a_declared_type_leaves_arrays_among_the_types
 crates/sisuc/src/generate/coverage.rs::a_field_cap_past_most_is_an_i64
@@ -1482,7 +1478,6 @@ crates/sisuc/src/parser.rs::loop_is_an_expression
 crates/sisuc/src/parser.rs::loop_labels
 crates/sisuc/src/parser.rs::many_todo_bangs_parse_in_linear_time
 crates/sisuc/src/parser.rs::match_errors
-crates/sisuc/src/parser.rs::match_forms
 crates/sisuc/src/parser.rs::match_newlines
 crates/sisuc/src/parser.rs::match_syntax
 crates/sisuc/src/parser.rs::method_params_follow_self
@@ -1507,9 +1502,7 @@ crates/sisuc/src/parser.rs::nested_switch_calls_parse_in_linear_time
 crates/sisuc/src/parser.rs::new_tokens_are_errors_where_they_do_not_belong
 crates/sisuc/src/parser.rs::one_line_class
 crates/sisuc/src/parser.rs::opposite_comparison_directions
-crates/sisuc/src/parser.rs::optional_array_types_do_not_nest
 crates/sisuc/src/parser.rs::optional_types
-crates/sisuc/src/parser.rs::optionals_do_not_nest
 crates/sisuc/src/parser.rs::params_and_return_type
 crates/sisuc/src/parser.rs::parenthesized_primary
 crates/sisuc/src/parser.rs::pattern_forms

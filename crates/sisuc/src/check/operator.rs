@@ -4,7 +4,10 @@ use super::expr::{
     fits, if_some, int_literal, literal_type, local, none_literal, operator, path, rank, typed,
 };
 use super::unused_names::Used;
-use super::{Checked, Checker, Poisoned, UNKNOWN, optional_of, payload, type_of, wrap};
+use super::{
+    Checked, Checker, Poisoned, UNKNOWN, as_optional, beyond_one_layer, optional_of, payload,
+    type_of, wrap,
+};
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::source::Span;
@@ -22,7 +25,7 @@ impl Checker<'_> {
         operand: &ast::Expr,
         expected: Option<Type>,
     ) -> Result<(Type, (Checked, bool)), Poisoned> {
-        // A bare `None` expects an `i64`, as in `None + 1`.
+        // A `None` expects an `i64`, as in `None + 1`.
         let expected = expected.or_else(|| none_literal(operand).then_some(Type::I64));
         let before = self.diagnostics.len();
         let checked = self.value(operand, expected);
@@ -429,29 +432,42 @@ impl Checker<'_> {
             source: None,
             fix: None,
             conversion: false,
+            layers: false,
         }
         .into()
     }
 
-    /// `lhs == rhs`, or `!=`. The side of lower `rank` is checked first, the left on a tie,
-    /// and the other expects its type made optional. A bare `None` beside a value that is not
+    /// `lhs == rhs`, or `!=`. The side of lower `rank` is checked first, the left on a tie
+    /// unless it is the only `none_literal`, and the other expects its type made optional,
+    /// unless it is one. A side that is the other's type with two or more `?` layers taken off
+    /// is held to it. A value converts through one `?` only. A `None` beside a value that is not
     /// optional is reported: the answer is fixed. So is a `u8` beside an `i64`, at the side
     /// checked second, a `char` beside another number, at the side that is not the `char`, and
     /// an `i64` or a `u8` beside an `f64`, at the side that is not the `f64`. A side that is
     /// `f64.nan` is warned about.
     fn equal(&mut self, span: Span, negated: bool, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
-        let swapped = rank(rhs) < rank(lhs);
+        let swapped = rank(rhs) < rank(lhs) || (none_literal(lhs) && !none_literal(rhs));
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
         let checked = self.value(first, None);
-        let want = type_of(&checked).map_or_else(|| UNKNOWN, optional_of);
+        let want = type_of(&checked).map_or_else(|| UNKNOWN, as_optional);
         let other = self.value(second, Some(want));
+        // A side converts through one `?` only: `x == 5` on an `i64??` holds `5` to `i64??`.
+        if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
+            && let Some((side, want, got)) = [(second, a, b), (first, b, a)]
+                .into_iter()
+                .find(|&(_, want, got)| beyond_one_layer(want, got))
+        {
+            let d = self.mismatch(side.span, Some(side), want, got);
+            self.diagnostics.push(d);
+            return Err(Poisoned::error());
+        }
         // A class compares field by field, so it reads every field; `None` reads none.
         if !none_literal(second)
             && let Some(ty) = type_of(&checked)
         {
             self.record(Used::Equal(ty), span);
         }
-        // `second` is the bare `None`, if either is.
+        // `second` is the `none_literal`, if either is.
         if none_literal(second)
             && let Some(ty) = type_of(&checked)
             && !matches!(ty.kind(), TypeKind::Optional(_))
@@ -503,7 +519,8 @@ impl Checker<'_> {
     }
 
     /// `lhs is rhs`: each a class or its optional, of one class. An enum value has no identity
-    /// to test: two equal ones are the same value.
+    /// to test: two equal ones are the same value. An optional of an optional class is no
+    /// object: one layer comes off first.
     pub(super) fn is(&mut self, span: Span, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
         if none_literal(lhs) || none_literal(rhs) {
             let other = if none_literal(lhs) { rhs } else { lhs };
@@ -522,8 +539,35 @@ impl Checker<'_> {
         for (side, checked) in [(lhs, &l), (rhs, &r)] {
             // Once an operand is `Error`, the later one is not held to `is`.
             let Some(ty) = type_of(checked) else { break };
+            // The type under every `?` layer.
+            let mut base = ty;
+            while let TypeKind::Optional(inner) = base.kind() {
+                base = inner;
+            }
+            // Peeling a layer helps only when an object is under the rest.
+            if let TypeKind::Optional(payload) = ty.kind()
+                && matches!(payload.kind(), TypeKind::Optional(_))
+                && matches!(base.kind(), TypeKind::Class(..))
+            {
+                let text = |e: &ast::Expr| self.source.file.text(e.span).to_string();
+                let peeled = |e: &ast::Expr| {
+                    if std::ptr::eq(e, side) {
+                        format!("({} ?? None)", text(e))
+                    } else {
+                        text(e)
+                    }
+                };
+                let kind = DiagnosticKind::IsNeedsObjects {
+                    found: self.type_name(ty),
+                    at: side.span,
+                    help: false,
+                    peel: Some(format!("{} is {}", peeled(lhs), peeled(rhs))),
+                };
+                self.diagnostics.push(kind.into());
+                return Err(Poisoned::error());
+            }
             if matches!(
-                payload(ty).kind(),
+                base.kind(),
                 TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(..)
             ) || !ty.is_counted(&self.lowered_enums)
             {
@@ -531,6 +575,7 @@ impl Checker<'_> {
                     found: self.type_name(ty),
                     at: side.span,
                     help: !ty.has_param(),
+                    peel: None,
                 };
                 self.diagnostics.push(kind.into());
                 return Err(Poisoned::error());
@@ -604,12 +649,15 @@ impl Checker<'_> {
             let _ = self.fallback(rhs, UNKNOWN);
             return Err(Poisoned::error());
         };
-        let optional = optional_of(payload);
-        let other = self.fallback(rhs, optional);
-        let ty = match type_of(&other) {
+        // The right side expects `P` for an optional `P`, else `P?`: a value converts through
+        // one `?` only.
+        let other = self.fallback(rhs, as_optional(payload));
+        let (other, ty) = match type_of(&other) {
             // `a ?? panic("x")`: only the payload reaches the result.
-            Some(Type::NEVER) => payload,
-            Some(ty) if ty == payload || ty == optional => ty,
+            Some(Type::NEVER) => (other, payload),
+            Some(ty) if ty == payload || ty == optional_of(payload) => (other, ty),
+            // `x ?? 5` on an `i64??`: the payload of an optional `P` is wrapped to `P`.
+            Some(ty) if optional_of(ty) == payload => (other.map(|e| wrap(e, payload)), payload),
             Some(ty) => {
                 let d = self.mismatch(rhs.span, Some(rhs), payload, ty);
                 self.diagnostics.push(d);

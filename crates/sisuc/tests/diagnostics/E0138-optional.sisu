@@ -1,8 +1,0 @@
-class Cell<T> {
-    value: T
-}
-
-fn main() {
-    let c: Cell<i64?>? = None
-    print(c == None)
-}

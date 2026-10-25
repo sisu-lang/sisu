@@ -1,0 +1,15 @@
+// The prelude: Sisu source that the compiler checks before every program. The compiler
+// embeds this file (`front_end::PRELUDE_SOURCE`), and an error in it is an internal error.
+
+// A value that may be missing. The compiler takes this declaration for the optional type: `T?`
+// and `Option<T>` are the same type, `Some(x)` converts `x` to it, and no enum is made.
+enum Option<T> {
+    None
+    Some(T)
+}
+
+// The result of work that can fail: a value, or the reason it failed.
+enum Result<T, E> {
+    Ok(T)
+    Err(E)
+}

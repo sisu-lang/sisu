@@ -1,8 +1,0 @@
-error[E0127]: a `i64?` position takes only a name or `_`
- --> E0127-none.sisu:8:11
-  |
-8 |         V(None) => print(0)
-  |           ^^^^
-
-sisu: 1 error
-sisu: for more on a code, run `sisu explain <code>`: E0127

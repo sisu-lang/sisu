@@ -184,8 +184,8 @@ impl ConstantSite {
 
 impl Checker<'_> {
     /// Folds every constant in source order.
-    pub(super) fn fold_constants(&mut self, program: &ast::Program) {
-        let constants = program.items.iter().filter_map(|item| match item {
+    pub(super) fn fold_constants(&mut self, items: &[&ast::Item]) {
+        let constants = items.iter().filter_map(|item| match item {
             ast::Item::Const(c) => Some(c),
             ast::Item::Function(_) | ast::Item::Class(_) | ast::Item::Enum(_) => None,
         });

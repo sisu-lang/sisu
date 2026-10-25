@@ -1,0 +1,69 @@
+zero
+value 7
+none
+1
+2
+3
+1
+2
+3
+4
+1
+1
+2
+4
+-1
+0
+0
+6
+-1
+-2
+8
+0
+the letter a
+string b
+no string
+9
+-1
+circle red
+square 2
+nothing
+V(None)
+V(Circle(blue))
+V(Some(square 3))
+W small or none
+W small or none
+W 10
+circle green
+nothing
+W
+owned
+owned string
+owned holder
+if let Circle(pink)
+if let Some(1)
+if let y = 1
+not a circle
+item 2
+item 1
+item 0
+0 0 false false
+0 0 false false
+1 1 false false
+2 2 false false
+2 2 true true
+End End
+Next(None) Next(None)
+Next(Some(None)) Next(Some(None))
+Next(End) Next(End)
+Next(Next(_)) Next(Next(_))
+inner
+no inner name
+dot
+dash
+gap
+no second
+second
+-1
+-1
+7

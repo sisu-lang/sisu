@@ -149,6 +149,15 @@ impl Checker<'_> {
                 self.stray(call.map_or(&[], |(args, _)| args));
                 return Some(Err(Poisoned::error()));
             }
+            None if name.as_str() == "Option" => {
+                let site = Site {
+                    name: &ident,
+                    written,
+                    angles: angles.unwrap_or(base.span),
+                    expected,
+                };
+                return Some(self.option_path(span, site, member, call));
+            }
             None => {}
         }
         // Any other base with type arguments is checked as a value, which reports them.
@@ -252,9 +261,11 @@ impl Checker<'_> {
         }
         let wrap = !postfix(&first.value);
         let (open, close) = if wrap { ("(", ")") } else { ("", "") };
-        let text = &self.source.text[receiver.range()];
+        let text = self.source.file.slice(receiver.range());
         let tail = rest.last().map_or("", |last| {
-            &self.source.text[rest[0].value.span.start()..last.value.span.end()]
+            self.source
+                .file
+                .slice(rest[0].value.span.start()..last.value.span.end())
         });
         Some(MathFix::Method {
             name,

@@ -6,7 +6,7 @@ use crate::lexer::Float;
 use crate::source::Span;
 use crate::symbol::Symbol;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Program {
     pub(crate) items: Vec<Item>,
     /// The named items that hold a syntax error, which the checker treats as declared.
@@ -128,12 +128,12 @@ pub(crate) struct Param {
     pub(crate) ty: TypeExpr,
 }
 
-/// A type as written, and whether a `?` follows it.
+/// A type as written, and how many `?` follow it: each is one optional layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TypeExpr {
     pub(crate) kind: TypeKind,
-    pub(crate) optional: bool,
-    /// The name, or `[` through `]`, then through the `?`, if any.
+    pub(crate) optional: u16,
+    /// The name, or `[` through `]`, then through the last `?`, if any.
     pub(crate) span: Span,
 }
 
@@ -580,7 +580,7 @@ impl fmt::Display for TypeExpr {
             TypeKind::Applied(applied) => write!(f, "{}{}", applied.name, angled(&applied.args))?,
             TypeKind::Array(element) => write!(f, "[{element}]")?,
         }
-        if self.optional {
+        for _ in 0..self.optional {
             f.write_str("?")?;
         }
         Ok(())
@@ -1013,7 +1013,7 @@ mod tests {
     fn ty(name: &str) -> TypeExpr {
         TypeExpr {
             kind: TypeKind::Name(Symbol::intern(name)),
-            optional: false,
+            optional: 0,
             span: sp(),
         }
     }

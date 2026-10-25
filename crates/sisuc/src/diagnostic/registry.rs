@@ -68,7 +68,6 @@ codes! {
     UnexpectedCharacter = "E0010",
     Expected = "E0011",
     Var = "E0013",
-    OptionalNests = "E0014",
     FieldComma = "E0015",
     FieldLet = "E0016",
     MethodNeedsSelf = "E0017",
@@ -104,7 +103,7 @@ codes! {
     CannotCompare = "E0047",
     CoalesceNotOptional = "E0048",
     SafeAccessNotOptional = "E0049",
-    CannotInfer | CannotInferParam = "E0050",
+    CannotInfer | CannotInferParam | CannotInferSome | CannotInferResult = "E0050",
     UnwrapNeedsOptional = "E0051",
     FunctionNotFound = "E0052",
     ArgumentCount = "E0053",
@@ -214,10 +213,16 @@ codes! {
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
 /// "Numbers"). `sisu explain` still prints them.
-pub(crate) const RETIRED: &[(&str, &str)] = &[(
-    "E0012",
-    include_str!("../../../../docs/diagnostics/E0012.md"),
-)];
+pub(crate) const RETIRED: &[(&str, &str)] = &[
+    (
+        "E0012",
+        include_str!("../../../../docs/diagnostics/E0012.md"),
+    ),
+    (
+        "E0014",
+        include_str!("../../../../docs/diagnostics/E0014.md"),
+    ),
+];
 
 impl Code {
     /// The code `text` names, in either case.
@@ -299,8 +304,6 @@ pub(crate) enum DiagnosticKind {
     },
     /// A `var` at `at`, on a field or on a binding.
     Var { at: Span, field: bool },
-    /// The type `ty`, then `?` again, from `at`.
-    OptionalNests { ty: String, at: Span },
     /// A `,` at `at` after a `member`. `replacement` is what takes the comma: nothing when it ends
     /// its line or comes before `}`, and `;` otherwise.
     FieldComma {
@@ -367,7 +370,8 @@ pub(crate) enum DiagnosticKind {
     /// A value of type `got`, at `at`, where one of the types `want` is expected; `fix` is the
     /// rewrite that would fit. `source` is the place the expectation came from, if the report
     /// points at it. `conversion` is whether the value is a conversion that can fail, whose
-    /// optional stands where its payload is expected.
+    /// optional stands where its payload is expected. `layers` is whether `got` is `want` with
+    /// two or more `?` layers taken off: a value converts through one `?` only.
     Mismatch {
         want: Vec<String>,
         got: String,
@@ -375,6 +379,7 @@ pub(crate) enum DiagnosticKind {
         source: Option<MismatchSource>,
         fix: Option<MismatchFix>,
         conversion: bool,
+        layers: bool,
     },
     /// The binding `name`, at `at`, which no scope holds.
     BindingNotFound {
@@ -427,8 +432,14 @@ pub(crate) enum DiagnosticKind {
     /// path of the other side as written.
     IsTestsNone { tested: Option<String>, at: Span },
     /// An `is` whose operand at `at`, of type `found`, is no object. `help` when `==` may
-    /// compare it: its type names no type parameter.
-    IsNeedsObjects { found: String, at: Span, help: bool },
+    /// compare it: its type names no type parameter. `peel`, for an optional of an optional, is
+    /// the `is` with one layer of that operand taken off, as written.
+    IsNeedsObjects {
+        found: String,
+        at: Span,
+        help: bool,
+        peel: Option<String>,
+    },
     /// A comparison at `at` of a `left` with a `right`.
     CannotCompare {
         left: String,
@@ -462,6 +473,15 @@ pub(crate) enum DiagnosticKind {
         /// Whether the callee's result type names `param`, which annotating the result then
         /// fixes.
         in_result: bool,
+    },
+    /// A call of `Some` at `at` whose argument does not fix the type of its payload.
+    CannotInferSome { at: Span },
+    /// A call of `Ok` or `Err`, named `variant`, at `at`. Its arguments and context do not fix
+    /// the type parameter `param` of its `Result`.
+    CannotInferResult {
+        param: String,
+        variant: String,
+        at: Span,
     },
     /// The value at `at`, of type `found`, that `keyword` unwraps, and which is not optional.
     UnwrapNeedsOptional {
@@ -551,6 +571,8 @@ pub(crate) enum DiagnosticKind {
         value: Option<String>,
         at: Span,
         access: Option<Span>,
+        /// For a `?.` on an optional of an optional: the optional it leaves, which has no members.
+        peel: Option<Peel>,
     },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
     NoMember {
@@ -966,13 +988,8 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         form: ArgumentsForm,
     },
-    /// The type argument at `at`, `ty`, which no parameter may take: `unit`, `never`, or, with
-    /// `optional`, an optional.
-    TypeArgument {
-        ty: String,
-        at: Span,
-        optional: bool,
-    },
+    /// The type argument at `at`, `ty`, which no parameter may take: `unit` or `never`.
+    TypeArgument { ty: String, at: Span },
     /// The operator `op` on the operand at `at`, whose type `ty` names a type parameter, which
     /// has no operators; `contains` when `op` is the `==` of a `contains` on the array at `at`,
     /// whose element type is `ty`.
@@ -1332,6 +1349,15 @@ pub(crate) struct Operand {
     pub(crate) literal: bool,
 }
 
+/// A `receiver?.member` whose receiver is an optional of an optional, so `?.` leaves `left`.
+#[derive(Clone)]
+pub(crate) struct Peel {
+    /// The receiver as written.
+    pub(crate) receiver: String,
+    pub(crate) left: String,
+    pub(crate) member: String,
+}
+
 /// Moving a token up to the code before it: the `gap` between them becomes a space.
 #[derive(Clone, Copy)]
 pub(crate) struct Join {
@@ -1682,10 +1708,6 @@ impl From<DiagnosticKind> for Diagnostic {
                     d.with_help("Sisu declares a variable with `let mut`")
                 }
             }
-            DiagnosticKind::OptionalNests { ty, at } => {
-                Diagnostic::coded(code, at, format!("`{ty}??` is not a type"))
-                    .with_help("optionals do not nest")
-            }
             DiagnosticKind::FieldComma {
                 at,
                 member,
@@ -1886,6 +1908,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 source,
                 fix,
                 conversion,
+                layers,
             } => {
                 let want = listed(&want, "or");
                 let mut d =
@@ -1905,6 +1928,11 @@ impl From<DiagnosticKind> for Diagnostic {
                 if conversion {
                     d = d.with_help(
                         "a conversion that can fail gives an optional: give a default with `??`, or unwrap it with `if let`",
+                    );
+                }
+                if layers {
+                    d = d.with_help(
+                        "a value converts through one `?` only: wrap it in `Some(...)` for each further layer",
                     );
                 }
                 match fix {
@@ -2102,9 +2130,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::IsNeedsObjects { found, at, help } => {
+            DiagnosticKind::IsNeedsObjects {
+                found,
+                at,
+                help,
+                peel,
+            } => {
                 let d = Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"));
-                if help {
+                if let Some(peel) = peel {
+                    d.with_help(format!("peel one layer first: `{peel}`"))
+                } else if help {
                     d.with_help("use `==` to compare values")
                 } else {
                     d
@@ -2161,6 +2196,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot infer `{param}` for `{callee}`"))
                     .with_help(format!("{annotate}write the type: `{example}`"))
             }
+            DiagnosticKind::CannotInferSome { at } => {
+                Diagnostic::coded(code, at, "cannot infer `T` for `Some`")
+                    .with_help("annotate the optional's type, as in `let x: i64?? = Some(None)`")
+            }
+            DiagnosticKind::CannotInferResult { param, variant, at } => Diagnostic::coded(
+                code,
+                at,
+                format!("cannot infer `{param}` for `{variant}`"),
+            )
+            .with_help("annotate the result's type, as in `let r: Result<i64, string> = Ok(...)`"),
             DiagnosticKind::UnwrapNeedsOptional {
                 keyword,
                 found,
@@ -2329,7 +2374,25 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("`{function}` never runs: its argument never finishes"),
             ),
-            DiagnosticKind::MayBeNone { value, at, access } => {
+            DiagnosticKind::MayBeNone {
+                at,
+                peel: Some(Peel {
+                    receiver,
+                    left,
+                    member,
+                }),
+                ..
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!("`{receiver}?.` leaves a `{left}`, which may be `None`"),
+            )
+            .with_help(format!(
+                "peel the other layer first: `({receiver} ?? None)?.{member}`"
+            )),
+            DiagnosticKind::MayBeNone {
+                value, at, access, ..
+            } => {
                 let d = Diagnostic::coded(code, at, format!("{} may be `None`", named(value)));
                 match access {
                     Some(access) => d
@@ -3047,7 +3110,7 @@ impl From<DiagnosticKind> for Diagnostic {
             },
             DiagnosticKind::CannotMatch { ty, at } => {
                 Diagnostic::coded(code, at, format!("cannot `match` on `{ty}`"))
-                    .with_help("`match` takes enums, integers, `bool`, `char` and `string`")
+                    .with_help("`match` takes enums, optionals, integers, `bool`, `char` and `string`")
             }
             DiagnosticKind::NotVariantHere { name, at } => {
                 let mut lower = name.clone();
@@ -3468,13 +3531,8 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                 }
             },
-            DiagnosticKind::TypeArgument { ty, at, optional } => {
-                let d = Diagnostic::coded(code, at, format!("`{ty}` cannot be a type argument"));
-                if optional {
-                    d.with_label("an optional cannot be a type argument yet")
-                } else {
-                    d
-                }
+            DiagnosticKind::TypeArgument { ty, at } => {
+                Diagnostic::coded(code, at, format!("`{ty}` cannot be a type argument"))
             }
             DiagnosticKind::ParamLacks {
                 ty,

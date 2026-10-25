@@ -36,4 +36,5 @@ same way. See the milestone 2 spec, "Reference counting".
   list, or a chain that alternates between classes, frees in constant stack. A
   cycle is a set of classes that hold each other in direct fields, `X` or
   `X?`. A list's `next` is a cycle of one class. Other references recurse: a
-  field of an array or an enum, and a class outside the cycle.
+  field of an array or an enum, a field of type `X??` or deeper, and a class
+  outside the cycle.

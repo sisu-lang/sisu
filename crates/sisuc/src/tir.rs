@@ -102,11 +102,26 @@ impl MathOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Program {
     pub(crate) classes: Vec<Class>,
     pub(crate) enums: Vec<Enum>,
     pub(crate) functions: Vec<Function>,
+    /// Whether the checker recorded a type argument: a written one, or one a call inferred. A
+    /// program with none, and with no generic item of the user's, has nothing for `mono` to
+    /// instantiate. Only the checker sets it.
+    pub(crate) instantiates: bool,
+    /// Where the prelude's items start in each list; the user's come first. Only the checker
+    /// sets it.
+    pub(crate) prelude: ItemCounts,
+}
+
+/// How many classes, enums and functions (methods too) come first in their lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ItemCounts {
+    pub(crate) classes: usize,
+    pub(crate) enums: usize,
+    pub(crate) funcs: usize,
 }
 
 #[derive(Debug)]
@@ -485,6 +500,10 @@ pub(crate) enum PatternKind {
     Str(String),
     /// Any of the alternatives, tried in order; none of them is an `Or`.
     Or(Vec<Pattern>),
+    /// A value of the optional at its position, the pattern against the value inside.
+    Some(Box<Pattern>),
+    /// The `None` of the optional at its position.
+    None,
 }
 
 impl Type {
@@ -1148,8 +1167,8 @@ impl Printer<'_> {
         }
     }
 
-    /// `_`, a local, a payload-free variant's name, `(Name field ...)`, a literal, `lo..=hi`, or
-    /// `(| alternative ...)`, at a position of type `ty`.
+    /// `_`, a local, a payload-free variant's name, `(Name field ...)`, a literal, `lo..=hi`,
+    /// `(| alternative ...)`, `(Some pattern)` or `None`, at a position of type `ty`.
     fn pattern(&self, f: &mut fmt::Formatter<'_>, pattern: &Pattern, ty: Type) -> fmt::Result {
         match &pattern.kind {
             PatternKind::Wild => f.write_str("_"),
@@ -1196,6 +1215,17 @@ impl Printer<'_> {
                 }
                 f.write_str(")")
             }
+            PatternKind::Some(inner) => {
+                let TypeKind::Optional(payload) = ty.kind() else {
+                    panic!(
+                        "the checker should only emit a `Some` pattern at an optional position, not `{ty}`"
+                    )
+                };
+                f.write_str("(Some ")?;
+                self.pattern(f, inner, payload)?;
+                f.write_str(")")
+            }
+            PatternKind::None => f.write_str("None"),
         }
     }
 
@@ -1505,6 +1535,7 @@ mod tests {
                     ty: Type::I64,
                 },
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1637,6 +1668,7 @@ mod tests {
                     ty: Type::NEVER,
                 },
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1733,12 +1765,103 @@ mod tests {
                     ty: Type::I64,
                 },
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
             "(enum State Idle (Running i64))\n\
              (fn f ((s#0 State)) i64 (block (match s#0 (arm (Running c#1) (block c#1)) (arm Idle (block 0)) (arm _ (block 1)))))"
         );
+    }
+
+    /// A writer that refuses the write number `at`, and takes every other one.
+    struct FailsAt {
+        at: usize,
+        writes: usize,
+    }
+
+    impl fmt::Write for FailsAt {
+        fn write_str(&mut self, _: &str) -> fmt::Result {
+            self.writes += 1;
+            if self.writes - 1 == self.at {
+                return Err(fmt::Error);
+            }
+            Ok(())
+        }
+    }
+
+    /// `match o { Some(_) => 1  None => 0 }` over an `i64?`: the patterns of an optional.
+    #[test]
+    fn print_should_give_the_error_of_a_write_that_fails_in_an_optional_pattern() {
+        use fmt::Write as _;
+
+        let optional = Type::intern(TypeKind::Optional(Type::I64));
+        let arm = |kind, value| Arm {
+            pattern: Pattern {
+                kind,
+                span: Span::new(0, 0),
+            },
+            bindings: vec![],
+            guard: None,
+            body: Block {
+                stmts: vec![],
+                value: Some(Box::new(int(value))),
+                ty: Type::I64,
+            },
+            reachable: true,
+        };
+        let wild = Pattern {
+            kind: PatternKind::Wild,
+            span: Span::new(0, 0),
+        };
+        let matched = expr(
+            ExprKind::Match {
+                scrutinee: Box::new(expr(ExprKind::Local(LocalId(0)), optional)),
+                temp: LocalId(1),
+                arms: vec![
+                    arm(PatternKind::Some(Box::new(wild)), 1),
+                    arm(PatternKind::None, 0),
+                ],
+            },
+            Type::I64,
+        );
+        let program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                type_params: Vec::new(),
+                owner_params: 0,
+                params: vec![LocalId(0)],
+                ret: Type::I64,
+                locals: vec![
+                    param("o", optional),
+                    Local {
+                        name: None,
+                        ty: optional,
+                        mutable: false,
+                    },
+                ],
+                body: Block {
+                    stmts: vec![],
+                    value: Some(Box::new(matched)),
+                    ty: Type::I64,
+                },
+            }],
+            ..Program::default()
+        };
+        assert_eq!(
+            program.to_string(),
+            "(fn f ((o#0 i64?)) i64 (block (match o#0 (arm (Some _) (block 1)) (arm None (block 0)))))"
+        );
+        // Whichever single write fails, the print gives that error and does not go on.
+        let mut counter = FailsAt {
+            at: usize::MAX,
+            writes: 0,
+        };
+        write!(counter, "{program}").expect("a writer that never fails takes the print");
+        for at in 0..counter.writes {
+            let mut writer = FailsAt { at, writes: 0 };
+            assert!(write!(writer, "{program}").is_err(), "write {at}");
+        }
     }
 
     fn binary(op: BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
@@ -1815,6 +1938,7 @@ mod tests {
             classes: vec![],
             enums: vec![],
             functions: vec![first, second],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1860,6 +1984,7 @@ mod tests {
                         .collect(),
                 ),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1889,6 +2014,7 @@ mod tests {
                 locals: vec![param("c", Type::CHAR)],
                 body: block(vec![print(char_lit), print(to_i64), print(to_char)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1918,6 +2044,7 @@ mod tests {
                 locals: vec![],
                 body: block(vec![Stmt::Expr(eprint)]),
             }],
+            ..Program::default()
         };
         assert_eq!(program.to_string(), "(fn f () unit (block (eprint 1)))");
     }
@@ -1938,6 +2065,7 @@ mod tests {
                 locals: vec![],
                 body: block(vec![Stmt::Expr(read_line)]),
             }],
+            ..Program::default()
         };
         assert_eq!(program.to_string(), "(fn f () unit (block (read_line)))");
     }
@@ -1959,6 +2087,7 @@ mod tests {
                 locals: vec![param("s", Type::STRING)],
                 body: block(vec![Stmt::Expr(words)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -1988,6 +2117,7 @@ mod tests {
                 locals: vec![param("s", Type::STRING)],
                 body: block(vec![Stmt::Expr(print)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2023,6 +2153,7 @@ mod tests {
                 locals: vec![param("s", Type::STRING), param("n", Type::I64)],
                 body: block(vec![Stmt::Expr(print)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2073,6 +2204,7 @@ mod tests {
                 locals: vec![param("n", Type::I64), param("x", Type::F64)],
                 body: block(vec![Stmt::Expr(print)]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2109,6 +2241,7 @@ mod tests {
                     print(expr(ExprKind::FromChars(chars()), Type::STRING)),
                 ]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2153,6 +2286,7 @@ mod tests {
                     append,
                 ]),
             }],
+            ..Program::default()
         };
         assert_eq!(
             program.to_string(),
@@ -2177,6 +2311,7 @@ mod tests {
                 locals: vec![],
                 body: block(vec![Stmt::Expr(panic)]),
             }],
+            ..Program::default()
         };
         assert_eq!(program.to_string(), r#"(fn f () unit (block (panic "x")))"#);
     }
@@ -2235,6 +2370,7 @@ mod tests {
             ],
             enums: vec![],
             functions: vec![],
+            ..Program::default()
         };
         let chains = [0, 1, 2, 4].map(|id| program.chain_field(ClassId(id)));
         assert_eq!(chains, [Some(1), Some(1), Some(0), None]);
@@ -2287,6 +2423,7 @@ mod tests {
                 cycle: None,
             }],
             functions: vec![],
+            ..Program::default()
         };
         let args = TypeArgs::intern(&[Type::array(t)]);
         let pair = TypeArgs::intern(&[Type::I64, t]);
@@ -2320,6 +2457,7 @@ mod tests {
                     classes: Vec::new(),
                     enums: Vec::new(),
                     functions: Vec::new(),
+                    ..Program::default()
                 };
                 program.type_name(ty)
             })

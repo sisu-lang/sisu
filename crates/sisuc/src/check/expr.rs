@@ -43,7 +43,7 @@ impl Checker<'_> {
             let (x, exact) = (value as f64, (value as f64) as i128 == i128::from(value));
             if !exact {
                 self.report(DiagnosticKind::NotExactlyF64 {
-                    text: self.source.text[literal.range()].to_string(),
+                    text: self.source.file.text(literal).to_string(),
                     nearest: format!("{x:?}"),
                     at,
                 });
@@ -61,7 +61,7 @@ impl Checker<'_> {
                 DiagnosticKind::NegatedU8 { at }.into()
             } else {
                 DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source.text[literal.range()].to_string(),
+                    text: self.source.file.text(literal).to_string(),
                     at,
                 }
                 .into()
@@ -254,9 +254,20 @@ impl Checker<'_> {
                 }
             }
             None => self.constant_use(name, span).unwrap_or_else(|| {
-                let d = self
-                    .bare_variant(name, span)
-                    .unwrap_or_else(|| self.not_found(name, span));
+                let d = if name.as_str() == "Some" || self.result_variant(name).is_some() {
+                    // These variants of the prelude's enums are written without the enum, and
+                    // `Option` makes no enum for `bare_variant` to find.
+                    DiagnosticKind::VariantForm {
+                        path: name.to_string(),
+                        payload: true,
+                        held: false,
+                        at: span,
+                    }
+                    .into()
+                } else {
+                    self.bare_variant(name, span)
+                        .unwrap_or_else(|| self.not_found(name, span))
+                };
                 self.diagnostics.push(d);
                 Err(Poisoned::error())
             }),
@@ -359,7 +370,7 @@ impl Checker<'_> {
     }
 
     /// A `None`, of the optional type `expected`.
-    fn none(&mut self, span: Span, expected: Option<Type>) -> Checked {
+    pub(super) fn none(&mut self, span: Span, expected: Option<Type>) -> Checked {
         let (kind, mismatch) = match expected {
             _ if self.quiet(span, expected) => return Err(Poisoned::error()),
             Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
@@ -378,6 +389,7 @@ impl Checker<'_> {
                     source: self.expected_from(span),
                     fix: None,
                     conversion: false,
+                    layers: false,
                 },
                 true,
             ),
@@ -453,19 +465,47 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
 }
 
 /// Which side of an `if`, `if let` or `==` with no expected type is checked first, the lower
-/// first: a concrete value is 0, an `int_literal` 1, a bare `None` or `[]` 2.
+/// first: a concrete value is 0, an `int_literal` 1, a `bare_none` or `[]` 2.
 pub(super) fn rank(e: &ast::Expr) -> u8 {
     match &e.kind {
-        ExprKind::NoneLit => 2,
+        _ if bare_none(e) => 2,
         ExprKind::ArrayLit(elements) if elements.is_empty() => 2,
         _ if int_literal(e) => 1,
         _ => 0,
     }
 }
 
-/// Whether `e` is the bare literal `None`.
+/// Whether `e` is the empty optional, as `None`, `Option.None` or `Option<T>.None`.
 pub(super) fn none_literal(e: &ast::Expr) -> bool {
-    matches!(e.kind, ExprKind::NoneLit)
+    matches!(e.kind, ExprKind::NoneLit) || option_none(e).is_some()
+}
+
+/// Whether `e` is the empty optional without a type argument: `None` or `Option.None`.
+pub(super) fn bare_none(e: &ast::Expr) -> bool {
+    matches!(e.kind, ExprKind::NoneLit) || option_none(e) == Some(false)
+}
+
+/// Whether `e` is `Option.None` or `Option<T>.None`, and if so, whether it writes a type
+/// argument.
+fn option_none(e: &ast::Expr) -> Option<bool> {
+    match &e.kind {
+        ExprKind::Field {
+            base,
+            name,
+            safe: false,
+        } if name.name.as_str() == "None" => option_written(base),
+        _ => None,
+    }
+}
+
+/// Whether `e` is `Option` or `Option<T>`, and if so, whether it writes a type argument. No item
+/// can take the name `Option`, so the name alone tells.
+pub(super) fn option_written(e: &ast::Expr) -> Option<bool> {
+    match &e.kind {
+        ExprKind::Name(name) if name.as_str() == "Option" => Some(false),
+        ExprKind::Applied { name, .. } if name.name.as_str() == "Option" => Some(true),
+        _ => None,
+    }
 }
 
 /// A read of `local`, of type `ty`.

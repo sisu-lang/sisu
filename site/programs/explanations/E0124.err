@@ -4,7 +4,7 @@ error[E0124]: cannot `match` on `Point`
 8 |     let n = match p {
   |                   ^
   |
-  = help: `match` takes enums, integers, `bool`, `char` and `string`
+  = help: `match` takes enums, optionals, integers, `bool`, `char` and `string`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0124

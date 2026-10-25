@@ -6,13 +6,13 @@ use std::{fmt, iter};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
-use super::expr::{int_literal, rank};
+use super::expr::{bare_none, int_literal, option_written, rank};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN,
-    built_in_type, type_of,
+    built_in_type, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
@@ -107,7 +107,10 @@ impl Bindings {
             }
             (TypeKind::Array(p), TypeKind::Array(v))
             | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.bind(p, v),
-            (TypeKind::Optional(p), _) => self.bind(p, value),
+            // A value converts through one `?` only.
+            (TypeKind::Optional(p), _) if !matches!(p.kind(), TypeKind::Optional(_)) => {
+                self.bind(p, value)
+            }
             (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => self.bind_all(p, v),
             (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => self.bind_all(p, v),
             _ => false,
@@ -270,19 +273,23 @@ pub(super) fn mismatched(checked: &Checked) -> bool {
 }
 
 impl Checker<'_> {
-    /// The arguments of a call of the generic `sig`, which the caller has matched to its
-    /// parameters by count and label, checked in four passes that bind its type parameters
-    /// (`written` gives every one the receiver does not): (1) those that are neither
-    /// literal-like nor need context, each against its parameter's type once that names no
-    /// unbound parameter and on its own before; (2) `expected` against the return type, an
-    /// optional by its payload, which a `T?` takes as it takes the optional; (3) the
-    /// literal-like arguments, as in (1); (4) those that need context, against their
-    /// parameter's type. An argument of type `unit` or `never` binds only what none of the
-    /// others does. Returns the arguments in source order, the type arguments, and the call's
-    /// type; `None`, reported, when a parameter is left unbound or bound to a type no
-    /// parameter takes, and then an argument that needs context and has none is checked against
-    /// `UNKNOWN`, for its own mistakes only. What ranking
-    /// the arguments checked ahead (see `Ahead`) and left unused is dropped.
+    /// The arguments of a call of the generic `sig`, checked in four passes that bind its type
+    /// parameters. The caller has matched the arguments to the parameters by count and label.
+    /// `written` gives every type parameter that the receiver does not give.
+    ///
+    /// 1. The arguments that are neither literal-like nor need context. Each is checked against
+    ///    its parameter's type once that type names no unbound parameter, and on its own before.
+    /// 2. `expected` against the return type, whole. When the return type cannot meet an
+    ///    optional `expected` whole, it meets its payload.
+    /// 3. The literal-like arguments, as in pass 1.
+    /// 4. The arguments that need context, against their parameter's type.
+    ///
+    /// An argument of type `unit` or `never` binds only what none of the others binds. Returns
+    /// the arguments in source order, the type arguments and the call's type. Returns `None`,
+    /// reported, when a parameter is left unbound or bound to a type that no parameter takes.
+    /// Then an argument that needs context and has none is checked against `UNKNOWN`, for its
+    /// own mistakes only. What ranking the arguments checked ahead (see `Ahead`) and left unused
+    /// is dropped.
     pub(super) fn generic_call(
         &mut self,
         span: Span,
@@ -344,12 +351,12 @@ impl Checker<'_> {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
         }
         if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
-            let want = match want.kind() {
-                TypeKind::Optional(payload) => payload,
-                _ => want,
-            };
-            // What of the return type cannot meet it is reported where the call's value is used.
-            call.bindings.constrain(ret, want);
+            // The return type meets `want` whole if it can: `let x: i64? = id(5)` binds
+            // `T = i64?`. Else it meets the payload of an optional `want`, and the call's value
+            // is wrapped. What of it cannot meet either is reported where the value is used.
+            if !call.bindings.unify(ret, want) {
+                call.bindings.constrain(ret, payload(want));
+            }
             self.report_fresh(&mut call, span);
         }
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 1) {
@@ -416,6 +423,7 @@ impl Checker<'_> {
             }
             return None;
         };
+        self.instantiates = true;
         let checked = call
             .slots
             .into_iter()
@@ -559,12 +567,10 @@ impl Checker<'_> {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
-            let optional = matches!(ty.kind(), TypeKind::Optional(_));
-            if optional || matches!(ty, Type::UNIT | Type::NEVER) {
+            if matches!(ty, Type::UNIT | Type::NEVER) {
                 self.report(DiagnosticKind::TypeArgument {
                     ty: self.type_name(ty),
                     at,
-                    optional,
                 });
                 call.failed = true;
             }
@@ -574,6 +580,19 @@ impl Checker<'_> {
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) {
         let name = sig.name;
+        if name.name.as_str() == "Some" && sig.variant.is_none() {
+            self.report(DiagnosticKind::CannotInferSome { at: name.span });
+            return;
+        }
+        // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
+        if let Some(variant) = sig.variant.filter(|v| v.span == name.span) {
+            self.report(DiagnosticKind::CannotInferResult {
+                param: sig.declared[param].to_string(),
+                variant: variant.name.to_string(),
+                at: name.span,
+            });
+            return;
+        }
         let dots = vec!["..."; sig.declared.len() - sig.owner.len()].join(", ");
         let (callee, example, at) = match sig.variant {
             Some(variant) => {
@@ -618,7 +637,7 @@ impl Checker<'_> {
     fn waits(&mut self, e: &ast::Expr, fit: &mut bool) -> bool {
         use ast::ExprKind as K;
         let (generic, shaped, args) = match &e.kind {
-            K::NoneLit => return true,
+            _ if bare_none(e) => return true,
             K::ArrayLit(elements) => return elements.iter().all(|e| self.waits(e, fit)),
             K::Field {
                 base,
@@ -645,6 +664,12 @@ impl Checker<'_> {
                             || v.labels.iter().all(Option::is_none))
                         && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
                     (true, shaped)
+                } else if !safe
+                    && method.name.as_str() == "Some"
+                    && option_written(receiver) == Some(false)
+                {
+                    // `Option.Some` is `Some`, as `generic_callee` takes it.
+                    (true, matches!(&args[..], [arg] if arg.label.is_none()))
                 } else {
                     self.generic_method(receiver, method, args, *safe)
                 };
@@ -925,6 +950,11 @@ impl Checker<'_> {
                     sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args),
                 )
             }
+            // `Some<T>(x: T) -> T?`, and the prelude's `Ok` and `Err`, which no user item can
+            // take the name of.
+            (None, None) if name.as_str() == "Some" || self.result_variant(name).is_some() => {
+                (true, matches!(args, [arg] if arg.label.is_none()))
+            }
             _ => (false, false),
         }
     }
@@ -987,6 +1017,7 @@ impl Checker<'_> {
             _ => {
                 // Each argument is checked, so this collects into a `Vec` before it gives up.
                 let args: Vec<_> = written.iter().map(|arg| self.type_argument(arg)).collect();
+                self.instantiates = true;
                 return args
                     .into_iter()
                     .collect::<Option<Vec<_>>>()
@@ -1016,8 +1047,8 @@ impl Checker<'_> {
         });
     }
 
-    /// The type of the type argument `arg`: `None`, reported, for `unit`, `never` or an
-    /// optional, which no type parameter takes.
+    /// The type of the type argument `arg`: `None`, reported, for `unit` or `never`, which no
+    /// type parameter takes.
     fn type_argument(&mut self, arg: &ast::TypeExpr) -> Option<Type> {
         if let ast::TypeKind::Name(name) = arg.kind
             && matches!(name.as_str(), "unit" | "never")
@@ -1028,27 +1059,17 @@ impl Checker<'_> {
             self.report(DiagnosticKind::TypeArgument {
                 ty: arg.to_string(),
                 at: arg.span,
-                optional: false,
             });
             return None;
         }
-        let ty = self.resolve(arg)?;
-        if arg.optional {
-            self.report(DiagnosticKind::TypeArgument {
-                ty: self.type_name(ty),
-                at: arg.span,
-                optional: true,
-            });
-            return None;
-        }
-        Some(ty)
+        self.resolve(arg)
     }
 
     /// Reports `main`, which has type parameters. The fix removes them, unless a comment is
     /// among them or a name in the rest of `main`, outside its strings and comments, is one.
     pub(super) fn main_type_params(&mut self, main: &ast::Function) {
         let angles = main.angles;
-        let rest = &self.source.text[angles.end()..main.span.end()];
+        let rest = self.source.file.slice(angles.end()..main.span.end());
         // What does not lex alone is held to name one.
         let named = lex(rest).map_or(true, |lexed| {
             lexed.tokens.iter().any(|token| {
@@ -1080,7 +1101,12 @@ impl Checker<'_> {
     /// and `first` could be a value: a name that is not a built-in type, with no `?`.
     pub(super) fn misread(&mut self, name: Span, first: Option<&ast::TypeExpr>) -> Poisoned {
         let first = first.filter(|first| self.could_be_value(first));
-        let compare = first.map(|first| self.source.text[name.start()..first.span.end()].into());
+        let compare = first.map(|first| {
+            self.source
+                .file
+                .slice(name.start()..first.span.end())
+                .into()
+        });
         self.misread_as(name, compare)
     }
 
@@ -1089,7 +1115,7 @@ impl Checker<'_> {
         let ast::TypeKind::Name(n) = arg.kind else {
             return false;
         };
-        !arg.optional && self.body.scopes.iter().any(|scope| scope.contains_key(&n))
+        arg.optional == 0 && self.body.scopes.iter().any(|scope| scope.contains_key(&n))
             || self.names_no_type(arg)
     }
 
@@ -1099,7 +1125,7 @@ impl Checker<'_> {
         let ast::TypeKind::Name(n) = arg.kind else {
             return false;
         };
-        !arg.optional
+        arg.optional == 0
             && built_in_type(n.as_str()).is_none()
             && !self.class_ids.contains_key(&n)
             && !self.enum_ids.contains_key(&n)
@@ -1110,7 +1136,7 @@ impl Checker<'_> {
     pub(super) fn misread_as(&mut self, name: Span, compare: Option<String>) -> Poisoned {
         self.body.misread.insert(name.start());
         self.report(DiagnosticKind::TypeArguments {
-            name: self.source.text[name.start()..name.end()].to_string(),
+            name: self.source.file.slice(name.start()..name.end()).to_string(),
             at: name,
             form: ArgumentsForm::Value { compare },
         });
@@ -1175,14 +1201,18 @@ impl Checker<'_> {
         None
     }
 
-    /// Whether `receiver` before `.method` is a path, not a value: an enum, or `math` or a
-    /// built-in type that no local takes.
+    /// Whether `receiver` before `.method` is a path, not a value: an enum, `Option`, or `math`
+    /// or a built-in type that no local takes.
     pub(super) fn path_method(&mut self, receiver: &ast::Expr, method: &ast::Ident) -> bool {
         let name = match &receiver.kind {
             ast::ExprKind::Name(name) => *name,
             ast::ExprKind::Applied { name, .. } => name.name,
             _ => return false,
         };
+        // No item can take the name of the optional type, whose members are its variants.
+        if name.as_str() == "Option" {
+            return true;
+        }
         if let Some(&Declared::Known(id)) = self.enum_ids.get(&name) {
             // A generic method's list waits for the member's report, which says it is a method.
             let info = &self.enums[id.0];
@@ -1246,17 +1276,19 @@ impl Checker<'_> {
         types: &[ast::TypeExpr],
         angles: Span,
     ) {
-        let text = self.source.text;
+        let text = self.source.file;
         let instead = types.iter().all(|ty| !self.names_no_type(ty)).then(|| {
             format!(
                 "{}{}.{}",
-                &text[base.span.range()],
-                &text[angles.range()],
+                text.text(base.span),
+                text.text(angles),
                 variant.name
             )
         });
         self.report(DiagnosticKind::TypeArguments {
-            name: text[base.span.start()..variant.span.end()].to_string(),
+            name: text
+                .slice(base.span.start()..variant.span.end())
+                .to_string(),
             at: angles,
             form: ArgumentsForm::Variant { instead },
         });

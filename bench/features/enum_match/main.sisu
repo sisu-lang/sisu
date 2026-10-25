@@ -1,7 +1,8 @@
-// A stack machine: an array of instructions with inline payloads, run by a
-// match in a loop from a different start each round, so no tag is known at
-// compile time. Both registers fold into the checksum after every
-// instruction. Then a boxed expression tree is built and evaluated per round.
+// A stack machine: an array of optional instructions with inline payloads,
+// run by a match in a loop from a different start each round, so no tag is
+// known at compile time. A `None` is a spare tag of `Instr` and does nothing.
+// Both registers fold into the checksum after every instruction. Then a boxed
+// expression tree is built and evaluated per round.
 enum Instr {
     Push(i64)
     Add
@@ -34,13 +35,14 @@ fn eval(e: Expr) -> i64 {
     }
 }
 
-fn run(code: [Instr], rounds: i64) -> i64 {
+fn run(code: [Instr?], rounds: i64) -> i64 {
     let mut acc = 0
     for r in 0..rounds {
         let mut top = r
         let mut below = 0
         for j in 0..code.len() {
             match code[(r + j) % code.len()] {
+                None => {}
                 Push(v) => {
                     below = top
                     top = v
@@ -57,7 +59,7 @@ fn run(code: [Instr], rounds: i64) -> i64 {
 }
 
 fn main() {
-    let code = [Instr.Push(3), Instr.Add, Instr.Mul(7), Instr.Dup, Instr.Push(11), Instr.Add, Instr.Drop, Instr.Mul(5)]
+    let code: [Instr?] = [Instr.Push(3), Instr.Add, None, Instr.Mul(7), Instr.Dup, Instr.Push(11), Instr.Add, None, Instr.Drop, Instr.Mul(5)]
     print(run(code, 200_000))
     let mut total = 0
     for k in 0..200 {

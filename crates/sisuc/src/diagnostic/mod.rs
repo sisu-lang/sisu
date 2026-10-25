@@ -11,8 +11,8 @@ pub(crate) use registry::{
     ArgumentsForm, BadRange, BuiltIn, ClashForm, ClashKind, Code, Conversion, Definition,
     DiagnosticKind, Earlier, ForeignPattern, ForeignRange, GuardHelp, Immutable, InterpolateHelp,
     Join, LetField, Literal, LiteralKind, MainForm, MatchIdiomForm, MathFix, Member,
-    MethodReceiver, MismatchFix, MismatchSource, NanFix, Operand, Owner, Panic, PowerFix, RETIRED,
-    ReceiverArgument, TypedLiteral, Unbuilt, Unwrap, VariantLabels, invisible,
+    MethodReceiver, MismatchFix, MismatchSource, NanFix, Operand, Owner, Panic, Peel, PowerFix,
+    RETIRED, ReceiverArgument, TypedLiteral, Unbuilt, Unwrap, VariantLabels, invisible,
 };
 pub(crate) use suggest::{Suggestion, alias, closest, suggestion};
 

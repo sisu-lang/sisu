@@ -11,7 +11,7 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit 2c22efd</p>
+    <p class="meta">{{adr-count}} records · at commit 3c93176</p>
   </div></section>
   <!-- source: docs/adr/ (34 files, 0001 to 0034), README.md ("Read why a design choice was made") -->
 
@@ -43,7 +43,7 @@ The design decisions behind Sisu, each written down as a short record with its r
       <!-- source: docs/adr/0006-values-correctness-simplicity-readability-performance.md -->
 
       <h2 id="principles">Principles</h2>
-      <div class="callout info"><p>Some records settle features that are still planned, such as generics. The <a href="status.html">status page</a> shows what works today.</p></div>
+      <div class="callout info"><p>Some records settle features that are still planned, such as interfaces. The <a href="status.html">status page</a> shows what works today.</p></div>
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0004-python-syntax-rust-semantics-swift-memory-model.md"><span class="num">0004</span><b>Python syntax, Rust semantics, Swift memory model</b><span>Surface syntax follows Python, semantics follow Rust, and memory management and everyday ergonomics follow Swift.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0027-what-sisu-is-for.md"><span class="num">0027</span><b>What Sisu is for<small>proposed</small></b><span>Fast, small, reliable command-line tools, scripts and server-side software, with code that is fast and easy to verify; three acceptance programs define 1.0.</span></a></li>
@@ -89,7 +89,7 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0017-floats-follow-ieee-754.md"><span class="num">0017</span><b>Floats follow IEEE 754</b><span><code>f64</code> arithmetic never panics: division by zero gives infinity or NaN.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md"><span class="num">0018</span><b>A conversion that can fail returns an optional</b><span><code>u8(n)</code>, <code>char(n)</code> and <code>i64(x)</code> of an <code>f64</code> return an optional, and no conversion panics.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md"><span class="num">0023</span><b>Generics are monomorphized and checked at the definition</b><span>Each list of type arguments gets its own compiled copy, and a generic body is checked once, against its bounds.</span></a></li>
-        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0024-optionals-nest.md"><span class="num">0024</span><b>Optionals nest <span class="soon">planned</span></b><span><code>i64??</code> is its own type, and <code>??</code> and <code>if let</code> peel one layer.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0024-optionals-nest.md"><span class="num">0024</span><b>Optionals nest</b><span><code>i64??</code> is its own type, and <code>??</code> and <code>if let</code> peel one layer.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0032-while-true-without-break-is-never.md"><span class="num">0032</span><b><code>while true</code> with no <code>break</code> is <code>never</code><small>amended by 0034</small></b><span>A function can return from inside an endless loop with no dead tail after it, and code after the loop warns as unreachable.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0034-loop-and-loop-labels.md"><span class="num">0034</span><b><code>loop</code>, <code>break</code> with a value, and loop labels</b><span>A <code>loop</code> gives the value of its <code>break</code>, <code>outer: for ...</code> lets <code>break outer</code> leave an outer loop, and <code>while true</code> warns and points at <code>loop</code>.</span></a></li>
       </ul>
@@ -138,9 +138,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><strong>Mutable memory shared between tasks.</strong> Tasks share no objects, so counts stay non-atomic and Sisu code cannot have a data race (ADR 0010, proposed).</li>
         <li><strong>A package registry, for a long time.</strong> A registry means hosting, security and name squatting.</li>
       </ul>
-      <p>Interfaces and generic code are <span class="soon">planned</span>. Planned work has no promised date and may change.</p>
+      <p>Interfaces are <span class="soon">planned</span>. Planned work has no promised date and may change.</p>
       <p>Compile-time evaluation and reflection are left open, to decide once Sisu has grown; the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#open-decisions">Open decisions</a> lists what has to be settled first.</p>
-      <!-- source: docs/roadmap.md "Deliberately avoided", "Open decisions" ("Compile-time evaluation and reflection"), "Proposed milestones 8 to 12"; docs/adr/0010-tasks-share-no-objects.md; README.md (generics proposed) -->
+      <!-- source: docs/roadmap.md "Deliberately avoided", "Open decisions" ("Compile-time evaluation and reflection"), "Proposed milestones 8 to 12"; docs/adr/0010-tasks-share-no-objects.md; README.md (interfaces proposed) -->
 
       <h2 id="propose">Proposing a change</h2>
       <p>Open a <a href="https://github.com/sisu-lang/sisu/issues">GitHub issue</a> that names the record and the change you propose. A change that is accepted becomes a new record that supersedes the old one. See <a href="contribute.html">how to contribute</a>.</p>

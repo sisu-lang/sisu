@@ -1,0 +1,10 @@
+error[E0032]: expected `i64??`, found `i64`
+ --> E0032-three-depths.sisu:5:15
+  |
+5 |     let xs = [a, b, c]
+  |               ^
+  |
+  = help: a value converts through one `?` only: wrap it in `Some(...)` for each further layer
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

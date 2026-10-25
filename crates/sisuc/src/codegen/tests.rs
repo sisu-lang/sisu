@@ -1,5 +1,5 @@
 use super::*;
-use crate::check::check;
+use crate::check::check_alone;
 use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::tir::BinaryOp;
@@ -25,7 +25,7 @@ fn compiled_from<'ctx>(
     edit: impl FnOnce(&mut mir::Program),
 ) -> Module<'ctx> {
     let program = parse_ok(src);
-    let (program, diagnostics) = check(&program, src, &[]);
+    let (program, diagnostics) = check_alone(&program, src, &[]);
     let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     let mut mir = mir::build(&program);
     edit(&mut mir);
@@ -873,6 +873,127 @@ fn scalar_optional_is_a_pair() {
         ir.contains("define internal { i1, i64 } @sisu.f({ i1, i64 }"),
         "{ir}"
     );
+}
+
+/// A tag is the smallest of 8, 16 and 32 bits that holds the variant count.
+#[test]
+fn tag_bits_should_hold_the_variant_count() {
+    for (count, bits) in [(1, 8), (256, 8), (257, 16), (65_536, 16), (65_537, 32)] {
+        assert_eq!(enums::tag_bits(count), bits, "{count} variants");
+    }
+}
+
+/// Each layer of a niche takes the next spare value while its storage holds it: a `bool` with
+/// 254 layers is an `i8` whose empty value is 255, and the 255th layer is a pair. An enum of 255
+/// variants has one spare tag, so `E?` is `E` and `E??` is a pair.
+#[test]
+fn niche_should_run_out_past_its_storage() {
+    let context = Context::create();
+    let variants = (0..255)
+        .map(|v| format!("    V{v}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let src = format!("enum E {{\n{variants}}}\nfn main() {{\n    let _ = E.V0\n}}\n");
+    let (program, diagnostics) = check_alone(&parse_ok(&src), &src, &[]);
+    let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
+    let machine = target_machine(OptLevel::O0).expect("the host is a target");
+    let mut codegen = Codegen::new(&context, &program, "test.sisu", &src, &machine, false);
+    codegen.lay_out_types();
+    let layers = |ty, k| (0..k).fold(ty, |ty, _| Type::optional(ty));
+    let pair = |value| {
+        Some(
+            context
+                .struct_type(&[context.bool_type().into(), value], false)
+                .into(),
+        )
+    };
+    let i8_type = context.i8_type().into();
+    assert_eq!(codegen.llvm_type(layers(Type::BOOL, 254)), Some(i8_type));
+    assert_eq!(codegen.llvm_type(layers(Type::BOOL, 255)), pair(i8_type));
+    let e = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
+    let e_type = codegen.enum_layout(EnumId(0)).ty;
+    assert_eq!(codegen.llvm_type(layers(e, 1)), Some(e_type));
+    assert_eq!(codegen.llvm_type(layers(e, 2)), pair(e_type));
+}
+
+/// The LLVM type of each local, from its `alloca`, and the value that its first value stores.
+/// An optional is a spare value of the payload where it has one, and `null` for one layer around
+/// a pointer. Every other optional is a `{ i1, T }` pair. An `Option`-shaped enum has one variant
+/// with no payload and one with one field. It is that field's storage in either order of its
+/// variants, and its payload-free variant is the field's spare value. Every other enum is tagged.
+#[test]
+fn niche_layouts_should_follow_the_payload() {
+    let rows = [
+        ("char?", "None", "i32", Some("i32 1114112")),
+        ("char??", "None", "i32", Some("i32 1114113")),
+        ("bool?", "None", "i8", Some("i8 2")),
+        ("bool??", "None", "i8", Some("i8 3")),
+        ("E?", "None", "%sisu.E", Some("%sisu.E { i8 2 }")),
+        ("Node?", "None", "ptr", Some("ptr null")),
+        (
+            "Node??",
+            "None",
+            "{ i1, ptr }",
+            Some("{ i1, ptr } zeroinitializer"),
+        ),
+        (
+            "i64?",
+            "None",
+            "{ i1, i64 }",
+            Some("{ i1, i64 } zeroinitializer"),
+        ),
+        (
+            "u8?",
+            "None",
+            "{ i1, i8 }",
+            Some("{ i1, i8 } zeroinitializer"),
+        ),
+        (
+            "f64?",
+            "None",
+            "{ i1, double }",
+            Some("{ i1, double } zeroinitializer"),
+        ),
+        ("Maybe", "Maybe.Nothing", "i32", Some("i32 1114112")),
+        ("Flag", "Flag.Unset", "i8", Some("i8 2")),
+        ("Chain", "Chain.End", "ptr", Some("ptr null")),
+        ("Rev", "Rev.Nothing", "i32", Some("i32 1114112")),
+        ("Maybe?", "None", "i32", Some("i32 1114113")),
+        ("Link", "Link.End", "%sisu.Link", None),
+        ("Wide", "Wide.A", "%sisu.Wide", None),
+        ("Two", "Two.A('a')", "%sisu.Two", None),
+    ];
+    let context = Context::create();
+    let lets = (rows.iter().enumerate())
+        .map(|(i, (ty, init, ..))| {
+            format!("    let x{i}: {ty} = {init}\n    print(x{i} == {init})\n")
+        })
+        .collect::<Vec<_>>()
+        .concat();
+    let enums = "enum Maybe {\n    Nothing\n    Just(char)\n}\n\
+        enum Flag {\n    Unset\n    Set(bool)\n}\n\
+        enum Chain {\n    End\n    Next(Chain)\n}\n\
+        enum Rev {\n    Just(char)\n    Nothing\n}\n\
+        enum Link {\n    End\n    Next(Link?)\n}\n\
+        enum Wide {\n    A\n    B(i64)\n}\n\
+        enum Two {\n    A(char)\n    B(char)\n}\n";
+    let src = format!(
+        "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\n{enums}fn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
+    );
+    let ir = compiled(&context, &src).print_to_string().to_string();
+    let main = function_body(&ir, "define internal void @sisu.main()");
+    for (i, (ty, _, llvm, first)) in rows.iter().enumerate() {
+        assert!(
+            main.contains(&format!("%x{i} = alloca {llvm}, align")),
+            "{ty} should be {llvm} in\n{main}"
+        );
+        if let Some(first) = first {
+            assert!(
+                main.contains(&format!("store {first}, ptr %x{i},")),
+                "the first value of {ty} should be {first} in\n{main}"
+            );
+        }
+    }
 }
 
 /// `!=` on an `i64` or a `bool` is one `icmp ne`, not an `icmp eq` and a `not`.
@@ -1778,7 +1899,7 @@ fn address_of(instruction: InstructionValue<'_>, n: u32) -> InstructionValue<'_>
 fn binary_takes_and_and_or_of_two_computed_bools() {
     let context = Context::create();
     let src = "fn main() {}";
-    let (program, diagnostics) = check(&parse_ok(src), src, &[]);
+    let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
     let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let codegen = Codegen::new(&context, &program, "test.sisu", src, &machine, false);

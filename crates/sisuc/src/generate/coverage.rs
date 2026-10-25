@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 11] = [
+const EXCLUDED: [(&str, &str); 10] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -44,10 +44,6 @@ const EXCLUDED: [(&str, &str); 11] = [
     (
         "ast::Bound::Name",
         "a named range bound is an error (E0126)",
-    ),
-    (
-        "ast::PatternKind::None",
-        "a `None` pattern is an error in every position (E0127)",
     ),
     (
         "types::Step::Type",
@@ -96,7 +92,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 43] = [
+const REACH: [&str; 62] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -140,6 +136,25 @@ const REACH: [&str; 43] = [
     "reach: a generic class is built with inferred type arguments",
     "reach: a generic variant is built with inferred type arguments",
     "reach: a generic type is a type argument",
+    "reach: an optional is a type argument",
+    "reach: a type has one `?` layer",
+    "reach: a type has two or more `?` layers",
+    "reach: `??` on an optional of an optional",
+    "reach: `Some` builds an optional",
+    "reach: a type is spelled `Option<..>`",
+    "reach: `Option.None` or `Option<..>.None`",
+    "reach: a variant, literal or range pattern stands at an optional position",
+    "reach: a binding or `_` covers a whole optional in a `match` arm",
+    "reach: a `match` on an optional of an optional",
+    "reach: `Ok` builds a `Result`",
+    "reach: `Err` builds a `Result`",
+    "reach: a `match` on a `Result`",
+    "reach: a `char?` is stored",
+    "reach: a `bool?` is stored",
+    "reach: an optional of an enum is stored",
+    "reach: an optional of an optional of `char` or `bool` is stored",
+    "reach: an `Option`-shaped enum has a niche",
+    "reach: an `Option`-shaped enum holds itself",
 ];
 
 /// Whether a program's text holds a form.
@@ -230,7 +245,7 @@ fn checked(source: &str) -> (ast::Program, tir::Program) {
         panic!("a generated program fails to check: {errors:?}\n{numbered}")
     });
     let lexed = lexer::lex(source).expect("a program that checks should lex");
-    (parser::parse(lexed).program, program)
+    (parser::parse(lexed, false).program, program)
 }
 
 /// Everything the generated programs should hold between them.
@@ -389,6 +404,8 @@ struct Walk {
     chains: FxHashSet<usize>,
     /// Each enum's variants, by the enum's name.
     variants: FxHashMap<String, Vec<String>>,
+    /// The id of the prelude's `Result` in the typed tree.
+    result: Option<usize>,
     /// The types each enum's payloads hold, by its id.
     payloads: Vec<Vec<Type>>,
     /// Field and element assignments of a value that may hold a class object (decision 4).
@@ -570,14 +587,24 @@ impl Walk {
     }
 
     fn type_expr(&mut self, ty: &ast::TypeExpr) {
-        self.mark(&format!("ast::TypeExpr.optional = {}", ty.optional));
+        match ty.optional {
+            0 => {}
+            1 => self.mark("reach: a type has one `?` layer"),
+            _ => self.mark("reach: a type has two or more `?` layers"),
+        }
         match &ty.kind {
             ast::TypeKind::Name(_) => self.mark("ast::TypeKind::Name"),
             ast::TypeKind::Applied(applied) => {
                 self.mark("ast::TypeKind::Applied");
+                if applied.name.as_str() == "Option" {
+                    self.mark("reach: a type is spelled `Option<..>`");
+                }
                 for arg in &applied.args {
                     if matches!(arg.kind, ast::TypeKind::Applied(_)) {
                         self.mark("reach: a generic type is a type argument");
+                    }
+                    if arg.optional > 0 {
+                        self.mark("reach: an optional is a type argument");
                     }
                     self.type_expr(arg);
                 }
@@ -1135,6 +1162,12 @@ impl Walk {
             } => {
                 self.mark("ast::ExprKind::Call");
                 let callee = callee.name.as_str();
+                if callee == "Some" {
+                    self.mark("reach: `Some` builds an optional");
+                }
+                if callee == "Ok" || callee == "Err" {
+                    self.mark(&format!("reach: `{callee}` builds a `Result`"));
+                }
                 self.generic_call(callee, types.is_empty());
                 self.mark(&format!("prelude {callee}"));
                 if callee == "panic" {
@@ -1161,6 +1194,9 @@ impl Walk {
             ast::ExprKind::Field { base, name, safe } => {
                 self.mark("ast::ExprKind::Field");
                 self.mark(&format!("ast::ExprKind::Field.safe = {safe}"));
+                if enum_name(base) == Some("Option") && name.name.as_str() == "None" {
+                    self.mark("reach: `Option.None` or `Option<..>.None`");
+                }
                 if matches!(&base.kind, ast::ExprKind::Name(n) if n.as_str() == "f64") {
                     self.mark(&format!("f64.{}", name.name.as_str()));
                 }
@@ -1175,6 +1211,9 @@ impl Walk {
             } => {
                 self.mark("ast::ExprKind::MethodCall");
                 self.mark(&format!("ast::ExprKind::MethodCall.safe = {safe}"));
+                if enum_name(receiver) == Some("Option") && method.name.as_str() == "Some" {
+                    self.mark("reach: `Some` builds an optional");
+                }
                 let built = enum_name(receiver)
                     .and_then(|receiver| self.variants.get(receiver))
                     .is_some_and(|variants| variants.iter().any(|v| v == method.name.as_str()));
@@ -1408,6 +1447,7 @@ impl Walk {
     }
 
     fn tir(&mut self, program: &tir::Program) {
+        self.result = program.enums.iter().position(|e| e.name == "Result");
         self.payloads = program
             .enums
             .iter()
@@ -1431,12 +1471,72 @@ impl Walk {
                 tir::Rank::Never => "tir::Rank::Never",
             });
         }
+        for (id, e) in program.enums.iter().enumerate() {
+            self.option_shaped(id, e);
+        }
         for function in &program.functions {
             self.ty(function.ret);
             for local in &function.locals {
                 self.ty(local.ty);
+                self.stored(local.ty);
             }
             self.tir_block(&function.body);
+        }
+    }
+
+    /// Records an enum `id` of two variants, one with no payload and one with one field. The
+    /// field's storage has a spare value: it is a box, or a `char`, `bool` or pointer type. This
+    /// rule is a subset of codegen's `option_shape`, which also accepts an enum or optional
+    /// field with a niche. Thus the walker can miss such an enum, but it never marks an enum
+    /// that codegen lays out tagged.
+    fn option_shaped(&mut self, id: usize, e: &tir::Enum) {
+        let [first, second] = e.variants.as_slice() else {
+            return;
+        };
+        let (([field], empty) | (empty, [field])) =
+            (first.fields.as_slice(), second.fields.as_slice())
+        else {
+            return;
+        };
+        let niche = if field.boxed {
+            !matches!(field.ty.kind(), TypeKind::Optional(_))
+        } else {
+            matches!(
+                field.ty.kind(),
+                TypeKind::Char
+                    | TypeKind::Bool
+                    | TypeKind::String
+                    | TypeKind::Class(..)
+                    | TypeKind::Array(_)
+            )
+        };
+        if !empty.is_empty() || !niche {
+            return;
+        }
+        self.mark("reach: an `Option`-shaped enum has a niche");
+        if field.boxed && field.ty.inline_enum().is_some_and(|held| held.0 == id) {
+            self.mark("reach: an `Option`-shaped enum holds itself");
+        }
+    }
+
+    /// Records the optionals with a niche that a local of `ty` holds, itself or as its elements.
+    fn stored(&mut self, mut ty: Type) {
+        while let TypeKind::Array(element) = ty.kind() {
+            ty = element;
+        }
+        let TypeKind::Optional(payload) = ty.kind() else {
+            return;
+        };
+        match payload.kind() {
+            TypeKind::Char => self.mark("reach: a `char?` is stored"),
+            TypeKind::Bool => self.mark("reach: a `bool?` is stored"),
+            TypeKind::Enum(..) => self.mark("reach: an optional of an enum is stored"),
+            TypeKind::Optional(inner)
+                if matches!(inner.kind(), TypeKind::Char | TypeKind::Bool) =>
+            {
+                self.mark("reach: an optional of an optional of `char` or `bool` is stored");
+            }
+            _ => {}
         }
     }
 
@@ -1619,8 +1719,15 @@ impl Walk {
             tir::ExprKind::Str(_) => self.mark("tir::ExprKind::Str"),
             tir::ExprKind::None => self.mark("tir::ExprKind::None"),
             tir::ExprKind::Local(_) => self.mark("tir::ExprKind::Local"),
-            tir::ExprKind::Call { args, .. } => {
+            tir::ExprKind::Call { types, args, .. } => {
                 self.mark("tir::ExprKind::Call");
+                if types
+                    .get()
+                    .iter()
+                    .any(|t| matches!(t.kind(), TypeKind::Optional(_)))
+                {
+                    self.mark("reach: an optional is a type argument");
+                }
                 self.tir_exprs(args);
             }
             tir::ExprKind::New { args, .. } => {
@@ -1757,6 +1864,15 @@ impl Walk {
                 ..
             } => {
                 self.mark("tir::ExprKind::IfSome");
+                // Only a `??` starts where its scrutinee does, but for the `(`s around it: an
+                // `if let` starts at `if`, and a `?.` on an optional of an optional is an error
+                // (E0062).
+                let before = &self.source[e.span.start()..scrutinee.span.start()];
+                if before.chars().all(|c| c == '(')
+                    && matches!(scrutinee.ty.kind(), TypeKind::Optional(inner) if matches!(inner.kind(), TypeKind::Optional(_)))
+                {
+                    self.mark("reach: `??` on an optional of an optional");
+                }
                 self.some_value(scrutinee);
                 self.tir_expr(scrutinee, Parent::Other);
                 self.tir_block(then_block);
@@ -1768,8 +1884,30 @@ impl Walk {
                 scrutinee, arms, ..
             } => {
                 self.mark("tir::ExprKind::Match");
+                if matches!(scrutinee.ty.kind(), TypeKind::Enum(id, _) if Some(id.0) == self.result)
+                {
+                    self.mark("reach: a `match` on a `Result`");
+                }
                 self.some_value(scrutinee);
                 self.tir_expr(scrutinee, Parent::Other);
+                if let TypeKind::Optional(payload) = scrutinee.ty.kind() {
+                    if let TypeKind::Optional(_) = payload.kind() {
+                        self.mark("reach: a `match` on an optional of an optional");
+                    }
+                    // An `if let` lowers to a `match` whose `_` arm has the span of its pattern.
+                    let first = arms.first().map(|arm| arm.pattern.span);
+                    let covers = arms.iter().enumerate().any(|(i, arm)| {
+                        matches!(
+                            arm.pattern.kind,
+                            tir::PatternKind::Wild | tir::PatternKind::Bind(_)
+                        ) && (i == 0 || Some(arm.pattern.span) != first)
+                    });
+                    if covers {
+                        self.mark(
+                            "reach: a binding or `_` covers a whole optional in a `match` arm",
+                        );
+                    }
+                }
                 for arm in arms {
                     self.tir_pattern(&arm.pattern);
                     if let Some(guard) = &arm.guard {
@@ -1849,6 +1987,17 @@ impl Walk {
                     self.tir_pattern(alternative);
                 }
             }
+            tir::PatternKind::Some(inner) => {
+                self.mark("tir::PatternKind::Some");
+                // The checker gives the `Some` it writes out the span of the pattern inside.
+                if inner.span == pattern.span {
+                    self.mark(
+                        "reach: a variant, literal or range pattern stands at an optional position",
+                    );
+                }
+                self.tir_pattern(inner);
+            }
+            tir::PatternKind::None => self.mark("tir::PatternKind::None"),
         }
     }
 }
@@ -2555,28 +2704,29 @@ fn an_int_literal_is_worth_what_it_says() {
 
 #[test]
 fn rare_constant_forms_check_clean() {
-    // Each input chooses, byte by byte, no class or enum, no generic type, no generic function,
-    // an item, a constant, its type, no annotation, and then its form, ending once the bytes run
-    // out, where every choice is the first.
+    // Each input chooses, byte by byte, no class or enum, no generic type, one instance of
+    // `Result` over two `i64`s, no generic function, an item, a constant, its type, no
+    // annotation, and then its form, ending once the bytes run out, where every choice is the
+    // first.
     for (data, form) in [
         // `-(e)` of the smallest `i64`, which has no negation: `e` alone.
         (
-            &[0, 0, 0, 1, 0, 0, 0, 1, 0, 63][..],
+            &[0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 63][..],
             "const c1 = (-9223372036854775808)\n",
         ),
         // `a - b` of the smallest `i64` and a negative literal, which fits where `a + b` would
         // overflow: the fold must know the literal's sign.
         (
-            &[0, 0, 0, 1, 0, 0, 0, 3, 0, 63, 0, 6, 0, 0, 0][..],
+            &[0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 3, 0, 63, 0, 6, 0, 0, 0][..],
             "const c1 = ((-9223372036854775808) - (-1))\n",
         ),
         // `(a && b)` and `(a || b)` of `bool`s.
         (
-            &[0, 0, 0, 1, 0, 3, 0, 3, 1][..],
+            &[0, 0, 0, 0, 0, 0, 1, 0, 3, 0, 3, 1][..],
             "const c1 = (false && false)\n",
         ),
         (
-            &[0, 0, 0, 1, 0, 3, 0, 3, 1, 0, 0, 1][..],
+            &[0, 0, 0, 0, 0, 0, 1, 0, 3, 0, 3, 1, 0, 0, 1][..],
             "const c1 = (false || false)\n",
         ),
     ] {
@@ -2675,6 +2825,32 @@ fn main() {{
 }
 
 #[test]
+fn the_walker_should_mark_a_result_built_by_bare_names_and_matched() {
+    let program = |build: &str| {
+        format!(
+            "fn main() {{
+    let r: Result<i64, string> = {build}
+    match r {{
+        Ok(n) => print(n)
+        Err(e) => print(e)
+    }}
+}}
+"
+        )
+    };
+    let keys = [
+        "reach: `Ok` builds a `Result`",
+        "reach: `Err` builds a `Result`",
+        "reach: a `match` on a `Result`",
+    ];
+    let marks = |build: &str| keys.map(|k| marked(&program(build)).contains(k));
+    assert_eq!(marks("Ok(1)"), [true, false, true]);
+    assert_eq!(marks("Err(\"x\")"), [false, true, true]);
+    // The qualified spelling is no bare name.
+    assert_eq!(marks("Result.Ok(1)"), [false, false, true]);
+}
+
+#[test]
 fn the_walker_should_mark_a_match_in_a_generic_function_only() {
     let key = "reach: a generic function matches a generic enum";
     let program = |generic: &str| {
@@ -2737,6 +2913,23 @@ fn main() {}
     }
     for rank in ["Open", "Late"] {
         assert!(!seen.contains(&format!("tir::Rank::{rank}")), "{rank}");
+    }
+}
+
+/// An enum is `Option`-shaped in either order of its variants. It is `Option`-shaped only when
+/// its field's storage has a spare value: a `Link?` box and an `i64` have none.
+#[test]
+fn the_walker_should_mark_an_option_shaped_enum_by_its_niche() {
+    let shaped = "enum Rev {\n    Just(char)\n    Nothing\n}\nenum Chain {\n    End\n    Next(Chain)\n}\nfn main() {}\n";
+    let tagged = "enum Link {\n    End\n    Next(Link?)\n}\nenum Wide {\n    A\n    B(i64)\n}\nenum Two {\n    A(char)\n    B(char)\n}\nfn main() {}\n";
+    let keys = [
+        "reach: an `Option`-shaped enum has a niche",
+        "reach: an `Option`-shaped enum holds itself",
+    ];
+    let (seen, not_seen) = (marked(shaped), marked(tagged));
+    for key in keys {
+        assert!(seen.contains(key), "{key}");
+        assert!(!not_seen.contains(key), "{key}");
     }
 }
 
@@ -3472,7 +3665,7 @@ fn declare(g: &mut Gen) {
 fn first_init(text: &str) -> ast::Expr {
     let source = format!("fn main() {{\n{text}\n}}\n");
     let lexed = lexer::lex(&source).expect("a generated expression should lex");
-    let mut items = parser::parse(lexed).program.items.into_iter();
+    let mut items = parser::parse(lexed, false).program.items.into_iter();
     let Some(ast::Item::Function(main)) = items.next() else {
         panic!("`main` should be the only item: {source}")
     };
@@ -3782,17 +3975,21 @@ fn an_enum_match_ends_in_a_catch_all_only_where_its_arms_leave_a_value() {
 /// Whether a pattern's text is of some kind.
 type Is = fn(&str) -> bool;
 
-/// How deep the parentheses of `pattern` nest.
+/// How deep the variants of `pattern` nest: its parentheses, but those of a `Some`, which is
+/// a layer of an optional.
 fn depth(pattern: &str) -> usize {
-    let mut open = 0usize;
+    // Whether each open parenthesis is a variant's.
+    let mut open: Vec<bool> = Vec::new();
     let mut deepest = 0;
-    for c in pattern.chars() {
+    for (at, c) in pattern.char_indices() {
         match c {
             '(' => {
-                open += 1;
-                deepest = deepest.max(open);
+                open.push(!pattern[..at].ends_with("Some"));
+                deepest = deepest.max(open.iter().filter(|&&variant| variant).count());
             }
-            ')' => open -= 1,
+            ')' => {
+                open.pop();
+            }
             _ => {}
         }
     }
@@ -4034,9 +4231,9 @@ fn declared_types_keep_their_sizes_256() {
 }
 
 #[test]
-fn a_class_optional_field_keeps_its_size() {
-    // A class field that holds a class optional is rare: seed 698 is the first seed with one.
-    let (optional_classes, _) = check_declared_types(698);
+fn a_class_optional_field_should_keep_its_size() {
+    // A class field that holds a class optional is rare: seed 0 has one.
+    let (optional_classes, _) = check_declared_types(0);
     assert!(
         optional_classes > 0,
         "no class should fail to hold a class optional"
@@ -4677,9 +4874,10 @@ fn let_binding_keeps_the_type() {
 
 #[test]
 fn known_answers_happen() {
-    // Over the seeds, a known site of each type gives a value, and one panics (decision 3).
+    // Over the seeds, a known site of each type gives a value, and one panics (decision 3). A
+    // `u8` site that panics is rare, so this test reads 50% more seeds than the others.
     let mut kinds = FxHashSet::default();
-    for data in seeds() {
+    for data in (0..SEEDS * 3 / 2).map(seed) {
         let g = generate(&data);
         for known in &g.known {
             let head = format!("fn {}(a: ", known.marker);

@@ -278,7 +278,9 @@ fn terminator(term: &Terminator, read: &mut impl FnMut(LocalId)) {
         | Terminator::Return(Some(op))
         | Terminator::Panic { message: op, .. } => operand(op, read),
         Terminator::IfPresent { optional, .. } => read(*optional),
-        Terminator::SwitchTag { place, .. } => self::place(place, read),
+        Terminator::SwitchTag { place, .. } | Terminator::TestPresent { place, .. } => {
+            self::place(place, read);
+        }
         Terminator::Goto(_) | Terminator::Return(None) | Terminator::Unreachable => {}
     }
 }

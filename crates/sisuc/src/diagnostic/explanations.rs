@@ -293,7 +293,7 @@ fn fixtures() -> Vec<(PathBuf, Code)> {
 /// The lexer and parser diagnostics of `source`.
 fn syntax_codes(source: &str) -> Vec<Code> {
     let diagnostics = match lex(source) {
-        Ok(lexed) => parse(lexed).diagnostics,
+        Ok(lexed) => parse(lexed, false).diagnostics,
         Err(d) => vec![d],
     };
     diagnostics.iter().map(Diagnostic::code).collect()

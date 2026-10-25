@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use super::scope::{Scope, Ty, Var};
+use super::scope::{RESULT, Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Mark, Rewrite, Site, allowed};
 use super::{Gen, LINE, MAX_BOUND, MAX_LOOPS, MAX_NESTING, MAX_SIZE};
@@ -248,6 +248,7 @@ impl Gen<'_> {
     /// type `None` or `[]` at all. Such a value is at least `ty.least()`, which `max` holds.
     pub(crate) fn expr(&mut self, ty: &Ty, max: u64) -> Info {
         let synth = std::mem::take(&mut self.synth) && ty.inferred();
+        let typed = std::mem::take(&mut self.typed);
         debug_assert!(!synth || ty.least() <= max, "no {ty} fits {max}");
         debug_assert!(ty.floor() <= max, "no {ty} fits {max}");
         let u8 = synth && *ty == Ty::U8;
@@ -269,7 +270,9 @@ impl Gen<'_> {
         let rule = rules[self.pick(rules.len())];
         let start = self.w.mark();
         self.nesting += 1;
+        self.bare = typed && matches!(rule, Rule::Literal);
         let mut info = self.rule(rule, ty, max, synth);
+        self.bare = false;
         self.nesting -= 1;
         // A value of a type without a size counts none, whatever its parts held.
         if !ty.sized() {
@@ -360,15 +363,24 @@ impl Gen<'_> {
                 &[]
             }
             Ty::Optional(payload) => {
-                if !synth && payload.floor() <= max {
+                let nested = matches!(**payload, Ty::Optional(_));
+                if !synth && payload.floor() <= max && (!nested || self.has_name(payload, max)) {
                     rules.push(Rule::Wrap);
                 }
-                if !self.fields(payload, max).is_empty() {
+                if !self.fields(safe_member(ty), max).is_empty() {
                     rules.push(Rule::SafeField);
                 }
                 // Twice: a method of the payload's type is rare.
-                if self.callees(payload, max).iter().any(|&f| self.method(f)) {
+                if self
+                    .callees(safe_member(ty), max)
+                    .iter()
+                    .any(|&f| self.method(f))
+                {
                     rules.extend([Rule::SafeMethod, Rule::SafeMethod]);
+                }
+                // A name of an optional of `ty` is rare, so a `??` on it comes often.
+                if self.has_name(&Ty::Optional(Box::new(ty.clone())), max) {
+                    rules.extend([Rule::Coalesce; 4]);
                 }
                 if matches!(**payload, Ty::U8 | Ty::Char | Ty::I64)
                     || **payload == Ty::String && max >= LINE
@@ -419,10 +431,7 @@ impl Gen<'_> {
             Rule::Literal => match ty {
                 Ty::Array(element) => self.array_literal(element, max, synth),
                 Ty::Optional(payload) if synth => self.maybe(payload, max),
-                Ty::Optional(_) => {
-                    self.w.text("None");
-                    Info::leaf(0)
-                }
+                Ty::Optional(payload) => self.none(payload),
                 _ => self.literal(ty, max),
             },
             Rule::Name => self.name(ty, max),
@@ -447,7 +456,7 @@ impl Gen<'_> {
                 Info::folding(&[lhs, rhs], 0, true)
             }
             Rule::Equal => {
-                let operand = self.any_type();
+                let operand = self.bare_type();
                 self.w.text("(");
                 self.synth = true;
                 let lhs = self.expr(&operand, MAX_SIZE);
@@ -516,12 +525,10 @@ impl Gen<'_> {
         }
     }
 
-    /// `((o).g)` of a field of type `ty`, or if `safe`, `((o)?.g)` of one of its payload's.
+    /// `((o).g)` of a field of type `ty`, or if `safe`, `((o)?.g)` of one of the type
+    /// `safe_member` says.
     fn field(&mut self, ty: &Ty, max: u64, safe: bool) -> Info {
-        let wanted = match ty {
-            Ty::Optional(payload) if safe => payload,
-            _ => ty,
-        };
+        let wanted = if safe { safe_member(ty) } else { ty };
         let fields = self.fields(wanted, max);
         let (class, field) = fields[self.pick(fields.len())];
         let (name, cap) = {
@@ -537,13 +544,10 @@ impl Gen<'_> {
         Info::of(&[receiver], cap, false)
     }
 
-    /// `((o)?.m(depth, args))` of a method that returns the payload of `ty`, an optional.
+    /// `((o)?.m(depth, args))` of a method that returns the type `safe_member` says of `ty`.
     fn safe_method(&mut self, ty: &Ty, max: u64) -> Info {
-        let Ty::Optional(payload) = ty else {
-            unreachable!("only an optional is a safe call's")
-        };
         let methods: Vec<usize> = self
-            .callees(payload, max)
+            .callees(safe_member(ty), max)
             .into_iter()
             .filter(|&f| self.method(f))
             .collect();
@@ -660,10 +664,16 @@ impl Gen<'_> {
         };
         // Where the fields name every type parameter of a generic enum, the type arguments may
         // be left out; each field is then of its own type (`Gen::expr`).
-        let fits = fields.iter().map(Ty::least).sum::<u64>() < max;
+        let fits = fields.iter().map(Ty::least).fold(0, u64::saturating_add) < max;
         let infer = inferable && fits && self.pick(2) == 0;
         let enum_name = if infer { ty.bare() } else { ty.to_string() };
-        self.w.text(&format!("{enum_name}.{name}"));
+        // `Ok(..)` and `Err(..)` take their `Result` from the type that the `let` writes.
+        let is_result = matches!(ty, Ty::Enum { applied: Some(a), .. } if a.generic == RESULT);
+        if is_result && std::mem::take(&mut self.bare) && self.pick(2) == 0 {
+            self.w.text(&name);
+        } else {
+            self.w.text(&format!("{enum_name}.{name}"));
+        }
         if fields.is_empty() {
             return Info::leaf(1);
         }
@@ -697,7 +707,7 @@ impl Gen<'_> {
         let receiver = if self.pick(2) == 0 {
             self.expr(&Ty::String, MAX_SIZE)
         } else {
-            let element = self.any_type();
+            let element = self.bare_type();
             self.expr(&Ty::Array(Box::new(element)), MAX_SIZE)
         };
         self.w.text(").len())");
@@ -716,7 +726,7 @@ impl Gen<'_> {
 
     /// `((a).contains(v))`.
     fn contains(&mut self) -> Info {
-        let element = self.any_type();
+        let element = self.bare_type();
         self.w.text("((");
         self.synth = true;
         let receiver = self.expr(&Ty::Array(Box::new(element.clone())), MAX_SIZE);
@@ -774,6 +784,17 @@ impl Gen<'_> {
         }
     }
 
+    /// A `None` of an optional of `payload`. `Option<T>.None` writes its type, and the others take
+    /// it from their context.
+    fn none(&mut self, payload: &Ty) -> Info {
+        match self.pick(3) {
+            0 => self.w.text("None"),
+            1 => self.w.text("Option.None"),
+            _ => self.w.text(&format!("Option<{payload}>.None")),
+        }
+        Info::leaf(0)
+    }
+
     /// `(if c { v } else { None })`, an optional of its own type.
     fn maybe(&mut self, payload: &Ty, max: u64) -> Info {
         self.w.text("(if ");
@@ -806,18 +827,26 @@ impl Gen<'_> {
         Info::of(&[operand], 0, true)
     }
 
-    /// `(a ?? b)`: of a `T?` `a` and a `T` `b` for a `T`, of two `T?` for a `T?`.
+    /// `(a ?? b)`: of a `T?` `a` and a `T` `b` for a `T`, of two `T?` for a `T?`, or of a
+    /// named `T??` `a` and a `T?` `b` for a `T?`: `??` takes one layer off.
     fn coalesce(&mut self, ty: &Ty, max: u64) -> Info {
         let optional = match ty {
             Ty::Optional(_) => ty.clone(),
             _ => Ty::Optional(Box::new(ty.clone())),
         };
+        let nested = Ty::Optional(Box::new(ty.clone()));
+        let named = optional == *ty && self.has_name(&nested, max);
         self.w.text("(");
-        self.synth = true;
-        let lhs = self.expr(&optional, max);
+        let lhs = if named {
+            self.name(&nested, max)
+        } else {
+            self.synth = true;
+            self.expr(&optional, max)
+        };
         self.w.text(" ?? ");
         // The `T?` the right side gives must be one: a `T` there would make the result a `T`.
-        self.synth = optional == *ty;
+        // After a `T??`, the right side has the `T?` it gives as its expected type.
+        self.synth = optional == *ty && !named;
         let rhs = self.conditionally(|g| g.expr(ty, max));
         self.w.text(")");
         Info::of(&[lhs, rhs], lhs.size.max(rhs.size), true)
@@ -889,10 +918,17 @@ impl Gen<'_> {
 
     /// A value type, an array or an optional, nested at most twice.
     pub(crate) fn any_type(&mut self) -> Ty {
-        self.type_within(2)
+        self.type_within(2, true)
     }
 
-    fn type_within(&mut self, nesting: u32) -> Ty {
+    /// A type of `any_type` with no optional of an optional in it: one that a value written
+    /// with no expected type can have (`Ty::least`).
+    pub(crate) fn bare_type(&mut self) -> Ty {
+        self.type_within(2, false)
+    }
+
+    /// With `nest`, an optional may be the payload of an optional.
+    fn type_within(&mut self, nesting: u32, nest: bool) -> Ty {
         let values = Ty::VALUES.len();
         // The declared types share one choice, so they take no more of the values' as they grow;
         // so do the instances of generic types, whose number does not crowd out the declared.
@@ -915,12 +951,11 @@ impl Gen<'_> {
         let inner = if choice == values && self.pick(2) == 0 {
             Ty::String
         } else {
-            self.type_within(nesting - 1)
+            self.type_within(nesting - 1, nest)
         };
         match (choice - values, inner) {
             (0, inner) => Ty::Array(Box::new(inner)),
-            // `optional_of` does not nest optionals.
-            (_, Ty::Optional(payload)) => Ty::Optional(payload),
+            (_, Ty::Optional(payload)) if !nest => Ty::Optional(payload),
             (_, inner) => Ty::Optional(Box::new(inner)),
         }
     }
@@ -1440,15 +1475,27 @@ impl Gen<'_> {
         Info::of(&parts, size, true)
     }
 
-    /// A `T` where a `T?` is expected.
+    /// A `T` where a `T?` is expected. A value converts through one `?` only, so a `T` that is
+    /// an optional is a name: the expected `T?` would reach into any other form of it.
     fn wrap(&mut self, ty: &Ty, max: u64) -> Info {
         let Ty::Optional(payload) = ty else {
             unreachable!("only an optional wraps")
         };
+        // `Some(x)` and `Option.Some(x)` convert as `x` does.
+        let open = ["", "Some(", "Option.Some("][self.pick(3)];
+        self.w.text(open);
+        let value = if matches!(**payload, Ty::Optional(_)) {
+            self.name(payload, max)
+        } else {
+            self.expr(payload, max)
+        };
+        if !open.is_empty() {
+            self.w.text(")");
+        }
         // A constant of an optional type does not fold.
         Info {
             folds: false,
-            ..self.expr(payload, max)
+            ..value
         }
     }
 
@@ -1463,23 +1510,18 @@ impl Gen<'_> {
         }
     }
 
-    /// The head of an `if`: a condition, or `let p = e` of an optional `e`, and what the first
-    /// branch binds.
+    /// The head of an `if`: a condition, or `let p = e` of an optional `e` (`let_pattern`), and
+    /// what the first branch binds.
     pub(crate) fn condition(&mut self) -> (Info, Option<Var>) {
         if self.pick(4) != 3 || !self.spend(1) {
             return (self.expr(&Ty::Bool, 0), None);
         }
-        let payload = match self.any_type() {
+        let payload = match self.bare_type() {
             Ty::Optional(payload) => *payload,
             ty => ty,
         };
-        let name = if self.pick(4) == 0 {
-            None
-        } else {
-            Some(self.scope.fresh("v"))
-        };
-        self.w
-            .text(&format!("let {} = ", name.as_deref().unwrap_or("_")));
+        let (pattern, name) = self.let_pattern(&payload, true);
+        self.w.text(&format!("let {pattern} = "));
         self.synth = true;
         let value = self.expr(&Ty::Optional(Box::new(payload.clone())), MAX_SIZE);
         let loops = self.cost.depth();
@@ -1495,12 +1537,9 @@ impl Gen<'_> {
         if self.pick(64) != 63 {
             return self.expr(ty, max);
         }
-        // The index takes half: it is the one panic that reads a value first.
+        // The index takes half: it is the one panic that reads a value first. An optional of an
+        // optional has no value of its own type to index, so `panic` takes its place.
         match self.pick(4) {
-            0 => {
-                let message = self.message();
-                self.w.text(&format!("panic({message})"));
-            }
             1 => {
                 let todo = if self.pick(2) == 0 {
                     "todo".to_string()
@@ -1508,6 +1547,10 @@ impl Gen<'_> {
                     format!("todo({})", self.message())
                 };
                 self.w.text(&todo);
+            }
+            pick if pick == 0 || ty.least() >= MAX_SIZE => {
+                let message = self.message();
+                self.w.text(&format!("panic({message})"));
             }
             _ => {
                 // `[e][1]`: index 1 out of bounds for length 1.
@@ -1523,25 +1566,45 @@ impl Gen<'_> {
 
 impl Gen<'_> {
     /// `(match s { p [if g] => e ... })`, an arm a line, of a `bool`, a number, a `char`, a
-    /// `string` or an enum value: arms whose patterns do not overlap, so none is unreachable,
-    /// then `_` or a binding where they leave a value unmatched.
+    /// `string`, an enum value, or an optional of one of these, or of an optional of one: arms
+    /// whose patterns do not overlap, so none is unreachable, then `_` or a binding where they
+    /// leave a value unmatched.
     pub(crate) fn match_expr(&mut self, ty: &Ty, max: u64, synth: bool) -> Info {
-        let enums = self.scope.enums.len();
-        // The enums share one choice with the other types.
-        let choice = self.pick(MATCHED.len() + usize::from(enums > 0));
-        let tested = if choice < MATCHED.len() {
-            MATCHED[choice].clone()
+        let tested = if self.pick(4) == 0 {
+            let optional = Ty::Optional(Box::new(self.matched()));
+            if self.pick(3) == 0 {
+                Ty::Optional(Box::new(optional))
+            } else {
+                optional
+            }
         } else {
-            let id = self.pick(enums);
-            self.scope.enum_ty(id)
+            self.matched()
         };
         self.w.text("(match ");
-        self.synth = true;
-        let scrutinee = self.expr(&tested, MAX_SIZE);
+        let scrutinee = match &tested {
+            // An optional of an optional has no value of its own type: a name of it, or
+            // `Some` of an optional, is one.
+            Ty::Optional(optional) if tested.least() == u64::MAX => {
+                if self.has_name(&tested, MAX_SIZE) && self.pick(2) == 0 {
+                    self.name(&tested, MAX_SIZE)
+                } else {
+                    self.w.text("Some(");
+                    self.synth = true;
+                    let value = self.expr(optional, MAX_SIZE);
+                    self.w.text(")");
+                    value
+                }
+            }
+            _ => {
+                self.synth = true;
+                self.expr(&tested, MAX_SIZE)
+            }
+        };
         self.w.text(" ");
         self.blocks += 1;
         self.w.open();
         let (mut arms, exhaustive) = match tested {
+            Ty::Optional(_) => self.optional_arms(&tested),
             Ty::Bool => self.bool_arms(),
             Ty::String => (self.word_arms(), false),
             Ty::Enum { .. } => self.variant_arms(&tested),
@@ -1590,6 +1653,106 @@ impl Gen<'_> {
         self.blocks -= 1;
         self.w.text(")");
         Info::of(&parts, size, true)
+    }
+
+    /// A type that a `match` tests by value: a `bool`, a number, a `char`, a `string` or an
+    /// enum.
+    fn matched(&mut self) -> Ty {
+        let enums = self.scope.enums.len();
+        // The enums share one choice with the other types.
+        let choice = self.pick(MATCHED.len() + usize::from(enums > 0));
+        if choice < MATCHED.len() {
+            MATCHED[choice].clone()
+        } else {
+            let id = self.pick(enums);
+            self.scope.enum_ty(id)
+        }
+    }
+
+    /// Arms of the optional `ty`: the arms of its payload, each as written, which matches the
+    /// value inside, or in `Some(..)`, which an optional payload needs; then, where they leave a
+    /// value, now and then `Some(v)` or `Some(_)`; and now and then `None` among them. Exhaustive
+    /// when `None` and each value are in arms without a guard.
+    fn optional_arms(&mut self, ty: &Ty) -> (Vec<Arm>, bool) {
+        let Ty::Optional(payload) = ty else {
+            unreachable!("only an optional has a payload")
+        };
+        let (inner, mut covered) = match &**payload {
+            Ty::Optional(_) => self.optional_arms(payload),
+            Ty::Bool => self.bool_arms(),
+            Ty::String => (self.word_arms(), false),
+            Ty::Enum { .. } => self.variant_arms(payload),
+            _ => (self.range_arms(payload), false),
+        };
+        let nested = matches!(**payload, Ty::Optional(_));
+        let mut arms = Vec::new();
+        for arm in inner {
+            let pattern = if nested || self.pick(2) == 0 {
+                format!("Some({})", arm.pattern)
+            } else {
+                arm.pattern
+            };
+            arms.push(Arm { pattern, ..arm });
+        }
+        if !covered && self.pick(3) == 0 {
+            let guard = self.pick(4) == 0;
+            let mut binds = Vec::new();
+            let inside = if self.pick(2) == 0 {
+                "_".to_string()
+            } else {
+                let name = self.scope.fresh("v");
+                binds.push((name.clone(), (**payload).clone()));
+                name
+            };
+            arms.push(Arm {
+                pattern: format!("Some({inside})"),
+                binds,
+                guard,
+            });
+            covered = !guard;
+        }
+        let none = self.pick(4) != 0;
+        let guard = self.pick(4) == 0;
+        if none {
+            let at = self.pick(arms.len() + 1);
+            let pattern = "None".to_string();
+            let binds = Vec::new();
+            arms.insert(
+                at,
+                Arm {
+                    pattern,
+                    binds,
+                    guard,
+                },
+            );
+        }
+        (arms, covered && none && !guard)
+    }
+
+    /// The pattern of an `if let` or a `while let` on an optional of `payload`, and the name it
+    /// binds to the payload, if any: a name or `_`, which unwraps; `Some(..)`; `None` when
+    /// `none`; or a pattern of the value inside, as written or in `Some(..)`.
+    pub(crate) fn let_pattern(&mut self, payload: &Ty, none: bool) -> (String, Option<String>) {
+        match self.pick(8) {
+            0 => ("_".to_string(), None),
+            5 => {
+                let name = self.scope.fresh("v");
+                (format!("Some({name})"), Some(name))
+            }
+            6 if none && self.pick(2) == 0 => ("None".to_string(), None),
+            6 => ("Some(_)".to_string(), None),
+            7 => match self.refutable(payload, 0) {
+                Some(inside) if self.pick(2) == 0 => (inside, None),
+                inside => {
+                    let inside = inside.unwrap_or_else(|| "_".to_string());
+                    (format!("Some({inside})"), None)
+                }
+            },
+            _ => {
+                let name = self.scope.fresh("v");
+                (name.clone(), Some(name))
+            }
+        }
     }
 
     /// Arms of `true`, `false` or both, each at most once; exhaustive when both come without
@@ -1780,8 +1943,9 @@ impl Gen<'_> {
         (text, total)
     }
 
-    /// A pattern that matches some values of `ty` but not all: a literal, a range or a
-    /// variant; none for a type only names and `_` match.
+    /// A pattern that matches some values of `ty` but not all: a literal, a range, a variant,
+    /// or for an optional `None`, `Some(..)` or a pattern of the value inside; none for a type
+    /// only names and `_` match.
     fn refutable(&mut self, ty: &Ty, depth: u32) -> Option<String> {
         match ty {
             Ty::I64 | Ty::U8 | Ty::Char => {
@@ -1799,6 +1963,14 @@ impl Gen<'_> {
                 let v = self.pick(self.scope.enums[*id].variants.len());
                 Some(self.variant_pattern(ty, v, None, depth + 1).0)
             }
+            Ty::Optional(payload) if depth < MAX_PATTERN_DEPTH => Some(match self.pick(3) {
+                0 => "None".to_string(),
+                pick => match self.refutable(payload, depth + 1) {
+                    // A `None` inside would match the outer `None`, so only `Some` writes it.
+                    Some(inside) if pick == 2 && !matches!(**payload, Ty::Optional(_)) => inside,
+                    inside => format!("Some({})", inside.unwrap_or_else(|| "_".to_string())),
+                },
+            }),
             Ty::Enum { .. }
             | Ty::F64
             | Ty::Unit
@@ -1834,6 +2006,15 @@ fn names<'s>(scope: &'s Scope, ty: &'s Ty, max: u64) -> impl Iterator<Item = (&'
     vars.chain(consts)
 }
 
+/// The type of the member that `o?.m` reads to give `ty`, an optional: its payload, or `ty`
+/// itself for an optional of an optional, since `?.` adds no layer to an optional member.
+fn safe_member(ty: &Ty) -> &Ty {
+    match ty {
+        Ty::Optional(payload) if !matches!(**payload, Ty::Optional(_)) => payload,
+        _ => ty,
+    }
+}
+
 /// Whether an index into `var` reads a `ty` of at most `max` in bounds.
 fn indexable(var: &Var, ty: &Ty, max: u64) -> bool {
     matches!(&var.ty, Ty::Array(element) if **element == *ty) && var.len > 0 && var.elem <= max
@@ -1856,7 +2037,7 @@ fn separated(n: i64) -> String {
 mod tests {
     use arbitrary::Unstructured;
 
-    use super::{Gen, MAX_SIZE, Rule, Ty, arithmetic_value};
+    use super::{Gen, MAX_SIZE, Rule, Ty, Var, arithmetic_value};
     use crate::generate::writer::Rewrite;
 
     #[test]
@@ -1950,6 +2131,92 @@ mod tests {
     }
 
     #[test]
+    fn a_wrap_should_be_written_with_or_without_some() {
+        // The first byte picks the spelling.
+        let ty = Ty::Optional(Box::new(Ty::I64));
+        for (byte, text) in [(0, "0"), (1, "Some(0)"), (2, "Option.Some(0)")] {
+            let bytes = [byte];
+            let mut g = Gen::new(&bytes);
+            g.rule(Rule::Wrap, &ty, MAX_SIZE, false);
+            assert_eq!(g.w.out.program, text);
+        }
+    }
+
+    #[test]
+    fn a_none_should_be_written_with_or_without_its_enum() {
+        for (byte, text) in [(0, "None"), (1, "Option.None"), (2, "Option<i64>.None")] {
+            let bytes = [byte];
+            let mut g = Gen::new(&bytes);
+            g.none(&Ty::I64);
+            assert_eq!(g.w.out.program, text);
+        }
+    }
+
+    #[test]
+    fn a_type_should_be_spelled_with_a_question_mark_or_with_option() {
+        // The first byte picks the spelling of the inner optional, the second the outer's.
+        let ty = Ty::Array(Box::new(Ty::Optional(Box::new(Ty::Optional(Box::new(
+            Ty::I64,
+        ))))));
+        for (bytes, text) in [
+            ([0, 0], "[i64??]"),
+            ([1, 0], "[Option<i64>?]"),
+            ([0, 1], "[Option<i64?>]"),
+            ([1, 1], "[Option<Option<i64>>]"),
+        ] {
+            let mut g = Gen::new(&bytes);
+            assert_eq!(g.spell(&ty), text, "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn a_wrapped_optional_of_an_optional_should_be_a_name_of_its_payload() {
+        // The generator builds no `i64?` from nothing, so an `i64??` wraps only a name.
+        let (payload, nested) = (
+            Ty::Optional(Box::new(Ty::I64)),
+            Ty::Optional(Box::new(Ty::Optional(Box::new(Ty::I64)))),
+        );
+        let mut g = Gen::new(&[]);
+        let wraps = |g: &mut Gen<'_>| {
+            let mut rules = Vec::new();
+            g.compound_rules(&nested, MAX_SIZE, false, &mut rules);
+            rules.iter().any(|r| matches!(r, Rule::Wrap))
+        };
+        assert!(!wraps(&mut g));
+        g.scope
+            .vars
+            .push(Var::new("w".to_string(), payload, false, 0, 0, 0));
+        assert!(wraps(&mut g));
+        g.rule(Rule::Wrap, &nested, MAX_SIZE, false);
+        assert_eq!(g.w.out.program, "w");
+    }
+
+    #[test]
+    fn a_panicking_branch_should_take_each_form_but_index_no_optional_of_an_optional() {
+        // A first byte of 63 makes the branch panic; the second picks the form.
+        let nested = Ty::Optional(Box::new(Ty::Optional(Box::new(Ty::I64))));
+        for (ty, form, text) in [
+            (&Ty::I64, 0, "panic(\"\")"),
+            (&Ty::I64, 1, "todo"),
+            (&Ty::I64, 2, "([0][1])"),
+            (&nested, 2, "panic(\"\")"),
+        ] {
+            let bytes = [63, form];
+            let mut g = Gen::new(&bytes);
+            g.branch(ty, MAX_SIZE);
+            assert_eq!(g.w.out.program, text, "{ty}, form {form}");
+        }
+    }
+
+    #[test]
+    fn a_safe_member_should_take_a_layer_off_one_layer_only() {
+        let payload = Ty::Optional(Box::new(Ty::I64));
+        let nested = Ty::Optional(Box::new(payload.clone()));
+        assert_eq!(super::safe_member(&payload), &Ty::I64);
+        assert_eq!(super::safe_member(&nested), &nested);
+    }
+
+    #[test]
     fn an_if_typed_by_its_first_arm_is_not_swapped() {
         // With no expected type, `(if false { (u8(0) ?? 0) } else { 0 })` is a `u8` by its first
         // arm; swapped, the bare `0` would make it an `i64`. Where the arms' type is not
@@ -1979,5 +2246,108 @@ mod tests {
         let info = g.rule(Rule::Arithmetic, &Ty::I64, MAX_SIZE, false);
         assert_eq!(g.w.out.program, "(15 / 0)");
         assert_eq!((info.value, info.pure, info.folds), (None, false, false));
+    }
+
+    /// Arms as (pattern, guarded).
+    type Arms<'a> = &'a [(&'a str, bool)];
+
+    #[test]
+    fn optional_arms_should_cover_the_payload_as_written_or_in_some_and_none() {
+        // Byte by byte: one `bool` arm, its guard, `false | true`, then whether it is written in
+        // `Some(..)`; where the arms leave a value, a `Some(..)` arm, its guard and what it
+        // binds; then `None`, its guard and its place among the arms.
+        let ty = Ty::Optional(Box::new(Ty::Bool));
+        // Each row: the bytes, the arms as (pattern, guarded), and whether they are exhaustive.
+        let rows: [(&[u8], Arms<'_>, bool); 3] = [
+            (
+                &[0, 1, 0, 1, 1, 1, 0],
+                &[("None", false), ("false | true", false)],
+                true,
+            ),
+            (&[0, 1, 0, 0, 0, 0], &[("Some(false | true)", false)], false),
+            (
+                &[0, 0, 0, 1, 0, 1, 1, 1, 1, 2],
+                &[("false | true", true), ("Some(v1)", false), ("None", false)],
+                true,
+            ),
+        ];
+        for (bytes, expected, exhaustive) in rows {
+            let mut g = Gen::new(bytes);
+            let (arms, found) = g.optional_arms(&ty);
+            let arms: Vec<_> = arms.iter().map(|a| (a.pattern.as_str(), a.guard)).collect();
+            assert_eq!((&arms[..], found), (expected, exhaustive), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn a_let_pattern_on_an_optional_should_take_each_form() {
+        // The first byte picks the form; with `6`, the second picks `None` where it may be
+        // written; with `7`, the bytes after the value's pattern pick `Some(..)` around it.
+        let rows: [(&[u8], bool, &str, Option<&str>); 9] = [
+            (&[0], true, "_", None),
+            (&[1], true, "v1", Some("v1")),
+            (&[5], true, "Some(v1)", Some("v1")),
+            (&[6, 0], true, "None", None),
+            (&[6, 1], true, "Some(_)", None),
+            (&[6, 0], false, "Some(_)", None),
+            (&[7, 0, 0], true, "-3", None),
+            (&[7, 0, 0, 1], true, "Some(-3)", None),
+            (&[7, 0, 1], false, "-3..-2", None),
+        ];
+        for (bytes, none, pattern, bound) in rows {
+            let mut g = Gen::new(bytes);
+            let (found, name) = g.let_pattern(&Ty::I64, none);
+            assert_eq!(
+                (found.as_str(), name.as_deref()),
+                (pattern, bound),
+                "{bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refutable_optional_pattern_should_write_none_some_or_the_value_inside() {
+        // The first byte picks `None`, `Some(..)` or the value's own pattern, which an optional
+        // payload writes in `Some(..)`, as its `None` would match the outer one. Below
+        // `MAX_PATTERN_DEPTH` layers, `_` stands for the rest.
+        let opt = |ty: Ty| Ty::Optional(Box::new(ty));
+        let rows = [
+            (opt(Ty::I64), 0, &[0][..], Some("None")),
+            (opt(Ty::I64), 0, &[1], Some("Some(-3)")),
+            (opt(Ty::I64), 0, &[2], Some("-3")),
+            (opt(opt(Ty::I64)), 0, &[2], Some("Some(None)")),
+            (opt(opt(opt(Ty::I64))), 0, &[1, 1], Some("Some(Some(_))")),
+            (opt(Ty::I64), super::MAX_PATTERN_DEPTH, &[1], None),
+        ];
+        for (ty, depth, bytes, expected) in rows {
+            let mut g = Gen::new(bytes);
+            assert_eq!(
+                g.refutable(&ty, depth).as_deref(),
+                expected,
+                "{ty}, {bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_match_on_an_optional_of_an_optional_should_test_a_name_or_a_some() {
+        // Byte by byte: an optional scrutinee, of a `bool`, of two layers, then a name of one
+        // where a name fits.
+        let nested = Ty::Optional(Box::new(Ty::Optional(Box::new(Ty::Bool))));
+        for (named, bytes, start) in [
+            (true, [0, 0, 0, 0], "(match w "),
+            (true, [0, 0, 0, 1], "(match Some("),
+            (false, [0, 0, 0, 0], "(match Some("),
+        ] {
+            let mut g = Gen::new(&bytes);
+            if named {
+                g.scope
+                    .vars
+                    .push(Var::new("w".to_string(), nested.clone(), false, 0, 0, 0));
+            }
+            g.match_expr(&Ty::I64, MAX_SIZE, false);
+            let program = &g.w.out.program;
+            assert!(program.starts_with(start), "{bytes:?}: {program}");
+        }
     }
 }

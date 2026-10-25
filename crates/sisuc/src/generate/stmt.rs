@@ -195,7 +195,7 @@ impl Gen<'_> {
             Rule::Let => self.let_stmt(),
             Rule::Discard => {
                 self.w.text("let _ = ");
-                let ty = self.any_type();
+                let ty = self.bare_type();
                 self.synth = true;
                 self.expr(&ty, MAX_SIZE);
             }
@@ -259,8 +259,10 @@ impl Gen<'_> {
         let keyword = if mutable { "let mut" } else { "let" };
         self.w.text(&format!("{keyword} {name}"));
         // A value of a type the checker infers needs one where it is not written.
-        if ty.inferred() || self.pick(2) == 1 {
-            self.w.text(&format!(": {ty}"));
+        let written = ty.inferred() || self.pick(2) == 1;
+        if written {
+            let written = self.spell(&ty);
+            self.w.text(&format!(": {written}"));
         }
         self.w.text(" = ");
         if mutable && let Ty::Array(element) = &ty {
@@ -273,6 +275,7 @@ impl Gen<'_> {
             (_, false) if ty.sized() => (MAX_SIZE, 0),
             _ => (0, 0),
         };
+        self.typed = written;
         let init = self.expr(&ty, base);
         let base = if mutable { base } else { init.size };
         let mut var = Var::new(name, ty, mutable, base, room, self.cost.depth());
@@ -561,9 +564,9 @@ impl Gen<'_> {
         Some(label)
     }
 
-    /// `let mut c = n` and `while let x = (if c > 0 { e } else { None }) { c -= 1 ... }`:
-    /// `while_stmt`'s bounds, and `x` bound to each `e`; or, half the time an enum holds itself,
-    /// `while_chain`.
+    /// `let mut c = n` and `while let p = (if c > 0 { e } else { None }) { c -= 1 ... }`:
+    /// `while_stmt`'s bounds, and `p` a `let_pattern`, which may bind each `e`; or, half the
+    /// time an enum holds itself, `while_chain`.
     fn while_let(&mut self) {
         self.spend(2);
         let chains = self.chains();
@@ -576,16 +579,12 @@ impl Gen<'_> {
         self.w.text(&format!("let mut {counter} = {bound}"));
         self.w.line();
         self.cost.statement();
-        let payload = match self.any_type() {
+        let payload = match self.bare_type() {
             Ty::Optional(payload) => *payload,
             ty => ty,
         };
-        let name = if self.pick(4) == 0 {
-            None
-        } else {
-            Some(self.scope.fresh("v"))
-        };
-        let pattern = name.as_deref().unwrap_or("_");
+        // A `None` pattern would match only once the counter stops the loop, so it never ends.
+        let (pattern, name) = self.let_pattern(&payload, false);
         let label = self.label();
         self.w
             .text(&format!("while let {pattern} = (if {counter} > 0 {{ "));
@@ -742,7 +741,7 @@ impl Gen<'_> {
 
     /// `for v in [a, b, ...]` or `for v in [e; n]`, of at most `MAX_BOUND` elements.
     fn for_array(&mut self) {
-        let element = self.any_type();
+        let element = self.bare_type();
         let name = self.scope.fresh("v");
         let label = self.label();
         self.w.text(&format!("for {name} in "));

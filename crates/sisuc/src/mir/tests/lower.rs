@@ -867,3 +867,73 @@ fn some_projection_prints_as_a_pattern() {
     };
     has(&print(&mir, &program), "f", &["x#1 = borrow (p#0 as some)"]);
 }
+
+/// A variant pattern on a `Shape?` tests that a value is present, then switches on the tag of
+/// the value inside, and binds through `Some` in the middle of the path.
+#[test]
+fn a_variant_pattern_on_an_optional_should_test_presence_then_the_tag() {
+    let printed = lowered(
+        "enum Shape {\n    Circle(f64)\n    Square(f64)\n}\nfn f(s: Shape?) -> f64 {\n    match s {\n        Circle(r) => r\n        Square(w) => w\n        None => 0.0\n    }\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "test_present _ bb",
+            "switch tag (_ as some) [0: bb",
+            "((_ as some) as 0).0",
+        ],
+    );
+}
+
+/// `V(Circle(r))` on an owned `Shape?` payload takes the scrutinee apart through `Some`, an
+/// inline step: `r` moves out, with no token, no copy and no release of the scrutinee.
+#[test]
+fn a_take_apart_should_step_through_an_inline_some() {
+    let printed = built(
+        "enum Shape {\n    Circle(string)\n    Square(i64)\n}\nenum H {\n    V(Shape?)\n    W(string)\n}\nfn f(h: H) -> string {\n    match h {\n        V(Circle(r)) => r\n        _ => \"\"\n    }\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "test_present (_ as 0).0 bb",
+            "take_apart _: r#",
+            "= (((_ as 0).0 as some) as 0).0",
+        ],
+    );
+    let f = function(&printed, "f");
+    assert!(!f.contains("token"), "a token in\n{f}");
+}
+
+/// A pattern under a boxed `E?` field tests the field's presence, then the tag of the enum in
+/// its box.
+#[test]
+fn a_pattern_under_a_boxed_optional_field_should_test_presence_then_the_tag() {
+    let printed = lowered(
+        "enum E {\n    End\n    Next(E?)\n}\nfn f(e: E) -> i64 {\n    match e {\n        Next(Some(Next(_))) => 2\n        _ => 0\n    }\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &[
+            "switch tag e#0",
+            "test_present (e#0 as 1).0 bb",
+            "switch tag ((e#0 as 1).0 as some)",
+        ],
+    );
+}
+
+/// Under a boxed `T?` field the box stays in the rest: each counted binding under it is
+/// copied once, though two alternatives bind it, and an uncounted one is not copied.
+#[test]
+fn a_binding_under_a_boxed_optional_field_should_be_copied_once() {
+    let printed = built(
+        "enum T {\n    End\n    Next(T?, string, i64)\n}\nfn f(t: T) -> string {\n    match t {\n        Next(Some(Next(None, s, n) | Next(Some(_), s, n)), _, _) => \"{s}{n}\"\n        _ => \"\"\n    }\n}",
+    );
+    let f = function(&printed, "f");
+    assert_eq!(f.matches(" = copy s#").count(), 1, "{f}");
+    assert!(!f.contains(" = copy n#"), "a copy of `n` in\n{f}");
+    assert!(!f.contains("token"), "a token in\n{f}");
+    has(&printed, "f", &["take_apart _: rest _"]);
+}

@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::str::CharIndices;
 
 use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Join};
-use crate::source::{LineIndex, Span};
+use crate::source::{LineIndex, Source, Span};
 use crate::symbol::Symbol;
 use literal::End;
 pub(crate) use literal::Float;
@@ -291,7 +291,7 @@ type Open = (char, Span);
 /// in source order.
 #[derive(Debug)]
 pub(crate) struct Lexed<'src> {
-    pub(crate) source: &'src str,
+    pub(crate) source: Source<'src>,
     pub(crate) tokens: Vec<Token>,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) warnings: Vec<Diagnostic>,
@@ -307,6 +307,28 @@ pub(crate) fn lex_clean(source: &str) -> Result<Vec<Token>, Diagnostic> {
         Some(d) => Err(d),
         None => Ok(lexed.tokens),
     }
+}
+
+/// `lex(text)` with every offset it holds, in the tokens, comments and breaks, moved up by
+/// `base`, so that the spans of two texts never meet. A text with a base is the prelude, which
+/// must lex without a diagnostic or a warning: the first of them is the error.
+pub(crate) fn lex_at(text: &str, base: usize) -> Result<Lexed<'_>, Diagnostic> {
+    let mut lexed = lex(text)?;
+    if base == 0 {
+        return Ok(lexed);
+    }
+    if let Some(d) = lexed.diagnostics.first().or(lexed.warnings.first()) {
+        return Err(d.clone());
+    }
+    let moved = |at: Span| Span::new(at.start() + base, at.end() + base);
+    for token in &mut lexed.tokens {
+        token.span = moved(token.span);
+    }
+    for at in lexed.comments.iter_mut().chain(&mut lexed.breaks) {
+        *at += base;
+    }
+    lexed.source = Source::new(text, base);
+    Ok(lexed)
 }
 
 /// Lexes `source`, reporting every error it can continue after. `Err` holds the one diagnostic a
@@ -423,7 +445,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
     let warnings = separate(source, &mut tokens, &brackets.separators);
     tokens.push(eof(&tokens));
     Ok(Lexed {
-        source,
+        source: Source::new(source, 0),
         tokens,
         diagnostics,
         warnings,
@@ -489,8 +511,8 @@ fn separate(source: &str, tokens: &mut Vec<Token>, separators: &[Separator]) -> 
 
 /// What becomes of the first `;` of `run`, a run of `;`s among `tokens`, in statement context.
 /// `between_items` is true when the run stands between top-level items, after a `fn`, `class` or
-/// `enum`. `statements` reads `tokens` forward, to tell whether a `>` before the run closes a type
-/// annotation, which ends a statement as at a line's end.
+/// `enum`. `statements` reads `tokens` forward, to tell whether a `>` or `??` before the run
+/// closes a type annotation, which ends a statement as at a line's end.
 /// The rules, in order: a `.` after the run is a continuation unless the `;` is needed to end the
 /// statement; a `;` that joins two lines into a different statement stays; a `;` next to a line
 /// break, a `{`, a `}`, an `else` or an item that needs no separator is redundant.
@@ -501,7 +523,10 @@ fn judge(
     between_items: bool,
     statements: &mut Statements,
 ) -> Judgement {
-    use TokenKind::{Class, Const, Dot, Else, Enum, Fn, Gt, LBrace, Newline, QuestionDot, RBrace};
+    use TokenKind::{
+        Class, Const, Dot, Else, Enum, Fn, Gt, LBrace, Newline, QuestionDot, QuestionQuestion,
+        RBrace,
+    };
     let (i, end) = (run.start, run.end);
     let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
     let first = tokens[i].span;
@@ -512,9 +537,10 @@ fn judge(
     let break_after = next
         .is_none_or(|n| n.kind == Newline || source[first.start()..n.span.start()].contains('\n'));
     let next = next.map(|n| &n.kind);
-    // A `>` that closes a type annotation ends a statement, as at a line's end.
+    // A `>` or `??` that closes a type annotation ends a statement, as at a line's end.
     let ends = can_end_statement(prev)
-        || prev.is_some_and(|p| p.kind == Gt) && statements.annotates_type(&tokens[..i]);
+        || prev.is_some_and(|p| matches!(p.kind, Gt | QuestionQuestion))
+            && statements.annotates_type(&tokens[..i]);
     if matches!(next, Some(Dot | QuestionDot)) {
         // Without the `;`, the line break before the `.` would continue the line.
         if ends && !break_before {
@@ -707,8 +733,8 @@ impl Statements {
         self.current
     }
 
-    /// Whether the `>` that ends `tokens`, at a line's end, closes a type annotation: in its
-    /// statement, a `:` or `->` has no `=` after it, and every `<` after that is closed
+    /// Whether the `>` or `??` that ends `tokens`, at a line's end, closes a type annotation: in
+    /// its statement, a `:` or `->` has no `=` after it, and every `<` after that is closed
     /// (`b: Box<i64>`, `fn f() -> Box<i64>`). Anywhere else the `>` compares (`a >`), closes a
     /// header's type parameters before its `(` (`fn f<T>`), or an inner list of a type that
     /// goes on (`b: Pair<Box<i64>`), and the line goes on. This is the one place that decides
@@ -1050,13 +1076,13 @@ fn newline(span: Span) -> Token {
 /// Whether a line break here ends a statement: the token before the last `trailing` tokens, which
 /// are `;`s that separate statements, can end one, and the innermost open bracket, if any, is a
 /// block. A `;` is transparent, so `x;\n` ends a statement as `x\n` does, and `{;\n` does not.
-/// A `>` ends one too when it closes a type annotation (`annotates_type`).
+/// A `>` or `??` ends one too when it closes a type annotation (`annotates_type`): `b: i64??`.
 fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
     let trailing = brackets.trailing_semicolons;
     let last = before_semicolons(tokens, trailing);
     brackets.open.last().is_none_or(|&(c, _)| c == '{')
         && (can_end_statement(last)
-            || last.is_some_and(|t| matches!(t.kind, TokenKind::Gt))
+            || last.is_some_and(|t| matches!(t.kind, TokenKind::Gt | TokenKind::QuestionQuestion))
                 && brackets
                     .statements
                     .annotates_type(&tokens[..tokens.len() - trailing]))
@@ -2937,6 +2963,25 @@ mod tests {
         assert_eq!(newlines("fn f() -> bool {\n    x < y >\n        z\n}"), 2);
     }
 
+    /// A line-end `??` ends the statement where it closes a type annotation, and goes on to its
+    /// operand anywhere else.
+    #[test]
+    fn a_line_end_question_question_should_end_only_a_type_annotation() {
+        let newlines = |src: &str| {
+            all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count()
+        };
+        assert_eq!(newlines("class D {\n    b: i64??\n    n: i64\n}"), 3);
+        assert_eq!(
+            newlines("fn f() {\n    let r: i64?? = x ??\n        y\n}"),
+            2
+        );
+        // Inside `( )`, a line break ends nothing, also after a `??` that closes an annotation.
+        assert_eq!(newlines("fn f(a: i64??\n    , b: i64) {}"), 1);
+    }
+
     /// A loop label's `:` does not start a type annotation, so a `>` at a line's end after it still
     /// compares and the condition goes on.
     #[test]
@@ -4072,17 +4117,20 @@ mod tests {
                 // The lexer's diagnostic stays the only one, and the tokens parse as lexed.
                 let lexed = lex(&fixed).expect("the lexer recovers");
                 let tokens = lexed.tokens.clone();
-                let parsed = crate::parser::parse(lexed);
+                let parsed = crate::parser::parse(lexed, false);
                 let reported: Vec<_> = parsed.diagnostics.iter().map(|d| at(&fixed, d)).collect();
                 assert_eq!(reported, [want], "{fixed}");
-                let parsed = crate::parser::parse(Lexed {
-                    source: &fixed,
-                    tokens,
-                    diagnostics: Vec::new(),
-                    warnings: Vec::new(),
-                    comments: Vec::new(),
-                    breaks: Vec::new(),
-                });
+                let parsed = crate::parser::parse(
+                    Lexed {
+                        source: Source::new(&fixed, 0),
+                        tokens,
+                        diagnostics: Vec::new(),
+                        warnings: Vec::new(),
+                        comments: Vec::new(),
+                        breaks: Vec::new(),
+                    },
+                    false,
+                );
                 assert!(
                     parsed.diagnostics.is_empty() && parsed.checkable,
                     "{fixed}: {:?}",
@@ -4300,5 +4348,42 @@ mod tests {
             "{} bytes looked at",
             LOOKED.get()
         );
+    }
+
+    /// The text has a `//` comment and three line breaks, so that each list has offsets to move.
+    #[test]
+    fn lex_at_should_move_every_offset_up_by_the_base() {
+        let text = "fn f() {}\n// c\nfn g() {}\n";
+        let base = 1000;
+        let (plain, moved) = (
+            lex(text).expect("lexes"),
+            lex_at(text, base).expect("lexes"),
+        );
+        let shift = |at: Span| Span::new(at.start() + base, at.end() + base);
+        assert_eq!(moved.tokens.len(), plain.tokens.len());
+        for (m, p) in moved.tokens.iter().zip(&plain.tokens) {
+            assert_eq!((m.span, &m.kind), (shift(p.span), &p.kind));
+            assert_eq!(moved.source.text(m.span), plain.source.text(p.span));
+        }
+        assert_eq!(moved.comments, [10 + base]);
+        assert_eq!(moved.breaks, [9 + base, 14 + base, 24 + base]);
+    }
+
+    /// A bracket error stops the lexer at any base.
+    #[test]
+    fn lex_at_should_pass_on_a_bracket_error() {
+        assert!(lex_at("fn f(", 0).is_err());
+        assert!(lex_at("fn f(", 10).is_err());
+    }
+
+    /// A text at a base is the prelude, which has no diagnostic and no warning: the first one
+    /// is the error. At base 0 it is a user's text, whose diagnostics stay.
+    #[test]
+    fn lex_at_should_refuse_a_diagnostic_or_a_warning_when_the_base_is_not_zero() {
+        for (text, kind) in [("enum P { A } $", "error"), ("x\n    y;\n", "warning")] {
+            assert!(lex_at(text, 10).is_err(), "{kind}");
+            let lexed = lex_at(text, 0).expect("a user's text lexes");
+            assert_eq!(lexed.diagnostics.len() + lexed.warnings.len(), 1, "{kind}");
+        }
     }
 }

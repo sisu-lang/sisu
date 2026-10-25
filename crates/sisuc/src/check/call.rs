@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::expr::{fits, no_member, path, postfix};
+use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::prelude::PRELUDE;
 use super::unused_names::Used;
@@ -58,6 +58,13 @@ impl Checker<'_> {
         match declared {
             (Some(Declared::Known(class)), _) => self.construct_class(span, class, site, args),
             (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
+            // Here `Some` is the prelude's. A user item named `Some` is reported, and the two arms
+            // above call it.
+            _ if callee.name.as_str() == "Some" => self.some(span, site, None, args),
+            // `Ok` and `Err` are the prelude's, and no user item can take their names.
+            _ if let Some((id, _)) = self.result_variant(callee.name) => {
+                self.enum_path(span, id, callee, Some((args, callee.span)), site)
+            }
             _ => match self.bare_variant(callee.name, callee.span) {
                 Some(d) => {
                     self.diagnostics.push(d);
@@ -232,7 +239,7 @@ impl Checker<'_> {
     /// loop label, and the call starts the value of an unlabeled `break`: the fix then writes
     /// the label there, unless it wraps the receiver in parentheses.
     fn label_starts_receiver(&self, callee: &ast::Ident, first: &ast::Arg) -> bool {
-        let text = &self.source.text[first.value.span.start()..];
+        let text = self.source.file.rest(first.value.span.start());
         let end = text
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
             .unwrap_or(text.len());
@@ -339,7 +346,10 @@ impl Checker<'_> {
         let (method, types, angles) = (site.name, site.written, site.angles);
         let start = self.diagnostics.len();
         let path = !types.is_empty() && self.path_method(receiver, method);
-        if path && self.generic_variant(receiver, method).is_some() {
+        // `Option` is generic, as an enum with the variants `Some` and `None` would be.
+        let option_variant = option_written(receiver) == Some(false)
+            && matches!(method.name.as_str(), "Some" | "None");
+        if path && (option_variant || self.generic_variant(receiver, method).is_some()) {
             // Its arguments alone could not bind what the list was meant to.
             self.variant_args(receiver, method, types, angles);
             self.stray(args);
@@ -381,10 +391,10 @@ impl Checker<'_> {
                         deferred = false;
                         c.stray(args);
                         let at = receiver.span.to(method.span);
-                        let text = c.source.text;
+                        let text = c.source.file;
                         let compare = (arity == 0).then(|| {
-                            let rest = &text[at.end()..first.span.end()];
-                            format!("{}(){rest}", &text[at.start()..at.end()])
+                            let rest = text.slice(at.end()..first.span.end());
+                            format!("{}(){rest}", text.text(at))
                         });
                         return Err(c.misread_as(at, compare));
                     }

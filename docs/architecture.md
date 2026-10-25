@@ -49,7 +49,9 @@ unnecessary one, such as a `;` at the end of a line, is dropped with W0007
 ([ADR 0028](adr/0028-a-semicolon-stands-in-for-a-line-break.md)). A `>` at
 a line's end ends the statement when it closes a type annotation, as in
 `b: Box<i64>`. Any other `>` there lets the line go on: a comparison, a
-header's type parameters, or a call's type arguments. It
+header's type parameters, or a call's type arguments. A `??` at a line's end
+follows the same rule: it ends the statement in `b: i64??`, and otherwise the
+line goes on to the operand of `??`. The lexer
 decodes a `char` literal and its escapes into one scalar value, and a string
 literal into its text, so later stages never see the escape text. An integer
 literal's token holds only its value; a diagnostic that quotes the literal as
@@ -224,7 +226,8 @@ kernel refuses a request far beyond RAM plus swap
 `codegen/layout.rs` holds how a value sits in memory: the LLVM type of each
 Sisu type, the layouts of an object, an array block and a string block, the
 count word (`load_count`, `store_count`, `init_count`), the optional accessors
-(`empty`, `has_value`, `optional`, `optional_value`), the size of every heap
+(`empty`, `has_value`, `optional`, `optional_value`), the niche of an optional
+(`niche`): the spare payload value that holds its `None`, the size of every heap
 block (`heap_size`), and the TBAA tags with the tagged loads and stores that
 use them.
 

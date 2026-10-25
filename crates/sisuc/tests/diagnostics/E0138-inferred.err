@@ -1,8 +1,0 @@
-error[E0138]: `i64?` cannot be a type argument
- --> E0138-inferred.sisu:7:16
-  |
-7 |     let x = id(n)
-  |                ^ an optional cannot be a type argument yet
-
-sisu: 1 error
-sisu: for more on a code, run `sisu explain <code>`: E0138

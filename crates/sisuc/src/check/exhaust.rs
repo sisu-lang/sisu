@@ -4,7 +4,8 @@
 //!
 //! Specializing a column puts each row in the bucket of its head constructor; a wildcard row goes
 //! into every bucket and into the default matrix, which stands for every constructor no row
-//! names. The constructors of an enum are its variants and those of `bool` its two values. An
+//! names. The constructors of an enum are its variants, those of `bool` its two values, and
+//! those of an optional `None` and `Some`, which holds the payload as its one field. An
 //! integer or `char` column is split into disjoint intervals at every bound its ranges use, and
 //! each interval is a constructor. A `string` column has a constructor for each of its literals,
 //! and the default stands for every other string, so only a wildcard covers a `string`. An `|`
@@ -198,11 +199,13 @@ fn bottom(guarded: bool) -> StackId {
     if guarded { GUARDED } else { EMPTY }
 }
 
-/// The type of a column as coverage sees it: its enum with its type arguments, a type whose
-/// literals or ranges a pattern names, or `Other`, a type whose values no pattern names.
+/// The type of a column as coverage sees it: its enum with its type arguments, an optional with
+/// its payload, a type whose literals or ranges a pattern names, or `Other`, a type whose values
+/// no pattern names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Col {
     Enum(usize, TypeArgs),
+    Optional(Type),
     I64,
     U8,
     Char,
@@ -214,6 +217,7 @@ enum Col {
 fn column(ty: Type) -> Col {
     match ty.kind() {
         TypeKind::Enum(id, args) => Col::Enum(id.0, args),
+        TypeKind::Optional(payload) => Col::Optional(payload),
         TypeKind::I64 => Col::I64,
         TypeKind::U8 => Col::U8,
         TypeKind::Char => Col::Char,
@@ -244,6 +248,10 @@ enum Pat {
         at: Span,
         alts: Box<[PatId]>,
     },
+    /// The `None` of an optional, its constructor 0.
+    None,
+    /// A value of an optional, its constructor 1, whose one field is the payload.
+    Some(PatId),
 }
 
 /// `lo..=hi` as a pattern, of code points when `char`: one value alone, else a range.
@@ -467,6 +475,7 @@ impl Solver<'_> {
             ors.push(match pat {
                 Pat::Or { .. } => true,
                 Pat::Variant { fields, .. } => fields.iter().any(|&field| ors[field]),
+                &Pat::Some(field) => ors[field],
                 _ => false,
             });
             pats.push(pat.clone());
@@ -508,6 +517,14 @@ impl Solver<'_> {
                 let alts = alts.iter().map(|alt| self.intern(alt, col)).collect();
                 self.pat(Pat::Or { at: p.span, alts })
             }
+            tir::PatternKind::Some(inner) => {
+                let Col::Optional(payload) = col else {
+                    panic!("a `Some` pattern should sit at an optional")
+                };
+                let inner = self.intern(inner, column(payload));
+                self.pat(Pat::Some(inner))
+            }
+            tir::PatternKind::None => self.pat(Pat::None),
         }
     }
 
@@ -537,6 +554,7 @@ impl Solver<'_> {
                     self.unreached(field, id, found);
                 }
             }
+            (tir::PatternKind::Some(inner), &Pat::Some(id)) => self.unreached(inner, id, found),
             (tir::PatternKind::Or(alts), Pat::Or { alts: ids, .. }) => {
                 for (a, (alt, &id)) in alts.iter().zip(ids.iter()).enumerate() {
                     if self.reached.contains(&(pat, a)) {
@@ -563,6 +581,7 @@ impl Solver<'_> {
                     self.alternatives_in(field, found);
                 }
             }
+            &Pat::Some(field) => self.alternatives_in(field, found),
             Pat::Or { alts, .. } => {
                 for (a, &alt) in alts.iter().enumerate() {
                     found.push(((pat, a), (0, 0)));
@@ -673,6 +692,21 @@ impl Solver<'_> {
                 let printed: Vec<_> = alts.iter().map(|&alt| self.print(alt)).collect();
                 printed.join(" | ")
             }
+            Pat::None => "None".to_string(),
+            // As the user writes it: a pattern of the value inside stands alone.
+            &Pat::Some(inner) if self.inside(inner) => self.print(inner),
+            &Pat::Some(inner) => format!("Some({})", self.print(inner)),
+        }
+    }
+
+    /// Whether `id`, the pattern of an optional's value, matches the value inside as it stands
+    /// at the optional's position: a variant, literal or range pattern, inside every layer.
+    fn inside(&self, id: PatId) -> bool {
+        match &self.pats[id] {
+            Pat::Variant { .. } | Pat::Bool(_) | Pat::Range { .. } | Pat::Str(_) => true,
+            &Pat::Some(inner) => self.inside(inner),
+            Pat::Or { alts, .. } => alts.iter().all(|&alt| self.inside(alt)),
+            Pat::Wild | Pat::None => false,
         }
     }
 
@@ -681,10 +715,11 @@ impl Solver<'_> {
         printed.join(", ")
     }
 
-    /// Field `k` of `pat`, a variant pattern or `_`.
+    /// Field `k` of `pat`, a variant pattern, a `Some` or `_`.
     fn field(&self, pat: PatId, k: usize) -> PatId {
         match &self.pats[pat] {
             Pat::Variant { fields, .. } => fields[k],
+            &Pat::Some(payload) => payload,
             _ => WILD,
         }
     }
@@ -841,6 +876,8 @@ impl Solver<'_> {
                     }
                     wild.push(e);
                 }
+                Pat::None => join(&mut bucket, &mut children, &wild, (0, 0), e),
+                Pat::Some(_) => join(&mut bucket, &mut children, &wild, (1, 1), e),
                 Pat::Or { .. } => panic!("an alternative should not be an `|`"),
             }
         }
@@ -849,7 +886,7 @@ impl Solver<'_> {
             .collect();
         let constructors = match col {
             Col::Enum(e, _) => Some(self.enums[e].variants.len()),
-            Col::Bool => Some(2),
+            Col::Bool | Col::Optional(_) => Some(2),
             Col::I64 | Col::U8 | Col::Char => Some(intervals.len()),
             Col::Str | Col::Other => None,
         };
@@ -920,10 +957,20 @@ impl Solver<'_> {
     }
 
     /// The rows of the child `next` of `frame`: an enum bucket's rows with the variant's fields
-    /// in place of their first column, any other child's without it.
+    /// in place of their first column, `Some`'s with the payload, any other child's without it.
     fn child_rows(&mut self, frame: &Frame) -> Box<[StackId]> {
         let child = &frame.children[frame.next];
         let heads: Vec<_> = child.members.iter().map(|&e| frame.expanded[e]).collect();
+        // `Some`'s bucket: the payload in place of the optional.
+        if let Col::Optional(payload) = frame.col
+            && child.bucket
+            && child.order == 1
+        {
+            let col = column(payload);
+            return (heads.into_iter())
+                .map(|head| self.push(self.field(head.head, 0), col, head.tail))
+                .collect();
+        }
         let Col::Enum(enum_id, args) = frame.col else {
             return heads.into_iter().map(|head| head.tail).collect();
         };
@@ -986,6 +1033,20 @@ impl Solver<'_> {
                 }
                 Col::Bool if frame.children[child].bucket || frame.children.len() > 1 => {
                     self.pat(Pat::Bool(order == 1))
+                }
+                // `Some`'s witness starts with the payload's.
+                Col::Optional(_) if frame.children[child].bucket && order == 1 => {
+                    let node = self.nodes[witness];
+                    let head = self.pat(Pat::Some(node.pat));
+                    return self.push(head, frame.col, node.tail);
+                }
+                Col::Optional(_) if frame.children[child].bucket || frame.children.len() > 1 => {
+                    let head = if order == 0 {
+                        Pat::None
+                    } else {
+                        Pat::Some(WILD)
+                    };
+                    self.pat(head)
                 }
                 _ => WILD,
             };
@@ -1085,11 +1146,11 @@ mod tests {
         clippy::too_many_lines,
         reason = "one row per witness, so the table reads in one place"
     )]
-    fn witnesses() {
-        let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n    Mul(Expr, Expr)\n}\nenum Name {\n    Named(string)\n    Anon\n}\nfn main() {}";
+    fn witnesses_should_name_the_missing_pattern_of_each_row() {
+        let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n    Mul(Expr, Expr)\n}\nenum Name {\n    Named(string)\n    Anon\n}\nenum Shape {\n    Circle(f64)\n    Square(f64)\n}\nenum Holder {\n    V(Shape??)\n    W(i64?, bool)\n}\nfn main() {}";
         // Each row: the scrutinee, the arms before `_ => 0`, the missing pattern, the texts of
         // the arm that covers part of its variant, and whether a guarded arm may not match.
-        let rows: [(&str, &[&str], &str, Texts<'_>, bool); 20] = [
+        let rows: [(&str, &[&str], &str, Texts<'_>, bool); 27] = [
             (
                 "e",
                 &["Num(_) => 1", "Add(_, _) => 2"],
@@ -1213,6 +1274,41 @@ mod tests {
                 Some(("Named(\"a\")", "\"a\"")),
                 false,
             ),
+            // An optional misses its `None`, a value, a variant of its payload as the arm
+            // would name it, or the `None` of a middle layer.
+            ("o", &["Some(m) => m"], "None", None, false),
+            ("o", &["None => 1"], "Some(_)", None, false),
+            (
+                "sh",
+                &["Circle(r) => 1", "None => 2"],
+                "Square(_)",
+                None,
+                false,
+            ),
+            (
+                "oo",
+                &["Some(Some(m)) => m", "None => 1"],
+                "Some(None)",
+                None,
+                false,
+            ),
+            // A guarded `None` may not match; a `Some` arm prints as the user writes it, its
+            // `|` too; an optional field no arm names stays `_`.
+            ("o", &["None if b => 1", "Some(_) => 2"], "None", None, true),
+            (
+                "h",
+                &["V(Some(Circle(_) | Square(_))) => 1", "W(_, _) => 2"],
+                "V(None)",
+                Some(("V(Circle(_) | Square(_))", "Circle(_) | Square(_)")),
+                false,
+            ),
+            (
+                "h",
+                &["V(_) => 1", "W(_, true) => 2"],
+                "W(_, false)",
+                Some(("W(_, true)", "_, true")),
+                false,
+            ),
         ];
         for (scrutinee, arms, pattern, partly, guarded) in rows {
             let arms = arms
@@ -1221,7 +1317,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .concat();
             let src = format!(
-                "{decls}\nfn t(e: Expr, i: i64, u: u8, c: char, b: bool, s: string, n: Name) -> i64 {{\n    match {scrutinee} {{\n{arms}        _ => 0\n    }}\n}}"
+                "{decls}\nfn t(e: Expr, i: i64, u: u8, c: char, b: bool, s: string, n: Name, o: i64?, sh: Shape?, oo: i64??, h: Holder) -> i64 {{\n    match {scrutinee} {{\n{arms}        _ => 0\n    }}\n}}"
             );
             let missing = report(&src).missing.expect("the arms should miss a value");
             assert_eq!(missing.pattern, pattern, "{src}");

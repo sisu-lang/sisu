@@ -4,7 +4,7 @@ A tour of the Sisu language as it works today, one small program at a time.
   <section class="ph"><div class="w">
     <h1>A tour of Sisu</h1>
     <p class="lede">The language as it works today, one small program at a time, in about ten minutes of reading.</p>
-    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit f73a40d.</p>
+    <p class="meta">The working programs on this page compile with sisu today. Every output and error shown is what sisu really prints. Checked against the repository at commit 3c93176.</p>
   </div></section>
 
   <div class="w doc">
@@ -77,9 +77,10 @@ A tour of the Sisu language as it works today, one small program at a time.
         <li><code>a ?? b</code> gives the value, or <code>b</code> when <code>a</code> is <code>None</code>. <code>b</code> may be <code>panic("why")</code>.</li>
         <li><code>if let x = a</code> runs its block with the value bound to <code>x</code>; <code>while let</code> loops while there is one.</li>
         <li><code>a?.field</code> and <code>a?.method()</code> reach through an optional and give an optional.</li>
+        <li><code>match a</code> with the arms <code>Some(x) =&gt;</code> and <code>None =&gt;</code> handles both cases. <code>i64?</code> is short for <code>Option&lt;i64&gt;</code>, an enum that every program has.</li>
       </ul>
       <p>A conversion that can fail returns an optional instead of panicking. <code>i64(41.5)</code> is <code>None</code>, because 41.5 is not a whole number.</p>
-      <!-- source: docs/roadmap.md ("What works today": optionals, ?. ?? if let while let, panic on the right of ??), docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md, crates/sisuc/tests/run/optionals.sisu, crates/sisuc/tests/run/unwrap.sisu -->
+      <!-- source: docs/roadmap.md ("What works today": optionals, ?. ?? if let while let, panic on the right of ??), docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md, crates/sisuc/tests/run/optionals.sisu, crates/sisuc/tests/run/unwrap.sisu, crates/sisuc/tests/run/optional_patterns.sisu -->
 
       <h2 id="classes">Classes</h2>
       <p>A class declares its fields one per line and its methods after them. A method takes <code>self</code> and may write any <code>mut</code> field. Objects are freed by reference counting when the last reference goes away.</p>

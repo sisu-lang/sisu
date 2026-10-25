@@ -24,11 +24,19 @@ use crate::types::{Head, write_args};
 /// the non-generic functions' bodies, then each instantiation's in turn. A method is reached only
 /// by a call, never with its class. The checker has accepted the program, so nothing here can
 /// fail.
-pub(crate) fn instantiate(program: Program) -> Program {
-    let generic = program.functions.iter().any(|f| !f.type_params.is_empty())
-        || program.classes.iter().any(|c| !c.type_params.is_empty())
-        || program.enums.iter().any(|e| !e.type_params.is_empty());
-    if !generic {
+pub(crate) fn instantiate(mut program: Program) -> Program {
+    let prelude = program.prelude;
+    let generic = program.functions[..prelude.funcs]
+        .iter()
+        .any(|f| !f.type_params.is_empty())
+        || (program.classes[..prelude.classes].iter()).any(|c| !c.type_params.is_empty())
+        || (program.enums[..prelude.enums].iter()).any(|e| !e.type_params.is_empty());
+    if !generic && !program.instantiates {
+        // Reaching a generic item records a type argument, so nothing of the prelude's that a
+        // program does not name is used: they are all templates or unused.
+        program.functions.truncate(prelude.funcs);
+        program.classes.truncate(prelude.classes);
+        program.enums.truncate(prelude.enums);
         return program;
     }
     let program = Mono::new(program).run();
@@ -91,11 +99,7 @@ impl Mono {
             enum_decls: Vec::with_capacity(program.enums.len()),
             types: FxHashMap::default(),
             functions: Vec::new(),
-            out: Program {
-                classes: Vec::new(),
-                enums: Vec::new(),
-                functions: Vec::new(),
-            },
+            out: Program::default(),
             work: VecDeque::new(),
         };
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -602,7 +606,7 @@ mod tests {
     use rustc_hash::FxHashSet;
 
     use super::*;
-    use crate::check::check;
+    use crate::check::check_alone;
     use crate::parser::parse_ok;
     use crate::types::NAME_LIMIT;
 
@@ -914,7 +918,7 @@ mod tests {
     #[should_panic(expected = "mono should leave no generic type in id")]
     fn a_type_parameter_left_behind_should_be_caught() {
         let src = "fn id<T>(x: T) -> T { x }\nfn main() {\n    print(id(1))\n}";
-        let (program, diagnostics) = check(&parse_ok(src), src, &[]);
+        let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
         assert_concrete(&program.unwrap_or_else(|| panic!("{diagnostics:?}")));
     }
 
@@ -1015,7 +1019,7 @@ mod tests {
                    enum E {\n    A(P)\n    B\n}\n\
                    fn f(e: E) -> i64 {\n    match e {\n        E.A(p) => p.get()\n        E.B => 0\n    }\n}\n\
                    fn main() {\n    print(f(E.A(P(x: 1))))\n}";
-        let (program, diagnostics) = check(&parse_ok(src), src, &[]);
+        let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
         let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
         let (text, count) = (program.to_string(), program.functions.len());
         let program = instantiate(program);

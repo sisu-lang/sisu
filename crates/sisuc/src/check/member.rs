@@ -2,9 +2,9 @@
 
 use super::expr::{if_some, local, no_member, path};
 use super::unused_names::Used;
-use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, optional_of, type_of, wrap};
+use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, type_of, wrap};
 use crate::ast;
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind};
+use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Peel};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
@@ -39,11 +39,28 @@ impl Checker<'_> {
             let _ = member(self, Err(Poisoned::of(type_of(&scrutinee))));
             return Err(Poisoned::error());
         };
+        // `?.` takes one layer off: on a `C??` it leaves a `C?`, which has no members.
+        if matches!(payload.kind(), TypeKind::Optional(_)) {
+            let kind = DiagnosticKind::MayBeNone {
+                value: path(receiver),
+                at: receiver.span,
+                access: None,
+                peel: Some(Peel {
+                    receiver: self.source.file.text(receiver.span).to_string(),
+                    left: self.type_name(payload),
+                    member: name.name.to_string(),
+                }),
+            };
+            self.diagnostics.push(kind.into());
+            // Only its own diagnostics matter.
+            let _ = member(self, Err(Poisoned::error()));
+            return Err(Poisoned::error());
+        }
         let bind = self.fresh(payload);
         let member = member(self, Ok(local(bind, payload, receiver.span)));
         let ty = match type_of(&member) {
             Some(Type::UNIT) => Type::UNIT,
-            Some(ty) => optional_of(ty),
+            Some(ty) => as_optional(ty),
             None => return Err(Poisoned::error()),
         };
         let (Ok(scrutinee), Ok(member)) = (scrutinee, member) else {
@@ -238,6 +255,7 @@ fn may_be_none(receiver: &ast::Expr, name: &ast::Ident, fix: bool) -> Diagnostic
         value: path(receiver),
         at: receiver.span,
         access: fix.then(|| Span::new(receiver.span.end(), name.span.start())),
+        peel: None,
     }
     .into()
 }

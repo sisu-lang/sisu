@@ -1,10 +1,24 @@
 //! What the generator knows at a point of the program: the names in scope, their types, the
 //! sizes their values can reach, and the values it knows.
 
+use std::cell::OnceCell;
 use std::rc::Rc;
 
 use super::DEPTHS;
 use super::generic::{GFunc, Generic};
+
+/// The generic that is the prelude's `Result<T, U>`, which no `Scope::generics` entry holds and
+/// no declaration writes.
+pub(crate) const RESULT: usize = usize::MAX;
+
+/// How a program writes the generic `generic`: `G3`, or `Result`.
+pub(crate) fn generic_name(generic: usize) -> String {
+    if generic == RESULT {
+        "Result".to_string()
+    } else {
+        format!("G{generic}")
+    }
+}
 
 /// An instance of a generic class or enum: `Scope::generics[generic]` applied to `args`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,7 +38,6 @@ pub(crate) enum Ty {
     String,
     Unit,
     Array(Box<Ty>),
-    /// Never of an optional: `optional_of` does not nest them.
     Optional(Box<Ty>),
     /// The class `Scope::classes[id]`, each of whose objects counts `size` (decision 5).
     Class {
@@ -65,7 +78,7 @@ fn written(prefix: &str, id: usize, applied: Option<&Applied>) -> String {
         return format!("{prefix}{id}");
     };
     let args: Vec<String> = args.iter().map(ToString::to_string).collect();
-    format!("G{generic}<{}>", args.join(", "))
+    format!("{}<{}>", generic_name(*generic), args.join(", "))
 }
 
 impl Ty {
@@ -96,9 +109,7 @@ impl Ty {
             }
             | Ty::Enum {
                 applied: Some(a), ..
-            } => {
-                format!("G{}", a.generic)
-            }
+            } => generic_name(a.generic),
             _ => self.to_string(),
         }
     }
@@ -113,9 +124,12 @@ impl Ty {
     }
 
     /// The size of its smallest value written with no expected type: an array holds an element.
+    /// An optional of an optional has no such value, so its size is `u64::MAX`, which no `max`
+    /// holds: an `if` with `None` in a branch takes one `?` only.
     pub(crate) fn least(&self) -> u64 {
         match self {
-            Ty::Array(element) => 1 + element.least(),
+            Ty::Array(element) => element.least().saturating_add(1),
+            Ty::Optional(payload) if matches!(**payload, Ty::Optional(_)) => u64::MAX,
             Ty::Optional(payload) => payload.least(),
             Ty::Class { .. } | Ty::Enum { .. } => self.floor(),
             Ty::I64 | Ty::U8 | Ty::F64 | Ty::Bool | Ty::Char | Ty::String | Ty::Unit => 0,
@@ -344,9 +358,20 @@ pub(crate) struct Scope {
     pub(crate) conditional: usize,
     /// The last number a name took.
     names: usize,
+    /// `Generic::result()`, built on first use.
+    result: OnceCell<Generic>,
 }
 
 impl Scope {
+    /// The generic `generic`, which may be `RESULT`.
+    pub(crate) fn generic(&self, generic: usize) -> &Generic {
+        if generic == RESULT {
+            self.result.get_or_init(Generic::result)
+        } else {
+            &self.generics[generic]
+        }
+    }
+
     /// A name that no other name of the program has: `prefix` and a number.
     pub(crate) fn fresh(&mut self, prefix: &str) -> String {
         self.names += 1;

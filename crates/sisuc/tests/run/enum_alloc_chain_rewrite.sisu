@@ -1,0 +1,32 @@
+fn iterations() -> i64 { 1000 }
+
+// Each step takes the three boxes of `c` apart in `match`, each with count 1, and builds each
+// `Next` again. A `Chain` is the pointer to its box, with `End` as `null`. Taking a box apart
+// frees it and the new `Next` allocates one, unless the new `Next` is built into the box the
+// `match` took apart.
+enum Chain {
+    End
+    Next(Chain)
+}
+
+fn rebuild(c: Chain) -> Chain {
+    match c {
+        Next(rest) => Chain.Next(rebuild(rest))
+        End => Chain.End
+    }
+}
+
+fn depth(c: Chain) -> i64 {
+    match c {
+        End => 0
+        Next(rest) => 1 + depth(rest)
+    }
+}
+
+fn main() {
+    let mut c = Chain.Next(Chain.Next(Chain.Next(Chain.End)))
+    for _ in 0..iterations() {
+        c = rebuild(c)
+    }
+    print(depth(c)) // 3: the rewrite keeps the depth
+}

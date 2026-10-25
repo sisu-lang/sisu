@@ -1,6 +1,7 @@
-// Optional payload fields: an `i64?` and a `string?` are `{ flag, value }` pairs, an `Inner?`
-// is a pair holding an enum. A copy retains only what is present, `==` compares a payload only
-// when both flags are set, and release skips a `None` string and an absent `Inner`.
+// Optional payload fields: an `i64?` is a `{ flag, value }` pair, a `string?` is a pointer that
+// is `null` for `None`, and an `Inner?` is an `Inner` whose `None` has the tag after `Num`. A copy
+// retains only what is present, `==` compares a payload only when both are present, and release
+// skips a `None` string and an absent `Inner`.
 enum Inner {
     Name(string)
     Num(i64)

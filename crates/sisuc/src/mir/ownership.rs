@@ -173,7 +173,9 @@ impl Placer<'_> {
             | Terminator::SwitchValue { operand: op, .. }
             | Terminator::Return(Some(op))
             | Terminator::Panic { message: op, .. } => self.operand(op),
-            Terminator::SwitchTag { place, .. } => self.place(place),
+            Terminator::SwitchTag { place, .. } | Terminator::TestPresent { place, .. } => {
+                self.place(place);
+            }
             Terminator::Goto(_)
             | Terminator::IfPresent { .. }
             | Terminator::Return(None)

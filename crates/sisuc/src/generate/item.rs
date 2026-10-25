@@ -237,11 +237,13 @@ impl Gen<'_> {
         let receiver = if owner.is_some() { "self, " } else { "" };
         self.w.text(&format!("fn {name}({receiver}depth: i64"));
         for (param, ty, _) in &params {
-            self.w.text(&format!(", {param}: {ty}"));
+            let written = self.spell(ty);
+            self.w.text(&format!(", {param}: {written}"));
         }
         self.w.text(")");
         if ret != Ty::Unit {
-            self.w.text(&format!(" -> {ret}"));
+            let written = self.spell(&ret);
+            self.w.text(&format!(" -> {written}"));
         }
         self.w.text(" ");
         self.scope.funcs.push(Func {
@@ -367,7 +369,8 @@ impl Gen<'_> {
             let name = self.scope.fresh("g");
             self.w.line();
             let keyword = if mutable { "mut " } else { "" };
-            self.w.text(&format!("{keyword}{name}: {ty}"));
+            let written = self.spell(&ty);
+            self.w.text(&format!("{keyword}{name}: {written}"));
             fields.push(Field {
                 name,
                 ty,

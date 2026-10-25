@@ -304,7 +304,7 @@ fn emit(
             let Some(lexed) = lex(reporter, &path, &source) else {
                 return ExitCode::FAILURE;
             };
-            let parsed = parser::parse(lexed);
+            let parsed = parser::parse(lexed, false);
             reporter.diagnostics(&path, &source, &parsed.diagnostics);
             if parsed
                 .diagnostics

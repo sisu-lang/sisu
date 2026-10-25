@@ -46,8 +46,10 @@ done
 
 # step0 returns its argument. stepi adds 1 through an array, a class and an
 # optional chain, and 0 through constants, an enum, f64 methods, a string built
-# with += and format specs, while let, u8 and char, and a generic function,
-# class and enum, each instantiated twice; then it calls step(i-1).
+# with += and format specs, while let, u8 and char, a generic function,
+# class and enum, each instantiated twice, a match on a prelude Result, and
+# an i64?? that two ?? peel to 0;
+# then it calls step(i-1).
 # main prints step(N-1)(0) = N-1. Not fi: f64 is a built-in type.
 large_input() {
     local sections=$1 dir=$2
@@ -101,6 +103,10 @@ fn below$i(k: i64) -> i64? {
     if k > 0 { k - 1 } else { None }
 }
 
+fn parse$i(k: i64) -> Result<i64, string> {
+    if k > 0 { Result.Ok(k) } else { Result.Err("none") }
+}
+
 fn step$i(x: i64) -> i64 {
     let xs = [x, K$i, 1]
     let mut sum = 0
@@ -117,6 +123,8 @@ fn step$i(x: i64) -> i64 {
         k = below$i(n)
     }
     let b = u8(spins) ?? 0
+    let nested: i64?? = k
+    let peeled = (nested ?? None) ?? 0
     let first = text.chars()[0]
     let zero = if shapes[2].is_dot() && first == 's' { i64(b) - spins } else { 1 }
     let c: C$i? = C$i(v: sum - x - xs[1], _label: text)
@@ -124,7 +132,11 @@ fn step$i(x: i64) -> i64 {
     let t = Tree$i.Node(Tree$i.Leaf, p.first(), Tree$i.Leaf)
     let u = Tree$i.Node(Tree$i.Leaf, p.b, Tree$i.Node(Tree$i.Leaf, "h", Tree$i.Leaf))
     let q = Pair$i(a: p.b, b: p.first())
-    let generic = t.size() + u.size() - 3 + q.b - K$i
+    let parsed = match parse$i(K$i) {
+        Result.Ok(v) => v - K$i
+        Result.Err(_) => 1
+    }
+    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU
@@ -201,7 +213,7 @@ expected() {
         mandelbrot) echo 63528 ;;
         fannkuch_redux) printf '%s\n' 8629 'Pfannkuchen(9) = 30' ;;
         strings) printf '%s\n' 186741 9800 10000 12073291 ;;
-        enum_match) printf '%s\n' 987548 816672 ;;
+        enum_match) printf '%s\n' 457364 816672 ;;
         shared_arrays) printf '%s\n' 20000 519500 ;;
         compare) printf '%s\n' 1494 640 2880 ;;
         tree_rewrite) printf '%s\n' 732347 163697 ;;

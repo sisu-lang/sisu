@@ -1,0 +1,10 @@
+error[E0046]: `is` needs objects; found `string??`
+ --> E0046-nested-string.sisu:4:11
+  |
+4 |     print(a is b)
+  |           ^
+  |
+  = help: use `==` to compare values
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0046

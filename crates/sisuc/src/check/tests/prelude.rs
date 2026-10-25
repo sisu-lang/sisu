@@ -2,6 +2,7 @@
 //! and `todo`.
 
 use super::*;
+use crate::source::PRELUDE_BASE;
 
 /// A function `f` over `params`, whose body is `body` from line 2, and an empty `main`.
 fn body(params: &str, body: &str) -> String {
@@ -372,6 +373,111 @@ fn todo_ends_at_the_line() {
             (Code::TodoLeft, (2, 5)),
             (Code::UnreachableCode, (3, 5)),
             (Code::UnusedValue, (3, 5)),
+        ],
+    );
+}
+
+/// A user's item that takes a name which the prelude declares is one E0026, at the user's name.
+/// The prelude's own declaration is no second error, and no diagnostic points into the prelude.
+#[test]
+fn user_item_should_not_take_a_name_the_prelude_declares() {
+    let prelude = prelude_program(PRELUDE_SOURCE);
+    for (item, expected) in [
+        ("enum Result { A }", (1, 6)),
+        ("fn Result() {}", (1, 4)),
+        ("class Ok {}", (1, 7)),
+    ] {
+        let src = format!("{item}\nfn main() {{}}");
+        let (_, ds) = check(&parse_ok(&src), &prelude, &src, &[]);
+        let errors: Vec<_> = ds
+            .iter()
+            .filter(|d| d.severity() == Severity::Error)
+            .collect();
+        let [error] = errors[..] else {
+            panic!("{src}: {ds:?}");
+        };
+        assert_eq!(error.code(), Code::BuiltInName, "{src}");
+        assert!(error.span().end() < PRELUDE_BASE as usize, "{src}");
+        assert_eq!(at(&src, error.span()), expected, "{src}");
+        assert!(ds.iter().all(|d| !d.span().in_prelude()), "{src}: {ds:?}");
+    }
+}
+
+/// `Ok`, `Err` and `Result.Ok` build a `Result` whose type the context fixes, in each row: the
+/// program, and a part of the typed tree that shows the variant built.
+#[test]
+fn result_should_be_built_with_bare_names() {
+    with_prelude();
+    let parse = "fn parse(s: string) -> Result<i64, string> {\n    if s == \"\" { return Err(\"empty\") }\n    Ok(s.len())\n}\nfn main() {}";
+    let r = "let r: Result<i64, string> =";
+    for (src, part) in [
+        (body("", &format!("{r} Ok(1)")), "Result.Ok 1"),
+        (body("", &format!("{r} Err(\"bad\")")), "Result.Err \"bad\""),
+        (parse.to_string(), "Result.Ok"),
+        (body("", &format!("{r} Result.Ok(1)")), "Result.Ok 1"),
+        (
+            body("", "let r = Result<i64, string>.Err(\"x\")"),
+            "Result.Err \"x\"",
+        ),
+    ] {
+        let printed = lowered(&src);
+        assert!(printed.contains(part), "{part} in {printed}");
+    }
+}
+
+/// A `match` takes `Ok` and `Err` as the variants of the `Result` it matches.
+#[test]
+fn result_should_be_matched_with_bare_names() {
+    with_prelude();
+    clean(&body(
+        "r: Result<i64, string>",
+        "let n = match r {\n        Ok(n) => n\n        Err(e) => 0\n    }",
+    ));
+}
+
+/// What a `Result` cannot decide: in each row, the program, the code and where it is reported.
+#[test]
+fn result_should_report_what_it_cannot_decide() {
+    with_prelude();
+    for (src, expected) in [
+        (
+            body("", "let r = Ok(1)"),
+            &[(Code::CannotInfer, (2, 13))][..],
+        ),
+        (
+            body("", "let r = Err(\"x\")"),
+            &[(Code::CannotInfer, (2, 13))],
+        ),
+        (
+            body(
+                "r: Result<i64, string>",
+                "let n = match r {\n        Ok(n) => n\n    }",
+            ),
+            &[(Code::NonExhaustive, (2, 13))],
+        ),
+        (body("", "let r = Ok"), &[(Code::VariantForm, (2, 13))]),
+        (
+            body("", "let r: Result<i64, string> = Ok(1, 2)"),
+            &[(Code::ArgumentCount, (2, 34))],
+        ),
+    ] {
+        codes(&src, expected);
+    }
+}
+
+/// `Ok` and `Err` name the variants of a `Result` that declares them: with no prelude, or with
+/// a user's `Result` that has none (which E0026 reports), a call of either names nothing.
+#[test]
+fn ok_should_name_nothing_when_no_result_declares_it() {
+    let call = body("", "let r = Ok(1)");
+    codes(&call, &[(Code::FunctionNotFound, (2, 13))]);
+    with_prelude();
+    let src = format!("enum Result {{\n    A\n}}\n{call}");
+    codes(
+        &src,
+        &[
+            (Code::BuiltInName, (1, 6)),
+            (Code::FunctionNotFound, (5, 13)),
         ],
     );
 }

@@ -384,6 +384,7 @@ fn exits_of(function: &Function) -> Vec<Exit> {
                 | Terminator::Branch { .. }
                 | Terminator::IfPresent { .. }
                 | Terminator::SwitchTag { .. }
+                | Terminator::TestPresent { .. }
                 | Terminator::SwitchValue { .. }
                 | Terminator::Panic { .. }
                 | Terminator::Unreachable => break Exit::Other,

@@ -187,6 +187,10 @@ impl Checker<'_> {
         };
         let mut found = Vec::new();
         let mut report = |kind: Definition, at: Span, item: usize| {
+            // The prelude is out of the user's sight, so nothing in it is unused.
+            if at.in_prelude() {
+                return;
+            }
             let name = self.text(at);
             if name.starts_with('_') {
                 return;
@@ -509,7 +513,9 @@ impl Checker<'_> {
         let mut live = vec![false; owners];
         let mut stack: Vec<usize> = (names.enumerate())
             .filter(|&(o, name)| {
-                Some(o) == main || name.is_some_and(|name| self.text(name).starts_with('_'))
+                Some(o) == main
+                    || name
+                        .is_some_and(|name| !name.in_prelude() && self.text(name).starts_with('_'))
             })
             .map(|(o, _)| o)
             .collect();
@@ -581,6 +587,6 @@ impl Checker<'_> {
 
     /// The source text at `span`.
     fn text(&self, span: Span) -> &str {
-        &self.source.text[span.range()]
+        self.source.file.text(span)
     }
 }

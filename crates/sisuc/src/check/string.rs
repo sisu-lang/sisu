@@ -183,6 +183,7 @@ impl Checker<'_> {
                 rhs: operand(rhs),
             }),
             conversion: false,
+            layers: false,
         }
         .into()
     }
@@ -208,6 +209,7 @@ impl Checker<'_> {
                     source: Some(MismatchSource::Concat(other.span)),
                     fix: None,
                     conversion: false,
+                    layers: false,
                 }
                 .into();
             }
@@ -381,6 +383,7 @@ impl Checker<'_> {
                     source: None,
                     fix: None,
                     conversion: false,
+                    layers: false,
                 }
                 .into(),
             },
@@ -447,6 +450,7 @@ impl Checker<'_> {
                 arg: arg.span,
             }),
             conversion: false,
+            layers: false,
         }
         .into()
     }
@@ -458,7 +462,7 @@ impl Checker<'_> {
     fn literal_name(&self, e: &ast::Expr) -> Option<String> {
         (matches!(e.kind, ExprKind::Str(_))
             && self.source.quotes.binary_search(&e.span.start()).is_ok())
-        .then(|| literal(&self.source.text[e.span.range()]))
+        .then(|| literal(self.source.file.text(e.span)))
     }
 }
 

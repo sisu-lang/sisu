@@ -600,6 +600,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                 arms,
                 otherwise,
             } => self.switch_tag(place, arms, *otherwise),
+            Terminator::TestPresent { place, some, none } => {
+                let (address, ty, _, boxed) = self.located(place.local, &place.projections, true);
+                let present = self.present_at(address, ty, boxed);
+                self.branch_on(present, self.block(*some), self.block(*none));
+            }
             Terminator::SwitchValue {
                 operand,
                 arms,
@@ -788,7 +793,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .into(),
                 Type::CHAR,
             ),
-            Const::None(ty) => (self.empty(*ty), *ty),
+            Const::None { ty, .. } => (self.empty(*ty), *ty),
             Const::Str(text) => (self.string_global(text).into(), Type::STRING),
         }
     }
@@ -847,10 +852,27 @@ impl<'ctx> Codegen<'ctx, '_> {
         projections: &[Projection],
         checked: bool,
     ) -> (PointerValue<'ctx>, Type, Option<MetadataValue<'ctx>>) {
+        let (address, ty, tag, boxed) = self.located(local, projections, checked);
+        assert!(
+            !boxed,
+            "mir should only test the presence of a boxed `F?`, which has no address of a value"
+        );
+        (address, ty, tag)
+    }
+
+    /// `address`, and whether the address is the storage of a boxed field of an optional type,
+    /// whose box may be `null`, in place of the address of a value.
+    fn located(
+        &self,
+        local: LocalId,
+        projections: &[Projection],
+        checked: bool,
+    ) -> (PointerValue<'ctx>, Type, Option<MetadataValue<'ctx>>, bool) {
         self.check_not_moved(local);
         let (mut address, _) = self.slot(local);
         let mut ty = self.types[local.0];
         let mut tag = None;
+        let mut boxed = false;
         for projection in projections {
             (address, ty, tag) = match projection {
                 Projection::Field { index, .. } => {
@@ -864,8 +886,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
                 Projection::Payload { variant, field } => {
                     let id = enum_of(ty);
+                    let place;
+                    (place, boxed) = self.field_place(address, id, *variant, *field);
                     (
-                        self.payload_place(address, id, *variant, *field),
+                        place,
                         self.program.enums[id.0].variants[*variant].fields[*field].ty,
                         None,
                     )
@@ -884,11 +908,13 @@ impl<'ctx> Codegen<'ctx, '_> {
                     )
                 }
                 Projection::Some => {
-                    panic!("`some` should only ever be the last projection, which `read` reads")
+                    let place;
+                    (place, ty, boxed) = self.some_place(address, ty, boxed);
+                    (place, ty, None)
                 }
             };
         }
-        (address, ty, tag)
+        (address, ty, tag, boxed)
     }
 
     /// The pointer at `address`: an object, an array or a string.

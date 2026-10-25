@@ -231,8 +231,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `i64(u8)`, `i64(char)`, `i64(f64)`, `u8(i64)`, `char(i64)` and `f64(i64)`, the type
-    /// `ty` saying which. A `u8?` or `char?` is a `{ i1, T }` pair of whether the value fits
-    /// and the value truncated, with no branch: `u8` fits `0..=255`, and `char` a scalar value.
+    /// `ty` saying which. A `u8?` or `char?` is built from whether the value fits and the value
+    /// truncated, with no branch: `u8` fits `0..=255`, and `char` a scalar value.
     /// One unsigned compare also catches the negatives. An `i64?` comes from an `f64`.
     pub(super) fn convert(&self, ty: Type, value: BasicValueEnum<'ctx>) -> BasicValueEnum<'ctx> {
         let kind = ty.kind();

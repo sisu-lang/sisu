@@ -278,6 +278,12 @@ impl Printer<'_> {
                 some.0,
                 none.0
             ),
+            Terminator::TestPresent { place, some, none } => format!(
+                "test_present {} bb{} bb{}",
+                self.place(place),
+                some.0,
+                none.0
+            ),
             Terminator::SwitchTag {
                 place,
                 arms,
@@ -328,7 +334,7 @@ fn constant(c: &Const) -> String {
         Const::Float(x) => format!("{x:?}"),
         Const::Bool(b) => format!("{b}"),
         Const::Char(c) => format!("{c:?}"),
-        Const::None(_) => "None".to_owned(),
+        Const::None { .. } => "None".to_owned(),
         Const::Str(text) => format!("{text:?}"),
     }
 }

@@ -2,7 +2,7 @@
 
 use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
 use super::unused_names::Used;
-use super::{Checked, Checker, Poisoned, UNKNOWN, optional_of, payload, type_of, wrap};
+use super::{Checked, Checker, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Literal};
 use crate::source::Span;
@@ -39,6 +39,7 @@ impl Checker<'_> {
                         source: self.expected_from(span),
                         fix: None,
                         conversion: false,
+                        layers: false,
                     },
                     true,
                 ),
@@ -98,6 +99,18 @@ impl Checker<'_> {
                     _ => joined = Some(ty),
                 }
             }
+            // The join can grow past an earlier element: each converts through one layer only.
+            if let Some(t) = joined.filter(|_| !failed) {
+                let short = slots.iter().zip(elements).find_map(|(slot, e)| {
+                    let ty = slot.as_ref().and_then(type_of)?;
+                    (!fits(t, ty)).then_some((e, ty))
+                });
+                if let Some((e, ty)) = short {
+                    let d = self.mismatch(e.span, Some(e), t, ty);
+                    self.diagnostics.push(d);
+                    failed = true;
+                }
+            }
         }
         let Some(joined) = joined.filter(|_| !failed) else {
             for (i, e) in elements.iter().filter(|e| rank(e) == 2).enumerate() {
@@ -107,7 +120,7 @@ impl Checker<'_> {
             }
             return Err(Poisoned::error());
         };
-        let want = optional_of(joined);
+        let want = as_optional(joined);
         for (slot, e) in slots.iter_mut().zip(elements) {
             if rank(e) == 2 {
                 *slot = Some(self.value(e, Some(want)));
@@ -151,9 +164,9 @@ impl Checker<'_> {
     }
 
     /// `[value; len]`: `value` is checked with the expected element type as its hint, then
-    /// against it, and `len` against `i64`. A `value` of a class or a class optional is
-    /// reported, as every slot would hold the same object; the literal `None` is not. That rule
-    /// sees `value`'s own type, before a mismatch with the element type erases it.
+    /// against it, and `len` against `i64`. A `value` of a class, under any layers of optional,
+    /// is reported, as every slot would hold the same object; the literal `None` is not. That
+    /// rule sees `value`'s own type, before a mismatch with the element type erases it.
     pub(super) fn array_fill(
         &mut self,
         span: Span,
@@ -169,7 +182,7 @@ impl Checker<'_> {
         // `operand`, split so the class rule runs between the check and the wrap.
         let checked = self.value(value, hint);
         self.body.quiet_at = outer;
-        let class = type_of(&checked).map(payload).filter(|ty| {
+        let class = type_of(&checked).map(innermost).filter(|ty| {
             matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Param(..)) && !none_literal(value)
         });
         if let Some(class) = class {
@@ -327,6 +340,7 @@ pub(super) fn optional_array(base: &ast::Expr) -> Diagnostic {
         value: path(base),
         at: base.span,
         access: None,
+        peel: None,
     }
     .into()
 }
@@ -345,4 +359,12 @@ pub(super) fn pair(operands: Vec<tir::Expr>) -> (Box<tir::Expr>, Box<tir::Expr>)
         .try_into()
         .expect("`spilled` should hand its closure one operand per input, and there are two");
     (Box::new(a), Box::new(b))
+}
+
+/// `ty` with every layer of optional taken off.
+fn innermost(mut ty: Type) -> Type {
+    while let TypeKind::Optional(inner) = ty.kind() {
+        ty = inner;
+    }
+    ty
 }

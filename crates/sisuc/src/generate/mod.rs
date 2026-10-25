@@ -16,7 +16,7 @@ pub(crate) mod coverage;
 
 use arbitrary::Unstructured;
 
-use scope::Scope;
+use scope::{Scope, Ty};
 use writer::Writer;
 
 pub(crate) struct Generated {
@@ -138,6 +138,11 @@ struct Gen<'a> {
     /// Whether the next expression is in a position with no expected type, where a `u8` must
     /// be one by its own type (`Gen::expr`).
     synth: bool,
+    /// Whether the next expression is the value of a `let` that writes its type, so that a
+    /// `Result` may be built as `Ok(..)` or `Err(..)`, which take their type from it.
+    typed: bool,
+    /// Whether the variant that `Gen::variant` writes next may be written as `Ok(..)` or `Err(..)`.
+    bare: bool,
     /// What chooses the rewrites and the known sites, apart from `u`, so the program is the
     /// same whatever they are.
     ru: Unstructured<'a>,
@@ -166,6 +171,8 @@ impl<'a> Gen<'a> {
             jumps: stmt::Jumps::default(),
             blocks: 0,
             synth: false,
+            typed: false,
+            bare: false,
             ru: Unstructured::new(&[]),
             effect: false,
             returns: false,
@@ -182,6 +189,22 @@ impl<'a> Gen<'a> {
     /// One of `0..n`, `n > 0`.
     fn pick(&mut self, n: usize) -> usize {
         self.u.choose_index(n).unwrap_or(0)
+    }
+
+    /// `ty` as a declaration writes it: each optional is `T?`, or now and then `Option<T>`.
+    fn spell(&mut self, ty: &Ty) -> String {
+        match ty {
+            Ty::Optional(payload) => {
+                let payload = self.spell(payload);
+                if self.pick(2) == 0 {
+                    format!("{payload}?")
+                } else {
+                    format!("Option<{payload}>")
+                }
+            }
+            Ty::Array(element) => format!("[{}]", self.spell(element)),
+            _ => ty.to_string(),
+        }
     }
 
     /// One of `lo..=hi`.

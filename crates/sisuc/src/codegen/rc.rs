@@ -114,13 +114,22 @@ pub(super) fn class_cycles(program: &Program) -> ClassCycles {
     cycles
 }
 
-/// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with any
-/// `?` removed. `None` for every other type, an enum and its optional included: those are not
-/// pointers, and a `None` of theirs is not `null`.
+/// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with
+/// the `?` of a `null` niche removed. `None` for every other type, an enum, its optional and an
+/// optional of an optional included: those are not pointers, and a `None` of theirs is not
+/// `null`.
 pub(super) fn counted_core(ty: Type) -> Option<Type> {
     match ty.kind() {
         TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) => Some(ty),
-        TypeKind::Optional(payload) => counted_core(payload),
+        // One `?` around a pointer keeps its `None` in `null`; no enum's niche is `null`.
+        TypeKind::Optional(payload)
+            if matches!(
+                payload.kind(),
+                TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_)
+            ) =>
+        {
+            Some(payload)
+        }
         _ => None,
     }
 }
@@ -608,7 +617,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.has_value(ty, rhs, "part"),
         );
         let flags = self.int_compare(IntPredicate::EQ, fa, fb);
-        if let TypeKind::Enum(..) = payload.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Optional(_) = payload.kind() {
             // Equal flags decide, unless both are set: a `None`'s payload is never read.
             let function = self.current_function();
             let both = self.builder.build_and(fa, fb, "both").expect(POSITIONED);
@@ -852,8 +861,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `retain` or `release`, as `kind` says. A string, object or array is the pointer itself,
-    /// `null` for `None`; an enum goes to its helper by address; an enum optional's payload is
-    /// counted only when its flag is set.
+    /// `null` for `None`; an enum goes to its helper by address; the payload of any other
+    /// optional is counted only when the optional holds a value, one layer at a time.
     fn retain_or_release(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
         if let Some(core) = counted_core(ty) {
             let function = match kind {

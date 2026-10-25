@@ -268,7 +268,7 @@ The rules:
 - `None` needs an expected optional type. Where the context expects a type that is not optional, `None` is an error ([E0032](../diagnostics/E0032.md)).
 - An optional is not its value. An arithmetic operator, a comparison, a field or a method of `T` does not apply to a `T?` ([E0032](../diagnostics/E0032.md), [E0062](../diagnostics/E0062.md)). Use `??`, `?.` ([Operators](operators.md#default-values)) or [`if let`](enums.md#if-let-and-while-let).
 - `x == None` and `x != None` test whether `x` holds a value. When `x` is not optional, the test is an error ([E0044](../diagnostics/E0044.md)).
-- An optional of an optional, such as `i64??`, is not a type ([E0014](../diagnostics/E0014.md)). The section [Option and Result](#option-and-result) is in development, and it changes this rule.
+- An optional of an optional, such as `i64??`, is a type. A value becomes an optional through one `?` layer only, and `??`, `if let` and `?.` take off one layer at a time. See [Optionals of optionals](#optionals-of-optionals).
 - `print` and interpolation do not take an optional ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)). The section [Option and Result](#option-and-result) is in development, and it changes this rule.
 
 ```sisu
@@ -298,12 +298,19 @@ fn main() {
 
 `T?` is short for `Option<T>`, and `T | E` is short for `Result<T, E>`. `Option` and `Result` are enums that a program uses with no declaration. Both spellings of a type are the same type.
 
-```sisu pending
+```sisu
 fn half(n: i64) -> Option<i64> {
     if n % 2 == 1 {
         return None
     }
     Some(n / 2)
+}
+
+fn exact_half(n: i64) -> Result<i64, string> {
+    if n % 2 == 1 {
+        return Err("{n} is odd")
+    }
+    Ok(n / 2)
 }
 
 fn main() {
@@ -312,6 +319,10 @@ fn main() {
         Some(n) => print(n)            // 4
         None => print("odd")
     }
+    match exact_half(7) {
+        Ok(n) => print(n)
+        Err(reason) => print(reason)   // 7 is odd
+    }
 }
 ```
 
@@ -319,15 +330,14 @@ The rules:
 
 - `Option<T>` is the enum with the variants `None` and `Some(T)`. `Result<T, E>` is the enum with the variants `Ok(T)` and `Err(E)`. [Errors and Result](errors.md#results) tells how a result is used.
 - `Some`, `None`, `Ok` and `Err` are names in expressions and in patterns, without the name of the enum.
-- A pattern whose outermost name is `Some` or `None` matches the optional itself. Any other pattern matches the value inside it. So `if let` takes any pattern for the type of the value inside.
-- A `match` on an optional takes the arms `Some(...)` and `None`.
+- `Some(p)` and `None` match the optional itself. A variant, a literal or a range matches the value inside it, and a name or `_` matches the whole optional. Only the top of an `if let` or a `while let` takes off one layer. [Patterns on an optional](enums.md#patterns-on-an-optional) has the rules.
 - A `print`, `eprint` or interpolation of an optional builds with a warning, because the text can be `None`. `x.to_string()` gives the same text with no warning, for a program that wants `None` in its output.
 
 ### Optionals of optionals
 
 An optional can hold an optional. `i64??` is `Option<Option<i64>>`. So generic code that finds the first element of a `[i64?]` gives an `i64??`. `None` tells that the array is empty. `Some(None)` tells that the first element is `None`.
 
-```sisu pending
+```sisu
 fn first<T>(xs: [T]) -> T? {
     if xs.len() > 0 { xs[0] } else { None }
 }
@@ -348,7 +358,7 @@ The rules:
 - A plain value becomes an optional through one layer only. The middle state of an `i64??` is written `Some(None)`.
 - `??` and `if let` peel one layer. On an `i64??` named `x`, `x ?? 5` gives an `i64?`, and `(x ?? None) ?? 0` gives an `i64`. `if let y = x` binds `y` with the type `i64?`.
 - `?.` removes one layer, as it does now. If `a?.b` has a `b` of the type `i64?`, it gives an `i64?`, not an `i64??`.
-- A type argument can be an optional. This lifts the rule in [Type arguments](generics.md#type-arguments).
+- A type argument can be an optional ([Type arguments](generics.md#type-arguments)).
 - `None` prints as `None` at every depth. A `T?` that holds `x` prints the text of `x`. When `x` is itself an optional that holds `None` at its innermost layer, the text is `Some(`, the text of `x`, and `)`. So every state of a nested optional prints in its own way. A `print` of an optional still builds with the warning; `to_string` does not.
 
 ```sisu pending

@@ -15,7 +15,7 @@ use crate::diagnostic::{
     LetField, MatchIdiomForm, Owner, PowerFix,
 };
 use crate::lexer::{Lexed, MIN_MAGNITUDE, Token, TokenKind, literal_too_large};
-use crate::source::Span;
+use crate::source::{Source, Span};
 use crate::symbol::Symbol;
 
 /// What the parser makes of a lexed source.
@@ -33,8 +33,9 @@ pub(crate) struct Parsed {
 /// Parses `lexed`, whose tokens end with `Eof` and whose brackets balance. An item with a
 /// syntax error, its own or the lexer's, is broken: it reports its earliest error, and the
 /// parser resumes after it. A bad format spec alone does not break its item: the parser reports
-/// it and reads its part without a spec. A lexer warning breaks nothing.
-pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
+/// it and reads its part without a spec. A lexer warning breaks nothing. The prelude (`prelude`)
+/// may declare a variant `None`, which no other source may.
+pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
     let Lexed {
         source,
         tokens,
@@ -62,6 +63,7 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
         specs: Vec::new(),
         warnings,
         labels: Vec::new(),
+        prelude,
     }
     .program()
 }
@@ -69,7 +71,10 @@ pub(crate) fn parse(lexed: Lexed<'_>) -> Parsed {
 /// The program of `source`, which must lex and parse without a diagnostic.
 #[cfg(test)]
 pub(crate) fn parse_ok(source: &str) -> Program {
-    let parsed = parse(crate::lexer::lex(source).expect("the source should lex"));
+    let parsed = parse(
+        crate::lexer::lex(source).expect("the source should lex"),
+        false,
+    );
     assert!(
         parsed.diagnostics.is_empty() && parsed.checkable,
         "{source}: {:?}",
@@ -269,7 +274,7 @@ enum RangeOp {
 
 struct Parser<'a> {
     /// The text the token spans index.
-    source: &'a str,
+    source: Source<'a>,
     tokens: &'a [Token],
     pos: usize,
     /// While a node's children are parsed: the levels above them. When a parse function returns:
@@ -291,6 +296,8 @@ struct Parser<'a> {
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
     /// end of its loop's body.
     labels: Vec<Ident>,
+    /// Whether this is the prelude, which may declare a variant `None`.
+    prelude: bool,
     /// `tokens`, or once a type-argument list takes the `>` of a `>=` (a split), the tokens before
     /// it. `peek` reads it with the bounds check it needs anyway, so only a split pays for one.
     window: &'a [Token],
@@ -433,7 +440,7 @@ impl<'a> Parser<'a> {
             },
             TokenKind::Int(_) => DiagnosticKind::Expected {
                 what: what.to_string(),
-                found: format!("`{}`", &self.source[found.span.range()]),
+                found: format!("`{}`", self.source.text(found.span)),
                 at: found.span,
             },
             // A `Newline` over a `;` that separates is named as written.
@@ -516,25 +523,19 @@ impl<'a> Parser<'a> {
                 (TypeKind::Name(ident.name), ident.span)
             }
         };
-        let optional = self.eat(&TokenKind::Question).is_some();
-        if optional {
-            span = span.to(self.last_span());
-        }
-        // `??` is one token, so `Tree??` and `Tree? ?` both stop here.
-        if matches!(
-            self.peek().kind,
-            TokenKind::Question | TokenKind::QuestionQuestion
-        ) {
-            let base = TypeExpr {
-                kind,
-                optional: false,
-                span,
+        // Each `?` is one layer and one level of depth; `??` is one token of two.
+        let mut optional = 0;
+        loop {
+            let layers = match self.peek().kind {
+                TokenKind::Question => 1,
+                TokenKind::QuestionQuestion => 2,
+                _ => break,
             };
-            return Err(DiagnosticKind::OptionalNests {
-                ty: base.to_string(),
-                at: start.to(self.peek().span),
+            for _ in 0..layers {
+                self.descend()?;
             }
-            .into());
+            optional += layers;
+            span = span.to(self.bump().span);
         }
         Ok(TypeExpr {
             kind,
@@ -628,7 +629,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Scans a type: a name and its list, or `[type]`, then an optional `?`.
+    /// Scans a type: a name and its list, or `[type]`, then its `?` layers, each one level deep.
     fn scan_type(&self, at: &mut usize, depth: usize) -> bool {
         if depth > MAX_DEPTH {
             return false;
@@ -649,10 +650,15 @@ impl<'a> Parser<'a> {
             }
             _ => return false,
         }
-        if *self.scanned(*at) == TokenKind::Question {
+        let mut layers = 0;
+        loop {
+            layers += match self.scanned(*at) {
+                TokenKind::Question => 1,
+                TokenKind::QuestionQuestion => 2,
+                _ => return depth + layers <= MAX_DEPTH,
+            };
             *at += 1;
         }
-        true
     }
 
     /// `<T, U>` after the name of a function, class or enum, with an optional trailing comma;
@@ -1010,7 +1016,10 @@ impl<'a> Parser<'a> {
         let separated = matches!(
             next.kind,
             TokenKind::RBrace | TokenKind::Eof | TokenKind::Semicolon
-        ) || self.source[comma.end()..next.span.start()].contains('\n');
+        ) || self
+            .source
+            .slice(comma.end()..next.span.start())
+            .contains('\n');
         let replacement = if separated { "" } else { ";" }.to_string();
         DiagnosticKind::FieldComma {
             at: comma,
@@ -1075,7 +1084,7 @@ impl<'a> Parser<'a> {
             let class = self.peek().span;
             return Err(DiagnosticKind::MatchIdiom {
                 form: MatchIdiomForm::EnumClass {
-                    name: self.source[next.span.range()].to_string(),
+                    name: self.source.text(next.span).to_string(),
                     remove: Span::new(class.start(), next.span.start()),
                 },
                 at: class,
@@ -1156,17 +1165,23 @@ impl<'a> Parser<'a> {
         Ok(member)
     }
 
-    /// `Name`, or `Name(payload)`.
+    /// `Name`, or `Name(payload)`. Only the prelude names a variant `None`.
     fn variant(&mut self) -> Result<Variant, Diagnostic> {
-        if self.at(&TokenKind::NoneKw) {
+        let name = if self.prelude && self.at(&TokenKind::NoneKw) {
+            Ident {
+                name: Symbol::intern("None"),
+                span: self.bump().span,
+            }
+        } else if self.at(&TokenKind::NoneKw) {
             return Err(DiagnosticKind::BuiltInName {
                 name: "None".to_string(),
                 at: self.peek().span,
                 kind: BuiltIn::Keyword,
             }
             .into());
-        }
-        let name = self.ident("a variant or `fn`")?;
+        } else {
+            self.ident("a variant or `fn`")?
+        };
         let payload = match self.eat(&TokenKind::LParen) {
             Some(_) => Some(self.payload()?),
             None => None,
@@ -1215,6 +1230,7 @@ impl<'a> Parser<'a> {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            prelude: self.prelude,
             window: self.tokens,
             halves: self.halves,
             halved: None,
@@ -1623,7 +1639,7 @@ impl<'a> Parser<'a> {
                 depth == 0
             })
             .map_or(start, |token| token.span);
-        self.source[start.to(end).range()].to_string()
+        self.source.text(start.to(end)).to_string()
     }
 
     /// The loop label after `break` or `continue`: a name, when it is an open loop label or
@@ -1683,7 +1699,7 @@ impl<'a> Parser<'a> {
         let gap = self.last_code_end()..at.start();
         let join = (lacks_else && takes_block).then(|| Join {
             gap: Span::new(gap.start, gap.end),
-            safe: self.source[gap.clone()].trim().is_empty(),
+            safe: self.source.slice(gap.clone()).trim().is_empty(),
         });
         DiagnosticKind::ElseOnNewLine { at, join }.into()
     }
@@ -1750,7 +1766,8 @@ impl<'a> Parser<'a> {
     }
 
     /// One alternative of a pattern: `_`, `None`, a name, `Num(p, ...)`, `Expr.Num(p, ...)`,
-    /// `Expr.Idle`, a literal, or a range of two literals. The caller has counted its level.
+    /// `Expr.Idle`, `Option.None`, a literal, or a range of two literals. The caller has counted
+    /// its level.
     fn single(&mut self) -> Result<Pattern, Diagnostic> {
         let base = self.depth;
         let mut reach = base;
@@ -1779,7 +1796,17 @@ impl<'a> Parser<'a> {
                     return Err(error);
                 }
                 let (qualifier, name) = if self.eat(&TokenKind::Dot).is_some() {
-                    (Some(first), self.ident("a variant name")?)
+                    // `Option.None`, as in an expression; the checker rejects the `None` member
+                    // of anything else.
+                    let name = if self.at(&TokenKind::NoneKw) {
+                        Ident {
+                            name: Symbol::intern("None"),
+                            span: self.bump().span,
+                        }
+                    } else {
+                        self.ident("a variant name")?
+                    };
+                    (Some(first), name)
                 } else {
                     (None, first)
                 };
@@ -1791,11 +1818,7 @@ impl<'a> Parser<'a> {
                     if let Some(&(first_label, _)) = labels.first() {
                         return Err(DiagnosticKind::PatternForm {
                             form: ForeignPattern::Labels {
-                                form: format!(
-                                    "{}{}",
-                                    &self.source[path.range()],
-                                    self.listed(&fields)
-                                ),
+                                form: format!("{}{}", self.source.text(path), self.listed(&fields)),
                                 labels: labels.into_iter().map(|(_, remove)| remove).collect(),
                             },
                             at: first_label,
@@ -1817,7 +1840,7 @@ impl<'a> Parser<'a> {
                     let fields = self.listed(&fields);
                     return Err(DiagnosticKind::PatternForm {
                         form: ForeignPattern::Braces {
-                            form: format!("{}{fields}", &self.source[path.range()]),
+                            form: format!("{}{fields}", self.source.text(path)),
                             replace: Span::new(path.end(), braces.end()),
                             fields,
                         },
@@ -2007,8 +2030,8 @@ impl<'a> Parser<'a> {
         end: Option<Span>,
         fixable: bool,
     ) -> Diagnostic {
-        let start_text = self.source[start.range()].to_string();
-        let end_text = end.map(|end| self.source[end.range()].to_string());
+        let start_text = self.source.text(start).to_string();
+        let end_text = end.map(|end| self.source.text(end).to_string());
         let form = match lt {
             Some(lt) => ForeignRange::Exclusive {
                 start: start_text,
@@ -2078,10 +2101,7 @@ impl<'a> Parser<'a> {
 
     /// `patterns` as written, in parentheses: `(x, y)`.
     fn listed(&self, patterns: &[Pattern]) -> String {
-        let written: Vec<&str> = patterns
-            .iter()
-            .map(|p| &self.source[p.span.range()])
-            .collect();
+        let written: Vec<&str> = patterns.iter().map(|p| self.source.text(p.span)).collect();
         format!("({})", written.join(", "))
     }
 
@@ -2103,8 +2123,8 @@ impl<'a> Parser<'a> {
         Some(
             DiagnosticKind::MatchIdiom {
                 form: MatchIdiomForm::Path {
-                    name: self.source[name.range()].to_string(),
-                    member: self.source[member.span.range()].to_string(),
+                    name: self.source.text(name).to_string(),
+                    member: self.source.text(member.span).to_string(),
                 },
                 at: first.span.to(second.span),
             }
@@ -2153,7 +2173,7 @@ impl<'a> Parser<'a> {
         }
         // Neither is `Eof`, so the token after it exists.
         let next = &self.tokens[self.pos + 1];
-        let text = &self.source[token.span.range()];
+        let text = self.source.text(token.span);
         let (form, at) = match (&token.kind, &next.kind) {
             (TokenKind::Ident(_), kind) if text == "case" && *kind != TokenKind::FatArrow => {
                 // Swift's `case let .some(x)` also loses its `let` and its `.`. A `let` is not
@@ -2259,7 +2279,9 @@ impl<'a> Parser<'a> {
             return Ok(());
         };
         let gap = self.last_code_end()..next.span.start();
-        let join = self.source[gap.clone()]
+        let join = self
+            .source
+            .slice(gap.clone())
             .trim()
             .is_empty()
             .then(|| Span::new(gap.start, gap.end));
@@ -2642,7 +2664,16 @@ impl<'a> Parser<'a> {
             self.reach(wrapped)?;
             let access = self.bump();
             let safe = access.kind == TokenKind::QuestionDot;
-            let name = self.ident("a field or method name")?;
+            // `Option.None` names the variant of the prelude's `Option`; the checker rejects the
+            // `None` member of anything else.
+            let name = if !safe && self.at(&TokenKind::NoneKw) {
+                Ident {
+                    name: Symbol::intern("None"),
+                    span: self.bump().span,
+                }
+            } else {
+                self.ident("a field or method name")?
+            };
             // The type arguments and the value arguments are siblings of the receiver: each
             // starts at the receiver's own level and only the deepest counts.
             let written = if self.at(&TokenKind::Lt) && self.type_args_follow() {
@@ -2874,7 +2905,9 @@ impl<'a> Parser<'a> {
         let next = &self.tokens[self.pos + 1];
         matches!(next.kind, TokenKind::Int(_))
             && next.span.start() == self.peek().span.end()
-            && self.source[next.span.range()]
+            && self
+                .source
+                .text(next.span)
                 .bytes()
                 .all(|b| b.is_ascii_digit() || b == b'_')
     }
@@ -2920,7 +2953,7 @@ impl<'a> Parser<'a> {
             }
         };
         // A word right after the deleted text would join `todo`: `todo!x` is not `todo x`.
-        let rest = &self.source[delete.end()..];
+        let rest = self.source.rest(delete.end());
         let safe = !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
         Err(DiagnosticKind::TodoForm { at, delete, safe }.into())
     }
@@ -3148,7 +3181,7 @@ mod tests {
 
     /// The parse of `src`, which must lex without a bracket error.
     fn parsed(src: &str) -> Parsed {
-        parse(lex(src).expect("source lexes"))
+        parse(lex(src).expect("source lexes"), false)
     }
 
     /// The one diagnostic `src` reports.
@@ -4161,6 +4194,19 @@ mod tests {
         }
     }
 
+    /// Only the prelude may declare a variant `None`, and so name `Option`'s.
+    #[test]
+    fn none_variant_should_parse_only_in_the_prelude() {
+        let src = "enum Option<T> {\n    None\n    Some(T)\n}";
+        assert_eq!(
+            parse(lex(src).expect("source lexes"), true)
+                .program
+                .to_string(),
+            "(enum Option<T> None (Some T))"
+        );
+        assert_eq!(parse_err(src), (Code::BuiltInName, 2, 5));
+    }
+
     #[test]
     fn broken_enum_keeps_its_name() {
         let parsed = parsed("enum E {\n    None\n}\nfn main() {}");
@@ -4551,6 +4597,9 @@ mod tests {
             ),
             ("Tree<i64>.Leaf", "(. Tree<i64> Leaf)"),
             ("Tree<i64>.Node(x)", "(call (. Tree<i64> Node) x)"),
+            ("Option.None", "(. Option None)"),
+            ("Option<i64>.None", "(. Option<i64> None)"),
+            ("Option.Some(x)", "(call (. Option Some) x)"),
             ("s.map_all<f64>(1.5)", "(call (. s map_all<f64>) 1.5)"),
             ("largest<[i64]>([])", "(call largest<[i64]> (array))"),
             ("a < b > (c)", "(call a<b> c)"),
@@ -4604,6 +4653,7 @@ mod tests {
             specs: Vec::new(),
             warnings: Vec::new(),
             labels: Vec::new(),
+            prelude: false,
             window: &lexed.tokens,
             halves: &OnceCell::new(),
             halved: None,
@@ -4786,7 +4836,7 @@ mod tests {
     }
 
     #[test]
-    fn match_forms() {
+    fn match_arms_should_parse_each_form_to_its_tree() {
         let rows = [
             (
                 "match e {\n    Num(n) => n\n    Add(a, b) => a\n    Expr.Num(_) => 0\n    State.Idle => 1\n    _ => 2\n}",
@@ -4819,6 +4869,10 @@ mod tests {
                 "match e {\n    Idle() => 1\n    Expr.Idle() => 2\n    Add(a, b,) => 3\n    None => 4\n}",
                 "(match e (arm (Idle ()) 1) (arm (Expr.Idle ()) 2) (arm (Add a b) 3) \
                  (arm None 4))",
+            ),
+            (
+                "match o {\n    Option.None => 1\n    Option.Some(n) => n\n}",
+                "(match o (arm Option.None 1) (arm (Option.Some n) n))",
             ),
             (
                 "match a {\n    A => match b {\n        B => 1\n        _ => 2\n    }\n    _ => 3\n}",
@@ -5365,23 +5419,57 @@ mod tests {
         }
     }
 
+    /// Optionals nest, a layer for each `?`: `??` is one token of two layers, so `Tree??` and
+    /// `Tree? ?` are one type. The span runs through the last `?`.
     #[test]
-    fn optionals_do_not_nest() {
-        // `Tree??` lexes as one token and `Tree? ?` as two; both name the type `Tree??`.
+    fn optional_types_should_nest() {
         let rows = [
             (
-                "fn main() { let x: Tree?? = None }",
-                Span::new(19, 25),
-                (1, 20),
+                "fn main() { let x: i64?? = None }",
+                "(block (let x i64?? None))",
             ),
-            ("fn f() -> Tree? ? {}", Span::new(10, 17), (1, 11)),
+            (
+                "fn main() { let x: Tree? ? = None }",
+                "(block (let x Tree?? None))",
+            ),
+            (
+                "fn main() { let x: Stack<i64>?? = None }",
+                "(block (let x Stack<i64>?? None))",
+            ),
+            (
+                "fn main() { let x: i64??? = None }",
+                "(block (let x i64??? None))",
+            ),
         ];
-        for (src, span, position) in rows {
-            let d = parse_diagnostic(src);
-            assert_eq!(d.code(), Code::OptionalNests, "{src}");
-            assert_eq!(d.span(), span, "{src}");
-            assert_eq!(line_col(src, d.span().start()), position, "{src}");
+        for (src, want) in rows {
+            assert_eq!(body(src), want, "{src}");
         }
+        assert_eq!(
+            program("fn f(x: [i64?]??, y: Node? ?) {}"),
+            "(fn f ((x [i64?]??) (y Node??)) unit (block))"
+        );
+        let f = first_fn("fn f() -> Tree?? {}");
+        assert_eq!(f.ret.expect("has a return type").span, Span::new(10, 16));
+        // After a value, `??` still coalesces.
+        assert_eq!(expr("a ?? b"), "(?? a b)");
+    }
+
+    /// Each `?` is a level of the tree: a type with more layers than `MAX_DEPTH` allows is too
+    /// deep, and a type argument list with them does not scan as one.
+    #[test]
+    fn optional_layers_should_count_toward_the_nesting_limit() {
+        let deep = |n: usize| format!("fn main() {{ let x: i64{} = None }}", "?".repeat(n));
+        let codes = [MAX_DEPTH - 8, MAX_DEPTH + 1].map(|n| {
+            parsed(&deep(n))
+                .diagnostics
+                .iter()
+                .map(Diagnostic::code)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(codes, [vec![], vec![Code::NestingTooDeep]]);
+        assert!(follows(&format!("f<i64{}>(x)", "?".repeat(MAX_DEPTH - 1))));
+        assert!(!follows(&format!("f<i64{}>(x)", "?".repeat(MAX_DEPTH))));
+        assert!(follows("f<i64??>(x)"));
     }
 
     #[test]
@@ -5721,14 +5809,6 @@ mod tests {
             assert!(d.help().is_none(), "{src}");
             assert_eq!(fix_edits(&d), None, "{src}");
         }
-    }
-
-    #[test]
-    fn optional_array_types_do_not_nest() {
-        assert_eq!(
-            parse_err("fn f(x: [Node]??) {}"),
-            (Code::OptionalNests, 1, 9)
-        );
     }
 
     #[test]

@@ -74,7 +74,17 @@ pub(super) fn matchable(ty: Type) -> bool {
             | TypeKind::Bool
             | TypeKind::Char
             | TypeKind::String
+            | TypeKind::Optional(_)
     )
+}
+
+/// Whether `name` is a variant of the enum inside `ty`, under any layers of optional.
+fn variant_inside(enums: &[super::EnumInfo], ty: Type, name: Symbol) -> bool {
+    match ty.kind() {
+        TypeKind::Optional(payload) => variant_inside(enums, payload, name),
+        TypeKind::Enum(id, _) => enums[id.0].index.contains_key(&name),
+        _ => false,
+    }
 }
 
 /// The key under which ranking keeps the branch of `arm` (see `Ahead::Bound`). A block is kept
@@ -229,8 +239,8 @@ impl Checker<'_> {
         report: Report,
         reachable: &mut [bool],
     ) {
-        let source = self.source.text;
-        let line_start = |at: usize| source[..at].rfind('\n').map_or(0, |n| n + 1);
+        let source = self.source.file;
+        let line_start = |at: usize| source.slice(0..at).rfind('\n').map_or(0, |n| n + 1);
         // Each entry is an arm's pattern or an alternative in it, in arm order.
         let mut rest = arms.iter().enumerate();
         let mut current = rest.next();
@@ -252,7 +262,7 @@ impl Checker<'_> {
                 let start = arm.pattern.span.start();
                 let end = arm.body.span.end();
                 let next = arms.get(index + 1).map(|next| next.pattern.span.start());
-                if !source[line_start(start)..start].trim().is_empty() {
+                if !source.slice(line_start(start)..start).trim().is_empty() {
                     // The arm follows another on its line: take the `;` before it too.
                     let previous = index.checked_sub(1).and_then(|i| arms.get(i));
                     let previous = previous.expect("an unreachable arm should follow an arm");
@@ -266,11 +276,14 @@ impl Checker<'_> {
                 // This arm starts its line and the next starts its own. The fix takes the
                 // whole line, a comment after the body too, unless the `match`'s `}` ends it:
                 // then from the line break before the arm through the body, so the `}` stays.
-                let line_end = source[end..].find('\n').map_or(source.len(), |n| end + n);
+                let line_end = source
+                    .rest(end)
+                    .find('\n')
+                    .map_or(source.end(), |n| end + n);
                 if close.start() < line_end {
                     Span::new(line_start(start) - 1, end)
                 } else {
-                    Span::new(line_start(start), (line_end + 1).min(source.len()))
+                    Span::new(line_start(start), (line_end + 1).min(source.end()))
                 }
             });
             self.report(DiagnosticKind::UnreachableArm {
@@ -284,8 +297,9 @@ impl Checker<'_> {
             return;
         };
         // What comes before `at` on its line, when that is only whitespace.
-        let blank = |at: usize| Some(&source[line_start(at)..at]).filter(|s| s.trim().is_empty());
-        let line = &source[line_start(keyword.start())..keyword.start()];
+        let blank =
+            |at: usize| Some(source.slice(line_start(at)..at)).filter(|s| s.trim().is_empty());
+        let line = source.slice(line_start(keyword.start())..keyword.start());
         let match_indent = &line[..line.len() - line.trim_start().len()];
         let close = close.start();
         let indent = match arms.first().and_then(|arm| blank(arm.pattern.span.start())) {
@@ -313,9 +327,10 @@ impl Checker<'_> {
     }
 
     /// `value`, which `keyword` tests against `pattern`, and what it does with it: unwraps an
-    /// optional when `pattern` is a name or `_`, else matches it. A value that is neither an
-    /// enum nor optional is reported, as the `bool` says, and becomes `Error`; the pattern is
-    /// then checked at an `Error` position, so its names are poisoned.
+    /// optional when `pattern` is `_` or a name that is no variant of the enum inside, else
+    /// matches it. A value that is neither an enum nor optional is reported, as the `bool`
+    /// says, and becomes `Error`; the pattern is then checked at an `Error` position, so its
+    /// names are poisoned.
     pub(super) fn let_value(
         &mut self,
         keyword: Unwrap,
@@ -325,6 +340,12 @@ impl Checker<'_> {
         let checked = self.value(value, None);
         let ty = type_of(&checked);
         let name = match &pattern.kind {
+            // A variant of the enum inside matches that value, as in `match`.
+            ast::PatternKind::Name(name)
+                if ty.is_some_and(|ty| variant_inside(&self.enums, ty, name.name)) =>
+            {
+                None
+            }
             ast::PatternKind::Name(name) => Some(name.clone()),
             ast::PatternKind::Wild => Some(ast::Ident {
                 name: Symbol::intern("_"),
@@ -341,7 +362,6 @@ impl Checker<'_> {
                 let bound = Some(payload);
                 (checked, LetValue::Unwrap { name, bound }, false)
             }
-            // `pattern_in_scope` reports any other pattern on an optional.
             (Some((_, TypeKind::Optional(_) | TypeKind::Enum(..))) | None, _) => {
                 (checked, LetValue::Match { ty }, false)
             }
@@ -417,9 +437,9 @@ impl Checker<'_> {
             },
             &LetValue::Match { ty } => {
                 let pattern = self.pattern_in_scope(pattern, ty, word, arm);
-                // An optional takes only a name or `_`, which unwraps it: only an enum gets here.
+                // `_`, or a name that is no variant inside, unwraps an optional: never here.
                 if let (Some(keyword), Some(ty), Some((pattern, _))) = (keyword, ty, &pattern)
-                    && let TypeKind::Enum(..) = ty.kind()
+                    && let TypeKind::Enum(..) | TypeKind::Optional(_) = ty.kind()
                 {
                     let rows = [Row {
                         pattern,
@@ -481,6 +501,9 @@ impl Checker<'_> {
             self.poison(p, keyword, bound);
             return None;
         };
+        if let TypeKind::Optional(payload) = ty.kind() {
+            return self.optional_pattern(p, ty, payload, keyword, bound);
+        }
         let names_only = !matchable(ty);
         match &p.kind {
             ast::PatternKind::None
@@ -552,6 +575,113 @@ impl Checker<'_> {
                     variant,
                     fields: fields.into_iter().collect::<Option<_>>()?,
                 }))
+            }
+        }
+    }
+
+    /// `p` at a position of the optional type `ty`, whose payload is `payload`. `Some(p)` and
+    /// `None` match the optional itself, a variant, literal or range pattern matches the value
+    /// inside, each alternative of an `|` takes this rule, and a name or `_` covers the whole
+    /// optional. See `pattern`.
+    fn optional_pattern(
+        &mut self,
+        p: &ast::Pattern,
+        ty: Type,
+        payload: Type,
+        keyword: &'static str,
+        bound: &mut Bound<'_>,
+    ) -> Option<tir::Pattern> {
+        let pattern = |kind| tir::Pattern { kind, span: p.span };
+        let some = |inner| Some(pattern(tir::PatternKind::Some(Box::new(inner?))));
+        match &p.kind {
+            ast::PatternKind::Wild => Some(pattern(tir::PatternKind::Wild)),
+            ast::PatternKind::None => Some(pattern(tir::PatternKind::None)),
+            ast::PatternKind::Name(name) if variant_inside(&self.enums, payload, name.name) => {
+                some(self.pattern(p, Some(payload), keyword, bound))
+            }
+            ast::PatternKind::Name(name) if name.name.as_str() == "Some" => {
+                self.report(DiagnosticKind::VariantForm {
+                    path: "Some".to_string(),
+                    payload: true,
+                    held: false,
+                    at: name.span,
+                });
+                None
+            }
+            ast::PatternKind::Name(name) => {
+                self.name_pattern(name, ty, keyword, bound).map(pattern)
+            }
+            ast::PatternKind::Or(alternatives) => self
+                .alternatives(alternatives, ty, keyword, bound)
+                .map(pattern),
+            ast::PatternKind::Variant {
+                qualifier,
+                name,
+                fields,
+                parens,
+            } if name.name.as_str() == "Some"
+                && qualifier
+                    .as_ref()
+                    .is_none_or(|q| q.name.as_str() == "Option") =>
+            {
+                let kind = match (parens, &fields[..]) {
+                    (Some(_), [field]) => {
+                        return some(self.pattern(field, Some(payload), keyword, bound));
+                    }
+                    (None, _) => DiagnosticKind::VariantForm {
+                        path: written(qualifier.as_ref(), name),
+                        payload: true,
+                        held: false,
+                        at: name.span,
+                    },
+                    (Some(_), _) => DiagnosticKind::SubpatternCount {
+                        variant: name.name.to_string(),
+                        fields: 1,
+                        found: fields.len(),
+                        at: p.span,
+                    },
+                };
+                self.report(kind);
+                self.poison(p, keyword, bound);
+                None
+            }
+            ast::PatternKind::Variant {
+                qualifier: Some(q),
+                name,
+                fields,
+                parens,
+            } if q.name.as_str() == "Option" && name.name.as_str() == "None" => {
+                let Some(parens) = parens else {
+                    return Some(pattern(tir::PatternKind::None));
+                };
+                self.report(DiagnosticKind::VariantForm {
+                    path: written(Some(q), name),
+                    payload: false,
+                    held: !fields.is_empty() || self.comment_in(&[parens.range()]),
+                    at: *parens,
+                });
+                self.poison(p, keyword, bound);
+                None
+            }
+            ast::PatternKind::Variant {
+                qualifier: Some(q),
+                name,
+                ..
+            } if q.name.as_str() == "Option" => {
+                let variants = [("None", Definition::Variant), ("Some", Definition::Variant)];
+                self.report(DiagnosticKind::UnknownVariant {
+                    enum_name: q.name.to_string(),
+                    name: name.name.to_string(),
+                    at: name.span,
+                    suggestion: suggestion(name.name.as_str(), variants),
+                });
+                self.poison(p, keyword, bound);
+                None
+            }
+            ast::PatternKind::Variant { .. }
+            | ast::PatternKind::Literal(_)
+            | ast::PatternKind::Range { .. } => {
+                some(self.pattern(p, Some(payload), keyword, bound))
             }
         }
     }
@@ -698,7 +828,7 @@ impl Checker<'_> {
             }
             if value > i64::from(u8::MAX) {
                 self.report(DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source.text[text.range()].to_string(),
+                    text: self.source.file.text(text).to_string(),
                     at: text,
                 });
                 return None;
@@ -799,7 +929,7 @@ impl Checker<'_> {
         let want = self.type_name(ty);
         self.report(DiagnosticKind::PatternMismatch {
             want,
-            found: self.source.text[at.range()].to_string(),
+            found: self.source.file.text(at).to_string(),
             at,
         });
     }
@@ -887,13 +1017,15 @@ impl Checker<'_> {
         mut candidates: impl Iterator<Item = String>,
     ) -> Option<(String, String)> {
         let arm = bound.arm?;
-        let source = self.source.text;
+        let source = self.source.file;
         let read = iter::once(arm.pattern.span)
             .chain(arm.guard.iter().map(|guard| guard.span))
             .chain([arm.body.span]);
         let words: FxHashSet<_> = read
             .flat_map(|span| {
-                source[span.range()].split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                source
+                    .text(span)
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
             })
             .collect();
         let fresh = candidates
@@ -911,8 +1043,8 @@ impl Checker<'_> {
                         },
                     ..
                 },
-            ) => format!(" && ({})", &source[guard.span.range()]),
-            Some(guard) => format!(" && {}", &source[guard.span.range()]),
+            ) => format!(" && ({})", source.text(guard.span)),
+            Some(guard) => format!(" && {}", source.text(guard.span)),
         };
         Some((fresh, own))
     }
@@ -941,7 +1073,7 @@ impl Checker<'_> {
             Some(q) => {
                 self.resolve(&ast::TypeExpr {
                     kind: ast::TypeKind::Name(q.name),
-                    optional: false,
+                    optional: 0,
                     span: q.span,
                 })?;
                 false
@@ -1037,7 +1169,7 @@ impl Checker<'_> {
                 Some(GuardHelp::InWords)
             } else {
                 self.guard_help(bound, candidates).map(|(fresh, own)| {
-                    let pattern = &self.source.text[bound.top.range()];
+                    let pattern = self.source.file.text(bound.top);
                     let start = name.span.start() - bound.top.start();
                     let end = name.span.end() - bound.top.start();
                     GuardHelp::Rewritten(format!(
@@ -1079,6 +1211,7 @@ impl Checker<'_> {
                         }),
                         fix: None,
                         conversion: false,
+                        layers: false,
                     });
                     agrees = false;
                 }

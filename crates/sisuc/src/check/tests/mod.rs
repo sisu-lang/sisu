@@ -1,6 +1,7 @@
 use super::*;
 use crate::diagnostic::explanations::apply;
 use crate::diagnostic::{Code, Fix};
+use crate::front_end::{PRELUDE_SOURCE, prelude_program};
 use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::source::line_col;
@@ -13,6 +14,7 @@ mod floats;
 mod for_loops;
 mod generics;
 mod loop_condition;
+mod optionals;
 mod patterns;
 mod places;
 mod prelude;
@@ -28,6 +30,17 @@ thread_local! {
     static UNUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+thread_local! {
+    /// Whether this test checks with the prelude's items; `with_prelude` sets it.
+    static PRELUDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Declares the prelude's items (`Result`, `Ok` and `Err`) for the rest of this test, which
+/// `checked` leaves out otherwise: most tests need none of them.
+fn with_prelude() {
+    PRELUDE.set(true);
+}
+
 /// Keeps the unused-names warnings for the rest of this test, which `checked` drops otherwise:
 /// most test programs have helpers that `main` never calls.
 fn judge_unused() {
@@ -35,7 +48,12 @@ fn judge_unused() {
 }
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let (program, mut ds) = check(&parse_ok(src), src, &[]);
+    let prelude = if PRELUDE.get() {
+        prelude_program(PRELUDE_SOURCE)
+    } else {
+        ast::Program::default()
+    };
+    let (program, mut ds) = check(&parse_ok(src), &prelude, src, &[]);
     if !UNUSED.get() {
         ds.retain(|d| {
             !matches!(
@@ -1776,7 +1794,7 @@ fn empty_file_has_no_main() {
     // The empty span at offset 0 renders without a panic.
     assert!(
         ds[0]
-            .render("empty.sisu", "", &crate::source::LineIndex::new(""), false)
+            .render("empty.sisu", "", &source::LineIndex::new(""), false)
             .contains(Code::NoMain.as_str())
     );
 }

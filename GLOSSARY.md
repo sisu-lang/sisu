@@ -76,7 +76,7 @@ _Avoid_: trap, crash, abort
 **Prelude**:
 The names visible in every file without an import. Most are declared in Sisu,
 in the prelude file the compiler builds into every program.
-The Sisu prelude file arrives in milestone 8.
+The prelude file, `crates/sisuc/src/prelude.sisu`, declares `Option` and `Result`.
 
 **RC check**:
 A check that a program built with `--rc-checks` makes on its reference
@@ -277,7 +277,6 @@ _Avoid_: total, complete
 **Optional**:
 A value of type `T?`, short for `Option<T>`, holding either a `T` or `None`.
 Optionals nest: `i64??` is `Option<Option<i64>>`.
-Nesting arrives in milestone 8.
 _Avoid_: nullable, maybe
 
 **`None`**:
