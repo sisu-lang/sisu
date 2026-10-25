@@ -1,0 +1,7 @@
+fn main() {
+    let a = 1
+    let b: i64? = 2
+    let c: i64?? = Some(3)
+    let xs = [a, b, c]
+    print(xs.len())
+}

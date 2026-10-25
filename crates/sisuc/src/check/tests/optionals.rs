@@ -82,6 +82,19 @@ fn a_value_should_convert_through_one_layer_only() {
         ("let r: i64??? = 5", (2, 21, "5"), true),
         ("let r = x ?? \"a\"", (2, 18, "\"a\""), false),
         ("let r = x == 5", (2, 18, "5"), true),
+        // A join of three depths: the `i64` is two layers below the join, in either order.
+        ("let n = 1\n    let r = [n, w, x]", (3, 14, "n"), true),
+        ("let n = 1\n    let r = [x, w, n]", (3, 20, "n"), true),
+        (
+            "let n = 1\n    let r = match n {\n        0 => n\n        1 => w\n        _ => x\n    }",
+            (4, 14, "n"),
+            true,
+        ),
+        (
+            "let n = 1\n    let r = match n {\n        0 => x\n        1 => w\n        _ => n\n    }",
+            (6, 14, "n"),
+            true,
+        ),
     ] {
         let d = diagnostic(&with_body(body), Code::Mismatch, at, &[]);
         assert_eq!(d.help().is_some(), layers, "{body}");

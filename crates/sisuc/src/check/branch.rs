@@ -200,6 +200,18 @@ impl Checker<'_> {
                 }
             }
         }
+        // The join can grow past an earlier branch: each converts through one layer only.
+        if let Some((k, j)) = joined.filter(|_| !failed) {
+            let short = blocks.iter().enumerate().find_map(|(i, block)| {
+                let t = block_type(block)?;
+                (t != Type::NEVER && !fits(j, t)).then_some((i, t))
+            });
+            if let Some(other) = short {
+                let d = self.join_mismatch(sources, expected, (k, j), other);
+                self.diagnostics.push(d);
+                failed = true;
+            }
+        }
         let ty = match joined {
             _ if failed => None,
             Some((_, ty)) => {

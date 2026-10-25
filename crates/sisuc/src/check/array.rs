@@ -99,6 +99,18 @@ impl Checker<'_> {
                     _ => joined = Some(ty),
                 }
             }
+            // The join can grow past an earlier element: each converts through one layer only.
+            if let Some(t) = joined.filter(|_| !failed) {
+                let short = slots.iter().zip(elements).find_map(|(slot, e)| {
+                    let ty = slot.as_ref().and_then(type_of)?;
+                    (!fits(t, ty)).then_some((e, ty))
+                });
+                if let Some((e, ty)) = short {
+                    let d = self.mismatch(e.span, Some(e), t, ty);
+                    self.diagnostics.push(d);
+                    failed = true;
+                }
+            }
         }
         let Some(joined) = joined.filter(|_| !failed) else {
             for (i, e) in elements.iter().filter(|e| rank(e) == 2).enumerate() {
