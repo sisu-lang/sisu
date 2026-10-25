@@ -467,6 +467,53 @@ fn class_drop_should_call_no_drop_or_release_of_its_own_class() {
     assert!(tree.contains("@sisu_rc.release.string("), "{tree}");
 }
 
+/// `Node` holds itself in a `Node??`, and `A` and `B` hold each other in a `B??` and an `A???`,
+/// so each has a loop, not a call of the drop of the class that its field holds.
+#[test]
+fn class_drop_should_loop_on_fields_with_more_than_one_optional() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node {\n    next: Node??\n}\nclass A {\n    b: B??\n}\nclass B {\n    a: A???\n}\nfn main() {}",
+    )
+    .print_to_string()
+    .to_string();
+    let node = function_body(&ir, "define internal void @sisu_rc.drop.Node(ptr");
+    assert!(node.contains("phi ptr"), "no loop in\n{node}");
+    // The drop tests the flag of the outer `?` before the link. The `true` branch of the flag
+    // takes the payload out and tests it for null.
+    let lines: Vec<&str> = node.lines().map(str::trim).collect();
+    let flag = lines
+        .iter()
+        .position(|line| line.contains("= extractvalue { i1, ptr }") && line.ends_with(", 0"))
+        .unwrap_or_else(|| panic!("no flag test in\n{node}"));
+    let branch = lines[flag + 1]
+        .strip_prefix("br i1 ")
+        .unwrap_or_else(|| panic!("no branch on the flag in\n{node}"));
+    let some = branch
+        .split("label %")
+        .nth(1)
+        .and_then(|label| label.split(',').next())
+        .unwrap_or_else(|| panic!("no target in {branch:?}"));
+    let some = node
+        .split_once(&format!("\n{some}:"))
+        .and_then(|(_, rest)| rest.split("\n\n").next())
+        .unwrap_or_else(|| panic!("no block {some} in\n{node}"));
+    assert!(
+        some.contains("= extractvalue { i1, ptr }") && some.contains("icmp eq ptr"),
+        "no payload null test in\n{some}"
+    );
+    let a = function_body(&ir, "define internal void @sisu_rc.drop.A(ptr");
+    assert!(a.contains("@sisu_rc.drain.A("), "{a}");
+    let drain = function_body(&ir, "define internal void @sisu_rc.drain.A(ptr");
+    assert_eq!(drain.matches("@sisu_free(").count(), 2, "{drain}");
+    for body in [&node, &a, &drain] {
+        for unwanted in ["@sisu_rc.drop.", "@sisu_rc.release."] {
+            assert!(!body.contains(unwanted), "{unwanted:?} in\n{body}");
+        }
+    }
+}
+
 /// `A` and `B` hold each other, so they are one cycle with one `drain` helper. `H` holds `A`
 /// but is in no cycle, so its drop releases `A` as before.
 #[test]

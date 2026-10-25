@@ -1,0 +1,47 @@
+// A class's drop frees the objects of a cycle through fields of type `X??`, whatever layer of
+// the `?` has no value: `None`, `Some(None)` or `Some(Some(x))`. `Node` holds itself; `A` and
+// `B` hold each other. `Deep` holds itself through `Deep???`, so its drop takes more than one
+// pair step. A `Node` that two others hold loses one count per holder. Valgrind and
+// the RC checks find a leak, a double free or a read of a freed object.
+class Node {
+    value: i64
+    _next: Node??
+}
+
+class Deep {
+    value: i64
+    _next: Deep???
+}
+
+class A {
+    _b: B??
+}
+
+class B {
+    _a: A??
+}
+
+fn main() {
+    let none: Node?? = None
+    let inner_none: Node?? = Some(None)
+    let shared = Node(value: 1, _next: inner_none)
+    let first = Node(value: 2, _next: Some(Some(shared)))
+    let second = Node(value: 3, _next: Some(Some(shared)))
+    let chain = Node(value: 4, _next: none)
+    print(first.value + second.value + chain.value + shared.value) // 2 + 3 + 4 + 1 = 10
+
+    let deep = Deep(value: 5, _next: Some(Some(None)))
+    let deep_none = Deep(value: 1, _next: None)
+    let deep_one = Deep(value: 2, _next: Some(None))
+    let deep_two = Deep(value: 3, _next: Some(Some(None)))
+    let deep_three = Deep(value: 4, _next: Some(Some(Some(deep))))
+    let deep_four = Deep(value: 6, _next: Some(Some(Some(deep))))
+    print(deep_none.value + deep_one.value + deep_two.value + deep_three.value + deep.value + deep_four.value) // 1 + 2 + 3 + 4 + 5 + 6 = 21
+
+    let _pair = A(_b: Some(Some(B(_a: Some(Some(A(_b: Some(None))))))))
+    let _third = A(_b: Some(None))
+    let _lone = A(_b: None)
+    let tail = B(_a: None)
+    let _other = A(_b: Some(Some(tail)))
+    print(1) // 1
+}

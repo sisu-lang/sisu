@@ -42,10 +42,10 @@ pub(super) enum Helper {
     Reuse,
 }
 
-/// The cycles of classes that hold each other, which `define_drop` frees in a loop. A class is
-/// in a cycle when a class holds it in a field, `X` or `X?`, along a path that comes back to
-/// the holder: its strongly connected component of that graph has two classes, or it holds
-/// itself. A field of an array or of an enum is not an edge.
+/// The cycles of classes that hold each other, which `define_drop` frees in a loop. A class
+/// holds a class, maybe itself, in a field of type `X` with any number of `?` around it. A field
+/// of an array or of an enum is not a hold. A class is in a cycle when a path of holds leads back
+/// to it. Then its strongly connected component has two or more classes, or it holds itself.
 pub(super) struct ClassCycles {
     /// For each class, the index in `members` of its cycle, when it is in one.
     cycle: Vec<Option<usize>>,
@@ -69,9 +69,7 @@ impl ClassCycles {
     /// The index among the classes of the cycle of `holder` of the class that a field of type
     /// `field` holds, when `holder` is in a cycle and that class is in it too.
     fn link(&self, holder: ClassId, field: Type) -> Option<usize> {
-        let TypeKind::Class(held, _) = counted_core(field)?.kind() else {
-            return None;
-        };
+        let held = held_class(field)?;
         let cycle = self.cycle[holder.0]?;
         (self.cycle[held.0] == Some(cycle)).then(|| self.position[held.0])
     }
@@ -80,10 +78,7 @@ impl ClassCycles {
 /// The `ClassCycles` of `program`, by `components` of the graph with an edge from each class to
 /// each class it holds in a field. It reads every field once.
 pub(super) fn class_cycles(program: &Program) -> ClassCycles {
-    let held = |ty| match counted_core(ty)?.kind() {
-        TypeKind::Class(id, _) => Some(id.0),
-        _ => None,
-    };
+    let held = |ty| held_class(ty).map(|id| id.0);
     let edges: Vec<Vec<usize>> = program
         .classes
         .iter()
@@ -112,6 +107,18 @@ pub(super) fn class_cycles(program: &Program) -> ClassCycles {
             .push(group.into_iter().map(ClassId).collect());
     }
     cycles
+}
+
+/// The class that a field of type `ty` holds, through any number of `?`: `C`, `C?`, `C??` and
+/// so on hold `C`. `None` for every other type.
+fn held_class(mut ty: Type) -> Option<ClassId> {
+    while let TypeKind::Optional(payload) = ty.kind() {
+        ty = payload;
+    }
+    match ty.kind() {
+        TypeKind::Class(id, _) => Some(id),
+        _ => None,
+    }
 }
 
 /// The type whose helpers a pointer-shaped `ty` uses: a `string`, a class or an array, with
@@ -249,7 +256,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `@sisu_rc.drop.<C>`: frees the object, and in the same frame each object that it holds the
     /// last reference to, at any depth, in the cycle of classes of `C` (see `class_cycles`).
-    /// A field of a class in the cycle that is not `null` loses 1 from its object's count. At 0,
+    /// A field of a class in the cycle that holds an object loses 1 from its object's count. At 0,
     /// that object goes onto the pending list of its class, linked to the old head through its
     /// count word, which is dead by then. Every other counted field goes through `release_at`.
     /// A loop reads every field of an object, frees it, then takes the next object off a list.
@@ -368,8 +375,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.build_return(None).expect(POSITIONED);
     }
 
-    /// Releases each counted field of the object of class `id` at `object`. A `null` field of a
-    /// class in the cycle of `id`, with its `heads`, is skipped. Another such field loses 1
+    /// Releases each counted field of the object of class `id` at `object`. When `heads` is
+    /// given, a field of a class in the cycle of `id` is a link: `C` under any number of `?`. A
+    /// link with no value in some layer, or `null`, is skipped. Another link loses 1
     /// from its object's count, and at 0 the object becomes the head of its class's list, linked
     /// to the old head through its count word. Every other counted field goes through
     /// `release_at`.
@@ -395,7 +403,21 @@ impl<'ctx> Codegen<'ctx, '_> {
                 continue;
             };
             let (live, last, next) = (block("link"), block("link.last"), block("link.next"));
-            let child = self.load_value(field.ty, place).into_pointer_value();
+            let mut child = self.load_value(field.ty, place);
+            let mut ty = field.ty;
+            // Each `?` that is not the `null` niche of a pointer has its own flag: a layer with
+            // no value holds nothing to release.
+            while counted_core(ty).is_none() {
+                let TypeKind::Optional(payload) = ty.kind() else {
+                    unreachable!("a link field should be a class under some `?`")
+                };
+                let some = block("link.some");
+                self.branch_on(self.has_value(ty, child, "flag"), some, next);
+                self.builder.position_at_end(some);
+                child = self.optional_value(ty, child, "payload");
+                ty = payload;
+            }
+            let child = child.into_pointer_value();
             let null = self.builder.build_is_null(child, "null").expect(POSITIONED);
             self.branch_on(null, next, live);
             self.builder.position_at_end(live);
