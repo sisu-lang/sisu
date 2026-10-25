@@ -13,7 +13,7 @@ The design decisions behind Sisu, each written down as a short record with its r
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
     <p class="meta">{{adr-count}} records · at commit 3c93176</p>
   </div></section>
-  <!-- source: docs/adr/ (34 files, 0001 to 0034), README.md ("Read why a design choice was made") -->
+  <!-- source: docs/adr/ (35 files, 0001 to 0035), README.md ("Read why a design choice was made") -->
 
   <div class="w doc">
     <nav class="toc" aria-label="On this page"><h2>On this page</h2><ol>
@@ -58,8 +58,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md"><span class="num">0015</span><b>The prelude holds only what almost every program uses</b><span>A name is visible in every file without an import only if almost every program uses it, or the language depends on it.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0019-enums-are-values-named-through-their-enum.md"><span class="num">0019</span><b>Enums are values named through their enum<small>amended by 0025 and 0030</small></b><span>An enum is an inline value built as <code>Expr.Num(2)</code>; a pattern can use the bare name, and <code>match</code> must cover every variant.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0020-labels-belong-to-the-declaration.md"><span class="num">0020</span><b>Labels belong to the declaration</b><span>A variant labels every field or none, and is built with its labels in declared order.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md"><span class="num">0035</span><b>A file is a module, and its names are private unless <code>pub</code><small>not built yet</small></b><span>The path of a file names its module, a folder's front door is <code>pkg.sisu</code>, an import binds only what it shows, and each item, field and method needs its own <code>pub</code>.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md -->
+      <!-- source: docs/adr/0001-newline-terminated-statements.md, docs/adr/0028-a-semicolon-stands-in-for-a-line-break.md, docs/adr/0015-the-prelude-holds-only-what-almost-every-program-uses.md, docs/adr/0019-enums-are-values-named-through-their-enum.md, docs/adr/0020-labels-belong-to-the-declaration.md, docs/adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md -->
 
       <h2 id="change">Values and change</h2>
       <ul class="rows">

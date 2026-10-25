@@ -331,7 +331,8 @@ _Avoid_: trait, protocol
 A type's declaration that it meets an interface, with the methods the
 interface requires: `class Circle: Shape { ... }` or
 `extend Celsius: Convert<Kelvin> { ... }`. A type conforms to an interface
-with the same arguments at most once.
+with the same arguments at most once. From milestone 11, a conformance lives
+in the project that declares its type, its interface or a type argument.
 _Avoid_: impl, implementation
 
 **Generated conformance**:
@@ -353,7 +354,8 @@ through the type: `S.Item`.
 **`extend`**:
 A block that adds methods to a type declared elsewhere (`extend T { ... }`),
 or one conformance (`extend T: I { ... }`). Only the prelude may extend a
-built-in type.
+built-in type. From milestone 11, a block without an interface lives in its
+type's module.
 
 **Interface value**:
 A value of type `any I`: a value of any type that conforms to `I`, whose
@@ -441,6 +443,45 @@ _Avoid_: failure type
 **Unused result**:
 An unused value whose type is a result. Unlike other unused values it is
 an error, not a warning; `let _ = e` ignores it on purpose.
+
+## Modules
+
+Milestone 11 adds these.
+
+**Module**:
+One `.sisu` file. Its path from the root names it: `report/table.sisu` is
+`report.table`.
+_Avoid_: "module" alone for the compiler's unit of LLVM code; say "LLVM
+module"
+
+**Package**:
+A folder of modules, whose front door is its `pkg.sisu`.
+_Avoid_: crate, for a folder
+
+**Front door**:
+The file `pkg.sisu` of a package: `import cli` opens `cli/pkg.sisu`.
+
+**Project**:
+A root folder with a `sisu.toml`: the unit that other code depends on.
+Until projects land, every program is one project without a manifest.
+_Avoid_: crate, package, for a root with `sisu.toml`
+
+**Root**:
+The folder that import paths start from: the entry file's folder, or the
+folder of the project's `sisu.toml`.
+
+**Entry file**:
+The file that `sisu run`, `sisu build` or `sisu check` gets. Only its `main`
+runs.
+
+**Import**:
+A line that binds a module, or `pub` items of a module, in a file:
+`import report.table` binds `table`.
+
+**`pub`**:
+The mark that makes an item, a field or a method visible to other modules.
+Without it, a name is private to its module.
+_Avoid_: export, public
 
 ## Compiler
 

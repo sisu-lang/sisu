@@ -346,7 +346,7 @@ and its memory model and everyday ergonomics from Swift (ADR 0004).
 Every later milestone should move real code toward this:
 
 ```
-import os
+import std.os
 
 enum Shape {
     Circle(radius: f64)
@@ -429,10 +429,10 @@ so it does not wait for the later goals:
   - `sisu --version --verbose` prints the commit, the host and the LLVM
     version.
 
-  A build directory and `sisu clean` wait for modules (milestone 11), when
-  per-file objects are worth keeping. Before that, `sisu run` can keep the
-  executable it builds, so a script that has not changed starts without a
-  build. The key must cover everything the executable depends on: the
+  A build directory and `sisu clean` wait for separate compilation (see
+  "Modules"), when per-file objects are worth keeping. Before that,
+  `sisu run` can keep the executable it builds, so a script that has not
+  changed starts without a build. The key must cover everything the executable depends on: the
   source, its path (panic messages print it), the build flags, and the
   compiler's commit, not only its version number. Scripts that drive other
   programs (ADR 0027) run often and change rarely.
@@ -895,38 +895,52 @@ Each is small once its milestone's main feature exists:
   constructor is private holds only checked values, such as
   `Email.parse(s) -> Email?`. A newtype over a class or an array still
   counts that reference, as the field alone would.
-- Milestone 11: opaque types. The type is `pub`, but its constructor and
-  fields are private to its module, so other modules must build it through a
-  function that checks the value.
+- Milestone 11: opaque types. The type is `pub`, but a private field makes
+  it impossible to build or take apart in other modules, so they must build
+  it through a function that checks the value.
 
 ### Modules (milestone 11)
 
-- One file is one module, and its path names it: `src/geometry/shapes.sisu` is
-  `geometry.shapes`. A parent file needs no `mod shapes` declaration, as in
-  Rust. A directory is not a package either: in Go, a file uses names from
-  sibling files without importing them, so it cannot be read on its own.
-- `import geometry.shapes` lets code call `shapes.area(s)`.
-  `import geometry.shapes.{area, Shape}` brings those names in without a
-  prefix.
-- Names are private to their module unless marked `pub`.
+[ADR 0035](adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md)
+records the design. Part 1 is modules and `pub`; part 2 is the standard
+library.
+
+- One file is one module, and its path from the root names it:
+  `report/table.sisu` is `report.table`. A parent file needs no
+  `mod table` declaration, as in Rust. A folder is a package, and its front
+  door is `pkg.sisu`: `cli/pkg.sisu` is the module `cli`. A folder is not a
+  Go-style package: in Go, a file uses names from sibling files without
+  importing them, so it cannot be read on its own.
+- The root is the entry file's folder, and the program is the entry file and
+  each file that its imports reach. A file that nothing imports is not read.
+  `std` is a root of its own and always means the standard library.
+- `import report.table` lets code call `table.render(t)`.
+  `import report.table.{Table, render}` brings those names in without a
+  prefix, and `as` renames. The braces name items only. A submodule needs its
+  own import.
+- Names, fields and methods are private to their module unless marked `pub`;
+  `pub mut` lets other modules assign a field. A `pub` type with a private
+  field can be built and taken apart only in its own module.
+- A conformance lives in the project that declares its type, its interface
+  or a type argument, as Rust's orphan rule asks. A plain `extend T`, and a
+  conformance that replaces a generated one, live in `T`'s module.
 - Modules may import each other in a cycle. The checker sees the whole
-  program at once, so this costs nothing.
-- Codegen puts the whole program into one LLVM module. Each symbol is
-  prefixed with its module path; `main` keeps its name.
-- A `pub` function writes out its parameter and return types, with no
-  inference across modules. A module can then be compiled from the `pub`
-  signatures it imports, without their bodies.
+  program at once, with one scope per module, so this costs nothing.
+- Codegen puts the whole program into one LLVM module. Each generated name,
+  the reference-count helpers too, carries its module path, so two modules
+  with a class of the same name do not clash. `main` keeps its name.
 - Separate compilation and build caching wait until `--time` shows builds
   are slow. Then codegen emits one LLVM module per Sisu module and LLVM
-  compiles them in parallel, as Rust's codegen units do. Each object file is
-  cached under a hash of its source and of the `pub` signatures it imports.
-  Monomorphized generics complicate this: a generic function's copy is
-  emitted in the module that uses it.
-- A small prelude is visible in every file without an import: `print`,
-  `Option` and `Result`, each once it exists.
-- Each generated symbol carries its module path, the reference-count helpers
-  too: today `@sisu_rc.drop.<Class>` is named by the class alone, so two
-  modules with a class of the same name would clash.
+  compiles them in parallel, as Rust's codegen units do. Inferred ownership
+  ([ADR 0029](adr/0029-parameters-are-borrowed-unless-consumed.md)) and
+  monomorphized generics need the whole program, so a cache key must cover
+  more than one file's source.
+- A small prelude is visible in every file without an import, and no module
+  may declare a prelude name.
+- Later, with projects: `sisu.toml`, path and Git dependencies chosen by
+  minimal version selection, a lock file of hashes, and script dependencies
+  in a `---` fence at the top of a file (see "Packages" in "Gaps before
+  production").
 
 ## Concurrency (after milestone 12)
 
@@ -1288,8 +1302,31 @@ stretch goals" with no date. Each gap gets a milestone once a definition of
     and Rust's Cranelift backend do, and a link that patches only what
     changed, as Roc's surgical linker does.
 - **Packages.** "Deliberately avoided" defers a registry and lets path and
-  Git dependencies come first. A manifest (`sisu.toml`) and dependency
-  resolution have no design.
+  Git dependencies come first. The sketch, fixed with milestone 11 so that
+  modules do not block it
+  ([ADR 0035](adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md)):
+  - A project is a root folder with `sisu.toml` (`[project]`, optional
+    `[bin]`, `[dependencies]`). `sisu` finds it by searching up from the
+    entry file, and stops at a repository's top. A dependency's root
+    `pkg.sisu` is what `import money` opens.
+  - A project is its canonical URL, a subfolder and a major version, and a
+    program holds one version of each project. Distribution is a Git URL
+    and a semver tag.
+  - Go's minimal version selection picks versions, with Cargo-style tools:
+    `version = "1.2"` means 1.2 or newer below 2.0, `sisu add` writes the
+    newest release, `sisu update` raises the minimums, and `sisu.lock`
+    holds commits and hashes but never chooses a version. Only `add`,
+    `update` and `outdated` ask which versions exist; `build` downloads
+    only what the lock or the selection names, and `--offline` turns that
+    off.
+  - A script declares its dependencies in a `---` fence at the top that
+    holds a `sisu.toml` (Cargo's frontmatter, RFC 3503); `sisu lock` writes
+    a lock file next to it, as `uv lock --script` does. Milestone 11
+    reserves the fence.
+  - Nothing runs at build time: no build scripts. C libraries wait for the
+    FFI.
+  - Before libraries ship: re-exports, project-level visibility, and enums
+    that may gain variants without breaking users. Workspaces are open.
 - **Number types.** Sisu has `i64` and `u8`, and milestone 6 added `f64`.
   The C FFI, binary file formats and hashing need `i32`, `u32`, `u64` and
   `f32`. "Integer widths and wrapping" in "Open decisions" covers only part of
@@ -1486,9 +1523,11 @@ accepted.
   ([ADR 0019](adr/0019-enums-are-values-named-through-their-enum.md)): a
   variant is built as `Shape.Circle`, a pattern uses the bare name, and the
   type of the matched value decides which enum's variants are searched. Swift's
-  `.circle` short form stays open for expressions only. Modules (milestone 11)
-  still decide their part: classes and functions share one namespace, modules
-  add module names to it, and every generated symbol then carries its module
+  `.circle` short form stays open for expressions only. Resolved for modules
+  in milestone 11
+  ([ADR 0035](adr/0035-a-file-is-a-module-and-its-names-are-private-unless-pub.md)):
+  each module has one scope of its items and its imports, an import binds
+  only the names it shows, and every generated symbol carries its module
   path, as "Modules" describes.
 - **Argument labels.** Resolved for enum payloads in milestone 7
   ([ADR 0020](adr/0020-labels-belong-to-the-declaration.md)): a variant
