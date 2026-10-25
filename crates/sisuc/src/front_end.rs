@@ -1069,6 +1069,9 @@ fn main() {
             let found = codes(src);
             assert_eq!(found.first(), Some(&(Code::UnknownType, at)), "{src}");
         }
+        // An unknown type is reported without its `?`.
+        let src = "fn f<T: Ord?>(x: T) {}\nfn main() {}\n";
+        assert_eq!(front_end(src).1[0].span(), Span::new(8, 11));
         let src =
             "interface Shape {\n    type Item: Same\n    fn area(self) -> f64\n}\nfn main() {}\n";
         assert_eq!(codes(src), [], "{src}");

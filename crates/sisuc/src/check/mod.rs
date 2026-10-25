@@ -563,9 +563,12 @@ pub(crate) fn check<'src>(
         || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
             ast::Item::Enum(e) => !e.broken_methods.is_empty(),
-            ast::Item::Interface(i) => !i.broken_methods.is_empty(),
-            ast::Item::Extend(e) => !e.broken_methods.is_empty(),
-            ast::Item::Function(_) | ast::Item::Const(_) => false,
+            // Nothing poisons a call of a method these lose without an error yet: Tasks 2 and 3
+            // resolve such calls, and until then the program has an error of its own.
+            ast::Item::Function(_)
+            | ast::Item::Const(_)
+            | ast::Item::Interface(_)
+            | ast::Item::Extend(_) => false,
         });
     let enums = checker.lowered_enums;
     let (instantiates, prelude) = (checker.instantiates, checker.prelude);

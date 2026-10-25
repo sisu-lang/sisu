@@ -575,11 +575,14 @@ impl<'a> Parser<'a> {
         // field access.
         while !matches!(kind, TypeKind::Array(_))
             && self.at(&TokenKind::Dot)
-            && matches!(self.tokens[self.pos + 1].kind, TokenKind::Ident(_))
+            && let TokenKind::Ident(member) = self.tokens[self.pos + 1].kind
         {
             self.descend()?;
             self.bump();
-            let name = self.ident("an associated type")?;
+            let name = Ident {
+                name: member,
+                span: self.bump().span,
+            };
             let base = TypeExpr {
                 kind,
                 optional: 0,
@@ -1632,7 +1635,7 @@ impl<'a> Parser<'a> {
         errors: &mut Vec<Diagnostic>,
         methods: &mut Vec<Range<usize>>,
     ) -> Result<Interface, Diagnostic> {
-        let keyword = self.expect(&TokenKind::Interface)?.span;
+        let keyword = self.bump().span;
         let name = self.name("an interface name")?;
         let type_params = self.type_params()?;
         let inherits = self.interface_list()?;
@@ -1734,7 +1737,7 @@ impl<'a> Parser<'a> {
         errors: &mut Vec<Diagnostic>,
         methods: &mut Vec<Range<usize>>,
     ) -> Result<Extend, Diagnostic> {
-        let keyword = self.expect(&TokenKind::Extend)?.span;
+        let keyword = self.bump().span;
         let type_params = self.type_params()?;
         self.depth = 0;
         let target = self.parse_type()?;
@@ -4895,6 +4898,10 @@ mod tests {
             ),
             ("extend Stack<i64> {}", "(extend Stack<i64>)"),
             // The checker, not the parser, says that these cannot be extended.
+            (
+                "enum E: Source {\n    A\n    type Item = i64\n}",
+                "(enum E (: Source) (type Item i64) A)",
+            ),
             ("extend [i64] {}", "(extend [i64])"),
             ("extend<T> T {}", "(extend<T> T)"),
         ];
@@ -4982,6 +4989,45 @@ mod tests {
             // Nothing follows an `extend` target but `:` and `{`.
             ("extend C: A, B {}", (Code::Expected, 1, 12)),
             ("extend C {\n    x: i64\n}", (Code::Expected, 2, 5)),
+            ("extend<> C {}", (Code::Expected, 1, 8)),
+            (
+                "extend C {\n    fn f(self) {} x\n}",
+                (Code::Expected, 2, 19),
+            ),
+            ("extend C: I {\n    type Item\n}", (Code::Expected, 2, 14)),
+            (
+                "extend C {\n    fn f(mut self: ) {}\n}",
+                (Code::Expected, 2, 20),
+            ),
+            // The pieces of an interface and of an associated type.
+            ("interface {}", (Code::Expected, 1, 11)),
+            ("interface I<> {}", (Code::Expected, 1, 13)),
+            ("interface I x {}", (Code::Expected, 1, 13)),
+            ("interface I {\n    type 1\n}", (Code::Expected, 2, 10)),
+            // A `:` cannot end a line, so the type is missing where the next line starts.
+            ("interface I {\n    type Item:\n}", (Code::Expected, 3, 1)),
+            ("interface I {\n    x i64\n}", (Code::Expected, 2, 7)),
+            (
+                "interface I {\n    fn f(self) x\n}",
+                (Code::Expected, 2, 16),
+            ),
+            ("class C: {}", (Code::Expected, 1, 10)),
+            ("enum E: {}", (Code::Expected, 1, 9)),
+            // Neither `type` nor `=` ends a line, so what is missing is found on the next one.
+            ("class C: S {\n    type\n}", (Code::Expected, 3, 1)),
+            ("class C: S {\n    type Item\n}", (Code::Expected, 2, 14)),
+            ("class C: S {\n    type Item =\n}", (Code::Expected, 3, 1)),
+            (
+                "class C: S {\n    type Item = i64 x\n}",
+                (Code::Expected, 2, 21),
+            ),
+            ("enum E: S {\n    type Item\n}", (Code::Expected, 2, 14)),
+            // Only an enum that lists an interface chooses an associated type.
+            (
+                "enum E {\n    A\n    type Item = i64\n}",
+                (Code::ReservedWord, 3, 5),
+            ),
+            ("fn f(x: S.) {}", (Code::Expected, 1, 10)),
         ] {
             assert_eq!(parse_err(src), want, "{src}");
         }
@@ -5027,12 +5073,43 @@ mod tests {
             assert_eq!(parsed.diagnostics.len(), 1, "{src}");
             assert_eq!(parsed.program.items.len(), 1, "{src}");
         }
-        for src in ["extend {}\nfn main() {}", "extend [i64]: {}\nfn main() {}"] {
+        // A type-parameter list that is not closed on the line leaves no name to give.
+        for src in [
+            "extend {}\nfn main() {}",
+            "extend [i64]: {}\nfn main() {}",
+            "extend<T {}\nfn main() {}",
+            "extend<T\nfn main() {}",
+        ] {
             let parsed = parsed(src);
             assert!(parsed.program.broken.is_empty(), "{src}");
             assert!(!parsed.checkable, "{src}");
             assert_eq!(parsed.diagnostics.len(), 1, "{src}");
             assert_eq!(parsed.program.items.len(), 1, "{src}");
+        }
+    }
+
+    /// A method that holds an error is broken alone: its interface or `extend` block stays
+    /// intact, with the methods before and after it, and names the lost one.
+    #[test]
+    fn a_broken_method_should_not_break_its_interface_or_extend_block() {
+        for (src, intact) in [
+            ("interface I {\n    fn a(self) {}\n    fn b(self)\n}", 1),
+            (
+                "extend C {\n    fn a(self) {\n        let = 1\n    }\n    fn b(self) {}\n}",
+                1,
+            ),
+        ] {
+            let parsed = parsed(src);
+            assert_eq!(parsed.diagnostics.len(), 1, "{src}");
+            assert!(parsed.program.broken.is_empty(), "{src}");
+            let (methods, lost) = match &parsed.program.items[..] {
+                [Item::Interface(i)] => (i.methods.len(), &i.broken_methods),
+                [Item::Extend(e)] => (e.methods.len(), &e.broken_methods),
+                other => panic!("{src}: expected one item, found {other:?}"),
+            };
+            assert_eq!(methods, intact, "{src}");
+            let lost: Vec<_> = lost.iter().map(|name| name.name.as_str()).collect();
+            assert_eq!(lost, ["a"], "{src}");
         }
     }
 
@@ -6250,6 +6327,33 @@ mod tests {
         assert_eq!(f.ret.expect("has a return type").span, Span::new(10, 16));
         // After a value, `??` still coalesces.
         assert_eq!(expr("a ?? b"), "(?? a b)");
+    }
+
+    /// Each `.Name` of a member type is a level of the tree, as each `?` is: a chain that
+    /// `MAX_DEPTH` allows parses, one more is too deep, and a type argument list that holds one
+    /// scans as a list only up to that limit, with its `?` layers counted too.
+    #[test]
+    fn member_types_should_count_toward_the_nesting_limit() {
+        let codes = [MAX_DEPTH - 1, MAX_DEPTH].map(|n| {
+            parsed(&format!("fn f(x: S{}) {{}}", ".A".repeat(n)))
+                .diagnostics
+                .iter()
+                .map(Diagnostic::code)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(codes, [vec![], vec![Code::NestingTooDeep]]);
+        let list = |members: usize, layers: usize| {
+            follows(&format!(
+                "f<S{}{}>(x)",
+                ".A".repeat(members),
+                "?".repeat(layers)
+            ))
+        };
+        assert!(follows("f<S.Item>(x)") && follows("f<Self.Item>(x)") && follows("f<Self>(x)"));
+        assert!(!follows("f<S.>(x)") && !follows("f<S.1>(x)"));
+        assert!(list(MAX_DEPTH - 1, 0) && !list(MAX_DEPTH, 0));
+        assert!(list(MAX_DEPTH - 2, 1) && !list(MAX_DEPTH - 2, 2));
+        assert!(list(1, MAX_DEPTH - 2) && !list(2, MAX_DEPTH - 2));
     }
 
     /// Each `?` is a level of the tree: a type with more layers than `MAX_DEPTH` allows is too

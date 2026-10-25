@@ -3874,6 +3874,25 @@ mod tests {
         }
     }
 
+    /// `--emit tokens` prints the new tokens by name, and a diagnostic spells them as written.
+    #[test]
+    fn the_new_tokens_should_print_and_spell_as_written() {
+        use TokenKind::{Amp, Extend, Interface, SelfType};
+        let src = "interface extend Self &";
+        assert_eq!(
+            dump(src, &tokens(src)),
+            "1:1 Interface interface\n1:11 Extend extend\n1:18 SelfType Self\n1:23 Amp &\n1:24 Eof\n"
+        );
+        for (kind, text) in [
+            (Interface, "`interface`"),
+            (Extend, "`extend`"),
+            (SelfType, "`Self`"),
+            (Amp, "`&`"),
+        ] {
+            assert_eq!(kind.describe(), text);
+        }
+    }
+
     #[test]
     fn dump_format() {
         let src = "fn main() { loop {} }\n";
@@ -4349,6 +4368,18 @@ mod tests {
             assert_eq!(breaks, 1, "{src}");
             crate::parser::parse_ok(src);
         }
+    }
+
+    /// A list ends at its own `>`, also after a bound's arguments, so a name on the next line
+    /// starts a new statement.
+    #[test]
+    fn a_header_list_with_a_bound_should_end_at_its_own_greater_than() {
+        let kinds = all_kinds("class C<T: Convert<K>>: Shape\nfoo");
+        let shape = kinds.iter().position(|k| *k == ident("Shape"));
+        assert_eq!(
+            shape.and_then(|at| kinds.get(at + 1)),
+            Some(&TokenKind::Newline)
+        );
     }
 
     /// Only a name goes on with a list: a number is no name, and after a `_` that stands where

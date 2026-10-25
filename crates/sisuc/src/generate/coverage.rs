@@ -2377,6 +2377,28 @@ fn every_variant_is_generated() {
     );
 }
 
+/// What no generated program writes yet, the walk marks all the same: an interface, an
+/// `extend` block, bounds, `Self`, a member type, and a broken item of each new kind. Without
+/// this, the walk's arms for them would never run until the generator writes them.
+#[test]
+fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
+    let src = "interface Shape<T: Same> {\n    type Item: Same\n    fn area<U: Same>(self, x: U) -> Self\n}\nclass Box<T: Same> {}\nextend<T: Same> Stack<T> {\n    fn first(self, x: S.Item) {}\n}\ninterface Bad: {}\nextend C: {}\n";
+    let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+    let mut walk = Walk::default();
+    walk.ast(&parsed.program);
+    for key in [
+        "ast::Item::Interface",
+        "ast::Item::Extend",
+        "ast::Item::Class",
+        "ast::TypeKind::SelfType",
+        "ast::TypeKind::Member",
+        "ast::BrokenKind::Interface",
+        "ast::BrokenKind::Extend",
+    ] {
+        assert!(walk.seen.contains(key), "the walk should mark {key}");
+    }
+}
+
 #[test]
 fn main_holds_several_statements() {
     // Each top-level statement of `main` takes a share of its fuel, so the first cannot spend
