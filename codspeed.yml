@@ -36,6 +36,9 @@ benchmarks:
   - name: tree_rewrite
     id: tree_rewrite
     exec: target/codspeed/tree_rewrite/main
+  - name: interp
+    id: interp
+    exec: target/codspeed/interp/main
   - name: build_hello
     id: build_hello
     exec: target/release/sisu build -O2 bench/hello/main.sisu -o target/codspeed/build_hello/main
