@@ -12,6 +12,7 @@ The template comes from origin/main, so a branch that started before a change to
 criteria still gets the current ones. Without origin/main it falls back to ../brief.md.
 """
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -19,9 +20,21 @@ from pathlib import Path
 
 TEMPLATE = Path(__file__).resolve().parents[1] / 'brief.md'
 MAIN_TEMPLATE = 'origin/main:.agents/skills/review-sisu/brief.md'
+
+
+def plugin_skill(plugin, skill):
+    """The SKILL.md of an installed Claude Code plugin, at its installPath, or None."""
+    try:
+        installed = json.loads((Path.home() / '.claude/plugins/installed_plugins.json').read_text())
+        return Path(installed['plugins'][plugin][0]['installPath']) / 'skills' / skill / 'SKILL.md'
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
+
+
 SKILLS = {
     '<test-audit SKILL.md path>': Path.home() / '.claude/skills/test-audit/SKILL.md',
     '<codebase-design SKILL.md path>': Path.home() / '.agents/skills/codebase-design/SKILL.md',
+    '<rust-best-practices SKILL.md path>': plugin_skill('beautiful-rust@beautiful-rust', 'rust-best-practices'),
 }
 
 
@@ -48,16 +61,16 @@ def main():
     docs = ''.join(f'- {Path(d).resolve()}\n' for d in a.doc)
     t = re.sub(r'- <the other documents to read.*?>\n', docs, t, flags=re.S)
     for slot, path in SKILLS.items():
-        if path.exists():
+        if path and path.exists():
             t = t.replace(slot, str(path))
         else:
-            print(f'diff_brief: {path} is missing; its line is dropped, so tell the user', file=sys.stderr)
+            print(f'diff_brief: {path or slot} is missing; its line is dropped, so tell the user', file=sys.stderr)
             t = re.sub(rf'- `{re.escape(slot)}`.*?(?=\n- |\n\n)', '', t, flags=re.S)
     t = re.sub(r'# Check, for a spec\n.*?(?=# Check, for a diff)', '', t, flags=re.S)
     # Checked before Focus goes in, so text in the caller's focus cannot trip it.
     focus_slot = '<what the caller knows that the target does not say, or "none">'
     head = t.split('# Report', 1)[0].replace(focus_slot, '', 1)
-    left = re.findall(r'<(?:spec|path|repository|base|the other|test-audit|codebase-design|what the caller)[^>]*>', head)
+    left = re.findall(r'<(?:spec|path|repository|base|the other|test-audit|codebase-design|rust-best-practices|what the caller)[^>]*>', head)
     if left or focus_slot not in t:
         sys.exit(f'diff_brief: unfilled slots: {left or [focus_slot + " missing"]}')
     focus = Path(a.focus).read_text().strip() if a.focus else 'none'
