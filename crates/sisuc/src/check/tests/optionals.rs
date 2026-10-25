@@ -265,12 +265,12 @@ fn an_unknown_call_should_not_wait_for_context_in_a_generic_call() {
 }
 
 /// `body` on lines 2 on of `fn g` over `o: i64?`, `s: Shape?`, `oo: i64??`, `h: Holder`,
-/// `k: Num` and `p: Pile`, then the enums `Shape`, `Holder`, whose `V` holds a `Shape?`, and
-/// `Num`, whose `N` holds an `i64?`, the class `Pile`, whose `pop` gives an `i64?`, and an empty
-/// `main`.
+/// `k: Num`, `p: Pile` and `l: Light??`, then the enums `Shape`, `Holder`, whose `V` holds a
+/// `Shape?`, `Num`, whose `N` holds an `i64?`, and `Light`, of `On` and `Off`, the class `Pile`,
+/// whose `pop` gives an `i64?`, and an empty `main`.
 fn with_shapes(body: &str) -> String {
     format!(
-        "fn g(o: i64?, s: Shape?, oo: i64??, h: Holder, k: Num, p: Pile) {{\n    {body}\n}}\nenum Shape {{\n    Circle(f64)\n    Square(f64)\n}}\nenum Holder {{\n    V(Shape?)\n}}\nenum Num {{\n    N(i64?)\n}}\nclass Pile {{\n    mut items: [i64]\n    fn pop(self) -> i64? {{ None }}\n}}\nfn main() {{}}"
+        "fn g(o: i64?, s: Shape?, oo: i64??, h: Holder, k: Num, p: Pile, l: Light??) {{\n    {body}\n}}\nenum Shape {{\n    Circle(f64)\n    Square(f64)\n}}\nenum Holder {{\n    V(Shape?)\n}}\nenum Num {{\n    N(i64?)\n}}\nenum Light {{\n    On\n    Off\n}}\nclass Pile {{\n    mut items: [i64]\n    fn pop(self) -> i64? {{ None }}\n}}\nfn main() {{}}"
     )
 }
 
@@ -349,9 +349,29 @@ fn a_pattern_on_an_optional_should_match_the_optional_or_the_value_inside() {
             "m",
             "i64",
         ),
+        (
+            "let r = match l {\n        On => 1\n        Off => 2\n        Some(None) => 3\n        None => 4\n    }",
+            "3",
+            "i64",
+        ),
     ] {
         assert_eq!(type_at(&with_shapes(body), text), ty, "{body}");
     }
+}
+
+/// The `tir` prints a `Some` pattern with its inner pattern, the implicit `Some` too.
+#[test]
+fn a_some_pattern_should_print_with_its_inner_pattern() {
+    contains(
+        &with_shapes(
+            "let r = match s {\n        Circle(r) => r\n        Some(q) => 0.0\n        None => 0.0\n    }",
+        ),
+        &[
+            "(arm (Some (Circle r#7)) (block r#7))",
+            "(arm (Some q#8) (block 0.0))",
+            "(arm None (block 0.0))",
+        ],
+    );
 }
 
 /// A `match` on an optional that leaves a value out is not exhaustive: `None`, a value, a

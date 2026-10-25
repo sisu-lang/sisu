@@ -57,3 +57,10 @@ Next(None) Next(None)
 Next(Some(None)) Next(Some(None))
 Next(End) Next(End)
 Next(Next(_)) Next(Next(_))
+inner
+no inner name
+dot
+dash
+gap
+no second
+second

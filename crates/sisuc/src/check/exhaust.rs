@@ -1147,10 +1147,10 @@ mod tests {
         reason = "one row per witness, so the table reads in one place"
     )]
     fn witnesses() {
-        let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n    Mul(Expr, Expr)\n}\nenum Name {\n    Named(string)\n    Anon\n}\nenum Shape {\n    Circle(f64)\n    Square(f64)\n}\nfn main() {}";
+        let decls = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n    Mul(Expr, Expr)\n}\nenum Name {\n    Named(string)\n    Anon\n}\nenum Shape {\n    Circle(f64)\n    Square(f64)\n}\nenum Holder {\n    V(Shape??)\n    W(i64?, bool)\n}\nfn main() {}";
         // Each row: the scrutinee, the arms before `_ => 0`, the missing pattern, the texts of
         // the arm that covers part of its variant, and whether a guarded arm may not match.
-        let rows: [(&str, &[&str], &str, Texts<'_>, bool); 24] = [
+        let rows: [(&str, &[&str], &str, Texts<'_>, bool); 27] = [
             (
                 "e",
                 &["Num(_) => 1", "Add(_, _) => 2"],
@@ -1292,6 +1292,23 @@ mod tests {
                 None,
                 false,
             ),
+            // A guarded `None` may not match; a `Some` arm prints as the user writes it, its
+            // `|` too; an optional field no arm names stays `_`.
+            ("o", &["None if b => 1", "Some(_) => 2"], "None", None, true),
+            (
+                "h",
+                &["V(Some(Circle(_) | Square(_))) => 1", "W(_, _) => 2"],
+                "V(None)",
+                Some(("V(Circle(_) | Square(_))", "Circle(_) | Square(_)")),
+                false,
+            ),
+            (
+                "h",
+                &["V(_) => 1", "W(_, true) => 2"],
+                "W(_, false)",
+                Some(("W(_, true)", "_, true")),
+                false,
+            ),
         ];
         for (scrutinee, arms, pattern, partly, guarded) in rows {
             let arms = arms
@@ -1300,7 +1317,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .concat();
             let src = format!(
-                "{decls}\nfn t(e: Expr, i: i64, u: u8, c: char, b: bool, s: string, n: Name, o: i64?, sh: Shape?, oo: i64??) -> i64 {{\n    match {scrutinee} {{\n{arms}        _ => 0\n    }}\n}}"
+                "{decls}\nfn t(e: Expr, i: i64, u: u8, c: char, b: bool, s: string, n: Name, o: i64?, sh: Shape?, oo: i64??, h: Holder) -> i64 {{\n    match {scrutinee} {{\n{arms}        _ => 0\n    }}\n}}"
             );
             let missing = report(&src).missing.expect("the arms should miss a value");
             assert_eq!(missing.pattern, pattern, "{src}");

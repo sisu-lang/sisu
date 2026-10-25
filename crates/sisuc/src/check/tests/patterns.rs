@@ -1283,6 +1283,22 @@ fn cut_takes_unexpanded_alternatives() {
         found(&src),
         [(Code::UnreachableArm, (line + 2, 14), vec![(line + 1, 9)])]
     );
+    // The cut takes the `|` inside a `Some` too: `1` is the first arm's there and the second's
+    // where the `|` is expanded.
+    let (src, line) = typed(
+        "enum P { V(bool, i64?) }\n",
+        "P",
+        &[
+            "V(true, _) => 0",
+            "V(false, Some(1)) => 1",
+            "V(_, Some(1 | 2)) => 2",
+            "_ => 3",
+        ],
+    );
+    assert_eq!(
+        found(&src),
+        [(Code::UnreachableArm, (line + 3, 19), vec![])]
+    );
     // The top matrix is a cut: the whole arm below the wildcard arm is its first row's.
     let (src, line) = typed("", "bool", &["_ => 0", "true | false => 1"]);
     assert_eq!(

@@ -923,3 +923,17 @@ fn a_pattern_under_a_boxed_optional_field_should_test_presence_then_the_tag() {
         ],
     );
 }
+
+/// Under a boxed `T?` field the box stays in the rest: each counted binding under it is
+/// copied once, though two alternatives bind it, and an uncounted one is not copied.
+#[test]
+fn a_binding_under_a_boxed_optional_field_should_be_copied_once() {
+    let printed = built(
+        "enum T {\n    End\n    Next(T?, string, i64)\n}\nfn f(t: T) -> string {\n    match t {\n        Next(Some(Next(None, s, n) | Next(Some(_), s, n)), _, _) => \"{s}{n}\"\n        _ => \"\"\n    }\n}",
+    );
+    let f = function(&printed, "f");
+    assert_eq!(f.matches(" = copy s#").count(), 1, "{f}");
+    assert!(!f.contains(" = copy n#"), "a copy of `n` in\n{f}");
+    assert!(!f.contains("token"), "a token in\n{f}");
+    has(&printed, "f", &["take_apart _: rest _"]);
+}

@@ -2238,4 +2238,107 @@ mod tests {
         assert_eq!(g.w.out.program, "(15 / 0)");
         assert_eq!((info.value, info.pure, info.folds), (None, false, false));
     }
+
+    /// Arms as (pattern, guarded).
+    type Arms<'a> = &'a [(&'a str, bool)];
+
+    #[test]
+    fn optional_arms_should_cover_the_payload_as_written_or_in_some_and_none() {
+        // Byte by byte: one `bool` arm, its guard, `false | true`, then whether it is written in
+        // `Some(..)`; where the arms leave a value, a `Some(..)` arm, its guard and what it
+        // binds; then `None`, its guard and its place among the arms.
+        let ty = Ty::Optional(Box::new(Ty::Bool));
+        // Each row: the bytes, the arms as (pattern, guarded), and whether they are exhaustive.
+        let rows: [(&[u8], Arms<'_>, bool); 3] = [
+            (
+                &[0, 1, 0, 1, 1, 1, 0],
+                &[("None", false), ("false | true", false)],
+                true,
+            ),
+            (&[0, 1, 0, 0, 0, 0], &[("Some(false | true)", false)], false),
+            (
+                &[0, 0, 0, 1, 0, 1, 1, 1, 1, 2],
+                &[("false | true", true), ("Some(v1)", false), ("None", false)],
+                true,
+            ),
+        ];
+        for (bytes, expected, exhaustive) in rows {
+            let mut g = Gen::new(bytes);
+            let (arms, found) = g.optional_arms(&ty);
+            let arms: Vec<_> = arms.iter().map(|a| (a.pattern.as_str(), a.guard)).collect();
+            assert_eq!((&arms[..], found), (expected, exhaustive), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn a_let_pattern_on_an_optional_should_take_each_form() {
+        // The first byte picks the form; with `6`, the second picks `None` where it may be
+        // written; with `7`, the bytes after the value's pattern pick `Some(..)` around it.
+        let rows: [(&[u8], bool, &str, Option<&str>); 9] = [
+            (&[0], true, "_", None),
+            (&[1], true, "v1", Some("v1")),
+            (&[5], true, "Some(v1)", Some("v1")),
+            (&[6, 0], true, "None", None),
+            (&[6, 1], true, "Some(_)", None),
+            (&[6, 0], false, "Some(_)", None),
+            (&[7, 0, 0], true, "-3", None),
+            (&[7, 0, 0, 1], true, "Some(-3)", None),
+            (&[7, 0, 1], false, "-3..-2", None),
+        ];
+        for (bytes, none, pattern, bound) in rows {
+            let mut g = Gen::new(bytes);
+            let (found, name) = g.let_pattern(&Ty::I64, none);
+            assert_eq!(
+                (found.as_str(), name.as_deref()),
+                (pattern, bound),
+                "{bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refutable_optional_pattern_should_write_none_some_or_the_value_inside() {
+        // The first byte picks `None`, `Some(..)` or the value's own pattern, which an optional
+        // payload writes in `Some(..)`, as its `None` would match the outer one. Below
+        // `MAX_PATTERN_DEPTH` layers, `_` stands for the rest.
+        let opt = |ty: Ty| Ty::Optional(Box::new(ty));
+        let rows = [
+            (opt(Ty::I64), 0, &[0][..], Some("None")),
+            (opt(Ty::I64), 0, &[1], Some("Some(-3)")),
+            (opt(Ty::I64), 0, &[2], Some("-3")),
+            (opt(opt(Ty::I64)), 0, &[2], Some("Some(None)")),
+            (opt(opt(opt(Ty::I64))), 0, &[1, 1], Some("Some(Some(_))")),
+            (opt(Ty::I64), super::MAX_PATTERN_DEPTH, &[1], None),
+        ];
+        for (ty, depth, bytes, expected) in rows {
+            let mut g = Gen::new(bytes);
+            assert_eq!(
+                g.refutable(&ty, depth).as_deref(),
+                expected,
+                "{ty}, {bytes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_match_on_an_optional_of_an_optional_should_test_a_name_or_a_some() {
+        // Byte by byte: an optional scrutinee, of a `bool`, of two layers, then a name of one
+        // where a name fits.
+        let nested = Ty::Optional(Box::new(Ty::Optional(Box::new(Ty::Bool))));
+        for (named, bytes, start) in [
+            (true, [0, 0, 0, 0], "(match w "),
+            (true, [0, 0, 0, 1], "(match Some("),
+            (false, [0, 0, 0, 0], "(match Some("),
+        ] {
+            let mut g = Gen::new(&bytes);
+            if named {
+                g.scope
+                    .vars
+                    .push(Var::new("w".to_string(), nested.clone(), false, 0, 0, 0));
+            }
+            g.match_expr(&Ty::I64, MAX_SIZE, false);
+            let program = &g.w.out.program;
+            assert!(program.starts_with(start), "{bytes:?}: {program}");
+        }
+    }
 }

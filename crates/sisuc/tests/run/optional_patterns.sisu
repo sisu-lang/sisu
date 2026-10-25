@@ -2,7 +2,8 @@
 // itself, a variant, literal or range pattern matches the value inside, an `|` applies the rule
 // to each alternative, and a name or `_` covers the whole optional. Only the top of an `if let`
 // or `while let` unwraps. Counted payloads are matched and released, from owned scrutinees and
-// from borrowed ones, also under the box of a recursive optional field.
+// from borrowed ones, also under the box of a recursive optional field and through a `Some` on
+// a path under a box.
 class Node {
     n: i64
 }
@@ -37,6 +38,26 @@ enum E {
 enum D {
     End
     Next(D??)
+}
+
+enum K {
+    Leaf
+    Node(K, string?)
+}
+
+enum Mark {
+    Dot(string)
+    Dash(string)
+    Gap
+}
+
+enum Marks {
+    M(Mark?)
+}
+
+enum T {
+    End
+    Next(T?, string)
 }
 
 fn int_kind(o: i64?) -> string {
@@ -250,6 +271,29 @@ fn d_kind_owned(i: i64) -> string {
     }
 }
 
+fn inner_name(k: K) -> string {
+    match k {
+        Node(Node(_, Some(t)), _) => t
+        _ => "no inner name"
+    }
+}
+
+fn mark(m: Mark?) -> string {
+    let marks = Marks.M(m)
+    match marks {
+        M(Some(Dot(t) | Dash(t))) => t
+        _ => "gap"
+    }
+}
+
+fn second(i: i64) -> string {
+    let t = if i == 0 { T.End } else { T.Next(T.Next(None, "second"), "first") }
+    match t {
+        Next(Some(Next(_, s)), _) => s
+        _ => "no second"
+    }
+}
+
 fn main() {
     let none: i64? = None
     for o in [Some(0), Some(7), none] {
@@ -310,4 +354,11 @@ fn main() {
     for i in 0..5 {
         print("{d_kind(make_d(i))} {d_kind_owned(i)}")
     }
+    print(inner_name(K.Node(K.Node(K.Leaf, "inner"), None)))
+    print(inner_name(K.Node(K.Node(K.Leaf, None), "outer")))
+    print(mark(Mark.Dot("dot")))
+    print(mark(Mark.Dash("dash")))
+    print(mark(Mark.Gap))
+    print(second(0))
+    print(second(1))
 }
