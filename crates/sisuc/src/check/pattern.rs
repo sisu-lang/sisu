@@ -327,9 +327,10 @@ impl Checker<'_> {
     }
 
     /// `value`, which `keyword` tests against `pattern`, and what it does with it: unwraps an
-    /// optional when `pattern` is a name or `_`, else matches it. A value that is neither an
-    /// enum nor optional is reported, as the `bool` says, and becomes `Error`; the pattern is
-    /// then checked at an `Error` position, so its names are poisoned.
+    /// optional when `pattern` is `_` or a name that is no variant of the enum inside, else
+    /// matches it. A value that is neither an enum nor optional is reported, as the `bool`
+    /// says, and becomes `Error`; the pattern is then checked at an `Error` position, so its
+    /// names are poisoned.
     pub(super) fn let_value(
         &mut self,
         keyword: Unwrap,
@@ -339,6 +340,12 @@ impl Checker<'_> {
         let checked = self.value(value, None);
         let ty = type_of(&checked);
         let name = match &pattern.kind {
+            // A variant of the enum inside matches that value, as in `match`.
+            ast::PatternKind::Name(name)
+                if ty.is_some_and(|ty| variant_inside(&self.enums, ty, name.name)) =>
+            {
+                None
+            }
             ast::PatternKind::Name(name) => Some(name.clone()),
             ast::PatternKind::Wild => Some(ast::Ident {
                 name: Symbol::intern("_"),
@@ -430,7 +437,7 @@ impl Checker<'_> {
             },
             &LetValue::Match { ty } => {
                 let pattern = self.pattern_in_scope(pattern, ty, word, arm);
-                // A name or `_` unwraps an optional, so it never gets here.
+                // `_`, or a name that is no variant inside, unwraps an optional: never here.
                 if let (Some(keyword), Some(ty), Some((pattern, _))) = (keyword, ty, &pattern)
                     && let TypeKind::Enum(..) | TypeKind::Optional(_) = ty.kind()
                 {

@@ -1,0 +1,24 @@
+// GIVEN an `if let` and a `while let` whose pattern is a bare variant name of the enum inside
+// an optional, `On` at a `Light?` position
+// WHEN each tests `Light.Off`, `Light.On` and `None`
+// THEN the name matches the variant inside, as in `match`, and binds nothing
+enum Light {
+    On
+    Off
+}
+
+fn selected(o: Light?) -> i64 {
+    if let On = o { 1 } else { 0 }
+}
+
+fn main() {
+    print(selected(Light.Off))    // 0
+    print(selected(Light.On))     // 1
+    print(selected(None))         // 0
+    let lights: [Light?] = [Light.On, Light.On, Light.Off, Light.On]
+    let mut i = 0
+    while let On = lights[i] {
+        i = i + 1
+    }
+    print(i)                      // 2
+}
