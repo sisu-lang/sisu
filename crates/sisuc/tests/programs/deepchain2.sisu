@@ -1,0 +1,25 @@
+// Two pairs of 1 000 000-deep `Chain`s, compared with `==` and dropped under a 256 KiB stack. A
+// `Chain` is the pointer to its box, with `End` as `null`. `==` loops on the box, and the drop
+// frees the boxes from a pending list, in one frame: an `==` or a drop that recursed on the box
+// needs a frame per level and overflows that stack. The second pair differs only at the bottom,
+// so `==` walks the whole chain to find it.
+enum Chain {
+    End
+    Next(Chain)
+}
+
+fn build(depth: i64) -> Chain {
+    let mut c = Chain.End
+    let mut i = 0
+    while i < depth {
+        c = Chain.Next(c)
+        i += 1
+    }
+    c
+}
+
+fn main() {
+    let a = build(1_000_000)
+    print(a == build(1_000_000)) // true
+    print(a == build(999_999))   // false
+}

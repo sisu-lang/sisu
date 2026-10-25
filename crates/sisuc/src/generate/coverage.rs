@@ -92,7 +92,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 60] = [
+const REACH: [&str; 62] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -153,6 +153,8 @@ const REACH: [&str; 60] = [
     "reach: a `bool?` is stored",
     "reach: an optional of an enum is stored",
     "reach: an optional of an optional of `char` or `bool` is stored",
+    "reach: an `Option`-shaped enum has a niche",
+    "reach: an `Option`-shaped enum holds itself",
 ];
 
 /// Whether a program's text holds a form.
@@ -1469,6 +1471,9 @@ impl Walk {
                 tir::Rank::Never => "tir::Rank::Never",
             });
         }
+        for (id, e) in program.enums.iter().enumerate() {
+            self.option_shaped(id, e);
+        }
         for function in &program.functions {
             self.ty(function.ret);
             for local in &function.locals {
@@ -1476,6 +1481,38 @@ impl Walk {
                 self.stored(local.ty);
             }
             self.tir_block(&function.body);
+        }
+    }
+
+    /// Records an enum `id` of two variants, one with no payload and one with one field whose
+    /// storage has a spare value for the other: a box, or a `char`, `bool` or pointer type.
+    fn option_shaped(&mut self, id: usize, e: &tir::Enum) {
+        let [first, second] = e.variants.as_slice() else {
+            return;
+        };
+        let (([field], empty) | (empty, [field])) =
+            (first.fields.as_slice(), second.fields.as_slice())
+        else {
+            return;
+        };
+        let niche = if field.boxed {
+            !matches!(field.ty.kind(), TypeKind::Optional(_))
+        } else {
+            matches!(
+                field.ty.kind(),
+                TypeKind::Char
+                    | TypeKind::Bool
+                    | TypeKind::String
+                    | TypeKind::Class(..)
+                    | TypeKind::Array(_)
+            )
+        };
+        if !empty.is_empty() || !niche {
+            return;
+        }
+        self.mark("reach: an `Option`-shaped enum has a niche");
+        if field.boxed && field.ty.inline_enum().is_some_and(|held| held.0 == id) {
+            self.mark("reach: an `Option`-shaped enum holds itself");
         }
     }
 
@@ -2873,6 +2910,23 @@ fn main() {}
     }
     for rank in ["Open", "Late"] {
         assert!(!seen.contains(&format!("tir::Rank::{rank}")), "{rank}");
+    }
+}
+
+/// An enum is `Option`-shaped in either order of its variants, and only when its field's storage
+/// has a spare value: a `Link?` box and an `i64` have none.
+#[test]
+fn the_walker_should_mark_an_option_shaped_enum_by_its_niche() {
+    let shaped = "enum Rev {\n    Just(char)\n    Nothing\n}\nenum Chain {\n    End\n    Next(Chain)\n}\nfn main() {}\n";
+    let tagged = "enum Link {\n    End\n    Next(Link?)\n}\nenum Wide {\n    A\n    B(i64)\n}\nenum Two {\n    A(char)\n    B(char)\n}\nfn main() {}\n";
+    let keys = [
+        "reach: an `Option`-shaped enum has a niche",
+        "reach: an `Option`-shaped enum holds itself",
+    ];
+    let (seen, not_seen) = (marked(shaped), marked(tagged));
+    for key in keys {
+        assert!(seen.contains(key), "{key}");
+        assert!(!not_seen.contains(key), "{key}");
     }
 }
 

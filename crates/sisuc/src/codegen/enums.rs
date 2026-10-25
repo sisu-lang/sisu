@@ -3,7 +3,10 @@
 //! laid over the payload storage. A field that closes a cycle holds a box instead,
 //! `%sisu.box.<F> = { i64 count, %sisu.<F> }`. A boxed field of type `F` with k ≥ 1 `?` layers
 //! is k − 1 flags around a box pointer that is `null` for the innermost `None`: `{ i1, ptr }`
-//! for an `F??`. When a flag is clear, the storage inside it is zero. This module owns the
+//! for an `F??`. When a flag is clear, the storage inside it is zero. An `Option`-shaped enum,
+//! with one variant with no payload and one with one field whose storage has a niche, is that
+//! field's storage, with the payload-free variant in the niche's empty value: `enum Chain { End
+//! Next(Chain) }` is the pointer to its box, `null` for `End` (`Shape`). This module owns the
 //! layouts, building a variant, and the bodies of the enum helpers, which `define_helpers`
 //! reaches through `define_enum_helper`.
 //!
@@ -27,7 +30,7 @@ use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PhiValue, PointerValue,
 };
 
-use super::layout::HeapBlock;
+use super::layout::{HeapBlock, Niche, Storage, next_niche};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, enum_of};
 use crate::mir::{Place, Projection};
@@ -38,15 +41,40 @@ use rustc_hash::FxHashMap;
 pub(super) struct EnumLayout<'ctx> {
     /// `{ tag, [n x iA] }`, or `{ tag }` when no variant has a field. `iA` is the integer type
     /// as wide as the largest payload ABI alignment `a`, and `n` the largest payload ABI size
-    /// rounded up to whole `a`s, so the storage fits every payload at its alignment.
-    pub(super) ty: StructType<'ctx>,
+    /// rounded up to whole `a`s, so the storage fits every payload at its alignment. An
+    /// `Option`-shaped enum is the storage of its field's niche instead (`shape`).
+    pub(super) ty: BasicTypeEnum<'ctx>,
     /// `i8`, `i16` or `i32`, the smallest that holds the variant count. Tag `v` is variant `v`.
+    /// An `Option`-shaped enum stores no tag: `load_tag` gives it from the niche.
     pub(super) tag: IntType<'ctx>,
     /// Indexed by variant: `{ fields... }`, a field's LLVM type being its type's, or `ptr` when
-    /// boxed.
+    /// boxed. Opaque for an `Option`-shaped enum, which lays no payload over a storage.
     pub(super) payloads: Vec<StructType<'ctx>>,
     /// `%sisu.box.<Name> = { i64 count, %sisu.<Name> }`, a box that holds a value of this enum.
     pub(super) boxed: StructType<'ctx>,
+    /// For an `Option`-shaped enum, where it keeps its payload-free variant.
+    pub(super) shape: Option<Shape>,
+    /// The niche of an optional of this enum: the tag after the last variant, or for an
+    /// `Option`-shaped enum the next value of its field's niche; `None` when that does not fit.
+    pub(super) niche: Option<Niche>,
+}
+
+/// The layout of an `Option`-shaped enum: two variants, one with no payload and one with one
+/// field whose storage has a niche. A value is that field's storage, and the payload-free
+/// variant is the niche's empty value, in either order of the variants.
+#[derive(Clone, Copy)]
+pub(super) struct Shape {
+    /// The index of the variant with no payload.
+    pub(super) empty: usize,
+    /// The niche of the other variant's field: a box pointer's `null` when the field is boxed.
+    pub(super) field: Niche,
+}
+
+impl Shape {
+    /// The index of the variant with the field.
+    fn payload(self) -> usize {
+        1 - self.empty
+    }
 }
 
 /// The width in bits of the tag of an enum of `count` variants: 8, 16 or 32, the smallest
@@ -101,10 +129,11 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Builds every enum's layout: each enum's type and its payload structs, named first so
-    /// that a payload can name any enum, then each payload's body, then each enum's body. An
-    /// enum's body needs its payloads' sizes, so an enum held inline gets its body before its
-    /// holder: post-order over the inline fields, with an explicit stack. `tir::layout_enums`
-    /// boxes a field on every cycle, so the inline fields form no cycle and the walk ends.
+    /// that a payload can name any enum, then for each enum its shape and niche, its payloads'
+    /// bodies and its body. These need the layouts of the enums it holds inline, so an enum held
+    /// inline is laid out before its holder: post-order over the inline fields, with an explicit
+    /// stack. `tir::layout_enums` boxes a field on every cycle, so the inline fields form no
+    /// cycle and the walk ends.
     pub(super) fn lay_out_enums(&mut self) {
         let program = self.program;
         let context = self.context;
@@ -116,7 +145,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .and_then(|bits| context.custom_width_int_type(bits).ok())
                     .expect("a tag should be an `i8`, an `i16` or an `i32`, which LLVM has");
                 EnumLayout {
-                    ty: context.opaque_struct_type(&format!("sisu.{}", e.name)),
+                    ty: context
+                        .opaque_struct_type(&format!("sisu.{}", e.name))
+                        .into(),
                     tag,
                     payloads: e
                         .variants
@@ -124,6 +155,8 @@ impl<'ctx> Codegen<'ctx, '_> {
                         .map(|v| context.opaque_struct_type(&format!("sisu.{}.{}", e.name, v.name)))
                         .collect(),
                     boxed: context.opaque_struct_type(&format!("sisu.box.{}", e.name)),
+                    shape: None,
+                    niche: None,
                 }
             })
             .collect();
@@ -135,8 +168,38 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.target_data.get_abi_size(&ptr_type) <= self.target_data.get_abi_size(&i64_type),
             "a pointer should fit the 8-byte count word that links a box into a pending list"
         );
-        for (e, layout) in program.enums.iter().zip(&self.enums) {
-            for (variant, payload) in e.variants.iter().zip(&layout.payloads) {
+        let mut done = vec![false; program.enums.len()];
+        for root in 0..program.enums.len() {
+            // `(id, true)` once the enums `id` holds inline are queued before it.
+            let mut stack = vec![(root, false)];
+            while let Some((id, held_queued)) = stack.pop() {
+                if done[id] {
+                    continue;
+                }
+                if held_queued {
+                    self.lay_out_enum(id);
+                    done[id] = true;
+                    continue;
+                }
+                stack.push((id, true));
+                stack.extend(held_inline(&program.enums[id]).map(|held| (held.0, false)));
+            }
+        }
+        for layout in &self.enums {
+            layout.boxed.set_body(&[i64_type.into(), layout.ty], false);
+        }
+    }
+
+    /// Lays out enum `id`, whose inline-held enums are laid out: its shape and type when it is
+    /// `Option`-shaped, else its payloads' bodies and its body; then its niche.
+    fn lay_out_enum(&mut self, id: usize) {
+        let program = self.program;
+        let e = &program.enums[id];
+        let shape = self.option_shape(e);
+        if let Some(shape) = shape {
+            self.enums[id].ty = self.niche_type(shape.field.storage);
+        } else {
+            for (variant, &payload) in e.variants.iter().zip(&self.enums[id].payloads) {
                 let fields: Vec<_> = variant
                     .fields
                     .iter()
@@ -152,34 +215,52 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .collect();
                 payload.set_body(&fields, false);
             }
+            self.set_enum_body(id);
         }
-        let mut done = vec![false; program.enums.len()];
-        for root in 0..program.enums.len() {
-            // `(id, true)` once the enums `id` holds inline are queued before it.
-            let mut stack = vec![(root, false)];
-            while let Some((id, held_queued)) = stack.pop() {
-                if done[id] {
-                    continue;
-                }
-                if held_queued {
-                    self.set_enum_body(id);
-                    done[id] = true;
-                    continue;
-                }
-                stack.push((id, true));
-                stack.extend(held_inline(&program.enums[id]).map(|held| (held.0, false)));
-            }
-        }
-        for layout in &self.enums {
-            layout
-                .boxed
-                .set_body(&[i64_type.into(), layout.ty.into()], false);
-        }
+        // A tagged enum's last tag is its last variant's: the tag after it is the next value.
+        let last = Niche {
+            storage: Storage::Tag(EnumId(id)),
+            empty: u64::try_from(e.variants.len()).expect("a variant count should fit in a `u64`")
+                - 1,
+        };
+        let niche = next_niche(program, shape.map_or(last, |shape| shape.field));
+        let layout = &mut self.enums[id];
+        layout.shape = shape;
+        layout.niche = niche;
+    }
+
+    /// The shape of `e` when it is `Option`-shaped: two variants, one with no payload and one
+    /// with one field that has a niche. A boxed `F` is a box pointer, never `null`; a boxed `F?`
+    /// keeps its `None` in that `null`, so it has no niche.
+    fn option_shape(&self, e: &Enum) -> Option<Shape> {
+        let [first, second] = e.variants.as_slice() else {
+            return None;
+        };
+        let (empty, field) = match (first.fields.as_slice(), second.fields.as_slice()) {
+            ([], [field]) => (0, field),
+            ([field], []) => (1, field),
+            _ => return None,
+        };
+        let field = if field.boxed {
+            (!matches!(field.ty.kind(), TypeKind::Optional(_))).then_some(Niche {
+                storage: Storage::Pointer,
+                empty: 0,
+            })?
+        } else {
+            self.niche(field.ty)?
+        };
+        Some(Shape { empty, field })
+    }
+
+    /// The struct type of enum `id`, which is not `Option`-shaped.
+    fn tagged_type(&self, id: EnumId) -> StructType<'ctx> {
+        self.enums[id.0].ty.into_struct_type()
     }
 
     /// Sets the body of enum `id`, whose payload structs are all sized.
     fn set_enum_body(&self, id: usize) {
         let layout = &self.enums[id];
+        let ty = layout.ty.into_struct_type();
         let (size, align) = layout
             .payloads
             .iter()
@@ -191,7 +272,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             });
         let tag = layout.tag.into();
         if size == 0 {
-            layout.ty.set_body(&[tag], false);
+            ty.set_body(&[tag], false);
             return;
         }
         let unit = NonZeroU32::new(align * 8)
@@ -199,20 +280,33 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect("an ABI alignment should be a positive number of bytes that LLVM has an integer type for");
         let units = u32::try_from(size.div_ceil(u64::from(align)))
             .expect("a payload should be smaller than 2^32 units of its alignment");
-        layout
-            .ty
-            .set_body(&[tag, unit.array_type(units).into()], false);
+        ty.set_body(&[tag, unit.array_type(units).into()], false);
     }
 
     /// The address of the tag of the enum `id` at `value_addr`.
     fn tag_ptr(&self, id: EnumId, value_addr: PointerValue<'ctx>) -> PointerValue<'ctx> {
         self.builder
-            .build_struct_gep(self.enums[id.0].ty, value_addr, 0, "tag")
+            .build_struct_gep(self.tagged_type(id), value_addr, 0, "tag")
             .expect("an enum's struct should have the tag at element 0")
     }
 
-    /// The tag of the enum `id` at `value_addr`.
+    /// The tag of the enum `id` at `value_addr`. An `Option`-shaped enum has the tag of its
+    /// payload-free variant when its storage holds the niche's empty value.
     pub(super) fn load_tag(&self, id: EnumId, value_addr: PointerValue<'ctx>) -> IntValue<'ctx> {
+        let layout = &self.enums[id.0];
+        if let Some(shape) = layout.shape {
+            let present = self.holds_at(shape.field, value_addr, "present");
+            let tag = |variant| {
+                let variant =
+                    u64::try_from(variant).expect("a variant index should fit in a `u64`");
+                layout.tag.const_int(variant, false)
+            };
+            return self
+                .builder
+                .build_select(present, tag(shape.payload()), tag(shape.empty), "tag")
+                .expect(POSITIONED)
+                .into_int_value();
+        }
         self.builder
             .build_load(self.enums[id.0].tag, self.tag_ptr(id, value_addr), "tag")
             .expect(POSITIONED)
@@ -221,7 +315,8 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The slot that holds payload field `field` of variant `variant` in the enum `id` at
     /// `value_addr`, through the variant's struct laid over the payload storage: a box pointer
-    /// for a boxed field.
+    /// for a boxed field. An `Option`-shaped enum's field is the value itself, and a `bool`
+    /// there is an `i8`: `payload_value` reads it, never a load of an `i1`.
     fn field_slot(
         &self,
         value_addr: PointerValue<'ctx>,
@@ -230,9 +325,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         field: usize,
     ) -> PointerValue<'ctx> {
         let layout = &self.enums[id.0];
+        if layout.shape.is_some() {
+            return value_addr;
+        }
         let storage = self
             .builder
-            .build_struct_gep(layout.ty, value_addr, 1, "payload")
+            .build_struct_gep(self.tagged_type(id), value_addr, 1, "payload")
             .expect("an enum with a payload field should have its payload storage at element 1");
         let index = u32::try_from(field).expect(
             "a variant should have fewer than 2^32 fields, since field indexes are `u32` in LLVM",
@@ -436,6 +534,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         );
         let (true, TypeKind::Optional(_)) = (payload.boxed, ty.kind()) else {
             let place = self.payload_place(value_addr, id, variant, field);
+            let layout = &self.enums[id.0];
+            if layout.shape.is_some() && !payload.boxed {
+                let stored = self
+                    .builder
+                    .build_load(layout.ty, place, "field")
+                    .expect(POSITIONED);
+                return self.narrow(ty, stored, "field");
+            }
             return self
                 .builder
                 .build_load(llvm_ty, place, "field")
@@ -498,7 +604,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         reuse: &[Option<LocalId>],
     ) -> BasicValueEnum<'ctx> {
         let layout = self.enum_layout(id);
-        let (ty, tag) = (layout.ty, layout.tag);
+        if let Some(shape) = layout.shape {
+            return self.shaped_variant(id, shape, variant, values, reuse);
+        }
+        let (ty, tag) = (layout.ty.into_struct_type(), layout.tag);
         let slot = self.entry_alloca(ty.into(), "variant");
         self.store(slot, ty.const_zero().into());
         let tag_value = u64::try_from(variant).expect("a variant index should fit in a `u64`");
@@ -524,6 +633,36 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .build_load(ty, slot, "variant")
             .expect(POSITIONED)
+    }
+
+    /// `variant` of the `Option`-shaped enum `id`: the empty value of its field's niche for the
+    /// payload-free variant, else the field's storage: a `bool` widened to `i8`, and a boxed
+    /// field's value in a new box, as `variant` builds it.
+    fn shaped_variant(
+        &self,
+        id: EnumId,
+        shape: Shape,
+        variant: usize,
+        values: &[BasicValueEnum<'ctx>],
+        reuse: &[Option<LocalId>],
+    ) -> BasicValueEnum<'ctx> {
+        if variant == shape.empty {
+            return self.empty_value(shape.field);
+        }
+        let payload = &self.program.enums[id.0].variants[variant].fields[0];
+        let (&[value], &[token]) = (values, reuse) else {
+            unreachable!("the field variant of an `Option`-shaped enum should have one field")
+        };
+        if payload.boxed {
+            let ptr_type = self.context.ptr_type(AddressSpace::default());
+            let slot = self.entry_alloca(ptr_type.into(), "variant");
+            self.store_boxed(slot, value, payload.ty, token);
+            return self
+                .builder
+                .build_load(ptr_type, slot, "variant")
+                .expect(POSITIONED);
+        }
+        self.widen(payload.ty, value, "variant")
     }
 
     /// Stores at `place` a new box that holds `value`, of type `F`, or of `F?` when present. An
@@ -1064,17 +1203,33 @@ impl<'ctx> Codegen<'ctx, '_> {
             tag,
             equal,
             |_| true,
-            |variant, field, payload| {
-                let pair = self.equal_at(
-                    payload.ty,
-                    self.payload_place(a, id, variant, field),
-                    self.payload_place(b, id, variant, field),
-                );
+            |variant, field, _| {
+                let pair = self.fields_equal((id, variant, field), a, b);
                 let next = block("next");
                 self.branch_on(pair, next, unequal);
                 self.builder.position_at_end(next);
             },
         );
+    }
+
+    /// Whether payload field `field` of variant `variant` is `==` in the values of the enum `id`
+    /// at `a` and `b`, which are of that variant: an enum by address, any other type by value.
+    fn fields_equal(
+        &self,
+        (id, variant, field): (EnumId, usize, usize),
+        a: PointerValue<'ctx>,
+        b: PointerValue<'ctx>,
+    ) -> IntValue<'ctx> {
+        let ty = self.program.enums[id.0].variants[variant].fields[field].ty;
+        if let TypeKind::Enum(..) = ty.kind() {
+            return self.equal_at(
+                ty,
+                self.payload_place(a, id, variant, field),
+                self.payload_place(b, id, variant, field),
+            );
+        }
+        let value = |at| self.payload_value(at, id, variant, field);
+        self.equal(ty, value(a), value(b))
     }
 
     /// A call of `@sisu_rc.eq_component.<F0>` with `args`: `kind`, `a` and `b`.
@@ -1359,11 +1514,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             if !self.is_link(id, payload) {
                 let next = self.context.append_basic_block(function, "next");
-                let pair = self.equal_at(
-                    payload.ty,
-                    self.payload_place(a, id, variant, field),
-                    self.payload_place(b, id, variant, field),
-                );
+                let pair = self.fields_equal((id, variant, field), a, b);
                 self.branch_on(pair, next, eq.unequal);
                 self.builder.position_at_end(next);
                 continue;

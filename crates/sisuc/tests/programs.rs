@@ -47,10 +47,11 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 16] = [
+const SMALL_STACK: [&str; 17] = [
     "longlist",
     "rightskew",
     "deepchain",
+    "deepchain2",
     "dropmutual",
     "eqlist",
     "enumlist",
@@ -234,6 +235,8 @@ allocation_counts! {
     // Each step takes `e`'s two boxes apart for the new `Add`. Building into the old boxes
     // allocates nothing.
     (enum_alloc_rewrite, "12\n", "12\n", 0),
+    // The same for an `Option`-shaped enum, whose value is the pointer to its box.
+    (enum_alloc_chain_rewrite, "3\n", "3\n", 0),
     // `==` on right-deep values needs no buffer of pending pairs: only the 4 boxes per level.
     (enum_alloc_eq_right, "true\n", "true\n", 4000),
 }
@@ -354,6 +357,17 @@ fn equal_enum_lists_should_compare_in_a_small_stack() {
 #[test]
 fn deep_inline_links_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("deeppair", "true\nfalse\n");
+}
+
+/// GIVEN the `deepchain2` program, which compares and drops two pairs of 1 000 000-deep `Chain`s,
+/// an `Option`-shaped enum that holds itself
+/// WHEN it runs under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `true` and `false`
+///
+/// `==` and the drop of an enum that is the pointer to its box loop on the box in one frame.
+#[test]
+fn option_shaped_chains_should_compare_and_free_in_a_small_stack() {
+    assert_small_stack_prints_at_both("deepchain2", "true\nfalse\n");
 }
 
 /// GIVEN the `dropleft` program, which builds a class tree 1 000 000 deep through `l`, not the

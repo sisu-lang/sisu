@@ -205,7 +205,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.element_tag,
             );
         });
-        if counted_core(self.program, element).is_some() {
+        if counted_core(element).is_some() {
             self.share_filler(filler, element, count);
         } else if element.is_counted(&self.program.enums) {
             self.count_loop(count, |_| self.retain(filler, element));

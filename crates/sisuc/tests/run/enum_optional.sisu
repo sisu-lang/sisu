@@ -1,7 +1,8 @@
-// An optional enum is a `{ flag, value }` pair, never a pointer: `??`, `?.`, `if let` and `==`
-// test the flag, and `==` compares two payloads only when both are present. `Lit(0)` has the
-// zero value's bits, which a `None` holds, so `==` that read a `None`'s payload would find them
-// equal. An optional of `Expr`, whose `Add` fields are boxes, follows the same rules.
+// An optional enum keeps its `None` in the enum's tag: a `Num?` is a `Num` whose `None` has the
+// tag after `Text` and zero payload bits. `??`, `?.`, `if let` and `==` test that tag, and `==`
+// compares two payloads only when both are present. `Lit(0)` has the payload bits of a `None`, so
+// `==` that read a `None`'s payload would find them equal. An optional of `Expr`, whose `Add`
+// fields are boxes, follows the same rules.
 enum Num {
     Lit(i64)
     Text(string)

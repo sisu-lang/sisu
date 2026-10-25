@@ -911,47 +911,88 @@ fn niche_should_run_out_past_its_storage() {
     assert_eq!(codegen.llvm_type(layers(Type::BOOL, 254)), Some(i8_type));
     assert_eq!(codegen.llvm_type(layers(Type::BOOL, 255)), pair(i8_type));
     let e = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
-    let e_type = codegen.enum_layout(EnumId(0)).ty.into();
+    let e_type = codegen.enum_layout(EnumId(0)).ty;
     assert_eq!(codegen.llvm_type(layers(e, 1)), Some(e_type));
     assert_eq!(codegen.llvm_type(layers(e, 2)), pair(e_type));
 }
 
-/// The LLVM type of each optional local, from its `alloca`, and the empty value that a `None`
-/// stores: a spare value of the payload where it has one, `null` for one layer around a
-/// pointer, and a `{ i1, T }` pair for every other payload.
+/// The LLVM type of each local, from its `alloca`, and the value that its first value stores:
+/// a spare value of the payload where it has one, `null` for one layer around a pointer, and a
+/// `{ i1, T }` pair for every other optional. An `Option`-shaped enum, with one variant with no
+/// payload and one with one field, is that field's storage in either order of its variants, and
+/// its payload-free variant is the field's spare value. Every other enum is tagged.
 #[test]
 fn niche_layouts_should_follow_the_payload() {
     let rows = [
-        ("char?", "i32", "i32 1114112"),
-        ("char??", "i32", "i32 1114113"),
-        ("bool?", "i8", "i8 2"),
-        ("bool??", "i8", "i8 3"),
-        ("E?", "%sisu.E", "%sisu.E { i8 2 }"),
-        ("Node?", "ptr", "ptr null"),
-        ("Node??", "{ i1, ptr }", "{ i1, ptr } zeroinitializer"),
-        ("i64?", "{ i1, i64 }", "{ i1, i64 } zeroinitializer"),
-        ("u8?", "{ i1, i8 }", "{ i1, i8 } zeroinitializer"),
-        ("f64?", "{ i1, double }", "{ i1, double } zeroinitializer"),
+        ("char?", "None", "i32", Some("i32 1114112")),
+        ("char??", "None", "i32", Some("i32 1114113")),
+        ("bool?", "None", "i8", Some("i8 2")),
+        ("bool??", "None", "i8", Some("i8 3")),
+        ("E?", "None", "%sisu.E", Some("%sisu.E { i8 2 }")),
+        ("Node?", "None", "ptr", Some("ptr null")),
+        (
+            "Node??",
+            "None",
+            "{ i1, ptr }",
+            Some("{ i1, ptr } zeroinitializer"),
+        ),
+        (
+            "i64?",
+            "None",
+            "{ i1, i64 }",
+            Some("{ i1, i64 } zeroinitializer"),
+        ),
+        (
+            "u8?",
+            "None",
+            "{ i1, i8 }",
+            Some("{ i1, i8 } zeroinitializer"),
+        ),
+        (
+            "f64?",
+            "None",
+            "{ i1, double }",
+            Some("{ i1, double } zeroinitializer"),
+        ),
+        ("Maybe", "Maybe.Nothing", "i32", Some("i32 1114112")),
+        ("Flag", "Flag.Unset", "i8", Some("i8 2")),
+        ("Chain", "Chain.End", "ptr", Some("ptr null")),
+        ("Rev", "Rev.Nothing", "i32", Some("i32 1114112")),
+        ("Maybe?", "None", "i32", Some("i32 1114113")),
+        ("Link", "Link.End", "%sisu.Link", None),
+        ("Wide", "Wide.A", "%sisu.Wide", None),
+        ("Two", "Two.A('a')", "%sisu.Two", None),
     ];
     let context = Context::create();
     let lets = (rows.iter().enumerate())
-        .map(|(i, (ty, ..))| format!("    let x{i}: {ty} = None\n    print(x{i} == None)\n"))
+        .map(|(i, (ty, init, ..))| {
+            format!("    let x{i}: {ty} = {init}\n    print(x{i} == {init})\n")
+        })
         .collect::<Vec<_>>()
         .concat();
+    let enums = "enum Maybe {\n    Nothing\n    Just(char)\n}\n\
+        enum Flag {\n    Unset\n    Set(bool)\n}\n\
+        enum Chain {\n    End\n    Next(Chain)\n}\n\
+        enum Rev {\n    Just(char)\n    Nothing\n}\n\
+        enum Link {\n    End\n    Next(Link?)\n}\n\
+        enum Wide {\n    A\n    B(i64)\n}\n\
+        enum Two {\n    A(char)\n    B(char)\n}\n";
     let src = format!(
-        "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\nfn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
+        "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\n{enums}fn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
     );
     let ir = compiled(&context, &src).print_to_string().to_string();
     let main = function_body(&ir, "define internal void @sisu.main()");
-    for (i, (ty, llvm, empty)) in rows.iter().enumerate() {
+    for (i, (ty, _, llvm, first)) in rows.iter().enumerate() {
         assert!(
             main.contains(&format!("%x{i} = alloca {llvm}, align")),
             "{ty} should be {llvm} in\n{main}"
         );
-        assert!(
-            main.contains(&format!("store {empty}, ptr %x{i},")),
-            "the `None` of {ty} should be {empty} in\n{main}"
-        );
+        if let Some(first) = first {
+            assert!(
+                main.contains(&format!("store {first}, ptr %x{i},")),
+                "the first value of {ty} should be {first} in\n{main}"
+            );
+        }
     }
 }
 
