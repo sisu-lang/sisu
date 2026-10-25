@@ -132,6 +132,58 @@ fn an_optional_of_an_optional_should_be_peeled_first() {
     assert_eq!(fixes(&src, &d), []);
 }
 
+/// `??` groups to the right, so `x ?? None ?? 0` checks `None ?? 0`, whose `None` has no type.
+/// The error is at that `None`, and its unsafe fix groups the left side instead.
+/// `tests/diagnostics/E0050-coalesce` pins the wording.
+#[test]
+fn a_none_that_starts_the_right_of_coalesce_should_offer_to_group_the_left() {
+    let src = with_body("let r = x ?? None ?? 0");
+    let d = diagnostic(&src, Code::CannotInfer, (2, 18, "None"), &[]);
+    let edit = |col, text: &str| (2, col, "", text.to_string());
+    assert_eq!(
+        fixes(&src, &d),
+        [(false, vec![edit(13, "("), edit(22, ")")])]
+    );
+    clean(&applied(&src, &d));
+    // The right side of the inner `??` is still checked.
+    let src = with_body("let r = x ?? None ?? nothing");
+    codes(
+        &src,
+        &[
+            (Code::CannotInfer, (2, 18)),
+            (Code::BindingNotFound, (2, 26)),
+        ],
+    );
+}
+
+/// Only an optional left side and a `None` that no parenthesis groups get the fix.
+#[test]
+fn a_none_beside_coalesce_should_keep_the_type_help_when_the_grouping_is_not_the_cause() {
+    for (body, expected) in [
+        // The right side is written as a group already.
+        (
+            "let r = x ?? (None ?? 0)",
+            vec![(Code::CannotInfer, (2, 19))],
+        ),
+        // A left side that is not optional.
+        (
+            "let r = c ?? None ?? 0",
+            vec![
+                (Code::CoalesceNotOptional, (2, 13)),
+                (Code::CannotInfer, (2, 18)),
+            ],
+        ),
+        // A left side that is not a bare `None`.
+        ("let r = x ?? w ?? 0", vec![]),
+    ] {
+        let src = with_body(body);
+        codes(&src, &expected);
+        if let Some(d) = diags(&src).iter().find(|d| d.code() == Code::CannotInfer) {
+            assert_eq!(fixes(&src, d), [], "{body}");
+        }
+    }
+}
+
 /// An optional is a type argument like any other type, written or inferred.
 #[test]
 fn an_optional_should_be_a_type_argument() {

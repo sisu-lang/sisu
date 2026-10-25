@@ -462,6 +462,10 @@ pub(crate) enum DiagnosticKind {
         /// What the `let` that the literal initializes writes before its type, for the example.
         binding: Option<String>,
         at: Span,
+        /// For the `None` that starts the right side of a `??`, the offset where the left side
+        /// of that `??` starts: `??` groups to the right, and parentheses from there to `at`
+        /// group it to the left.
+        regroup: Option<usize>,
     },
     /// A call at `at` of `callee` that binds nothing to its type parameter `param`; `example`
     /// writes the call with its type arguments.
@@ -2171,6 +2175,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 literal,
                 binding,
                 at,
+                regroup,
             } => {
                 let (literal, example) = match (literal, binding) {
                     (Literal::None, name) => (
@@ -2182,8 +2187,25 @@ impl From<DiagnosticKind> for Diagnostic {
                         format!("let {}: [i64] = []", name.as_deref().unwrap_or("xs")),
                     ),
                 };
-                Diagnostic::coded(code, at, format!("cannot infer the type of `{literal}`"))
-                    .with_help(format!("write the type: `{example}`"))
+                let d = Diagnostic::coded(code, at, format!("cannot infer the type of `{literal}`"));
+                match regroup {
+                    Some(start) => d.with_fix(Fix {
+                        message: "`??` groups to the right; to unwrap the left side twice, use parentheses"
+                            .to_string(),
+                        safe: false,
+                        edits: vec![
+                            Edit {
+                                span: Span::new(start, start),
+                                replacement: "(".to_string(),
+                            },
+                            Edit {
+                                span: Span::new(at.end(), at.end()),
+                                replacement: ")".to_string(),
+                            },
+                        ],
+                    }),
+                    None => d.with_help(format!("write the type: `{example}`")),
+                }
             }
             DiagnosticKind::CannotInferParam {
                 param,
