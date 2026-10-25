@@ -80,7 +80,7 @@ A tour of the Sisu language as it works today, one small program at a time.
         <li><code>match a</code> with the arms <code>Some(x) =&gt;</code> and <code>None =&gt;</code> handles both cases. <code>i64?</code> is short for <code>Option&lt;i64&gt;</code>, an enum that every program has.</li>
       </ul>
       <p>A conversion that can fail returns an optional instead of panicking. <code>i64(41.5)</code> is <code>None</code>, because 41.5 is not a whole number.</p>
-      <!-- source: docs/roadmap.md ("What works today": optionals, ?. ?? if let while let, panic on the right of ??), docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md, crates/sisuc/tests/run/optionals.sisu, crates/sisuc/tests/run/unwrap.sisu -->
+      <!-- source: docs/roadmap.md ("What works today": optionals, ?. ?? if let while let, panic on the right of ??), docs/adr/0018-a-conversion-that-can-fail-returns-an-optional.md, crates/sisuc/tests/run/optionals.sisu, crates/sisuc/tests/run/unwrap.sisu, crates/sisuc/tests/run/optional_patterns.sisu -->
 
       <h2 id="classes">Classes</h2>
       <p>A class declares its fields one per line and its methods after them. A method takes <code>self</code> and may write any <code>mut</code> field. Objects are freed by reference counting when the last reference goes away.</p>
