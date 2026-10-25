@@ -76,8 +76,9 @@ class Parser {
         s
     }
 
-    // `x = expr`, `while expr block` or `if expr block else block`. A letter
-    // that no `=` follows starts an `if`.
+    // `x = expr`, `while expr block` or `if expr block else block`. `w` starts
+    // a `while`, so no variable is `w`. Another letter that no `=` follows
+    // starts an `if`.
     fn stmt(self) -> Stmt {
         let c = self.peek()
         if c == LOWER_W {
