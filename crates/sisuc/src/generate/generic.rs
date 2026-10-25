@@ -14,7 +14,7 @@ use super::Gen;
 use super::expr::{CHARS, Info};
 use super::item::MAX_FIELDS;
 use super::item::payload;
-use super::scope::{Applied, Class, Enum, Field, Ty, Variant};
+use super::scope::{Applied, Class, Enum, Field, RESULT, Ty, Variant, generic_name};
 
 /// The names of a generic declaration's type parameters, by index.
 const PARAMS: [&str; 2] = ["T", "U"];
@@ -50,7 +50,7 @@ impl fmt::Display for GTy {
             GTy::Plain(ty) => write!(f, "{ty}"),
             GTy::Array(element) => write!(f, "[{element}]"),
             GTy::Optional(payload) => write!(f, "{payload}?"),
-            GTy::Applied(g, args) => write!(f, "G{g}{}", angled(args)),
+            GTy::Applied(g, args) => write!(f, "{}{}", generic_name(*g), angled(args)),
         }
     }
 }
@@ -159,6 +159,19 @@ pub(crate) struct Generic {
 }
 
 impl Generic {
+    /// The prelude's `enum Result<T, E> { Ok(T)  Err(E) }`, whose second parameter is `U` here.
+    pub(crate) fn result() -> Generic {
+        let variant = |name: &str, param| GVariant {
+            name: name.to_string(),
+            fields: vec![GTy::Param(param)],
+            recursive: false,
+        };
+        Generic {
+            params: 2,
+            body: Body::Enum(vec![variant("Ok", 0), variant("Err", 1)]),
+        }
+    }
+
     fn is_enum(&self) -> bool {
         matches!(self.body, Body::Enum(_))
     }
@@ -229,9 +242,11 @@ impl Gen<'_> {
             self.generic_type();
         }
         // The instances come before the functions, so that a function can name them.
-        for g in 0..self.scope.generics.len() {
+        // The prelude's `Result` is a generic like the declared ones.
+        let declared = 0..self.scope.generics.len();
+        for g in declared.chain([RESULT]) {
             for _ in 0..=self.pick(2) {
-                let args: Vec<Ty> = (0..self.scope.generics[g].params)
+                let args: Vec<Ty> = (0..self.scope.generic(g).params)
                     .map(|_| self.type_arg())
                     .collect();
                 let ty = self.instance(g, &args);
@@ -540,8 +555,11 @@ impl Gen<'_> {
         if let Some((_, ty)) = self.scope.instances.iter().find(|(k, _)| **k == *key) {
             return ty.clone();
         }
-        let params = self.scope.generics[generic].params;
-        let ty = match self.scope.generics[generic].body.clone() {
+        let (params, body) = {
+            let generic = self.scope.generic(generic);
+            (generic.params, generic.body.clone())
+        };
+        let ty = match body {
             Body::Class(fields) => {
                 let inferable = GTy::name_all(fields.iter().map(|f| &f.ty), params);
                 let mut made = Vec::new();
@@ -703,7 +721,7 @@ impl Gen<'_> {
             }
             if unused(
                 env,
-                &|ty| matches!(ty, GTy::Applied(g, _) if self.scope.generics[*g].is_enum()),
+                &|ty| matches!(ty, GTy::Applied(g, _) if self.scope.generic(*g).is_enum()),
             ) {
                 options.push(Source::Match);
             }
@@ -787,6 +805,13 @@ impl Gen<'_> {
             }
             GTy::Optional(payload) => {
                 let value = self.solve(payload, env, nesting + 1)?;
+                // An `if` over an optional takes one `?` layer, whatever its context expects.
+                if matches!(**payload, GTy::Optional(_)) {
+                    return Some(Solved {
+                        text: format!("Some({})", value.text),
+                        ..value
+                    });
+                }
                 let cond = if self.pick(2) == 0 { "true" } else { "false" };
                 Some(Solved {
                     text: format!("(if {cond} {{ {} }} else {{ None }})", value.text),
@@ -801,8 +826,11 @@ impl Gen<'_> {
     /// `G<n><args>(g: a, ...)` or `G<n><args>.V(a, ...)`. Where the fields name every type
     /// parameter, it can also leave out the type arguments.
     fn construct(&mut self, g: usize, args: &[GTy], env: &mut Env, nesting: u32) -> Option<Solved> {
-        let generic = self.scope.generics[g].clone();
-        let (bare, typed) = (format!("G{g}"), format!("G{g}{}", angled(args)));
+        let generic = self.scope.generic(g).into_owned();
+        let (bare, typed) = (
+            generic_name(g),
+            format!("{}{}", generic_name(g), angled(args)),
+        );
         let mut parts = Vec::new();
         let (variant, inferable) = match &generic.body {
             Body::Class(fields) => {
@@ -920,7 +948,8 @@ impl Gen<'_> {
             let (GTy::Applied(g, args), false) = (ty, *used) else {
                 continue;
             };
-            let Body::Enum(variants) = &self.scope.generics[*g].body else {
+            let generic = self.scope.generic(*g);
+            let Body::Enum(variants) = &generic.body else {
                 continue;
             };
             for variant in variants {
@@ -948,8 +977,9 @@ impl Gen<'_> {
             .collect();
         Some(Solved {
             text: format!(
-                "(match {} {{ G{g}.{}({}) => p; _ => {} }})",
+                "(match {} {{ {}.{}({}) => p; _ => {} }})",
                 env[i].0,
+                generic_name(g),
                 variant.name,
                 fields.join(", "),
                 rest.text

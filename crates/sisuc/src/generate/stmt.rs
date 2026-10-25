@@ -259,7 +259,8 @@ impl Gen<'_> {
         let keyword = if mutable { "let mut" } else { "let" };
         self.w.text(&format!("{keyword} {name}"));
         // A value of a type the checker infers needs one where it is not written.
-        if ty.inferred() || self.pick(2) == 1 {
+        let written = ty.inferred() || self.pick(2) == 1;
+        if written {
             let written = self.spell(&ty);
             self.w.text(&format!(": {written}"));
         }
@@ -274,6 +275,7 @@ impl Gen<'_> {
             (_, false) if ty.sized() => (MAX_SIZE, 0),
             _ => (0, 0),
         };
+        self.typed = written;
         let init = self.expr(&ty, base);
         let base = if mutable { base } else { init.size };
         let mut var = Var::new(name, ty, mutable, base, room, self.cost.depth());

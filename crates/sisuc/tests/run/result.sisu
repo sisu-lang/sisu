@@ -1,0 +1,60 @@
+// `Result<T, E>` is an ordinary generic enum of the prelude: `Ok` and `Err` build it and a
+// `match` takes it apart, with the error a counted `string` or the value a class. A `match` on
+// the result of a call takes an owned value apart, and the value that is left is released. A
+// `Result<Node, string>` also lives in an array.
+class Node {
+    v: i64
+    label: string
+}
+
+// The length of `s`, or why `s` has none: `Err` holds a `string` built at run time.
+fn parse(s: string) -> Result<i64, string> {
+    if s == "" {
+        return Err("empty")
+    }
+    if s.len() > 3 {
+        return Err("too long: {s}")
+    }
+    Ok(s.len())
+}
+
+fn make(v: i64) -> Result<Node, string> {
+    if v < 0 {
+        return Err("negative {v}")
+    }
+    Result.Ok(Node(v: v, label: "node {v}"))
+}
+
+fn show(s: string) {
+    match parse(s) {
+        Ok(n) => print("ok {n}")
+        Err(e) => print("err {e}")
+    }
+}
+
+fn main() {
+    show("") // err empty
+    show("abc") // ok 3
+    show("abcdef") // err too long: abcdef
+    show("12") // ok 2
+
+    let kept: Result<i64, string> = Err("kept")
+    let other = Result<i64, string>.Err("other")
+    match kept {
+        Ok(n) => print("ok {n}")
+        Err(e) => print("err {e}") // err kept
+    }
+    match other {
+        Ok(n) => print("ok {n}")
+        Err(e) => print("err {e}") // err other
+    }
+
+    let rs: [Result<Node, string>] = [make(1), make(-2), make(3)]
+    for r in rs {
+        match r {
+            Ok(node) => print("{node.v} {node.label}") // 1 node 1, then 3 node 3
+            Err(e) => print(e) // negative -2, between them
+        }
+    }
+    print(rs.len()) // 3
+}

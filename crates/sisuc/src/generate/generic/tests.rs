@@ -1,7 +1,7 @@
 //! Tests of the generic rules.
 
 use super::{Body, GField, GFunc, GTy, GVariant, Generic, MAX_SOLVE, Shape, unify};
-use crate::generate::scope::Ty;
+use crate::generate::scope::{RESULT, Ty};
 use crate::generate::{BUDGET, FUEL, Gen, MAX_NESTING, MAX_SIZE, STATEMENT_MOST, generate};
 use crate::tir::Rank;
 
@@ -600,6 +600,26 @@ fn a_variant_should_leave_out_its_type_arguments_only_with_fields_that_name_them
         "{}",
         g.w.out.program
     );
+}
+
+/// The prelude's `Result` is written by its name and variants, with its type arguments, and as
+/// `Ok(..)` or `Err(..)` only where the `let` that holds it writes its type.
+#[test]
+fn a_result_should_be_written_by_the_prelude_names() {
+    let write = |bytes: &[u8], bare: bool, max: u64, except: Option<usize>| {
+        let mut g = Gen::new(bytes);
+        let ty = g.instance(RESULT, &[Ty::I64, Ty::String]);
+        assert_eq!(ty.to_string(), "Result<i64, string>");
+        g.bare = bare;
+        g.variant(&ty, max, except);
+        g.w.out.program
+    };
+    // The `Ok` and `Err` variants, each with its type arguments.
+    assert!(write(&[0], false, 3, Some(1)).starts_with("Result<i64, string>.Ok("));
+    assert!(write(&[0], false, 3, Some(0)).starts_with("Result<i64, string>.Err("));
+    // `Ok(..)` after a first choice, and the variant with the type arguments after a second.
+    assert!(write(&[0], true, 3, Some(1)).starts_with("Ok("));
+    assert!(write(&[1], true, 3, Some(1)).starts_with("Result<i64, string>.Ok("));
 }
 
 #[test]
@@ -1203,7 +1223,10 @@ fn generics_should_name_each_instance_once_among_the_types() {
         instances += types.len();
         for (i, ty) in types.iter().enumerate() {
             assert!(!types[..i].contains(ty), "{ty} twice");
-            assert!(ty.to_string().starts_with('G'), "{ty}");
+            assert!(
+                ty.to_string().starts_with('G') || ty.to_string().starts_with("Result<"),
+                "{ty}"
+            );
         }
     }
     assert!(instances > 0, "no seed names an instance");

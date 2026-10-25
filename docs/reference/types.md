@@ -306,11 +306,22 @@ fn half(n: i64) -> Option<i64> {
     Some(n / 2)
 }
 
+fn exact_half(n: i64) -> Result<i64, string> {
+    if n % 2 == 1 {
+        return Err("{n} is odd")
+    }
+    Ok(n / 2)
+}
+
 fn main() {
     let a: i64? = half(8)
     match a {
         Some(n) => print(n)            // 4
         None => print("odd")
+    }
+    match exact_half(7) {
+        Ok(n) => print(n)
+        Err(reason) => print(reason)   // 7 is odd
     }
 }
 ```

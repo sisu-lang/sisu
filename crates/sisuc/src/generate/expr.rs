@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use super::scope::{Scope, Ty, Var};
+use super::scope::{RESULT, Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Mark, Rewrite, Site, allowed};
 use super::{Gen, LINE, MAX_BOUND, MAX_LOOPS, MAX_NESTING, MAX_SIZE};
@@ -248,6 +248,7 @@ impl Gen<'_> {
     /// type `None` or `[]` at all. Such a value is at least `ty.least()`, which `max` holds.
     pub(crate) fn expr(&mut self, ty: &Ty, max: u64) -> Info {
         let synth = std::mem::take(&mut self.synth) && ty.inferred();
+        let typed = std::mem::take(&mut self.typed);
         debug_assert!(!synth || ty.least() <= max, "no {ty} fits {max}");
         debug_assert!(ty.floor() <= max, "no {ty} fits {max}");
         let u8 = synth && *ty == Ty::U8;
@@ -269,7 +270,9 @@ impl Gen<'_> {
         let rule = rules[self.pick(rules.len())];
         let start = self.w.mark();
         self.nesting += 1;
+        self.bare = typed && matches!(rule, Rule::Literal);
         let mut info = self.rule(rule, ty, max, synth);
+        self.bare = false;
         self.nesting -= 1;
         // A value of a type without a size counts none, whatever its parts held.
         if !ty.sized() {
@@ -664,7 +667,13 @@ impl Gen<'_> {
         let fits = fields.iter().map(Ty::least).fold(0, u64::saturating_add) < max;
         let infer = inferable && fits && self.pick(2) == 0;
         let enum_name = if infer { ty.bare() } else { ty.to_string() };
-        self.w.text(&format!("{enum_name}.{name}"));
+        // `Ok(..)` and `Err(..)` take their `Result` from the type that the `let` writes.
+        let is_result = matches!(ty, Ty::Enum { applied: Some(a), .. } if a.generic == RESULT);
+        if is_result && std::mem::take(&mut self.bare) && self.pick(2) == 0 {
+            self.w.text(&name);
+        } else {
+            self.w.text(&format!("{enum_name}.{name}"));
+        }
         if fields.is_empty() {
             return Info::leaf(1);
         }

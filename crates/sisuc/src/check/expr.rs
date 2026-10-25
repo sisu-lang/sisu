@@ -254,10 +254,11 @@ impl Checker<'_> {
                 }
             }
             None => self.constant_use(name, span).unwrap_or_else(|| {
-                let d = if name.as_str() == "Some" {
-                    // The prelude's `Option` makes no enum for `bare_variant` to find.
+                let d = if name.as_str() == "Some" || self.result_variant(name).is_some() {
+                    // These variants of the prelude's enums are written without the enum, and
+                    // `Option` makes no enum for `bare_variant` to find.
                     DiagnosticKind::VariantForm {
-                        path: "Some".to_string(),
+                        path: name.to_string(),
                         payload: true,
                         held: false,
                         at: span,

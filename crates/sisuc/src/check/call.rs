@@ -60,6 +60,10 @@ impl Checker<'_> {
             (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
             // `Some` is the prelude's: a user item with that name is reported, and called above.
             _ if callee.name.as_str() == "Some" => self.some(span, site, None, args),
+            // `Ok` and `Err` are the prelude's, and no user item can take their names.
+            _ if let Some((id, _)) = self.result_variant(callee.name) => {
+                self.enum_path(span, id, callee, Some((args, callee.span)), site)
+            }
             _ => match self.bare_variant(callee.name, callee.span) {
                 Some(d) => {
                     self.diagnostics.push(d);

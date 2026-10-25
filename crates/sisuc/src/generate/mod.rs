@@ -138,6 +138,11 @@ struct Gen<'a> {
     /// Whether the next expression is in a position with no expected type, where a `u8` must
     /// be one by its own type (`Gen::expr`).
     synth: bool,
+    /// Whether the next expression is the value of a `let` that writes its type, so that a
+    /// `Result` may be built as `Ok(..)` or `Err(..)`, which take their type from it.
+    typed: bool,
+    /// Whether the variant that `Gen::variant` writes next may be written as `Ok(..)` or `Err(..)`.
+    bare: bool,
     /// What chooses the rewrites and the known sites, apart from `u`, so the program is the
     /// same whatever they are.
     ru: Unstructured<'a>,
@@ -166,6 +171,8 @@ impl<'a> Gen<'a> {
             jumps: stmt::Jumps::default(),
             blocks: 0,
             synth: false,
+            typed: false,
+            bare: false,
             ru: Unstructured::new(&[]),
             effect: false,
             returns: false,

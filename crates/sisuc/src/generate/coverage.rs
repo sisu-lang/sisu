@@ -20,7 +20,7 @@ use crate::types::{Type, TypeKind};
 use crate::{ast, lexer, parser, tir};
 
 /// How many seeds, and how many bytes each holds.
-const SEEDS: u64 = 64;
+const SEEDS: u64 = 96;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
@@ -92,7 +92,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 53] = [
+const REACH: [&str; 56] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -146,6 +146,9 @@ const REACH: [&str; 53] = [
     "reach: a variant, literal or range pattern stands at an optional position",
     "reach: a binding or `_` covers a whole optional in a `match` arm",
     "reach: a `match` on an optional of an optional",
+    "reach: `Ok` builds a `Result`",
+    "reach: `Err` builds a `Result`",
+    "reach: a `match` on a `Result`",
 ];
 
 /// Whether a program's text holds a form.
@@ -395,6 +398,8 @@ struct Walk {
     chains: FxHashSet<usize>,
     /// Each enum's variants, by the enum's name.
     variants: FxHashMap<String, Vec<String>>,
+    /// The id of the prelude's `Result` in the typed tree.
+    result: Option<usize>,
     /// The types each enum's payloads hold, by its id.
     payloads: Vec<Vec<Type>>,
     /// Field and element assignments of a value that may hold a class object (decision 4).
@@ -1154,6 +1159,9 @@ impl Walk {
                 if callee == "Some" {
                     self.mark("reach: `Some` builds an optional");
                 }
+                if callee == "Ok" || callee == "Err" {
+                    self.mark(&format!("reach: `{callee}` builds a `Result`"));
+                }
                 self.generic_call(callee, types.is_empty());
                 self.mark(&format!("prelude {callee}"));
                 if callee == "panic" {
@@ -1433,6 +1441,7 @@ impl Walk {
     }
 
     fn tir(&mut self, program: &tir::Program) {
+        self.result = program.enums.iter().position(|e| e.name == "Result");
         self.payloads = program
             .enums
             .iter()
@@ -1809,6 +1818,10 @@ impl Walk {
                 scrutinee, arms, ..
             } => {
                 self.mark("tir::ExprKind::Match");
+                if matches!(scrutinee.ty.kind(), TypeKind::Enum(id, _) if Some(id.0) == self.result)
+                {
+                    self.mark("reach: a `match` on a `Result`");
+                }
                 self.some_value(scrutinee);
                 self.tir_expr(scrutinee, Parent::Other);
                 if let TypeKind::Optional(payload) = scrutinee.ty.kind() {
@@ -2625,28 +2638,29 @@ fn an_int_literal_is_worth_what_it_says() {
 
 #[test]
 fn rare_constant_forms_check_clean() {
-    // Each input chooses, byte by byte, no class or enum, no generic type, no generic function,
-    // an item, a constant, its type, no annotation, and then its form, ending once the bytes run
-    // out, where every choice is the first.
+    // Each input chooses, byte by byte, no class or enum, no generic type, one instance of
+    // `Result` over two `i64`s, no generic function, an item, a constant, its type, no
+    // annotation, and then its form, ending once the bytes run out, where every choice is the
+    // first.
     for (data, form) in [
         // `-(e)` of the smallest `i64`, which has no negation: `e` alone.
         (
-            &[0, 0, 0, 1, 0, 0, 0, 1, 0, 63][..],
+            &[0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 63][..],
             "const c1 = (-9223372036854775808)\n",
         ),
         // `a - b` of the smallest `i64` and a negative literal, which fits where `a + b` would
         // overflow: the fold must know the literal's sign.
         (
-            &[0, 0, 0, 1, 0, 0, 0, 3, 0, 63, 0, 6, 0, 0, 0][..],
+            &[0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 3, 0, 63, 0, 6, 0, 0, 0][..],
             "const c1 = ((-9223372036854775808) - (-1))\n",
         ),
         // `(a && b)` and `(a || b)` of `bool`s.
         (
-            &[0, 0, 0, 1, 0, 3, 0, 3, 1][..],
+            &[0, 0, 0, 0, 0, 0, 1, 0, 3, 0, 3, 1][..],
             "const c1 = (false && false)\n",
         ),
         (
-            &[0, 0, 0, 1, 0, 3, 0, 3, 1, 0, 0, 1][..],
+            &[0, 0, 0, 0, 0, 0, 1, 0, 3, 0, 3, 1, 0, 0, 1][..],
             "const c1 = (false || false)\n",
         ),
     ] {
@@ -2742,6 +2756,32 @@ fn main() {{
         |class: &str, variant: &str| keys.map(|k| marked(&program(class, variant)).contains(k));
     assert_eq!(marks("B(v: 1)", "E.C(1)"), [false, true, true]);
     assert_eq!(marks("B<i64>(v: 1)", "E<i64>.C(1)"), [true, false, false]);
+}
+
+#[test]
+fn the_walker_should_mark_a_result_built_by_bare_names_and_matched() {
+    let program = |build: &str| {
+        format!(
+            "fn main() {{
+    let r: Result<i64, string> = {build}
+    match r {{
+        Ok(n) => print(n)
+        Err(e) => print(e)
+    }}
+}}
+"
+        )
+    };
+    let keys = [
+        "reach: `Ok` builds a `Result`",
+        "reach: `Err` builds a `Result`",
+        "reach: a `match` on a `Result`",
+    ];
+    let marks = |build: &str| keys.map(|k| marked(&program(build)).contains(k));
+    assert_eq!(marks("Ok(1)"), [true, false, true]);
+    assert_eq!(marks("Err(\"x\")"), [false, true, true]);
+    // The qualified spelling is no bare name.
+    assert_eq!(marks("Result.Ok(1)"), [false, false, true]);
 }
 
 #[test]

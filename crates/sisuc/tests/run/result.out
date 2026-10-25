@@ -1,0 +1,10 @@
+err empty
+ok 3
+err too long: abcdef
+ok 2
+err kept
+err other
+1 node 1
+negative -2
+3 node 3
+3

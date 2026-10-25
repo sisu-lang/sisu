@@ -416,6 +416,18 @@ impl Checker<'_> {
         }
     }
 
+    /// The prelude's `Result` and the variant it declares for `name`, when `name` is `Ok` or
+    /// `Err`, which a program writes without the enum.
+    pub(super) fn result_variant(&self, name: Symbol) -> Option<(EnumId, usize)> {
+        if !matches!(name.as_str(), "Ok" | "Err") {
+            return None;
+        }
+        let Some(&Declared::Known(id)) = self.enum_ids.get(&Symbol::intern("Result")) else {
+            return None;
+        };
+        Some((id, *self.enums[id.0].index.get(&name)?))
+    }
+
     /// The enums with a variant `name`, by name, in declaration order. A duplicate or broken
     /// enum has no variants anyone can name.
     pub(super) fn variant_of(&self, name: Symbol) -> Vec<String> {

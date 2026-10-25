@@ -103,7 +103,7 @@ codes! {
     CannotCompare = "E0047",
     CoalesceNotOptional = "E0048",
     SafeAccessNotOptional = "E0049",
-    CannotInfer | CannotInferParam | CannotInferSome = "E0050",
+    CannotInfer | CannotInferParam | CannotInferSome | CannotInferResult = "E0050",
     UnwrapNeedsOptional = "E0051",
     FunctionNotFound = "E0052",
     ArgumentCount = "E0053",
@@ -476,6 +476,13 @@ pub(crate) enum DiagnosticKind {
     },
     /// A call of `Some` at `at` whose argument does not fix the type of its payload.
     CannotInferSome { at: Span },
+    /// A call of `Ok` or `Err`, named `variant`, at `at`, whose arguments and context do not
+    /// fix the type parameter `param` of its `Result`.
+    CannotInferResult {
+        param: String,
+        variant: String,
+        at: Span,
+    },
     /// The value at `at`, of type `found`, that `keyword` unwraps, and which is not optional.
     UnwrapNeedsOptional {
         keyword: Unwrap,
@@ -2193,6 +2200,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, "cannot infer `T` for `Some`")
                     .with_help("annotate the optional's type, as in `let x: i64?? = Some(None)`")
             }
+            DiagnosticKind::CannotInferResult { param, variant, at } => Diagnostic::coded(
+                code,
+                at,
+                format!("cannot infer `{param}` for `{variant}`"),
+            )
+            .with_help("annotate the result's type, as in `let r: Result<i64, string> = Ok(...)`"),
             DiagnosticKind::UnwrapNeedsOptional {
                 keyword,
                 found,

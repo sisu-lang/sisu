@@ -1,10 +1,24 @@
 //! What the generator knows at a point of the program: the names in scope, their types, the
 //! sizes their values can reach, and the values it knows.
 
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use super::DEPTHS;
 use super::generic::{GFunc, Generic};
+
+/// The generic that is the prelude's `Result<T, U>`, which no `Scope::generics` entry holds and
+/// no declaration writes.
+pub(crate) const RESULT: usize = usize::MAX;
+
+/// How a program writes the generic `generic`: `G3`, or `Result`.
+pub(crate) fn generic_name(generic: usize) -> String {
+    if generic == RESULT {
+        "Result".to_string()
+    } else {
+        format!("G{generic}")
+    }
+}
 
 /// An instance of a generic class or enum: `Scope::generics[generic]` applied to `args`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,7 +78,7 @@ fn written(prefix: &str, id: usize, applied: Option<&Applied>) -> String {
         return format!("{prefix}{id}");
     };
     let args: Vec<String> = args.iter().map(ToString::to_string).collect();
-    format!("G{generic}<{}>", args.join(", "))
+    format!("{}<{}>", generic_name(*generic), args.join(", "))
 }
 
 impl Ty {
@@ -95,9 +109,7 @@ impl Ty {
             }
             | Ty::Enum {
                 applied: Some(a), ..
-            } => {
-                format!("G{}", a.generic)
-            }
+            } => generic_name(a.generic),
             _ => self.to_string(),
         }
     }
@@ -349,6 +361,15 @@ pub(crate) struct Scope {
 }
 
 impl Scope {
+    /// The generic `generic`, which may be `RESULT`.
+    pub(crate) fn generic(&self, generic: usize) -> Cow<'_, Generic> {
+        if generic == RESULT {
+            Cow::Owned(Generic::result())
+        } else {
+            Cow::Borrowed(&self.generics[generic])
+        }
+    }
+
     /// A name that no other name of the program has: `prefix` and a number.
     pub(crate) fn fresh(&mut self, prefix: &str) -> String {
         self.names += 1;

@@ -580,6 +580,15 @@ impl Checker<'_> {
             self.report(DiagnosticKind::CannotInferSome { at: name.span });
             return;
         }
+        // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
+        if let Some(variant) = sig.variant.filter(|v| v.span == name.span) {
+            self.report(DiagnosticKind::CannotInferResult {
+                param: sig.declared[param].to_string(),
+                variant: variant.name.to_string(),
+                at: name.span,
+            });
+            return;
+        }
         let dots = vec!["..."; sig.declared.len() - sig.owner.len()].join(", ");
         let (callee, example, at) = match sig.variant {
             Some(variant) => {
@@ -931,8 +940,9 @@ impl Checker<'_> {
                     sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args),
                 )
             }
-            // `Some<T>(x: T) -> T?`, which no user item can take the name of.
-            (None, None) if name.as_str() == "Some" => {
+            // `Some<T>(x: T) -> T?`, and the prelude's `Ok` and `Err`, which no user item can
+            // take the name of.
+            (None, None) if name.as_str() == "Some" || self.result_variant(name).is_some() => {
                 (true, matches!(args, [arg] if arg.label.is_none()))
             }
             _ => (false, false),
