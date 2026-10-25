@@ -238,7 +238,8 @@ less padding sits between them; `tir` and every diagnostic keep declared
 order. Codegen emits the helpers that
 manage them: `sisu_rc.retain`, and for each class `sisu_rc.release.<Class>`
 and `sisu_rc.drop.<Class>`. A class in a cycle of classes that hold each other
-in direct fields frees the objects of the cycle from pending lists, linked
+in direct fields, `X` with any number of `?` around it, frees the objects of
+the cycle from pending lists, linked
 through the dead count word. So a chain of any depth drops in one frame. A
 cycle of two or more classes shares one `sisu_rc.drain.<Class>` helper, named
 after its first class. A class that `==` compares also gets
