@@ -9,6 +9,7 @@ Reviewers apply these rules to every diff. Clippy, rustfmt and prek already enfo
 - **Diagnostic wording blocks when it misleads.** Messages, labels and help text are clear and specific, and follow "Writing" below. Block for a wrong code, a wrong position, a cascade, a crash or wrong behaviour, and for wording that is wrong, misleading, vague, full of compiler jargon, or different from the spec's text. A weak unsafe fix, or a rewording where both versions are clear, is a nit.
 - **A nit names what it changes.** Give the input whose output, diagnostic or cost changes, or mark the nit "comment only". Drop a nit whose change no test could observe.
 - **A comment's facts were observed.** A comment or doc that states run-time behavior, such as a printed value, an order, or what the OS or a library does, matches a real run or the cited source. Check each such claim in the diff. A wrong one blocks.
+- **Rust follows the `rust-best-practices` skill.** Apply the skill (`AGENTS.md`, Code rules) to Rust in the diff. Where the skill and these rules or the lints do not agree, these rules apply. A departure from the skill is a nit, unless it also causes a defect that the rules above block.
 - **Export a commit to build it.** `git -C <repo> archive <sha> | tar -x -C <scratch dir>` gives a clean copy to build, run or mutate; link `.llvm` into it from the repository. Do not use `git worktree add`: it leaves an entry in the shared `.git` that a sandbox cannot prune.
 
 ## Tests
