@@ -279,8 +279,8 @@ impl<'a> Checker<'_> {
     /// others through a table, so the work follows the methods and not the pairs of blocks, but
     /// for a block with type parameters, which meets each earlier block of the name.
     ///
-    /// That is the third recorded exception to "A pass is linear in the program" (user,
-    /// 2026-10-25; ruling F9): `n` plain blocks with parameters that hold a method of one name
+    /// That is the second recorded exception to "A pass is linear in the program" (user,
+    /// 2026-10-25; ruling F9 (d)): `n` plain blocks with parameters that hold a method of one name
     /// make `n` overlap tests for the last, `n²` in all. An index on the whole target would
     /// remove it, and waits until a program needs it.
     pub(super) fn extension_clashes(&mut self) {

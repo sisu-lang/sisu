@@ -4,7 +4,7 @@
 
 use std::cmp::Ordering;
 
-use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 
 use crate::symbol::Symbol;
 use crate::tir::{Conformances, InterfaceId, Type, TypeArgs, TypeKind, head_of};
@@ -15,8 +15,8 @@ thread_local! {
     static CANDIDATES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `Unifier::resolve` has read on this thread.
     static RESOLVE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many types `Unifier::occurs` has read on this thread.
-    static OCCURS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `Unifier::unify` has read on this thread.
+    static UNIFY_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The conformance of `interface` to `ty` with the interface arguments `args`, as its index
@@ -139,7 +139,8 @@ fn matches_all(patterns: TypeArgs, types: TypeArgs, slots: &mut [Option<Type>]) 
 /// second. The second's parameters follow the first's, so the two never share a number. The
 /// types come back as the most general ones both sides cover, with the parameters that are still
 /// free in them. A parameter never stands for a type that holds it, so `extend<U> Box<U>:
-/// Convert<[U]>` never meets `extend<T> Box<T>: Convert<T>`.
+/// Convert<[U]>` never meets `extend<T> Box<T>: Convert<T>`. The check for that waits until
+/// every pair is unified, and is one pass over the bindings.
 pub(crate) fn overlap(
     a: &[Type],
     a_params: usize,
@@ -163,18 +164,24 @@ pub(crate) fn overlap(
             return None;
         }
     }
-    Some(a.iter().map(|&ty| unifier.resolve(ty)).collect())
+    a.iter().map(|&ty| unifier.resolve(ty)).collect()
 }
 
 /// Why a chain of replacements cannot be longer than the parameters.
-const OCCURS: &str =
-    "the occurs check should keep a parameter from standing for a type that holds it";
+const CHAIN: &str =
+    "a chain of parameters that stand for each other should be shorter than the parameters";
 
-/// The two-sided unifier of `overlap`: what each parameter stands for so far.
+/// The two-sided unifier of `overlap`: what each parameter stands for so far. A parameter may
+/// stand for a type that holds it; `resolve` finds that out when the unifying is done.
 struct Unifier {
     stood: Vec<Option<Type>>,
     /// The answer of `resolve` for each parameter that stands for something.
     memo: Vec<Memo>,
+    /// The types that `unify` has made one, as a union-find forest: a type in a class has
+    /// unified with the others of it, so a pair of one class is not unified again, and a cyclic
+    /// binding cannot make `unify` run for ever.
+    classes: FxHashMap<Type, usize>,
+    parents: Vec<usize>,
 }
 
 /// What `resolve` knows of a parameter.
@@ -182,7 +189,7 @@ struct Unifier {
 enum Memo {
     Unknown,
     /// Being resolved: the parameter was met again on the way, so it stands for a type that holds
-    /// it.
+    /// it, and no type can stand for it.
     Doing,
     Done(Type),
 }
@@ -192,7 +199,35 @@ impl Unifier {
         Self {
             stood: vec![None; params],
             memo: vec![Memo::Unknown; params],
+            classes: FxHashMap::default(),
+            parents: Vec::new(),
         }
+    }
+
+    /// The class of `ty` among the types that `unify` has made one.
+    fn class(&mut self, ty: Type) -> usize {
+        let next = self.parents.len();
+        let at = *self.classes.entry(ty).or_insert(next);
+        if at == next {
+            self.parents.push(next);
+        }
+        let mut root = at;
+        while self.parents[root] != root {
+            root = self.parents[root];
+        }
+        // Path halving: every type on the way points at the root.
+        let mut at = at;
+        while self.parents[at] != root {
+            at = std::mem::replace(&mut self.parents[at], root);
+        }
+        root
+    }
+
+    /// Makes `x` and `y` one class, and says whether they were one already.
+    fn join(&mut self, x: Type, y: Type) -> bool {
+        let (x, y) = (self.class(x), self.class(y));
+        self.parents[x] = y;
+        x == y
     }
 
     /// `ty`, with the parameter at its root replaced while one stands for something, and how
@@ -205,89 +240,88 @@ impl Unifier {
         {
             ty = *next;
             steps += 1;
-            assert!(steps <= self.stood.len(), "{OCCURS}");
+            assert!(steps <= self.stood.len(), "{CHAIN}");
         }
         (ty, steps)
     }
 
-    /// `ty` with every parameter replaced that stands for something. A parameter is resolved
-    /// once, whatever number of places hold it, so types that share a binding cost the sum of
-    /// their parts, not the size of the type they unfold to.
-    fn resolve(&mut self, ty: Type) -> Type {
+    /// `ty` with every parameter replaced that stands for something, or `None` when a parameter
+    /// stands for a type that holds it. A parameter is resolved once, whatever number of places
+    /// hold it, so types that share a binding cost the sum of their parts, not the size of the
+    /// type they unfold to; and the parameters that are met again while one is resolved are the
+    /// cycles, so this is the one pass that finds them.
+    fn resolve(&mut self, ty: Type) -> Option<Type> {
         #[cfg(test)]
         RESOLVE_STEPS.set(RESOLVE_STEPS.get() + 1);
-        match ty.kind() {
+        Some(match ty.kind() {
             TypeKind::Param(_, i) => {
                 let Some(&Some(next)) = self.stood.get(i as usize) else {
-                    return ty;
+                    return Some(ty);
                 };
                 match self.memo[i as usize] {
-                    Memo::Done(done) => return done,
-                    Memo::Doing => panic!("{OCCURS}"),
+                    Memo::Done(done) => return Some(done),
+                    Memo::Doing => return None,
                     Memo::Unknown => {}
                 }
                 self.memo[i as usize] = Memo::Doing;
-                let done = self.resolve(next);
+                let done = self.resolve(next)?;
                 self.memo[i as usize] = Memo::Done(done);
                 done
             }
-            TypeKind::Array(element) => Type::array(self.resolve(element)),
-            TypeKind::Optional(payload) => Type::optional(self.resolve(payload)),
-            TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args))),
-            TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args))),
+            TypeKind::Array(element) => Type::array(self.resolve(element)?),
+            TypeKind::Optional(payload) => Type::optional(self.resolve(payload)?),
+            TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args)?)),
+            TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args)?)),
             _ => ty,
-        }
+        })
     }
 
-    fn resolve_all(&mut self, args: TypeArgs) -> TypeArgs {
-        let list: Vec<Type> = (args.get().iter()).map(|&ty| self.resolve(ty)).collect();
-        TypeArgs::intern(&list)
+    fn resolve_all(&mut self, args: TypeArgs) -> Option<TypeArgs> {
+        let list = (args.get().iter())
+            .map(|&ty| self.resolve(ty))
+            .collect::<Option<Vec<Type>>>()?;
+        Some(TypeArgs::intern(&list))
     }
 
-    /// Whether the parameter `i` is in `ty`, once what stands for each parameter is in. `seen`
-    /// holds the parameters already unfolded, so a binding that many places share is read once.
-    fn occurs(&self, i: u32, ty: Type, seen: &mut FxHashSet<u32>) -> bool {
-        #[cfg(test)]
-        OCCURS_STEPS.set(OCCURS_STEPS.get() + 1);
-        match ty.kind() {
-            TypeKind::Param(_, j) if i == j => true,
-            TypeKind::Param(_, j) => match self.stood.get(j as usize) {
-                Some(&Some(next)) => seen.insert(j) && self.occurs(i, next, seen),
-                _ => false,
-            },
-            TypeKind::Array(inner) | TypeKind::Optional(inner) => self.occurs(i, inner, seen),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
-                args.get().iter().any(|&arg| self.occurs(i, arg, seen))
-            }
-            _ => false,
-        }
-    }
-
-    /// Makes `x` and `y` the same type, if some types can stand for their parameters.
+    /// Makes `x` and `y` the same type, if some types can stand for their parameters. A
+    /// parameter may come to stand for a type that holds it: `resolve` rejects that.
     fn unify(&mut self, left: Type, right: Type) -> bool {
+        #[cfg(test)]
+        UNIFY_STEPS.set(UNIFY_STEPS.get() + 1);
         let (left, right) = (self.walk(left).0, self.walk(right).0);
         if left == right {
             return true;
         }
         match (left.kind(), right.kind()) {
             // The later parameter stands for the earlier, so the first side's names stay.
-            (TypeKind::Param(_, i), TypeKind::Param(_, j)) => match i.cmp(&j) {
-                Ordering::Less => self.stand(j, left),
-                _ => self.stand(i, right),
-            },
-            (TypeKind::Param(_, i), _) => self.stand(i, right),
-            (_, TypeKind::Param(_, i)) => self.stand(i, left),
+            (TypeKind::Param(_, i), TypeKind::Param(_, j)) => {
+                match i.cmp(&j) {
+                    Ordering::Less => self.stood[j as usize] = Some(left),
+                    _ => self.stood[i as usize] = Some(right),
+                }
+                true
+            }
+            (TypeKind::Param(_, i), _) => {
+                self.stood[i as usize] = Some(right);
+                true
+            }
+            (_, TypeKind::Param(_, i)) => {
+                self.stood[i as usize] = Some(left);
+                true
+            }
             (TypeKind::Array(l), TypeKind::Array(r))
-            | (TypeKind::Optional(l), TypeKind::Optional(r)) => self.unify(l, r),
+            | (TypeKind::Optional(l), TypeKind::Optional(r)) => {
+                self.join(left, right) || self.unify(l, r)
+            }
             (TypeKind::Class(from, l), TypeKind::Class(to, r))
                 if from == to && l.get().len() == r.get().len() =>
             {
-                self.unify_all(l, r)
+                self.join(left, right) || self.unify_all(l, r)
             }
             (TypeKind::Enum(from, l), TypeKind::Enum(to, r))
                 if from == to && l.get().len() == r.get().len() =>
             {
-                self.unify_all(l, r)
+                self.join(left, right) || self.unify_all(l, r)
             }
             _ => false,
         }
@@ -295,15 +329,6 @@ impl Unifier {
 
     fn unify_all(&mut self, left: TypeArgs, right: TypeArgs) -> bool {
         (left.get().iter().zip(right.get())).all(|(&l, &r)| self.unify(l, r))
-    }
-
-    /// Makes the parameter `i` stand for `ty`, unless `ty` holds it.
-    fn stand(&mut self, i: u32, ty: Type) -> bool {
-        if self.occurs(i, ty, &mut FxHashSet::default()) {
-            return false;
-        }
-        self.stood[i as usize] = Some(ty);
-        true
     }
 }
 
@@ -361,7 +386,7 @@ mod tests {
         let (t, u) = (param(0), param(0));
         let pair = |a, b| class(PAIR, &[a, b]);
         let circle = class(CIRCLE, &[]);
-        let rows: [Row; 24] = [
+        let rows: [Row; 25] = [
             // `extend<T> Box<T>: Convert<T>` and `extend<U> Box<U>: Convert<i64>`.
             (
                 &[boxed(t), t],
@@ -444,6 +469,9 @@ mod tests {
                 1,
                 None,
             ),
+            // `V := Pair<T>`, then `T := Pair<V>` closes a cycle, and `T` with `V` meets two types
+            // that each hold the other: the unifier must end, and the targets cover no type.
+            (&[pair(t, t), t, t], 1, &[u, pair(u, u), u], 1, None),
             // Two parameters meet at the first side's, so a report names it, whichever of them
             // the walk meets first.
             (&[boxed(t)], 1, &[boxed(u)], 1, Some(vec![boxed(t)])),
@@ -461,8 +489,8 @@ mod tests {
     }
 
     /// Targets that bind `v0 = Pair<w1, w1>`, `w1 = Pair<w2, w2>` and so on share a binding in
-    /// each level. The type they unfold to is `2^n` nodes, and the checks read each shared binding
-    /// once, so the resolution follows `n` and the occurs checks, one for each parameter, `n²`.
+    /// each level. The type they unfold to is `2^n` nodes, and the passes read each shared binding
+    /// once, so the unifying and the resolution follow `n`.
     #[test]
     fn overlap_should_read_a_shared_binding_once() {
         let pair = |a, b| class(PAIR, &[a, b]);
@@ -479,26 +507,56 @@ mod tests {
             a.extend((1..n).rev().map(v));
             b.extend((1..n).rev().map(w));
             RESOLVE_STEPS.set(0);
-            OCCURS_STEPS.set(0);
+            UNIFY_STEPS.set(0);
             let common = overlap(&a, n, &b, n).expect("the targets should cover a type");
             let mut expected = Type::I64;
             for _ in 1..n {
                 expected = shared(expected);
             }
             assert_eq!(common[0], expected, "n = {n}");
-            let (resolved, occurs) = (RESOLVE_STEPS.get(), OCCURS_STEPS.get());
+            let (resolved, unified) = (RESOLVE_STEPS.get(), UNIFY_STEPS.get());
             assert!(resolved <= 8 * n, "n = {n}: {resolved} resolutions");
-            // Each check reads the chain below its parameter once, and there is one check for
-            // each parameter: `n` squared and no more.
-            assert!(occurs <= 2 * n * n, "n = {n}: {occurs} occurs steps");
+            assert!(unified <= 2 * n, "n = {n}: {unified} unifications");
         }
     }
 
-    /// A chain of parameters that stand for each other is no longer than the parameters, and a
-    /// replacement of a parameter by a type that holds it is no deeper: the occurs check keeps
-    /// both from happening, and the walk fails with its name when it is gone.
+    /// Two types that share their parts in each level, `v_k = Pair<w_(k+1), w_(k+1)>` against
+    /// `w_k = Pair<v_(k+1), v_(k+1)>`, unify level by level. A pair of types unifies once, so the
+    /// second of the two arguments of a level costs nothing, and the work follows `n`, not `2^n`.
     #[test]
-    #[should_panic(expected = "occurs check")]
+    fn overlap_should_unify_a_pair_of_shared_types_once() {
+        let pair = |a, b| class(PAIR, &[a, b]);
+        let shared = |ty| pair(ty, ty);
+        for n in [8_usize, 16] {
+            let p = |i: usize| param(u32::try_from(i).expect("n should be small"));
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            for k in 0..n - 1 {
+                a.push(p(k));
+                b.push(shared(p(k + 1)));
+                a.push(shared(p(k + 1)));
+                b.push(p(k));
+            }
+            a.extend([p(n - 1), Type::I64, p(0)]);
+            b.extend([Type::I64, p(n - 1), p(0)]);
+            RESOLVE_STEPS.set(0);
+            UNIFY_STEPS.set(0);
+            let common = overlap(&a, n, &b, n).expect("the targets should cover a type");
+            let mut expected = Type::I64;
+            for _ in 1..n {
+                expected = shared(expected);
+            }
+            assert_eq!(common[0], expected, "n = {n}");
+            let (resolved, unified) = (RESOLVE_STEPS.get(), UNIFY_STEPS.get());
+            assert!(resolved <= 10 * n, "n = {n}: {resolved} resolutions");
+            assert!(unified <= 4 * n, "n = {n}: {unified} unifications");
+        }
+    }
+
+    /// A chain of parameters that stand for each other is no longer than the parameters: the
+    /// walk fails with its name when one is, and resolving a parameter that holds itself ends
+    /// with no type.
+    #[test]
+    #[should_panic(expected = "a chain of parameters")]
     fn walk_should_fail_on_a_chain_that_loops() {
         let mut unifier = Unifier::new(2);
         unifier.stood = vec![Some(param(1)), Some(param(0))];
@@ -506,11 +564,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "occurs check")]
-    fn resolve_should_fail_on_a_parameter_that_holds_itself() {
+    fn resolve_should_find_no_type_for_a_parameter_that_holds_itself() {
         let mut unifier = Unifier::new(2);
         unifier.stood = vec![Some(Type::array(param(1))), Some(Type::array(param(0)))];
-        unifier.resolve(param(0));
+        assert_eq!(unifier.resolve(param(0)), None);
     }
 
     /// The target of a conformance with parameters binds them from the structure of a type; a

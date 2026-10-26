@@ -457,8 +457,9 @@ struct Walk {
     labels: Vec<Option<Symbol>>,
     /// Where each `loop` that counts down starts.
     counted: FxHashSet<usize>,
-    /// The interfaces that the bounds of each function name, by the function's name.
-    bounded: FxHashMap<String, Vec<String>>,
+    /// The interfaces that the bounds of each type parameter of a function name, by the
+    /// function's name.
+    bounded: FxHashMap<String, Vec<Vec<String>>>,
     /// The interfaces of the typed tree, by `InterfaceId`, and the function being walked in it.
     interface_names: Vec<String>,
     tir_func: String,
@@ -743,7 +744,8 @@ impl Walk {
         self.func = f.name.name.as_str().to_string();
         self.in_generic = !f.type_params.is_empty();
         self.bounds(&f.type_params);
-        let named = (f.type_params.iter().flat_map(|p| &p.bounds)).map(ToString::to_string);
+        let named =
+            (f.type_params.iter()).map(|p| p.bounds.iter().map(ToString::to_string).collect());
         self.bounded.insert(self.func.clone(), named.collect());
         self.params.clear();
         for param in &f.params {
@@ -1670,13 +1672,13 @@ impl Walk {
         }
     }
 
-    /// Whether a call of the function `func` gives a type argument to a bound that the type meets
-    /// through a conformance of a block with bounds.
+    /// Whether a call of the function `func` gives a type argument to a bound of its own
+    /// parameter that the type meets through a conformance of a block with bounds.
     fn meets_conditional_bound(&self, func: usize, types: &[Type]) -> bool {
         let Some(bounds) = self.bounded.get(&self.function_names[func]) else {
             return false;
         };
-        types.iter().any(|ty| {
+        types.iter().zip(bounds).any(|(ty, bounds)| {
             let name = match ty.kind() {
                 TypeKind::Class(id, _) => &self.class_names[id.0],
                 TypeKind::Enum(id, _) => &self.enum_names[id.0],
@@ -1946,7 +1948,9 @@ impl Walk {
                 self.mark("tir::ExprKind::InterfaceCall");
                 // The bounds of the function name the interface, or one that inherits it.
                 let name = &self.interface_names[interface.0];
-                if !(self.bounded.get(&self.tir_func)).is_some_and(|named| named.contains(name)) {
+                if !(self.bounded.get(&self.tir_func))
+                    .is_some_and(|named| named.iter().flatten().any(|bound| bound == name))
+                {
                     self.mark("reach: a call goes through an inherited bound");
                 }
                 self.tir_exprs(args);
@@ -5543,6 +5547,20 @@ fn the_walk_should_mark_what_extension_holds() {
     );
     assert_eq!(
         marked(&format!("{block}fn main() {{\n    print(show(C()))\n}}\n")),
+        [false, false, false]
+    );
+    // The bound belongs to the first parameter: the block is met there, and not by the second.
+    let two = "fn two<T: Named, U>(x: T, y: U) -> string {\n    x.name()\n}\n";
+    assert_eq!(
+        marked(&format!(
+            "{block}{two}fn main() {{\n    print(two(R(v: C()), C()))\n}}\n"
+        )),
+        [false, true, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{block}{two}fn main() {{\n    print(two(C(), R(v: C())))\n}}\n"
+        )),
         [false, false, false]
     );
     assert_eq!(
