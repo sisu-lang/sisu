@@ -2,6 +2,8 @@
 //! cover a type together. A conformance's target is a class or an enum, with the type parameters
 //! of its `extend` block in it; they are the `Param`s numbered from 0.
 
+use std::cmp::Ordering;
+
 use crate::symbol::Symbol;
 use crate::tir::{Conformances, InterfaceId, Type, TypeArgs, TypeKind, head_of};
 
@@ -229,7 +231,10 @@ impl Unifier {
         }
         match (left.kind(), right.kind()) {
             // The later parameter stands for the earlier, so the first side's names stay.
-            (TypeKind::Param(_, i), TypeKind::Param(_, j)) if i < j => self.stand(j, left),
+            (TypeKind::Param(_, i), TypeKind::Param(_, j)) => match i.cmp(&j) {
+                Ordering::Less => self.stand(j, left),
+                _ => self.stand(i, right),
+            },
             (TypeKind::Param(_, i), _) => self.stand(i, right),
             (_, TypeKind::Param(_, i)) => self.stand(i, left),
             (TypeKind::Array(l), TypeKind::Array(r))
