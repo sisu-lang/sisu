@@ -1648,6 +1648,16 @@ fn bound_violations_should_be_reported_once_at_the_call() {
             "fn f<T: Same>(x: T) {}\nfn g(n: Node) {\n    f<Node>(n)\n}",
             vec![(Code::NotConform, (3, 7))],
         ),
+        // A built-in type conforms to nothing yet.
+        (
+            "fn f<T: Same>(x: T) {}\nfn g() {\n    f(1)\n}",
+            vec![(Code::NotConform, (3, 7))],
+        ),
+        // An interface with arguments: the report names them, and the parameter gets no help.
+        (
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nfn f<T: Convert<i64>>(x: T) {}\nfn g(n: Node) {\n    f(n)\n}",
+            vec![(Code::NotConform, (6, 7))],
+        ),
         // A parameter bound for the type it is a parameter of, with no bound of its own.
         (
             "fn f<T>(s: Sorted<T>) {}",
@@ -1694,12 +1704,47 @@ fn a_method_that_no_bound_gives_should_be_reported() {
     }
 }
 
+/// A call through a bound has the arguments of its requirement: a wrong count is reported at the
+/// call, unless a comparison misread as a call took the commas of the list.
+#[test]
+fn a_call_through_a_bound_should_check_the_count_of_its_arguments() {
+    for (row, expected) in [
+        (
+            "fn f<T: Shape>(x: T) -> f64 {\n    x.area(1)\n}",
+            vec![(Code::ArgumentCount, (2, 5))],
+        ),
+        (
+            "interface Two {\n    fn two(self, a: bool, b: bool)\n}\nfn f<T: Two>(x: T, a: i64, b: i64, c: i64, d: i64) {\n    x.two(a < b, c > (d))\n}",
+            vec![(Code::TypeArguments, (5, 11))],
+        ),
+        // An argument of the wrong type, and a label.
+        (
+            "fn f<T: Same>(x: T) -> bool {\n    x.same(1)\n}",
+            vec![(Code::Mismatch, (2, 12))],
+        ),
+        // The call is `Error` when its argument fails, so the tail adds no mismatch of its own.
+        (
+            "fn f<T: Same>(x: T) -> i64 {\n    x.same(1)\n}",
+            vec![(Code::Mismatch, (2, 12))],
+        ),
+        (
+            "fn f<T: Keep>(x: T) -> i64 {\n    x.keep(v: 1)\n}",
+            vec![(Code::LabeledArgument, (2, 12))],
+        ),
+    ] {
+        codes(&with_bounds(row), &expected);
+    }
+}
+
 /// An own type parameter of the requirement that the instantiation cycle passes through: the
 /// argument grows each time `go` calls `wrap` and `wrap` calls `go`.
 #[test]
 fn a_cycle_through_a_requirements_own_parameter_should_be_reported() {
     let row = "interface Wrap {\n    fn wrap<U>(self, x: U)\n}\nclass Ring {\n    r: f64\n}\nextend Ring: Wrap {\n    fn wrap<U>(self, x: U) {\n        go(self, [x])\n    }\n}\nfn go<T: Wrap, U>(t: T, x: U) {\n    t.wrap(x)\n}\nfn main() {}";
     codes(row, &[(Code::InstantiationCycle, (9, 9))]);
+    // The call through the requirement grows its argument: the cycle shows the class.
+    let grows = "interface Wrap {\n    fn wrap<U>(self, x: U)\n}\nclass Ring {\n    r: f64\n}\nclass Box<T> {\n    v: T\n}\nextend Ring: Wrap {\n    fn wrap<U>(self, x: U) {\n        go(self, x)\n    }\n}\nfn go<T: Wrap, U>(t: T, x: U) {\n    t.wrap(Box(v: x))\n}\nfn main() {}";
+    codes(grows, &[(Code::InstantiationCycle, (16, 5))]);
     // The argument shrinks back: not a cycle.
     let steady = "interface Wrap {\n    fn wrap<U>(self, x: U)\n}\nclass Ring {\n    r: f64\n}\nextend Ring: Wrap {\n    fn wrap<U>(self, x: U) {\n        go(self, x)\n    }\n}\nfn go<T: Wrap, U>(t: T, x: U) {\n    t.wrap(x)\n}\nfn main() {}";
     clean(steady);
@@ -1735,6 +1780,41 @@ fn a_method_that_two_bounds_require_should_be_ambiguous_without_a_context() {
                 "{other}fn take<T>(a: T, b: T) {{}}\nfn f<T: A & B>(x: T, s: string) {{\n    take(x.name(), s)\n}}\nfn main() {{}}"
             ),
             vec![],
+        ),
+        // Both return one type, so the call does not wait for the generic call around it, which
+        // could not infer its parameter.
+        (
+            format!("{both}fn id<T>(a: T) -> T {{\n    a\n}}\nfn f<T: A & B>(x: T) {{\n    let n = id(x.name())\n}}\nfn main() {{}}"),
+            vec![(Code::Ambiguous, (11, 18))],
+        ),
+        // A context that failed is the report, and the call adds none.
+        (
+            format!("{other}fn f<T: A & B>(x: T) {{\n    let n: Missing = x.name()\n}}\nfn main() {{}}"),
+            vec![(Code::UnknownType, (8, 12))],
+        ),
+        // A result that failed, and a type argument that does not resolve, are reported once.
+        (
+            "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> Missing\n}\nfn f<T: A & B>(x: T) {\n    let n = x.name()\n}\nfn main() {}".to_string(),
+            vec![(Code::UnknownType, (5, 22))],
+        ),
+        (
+            "interface A {\n    fn make<U>(self, x: U) -> U\n}\ninterface B {\n    fn make<V>(self, x: V) -> [V]\n}\nfn f<T: A & B>(x: T) {\n    let n = x.make<Missing>(1)\n}\nfn main() {}".to_string(),
+            vec![(Code::UnknownType, (8, 20))],
+        ),
+        // Both return one type: the call does not wait for an outer call, and is reported.
+        (
+            format!("{both}fn take<T>(a: T, b: T) {{}}\nfn f<T: A & B>(x: T) {{\n    take(x.name(), \"s\")\n}}\nfn main() {{}}"),
+            vec![(Code::Ambiguous, (9, 12))],
+        ),
+        // A parameter that no bound gives the method: the call does not wait.
+        (
+            format!("{other}fn take<T>(a: T, b: T) {{}}\nfn f<T: A>(x: T) {{\n    take(x.nothing(), 1)\n}}\nfn main() {{}}"),
+            vec![(Code::NoMember, (9, 12))],
+        ),
+        // The interface's arguments name each candidate.
+        (
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nfn f<T: Convert<i64> & Convert<f64>>(x: T) {\n    let n = x.convert()\n}\nfn main() {}".to_string(),
+            vec![(Code::Ambiguous, (5, 15))],
         ),
         // The candidates are only told apart by an argument, which a call must not wait for.
         (

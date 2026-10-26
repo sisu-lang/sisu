@@ -1125,6 +1125,21 @@ fn main() {
         assert_eq!(codes(src), [(Code::Expected, (7, 11))]);
     }
 
+    /// A bound that the prelude writes has no label for the user: nothing in the prelude is
+    /// theirs to read. The failure itself is reported at the user's code.
+    #[test]
+    fn a_bound_in_the_prelude_should_give_a_report_with_no_label_into_it() {
+        let prelude = "interface Weigh {\n    fn weigh(self) -> i64\n}\nclass Scale<T: Weigh> {\n    item: T\n}\n";
+        let src = "class Stone {}\nfn put(s: Scale<Stone>) {}\nfn main() {}\n";
+        let (_, ds) = front_end_with(prelude, src);
+        let [d] = &ds[..] else {
+            panic!("one diagnostic expected: {ds:?}");
+        };
+        assert_eq!(d.code(), Code::NotConform);
+        assert_eq!(line_col(src, d.span().start()), (2, 17));
+        assert_eq!(d.secondary(), []);
+    }
+
     /// A prelude that extends a built-in type is an internal error.
     #[test]
     #[should_panic(expected = "internal compiler error: the prelude does not check clean")]

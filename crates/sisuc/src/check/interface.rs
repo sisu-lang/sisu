@@ -488,17 +488,15 @@ impl Checker<'_> {
         }
         if self.body.conforming[place].is_none() {
             let mut out = Vec::new();
-            if let Some(&name) = self.body.type_params.get(place) {
-                let receiver = Type::intern(TypeKind::Param(
-                    name,
-                    u32::try_from(place)
-                        .expect("a declaration should have fewer than 2^32 parameters"),
-                ));
-                let bounds = self.body.bounds.get(place).map_or(&[][..], Vec::as_slice);
-                let mut seen = std::mem::take(&mut self.closure_seen);
-                self.interfaces_of(receiver, bounds, &mut out, &mut seen);
-                self.closure_seen = seen;
-            }
+            let name = self.body.type_params[place];
+            let receiver = Type::intern(TypeKind::Param(
+                name,
+                u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters"),
+            ));
+            let bounds = self.body.bounds.get(place).map_or(&[][..], Vec::as_slice);
+            let mut seen = std::mem::take(&mut self.closure_seen);
+            self.interfaces_of(receiver, bounds, &mut out, &mut seen);
+            self.closure_seen = seen;
             self.body.conforming[place] = Some(out);
         }
         self.body.conforming[place]
@@ -626,7 +624,7 @@ impl Checker<'_> {
         let (bounds, args) = match ty.kind() {
             TypeKind::Class(id, args) => (self.classes[id.0].bounds.clone(), args),
             TypeKind::Enum(id, args) => (self.enums[id.0].bounds.clone(), args),
-            _ => return true,
+            _ => unreachable!("only an applied class or enum should wait for its bounds"),
         };
         let mut holds = true;
         for (k, bounds) in bounds.iter().enumerate() {

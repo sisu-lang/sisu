@@ -1388,8 +1388,8 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Continue { .. }
         | ExprKind::Return(None) => {}
         ExprKind::Local(local) => found.found.push(local.0),
+        ExprKind::InterfaceCall { .. } => unreachable!("mono should replace every interface call"),
         ExprKind::Call { args, .. }
-        | ExprKind::InterfaceCall { args, .. }
         | ExprKind::New { args, .. }
         | ExprKind::Variant { args, .. }
         | ExprKind::ArrayLit(args)

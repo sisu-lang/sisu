@@ -2867,6 +2867,16 @@ mod tests {
                 2,
             ),
             (
+                ExprKind::InterfaceCall {
+                    interface: InterfaceId(0),
+                    iargs: TypeArgs::NONE,
+                    method: 0,
+                    types: TypeArgs::NONE,
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
+            (
                 ExprKind::New {
                     class: ClassId(0),
                     args: ints([1, 2]),
