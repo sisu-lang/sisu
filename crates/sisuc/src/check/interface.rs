@@ -649,11 +649,9 @@ impl Checker<'_> {
     /// that its class or enum declares. When every conformance is not yet known, the check waits.
     /// Whether it holds, or waits.
     pub(super) fn check_applied(&mut self, ty: Type, ats: Vec<Span>) -> bool {
-        if self.pending_bounds.is_some() {
-            let scope = self.scope();
-            if let Some(pending) = &mut self.pending_bounds {
-                pending.push(PendingBound { ty, ats, scope });
-            }
+        let scope = self.pending_bounds.is_some().then(|| self.scope());
+        if let (Some(scope), Some(pending)) = (scope, &mut self.pending_bounds) {
+            pending.push(PendingBound { ty, ats, scope });
             return true;
         }
         self.check_applied_now(ty, &ats)

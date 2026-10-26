@@ -2030,3 +2030,57 @@ fn a_closure_that_doubles_should_stop_at_the_limit() {
     // Four levels give less than the limit.
     clean(&doubling(2));
 }
+
+/// A list of interfaces on a class, and an `extend` block, report E0157 as a bound does: at the
+/// interface, once, when it gives more than 256 interfaces with those it inherits.
+#[test]
+fn a_conformance_should_give_at_most_the_limit_of_interfaces() {
+    let mut chain = String::from("interface D1 {}\n");
+    for k in 2..=257 {
+        writeln!(chain, "interface D{k}: D{} {{}}", k - 1)
+            .expect("writing to a `String` should succeed");
+    }
+    chain += "fn main() {}";
+    // In the list of a class.
+    let src = format!("class K: D257 {{}}\n{chain}");
+    codes(&src, &[(Code::BoundTooWide, (1, 10))]);
+    // The roots after the one that passed the limit are not walked.
+    let src = format!("class K: D257, Extra {{}}\ninterface Extra {{}}\n{chain}");
+    codes(&src, &[(Code::BoundTooWide, (1, 10))]);
+    // In a block: the interfaces that the walk did not reach are not asked for, and each that it
+    // reached and the class lacks is a report of its own.
+    let src = format!("class K {{}}\nextend K: D257 {{}}\n{chain}");
+    let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+    assert_eq!(
+        found.iter().filter(|&&c| c == Code::BoundTooWide).count(),
+        1
+    );
+    assert_eq!(
+        found.iter().filter(|&&c| c == Code::NotConform).count(),
+        256
+    );
+}
+
+/// A call that writes type arguments waits only when several methods answer it, whether the
+/// receiver is a class with conformance blocks, an optional of one, or a class with a method of its
+/// own that wins; other receivers never wait.
+#[test]
+fn a_call_with_written_type_arguments_should_wait_only_for_several_methods() {
+    let decls = "interface One {\n    fn make<U>(self, x: U) -> U\n}\ninterface Many {\n    fn make<V>(self, x: V) -> [V]\n}\nclass C {\n    x: i64\n}\nextend C: One {\n    fn make<U>(self, x: U) -> U { x }\n}\nextend C: Many {\n    fn make<V>(self, x: V) -> [V] { [x] }\n}\nclass D {\n    x: i64\n    fn make<U>(self, x: U) -> U { x }\n}\nfn take<T>(a: T, b: T) {}\nfn main() {}";
+    clean(&format!(
+        "fn f(c: C, o: C?, s: [i64], t: [i64]?) {{\n    take(c.make<i64>(1), s)\n    take(o?.make<i64>(1), t)\n}}\n{decls}"
+    ));
+    clean(&format!(
+        "fn f(d: D) {{\n    take(d.make<i64>(1), 2)\n}}\n{decls}"
+    ));
+    // The method of the class itself wins over two blocks, and one block is not several: the
+    // call is checked at once, where it would wait if it were several, for its result names a
+    // parameter that no argument gives.
+    let src = "interface Tag {\n    fn tag<U>(self) -> [U]\n}\ninterface Tag2 {\n    fn tag<V>(self) -> V\n}\nfn id<T>(a: T) -> T {\n    a\n}\nfn f(e: E, c: C1) {\n    let n = id(e.tag<i64>())\n    let m = id(c.tag<i64>())\n}\nclass E {\n    x: i64\n    fn tag<U>(self) -> [U] { [] }\n}\nextend E: Tag {\n    fn tag<U>(self) -> [U] { [] }\n}\nextend E: Tag2 {\n    fn tag<V>(self) -> V { panic(\"x\") }\n}\nclass C1 {\n    x: i64\n}\nextend C1: Tag {\n    fn tag<U>(self) -> [U] { [] }\n}\nfn main() {}";
+    clean(src);
+    // A built-in receiver draws its own report and no wait.
+    codes(
+        &format!("fn f() {{\n    take(5.max<i64>(2), 3)\n}}\n{decls}"),
+        &[(Code::TypeArguments, (2, 15))],
+    );
+}
