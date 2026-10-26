@@ -1,12 +1,14 @@
 //! Members: fields and methods found through `.` and `?.`.
 
 use super::expr::{if_some, local, no_member, path};
+use super::extend::holder_of;
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, type_of, wrap};
 use crate::ast;
-use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind, Peel};
+use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel};
 use crate::source::Span;
-use crate::tir::{self, Type, TypeKind};
+use crate::symbol::Symbol;
+use crate::tir::{self, InterfaceId, Type, TypeKind};
 
 impl Checker<'_> {
     /// `receiver.member`, which `member` checks on the checked receiver. With `safe`, it is
@@ -143,7 +145,7 @@ impl Checker<'_> {
                 if let Some(index) = info.fields.iter().position(|f| f.name.name == name.name) {
                     return Some((class, index, self.field_type(ty, index)));
                 }
-                match info.methods.get(&name.name) {
+                match self.own_method(ty, name.name) {
                     Some(Declared::Known(func)) => {
                         let no_arguments = self.signatures[func.0].params.is_empty();
                         method(self.type_name(ty), no_arguments).into()
@@ -156,7 +158,7 @@ impl Checker<'_> {
                     }
                 }
             }
-            TypeKind::Enum(id, _) => match self.enums[id.0].methods.get(&name.name) {
+            TypeKind::Enum(..) => match self.own_method(ty, name.name) {
                 Some(Declared::Known(func)) => {
                     let no_arguments = self.signatures[func.0].params.is_empty();
                     method(self.type_name(ty), no_arguments).into()
@@ -179,26 +181,86 @@ impl Checker<'_> {
         None
     }
 
-    /// The method `name` of `receiver`, a value of type `ty`. `None` when there is none,
-    /// reported unless `ty` is `Error`. `target` when the call is in an assignment target's
-    /// chain, where `?.` cannot follow the receiver.
+    /// The method of the class or enum type `ty` that its body or a plain `extend` block gives
+    /// the name `name`, if any; a broken one for a method that a syntax error took. The first in
+    /// source order wins, and two are reported (E0034) elsewhere.
+    pub(super) fn own_method(&self, ty: Type, name: Symbol) -> Option<Declared<tir::FuncId>> {
+        let holder = holder_of(ty)?;
+        let body = match holder {
+            super::Holder::Class(c) => self.classes[c.0].methods.get(&name),
+            super::Holder::Enum(e) => self.enums[e.0].methods.get(&name),
+        };
+        if let Some(&body) = body {
+            return Some(body);
+        }
+        let blocks = self.extension_methods.get(&(holder, name));
+        let plain = blocks.into_iter().flatten().find_map(|&(at, func)| {
+            let ext = &self.extensions[at];
+            (ext.interface.is_none() && ext.target == ty).then_some(Declared::Known(func))
+        });
+        plain.or_else(|| {
+            (self.broken_extension_methods.contains(&(holder, name))).then_some(Declared::Broken)
+        })
+    }
+
+    /// The methods named `name` of the conformance blocks that cover `ty`, each with its block's
+    /// interface, in source order.
+    ///
+    /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25; ruling
+    /// F9 (e)): a call reads every block that holds a method of its name, `n` for `n` blocks, and
+    /// only those.
+    pub(super) fn conforming_methods(
+        &self,
+        ty: Type,
+        name: Symbol,
+    ) -> Vec<(tir::FuncId, InterfaceId)> {
+        let Some(holder) = holder_of(ty) else {
+            return Vec::new();
+        };
+        let blocks = self.extension_methods.get(&(holder, name));
+        (blocks.into_iter().flatten())
+            .filter_map(|&(at, func)| {
+                let ext = &self.extensions[at];
+                let (bound, _) = ext.interface?;
+                (ext.target == ty && !ext.duplicate).then_some((func, bound.interface))
+            })
+            .collect()
+    }
+
+    /// The method `name` of `receiver`, a value of type `ty`, which the call `call` (its span, and
+    /// the type its context expects) names. The type's own method wins; else the method of the
+    /// one conformance block that has one, or of the one whose result is the expected type.
+    /// `None` when there is none, reported unless `ty` is `Error`. `target` when the call is in an
+    /// assignment target's chain, where `?.` cannot follow the receiver.
     pub(super) fn find_method(
         &mut self,
         ty: Option<Type>,
         receiver: &ast::Expr,
         name: &ast::Ident,
         target: bool,
+        call: (Span, Option<Type>),
     ) -> Option<tir::FuncId> {
         let ty = ty?;
+        match self.own_method(ty, name.name) {
+            Some(Declared::Known(func)) => return Some(func),
+            // Its own error is reported; the caller checks the arguments.
+            Some(Declared::Broken) => return None,
+            None => {}
+        }
+        match self.conforming_methods(ty, name.name)[..] {
+            [] => {}
+            [(func, _)] => return Some(func),
+            ref several => return self.pick_conforming(ty, name, several, call),
+        }
+        // A broken block may have given the type the method.
+        let broken = holder_of(ty)
+            .is_some_and(|holder| self.broken_extensions.contains(&self.holder_name(holder)));
+        if broken {
+            return None;
+        }
         let d = match ty.kind() {
             TypeKind::Class(class, _) => {
                 let info = &self.classes[class.0];
-                match info.methods.get(&name.name) {
-                    Some(&Declared::Known(func)) => return Some(func),
-                    // Its own error is reported; the caller checks the arguments.
-                    Some(Declared::Broken) => return None,
-                    None => {}
-                }
                 if info.fields.iter().any(|f| f.name.name == name.name) {
                     DiagnosticKind::FieldNotMethod {
                         name: name.name.to_string(),
@@ -213,12 +275,6 @@ impl Checker<'_> {
             }
             TypeKind::Enum(id, _) => {
                 let info = &self.enums[id.0];
-                match info.methods.get(&name.name) {
-                    Some(&Declared::Known(func)) => return Some(func),
-                    // Its own error is reported; the caller checks the arguments.
-                    Some(Declared::Broken) => return None,
-                    None => {}
-                }
                 if info.variants.iter().any(|v| v.name.name == name.name) {
                     DiagnosticKind::MemberKind {
                         name: name.name.to_string(),
@@ -236,6 +292,59 @@ impl Checker<'_> {
             _ => no_member(Definition::Method, self.type_name(ty), name, []),
         };
         self.diagnostics.push(d);
+        None
+    }
+
+    /// The method among `candidates`, which are methods of conformance blocks that cover `ty`,
+    /// that the call `call` names: the only one whose result is the type its context expects, or,
+    /// when none is, the only one whose result is the payload of an expected optional. Otherwise
+    /// the call is ambiguous, reported with the `let` that picks one answer.
+    fn pick_conforming(
+        &mut self,
+        ty: Type,
+        name: &ast::Ident,
+        candidates: &[(tir::FuncId, InterfaceId)],
+        (span, expected): (Span, Option<Type>),
+    ) -> Option<tir::FuncId> {
+        let rets: Vec<Option<Type>> = (candidates.iter())
+            .map(|&(func, _)| self.signatures[func.0].ret)
+            .collect();
+        let returning = |want: Type| -> Vec<usize> {
+            (rets.iter().enumerate())
+                .filter(|&(_, &ret)| ret == Some(want))
+                .map(|(i, _)| i)
+                .collect()
+        };
+        if let Some(expected) = expected {
+            let mut hits = returning(expected);
+            if hits.is_empty()
+                && let TypeKind::Optional(payload) = expected.kind()
+            {
+                hits = returning(payload);
+            }
+            if let [only] = hits[..] {
+                return Some(candidates[only].0);
+            }
+        }
+        // The first result that exactly one candidate has tells the `let` what to write.
+        let unique = rets
+            .iter()
+            .flatten()
+            .find(|&&ret| returning(ret).len() == 1);
+        let annotate = unique.map(|&ret| Annotate {
+            call: self.source.file.text(span).to_string(),
+            binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
+            ty: self.type_name(ret),
+        });
+        self.report(DiagnosticKind::Ambiguous {
+            method: name.name.to_string(),
+            receiver: self.type_name(ty),
+            interfaces: (candidates.iter())
+                .map(|&(_, interface)| self.interfaces[interface.0].name.name.to_string())
+                .collect(),
+            at: name.span,
+            annotate,
+        });
         None
     }
 

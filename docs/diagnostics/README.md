@@ -158,6 +158,11 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0149](E0149.md) | error | `Self` outside a type or an interface |
 | [E0150](E0150.md) | error | interface that inherits from itself |
 | [E0151](E0151.md) | error | inherited interface with a built argument |
+| [E0152](E0152.md) | error | conformance that a type does not meet |
+| [E0153](E0153.md) | error | second conformance to an interface |
+| [E0154](E0154.md) | error | conformance that needs another conformance |
+| [E0155](E0155.md) | error | `extend` of a type that is not a class or an enum |
+| [E0156](E0156.md) | error | call that more than one conformance answers |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |

@@ -144,7 +144,7 @@ impl fmt::Debug for TypeArgs {
 pub(crate) const NAME_LIMIT: usize = 256;
 
 /// A class or an enum, which a type's text names by its head.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Head {
     Class(ClassId),
     Enum(EnumId),

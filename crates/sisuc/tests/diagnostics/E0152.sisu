@@ -1,0 +1,11 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Circle: Shape {
+    r: f64
+}
+
+fn main() {
+    print(Circle(r: 1.0).r)
+}

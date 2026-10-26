@@ -604,3 +604,512 @@ fn closure(
         })
         .collect()
 }
+
+/// The interfaces the conformance rows use. A row is a whole program, and these follow it, so
+/// that a position in the row is its own line and column.
+const SHAPES: &str = "interface Shape {\n    fn area(self) -> f64\n}\ninterface Named {\n    fn name(self) -> string\n}\ninterface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Solid: Named {\n    fn volume(self) -> f64\n}\ninterface Label {\n    fn name(self) -> string\n}\ninterface Code {\n    fn name(self) -> i64\n}\ninterface Keep {\n    fn keep<U>(self, x: U) -> U\n}\n";
+
+/// `row`, a program, then the interfaces.
+fn with_shapes(row: &str) -> String {
+    format!("{row}\n{SHAPES}")
+}
+
+/// A class or an enum conforms in its declaration list or in an `extend` block, with methods
+/// that have the requirement's signature; the type's own methods and the methods of other blocks
+/// stand beside them.
+#[test]
+fn conformances_should_check_clean() {
+    for src in [
+        // A class and an enum, each conforming in its list or in a block, and a plain block.
+        "class Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n}\nclass Square {\n    side: f64\n}\nextend Square: Shape {\n    fn area(self) -> f64 { self.side }\n}\nenum Dir: Same {\n    North\n    South\n    fn same(self, other: Dir) -> bool { true }\n}\nextend Circle {\n    fn grow(self, by: f64) -> Circle { Circle(r: self.r + by) }\n}\nfn main() {\n    let g = Circle(r: 1.0).grow(1.0)\n    print(g.area() + Square(side: 1.0).area())\n    print(Dir.North.same(Dir.South))\n}",
+        // Two interfaces that both require `name`, met by one method of the body.
+        "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> string\n}\nclass C: A, B {\n    fn name(self) -> string { \"c\" }\n}\nfn main() {\n    print(C().name())\n}",
+        // `Solid` inherits `Named`: a block gives it, or the body holds its method, or both
+        // interfaces are listed and `Named` counts once.
+        "class Cube: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nextend Cube: Named {\n    fn name(self) -> string { \"cube\" }\n}\nclass Ball: Solid {\n    fn volume(self) -> f64 { 1.0 }\n    fn name(self) -> string { \"ball\" }\n}\nclass Disc: Solid, Named {\n    fn volume(self) -> f64 { 1.0 }\n    fn name(self) -> string { \"disc\" }\n}\nfn main() {\n    print(Cube().volume() + Ball().volume() + Disc().volume())\n}",
+        // A block for the inherited interface may come before the class that lists the other.
+        "extend Cube: Named {\n    fn name(self) -> string { \"cube\" }\n}\nclass Cube: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {\n    print(Cube().volume())\n}",
+        // The parameter of `same` is `Self`, which is the type itself.
+        "class Pin: Same {\n    n: i64\n    fn same(self, other: Pin) -> bool { self.n == other.n }\n}\nfn main() {\n    print(Pin(n: 1).same(Pin(n: 1)))\n}",
+        // The same interface through `Self`, in a class and in a block.
+        "class Pin: Same {\n    n: i64\n    fn same(self, other: Self) -> bool { self.n == other.n }\n}\nclass Peg {\n    n: i64\n}\nextend Peg: Same {\n    fn same(self, other: Self) -> bool { self.n == other.n }\n}\nfn main() {\n    print(Pin(n: 1).same(Pin(n: 1)))\n    print(Peg(n: 1).same(Peg(n: 2)))\n}",
+        // A method that no interface requires, beside the conformance.
+        "class Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n    fn grow(self) -> f64 { self.r }\n}\nfn main() {\n    print(Circle(r: 1.0).grow())\n}",
+        // Two blocks of unrelated interfaces, each with a `name`; the context picks one.
+        "class Circle {\n    r: f64\n}\nextend Circle: Label {\n    fn name(self) -> string { \"circle\" }\n}\nextend Circle: Code {\n    fn name(self) -> i64 { 7 }\n}\nfn show(s: string) -> string { s }\nfn code() -> i64 {\n    Circle(r: 1.0).name()\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let s: string = c.name()\n    let k: i64 = c.name()\n    let o: string? = c.name()\n    print(o ?? \"\")\n    print(show(c.name()))\n    print(s)\n    print(k)\n    print(code())\n}",
+        // A method of the requirement's own type parameters, named alike or not.
+        "class Box {\n    n: i64\n    fn keep<V>(self, x: V) -> V { x }\n}\nclass Crate: Keep {\n    n: i64\n    fn keep<V>(self, x: V) -> V { x }\n}\nfn main() {\n    print(Crate(n: 1).keep(2))\n}",
+        // The set of bounds counts, not their order.
+        "interface Both {\n    fn both<U: Named & Same>(self, x: U)\n}\nclass Crate: Both {\n    fn both<V: Same & Named>(self, x: V) {}\n}\nfn main() {\n    Crate().both(1)\n}",
+        // A body method beside a block's method of the same name: the call takes the body's.
+        "class Circle {\n    r: f64\n    fn name(self) -> string { \"body\" }\n}\nextend Circle: Label {\n    fn name(self) -> string { \"label\" }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let s = c.name()\n    print(s)\n    print(c.r)\n}",
+        // An argument of a generic call waits for the other, with the method in a block.
+        "class C {\n    x: i64\n}\nextend C {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { x }\nfn main() {\n    let c = C(x: 1)\n    print(take(c.make(), [1]).len())\n}",
+    ] {
+        clean(&with_shapes(src));
+    }
+}
+
+/// A call of a method is a call of `Type.method`, whichever block declares it; the methods of a
+/// conformance block carry their interface in the symbol, so two blocks may each hold a `name`.
+#[test]
+fn conformance_methods_should_lower_with_their_interface_in_the_symbol() {
+    contains(
+        &with_shapes(
+            "class Circle {\n    r: f64\n    fn name(self) -> string { \"body\" }\n}\nextend Circle: Label {\n    fn name(self) -> string { \"label\" }\n}\nextend Circle: Code {\n    fn name(self) -> i64 { 7 }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let s = c.name()\n}",
+        ),
+        &[
+            "(fn Circle.name ((self#0 Circle)) string ",
+            "(fn Circle.Label.name ((self#0 Circle)) string ",
+            "(fn Circle.Code.name ((self#0 Circle)) i64 ",
+            "(let s#",
+            "(call Circle.name c#",
+        ],
+    );
+}
+
+/// The interface of the method that the first `let` of `main` that calls one initializes from,
+/// through the `Wrap` that an optional adds; `None` for a method that no block declares.
+fn called_interface(src: &str) -> Option<String> {
+    let (program, ds) = checked(src);
+    assert!(ds.is_empty(), "{ds:?}");
+    let program = program.expect("the program should check");
+    let main = (program.functions.iter().find(|f| f.name == "main")).expect("a main");
+    for stmt in &main.body.stmts {
+        let tir::Stmt::Let { init, .. } = stmt else {
+            continue;
+        };
+        let mut init = init;
+        while let tir::ExprKind::Wrap(inner) = &init.kind {
+            init = inner;
+        }
+        if let tir::ExprKind::Call { func, .. } = init.kind {
+            let conformance = program.functions[func.0].conformance;
+            return conformance.map(|(interface, _)| program.interfaces[interface.0].name.clone());
+        }
+    }
+    panic!("main should call a method in a `let`");
+}
+
+/// The type that the call's context expects picks the block when more than one has the method:
+/// the only one that returns it, or, under an optional, the only one that returns its payload.
+#[test]
+fn the_expected_type_should_pick_the_conformance_block() {
+    let program = |binding: &str| {
+        with_shapes(&format!(
+            "class Circle {{\n    r: f64\n}}\nextend Circle: Label {{\n    fn name(self) -> string {{ \"label\" }}\n}}\nextend Circle: Code {{\n    fn name(self) -> i64 {{ 7 }}\n}}\nfn main() {{\n    let c = Circle(r: 1.0)\n    {binding}\n}}"
+        ))
+    };
+    for (binding, expected) in [
+        ("let s: string = c.name()", "Label"),
+        ("let k: i64 = c.name()", "Code"),
+        ("let o: string? = c.name()", "Label"),
+        ("let o: i64? = c.name()", "Code"),
+    ] {
+        assert_eq!(
+            called_interface(&program(binding)).as_deref(),
+            Some(expected),
+            "{binding}"
+        );
+    }
+}
+
+/// The errors of a conformance that a type does not meet: what lacks, what does not match, and
+/// what a block holds that its interface does not require.
+#[test]
+fn a_conformance_that_a_type_does_not_meet_should_be_reported() {
+    for (row, expected) in [
+        // Two requirements missing: one diagnostic, at the interface in the list.
+        (
+            "interface Both {\n    fn area(self) -> f64\n    fn perimeter(self) -> f64\n}\nclass Circle: Both {\n    r: f64\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (5, 15))],
+        ),
+        // A method that does not match: its return type, a parameter's type, the parameters'
+        // number, no return type.
+        (
+            "class Circle: Shape {\n    fn area(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (2, 8))],
+        ),
+        (
+            "class Pin: Same {\n    fn same(self, other: i64) -> bool { true }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (2, 8))],
+        ),
+        (
+            "class Circle: Shape {\n    fn area(self, by: f64) -> f64 { by }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (2, 8))],
+        ),
+        (
+            "class Circle: Shape {\n    fn area(self) {}\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (2, 8))],
+        ),
+        // The method's own type parameters: a bound that the requirement lacks, one that it has
+        // and the method lacks, another number of them.
+        (
+            "class Crate: Keep {\n    fn keep<V: Same>(self, x: V) -> V { x }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (2, 8))],
+        ),
+        (
+            "interface Both {\n    fn both<U: Named & Same>(self, x: U)\n}\nclass Crate: Both {\n    fn both<V: Same>(self, x: V) {}\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (5, 8))],
+        ),
+        (
+            "class Crate: Keep {\n    fn keep<V, W>(self, x: V) -> V { x }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (2, 8))],
+        ),
+        // A block holds the interface's methods only.
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { 1.0 }\n    fn perimeter(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (6, 8))],
+        ),
+        // A method of another block, or of the body, does not meet a block's requirement.
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle: Label {\n    fn name(self) -> string { \"l\" }\n}\nextend Circle: Named {\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (7, 16))],
+        ),
+        (
+            "class Circle {\n    r: f64\n    fn name(self) -> string { \"b\" }\n}\nextend Circle: Named {\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (5, 16))],
+        ),
+        // A body that lacks a method of an inherited interface: reported at the listed one.
+        (
+            "class Cube: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (1, 13))],
+        ),
+        // An enum conforms as a class does.
+        (
+            "enum Dir: Same {\n    North\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (1, 11))],
+        ),
+        (
+            "enum Dir {\n    North\n}\nextend Dir: Same {\n    fn same(self, other: Dir) -> bool { true }\n    fn flip(self) -> Dir { Dir.North }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (6, 8))],
+        ),
+    ] {
+        codes(&with_shapes(row), &expected);
+    }
+}
+
+/// A type conforms to an interface once. The second conformance in source order is reported,
+/// whether a list or a block writes it, and its methods answer no call.
+#[test]
+fn a_second_conformance_to_an_interface_should_be_reported_once() {
+    for (row, expected) in [
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { 2.0 }\n}\nfn main() {\n    print(Circle(r: 1.0).area())\n}",
+            vec![(Code::ConformsTwice, (7, 16))],
+        ),
+        (
+            "class Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { 1.0 }\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { 2.0 }\n}\nfn main() {}",
+            vec![(Code::ConformsTwice, (5, 16))],
+        ),
+        // The block comes first in the source, so the list is the second.
+        (
+            "extend Circle: Shape {\n    fn area(self) -> f64 { 2.0 }\n}\nclass Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::ConformsTwice, (4, 15))],
+        ),
+        (
+            "class Circle: Shape, Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::ConformsTwice, (1, 22))],
+        ),
+        // Two types conform once each, and one type conforms to two interfaces.
+        (
+            "class Circle: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nclass Square: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![],
+        ),
+    ] {
+        codes(&with_shapes(row), &expected);
+    }
+}
+
+/// An `extend` block's interface needs the interfaces it inherits: the type's list or a block of
+/// its own gives them, and each one missing is reported at the block's interface.
+#[test]
+fn a_conformance_without_an_inherited_conformance_should_be_reported() {
+    for (row, expected) in [
+        (
+            "class Square {\n    side: f64\n}\nextend Square: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::NotConform, (4, 16))],
+        ),
+        // Two interfaces missing, one diagnostic for each.
+        (
+            "interface Top: Mid {\n    fn top(self) -> f64\n}\ninterface Mid: Named {\n    fn mid(self) -> f64\n}\nclass X {\n    n: i64\n}\nextend X: Top {\n    fn top(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::NotConform, (10, 11)), (Code::NotConform, (10, 11))],
+        ),
+        // The list of the class gives the inherited interface, and so does a block of its own.
+        (
+            "class Square: Named {\n    fn name(self) -> string { \"s\" }\n}\nextend Square: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![],
+        ),
+        (
+            "class Square {\n    side: f64\n}\nextend Square: Named {\n    fn name(self) -> string { \"s\" }\n}\nextend Square: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![],
+        ),
+        // An enum is a type like a class.
+        (
+            "enum Dir {\n    North\n}\nextend Dir: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::NotConform, (4, 13))],
+        ),
+    ] {
+        codes(&with_shapes(row), &expected);
+    }
+}
+
+/// A call that more than one block answers is ambiguous, unless the type's own method answers
+/// or the expected type picks one result.
+#[test]
+fn a_call_that_two_conformances_answer_should_be_ambiguous() {
+    let blocks = |second: &str, binding: &str| {
+        with_shapes(&format!(
+            "class Circle {{\n    r: f64\n}}\nextend Circle: Label {{\n    fn name(self) -> string {{ \"a\" }}\n}}\nextend Circle: {second}\nfn main() {{\n    let c = Circle(r: 1.0)\n    {binding}\n}}"
+        ))
+    };
+    let code = "Code {\n    fn name(self) -> i64 { 7 }\n}";
+    let named = "Named {\n    fn name(self) -> string { \"b\" }\n}";
+    for (src, expected) in [
+        // No expected type.
+        (
+            blocks(code, "let n = c.name()"),
+            vec![(Code::Ambiguous, (12, 15))],
+        ),
+        // The same result type in both: no annotation tells them apart.
+        (
+            blocks(named, "let n = c.name()"),
+            vec![(Code::Ambiguous, (12, 15))],
+        ),
+        (
+            blocks(named, "let s: string = c.name()"),
+            vec![(Code::Ambiguous, (12, 23))],
+        ),
+        // An expected type that no answer returns is no choice, and no mismatch is added.
+        (
+            blocks(code, "let b: bool = c.name()"),
+            vec![(Code::Ambiguous, (12, 21))],
+        ),
+        // The expected payload picks, whatever the optional's depth.
+        (blocks(code, "let n: i64? = c.name()"), vec![]),
+    ] {
+        codes(&src, &expected);
+    }
+}
+
+/// The method a call takes is the body's, or a plain block's, though blocks of conformances have
+/// a method of the name.
+#[test]
+fn a_types_own_method_should_be_the_one_called_beside_conformance_blocks() {
+    let blocks = "extend Circle: Label {\n    fn name(self) -> string { \"label\" }\n}\nextend Circle: Code {\n    fn name(self) -> i64 { 7 }\n}\n";
+    let main = "fn main() {\n    let c = Circle(r: 1.0)\n    let s = c.name()\n}";
+    for own in [
+        "class Circle {\n    r: f64\n    fn name(self) -> string { \"body\" }\n}\n",
+        "class Circle {\n    r: f64\n}\nextend Circle {\n    fn name(self) -> string { \"plain\" }\n}\n",
+    ] {
+        let src = with_shapes(&format!("{own}{blocks}{main}"));
+        assert_eq!(called_interface(&src), None, "{own}");
+    }
+}
+
+/// A body method, or a plain block's, is the type's own, and takes the call before the methods
+/// of conformance blocks; the blocks of other types are not read.
+#[test]
+fn a_types_own_method_should_take_the_call_before_a_conformance_block() {
+    for src in [
+        "class Circle {\n    r: f64\n}\nextend Circle {\n    fn name(self) -> string { \"plain\" }\n}\nextend Circle: Label {\n    fn name(self) -> string { \"label\" }\n}\nextend Circle: Code {\n    fn name(self) -> i64 { 7 }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let s = c.name()\n    print(s)\n}",
+        // A block of another type has the name too.
+        "class Circle {\n    r: f64\n}\nclass Square {\n    side: f64\n}\nextend Square: Label {\n    fn name(self) -> string { \"square\" }\n}\nextend Circle: Code {\n    fn name(self) -> i64 { 7 }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let n = c.name()\n    print(n)\n    print(Square(side: 1.0).name())\n}",
+    ] {
+        clean(&with_shapes(src));
+    }
+}
+
+/// `row`, and an empty `main` unless it has one.
+fn with_main(row: &str) -> String {
+    if row.contains("fn main") {
+        row.to_string()
+    } else {
+        format!("{row}\nfn main() {{}}")
+    }
+}
+
+/// The target of an `extend` block is a class or an enum. Any other target is reported at it, and
+/// the methods of the block are not checked: its error says what is wrong.
+#[test]
+fn an_extend_target_that_is_no_class_or_enum_should_be_reported() {
+    for (row, expected) in [
+        (
+            "extend i64 {\n    fn f(self) -> i64 { 1 }\n}",
+            vec![(Code::CannotExtend, (1, 8))],
+        ),
+        ("extend [i64] {\n}", vec![(Code::CannotExtend, (1, 8))]),
+        // A type parameter is reported once.
+        (
+            "extend<T> T {\n    fn f(self) -> bool { true }\n}",
+            vec![(Code::CannotExtend, (1, 11))],
+        ),
+        // The body of a method in a block that failed is not checked.
+        (
+            "extend i64 {\n    fn f(self) -> i64 {\n        let b: bool = 1\n        1\n    }\n}",
+            vec![(Code::CannotExtend, (1, 8))],
+        ),
+        // An interface, and a name that is nothing.
+        ("extend Shape {\n}", vec![(Code::InterfaceAsType, (1, 8))]),
+        ("extend Missing {\n}", vec![(Code::UnknownType, (1, 8))]),
+        // A block of a failed target holds methods that a call may have wanted.
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle: Missing {\n    fn grow(self) {}\n}\nfn main() {\n    Circle(r: 1.0).grow()\n}",
+            vec![(Code::UnknownType, (4, 16))],
+        ),
+        // A class that is no interface.
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle: Circle {\n}",
+            vec![(Code::NotAnInterface, (4, 16))],
+        ),
+    ] {
+        codes(&with_shapes(&with_main(row)), &expected);
+    }
+}
+
+/// The methods of a type's body and of its plain `extend` blocks share a namespace with its
+/// fields and variants, as do the methods of one block. The one that starts last is reported.
+#[test]
+fn a_method_defined_in_the_body_and_in_a_block_should_be_reported_twice() {
+    for (row, expected) in [
+        (
+            "class Circle {\n    r: f64\n    fn grow(self) -> f64 { 1.0 }\n}\nextend Circle {\n    fn grow(self) -> f64 { 2.0 }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (6, 8))],
+        ),
+        // The block starts first, so the body's method is the second.
+        (
+            "extend Circle {\n    fn grow(self) -> f64 { 2.0 }\n}\nclass Circle {\n    r: f64\n    fn grow(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (6, 8))],
+        ),
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle {\n    fn grow(self) -> f64 { 1.0 }\n}\nextend Circle {\n    fn grow(self) -> f64 { 2.0 }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (8, 8))],
+        ),
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle {\n    fn grow(self) -> f64 { 1.0 }\n    fn grow(self) -> f64 { 2.0 }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (6, 8))],
+        ),
+        // A field, and a variant, with the name of a method of a block.
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle {\n    fn r(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (5, 8))],
+        ),
+        (
+            "enum Dir {\n    North\n}\nextend Dir {\n    fn North(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (5, 8))],
+        ),
+        // A block of a conformance has a namespace of its own, and so does each of its methods
+        // against a plain block's.
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle {\n    fn name(self) -> string { \"p\" }\n}\nextend Circle: Label {\n    fn name(self) -> string { \"l\" }\n}\nfn main() {}",
+            vec![],
+        ),
+    ] {
+        codes(&with_shapes(row), &expected);
+    }
+}
+
+/// `mut self` in an `extend` block is reported once the target is known, in the form of a class
+/// or of an enum, as in a declaration's body.
+#[test]
+fn mut_self_in_an_extend_block_should_be_reported_as_in_a_declaration() {
+    let class =
+        "class Circle {\n    r: f64\n}\nextend Circle {\n    fn grow(mut self) {}\n}\nfn main() {}";
+    let d = diagnostic(class, Code::MutSelf, (5, 13, "mut"), &[]);
+    assert_eq!(
+        fixes(class, &d),
+        [(true, vec![(5, 13, "mut ", String::new())])]
+    );
+    fix_removes_its_code(class, &d);
+    // The type annotation makes the fix unsafe, as it does in a class.
+    let typed = "class Circle {\n    r: f64\n}\nextend Circle {\n    fn grow(mut self: Circle) {}\n}\nfn main() {}";
+    let d = diagnostic(typed, Code::MutSelf, (5, 13, "mut"), &[]);
+    assert!(!fixes(typed, &d)[0].0);
+    let e = "enum Dir {\n    North\n}\nextend Dir {\n    fn flip(mut self) {}\n}\nfn main() {}";
+    let d = diagnostic(e, Code::MutSelf, (5, 13, "mut"), &[]);
+    assert!(!fixes(e, &d)[0].0);
+    // The target of a block that failed is not known, so nothing is reported.
+    codes(
+        "extend Missing {\n    fn flip(mut self) {}\n}\nfn main() {}",
+        &[(Code::UnknownType, (1, 8))],
+    );
+}
+
+/// A type with parameters and an interface that takes some wait for a later task, and report the
+/// name they cannot handle yet.
+#[test]
+fn generic_conformances_should_report_the_name_they_cannot_take_yet() {
+    for (row, expected) in [
+        (
+            "class Pile<T> {\n    items: [T]\n}\nextend<T> Pile<T> {\n}",
+            vec![(Code::UnknownType, (4, 11))],
+        ),
+        (
+            "class Pile<T> {\n    items: [T]\n}\nextend Pile<i64> {\n}",
+            vec![(Code::UnknownType, (4, 8))],
+        ),
+        (
+            "class Pile<T>: Same {\n    items: [T]\n}",
+            vec![(Code::UnknownType, (1, 16))],
+        ),
+        (
+            "enum Tree<T>: Same {\n    Leaf\n}",
+            vec![(Code::UnknownType, (1, 15))],
+        ),
+        (
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Convert<i64> {\n    fn convert(self) -> i64 { 1 }\n}",
+            vec![(Code::UnknownType, (7, 16))],
+        ),
+        (
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Circle: Convert<i64> {\n    fn convert(self) -> i64 { 1 }\n}",
+            vec![(Code::UnknownType, (4, 15))],
+        ),
+    ] {
+        codes(&with_shapes(&with_main(row)), &expected);
+    }
+}
+
+/// The conformances a program records: one for each type and interface, an inherited interface
+/// that the list gives included, each with the methods in the order of the requirements.
+#[test]
+fn conformances_should_list_their_methods_in_the_order_of_the_requirements() {
+    let src = with_shapes(
+        "interface Both {\n    fn area(self) -> f64\n    fn perimeter(self) -> f64\n}\nclass Circle: Both {\n    fn perimeter(self) -> f64 { 1.0 }\n    fn area(self) -> f64 { 2.0 }\n}\nclass Ball: Solid, Named {\n    fn name(self) -> string { \"ball\" }\n    fn volume(self) -> f64 { 1.0 }\n}\nclass Cube: Solid {\n    fn volume(self) -> f64 { 1.0 }\n    fn name(self) -> string { \"cube\" }\n}\nclass Disc {\n    r: f64\n}\nextend Disc: Both {\n    fn perimeter(self) -> f64 { 1.0 }\n    fn area(self) -> f64 { 2.0 }\n}\nfn main() {}",
+    );
+    let (program, ds) = checked(&src);
+    assert!(ds.is_empty(), "{ds:?}");
+    let program = program.expect("the program should check");
+    let mut found: Vec<(String, String, Vec<String>)> = program
+        .conformances
+        .iter()
+        .map(|(interface, c)| {
+            (
+                program.interfaces[interface.0].name.clone(),
+                program.type_name(c.target),
+                c.methods
+                    .iter()
+                    .map(|f| program.functions[f.0].name.clone())
+                    .collect(),
+            )
+        })
+        .collect();
+    found.sort();
+    let want = |interface: &str, ty: &str, methods: &[&str]| {
+        (
+            interface.to_string(),
+            ty.to_string(),
+            methods.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(
+        found,
+        [
+            want("Both", "Circle", &["Circle.area", "Circle.perimeter"]),
+            want("Both", "Disc", &["Disc.area", "Disc.perimeter"]),
+            want("Named", "Ball", &["Ball.name"]),
+            want("Named", "Cube", &["Cube.name"]),
+            want("Solid", "Ball", &["Ball.volume"]),
+            want("Solid", "Cube", &["Cube.volume"]),
+        ]
+    );
+}

@@ -1,0 +1,11 @@
+error[E0034]: method `grow` is defined twice
+  --> E0034-extend.sisu:10:8
+   |
+ 4 |     fn grow(self, by: f64) -> f64 {
+   |        ---- first defined here
+...
+10 |     fn grow(self, by: f64) -> f64 {
+   |        ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

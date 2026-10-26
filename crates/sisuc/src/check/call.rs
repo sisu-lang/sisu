@@ -226,7 +226,7 @@ impl Checker<'_> {
     /// How the method `name` belongs to a receiver of type `ty`: a built-in array or number
     /// method, or a method of a class or an enum. `None` when the type has no such method.
     fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
-        let (methods, owner) = match ty.kind() {
+        let owner = match ty.kind() {
             TypeKind::Array(element)
                 if matches!(name.as_str(), "len" | "contains")
                     || name.as_str() == "sum" && matches!(element, Type::I64 | Type::F64) =>
@@ -234,12 +234,11 @@ impl Checker<'_> {
                 return Some(Idiom::Built);
             }
             _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
-            TypeKind::Class(id, owner) => (&self.classes[id.0].methods, owner),
-            TypeKind::Enum(id, owner) => (&self.enums[id.0].methods, owner),
+            TypeKind::Class(_, owner) | TypeKind::Enum(_, owner) => owner,
             _ => return None,
         };
-        match methods.get(&name) {
-            Some(&Declared::Known(func)) => Some(Idiom::Method(func, owner)),
+        match self.own_method(ty, name) {
+            Some(Declared::Known(func)) => Some(Idiom::Method(func, owner)),
             _ => None,
         }
     }
@@ -446,7 +445,9 @@ impl Checker<'_> {
             }
             _ => {}
         }
-        let Some(func) = self.find_method(type_of(&receiver), receiver_expr, method, target) else {
+        let call = (span, site.expected);
+        let Some(func) = self.find_method(type_of(&receiver), receiver_expr, method, target, call)
+        else {
             self.labels(args);
             self.stray(args);
             return Err(Poisoned::error());

@@ -1,0 +1,14 @@
+enum Dir {
+    North
+    South
+}
+
+extend Dir {
+    fn flip(mut self) -> Dir {
+        Dir.South
+    }
+}
+
+fn main() {
+    print(1)
+}

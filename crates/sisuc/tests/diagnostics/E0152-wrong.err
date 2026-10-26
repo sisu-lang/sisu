@@ -1,0 +1,18 @@
+error[E0152]: `area` does not match `Shape`'s requirement
+  --> E0152-wrong.sisu:13:8
+   |
+13 |     fn area(self) -> i64 {
+   |        ^^^^ found `fn area(self) -> i64`
+   |
+   = help: `Shape` requires `fn area(self) -> f64`
+
+error[E0152]: `keep` does not match `Shape`'s requirement
+  --> E0152-wrong.sisu:17:8
+   |
+17 |     fn keep<V: Same>(self, x: V) -> V {
+   |        ^^^^ found `fn keep<V: Same>(self, x: V) -> V`
+   |
+   = help: `Shape` requires `fn keep<U>(self, x: U) -> U`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0152

@@ -47,6 +47,67 @@ struct KnownSite {
     answer: Result<i64, &'static str>,
 }
 
+/// A declared interface, as `shapes` needs it.
+struct Shape {
+    name: String,
+    /// Whether a type can conform to it: it takes no parameter and inherits nothing.
+    conformable: bool,
+    requirements: Vec<Requirement>,
+}
+
+/// A requirement `fn name(self, p: T, ...) -> R`.
+struct Requirement {
+    name: String,
+    params: Vec<(String, RequirementType)>,
+    ret: Option<RequirementType>,
+}
+
+/// A type that a requirement names, as written, and a value of it where `$` stands for a value of
+/// the type that conforms.
+struct RequirementType {
+    written: String,
+    value: String,
+}
+
+impl Requirement {
+    /// A method that meets the requirement: `fn r(self, _p: T) -> R { value }`.
+    fn method(&self) -> String {
+        let mut method = format!("fn {}(self", self.name);
+        for (name, ty) in &self.params {
+            write!(method, ", _{name}: {}", ty.written)
+                .expect("writing to a `String` should succeed");
+        }
+        method += ")";
+        match &self.ret {
+            Some(ty) => {
+                write!(
+                    method,
+                    " -> {} {{ {} }}",
+                    ty.written,
+                    ty.value.replace('$', "self")
+                )
+                .expect("writing to a `String` should succeed");
+            }
+            None => method += " {}",
+        }
+        method
+    }
+
+    /// A statement that calls the requirement on the value `var`, and prints an `i64` or a
+    /// `string` result.
+    fn call(&self, var: &str) -> String {
+        let args: Vec<String> = (self.params.iter())
+            .map(|(_, ty)| ty.value.replace('$', var))
+            .collect();
+        let call = format!("{var}.{}({})", self.name, args.join(", "));
+        match self.ret.as_ref().map(|ty| ty.written.as_str()) {
+            None => call,
+            Some("i64" | "string") => format!("print({call})"),
+            Some(_) => format!("let _ = {call}"),
+        }
+    }
+}
+
 /// What a constant expression is known to be: an integer's or a `char`'s value, and a
 /// `string`'s length.
 #[derive(Clone, Copy)]
@@ -100,6 +161,14 @@ impl Gen<'_> {
             });
         }
         self.main_stmts();
+        // Whether `main` calls the function of the conformances that follows it. The choice is
+        // made after the statements, so it moves none of theirs.
+        let called = self.pick(2) == 0;
+        if called {
+            self.w.line();
+            self.cost.statement();
+            self.w.text("shapes()");
+        }
         // One panic site at most, the last statement, which a `return` would skip; and seldom,
         // since a panic ends the run before `--rc-checks` looks for leaks.
         let panic = panics
@@ -124,7 +193,10 @@ impl Gen<'_> {
             });
         }
         // After `main`, so that the interfaces move no choice of the items before them.
-        self.interfaces();
+        let declared = self.interfaces();
+        if called {
+            self.shapes(&declared);
+        }
         // The stdin comes last, so the first bytes choose the program's shape.
         for _ in 0..self.pick(MAX_LINES + 1) {
             let line = self.stdin_line();
@@ -315,11 +387,12 @@ impl Gen<'_> {
 
     /// `interface I<n>[<T>][: I<m>[<A>], ...] { fn r(self, ...) ... }`: requirements over `Self`,
     /// `i64`, `string`, a declared type and the interface's parameter, and some earlier interfaces
-    /// inherited, each with an argument that is the parameter alone or names none. Nothing
-    /// conforms to them yet, which is legal.
-    fn interfaces(&mut self) {
+    /// inherited, each with an argument that is the parameter alone or names none. Gives what
+    /// `shapes` needs of each.
+    fn interfaces(&mut self) -> Vec<Shape> {
         // Whether each declared interface takes a type parameter.
         let mut generic: Vec<bool> = Vec::new();
+        let mut shapes = Vec::new();
         for id in 0..self.pick(MAX_INTERFACES + 1) {
             let takes = self.pick(3) == 0;
             let mut inherits: Vec<usize> = Vec::new();
@@ -346,44 +419,132 @@ impl Gen<'_> {
             }
             self.w.text(" ");
             self.w.open();
+            let mut requirements = Vec::new();
             for _ in 0..self.pick(MAX_REQUIREMENTS + 1) {
                 let name = self.scope.fresh("r");
                 let mut signature = format!("fn {name}(self");
+                let mut params = Vec::new();
                 for _ in 0..self.pick(3) {
                     let param = self.scope.fresh("p");
                     let ty = self.requirement_type(takes);
-                    write!(signature, ", {param}: {ty}")
+                    write!(signature, ", {param}: {}", ty.written)
                         .expect("writing to a `String` should succeed");
+                    params.push((param, ty));
                 }
                 signature += ")";
-                if self.pick(3) != 0 {
-                    let ty = self.requirement_type(takes);
-                    write!(signature, " -> {ty}").expect("writing to a `String` should succeed");
+                let ret = (self.pick(3) != 0).then(|| self.requirement_type(takes));
+                if let Some(ty) = &ret {
+                    write!(signature, " -> {}", ty.written)
+                        .expect("writing to a `String` should succeed");
                 }
                 self.w.line();
                 self.w.text(&signature);
+                requirements.push(Requirement { name, params, ret });
             }
             self.w.close();
             self.w.line();
             generic.push(takes);
+            // An interface that takes a parameter, or inherits one, waits for a later task: no
+            // type conforms to it.
+            shapes.push(Shape {
+                name: format!("I{id}"),
+                conformable: !takes && inherits.is_empty(),
+                requirements,
+            });
         }
+        shapes
     }
 
     /// A type a requirement of an interface may name: `Self`, `T` when it has a parameter, or one
     /// that names neither.
-    fn requirement_type(&mut self, takes: bool) -> String {
-        let mut choices: Vec<String> = ["i64", "string", "Self", "[Self]", "Self?"]
-            .map(String::from)
-            .into();
+    fn requirement_type(&mut self, takes: bool) -> RequirementType {
+        let plain = |written: &str, value: &str| RequirementType {
+            written: written.to_string(),
+            value: value.to_string(),
+        };
+        let mut choices = vec![
+            plain("i64", "0"),
+            plain("string", "\"s\""),
+            plain("Self", "$"),
+            plain("[Self]", "[$]"),
+            plain("Self?", "None"),
+        ];
         if takes {
-            choices.push("T".to_string());
+            choices.push(plain("T", "0"));
         }
         if !self.scope.types.is_empty() {
-            let declared = self.pick(self.scope.types.len());
-            choices.push(self.scope.types[declared].to_string());
+            let at = self.pick(self.scope.types.len());
+            let declared = self.scope.types[at].clone();
+            choices.push(plain(&declared.to_string(), &self.default(&declared)));
         }
         let choice = self.pick(choices.len());
         choices.swap_remove(choice)
+    }
+
+    /// For each interface that a type can conform to, a class or an enum that conforms to it, in
+    /// its declaration list or in an `extend` block, with a plain `extend` block, and `fn
+    /// shapes()`, which calls each method on a value of the type and prints what an `i64` or a
+    /// `string` result is. The methods hold the smallest value of their result.
+    fn shapes(&mut self, declared: &[Shape]) {
+        let mut calls = Vec::new();
+        for (k, shape) in declared.iter().enumerate().filter(|(_, s)| s.conformable) {
+            // A class in its list, a class in a block, an enum in its list, an enum in a block.
+            let form = self.pick(4);
+            let (class, listed) = (form < 2, form.is_multiple_of(2));
+            let (ty, value, var) = if class {
+                (format!("Q{k}"), format!("Q{k}(v: 1)"), format!("q{k}"))
+            } else {
+                (format!("N{k}"), format!("N{k}.A"), format!("n{k}"))
+            };
+            let methods: Vec<String> = shape.requirements.iter().map(Requirement::method).collect();
+            let conformance = if listed {
+                format!(": {}", shape.name)
+            } else {
+                String::new()
+            };
+            let keyword = if class { "class" } else { "enum" };
+            self.w.text(&format!("{keyword} {ty}{conformance} "));
+            self.w.open();
+            self.w.line();
+            self.w.text(if class { "v: i64" } else { "A\n    B(i64)" });
+            if listed {
+                for method in &methods {
+                    self.w.line();
+                    self.w.text(method);
+                }
+            }
+            self.w.close();
+            self.w.line();
+            if !listed {
+                self.w.text(&format!("extend {ty}: {} ", shape.name));
+                self.w.open();
+                for method in &methods {
+                    self.w.line();
+                    self.w.text(method);
+                }
+                self.w.close();
+                self.w.line();
+            }
+            self.w.text(&format!("extend {ty} "));
+            self.w.open();
+            self.w.line();
+            self.w.text("fn plain(self) -> i64 { 1 }");
+            self.w.close();
+            self.w.line();
+            calls.push(format!("let {var} = {value}"));
+            for requirement in &shape.requirements {
+                calls.push(requirement.call(&var));
+            }
+            calls.push(format!("print({var}.plain())"));
+        }
+        self.w.text("fn shapes() ");
+        self.w.open();
+        for call in &calls {
+            self.w.line();
+            self.w.text(call);
+        }
+        self.w.close();
+        self.w.line();
     }
 
     /// The most size for a value of `ty` (decision 5): a class object's own, else its floor

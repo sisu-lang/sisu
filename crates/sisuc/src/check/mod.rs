@@ -4,11 +4,13 @@
 mod array;
 mod branch;
 mod call;
+mod conform;
 mod constant;
 mod cycle;
 mod enums;
 mod exhaust;
 mod expr;
+mod extend;
 mod generic;
 mod interface;
 mod member;
@@ -36,7 +38,8 @@ use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{Head, write_type};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
-use interface::InterfaceInfo;
+use extend::Extension;
+use interface::{Bound, InterfaceInfo};
 use prelude::PRELUDE;
 use unused_names::{Owner, Pending, Use};
 
@@ -83,17 +86,32 @@ type CheckedBlock = Result<tir::Block, Poisoned>;
 /// `never`, so it stands for `Error` there: a `None` it reaches is `Error`, with no diagnostic.
 static UNKNOWN: Type = Type::NEVER;
 
+/// A class or an enum: the holder of a method, or of type parameters.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Holder {
+    Class(tir::ClassId),
+    Enum(tir::EnumId),
+}
+
 /// A type of `None` is `Error`: its error is reported where the signature names it.
 struct Signature {
     /// `f`, or `P.m` for a method.
     name: String,
     /// The type parameters in scope: a method's owner's, then its own.
     type_params: Vec<Symbol>,
+    /// How many of `type_params` are the function's own, the last ones.
+    own: usize,
+    /// The bounds of each of the function's own type parameters.
+    bounds: Vec<Vec<Bound>>,
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
     ret: Option<Type>,
     /// The name's span.
     span: Span,
+    /// `fn` through the end of the signature, before the body.
+    header: Span,
+    /// The interface, with its arguments, of the `extend` block that declares a method.
+    conformance: Option<(tir::InterfaceId, TypeArgs)>,
 }
 
 /// What a function, class, constant or method name stands for: the first intact item of that
@@ -315,6 +333,18 @@ struct Checker<'src> {
     interfaces: Vec<InterfaceInfo>,
     /// The first interface of each name, and every broken one.
     interface_ids: FxHashMap<Symbol, Declared<tir::InterfaceId>>,
+    /// Each `extend` block whose target is a class or an enum, in source order.
+    extensions: Vec<Extension>,
+    /// For each class or enum and method name, the blocks that hold a method of that name, and
+    /// the method, so that a method call reads only the blocks that hold its name.
+    extension_methods: FxHashMap<(Holder, Symbol), Vec<(usize, tir::FuncId)>>,
+    /// The names of the types that a broken `extend` block, or a block of a conformance that
+    /// failed, may have given methods to. A method no one finds on them is poisoned.
+    broken_extensions: FxHashSet<Symbol>,
+    /// The methods that a block of an intact target lost to a syntax error.
+    broken_extension_methods: FxHashSet<(Holder, Symbol)>,
+    /// Every conformance of a class or an enum to an interface.
+    conformances: tir::Conformances,
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
@@ -536,6 +566,7 @@ pub(crate) fn check<'src>(
     checker.collect_names(&items, program.items.len(), &program.broken);
     checker.interface_signatures(&items);
     let declared = checker.collect_signatures(&items);
+    checker.conformances(&items);
     checker.fold_constants(&items);
     let cyclic = checker.never_constructed();
     let unbuilt;
@@ -543,10 +574,8 @@ pub(crate) fn check<'src>(
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
-    let functions: Vec<_> = declared
-        .iter()
-        .enumerate()
-        .map(|(i, &(f, owner))| checker.function(f, tir::FuncId(i), owner))
+    let functions: Vec<_> = (declared.iter().enumerate())
+        .map(|(i, &(f, owner))| checker.method_or_function(f, tir::FuncId(i), owner))
         .collect();
     checker.instantiation_cycles(&functions, &unbuilt);
     let classes = checker.classes.iter().map(lower_class).collect();
@@ -595,15 +624,19 @@ pub(crate) fn check<'src>(
         || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
             ast::Item::Enum(e) => !e.broken_methods.is_empty(),
-            // Nothing poisons a call of a method these lose without an error yet: Tasks 2 and 3
-            // resolve such calls, and until then the program has an error of its own.
-            ast::Item::Function(_)
-            | ast::Item::Const(_)
-            | ast::Item::Interface(_)
-            | ast::Item::Extend(_) => false,
+            ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
+            // Nothing poisons a call of a method an interface loses without an error yet: Task 4
+            // resolves such calls, and until then the program has an error of its own.
+            ast::Item::Function(_) | ast::Item::Const(_) | ast::Item::Interface(_) => false,
         });
     let enums = checker.lowered_enums;
     let (instantiates, prelude) = (checker.instantiates, checker.prelude);
+    let interfaces = (checker.interfaces.iter())
+        .map(|info| tir::Interface {
+            name: info.name.name.to_string(),
+        })
+        .collect();
+    let conformances = checker.conformances;
     let program = functions
         .into_iter()
         .collect::<Option<_>>()
@@ -615,6 +648,8 @@ pub(crate) fn check<'src>(
             functions,
             instantiates,
             prelude,
+            interfaces,
+            conformances,
         });
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
@@ -705,6 +740,11 @@ impl<'src> Checker<'src> {
             enum_ids: FxHashMap::default(),
             interfaces: Vec::new(),
             interface_ids: FxHashMap::default(),
+            extensions: Vec::new(),
+            extension_methods: FxHashMap::default(),
+            broken_extensions: FxHashSet::default(),
+            broken_extension_methods: FxHashSet::default(),
+            conformances: tir::Conformances::default(),
             lowered_enums: Vec::new(),
             written: None,
             constants: FxHashMap::default(),
@@ -815,6 +855,7 @@ impl Checker<'_> {
                         name: interface.name.clone(),
                         type_params,
                         inherits: Vec::new(),
+                        inherits_at: Vec::new(),
                         requirements: Vec::new(),
                     });
                     let name = &interface.name;
@@ -824,9 +865,7 @@ impl Checker<'_> {
                         self.interface_ids.insert(name.name, Declared::Known(id));
                     }
                 }
-                // Task 3 takes an `extend` block, whose methods this pass, the signatures and
-                // the bodies skip until then.
-                ast::Item::Extend(extend) => self.unsupported(&extend.target),
+                ast::Item::Extend(extend) => next_function += extend.methods.len(),
             }
         }
         if user_items == items.len() {
@@ -855,9 +894,12 @@ impl Checker<'_> {
                 ast::BrokenKind::Constant => {
                     self.constants.insert(*name, Declared::Broken);
                 }
-                // Its target is intact, and its parse error already fails the program. A call of
-                // a method the block lost gives `NoMember` until Task 3 makes it poison.
-                ast::BrokenKind::Extend => continue,
+                // Its target is intact, and its parse error already fails the program. A method
+                // call on the target that finds no method is poisoned.
+                ast::BrokenKind::Extend => {
+                    self.broken_extensions.insert(*name);
+                    continue;
+                }
             }
             // Functions, classes, enums, interfaces and constants share a namespace, so an intact
             // item of another kind and this name is poisoned too.
@@ -970,7 +1012,11 @@ impl Checker<'_> {
                     next_enum += 1;
                     continue;
                 }
-                ast::Item::Const(_) | ast::Item::Interface(_) | ast::Item::Extend(_) => continue,
+                ast::Item::Extend(extend) => {
+                    self.extend_signatures(extend, &mut declared);
+                    continue;
+                }
+                ast::Item::Const(_) | ast::Item::Interface(_) => continue,
             };
             let id = tir::ClassId(next_class);
             next_class += 1;
@@ -979,7 +1025,6 @@ impl Checker<'_> {
             self.body.self_type = Some(receiver);
             self.body.set_type_params(&owner);
             self.bounds_of(&class.type_params);
-            self.unsupported_conformances(&class.conforms, &class.assoc);
             self.body.set_type_params(&[]);
             let mut first = FxHashMap::default();
             for member in &class.members {
@@ -1036,7 +1081,7 @@ impl Checker<'_> {
     fn signature(&mut self, f: &ast::Function, name: String, owner: &[ast::TypeParam]) {
         let type_params = self.type_params(owner, &f.type_params);
         self.body.set_type_params(&type_params);
-        self.bounds_of(&f.type_params);
+        let bounds = self.bounds_of(&f.type_params);
         let params = f.params.iter().map(|p| self.resolve(&p.ty)).collect();
         let ret = f
             .ret
@@ -1046,9 +1091,13 @@ impl Checker<'_> {
         self.signatures.push(Signature {
             name,
             type_params,
+            own: f.type_params.len(),
+            bounds,
             params,
             ret,
             span: f.name.span,
+            header: Span::new(f.span.start(), f.body.span.start()),
+            conformance: None,
         });
     }
 
@@ -1222,7 +1271,7 @@ impl Checker<'_> {
             if matches!(found, Declared::Known(_)) {
                 self.report(DiagnosticKind::InterfaceAsType {
                     name: name.to_string(),
-                    written: self.source.file.slice(ty.bare.range()).to_string(),
+                    written: Some(self.source.file.slice(ty.bare.range()).to_string()),
                     at: ident().span,
                 });
             }
@@ -1273,6 +1322,20 @@ impl Checker<'_> {
         }
     }
 
+    /// `function`, except that a method of a block that failed has the unknown receiver and is not
+    /// checked: the block's own error says what is wrong.
+    fn method_or_function(
+        &mut self,
+        f: &ast::Function,
+        id: tir::FuncId,
+        owner: Option<Type>,
+    ) -> Option<tir::Function> {
+        if owner == Some(UNKNOWN) {
+            return None;
+        }
+        self.function(f, id, owner)
+    }
+
     /// Checks `f`'s body against its own signature, `id`. The function, unless its return type
     /// is `Error` or its body failed; an `Error` parameter still yields one, and `check` drops
     /// it for the error behind it.
@@ -1285,6 +1348,7 @@ impl Checker<'_> {
     ) -> Option<tir::Function> {
         let sig = &self.signatures[id.0];
         let (name, param_types, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
+        let conformance = sig.conformance;
         let owner_params = match owner.map(Type::kind) {
             Some(TypeKind::Class(class, _)) => self.classes[class.0].type_params.len(),
             Some(TypeKind::Enum(e, _)) => self.enums[e.0].type_params.len(),
@@ -1357,6 +1421,8 @@ impl Checker<'_> {
         }
         Some(tir::Function {
             name,
+            owner,
+            conformance,
             type_params,
             owner_params,
             params,

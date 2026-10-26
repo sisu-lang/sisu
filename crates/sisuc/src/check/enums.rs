@@ -116,7 +116,6 @@ impl Checker<'_> {
         self.body.self_type = Some(receiver);
         self.body.set_type_params(&self.enums[id.0].type_params);
         self.bounds_of(&e.type_params);
-        self.unsupported_conformances(&e.conforms, &e.assoc);
         self.body.set_type_params(&[]);
         let mut first = FxHashMap::default();
         for variant in &e.variants {

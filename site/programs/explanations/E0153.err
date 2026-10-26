@@ -1,0 +1,11 @@
+error[E0153]: `Circle` conforms to `Shape` twice
+  --> E0153.sisu:13:16
+   |
+ 5 | class Circle: Shape {
+   |               ----- first conformance here
+...
+13 | extend Circle: Shape {
+   |                ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153

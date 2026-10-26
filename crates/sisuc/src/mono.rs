@@ -99,7 +99,10 @@ impl Mono {
             enum_decls: Vec::with_capacity(program.enums.len()),
             types: FxHashMap::default(),
             functions: Vec::new(),
-            out: Program::default(),
+            out: Program {
+                interfaces: program.interfaces,
+                ..Program::default()
+            },
             work: VecDeque::new(),
         };
         for (i, f) in program.functions.into_iter().enumerate() {

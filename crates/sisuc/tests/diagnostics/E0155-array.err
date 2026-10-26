@@ -1,0 +1,8 @@
+error[E0155]: `[i64]` is a built-in type; only the prelude extends it
+ --> E0155-array.sisu:1:8
+  |
+1 | extend [i64] {
+  |        ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0155

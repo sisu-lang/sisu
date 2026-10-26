@@ -1,0 +1,10 @@
+error[E0152]: `perimeter` is not a requirement of `Shape`
+  --> E0152-extend.sisu:14:8
+   |
+14 |     fn perimeter(self) -> f64 {
+   |        ^^^^^^^^^
+   |
+   = help: move it to `extend Circle { ... }`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

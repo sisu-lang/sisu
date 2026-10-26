@@ -1,0 +1,10 @@
+error[E0030]: cannot find type `Missing`
+ --> E0030-extend.sisu:1:8
+  |
+1 | extend Missing {
+  |        ^^^^^^^
+  |
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

@@ -1047,19 +1047,22 @@ impl Checker<'_> {
                 _ => ty,
             });
         }
-        let (methods, owner) = match ty.map(Type::kind) {
-            Some(TypeKind::Class(id, _)) => {
-                let info = &self.classes[id.0];
-                (&info.methods, info.type_params.len())
-            }
-            Some(TypeKind::Enum(id, _)) => {
-                let info = &self.enums[id.0];
-                (&info.methods, info.type_params.len())
-            }
+        let Some(ty) = ty else {
+            return CallShape::default();
+        };
+        let owner = match ty.kind() {
+            TypeKind::Class(id, _) => self.classes[id.0].type_params.len(),
+            TypeKind::Enum(id, _) => self.enums[id.0].type_params.len(),
             _ => return CallShape::default(),
         };
-        let Some(&Declared::Known(func)) = methods.get(&method.name) else {
-            return CallShape::default();
+        // The method the call will find, as `find_method` finds it, without its reports.
+        let func = match self.own_method(ty, method.name) {
+            Some(Declared::Known(func)) => func,
+            Some(Declared::Broken) => return CallShape::default(),
+            None => match self.conforming_methods(ty, method.name)[..] {
+                [(func, _)] => func,
+                _ => return CallShape::default(),
+            },
         };
         let sig = &self.signatures[func.0];
         let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
@@ -1224,23 +1227,6 @@ impl Checker<'_> {
     /// of milestone 8 replaces each use.
     pub(super) fn unsupported(&mut self, ty: &ast::TypeExpr) {
         self.unsupported_at(ty.bare);
-    }
-
-    /// `unsupported` for the interfaces a class or an enum lists and the associated types it
-    /// chooses; a listed type that is no interface is reported as that.
-    pub(super) fn unsupported_conformances(
-        &mut self,
-        listed: &[ast::TypeExpr],
-        assoc: &[ast::AssocChoice],
-    ) {
-        for ty in listed {
-            if self.bound(ty).is_some() {
-                self.unsupported(ty);
-            }
-        }
-        for choice in assoc {
-            self.unsupported_at(choice.name.span);
-        }
     }
 
     /// `unsupported` for the text at `at`.

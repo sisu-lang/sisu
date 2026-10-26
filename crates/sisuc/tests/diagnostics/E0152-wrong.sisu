@@ -1,0 +1,24 @@
+interface Shape {
+    fn area(self) -> f64
+    fn keep<U>(self, x: U) -> U
+}
+
+interface Same {
+    fn same(self) -> bool
+}
+
+class Circle: Shape {
+    r: f64
+
+    fn area(self) -> i64 {
+        3
+    }
+
+    fn keep<V: Same>(self, x: V) -> V {
+        x
+    }
+}
+
+fn main() {
+    print(Circle(r: 1.0).r)
+}

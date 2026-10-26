@@ -1,0 +1,10 @@
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0156.sisu:27:15
+   |
+27 |     let n = c.name()
+   |               ^^^^
+   |
+   = help: annotate the result: `let n: string = c.name()`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0156

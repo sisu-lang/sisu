@@ -11,7 +11,7 @@ use crate::diagnostic::{DiagnosticKind, NotInterface};
 use crate::graph::components;
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{InterfaceId, Type, TypeArgs, TypeKind};
+use crate::tir::{FuncId, InterfaceId, Type, TypeArgs, TypeKind};
 
 pub(super) struct InterfaceInfo {
     pub(super) name: ast::Ident,
@@ -20,8 +20,25 @@ pub(super) struct InterfaceInfo {
     /// The interfaces it inherits, each with arguments that are a parameter of this interface or
     /// name none. An inheritance that fails to resolve is not in the list.
     pub(super) inherits: Vec<Bound>,
-    /// The name of each requirement, in declaration order.
-    pub(super) requirements: Vec<ast::Ident>,
+    /// Where each of `inherits` is written.
+    pub(super) inherits_at: Vec<Span>,
+    /// The first requirement of each name, in declaration order.
+    pub(super) requirements: Vec<RequirementInfo>,
+}
+
+/// A requirement's signature, over the interface's parameters (`Self` first) and then its own.
+pub(super) struct RequirementInfo {
+    pub(super) name: ast::Ident,
+    /// `fn` through the return type.
+    pub(super) span: Span,
+    /// Its own type parameters.
+    pub(super) own: Vec<Symbol>,
+    /// The bounds of each of `own`.
+    pub(super) bounds: Vec<Vec<Bound>>,
+    /// Without `self`; `None` is `Error`.
+    pub(super) params: Vec<Option<Type>>,
+    /// `None` is `Error`; no return type is `unit`.
+    pub(super) ret: Option<Type>,
 }
 
 /// A bound `T: I<A, ...>`, a conformance or an inheritance: the interface and its arguments,
@@ -66,12 +83,13 @@ impl Checker<'_> {
         self.body.set_type_params(&params);
         self.body.self_type = Some(Type::intern(TypeKind::Param(params[0], 0)));
         self.bounds_of(&interface.type_params);
-        let inherits = interface
+        let (inherits, inherits_at) = interface
             .inherits
             .iter()
-            .filter_map(|ty| self.inherited(ty, interface))
-            .collect();
+            .filter_map(|ty| Some((self.inherited(ty, interface)?, ty.span)))
+            .unzip();
         self.interfaces[id.0].inherits = inherits;
+        self.interfaces[id.0].inherits_at = inherits_at;
         // Task 7 takes associated types.
         for assoc in &interface.assoc {
             self.unsupported_at(assoc.name.span);
@@ -88,16 +106,12 @@ impl Checker<'_> {
         let scope = self.body.type_params.len();
         for requirement in &interface.methods {
             let owner = interface.name.name.as_str();
-            if self.first_definition(
+            let first_of_name = self.first_definition(
                 &mut first,
                 Definition::Method,
                 Some(owner),
                 &requirement.name,
-            ) {
-                self.interfaces[id.0]
-                    .requirements
-                    .push(requirement.name.clone());
-            }
+            );
             self.own_type_params(&mut taken, &requirement.type_params);
             let own: Vec<Symbol> = (requirement.type_params.iter())
                 .map(|param| param.name.name)
@@ -105,16 +119,29 @@ impl Checker<'_> {
             self.body.push_type_params(&own);
             // A requirement has no body: its parameters are checked as a function's are.
             self.body.scopes.push(FxHashMap::default());
+            let mut params = Vec::new();
             for param in &requirement.params {
                 let ty = self.resolve(&param.ty);
+                params.push(ty);
                 self.declare(&param.name, ty, BindingKind::Param, None);
             }
             self.pop_scope();
-            if let Some(ret) = &requirement.ret {
-                self.resolve(ret);
-            }
-            self.bounds_of(&requirement.type_params);
+            let ret = requirement
+                .ret
+                .as_ref()
+                .map_or(Some(Type::UNIT), |ret| self.resolve(ret));
+            let bounds = self.bounds_of(&requirement.type_params);
             self.body.truncate_type_params(scope);
+            if first_of_name {
+                self.interfaces[id.0].requirements.push(RequirementInfo {
+                    name: requirement.name.clone(),
+                    span: requirement.span,
+                    own,
+                    bounds,
+                    params,
+                    ret,
+                });
+            }
             for param in &requirement.type_params {
                 if taken
                     .get(&param.name.name)
@@ -127,11 +154,15 @@ impl Checker<'_> {
     }
 
     /// Resolves the bounds of `params`, which are in scope, and reports each that names no
-    /// interface. A later task keeps them.
-    pub(super) fn bounds_of(&mut self, params: &[ast::TypeParam]) {
-        for ty in params.iter().flat_map(|param| &param.bounds) {
-            self.bound(ty);
-        }
+    /// interface. Gives the bounds of each parameter that name one.
+    pub(super) fn bounds_of(&mut self, params: &[ast::TypeParam]) -> Vec<Vec<Bound>> {
+        (params.iter())
+            .map(|param| {
+                (param.bounds.iter())
+                    .filter_map(|ty| self.bound(ty))
+                    .collect()
+            })
+            .collect()
     }
 
     /// The interface `ty` names with its arguments. `None`, reported, when it names no
@@ -197,6 +228,13 @@ impl Checker<'_> {
             at: ty.bare,
             kind,
         });
+    }
+
+    /// Whether `ty` is the name of a declared interface, with no `?` and no array around it.
+    pub(super) fn is_interface_name(&self, ty: &ast::TypeExpr) -> bool {
+        ty.optional == 0
+            && matches!(ty.kind, ast::TypeKind::Name(_) | ast::TypeKind::Applied(_))
+            && self.names_interface(ty)
     }
 
     /// Whether the element of `ty`, past its arrays and its `?`, names a declared interface.
@@ -307,19 +345,19 @@ impl Checker<'_> {
                     }
                     for requirement in &self.interfaces[inherited].requirements {
                         owners
-                            .entry(requirement.name)
-                            .or_insert((InterfaceId(inherited), requirement.span));
+                            .entry(requirement.name.name)
+                            .or_insert((InterfaceId(inherited), requirement.name.span));
                     }
                 }
             }
             let mut reports = Vec::new();
             for requirement in &self.interfaces[i].requirements {
-                if let Some(&(owner, first)) = owners.get(&requirement.name) {
+                if let Some(&(owner, first)) = owners.get(&requirement.name.name) {
                     reports.push(DiagnosticKind::InheritedRequirement {
-                        name: requirement.name.to_string(),
+                        name: requirement.name.name.to_string(),
                         interface: interface.name.name.to_string(),
                         owner: self.interfaces[owner.0].name.name.to_string(),
-                        at: requirement.span,
+                        at: requirement.name.span,
                         first,
                     });
                 }
@@ -328,6 +366,36 @@ impl Checker<'_> {
                 self.report(report);
             }
         }
+    }
+
+    /// Whether the method `func` meets `requirement`: after `Self`, the interface's arguments
+    /// and the method's own type parameters stand in for the requirement's (`base` holds the
+    /// first two), it has the same parameter types and return type, and the same number of type
+    /// parameters of its own, with the same bounds. A type that is `Error` matches any.
+    pub(super) fn meets(&self, requirement: &RequirementInfo, func: FuncId, base: &[Type]) -> bool {
+        let sig = &self.signatures[func.0];
+        if requirement.own.len() != sig.own || requirement.params.len() != sig.params.len() {
+            return false;
+        }
+        let owner = sig.type_params.len() - sig.own;
+        let mut with = base.to_vec();
+        for (i, &name) in (owner..).zip(&sig.type_params[owner..]) {
+            let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
+            with.push(Type::intern(TypeKind::Param(name, i)));
+        }
+        let differs = |want: Option<Type>, found: Option<Type>| matches!((want, found), (Some(want), Some(found)) if want.subst(&with) != found);
+        if (requirement.params.iter().zip(&sig.params)).any(|(&want, &found)| differs(want, found))
+            || differs(requirement.ret, sig.ret)
+        {
+            return false;
+        }
+        (requirement.bounds.iter().zip(&sig.bounds)).all(|(want, found)| {
+            let want: Vec<_> = (want.iter())
+                .map(|b| (b.interface, b.args.subst(&with)))
+                .collect();
+            let found: Vec<_> = found.iter().map(|b| (b.interface, b.args)).collect();
+            want.iter().all(|b| found.contains(b)) && found.iter().all(|b| want.contains(b))
+        })
     }
 
     /// Appends to `out` the interfaces of `bounds` and every interface they inherit, each
@@ -339,9 +407,8 @@ impl Checker<'_> {
     /// bound's closure is computed per use, so a use costs the closure's size. The closure of
     /// arguments may double at each level of inheritance, as the spec says ("Inheritance"): an
     /// interface that inherits one twice, once with a parameter and once with a type, has the
-    /// two as two entries. Task 4 reads the closure; the check for E0034 does not, as it needs
-    /// no arguments.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it for a bound"))]
+    /// two as two entries. The check for E0034 does not read the closure, as it needs no
+    /// arguments.
     pub(super) fn interfaces_of(
         &self,
         receiver: Type,

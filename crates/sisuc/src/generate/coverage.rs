@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 14] = [
+const EXCLUDED: [(&str, &str); 13] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -49,7 +49,6 @@ const EXCLUDED: [(&str, &str); 14] = [
         "ast::BrokenKind::Extend",
         "only an item with a syntax error is broken",
     ),
-    ("ast::Item::Extend", "lands in Task 3 of milestone 8 part 4"),
     (
         "ast::TypeKind::Member",
         "lands in Task 7 of milestone 8 part 4",
@@ -105,7 +104,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 66] = [
+const REACH: [&str; 68] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -172,6 +171,8 @@ const REACH: [&str; 66] = [
     "reach: an interface requirement names `Self`",
     "reach: a class method names `Self`",
     "reach: an enum method names `Self`",
+    "reach: a conformance is in a declaration list",
+    "reach: a conformance is an `extend` block",
 ];
 
 /// Whether a program's text holds a form.
@@ -558,6 +559,7 @@ impl Walk {
                 ast::Item::Enum(e) => {
                     self.mark("ast::Item::Enum");
                     self.bounds(&e.type_params);
+                    self.listed(&e.conforms, &e.assoc);
                     for field in e.variants.iter().flat_map(|v| v.payload.iter().flatten()) {
                         self.type_expr(&field.ty);
                     }
@@ -607,6 +609,11 @@ impl Walk {
         self.mark("ast::Item::Extend");
         self.bounds(&extend.type_params);
         self.type_expr(&extend.target);
+        if let Some(interface) = &extend.interface {
+            self.mark("reach: a conformance is an `extend` block");
+            self.type_expr(interface);
+        }
+        self.choices(&extend.assoc);
         for f in &extend.methods {
             self.ast_function(f);
         }
@@ -616,6 +623,7 @@ impl Walk {
     fn ast_class(&mut self, c: &ast::Class) {
         self.mark("ast::Item::Class");
         self.bounds(&c.type_params);
+        self.listed(&c.conforms, &c.assoc);
         for member in &c.members {
             match member {
                 ast::Member::Field(field) => {
@@ -661,6 +669,25 @@ impl Walk {
             if let Some(ret) = &requirement.ret {
                 self.type_expr(ret);
             }
+        }
+    }
+
+    /// Walks the interfaces a class or an enum lists after its name, and the associated types it
+    /// chooses.
+    fn listed(&mut self, conforms: &[ast::TypeExpr], assoc: &[ast::AssocChoice]) {
+        if !conforms.is_empty() {
+            self.mark("reach: a conformance is in a declaration list");
+        }
+        for interface in conforms {
+            self.type_expr(interface);
+        }
+        self.choices(assoc);
+    }
+
+    /// Walks the types of the associated types a conformance chooses.
+    fn choices(&mut self, assoc: &[ast::AssocChoice]) {
+        for choice in assoc {
+            self.type_expr(&choice.ty);
         }
     }
 
@@ -2431,6 +2458,29 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
     ] {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
     }
+    // A conformance is a key of its own in a list and in a block.
+    for (src, key) in [
+        (
+            "class C: Named {}\n",
+            "reach: a conformance is in a declaration list",
+        ),
+        (
+            "enum E: Named {\n    A\n}\n",
+            "reach: a conformance is in a declaration list",
+        ),
+        (
+            "extend C: Named {}\n",
+            "reach: a conformance is an `extend` block",
+        ),
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert!(
+            walk.seen.contains(key),
+            "the walk should mark {key} in {src}"
+        );
+    }
     // `Self` in a method is a key of its own for a class and for an enum.
     for (src, key) in [
         (
@@ -2477,6 +2527,12 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
         "interface I {\n    type Item: Same?\n}\n",
         "interface I {\n    fn f<U: Same?>(self)\n}\n",
         "interface I: Same? {}\n",
+        "class C: Same? {}\n",
+        "enum E: Same? {\n    A\n}\n",
+        "extend C: Same? {}\n",
+        "class C: Source {\n    type Item = i64?\n}\n",
+        "enum E: Source {\n    A\n    type Item = i64?\n}\n",
+        "extend C: Source {\n    type Item = i64?\n}\n",
         "extend<T: Same?> Stack<T> {}\n",
         "fn f<T: Same?>() {}\n",
     ] {

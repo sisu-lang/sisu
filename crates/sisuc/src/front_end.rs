@@ -1047,6 +1047,57 @@ fn main() {
         }
     }
 
+    /// A broken `extend` block with a target that is a class or an enum poisons that type only for
+    /// what the block could have given it: a call that finds no method. Every other use of the
+    /// type, and every other item, is checked.
+    #[test]
+    fn broken_extend_should_poison_only_its_target() {
+        let src = "class C {\n    x: i64\n}\nextend C: {}\nfn good() {\n    let b: bool = 1\n}\nfn main() {\n    let c = C(x: 1)\n    let y: bool = c.x\n    c.grow()\n}\n";
+        assert_eq!(
+            codes(src),
+            [
+                (Code::Expected, (4, 11)),
+                (Code::Mismatch, (6, 19)),
+                (Code::Mismatch, (10, 19))
+            ]
+        );
+    }
+
+    /// A block with no name for its target stops the checker, as an unnamed broken item does.
+    #[test]
+    fn unnamed_broken_extend_should_stop_the_checker() {
+        let src = "extend {}\nfn good() {\n    let b: bool = 1\n}\n";
+        assert_eq!(codes(src), [(Code::Expected, (1, 8))]);
+    }
+
+    /// A method that a syntax error took from an intact block poisons a call of its name only,
+    /// and is no missing requirement; a broken block's target conforms to every interface that a
+    /// conformance of it needs.
+    #[test]
+    fn a_method_lost_to_a_syntax_error_should_poison_only_its_calls() {
+        let src = "class C {\n    x: i64\n}\nextend C {\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    let c = C(x: 1)\n    c.grow()\n    c.shrink()\n}\n";
+        assert_eq!(
+            codes(src),
+            [(Code::Expected, (6, 13)), (Code::NoMember, (12, 7))]
+        );
+        let interfaces = "interface Named {\n    fn name(self) -> string\n}\ninterface Solid: Named {\n    fn volume(self) -> f64\n}\nclass C {\n    x: i64\n}\n";
+        let src = format!(
+            "{interfaces}extend C: Solid {{\n    fn volume(self) -> f64 {{ 1.0 }}\n}}\nextend C: Named {{\n    fn name(self) -> string {{\n        let = 1\n    }}\n}}\nfn main() {{}}\n"
+        );
+        assert_eq!(codes(&src), [(Code::Expected, (15, 13))]);
+        let src = format!(
+            "{interfaces}extend C: Solid {{\n    fn volume(self) -> f64 {{ 1.0 }}\n}}\nextend C: {{}}\nfn main() {{}}\n"
+        );
+        assert_eq!(codes(&src), [(Code::Expected, (13, 11))]);
+    }
+
+    /// A prelude that extends a built-in type is an internal error.
+    #[test]
+    #[should_panic(expected = "internal compiler error: the prelude does not check clean")]
+    fn prelude_should_be_an_internal_error_when_it_extends_a_built_in_type() {
+        front_end_with("extend i64 {}", "fn main() {}");
+    }
+
     /// A broken interface poisons its name for every use, as a broken class does, and so does a
     /// broken function of the name an intact interface has.
     #[test]
@@ -1065,22 +1116,26 @@ fn main() {
         }
     }
 
-    /// The checker takes no conformance, `extend` block or member type yet: each is E0030 at the
-    /// type it cannot take.
+    /// The checker takes no generic conformance, associated type or member type yet: each is
+    /// E0030 at the name it cannot take.
     #[test]
     fn what_the_checker_cannot_take_yet_should_be_an_unknown_type() {
         for (src, at) in [
             ("fn f<T: Ord>(x: T) {}\nfn main() {}\n", (1, 9)),
             (
-                "interface Shape {}\nclass C: Shape {}\nfn main() {}\n",
-                (2, 10),
+                "interface Shape {}\nclass C<T>: Shape {}\nfn main() {}\n",
+                (2, 13),
             ),
             (
-                "interface Shape {}\nenum E: Shape {\n    A\n}\nfn main() {}\n",
-                (2, 9),
+                "interface Shape {}\nenum E<T>: Shape {\n    A\n}\nfn main() {}\n",
+                (2, 12),
             ),
             (
                 "interface Source {}\nclass C: Source {\n    type Item = i64\n}\nfn main() {}\n",
+                (3, 10),
+            ),
+            (
+                "interface Convert<T> {}\nclass C: Convert<i64> {}\nfn main() {}\n",
                 (2, 10),
             ),
             ("extend C {}\nfn main() {}\n", (1, 8)),

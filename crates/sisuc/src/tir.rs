@@ -3,6 +3,8 @@
 
 use std::fmt;
 
+use rustc_hash::FxHashMap;
+
 use crate::ast::angled;
 use crate::graph::components;
 use crate::source::Span;
@@ -117,6 +119,108 @@ pub(crate) struct Program {
     /// Where the prelude's items start in each list; the user's come first. Only the checker
     /// sets it.
     pub(crate) prelude: ItemCounts,
+    /// Indexed by `InterfaceId`. Only the checker sets it.
+    pub(crate) interfaces: Vec<Interface>,
+    /// Every conformance of a class or an enum to an interface. Only the checker sets it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Task 4's `mono` resolves an interface call with it"
+        )
+    )]
+    pub(crate) conformances: Conformances,
+}
+
+/// An interface, as the typed tree names it.
+#[derive(Clone, Debug)]
+pub(crate) struct Interface {
+    pub(crate) name: String,
+}
+
+/// The conformance of the class or enum `target` to an interface with the arguments `args`
+/// (without `Self`). `type_params` is how many type parameters of an `extend` block the target
+/// binds: they are the `Param`s of `target` and `args`. `methods` hold, in the order of the
+/// interface's requirements, the method that meets each; the list is complete only in a program
+/// that checks without an error.
+#[derive(Clone, Debug)]
+pub(crate) struct Conformance {
+    pub(crate) type_params: usize,
+    pub(crate) target: Type,
+    pub(crate) args: TypeArgs,
+    pub(crate) methods: Vec<FuncId>,
+}
+
+/// The conformances of a program, by interface. A target without parameters is indexed by its
+/// exact type, and a target with parameters by its class or enum, so that a lookup reads the
+/// exact entry and then only the generic targets of the receiver's class or enum.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Conformances {
+    list: Vec<Vec<Conformance>>,
+    exact: FxHashMap<(InterfaceId, Type), Vec<usize>>,
+    generic: FxHashMap<(InterfaceId, Head), Vec<usize>>,
+}
+
+impl Conformances {
+    /// Adds `conformance` to those of `interface`, and gives its index among them. Its target is
+    /// a class or an enum type.
+    pub(crate) fn add(&mut self, interface: InterfaceId, conformance: Conformance) -> usize {
+        if self.list.len() <= interface.0 {
+            self.list.resize_with(interface.0 + 1, Vec::new);
+        }
+        let list = &mut self.list[interface.0];
+        let index = list.len();
+        if conformance.type_params == 0 {
+            self.exact
+                .entry((interface, conformance.target))
+                .or_default()
+                .push(index);
+        } else {
+            let head = head_of(conformance.target)
+                .expect("the target of a conformance should be a class or an enum type");
+            self.generic
+                .entry((interface, head))
+                .or_default()
+                .push(index);
+        }
+        list.push(conformance);
+        index
+    }
+
+    /// The conformance `index` of `interface`.
+    pub(crate) fn get(&self, interface: InterfaceId, index: usize) -> &Conformance {
+        &self.list[interface.0][index]
+    }
+
+    /// The conformance `index` of `interface`, to fill its methods.
+    pub(crate) fn get_mut(&mut self, interface: InterfaceId, index: usize) -> &mut Conformance {
+        &mut self.list[interface.0][index]
+    }
+
+    /// Every conformance, with its interface.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (InterfaceId, &Conformance)> {
+        (self.list.iter().enumerate())
+            .flat_map(|(i, list)| list.iter().map(move |c| (InterfaceId(i), c)))
+    }
+
+    /// The conformances of `interface` whose target is `ty`, which has no parameters.
+    pub(crate) fn exact(&self, interface: InterfaceId, ty: Type) -> &[usize] {
+        self.exact.get(&(interface, ty)).map_or(&[], Vec::as_slice)
+    }
+
+    /// The conformances of `interface` whose target has parameters and names `head`.
+    pub(crate) fn generic(&self, interface: InterfaceId, head: Head) -> &[usize] {
+        (self.generic.get(&(interface, head))).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// The class or enum that `ty` is, if it is one.
+pub(crate) fn head_of(ty: Type) -> Option<Head> {
+    match ty.kind() {
+        TypeKind::Class(id, _) => Some(Head::Class(id)),
+        TypeKind::Enum(id, _) => Some(Head::Enum(id)),
+        _ => None,
+    }
 }
 
 /// How many classes, enums and functions (methods too) come first in their lists.
@@ -197,6 +301,11 @@ pub(crate) struct Field {
 #[derive(Clone, Debug)]
 pub(crate) struct Function {
     pub(crate) name: String,
+    /// The type a method is declared on (`self`'s); `None` for a function.
+    pub(crate) owner: Option<Type>,
+    /// The interface, with its arguments, of the `extend` block that declares a method; `None`
+    /// for every other function.
+    pub(crate) conformance: Option<(InterfaceId, TypeArgs)>,
     /// The names of the type parameters in scope: a method's owner's, then its own.
     pub(crate) type_params: Vec<String>,
     /// How many of `type_params` belong to the class or enum of a method.
@@ -1435,11 +1544,25 @@ impl fmt::Display for Program {
                 function,
             };
             let (owner, own) = function.type_params.split_at(function.owner_params);
-            match function.name.split_once('.') {
-                Some((class, method)) => {
+            match (
+                function.name.split_once('.'),
+                function.owner,
+                function.conformance,
+            ) {
+                // A method of a conformance block: its interface stands between the type and
+                // the method, so two conformances may each hold a `name`.
+                (Some((_, method)), Some(ty), Some((interface, args))) => write!(
+                    f,
+                    "(fn {}.{}{}.{method}{} (",
+                    self.type_name(ty),
+                    self.interfaces[interface.0].name,
+                    self.args_name(args.get()),
+                    angled(own)
+                )?,
+                (Some((class, method)), ..) => {
                     write!(f, "(fn {class}{}.{method}{} (", angled(owner), angled(own))?;
                 }
-                None => write!(f, "(fn {}{} (", function.name, angled(own))?,
+                (None, ..) => write!(f, "(fn {}{} (", function.name, angled(own))?,
             }
             for (j, param) in function.params.iter().enumerate() {
                 if j > 0 {
@@ -1527,6 +1650,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: vec![],
                 owner_params: 0,
                 params: vec![],
@@ -1644,6 +1769,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -1749,6 +1876,8 @@ mod tests {
             }],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -1831,6 +1960,8 @@ mod tests {
         let program = Program {
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -1892,6 +2023,8 @@ mod tests {
         // fn second(a: i64, ok: bool) -> bool { first(); ok && (a == 3 && a < 4) }
         let first = Function {
             name: "first".into(),
+            owner: None,
+            conformance: None,
             type_params: Vec::new(),
             owner_params: 0,
             params: vec![],
@@ -1926,6 +2059,8 @@ mod tests {
         let value = binary(BinaryOp::And, ok, binary(BinaryOp::And, a_eq_3, a_lt_4));
         let second = Function {
             name: "second".into(),
+            owner: None,
+            conformance: None,
             type_params: Vec::new(),
             owner_params: 0,
             params: vec![LocalId(0), LocalId(1)],
@@ -1975,6 +2110,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2010,6 +2147,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2040,6 +2179,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2061,6 +2202,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2083,6 +2226,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2113,6 +2258,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2149,6 +2296,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
@@ -2200,6 +2349,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
@@ -2227,6 +2378,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2272,6 +2425,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2307,6 +2462,8 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],

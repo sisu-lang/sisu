@@ -801,3 +801,62 @@ fn equal_of_primitives_should_not_walk_the_generic_classes() {
     // Finding the held parameters would take a step for each class.
     assert!(HELD_STEPS.get() < n);
 }
+
+/// An interface, and the code that follows.
+const SHAPE: &str = "interface Shape {\n    fn area(self) -> f64\n}\n";
+
+/// A method of a conformance is live when its class or enum is built: an interface call names a
+/// requirement, so no use of the method itself reaches it, as rustc reports no method of a trait
+/// impl of a type it builds.
+#[test]
+fn conformance_method_should_not_warn_when_its_type_is_built() {
+    judge_unused();
+    for src in [
+        // In the list of a class, in a block of a class, and in a block of an enum.
+        "class Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n}\nfn main() {\n    print(Circle(r: 1.0).r)\n}",
+        "class Circle {\n    r: f64\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\nfn main() {\n    print(Circle(r: 1.0).r)\n}",
+        "enum Dir {\n    North\n}\nextend Dir: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let _ = Dir.North\n}",
+        "enum Dir: Shape {\n    North\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let _ = Dir.North\n}",
+    ] {
+        clean(&format!("{SHAPE}{src}"));
+    }
+}
+
+/// What only the method of a conformance of an unbuilt class calls is not live: the method is
+/// not, so rustc reports the helper, and the class is reported, not its method.
+#[test]
+fn helper_should_warn_when_only_the_conformance_method_of_an_unbuilt_class_calls_it() {
+    judge_unused();
+    let src = format!(
+        "{SHAPE}fn helper() -> f64 {{\n    1.0\n}}\nclass Circle: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ helper() }}\n}}\nfn main() {{}}"
+    );
+    assert_eq!(
+        found(&src),
+        [(W0012, (4, 4), vec![(9, 28)]), (W0012, (7, 7), vec![])]
+    );
+}
+
+/// A method of an `extend` block is unused when nothing calls it and its class is built; an
+/// unbuilt class is the one reported.
+#[test]
+fn extend_method_should_warn_only_when_its_type_is_built() {
+    judge_unused();
+    let block = "extend Circle {\n    fn grow(self) -> f64 { 1.0 }\n}\n";
+    let class = "class Circle {\n    r: f64\n}\n";
+    diagnostic(
+        &format!("{class}{block}fn main() {{\n    print(Circle(r: 1.0).r)\n}}"),
+        W0012,
+        (5, 8, "grow"),
+        &[],
+    );
+    diagnostic(
+        &format!("{class}{block}fn main() {{}}"),
+        W0012,
+        (1, 7, "Circle"),
+        &[],
+    );
+    // A call is a use, whichever block holds the method.
+    clean(&format!(
+        "{class}{block}fn main() {{\n    let c = Circle(r: 1.0)\n    print(c.grow() + c.r)\n}}"
+    ));
+}

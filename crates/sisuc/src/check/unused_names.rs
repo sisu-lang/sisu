@@ -9,7 +9,8 @@ use std::cell::OnceCell;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{Checker, Declared};
+use super::extend::holder_of;
+use super::{Checker, Declared, Holder};
 use crate::diagnostic::{Definition, Diagnostic, DiagnosticKind};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -101,13 +102,6 @@ impl Used {
             Used::Class(_) | Used::Variant(..) | Used::Field(..) | Used::Equal(_) => None,
         }
     }
-}
-
-/// A class or an enum: the holder of a method, or of type parameters.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Holder {
-    Class(tir::ClassId),
-    Enum(tir::EnumId),
 }
 
 /// What the walk from the roots reaches.
@@ -533,18 +527,45 @@ impl Checker<'_> {
         let held = OnceCell::new();
         // One for every comparison, so each type is walked once.
         let mut seen = Seen::default();
+        // The methods of a class's or an enum's conformances. An interface call names a
+        // requirement, so no use reaches them: they are live when the type is built, as rustc
+        // reports no method of a trait impl of a type it builds.
+        let mut conforming: FxHashMap<Holder, Vec<usize>> = FxHashMap::default();
+        for (_, conformance) in self.conformances.iter() {
+            if let Some(holder) = holder_of(conformance.target) {
+                (conforming.entry(holder).or_default())
+                    .extend(conformance.methods.iter().map(|f| f.0));
+            }
+        }
+        let mut enum_started = vec![false; self.enums.len()];
         while let Some(o) = stack.pop() {
             for &i in &edges[o] {
                 let to = self.uses[i].to;
+                let started = match to {
+                    Used::Class(c) => {
+                        Some((Holder::Class(c), !std::mem::replace(&mut built[c.0], true)))
+                    }
+                    Used::Variant(e, _) => Some((
+                        Holder::Enum(e),
+                        !std::mem::replace(&mut enum_started[e.0], true),
+                    )),
+                    _ => None,
+                };
+                if let Some((holder, true)) = started {
+                    for &method in conforming.get(&holder).into_iter().flatten() {
+                        if !std::mem::replace(&mut live[method], true) {
+                            stack.push(method);
+                        }
+                    }
+                }
                 match to {
-                    Used::Class(c) => built[c.0] = true,
                     Used::Variant(e, v) => variants[e.0][v] = true,
                     Used::Field(c, f) => read[c.0][f] = true,
                     Used::Equal(ty) => {
                         self.held_classes(ty, &held, &mut seen, |c| compared[c.0] = true);
                     }
-                    // An owner is reached next.
-                    Used::Func(_) | Used::Const(_) => {}
+                    // A class is built above, and an owner is reached next.
+                    Used::Class(_) | Used::Func(_) | Used::Const(_) => {}
                 }
                 if let Some(owner) = to.owner() {
                     let reached = owner.index(functions);
@@ -580,6 +601,11 @@ impl Checker<'_> {
                 if let Declared::Known(f) = method {
                     holders[f.0] = Some(Holder::Enum(tir::EnumId(e)));
                 }
+            }
+        }
+        for ext in &self.extensions {
+            for f in ext.methods.values() {
+                holders[f.0] = Some(ext.holder);
             }
         }
         holders

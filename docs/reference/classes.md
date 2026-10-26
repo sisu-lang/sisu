@@ -257,7 +257,7 @@ An object stays in memory while a reference to it exists. [Values and memory](va
 
 A class can name interfaces after its name, as in `class Person: Named`. Its body then holds the methods of those interfaces ([Interfaces](generics.md#interfaces)).
 
-```sisu pending
+```sisu
 interface Named {
     fn name(self) -> string
 }

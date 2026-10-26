@@ -1,0 +1,13 @@
+class Circle {
+    r: f64
+}
+
+extend Circle {
+    fn grow(mut self) -> f64 {
+        self.r
+    }
+}
+
+fn main() {
+    print(Circle(r: 1.0).grow())
+}

@@ -205,6 +205,11 @@ codes! {
     SelfOutside = "E0149",
     InheritanceCycle = "E0150",
     InheritedArgument = "E0151",
+    ConformanceBody = "E0152",
+    ConformsTwice = "E0153",
+    NotConform = "E0154",
+    CannotExtend = "E0155",
+    Ambiguous = "E0156",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -332,10 +337,11 @@ pub(crate) enum DiagnosticKind {
     },
     /// A body or a field at `at` in an interface, which holds signatures only.
     InterfaceBody { at: Span, form: InterfaceBodyForm },
-    /// The interface `name`, written as `written` at `at`, where a type belongs.
+    /// The interface `name`, written as `written` at `at`, where a type belongs. `written` is
+    /// `None` for the target of an `extend` block, where a type parameter is no advice.
     InterfaceAsType {
         name: String,
-        written: String,
+        written: Option<String>,
         at: Span,
     },
     /// The type `written` at `at`, which is a `kind` and no interface, where a bound, a
@@ -369,6 +375,46 @@ pub(crate) enum DiagnosticKind {
         owner: String,
         at: Span,
         first: Span,
+    },
+    /// The conformance of `ty` to `interface`, whose name is at `at`, and what is wrong with it.
+    ConformanceBody {
+        ty: String,
+        interface: String,
+        at: Span,
+        form: ConformanceForm,
+    },
+    /// A second conformance of `ty` to `interface`, whose name is at `at`; the first is at
+    /// `first`.
+    ConformsTwice {
+        ty: String,
+        interface: String,
+        at: Span,
+        first: Span,
+    },
+    /// `ty` conforms to `interface`, at `at`, which `via` requires at `requires`, yet not to
+    /// `inherited`. `extend` is the block that would add the conformance, when `ty` has none.
+    NotConform {
+        ty: String,
+        inherited: String,
+        via: String,
+        at: Span,
+        requires: Span,
+        extend: Option<String>,
+    },
+    /// An `extend` of `written`, at `at`, which is no class or enum.
+    CannotExtend {
+        written: String,
+        at: Span,
+        form: CannotExtendForm,
+    },
+    /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
+    /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
+    Ambiguous {
+        method: String,
+        receiver: String,
+        interfaces: Vec<String>,
+        at: Span,
+        annotate: Option<Annotate>,
     },
     /// A `mut` at `at` in front of the parameter `name`.
     MutParameter { name: String, at: Span },
@@ -1543,6 +1589,39 @@ pub(crate) enum Owner {
     Interface,
 }
 
+/// What is wrong with a conformance.
+#[derive(Clone)]
+pub(crate) enum ConformanceForm {
+    /// The signatures of the requirements that no method meets.
+    Missing(Vec<String>),
+    /// The method `method`, written as `found` at the diagnostic's span, which the requirement
+    /// `want` does not accept.
+    Wrong {
+        method: String,
+        found: String,
+        want: String,
+    },
+    /// The method `method` of an `extend` block, which is no requirement; `target` is the type
+    /// that its own block would extend.
+    NotRequirement { method: String, target: String },
+}
+
+/// Why an `extend` target is no class or enum.
+#[derive(Clone, Copy)]
+pub(crate) enum CannotExtendForm {
+    BuiltIn,
+    TypeParam,
+}
+
+/// The `let` that picks one answer of an ambiguous call: the call as written, the name of the
+/// binding, and the type that exactly one answer returns.
+#[derive(Clone)]
+pub(crate) struct Annotate {
+    pub(crate) call: String,
+    pub(crate) binding: String,
+    pub(crate) ty: String,
+}
+
 /// What an interface holds that it should not.
 #[derive(Clone, Copy)]
 pub(crate) enum InterfaceBodyForm {
@@ -1920,12 +1999,105 @@ impl From<DiagnosticKind> for Diagnostic {
                     InterfaceBodyForm::Field => d,
                 }
             }
-            DiagnosticKind::InterfaceAsType { name, written, at } => Diagnostic::coded(
+            DiagnosticKind::InterfaceAsType { name, written, at } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{name}` is an interface, not a type"),
+                );
+                match written {
+                    Some(written) => d.with_help(format!("use a type parameter: `T: {written}`")),
+                    None => d,
+                }
+            }
+            DiagnosticKind::ConformanceBody {
+                ty,
+                interface,
+                at,
+                form,
+            } => match form {
+                ConformanceForm::Missing(signatures) => {
+                    Diagnostic::coded(code, at, format!("`{ty}` does not meet `{interface}`"))
+                        .with_help(format!("add these members:\n{}", signatures.join("\n")))
+                }
+                ConformanceForm::Wrong {
+                    method,
+                    found,
+                    want,
+                } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{method}` does not match `{interface}`'s requirement"),
+                )
+                .with_label(format!("found `{found}`"))
+                .with_help(format!("`{interface}` requires `{want}`")),
+                ConformanceForm::NotRequirement { method, target } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{method}` is not a requirement of `{interface}`"),
+                )
+                .with_help(format!("move it to `extend {target} {{ ... }}`")),
+            },
+            DiagnosticKind::ConformsTwice {
+                ty,
+                interface,
+                at,
+                first,
+            } => Diagnostic::coded(code, at, format!("`{ty}` conforms to `{interface}` twice"))
+                .with_secondary(first, "first conformance here"),
+            DiagnosticKind::NotConform {
+                ty,
+                inherited,
+                via,
+                at,
+                requires,
+                extend,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{ty}` does not conform to `{inherited}`"),
+                )
+                .with_secondary(requires, format!("`{via}` requires `{inherited}`"));
+                match extend {
+                    Some(block) => d.with_help(format!("write `{block}`")),
+                    None => d,
+                }
+            }
+            DiagnosticKind::CannotExtend { written, at, form } => Diagnostic::coded(
                 code,
                 at,
-                format!("`{name}` is an interface, not a type"),
-            )
-            .with_help(format!("use a type parameter: `T: {written}`")),
+                match form {
+                    CannotExtendForm::BuiltIn => {
+                        format!("`{written}` is a built-in type; only the prelude extends it")
+                    }
+                    CannotExtendForm::TypeParam => format!(
+                        "`extend` takes a class or enum, and `{written}` is a type parameter"
+                    ),
+                },
+            ),
+            DiagnosticKind::Ambiguous {
+                method,
+                receiver,
+                interfaces,
+                at,
+                annotate,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!(
+                        "`{method}` on `{receiver}` could come from {}",
+                        listed(&interfaces, "or")
+                    ),
+                );
+                match annotate {
+                    Some(Annotate { call, binding, ty }) => {
+                        d.with_help(format!("annotate the result: `let {binding}: {ty} = {call}`"))
+                    }
+                    None => d,
+                }
+            }
             DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
                 code,
                 at,

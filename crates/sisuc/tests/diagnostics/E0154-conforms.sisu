@@ -1,0 +1,22 @@
+interface Named {
+    fn name(self) -> string
+}
+
+interface Shape: Named {
+    fn area(self) -> f64
+}
+
+enum Dir {
+    North
+    South
+}
+
+extend Dir: Shape {
+    fn area(self) -> f64 {
+        1.0
+    }
+}
+
+fn main() {
+    print(Dir.North.area())
+}

@@ -1,0 +1,11 @@
+error[E0152]: `Circle` does not meet `Shape`
+ --> E0152.sisu:5:15
+  |
+5 | class Circle: Shape {
+  |               ^^^^^
+  |
+  = help: add these members:
+          fn area(self) -> f64
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152
