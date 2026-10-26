@@ -1540,12 +1540,14 @@ fn a_method_should_find_the_choices_of_its_class_without_copying_them() {
 /// The bounds that write an associated type of another parameter are read a fixed number of
 /// times each, and put in scope in place. The steps are the bounds resolved and the
 /// entries of closures built. Those of 64 are at most twice those of 32
-/// (and a few more), for four lists: a chain of bounds written in reverse (each in a wave of its
+/// (and a few more), for five lists: a chain of bounds written in reverse (each in a wave of its
 /// own); one parameter with `n` bounds that write `S.Item` (a closure that is built once, not
 /// after each bound); a chain whose bounds write an associated type of a parameter with `n`
 /// bounds (a closure that stays when a wave adds bounds to other parameters); and one parameter
 /// whose `n` bounds each write the type that the one before declares (a closure that grows by the
-/// closure of each bound). The scopes kept are as many for 64 as for 32.
+/// closure of each bound); and one interface that declares `n` types, named by `n` bounds of
+/// one parameter, which `n` other bounds write (the declarations are read once, not for each
+/// bound). The scopes kept are as many for 64 as for 32.
 #[test]
 fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
     let chain = |n: usize| {
@@ -1599,6 +1601,17 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
             bounds.join(" & ")
         )
     };
+    let many = |n: usize| {
+        let declared: Vec<String> = (0..n).map(|i| format!("    type A{i}\n")).collect();
+        let bounds: Vec<String> = (0..n).map(|_| "Big<R.Item>".to_string()).collect();
+        let writers: Vec<String> = (0..n).map(|i| format!("U{i}: Convert<T.A{i}>")).collect();
+        format!(
+            "interface Big<X> {{\n{}}}\nfn f<R: Source, T: {}, {}>() {{}}",
+            declared.concat(),
+            bounds.join(" & "),
+            writers.join(", ")
+        )
+    };
     let steps = |list: String| {
         let src = format!(
             "interface Source {{\n    type Item\n}}\ninterface Holds<Y> {{\n    type Item\n}}\ninterface Convert<Y> {{}}\n{list}\nfn main() {{}}"
@@ -1615,6 +1628,7 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
         ("repeated", &repeated),
         ("beside", &beside),
         ("within", &within),
+        ("many", &many),
     ] {
         let ((small, kept_small), (large, kept_large)) = (steps(shape(32)), steps(shape(64)));
         assert!(small >= 32, "{name}: {small} steps for 32");
@@ -3317,6 +3331,9 @@ fn associated_types_should_normalize_through_generic_code() {
         // ways. A closure found before the bound is added grows by the interfaces it inherits.
         "interface Holds2<Y> {\n    type Item\n}\ninterface Two<A, B> {}\nfn two<U: Two<S.Item, T.Item>, S: Holds2<R.Item>, T: Holds2<R.Item>, R: Source>(_u: U, _s: S, _t: T, _r: R) {}",
         "interface Base2 {\n    type Key\n}\ninterface L2: Base2 {}\ninterface R2: Base2 {}\ninterface BothG<X>: L2, R2 {}\nfn diamond<S: Source & BothG<T.Item>, V: Convert<S.Item>, U: Convert<S.Key>, T: Source>(_s: S, _v: V, _u: U, _t: T) {}",
+        // Two bounds that inherit the one `Item` that `Source` declares, beside the bound of
+        // `Source` itself: they are no declarations to wait for.
+        "interface First<X>: Source {}\ninterface Second<X>: Source {}\nfn same<S: Source & First<S.Item> & Second<S.Item>>(_s: S) {}",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3557,6 +3574,12 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
             "interface A<X, Y> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\nfn f<T: A<S.Q, R.Item>, S: B<T.P>, R: Source>(t: T, s: S, r: R) {}".to_string(),
             vec![(Code::UnknownType, (7, 13)), (Code::UnknownType, (7, 32))],
         ),
+        // Two bounds that inherit the same `Item`, and no bound of `Source` beside them: each gives
+        // `Item` only through the other, so they wait for each other.
+        (
+            "interface First<X>: Source {}\ninterface Second<X>: Source {}\nfn f<S: First<S.Item> & Second<S.Item>>(_s: S) {}".to_string(),
+            vec![(Code::UnknownType, (3, 17)), (Code::UnknownType, (3, 34))],
+        ),
         // A bound that names no interface declares nothing: a class, a type parameter and an
         // optional. The parameter it bounds has no associated type, and that is all.
         (
@@ -3644,6 +3667,23 @@ fn a_bound_that_writes_an_associated_type_should_give_at_most_the_limit_of_inter
         let src = format!("{row}\n{big}");
         codes(&with_sources(&src), &[(Code::BoundTooWide, at)]);
     }
+}
+
+/// A parameter whose closure went past the limit when a bound was added is unknown for the bounds
+/// that resolve after it: a bound of a later wave that writes a type of it is not reported again.
+/// The type `Key` is declared at the end of the chain that the limit cuts, so the closure that
+/// `V` read before `Big` was added does not have it either.
+#[test]
+fn a_parameter_that_went_past_the_limit_should_stay_unknown_for_later_bounds() {
+    let mut chain = "interface C1 {\n    type Key\n}\n".to_string();
+    for k in 2..=257 {
+        writeln!(chain, "interface C{k}: C{} {{}}", k - 1)
+            .expect("writing to a `String` should succeed");
+    }
+    let row = format!(
+        "interface ZHolder<X> {{\n    type Z\n}}\ninterface Two<A, B> {{}}\ninterface Big<X>: C257 {{}}\n{chain}fn f<V: Convert<S.Item>, S: Source & Big<R.Item>, T: ZHolder<R.Item>, W: Two<S.Key, T.Z>, R: Source>(_v: V, _s: S, _t: T, _w: W, _r: R) {{}}"
+    );
+    codes(&with_sources(&row), &[(Code::BoundTooWide, (265, 38))]);
 }
 
 /// A cycle through an associated type is a cycle of the type it stands for: its edge weighs how
