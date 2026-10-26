@@ -487,9 +487,7 @@ impl Checker<'_> {
     /// Whether the bounds now in scope of the parameter at `place` include an interface that
     /// declares the associated type `name`.
     fn declares(&mut self, place: usize, name: Symbol) -> bool {
-        let Some(&param) = self.body.type_params.get(place) else {
-            return false;
-        };
+        let param = self.body.type_params[place];
         let place =
             u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters");
         let ty = Type::intern(TypeKind::Param(param, place));

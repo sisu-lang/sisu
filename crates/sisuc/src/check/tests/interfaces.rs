@@ -3249,6 +3249,9 @@ fn associated_types_should_normalize_through_generic_code() {
         // A bound that writes an associated type that another bound of its own parameter declares,
         // and two such bounds on one parameter.
         "interface Has {\n    type Out\n}\nfn own<S: Source & Convert<S.Item>>(s: S) -> S.Item { s.convert() }\nfn has<T: Has & Convert<T.Out>>(_t: T) {}\nfn both<S: Source & Convert<S.Item> & Wrap2<S.Item>>(_s: S) {}\ninterface Wrap2<X> {}\nfn later<S: Holds2<T.Item> & Convert<S.Item>, T: Source>(_s: S, _t: T) {}\ninterface Holds2<Y> {\n    type Item\n}",
+        // A bound that waits for the bound of a parameter after it, and three bounds of one
+        // parameter in a method of a generic class.
+        "interface Holds2<Y> {\n    type Item\n}\nfn waits<U: Convert<S.Item>, S: Holds2<T.Item>, T: Source>(u: U, _s: S, _t: T) -> S.Item { u.convert() }\ninterface Wrap2<X> {}\ninterface Wrap3<X> {}\nclass H<O> {\n    fn f<S: Source & Convert<S.Item> & Wrap2<S.Item> & Wrap3<S.Item>>(self, s: S) -> S.Item { s.convert() }\n}",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3465,6 +3468,12 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
         (
             "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\nfn f<T: A<S.Q>, S: B<T.P>, U: Convert<S.Q>>(t: T, s: S, u: U) {}".to_string(),
             vec![(Code::UnknownType, (7, 13)), (Code::UnknownType, (7, 24))],
+        ),
+        // A resolved parameter in a loop bound is no part of the loop; a bound that waits for the
+        // loop, and the bound that waits for that one, have no report.
+        (
+            "interface A<X, Y> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\nfn f<T: A<S.Q, R.Item>, S: B<T.P>, R: Source, V: A<S.Q, R.Item>, W: Convert<V.P>>(t: T, s: S, r: R, v: V, w: W) {}".to_string(),
+            vec![(Code::UnknownType, (7, 13)), (Code::UnknownType, (7, 32))],
         ),
         // A parameter of the class is in scope, and its associated type is no part of the loop.
         (
