@@ -122,11 +122,13 @@ struct CallShape {
     open: bool,
 }
 
-/// The hole, `_`: what `Bindings::partial` puts for an unbound parameter. No declaration has a
-/// parameter of this name, and its index is out of range for `found`, so a hole that leaks into
-/// `known` or `subst` panics at once and does not give a wrong type.
-fn hole() -> Type {
-    Type::intern(TypeKind::Param(Symbol::intern("_"), u32::MAX))
+/// What `Bindings::resolve` puts for a parameter that is unbound.
+#[derive(Clone, Copy)]
+enum Unbound {
+    /// Nothing: the walk gives `None`.
+    Fail,
+    /// The parameter itself, by the callee's name.
+    Keep,
 }
 
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
@@ -213,45 +215,48 @@ impl Bindings {
     /// `ty`, a callee's, with its parameters' bindings in their place; `None` while it names
     /// one that is unbound.
     pub(super) fn known(&self, ty: Type) -> Option<Type> {
-        self.resolve(ty, None)
+        self.resolve(ty, Unbound::Fail)
     }
 
-    /// As `known`, with a hole for each unbound parameter, so it always gives a type. Only for
-    /// a type that a diagnostic prints: a hole must not reach `found`.
-    pub(super) fn partial(&self, ty: Type) -> Type {
-        self.resolve(ty, Some(hole()))
-            .expect("a hole should stand for each unbound parameter")
+    /// As `known`, with each unbound parameter by the callee's name, so it always gives a type.
+    /// For a diagnostic: a repeated name shows that two places must be one type.
+    fn printed(&self, ty: Type) -> Type {
+        self.resolve(ty, Unbound::Keep)
+            .expect("a parameter should stand for itself while it is unbound")
     }
 
-    /// The walk of `known` and `partial`: `hole` stands for an unbound parameter, and `None`
-    /// there gives `None`.
-    fn resolve(&self, ty: Type, hole: Option<Type>) -> Option<Type> {
+    /// The walk of `known` and `printed`: `unbound` says what an unbound parameter becomes.
+    fn resolve(&self, ty: Type, unbound: Unbound) -> Option<Type> {
         #[cfg(test)]
-        if hole.is_none() {
+        if matches!(unbound, Unbound::Fail) {
             WALKED.set(WALKED.get() + 1);
         }
         if !ty.has_param() {
             return Some(ty);
         }
         Some(match ty.kind() {
-            TypeKind::Param(_, i) => self.found[i as usize].or(hole)?,
-            TypeKind::Array(element) => Type::array(self.resolve(element, hole)?),
-            TypeKind::Optional(payload) => Type::optional(self.resolve(payload, hole)?),
+            TypeKind::Param(_, i) => match (self.found[i as usize], unbound) {
+                (Some(bound), _) => bound,
+                (None, Unbound::Fail) => return None,
+                (None, Unbound::Keep) => ty,
+            },
+            TypeKind::Array(element) => Type::array(self.resolve(element, unbound)?),
+            TypeKind::Optional(payload) => Type::optional(self.resolve(payload, unbound)?),
             TypeKind::Class(id, args) => {
-                Type::intern(TypeKind::Class(id, self.resolve_all(args, hole)?))
+                Type::intern(TypeKind::Class(id, self.resolve_all(args, unbound)?))
             }
             TypeKind::Enum(id, args) => {
-                Type::intern(TypeKind::Enum(id, self.resolve_all(args, hole)?))
+                Type::intern(TypeKind::Enum(id, self.resolve_all(args, unbound)?))
             }
             _ => unreachable!("only a kind with a child can name a parameter"),
         })
     }
 
-    fn resolve_all(&self, args: TypeArgs, hole: Option<Type>) -> Option<TypeArgs> {
+    fn resolve_all(&self, args: TypeArgs, unbound: Unbound) -> Option<TypeArgs> {
         let list: Option<Vec<Type>> = args
             .get()
             .iter()
-            .map(|&ty| self.resolve(ty, hole))
+            .map(|&ty| self.resolve(ty, unbound))
             .collect();
         list.map(|list| TypeArgs::intern(&list))
     }
@@ -272,7 +277,7 @@ impl Bindings {
 thread_local! {
     /// How many bindings inference has checked or undone on this thread.
     pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many types `Bindings::known` has looked at on this thread. A `partial` walk, which
+    /// How many types `Bindings::known` has looked at on this thread. A `printed` walk, which
     /// only a diagnostic uses, is not counted.
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names the search for reported ones has looked at on this
@@ -657,12 +662,7 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                // With nothing bound, the callee's own names say more than holes.
-                let want = if call.bindings.found.iter().any(Option::is_some) {
-                    call.bindings.partial(pattern)
-                } else {
-                    pattern
-                };
+                let want = call.bindings.printed(pattern);
                 let d = self.mismatch(e.span, Some(e), want, ty);
                 self.diagnostics.push(d);
                 mark((checked, true))

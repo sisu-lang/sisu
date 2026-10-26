@@ -1,0 +1,12 @@
+class Three<A, B, C> {
+    a: A
+    b: B
+    c: C
+}
+
+fn f<A, B>(a: A, p: Three<A, B, B>) {}
+
+fn main() {
+    let t = Three(a: "s", b: 1, c: true)
+    f("s", t)
+}
