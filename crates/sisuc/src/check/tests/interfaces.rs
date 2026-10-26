@@ -1221,6 +1221,11 @@ fn written_type_arguments_should_pick_the_conformance_block_by_its_result() {
             "let n: i64 = c.make<i64, i64>(1)",
             vec![(Code::Ambiguous, (16, 20))],
         ),
+        // A written argument that does not resolve is reported, and the call is not also ambiguous.
+        (
+            "let n: i64 = c.make<Missing>(1)",
+            vec![(Code::UnknownType, (16, 25))],
+        ),
     ] {
         codes(&make_blocks(statement), &expected);
     }
@@ -1253,6 +1258,19 @@ fn a_call_with_several_candidates_should_wait_for_the_context_of_the_outer_call(
     ] {
         codes(&program(statement), &expected);
     }
+}
+
+/// Candidates that all return one known type leave nothing for the context to pick: the call is
+/// reported at once, not first as a type the outer call cannot infer.
+#[test]
+fn a_call_whose_candidates_return_one_type_should_be_reported_at_once() {
+    let blocks = "interface Tag1 {\n    fn name(self) -> string\n}\ninterface Tag2 {\n    fn name(self) -> string\n}\nclass C {}\nextend C: Tag1 {\n    fn name(self) -> string { \"a\" }\n}\nextend C: Tag2 {\n    fn name(self) -> string { \"b\" }\n}\nfn id<T>(x: T) -> T { x }\n";
+    codes(
+        &with_shapes(&format!(
+            "{blocks}fn main() {{\n    let c = C()\n    let x = id(c.name())\n}}"
+        )),
+        &[(Code::Ambiguous, (17, 18))],
+    );
 }
 
 /// A call waits for the context of an outer generic call only when several blocks answer it and its
@@ -1373,8 +1391,13 @@ fn the_fix_of_an_unused_extend_parameter_should_take_out_the_list_when_it_is_cer
     let d = diagnostic(&src, Code::CannotExtend, (4, 8, "T"), &[]);
     assert_eq!(
         fixes(&src, &d),
-        [(true, vec![(4, 7, "<T>", String::new())])]
+        [(true, vec![(4, 7, "<T> ", " ".to_string())])]
     );
+    fix_removes_its_code(&src, &d);
+    // The list is the only text between `extend` and the target: one space stays.
+    let src = program("extend<T>C {\n}");
+    let d = diagnostic(&src, Code::CannotExtend, (4, 8, "T"), &[]);
+    assert_eq!(applied(&src, &d), program("extend C {\n}"));
     fix_removes_its_code(&src, &d);
     // Another use of the name, a second parameter and a comment each leave the list in place.
     for block in [

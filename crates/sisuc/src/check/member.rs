@@ -343,10 +343,12 @@ impl Checker<'_> {
             .map(|&(func, _)| self.signatures[func.0].ret)
             .collect();
         let results = results?;
-        let written = (!site.written.is_empty())
-            .then(|| self.written_types(site.written))
-            .flatten()
-            .unwrap_or_default();
+        // A list that does not resolve is reported, and poisons the call.
+        let written = if site.written.is_empty() {
+            Vec::new()
+        } else {
+            self.written_types(site.written)?
+        };
         let rets: Vec<Option<Type>> = (candidates.iter().zip(results))
             .map(|(&(func, _), ret)| self.candidate_result(func, ret, &written))
             .collect();
@@ -354,7 +356,7 @@ impl Checker<'_> {
         let open = rets.contains(&None);
         if let Some(expected) = expected.filter(|_| !open) {
             let matching = |want: Type| {
-                let mut hits = read(&rets).filter(|&(_, ret)| ret == Some(want));
+                let mut hits = candidate_results(&rets).filter(|&(_, ret)| ret == Some(want));
                 let first = hits.next().map(|(i, _)| i);
                 (first, hits.next().is_some())
             };
@@ -370,10 +372,11 @@ impl Checker<'_> {
         }
         // The first result that exactly one candidate has tells the `let` what to write.
         let mut counts: FxHashMap<Type, usize> = FxHashMap::default();
-        for ret in read(&rets).filter_map(|(_, ret)| ret) {
+        for ret in candidate_results(&rets).filter_map(|(_, ret)| ret) {
             *counts.entry(ret).or_default() += 1;
         }
-        let unique = read(&rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
+        let unique =
+            candidate_results(&rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
         let annotate = unique.filter(|_| !open).map(|ret| Annotate {
             call: self.source.file.text(span).to_string(),
             binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
@@ -392,11 +395,14 @@ impl Checker<'_> {
     }
 
     /// The types `written`, resolved as a call's type arguments are, without a report: the call
-    /// reports them when it checks its arguments. `None` when one does not resolve.
+    /// reports them when it checks its arguments. `None` when one does not resolve; then its
+    /// reports stay, as no later step makes them.
     fn written_types(&mut self, written: &[ast::TypeExpr]) -> Option<Vec<Type>> {
         let before = self.diagnostics.len();
-        let types = written.iter().map(|ty| self.resolve(ty)).collect();
-        self.diagnostics.truncate(before);
+        let types: Option<Vec<Type>> = written.iter().map(|ty| self.resolve(ty)).collect();
+        if types.is_some() {
+            self.diagnostics.truncate(before);
+        }
         types
     }
 
@@ -411,7 +417,7 @@ impl Checker<'_> {
 
 /// The results of the candidates of a call, each with its place. The passes over them read through
 /// here, so that a test counts the steps.
-fn read(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Option<Type>)> {
+fn candidate_results(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Option<Type>)> {
     rets.iter().copied().enumerate().inspect(|_| {
         #[cfg(test)]
         super::PICK_STEPS.set(super::PICK_STEPS.get() + 1);

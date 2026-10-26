@@ -1067,6 +1067,15 @@ impl Checker<'_> {
                     // The call's context picks among several (`pick_conforming`): it waits for
                     // it, as a call whose arguments cannot bind its parameters does.
                     _ => {
+                        // Candidates that all return one known type give the call that type: the
+                        // context cannot pick among them, and the call reports it at once.
+                        let first = self.signatures[self.candidates[0].0.0].ret;
+                        let alike = first.is_some_and(|ret| !ret.has_param())
+                            && (self.candidates.iter())
+                                .all(|&(func, _)| self.signatures[func.0].ret == first);
+                        if alike {
+                            return CallShape::default();
+                        }
                         let shaped = self.candidates.iter().all(|&(func, _)| {
                             let sig = &self.signatures[func.0];
                             sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args)

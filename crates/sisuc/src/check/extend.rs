@@ -123,10 +123,15 @@ impl<'a> Checker<'_> {
     fn unused_params(&mut self, extend: &ast::Extend) -> bool {
         let params = &extend.type_params;
         let target = extend.target.to_string();
+        // The text from `extend` to the target, which the fix writes as one space.
+        let header = Span::new(
+            extend.span.start() + "extend".len(),
+            extend.target.span.start(),
+        );
         for param in params {
             let remove = (params.len() == 1 && !self.names_in_block(extend, param.name.name))
-                .then_some(extend.angles)
-                .filter(|angles| !self.comment_in(&[angles.range()]));
+                .then_some(header)
+                .filter(|header| !self.comment_in(&[header.range()]));
             self.report(DiagnosticKind::CannotExtend {
                 written: param.name.name.to_string(),
                 at: param.name.span,

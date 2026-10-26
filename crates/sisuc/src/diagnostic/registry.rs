@@ -1614,7 +1614,8 @@ pub(crate) enum CannotExtendForm {
     /// The target is a type parameter.
     TypeParam,
     /// A type parameter of the block that `target`, as written, does not name. `remove` is the
-    /// list of type parameters, when the fix may take it out.
+    /// text from `extend` to the target, which holds the list of type parameters, when the fix
+    /// may take the list out and leave one space.
     Unused {
         target: String,
         remove: Option<Span>,
@@ -2095,7 +2096,7 @@ impl From<DiagnosticKind> for Diagnostic {
                         safe: true,
                         edits: vec![Edit {
                             span,
-                            replacement: String::new(),
+                            replacement: " ".to_string(),
                         }],
                     }),
                     None => d,
