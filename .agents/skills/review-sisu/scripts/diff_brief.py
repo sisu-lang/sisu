@@ -2,12 +2,14 @@
 keeps the sections for a diff and drops the spec and plan sections. Fails, writing nothing, when
 a slot above "# Report" is left unfilled, so a template change cannot slip past it.
 
-Usage: python3 diff_brief.py REPO BASE..HEAD OUT [--doc PATH]... [--focus FILE]
+Usage: python3 diff_brief.py REPO BASE..HEAD OUT [--doc PATH]... [--focus FILE] [--verify-log LOG]
   REPO     the repository root that holds the diff (a worktree is fine)
   --doc    a spec or plan the reviewer reads with the diff; repeat for each
 REPO and each --doc are written as absolute paths: the reviewer runs in REPO, and a doc under
 the main checkout's gitignored docs/superpowers/ is not in a worktree.
   --focus  a file whose text goes under "# Focus"; without it, Focus is "none"
+  --verify-log  the log of `make verify LOG=...` for the diff; Focus names it by its absolute
+           path, so the reviewer checks its verdict line. Fails when the file does not exist.
 The template comes from origin/main, so a branch that started before a change to the review
 criteria still gets the current ones. Without origin/main it falls back to ../brief.md.
 """
@@ -45,7 +47,11 @@ def main():
     p.add_argument('out')
     p.add_argument('--doc', action='append', default=[])
     p.add_argument('--focus')
+    p.add_argument('--verify-log')
     a = p.parse_args()
+    log = Path(a.verify_log).resolve() if a.verify_log else None
+    if log and not log.is_file():
+        sys.exit(f'diff_brief: no verify log at {log}')
 
     shown = subprocess.run(['git', '-C', str(TEMPLATE.parent), 'show', MAIN_TEMPLATE],
                            capture_output=True, text=True)
@@ -74,6 +80,8 @@ def main():
     if left or focus_slot not in t:
         sys.exit(f'diff_brief: unfilled slots: {left or [focus_slot + " missing"]}')
     focus = Path(a.focus).read_text().strip() if a.focus else 'none'
+    if log:
+        focus = f'Verify log: {log}\n\n{focus}' if a.focus else f'Verify log: {log}'
     Path(a.out).write_text(t.replace(focus_slot, focus))
     print(a.out)
 
