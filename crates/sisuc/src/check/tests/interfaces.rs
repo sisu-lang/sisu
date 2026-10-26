@@ -3469,6 +3469,12 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
             "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\nfn f<T: A<S.Q>, S: B<T.P>, U: Convert<S.Q>>(t: T, s: S, u: U) {}".to_string(),
             vec![(Code::UnknownType, (7, 13)), (Code::UnknownType, (7, 24))],
         ),
+        // A bound that waited for a parameter whose last bound declares nothing is reported as a
+        // type the parameter lacks.
+        (
+            "interface Wrap2<X> {}\nfn f<U: Convert<S.Item>, S: Wrap2<T.Item>, T: Source>(u: U, s: S, t: T) {}".to_string(),
+            vec![(Code::UnknownType, (2, 19))],
+        ),
         // A resolved parameter in a loop bound is no part of the loop; a bound that waits for the
         // loop, and the bound that waits for that one, have no report.
         (
