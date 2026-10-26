@@ -532,10 +532,9 @@ impl Checker<'_> {
         // reports no method of a trait impl of a type it builds.
         let mut conforming: FxHashMap<Holder, Vec<usize>> = FxHashMap::default();
         for (_, conformance) in self.conformances.iter() {
-            if let Some(holder) = holder_of(conformance.target) {
-                (conforming.entry(holder).or_default())
-                    .extend(conformance.methods.iter().map(|f| f.0));
-            }
+            let holder = holder_of(conformance.target)
+                .expect("the target of a conformance should be a class or an enum");
+            (conforming.entry(holder).or_default()).extend(conformance.methods.iter().map(|f| f.0));
         }
         let mut enum_started = vec![false; self.enums.len()];
         while let Some(o) = stack.pop() {

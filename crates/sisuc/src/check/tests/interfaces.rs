@@ -1089,6 +1089,10 @@ fn generic_conformances_should_report_the_name_they_cannot_take_yet() {
             vec![(Code::UnknownType, (4, 8))],
         ),
         (
+            "enum Tree<T> {\n    Leaf\n}\nextend<T> Tree<T> {\n}",
+            vec![(Code::UnknownType, (4, 11))],
+        ),
+        (
             "class Pile<T>: Same {\n    items: [T]\n}",
             vec![(Code::UnknownType, (1, 16))],
         ),
@@ -1152,4 +1156,22 @@ fn conformances_should_list_their_methods_in_the_order_of_the_requirements() {
             want("Solid", "Cube", &["Cube.volume"]),
         ]
     );
+}
+
+/// A call of a method that a syntax error took poisons its function, so the program has no `tir`
+/// and the checker no error: the parser's error says why. This is checked without the prelude,
+/// which declares an enum of its own.
+#[test]
+fn a_call_of_a_method_lost_to_a_syntax_error_should_withhold_the_program() {
+    for src in [
+        "class C {\n    fn f(self) {\n        let = 1\n    }\n}\nfn main() {\n    C().f()\n}",
+        "enum E {\n    A\n    fn f(self) {\n        let = 1\n    }\n}\nfn main() {\n    E.A.f()\n}",
+        "class C {}\nextend C {\n    fn f(self) {\n        let = 1\n    }\n}\nfn main() {\n    C().f()\n}",
+    ] {
+        let lexed = crate::lexer::lex(src).expect("the source should lex");
+        let parsed = crate::parser::parse(lexed, false);
+        let empty = ast::Program::default();
+        let (program, ds) = check(&parsed.program, &empty, src, &parsed.diagnostics);
+        assert!(program.is_none() && ds.is_empty(), "{src}: {ds:?}");
+    }
 }
