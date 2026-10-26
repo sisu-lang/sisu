@@ -1,0 +1,17 @@
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+fn f<T, U>(p: Two<Result<T, string>, U>) -> T {
+    panic("e")
+}
+
+fn mk<E>() -> Two<Result<i64, i64>, [E]> {
+    panic("e")
+}
+
+fn main() {
+    let x = f(mk())
+    print(x)
+}

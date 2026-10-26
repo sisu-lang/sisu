@@ -1,0 +1,14 @@
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+fn f<T>(p: Two<T, bool>) {}
+
+fn mk<E>() -> Two<E, string> {
+    panic("e")
+}
+
+fn main() {
+    f(mk())
+}

@@ -412,6 +412,8 @@ struct Body {
     /// The value of the `break` being checked, and the earlier `break` whose value gave the
     /// loop the type that value expects.
     break_hint: Option<(Span, Span)>,
+    /// The waiting generic call that the outer call is checking as an argument.
+    context_hint: Option<generic::ContextHint>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// Where each loop label is declared that a failed jump or a reused loop label names, which
