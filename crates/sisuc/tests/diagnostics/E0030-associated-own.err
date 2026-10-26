@@ -4,5 +4,11 @@ error[E0030]: `S` has no associated type `Item`
 5 | fn keep<S: Holds<S.Item>>(s: S) {
   |                    ^^^^
 
-sisu: 1 error
+error[E0030]: `S` has no associated type `Item`
+  --> E0030-associated-own.sisu:15:32
+   |
+15 | fn keep_inherited<S: Derived<S.Item>>(s: S) {
+   |                                ^^^^
+
+sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0030

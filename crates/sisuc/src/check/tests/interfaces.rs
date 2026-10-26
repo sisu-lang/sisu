@@ -3334,6 +3334,10 @@ fn associated_types_should_normalize_through_generic_code() {
         // Two bounds that inherit the one `Item` that `Source` declares, beside the bound of
         // `Source` itself: they are no declarations to wait for.
         "interface First<X>: Source {}\ninterface Second<X>: Source {}\nfn same<S: Source & First<S.Item> & Second<S.Item>>(_s: S) {}",
+        // A bound of the parameter is in scope and gives a declaration of its own, and a bound of
+        // another parameter writes the type; so does a group of two bounds that give a shared one.
+        "interface Holds2<Y> {\n    type Item\n}\nfn scoped<S: Holds2<i64>, U: Convert<S.Item>>(u: U) -> S.Item { u.convert() }",
+        "interface First<X>: Source {}\nfn group<S: First<R.Item> & First<R.Item>, U: Convert<S.Item>, R: Source>(u: U) -> S.Item { u.convert() }",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3580,6 +3584,13 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
             "interface First<X>: Source {}\ninterface Second<X>: Source {}\nfn f<S: First<S.Item> & Second<S.Item>>(_s: S) {}".to_string(),
             vec![(Code::UnknownType, (3, 17)), (Code::UnknownType, (3, 34))],
         ),
+        // A bound waits for the bound of its own interface in no way, and for the other bounds of
+        // the parameter that declare the name: `T: Add2<T.Item>` goes on once `Src2` is in scope,
+        // and the bound of `U` waits for both, so it meets the two declarations.
+        (
+            "interface Add2<X> {\n    type Item\n}\ninterface Src2<X> {\n    type Item\n}\nfn f<T: Add2<T.Item> & Src2<R.Item>, U: Convert<T.Item>, R: Source>(_t: T, _u: U, _r: R) {}".to_string(),
+            vec![(Code::Ambiguous, (7, 51))],
+        ),
         // A bound that names no interface declares nothing: a class, a type parameter and an
         // optional. The parameter it bounds has no associated type, and that is all.
         (
@@ -3671,19 +3682,30 @@ fn a_bound_that_writes_an_associated_type_should_give_at_most_the_limit_of_inter
 
 /// A parameter whose closure went past the limit when a bound was added is unknown for the bounds
 /// that resolve after it: a bound of a later wave that writes a type of it is not reported again.
-/// The type `Key` is declared at the end of the chain that the limit cuts, so the closure that
-/// `V` read before `Big` was added does not have it either.
+/// The type `Key` is declared at the end of the chain that the limit cuts. A chain of 256 holds
+/// `Key` at its 256th interface, which the bound of `W` waits for; one entry more is past the
+/// limit, so `W` does not wait, reads the closure before `Big` is added, and is reported.
 #[test]
 fn a_parameter_that_went_past_the_limit_should_stay_unknown_for_later_bounds() {
-    let mut chain = "interface C1 {\n    type Key\n}\n".to_string();
-    for k in 2..=257 {
-        writeln!(chain, "interface C{k}: C{} {{}}", k - 1)
-            .expect("writing to a `String` should succeed");
+    for (key_at, extra) in [(3, vec![]), (2, vec![(Code::UnknownType, (261, 64))])] {
+        let mut chain = String::new();
+        for k in 1..=257 {
+            let body = if k == key_at { "\n    type Key\n" } else { "" };
+            let from = if k == 1 {
+                String::new()
+            } else {
+                format!(": C{}", k - 1)
+            };
+            writeln!(chain, "interface C{k}{from} {{{body}}}")
+                .expect("writing to a `String` should succeed");
+        }
+        let row = format!(
+            "interface Big<X>: C257 {{}}\n{chain}fn f<V: Convert<S.Item>, S: Source & Big<R.Item>, W: Convert<S.Key>, R: Source>(_v: V, _s: S, _w: W, _r: R) {{}}"
+        );
+        let mut expected = vec![(Code::BoundTooWide, (261, 38))];
+        expected.extend(extra);
+        codes(&with_sources(&row), &expected);
     }
-    let row = format!(
-        "interface ZHolder<X> {{\n    type Z\n}}\ninterface Two<A, B> {{}}\ninterface Big<X>: C257 {{}}\n{chain}fn f<V: Convert<S.Item>, S: Source & Big<R.Item>, T: ZHolder<R.Item>, W: Two<S.Key, T.Z>, R: Source>(_v: V, _s: S, _t: T, _w: W, _r: R) {{}}"
-    );
-    codes(&with_sources(&row), &[(Code::BoundTooWide, (265, 38))]);
 }
 
 /// A cycle through an associated type is a cycle of the type it stands for: its edge weighs how

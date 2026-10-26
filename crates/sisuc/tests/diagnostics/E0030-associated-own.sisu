@@ -6,6 +6,16 @@ fn keep<S: Holds<S.Item>>(s: S) {
     print(1)
 }
 
+interface Origin {
+    type Item
+}
+
+interface Derived<Y>: Origin {}
+
+fn keep_inherited<S: Derived<S.Item>>(s: S) {
+    print(3)
+}
+
 fn main() {
     print(2)
 }
