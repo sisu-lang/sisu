@@ -316,8 +316,9 @@ impl Checker<'_> {
     ///
     /// A bound that names an associated type in its arguments, as `T: Convert<S.Item>`, needs the
     /// bounds of the parameter it is written through, which may come after it. So the bounds that
-    /// name none are resolved first and put in scope, and then the others. An associated type
-    /// whose base has only a bound of the second kind is not found, and is reported once.
+    /// name none are resolved first and put in scope, and then the others, each after the bounds
+    /// it needs (see `resolve_member_bounds`). An associated type whose base has no bound that
+    /// declares it is not found, and is reported once.
     ///
     /// A check of an applied type that a bound names waits for every conformance. It takes the
     /// scope when it is queued, which has no bound of `params` yet, so it takes the scope that has
@@ -387,16 +388,18 @@ impl Checker<'_> {
     /// name an associated type of a parameter in their arguments. `found` holds the others, and
     /// `at` is the place of the first parameter. The bounds that `found` holds are in scope.
     ///
-    /// A bound that writes `S.Item` waits while `S` has no resolved bound that declares `Item` and
-    /// has another bound of this kind that is not resolved: that bound may declare it. A bound
-    /// never waits for itself. When a parameter has no such bound left, or only one, the bounds
-    /// that waited for it are tried again, so each bound is tried at most twice for each
-    /// parameter it writes an associated type of. Each bound that resolves is added to the scope
-    /// in place.
+    /// An associated type `S.Item` holds the arguments of the bound of `S` that declares `Item`,
+    /// so that bound is resolved first. Which bounds declare `Item` depends on the names of their
+    /// interfaces and not on their arguments, so the order is known before any bound resolves, and
+    /// it does not depend on the order of the parameters. A bound waits for each bound of the
+    /// parameter that declares the name it writes, except when it is the only one: then no bound
+    /// gives the type, and the resolution reports it. The bounds resolve in waves: each wave
+    /// holds the bounds that wait for no one now, and its bounds go into scope together at its
+    /// end. Each bound and each name is read a fixed number of times.
     ///
-    /// The bounds left wait for each other. Each that is on a loop of parameters is reported at
-    /// the associated type it writes (E0030), and the others that wait for it stay unknown, with
-    /// no report of their own.
+    /// The bounds left wait for each other. Each that is on a loop of bounds is reported at the
+    /// associated type it writes (E0030), and the others that wait for it stay unknown, with no
+    /// report of their own.
     fn resolve_member_bounds(
         &mut self,
         at: usize,
@@ -404,7 +407,11 @@ impl Checker<'_> {
         found: &mut [Vec<Option<Bound>>],
         members: &[(usize, usize)],
     ) {
-        // For each bound, the written associated types, as the place of the parameter they go
+        // The first place of each name, as `Body` finds a parameter.
+        let place_of: FxHashMap<Symbol, usize> = (params.iter().enumerate().rev())
+            .map(|(i, param)| (param.name.name, i))
+            .collect();
+        // For each bound, the associated types it writes, as the place of the parameter they go
         // through in the list and their name.
         let written: Vec<Vec<(usize, &ast::Ident)>> = members
             .iter()
@@ -412,91 +419,133 @@ impl Checker<'_> {
                 let mut roots = Vec::new();
                 params[i].bounds[j].member_roots(&mut roots);
                 (roots.into_iter())
-                    .filter_map(|(root, name)| {
-                        Some((params.iter().position(|p| p.name.name == root)?, name))
-                    })
+                    .filter_map(|(root, name)| Some((*place_of.get(&root)?, name)))
                     .collect()
             })
             .collect();
-        // How many bounds of each parameter are not resolved, and the bounds that wait for the
-        // parameter.
-        let mut pending = vec![0_usize; params.len()];
-        for &(i, _) in members {
-            pending[i] += 1;
+        let mut waits = Waits::new(&written, params.len());
+        self.find_declarers(params, members, &mut waits);
+        let mut ready = waits.start(members.len());
+        let mut seen = FxHashMap::default();
+        while !ready.is_empty() {
+            let mut wave = Vec::new();
+            for &m in &ready {
+                #[cfg(test)]
+                super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
+                let (i, j) = members[m];
+                found[i][j] = self.resolve_bound(at, params, i, j);
+                if let Some(bound) = found[i][j] {
+                    wave.push((at + i, bound));
+                }
+            }
+            self.add_bounds(&wave, &mut seen);
+            ready = waits.resolved(&ready);
         }
-        let mut waiting: Vec<Vec<usize>> = vec![Vec::new(); params.len()];
-        let mut stack: Vec<usize> = (0..members.len()).rev().collect();
-        while let Some(m) = stack.pop() {
-            #[cfg(test)]
-            super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
-            let (i, j) = members[m];
-            if let Some(blocker) = self.blocking(at, &written[m], &pending, i) {
-                waiting[blocker].push(m);
+        if waits.blocked.iter().all(|&blocked| blocked == 0) {
+            return;
+        }
+        for (root, name) in waits.on_loops(&written) {
+            self.report(DiagnosticKind::UnknownType {
+                name: name.name.to_string(),
+                at: name.span,
+                form: UnknownForm::BoundsLoop {
+                    base: params[root].name.name.to_string(),
+                },
+            });
+        }
+    }
+
+    /// Fills `waits` with the bounds of each parameter that declare each associated type that
+    /// some bound writes through the parameter.
+    fn find_declarers(
+        &self,
+        params: &[ast::TypeParam],
+        members: &[(usize, usize)],
+        waits: &mut Waits,
+    ) {
+        let mut by_param: Vec<Vec<usize>> = vec![Vec::new(); params.len()];
+        for (m, &(i, _)) in members.iter().enumerate() {
+            by_param[i].push(m);
+        }
+        for (root, bounds) in by_param.iter().enumerate() {
+            if !waits.is_root[root] {
                 continue;
             }
-            found[i][j] = self.resolve_bound(at, params, i, j);
-            if let Some(bound) = found[i][j] {
-                self.body.add_bound(at + i, bound);
-            }
-            pending[i] -= 1;
-            // From the last bound but one on, a bound of `i` that waits for `i` can go on.
-            if pending[i] <= 1 {
-                stack.extend(std::mem::take(&mut waiting[i]));
+            for &m in bounds {
+                let (i, j) = members[m];
+                let Some(interface) = self.written_interface(&params[i].bounds[j]) else {
+                    continue;
+                };
+                self.each_declared(interface, |name| waits.declared(root, name, m));
             }
         }
-        // What is still waiting waits for a parameter with bounds left.
-        let left: Vec<usize> = waiting.iter().flatten().copied().collect();
-        for &m in &left {
-            let (i, _) = members[m];
-            if !loops(&written, members, &left, i) {
+    }
+
+    /// Adds each of `added`, a bound with the place of the type parameter that has it, to the
+    /// bounds in scope. A closure that was found for the parameter before grows by the closure of
+    /// the bound: `seen` keeps the entries of each such closure from one call to the next, so the
+    /// work follows the closure of the bound and not the closure of the parameter. What was found
+    /// from the bounds of the other parameters stays. The scope that was made stays too: whoever
+    /// adds bounds in place makes it again when they are all in.
+    fn add_bounds(
+        &mut self,
+        added: &[(usize, Bound)],
+        seen: &mut FxHashMap<usize, FxHashSet<(InterfaceId, TypeArgs)>>,
+    ) {
+        self.body.required.clear();
+        self.body.conformed.clear();
+        for &(place, bound) in added {
+            self.body.bounds[place].push(bound);
+            let Some(mut out) = self.body.conforming.get_mut(place).and_then(Option::take) else {
                 continue;
+            };
+            let seen = seen
+                .entry(place)
+                .or_insert_with(|| out.iter().copied().collect());
+            let name = self.body.type_params[place];
+            let place32 =
+                u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters");
+            let receiver = Type::intern(TypeKind::Param(name, place32));
+            let wide = self.extend_closure(receiver, &[bound], &mut out, seen, |_, _| {});
+            self.body.conforming[place] = Some(out);
+            if wide.is_err() {
+                self.too_wide(place, self.body.bounds[place].len() - 1);
             }
-            for &(root, name) in &written[m] {
-                if pending[root] > 0 {
-                    self.report(DiagnosticKind::UnknownType {
-                        name: name.name.to_string(),
-                        at: name.span,
-                        form: UnknownForm::BoundsLoop {
-                            base: params[root].name.name.to_string(),
-                        },
-                    });
+        }
+    }
+
+    /// The interface that `ty`, the bound of a parameter, names, if it names one that is declared.
+    fn written_interface(&self, ty: &ast::TypeExpr) -> Option<InterfaceId> {
+        let name = match &ty.kind {
+            ast::TypeKind::Name(name) if ty.optional == 0 => *name,
+            ast::TypeKind::Applied(applied) if ty.optional == 0 => applied.name,
+            _ => return None,
+        };
+        if self.body.type_param(name).is_some() {
+            return None;
+        }
+        match self.interface_ids.get(&name) {
+            Some(&Declared::Known(id)) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// Calls `each` with the name of each associated type that `interface` declares, or that an
+    /// interface it inherits declares. The names do not depend on the arguments of a bound.
+    fn each_declared(&self, interface: InterfaceId, mut each: impl FnMut(Symbol)) {
+        let mut seen = FxHashSet::default();
+        seen.insert(interface);
+        let mut stack = vec![interface];
+        while let Some(id) = stack.pop() {
+            for declared in &self.interfaces[id.0].assoc {
+                each(declared.name.name);
+            }
+            for (inherited, _) in self.inheritances(id) {
+                if seen.insert(inherited.interface) {
+                    stack.push(inherited.interface);
                 }
             }
         }
-    }
-
-    /// The parameter, among those of the list, that the bound `written` of the parameter `own`
-    /// waits for, if any (see `resolve_member_bounds`).
-    fn blocking(
-        &mut self,
-        at: usize,
-        written: &[(usize, &ast::Ident)],
-        pending: &[usize],
-        own: usize,
-    ) -> Option<usize> {
-        for &(root, name) in written {
-            // The bound itself is not another one.
-            let others = pending[root] - usize::from(root == own);
-            if others > 0 && !self.declares(at + root, name.name) {
-                return Some(root);
-            }
-        }
-        None
-    }
-
-    /// Whether the bounds now in scope of the parameter at `place` include an interface that
-    /// declares the associated type `name`.
-    fn declares(&mut self, place: usize, name: Symbol) -> bool {
-        let param = self.body.type_params[place];
-        let place =
-            u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters");
-        let ty = Type::intern(TypeKind::Param(param, place));
-        (self.interfaces_for(ty).iter()).any(|&(interface, _)| {
-            self.interfaces[interface.0]
-                .assoc
-                .iter()
-                .any(|a| a.name.name == name)
-        })
     }
 
     /// The interface `ty` names with its arguments, for the type `this` that has it, if that is
@@ -1371,6 +1420,150 @@ impl Checker<'_> {
     }
 }
 
+/// What the bounds that write associated types wait for, as `resolve_member_bounds` reads it.
+/// A key is an associated type written through a parameter of the list, as `S.Item`.
+struct Waits {
+    /// The key of each such type, by the place of the parameter and the name.
+    key_of: FxHashMap<(usize, Symbol), usize>,
+    keys: Vec<WaitKey>,
+    /// The keys each bound writes, and the keys each bound declares.
+    writes: Vec<Vec<usize>>,
+    declares: Vec<Vec<usize>>,
+    /// Whether some bound writes an associated type through the parameter.
+    is_root: Vec<bool>,
+    /// For each bound, how many keys it waits for.
+    blocked: Vec<usize>,
+}
+
+#[derive(Default)]
+struct WaitKey {
+    /// The bounds of the parameter that declare the name, and how many are not resolved.
+    declarers: Vec<usize>,
+    left: usize,
+    /// The bounds that wait until `left` is 0.
+    waiting: Vec<usize>,
+}
+
+impl WaitKey {
+    /// Whether the key makes the bound `m` wait: a bound of the parameter that is not resolved
+    /// declares the name, and the bound is not the only one that declares it. A bound that is
+    /// the only one does not wait: no bound can give its type, and the resolution reports that.
+    fn blocks(&self, m: usize) -> bool {
+        self.left > 0 && self.declarers[..] != [m]
+    }
+}
+
+impl Waits {
+    /// The keys that the bounds `written` write, through the parameters of a list of `params`.
+    fn new(written: &[Vec<(usize, &ast::Ident)>], params: usize) -> Self {
+        let mut waits = Waits {
+            key_of: FxHashMap::default(),
+            keys: Vec::new(),
+            writes: Vec::with_capacity(written.len()),
+            declares: vec![Vec::new(); written.len()],
+            is_root: vec![false; params],
+            blocked: vec![0; written.len()],
+        };
+        for pairs in written {
+            let mut keys = Vec::with_capacity(pairs.len());
+            for &(root, name) in pairs {
+                waits.is_root[root] = true;
+                let next = waits.keys.len();
+                let key = *waits.key_of.entry((root, name.name)).or_insert(next);
+                if key == next {
+                    waits.keys.push(WaitKey::default());
+                }
+                keys.push(key);
+            }
+            waits.writes.push(keys);
+        }
+        waits
+    }
+
+    /// Records that the bound `m` of the parameter `root` declares the associated type `name`.
+    fn declared(&mut self, root: usize, name: Symbol, m: usize) {
+        if let Some(&key) = self.key_of.get(&(root, name))
+            && self.keys[key].declarers.last() != Some(&m)
+        {
+            self.keys[key].declarers.push(m);
+            self.declares[m].push(key);
+        }
+    }
+
+    /// Once every declarer is known: makes each bound wait, and gives the bounds that wait for
+    /// no one.
+    fn start(&mut self, bounds: usize) -> Vec<usize> {
+        for key in &mut self.keys {
+            key.left = key.declarers.len();
+        }
+        for (m, keys) in self.writes.iter().enumerate() {
+            for &key in keys {
+                if self.keys[key].blocks(m) {
+                    self.blocked[m] += 1;
+                    self.keys[key].waiting.push(m);
+                }
+            }
+        }
+        (0..bounds).filter(|&m| self.blocked[m] == 0).collect()
+    }
+
+    /// Records that the bounds `wave` are resolved, and gives the bounds that wait for no one
+    /// now.
+    fn resolved(&mut self, wave: &[usize]) -> Vec<usize> {
+        let mut ready = Vec::new();
+        for &m in wave {
+            for &key in &self.declares[m] {
+                let key = &mut self.keys[key];
+                key.left -= 1;
+                if key.left == 0 {
+                    for w in std::mem::take(&mut key.waiting) {
+                        self.blocked[w] -= 1;
+                        if self.blocked[w] == 0 {
+                            ready.push(w);
+                        }
+                    }
+                }
+            }
+        }
+        ready
+    }
+
+    /// The associated types, as the parameter and the name, that the bounds left write and that
+    /// keep a bound that is on a loop of bounds waiting. A bound that only waits for a loop is
+    /// not on it.
+    fn on_loops<'a>(
+        &self,
+        written: &[Vec<(usize, &'a ast::Ident)>],
+    ) -> Vec<(usize, &'a ast::Ident)> {
+        // The bounds first, then the keys: a bound waits for its keys, and a key for its declarers.
+        let bounds = self.writes.len();
+        let mut edges = vec![Vec::new(); bounds + self.keys.len()];
+        for m in (0..bounds).filter(|&m| self.blocked[m] > 0) {
+            let waits = self.writes[m]
+                .iter()
+                .filter(|&&key| self.keys[key].blocks(m));
+            edges[m] = waits.map(|&key| bounds + key).collect();
+        }
+        for (key, wait) in self.keys.iter().enumerate() {
+            edges[bounds + key].clone_from(&wait.declarers);
+        }
+        let component = components(&edges);
+        let mut size = vec![0_usize; component.iter().max().map_or(0, |c| c + 1)];
+        for &c in &component {
+            size[c] += 1;
+        }
+        let mut out = Vec::new();
+        for m in (0..bounds).filter(|&m| self.blocked[m] > 0 && size[component[m]] > 1) {
+            for &(root, name) in &written[m] {
+                if self.keys[self.key_of[&(root, name.name)]].blocks(m) {
+                    out.push((root, name));
+                }
+            }
+        }
+        out
+    }
+}
+
 /// The interfaces on a shortest cycle through `start`, in order, without `start`; empty for an
 /// interface that inherits itself. `start` lies on a cycle of its component in `edges`.
 fn cycle_through(edges: &[Vec<usize>], component: &[usize], start: usize) -> Vec<usize> {
@@ -1396,30 +1589,4 @@ fn cycle_through(edges: &[Vec<usize>], component: &[usize], start: usize) -> Vec
     }
     path.reverse();
     path
-}
-
-/// Whether the parameter `start` is on a loop of parameters: the bounds `left` of the list
-/// write an associated type of a parameter, and the bounds of that parameter write one of
-/// another, and so on, back to `start`.
-fn loops(
-    written: &[Vec<(usize, &ast::Ident)>],
-    members: &[(usize, usize)],
-    left: &[usize],
-    start: usize,
-) -> bool {
-    let mut seen = vec![false; members.iter().map(|m| m.0).max().map_or(0, |m| m + 1)];
-    let mut stack = vec![start];
-    while let Some(param) = stack.pop() {
-        for &m in left.iter().filter(|&&m| members[m].0 == param) {
-            for &(root, _) in &written[m] {
-                if root == start {
-                    return true;
-                }
-                if !std::mem::replace(&mut seen[root], true) {
-                    stack.push(root);
-                }
-            }
-        }
-    }
-    false
 }

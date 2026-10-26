@@ -1537,12 +1537,18 @@ fn a_method_should_find_the_choices_of_its_class_without_copying_them() {
     assert!(large <= 2 * small, "{large} reads for 64, {small} for 32");
 }
 
-/// Bounds that write an associated type of another parameter are tried a fixed number of times
-/// each, and put in scope in place: a chain of `n` bounds written in reverse is tried at most
-/// twice per bound, and keeps as many scopes whatever `n` is.
+/// The bounds that write an associated type of another parameter are read a fixed number of
+/// times each, and put in scope in place. The steps are the bounds resolved and the
+/// entries of closures built. Those of 64 are at most twice those of 32
+/// (and a few more), for four lists: a chain of bounds written in reverse (each in a wave of its
+/// own); one parameter with `n` bounds that write `S.Item` (a closure that is built once, not
+/// after each bound); a chain whose bounds write an associated type of a parameter with `n`
+/// bounds (a closure that stays when a wave adds bounds to other parameters); and one parameter
+/// whose `n` bounds each write the type that the one before declares (a closure that grows by the
+/// closure of each bound). The scopes kept are as many for 64 as for 32.
 #[test]
-fn bounds_that_write_associated_types_should_be_tried_a_fixed_number_of_times() {
-    let steps = |n: usize| {
+fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
+    let chain = |n: usize| {
         let params: Vec<String> = (0..n)
             .rev()
             .map(|i| {
@@ -1553,26 +1559,75 @@ fn bounds_that_write_associated_types_should_be_tried_a_fixed_number_of_times() 
                 }
             })
             .collect();
+        format!("fn f<{}>() {{}}", params.join(", "))
+    };
+    let repeated = |n: usize| {
+        let bounds: Vec<String> = (0..n).map(|_| "Convert<S.Item>".to_string()).collect();
+        format!("fn f<S: Source & {}>(_s: S) {{}}", bounds.join(" & "))
+    };
+    let beside = |n: usize| {
+        let params: Vec<String> = (0..n)
+            .rev()
+            .map(|i| {
+                if i == 0 {
+                    "T0: Source".to_string()
+                } else {
+                    format!("T{i}: Holds2<T{}.Item, Q.Item>", i - 1)
+                }
+            })
+            .collect();
+        let each: Vec<String> = (0..n).map(|i| format!("Z{i}")).collect();
+        let zs: Vec<String> = (0..n).map(|i| format!("interface Z{i} {{}}\n")).collect();
+        format!(
+            "{}interface Holds2<Y, Z> {{\n    type Item\n}}\nfn f<{}, Q: Source & {}>() {{}}",
+            zs.concat(),
+            params.join(", "),
+            each.join(" & ")
+        )
+    };
+    let within = |n: usize| {
+        let declared: Vec<String> = (0..n)
+            .map(|i| format!("interface I{i}<X> {{\n    type N{i}\n}}\n"))
+            .collect();
+        let bounds: Vec<String> = (1..n)
+            .rev()
+            .map(|i| format!("I{i}<S.N{}>", i - 1))
+            .collect();
+        format!(
+            "{}fn f<S: I0<i64> & {}>(_s: S) {{}}",
+            declared.concat(),
+            bounds.join(" & ")
+        )
+    };
+    let steps = |list: String| {
         let src = format!(
-            "interface Source {{\n    type Item\n}}\ninterface Holds<Y> {{\n    type Item\n}}\nfn f<{}>() {{}}\nfn main() {{}}",
-            params.join(", ")
+            "interface Source {{\n    type Item\n}}\ninterface Holds<Y> {{\n    type Item\n}}\ninterface Convert<Y> {{}}\n{list}\nfn main() {{}}"
         );
         BOUND_STEPS.set(0);
         SCOPES_KEPT.set(0);
+        CLOSURE_STEPS.set(0);
         let ds = diags(&src);
         assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
-        (BOUND_STEPS.get(), SCOPES_KEPT.get())
+        (BOUND_STEPS.get() + CLOSURE_STEPS.get(), SCOPES_KEPT.get())
     };
-    let ((small, kept_small), (large, kept_large)) = (steps(32), steps(64));
-    assert!(small >= 31, "{small} tries for 32");
-    assert!(
-        small <= 2 * 32 && large <= 2 * 64,
-        "{large} tries for 64, {small} for 32"
-    );
-    assert_eq!(
-        kept_large, kept_small,
-        "{kept_large} scopes for 64, {kept_small} for 32"
-    );
+    for (name, shape) in [
+        ("chain", &chain as &dyn Fn(usize) -> String),
+        ("repeated", &repeated),
+        ("beside", &beside),
+        ("within", &within),
+    ] {
+        let ((small, kept_small), (large, kept_large)) = (steps(shape(32)), steps(shape(64)));
+        assert!(small >= 32, "{name}: {small} steps for 32");
+        // Twice the steps, and a few more for the work that no bound adds.
+        assert!(
+            large <= 2 * small + 8,
+            "{name}: {large} steps for 64, {small} for 32"
+        );
+        assert_eq!(
+            kept_large, kept_small,
+            "{name}: {kept_large} scopes for 64, {kept_small} for 32"
+        );
+    }
 }
 
 /// A block that lacks every interface its own inherits reports each one by the place the closure
@@ -3252,6 +3307,12 @@ fn associated_types_should_normalize_through_generic_code() {
         // A bound that waits for the bound of a parameter after it, and three bounds of one
         // parameter in a method of a generic class.
         "interface Holds2<Y> {\n    type Item\n}\nfn waits<U: Convert<S.Item>, S: Holds2<T.Item>, T: Source>(u: U, _s: S, _t: T) -> S.Item { u.convert() }\ninterface Wrap2<X> {}\ninterface Wrap3<X> {}\nclass H<O> {\n    fn f<S: Source & Convert<S.Item> & Wrap2<S.Item> & Wrap3<S.Item>>(self, s: S) -> S.Item { s.convert() }\n}",
+        // A loop's neighbour: `T` writes through `S`, and `S` writes through `R`, which has an
+        // ordinary bound. The index of a later parameter is no concern of the order.
+        "interface A<X, Y> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\nfn later<T: A<S.Q, R.Item>, S: B<R.Item>, R: Source>(_t: T, _s: S, _r: R) {}",
+        // A bound that a parameter's bounds wait for in turn: the bound of `U` declares `Out`, and
+        // waits for the one of `S` that declares `Item`, which is not the last of its parameter.
+        "interface Holds2<Y> {\n    type Item\n}\ninterface HasOut<X> {\n    type Out\n}\nfn retry<U: HasOut<S.Item>, S: Holds2<T.Item> & Convert<U.Out> & Convert<U.Out>, T: Source>(_u: U, _s: S, _t: T) {}",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3486,12 +3547,89 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
             "interface A<X> {\n    type P\n}\ninterface B<X, Y> {\n    type Q\n}\nclass H<O: Source> {\n    fn f<T: A<S.Q>, S: B<T.P, O.Item>>(self, t: T, s: S) {}\n}".to_string(),
             vec![(Code::UnknownType, (8, 17)), (Code::UnknownType, (8, 28))],
         ),
+        // A loop that has a parameter with an ordinary bound after it: the parameter is no part
+        // of the loop, and nothing is out of range.
+        (
+            "interface A<X, Y> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\nfn f<T: A<S.Q, R.Item>, S: B<T.P>, R: Source>(t: T, s: S, r: R) {}".to_string(),
+            vec![(Code::UnknownType, (7, 13)), (Code::UnknownType, (7, 32))],
+        ),
+        // A bound that names no interface declares nothing: a class, a type parameter and an
+        // optional. The parameter it bounds has no associated type, and that is all.
+        (
+            "fn f<S: Source, T: Wrap<S.Item>, U: Convert<T.Out>>(_s: S, _t: T, _u: U) {}".to_string(),
+            vec![(Code::NotAnInterface, (1, 20)), (Code::UnknownType, (1, 47))],
+        ),
+        (
+            "fn f<S: Source, T, U: T<S.Item>, V: Convert<U.Out>>(_s: S, _t: T, _u: U, _v: V) {}".to_string(),
+            vec![
+                (Code::NotAnInterface, (1, 23)),
+                (Code::TypeArguments, (1, 24)),
+                (Code::UnknownType, (1, 47)),
+            ],
+        ),
+        (
+            "fn f<S: Source, U: Convert<S.Item>?, V: Convert<U.Out>>(_s: S, _u: U, _v: V) {}".to_string(),
+            vec![(Code::NotAnInterface, (1, 20)), (Code::UnknownType, (1, 51))],
+        ),
         (
             "interface GSource<T> {\n    type Item\n}\nextend<U: Marker> Wrap<U>: GSource<i64> {\n    type Item = i64\n}\nfn gpass<S: GSource<T>, T>(s: S, x: S.Item, y: T) {}\nfn t() {\n    let node = Node(id: 1)\n    gpass(Wrap(value: node), \"x\", 5)\n}".to_string(),
             vec![(Code::NotConform, (10, 11))],
         ),
     ] {
         codes(&with_sources(&row), &expected);
+    }
+}
+
+/// Which bounds of a parameter declare a name does not depend on the order of the parameters: a
+/// bound that writes `S.Item` waits for each bound of `S` that declares `Item`, those it names
+/// before it and after it. `Source` and `Add<T.Item>` both declare `Item`, so the bound that
+/// writes `S.Item` meets two declarations whichever parameter comes first (E0156), and a
+/// parameter between them gives the same answer.
+#[test]
+fn a_bound_should_meet_every_declaration_of_a_name_whatever_the_order_of_the_parameters() {
+    let add = "interface Add<X> {\n    type Item\n}\ninterface Use<X> {}\n";
+    for (params, at) in [
+        (
+            "U: Use<S.Item>, S: Source & Add<T.Item>, T: Source",
+            (5, 15),
+        ),
+        (
+            "S: Source & Add<T.Item>, U: Use<S.Item>, T: Source",
+            (5, 40),
+        ),
+        (
+            "T: Source, S: Source & Add<T.Item>, U: Use<S.Item>",
+            (5, 51),
+        ),
+        (
+            "U: Use<S.Item>, T: Source, S: Add<T.Item> & Source",
+            (5, 15),
+        ),
+    ] {
+        let row = format!("{add}fn f<{params}>(_u: U, _s: S, _t: T) {{}}");
+        codes(&with_sources(&row), &[(Code::Ambiguous, at)]);
+    }
+}
+
+/// A bound that writes an associated type and gives more than 256 interfaces is reported at the
+/// bound, once, whether another bound of the parameter has read the closure before it or not.
+#[test]
+fn a_bound_that_writes_an_associated_type_should_give_at_most_the_limit_of_interfaces() {
+    let big = "interface Big<X>: C257 {}\n".to_string() + &ladder("C", 257);
+    for (row, at) in [
+        // The bound of `U` reads the closure of `S` in the wave that holds `Big`.
+        (
+            "fn f<U: Convert<S.Item>, S: Source & Big<T.Item>, T: Source>(_u: U, _s: S, _t: T) {}",
+            (1, 38),
+        ),
+        // Nothing reads the closure before `Big` is added.
+        (
+            "fn f<S: Source & Big<T.Item>, T: Source>(_s: S, _t: T) {}",
+            (1, 18),
+        ),
+    ] {
+        let src = format!("{row}\n{big}");
+        codes(&with_sources(&src), &[(Code::BoundTooWide, at)]);
     }
 }
 

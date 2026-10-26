@@ -647,17 +647,6 @@ impl Body {
         self.scope = None;
     }
 
-    /// Adds `bound` to the type parameter at `place`, whose bounds are in scope already, and
-    /// forgets what was found from the bounds before. The scope that was made stays: whoever
-    /// adds bounds in place makes it again when they are all in.
-    fn add_bound(&mut self, place: usize, bound: Bound) {
-        self.bounds[place].push(bound);
-        self.conforming.clear();
-        self.wide.clear();
-        self.required.clear();
-        self.conformed.clear();
-    }
-
     /// Gives the type parameters from the place `first` on their `bounds`.
     fn set_bounds(&mut self, first: usize, bounds: Vec<Vec<Bound>>) {
         self.forget_bounds(first);
