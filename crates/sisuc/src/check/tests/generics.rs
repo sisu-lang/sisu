@@ -2654,6 +2654,11 @@ fn context_hole_should_meet_any_part_of_the_return_type_and_stay_out_of_reports(
     let src = format!("{decls}fn main() {{\n    let x = f(mk())\n    print(x)\n}}");
     assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
     assert_eq!(call_types(&src, "mk"), ["string", "Result<i64, string>"]);
+    // The hole sits in an optional: `Result<T?, string>` gives `Ok` the context
+    // `Result<_?, string>`.
+    let src = "fn g<T>(r: Result<T?, string>) -> T { panic(\"e\") }\n\
+               fn main() {\n    let x = g(Ok(Some(1)))\n    print(x)\n}";
+    assert_eq!(call_types(src, "g"), ["i64", "i64"]);
     for (line, expected) in [
         // `U` sits below the hole: nothing binds it.
         ("f(mk_all())", vec![(Code::CannotInfer, (6, 15))]),

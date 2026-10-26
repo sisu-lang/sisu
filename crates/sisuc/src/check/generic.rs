@@ -687,8 +687,9 @@ impl Checker<'_> {
     // flows into its branches and elements, `None`, `[]` and integer literals, and each would
     // need a rule for a hole; add them one kind at a time when a program needs one.
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
-        let (shape, _) = self.call_shape(e)?;
-        let partial = shape.generic.then(|| call.bindings.partial(param))?;
+        // A waiting call is a generic one, so its shape needs no `generic` check.
+        self.call_shape(e)?;
+        let partial = call.bindings.partial(param);
         (partial != *HOLE).then_some(partial)
     }
 
