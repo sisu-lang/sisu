@@ -1840,6 +1840,11 @@ fn a_method_that_two_bounds_require_should_be_ambiguous_without_a_context() {
             "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> Missing\n}\nfn f<T: A & B>(x: T) {\n    let n = x.name()\n}\nfn main() {}".to_string(),
             vec![(Code::UnknownType, (5, 22))],
         ),
+        // The same in a call that is the argument of another: it is checked at once.
+        (
+            "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> Missing\n}\nfn id<T>(a: T) -> T {\n    a\n}\nfn f<T: A & B>(x: T) {\n    let n = id(x.name())\n}\nfn main() {}".to_string(),
+            vec![(Code::UnknownType, (5, 22))],
+        ),
         (
             "interface A {\n    fn make<U>(self, x: U) -> U\n}\ninterface B {\n    fn make<V>(self, x: V) -> [V]\n}\nfn f<T: A & B>(x: T) {\n    let n = x.make<Missing>(1)\n}\nfn main() {}".to_string(),
             vec![(Code::UnknownType, (8, 20))],

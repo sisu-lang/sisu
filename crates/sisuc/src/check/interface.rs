@@ -248,14 +248,11 @@ impl Checker<'_> {
         let mut bounds = head;
         bounds.extend(self.bounds_of(params));
         self.body.set_bounds(first, bounds.clone());
-        if let Some(mut pending) = self.pending_bounds.take() {
-            if pending.len() > queued {
-                let scope = self.scope();
-                for p in &mut pending[queued..] {
-                    p.scope = scope;
-                }
+        if self.queued() > queued {
+            let scope = self.scope();
+            for check in self.pending_bounds.iter_mut().flatten().skip(queued) {
+                check.scope = scope;
             }
-            self.pending_bounds = Some(pending);
         }
         bounds
     }
@@ -595,9 +592,8 @@ impl Checker<'_> {
             limit: BOUND_CLOSURE_LIMIT,
             at,
         });
-        if let Some(holder) = holder_of(ty) {
-            self.broken_extensions.insert(self.holder_name(holder));
-        }
+        let holder = holder_of(ty).expect("a conformance's target should be a class or an enum");
+        self.broken_extensions.insert(self.holder_name(holder));
     }
 
     /// The requirements named `name` that the bounds of the type parameter at `place` give,
@@ -759,10 +755,9 @@ impl Checker<'_> {
 
     /// Says that the checks queued in `queued` are of a type kept at `place`.
     pub(super) fn keep_at(&mut self, queued: std::ops::Range<usize>, place: Slot) {
-        if let Some(pending) = &mut self.pending_bounds {
-            for check in &mut pending[queued] {
-                check.place = Some(place);
-            }
+        let waiting = self.pending_bounds.iter_mut();
+        for check in waiting.flat_map(|pending| &mut pending[queued.clone()]) {
+            check.place = Some(place);
         }
     }
 
@@ -775,17 +770,14 @@ impl Checker<'_> {
     pub(super) fn run_pending_bounds(&mut self) {
         let pending = self.pending_bounds.take().unwrap_or_default();
         let scopes = std::mem::take(&mut self.scopes);
-        let mut at = 0;
-        while at < pending.len() {
-            let id = pending[at].scope;
-            let scope = &scopes[id];
-            let group = pending[at..].iter().take_while(|p| p.scope == id).count();
+        for group in pending.chunk_by(|a, b| a.scope == b.scope) {
+            let scope = &scopes[group[0].scope];
             let (failed, _) = self.with_body(Body::default(), |checker| {
                 checker.body.set_type_params(&scope.params);
                 checker.body.set_bounds(0, scope.bounds.clone());
                 checker.body.self_type = scope.self_type;
                 let mut failed = Vec::new();
-                for p in &pending[at..at + group] {
+                for p in group {
                     if !checker.check_applied_now(p.ty, &p.ats) {
                         failed.extend(p.place);
                     }
@@ -795,7 +787,6 @@ impl Checker<'_> {
             for place in failed {
                 self.make_unknown(place);
             }
-            at += group;
         }
     }
 
@@ -860,10 +851,10 @@ impl Checker<'_> {
             alone.clear();
             own.push((bound.interface, bound.args));
             alone.insert((bound.interface, bound.args));
-            let mut at = 0;
-            while let Some(&(interface, args)) = own.get(at) {
-                let parent = at;
-                at += 1;
+            for parent in 0.. {
+                let Some(&(interface, args)) = own.get(parent) else {
+                    break;
+                };
                 with.clear();
                 with.push(receiver);
                 with.extend_from_slice(args.get());
