@@ -568,6 +568,7 @@ mod tests {
         let mut unifier = Unifier::new(2);
         unifier.stood = vec![Some(Type::array(param(1))), Some(Type::array(param(0)))];
         assert_eq!(unifier.resolve(param(0)), None);
+        let mut unifier = Unifier::new(2);
         unifier.stood = vec![
             Some(Type::optional(param(1))),
             Some(Type::optional(param(0))),
