@@ -3204,6 +3204,8 @@ fn associated_types_should_normalize_through_generic_code() {
         // A bound whose argument is an associated type of a sibling parameter, before and after
         // the bound that gives the parameter its type, and a call of each.
         "extend Tag: Convert<Tag> {\n    fn convert(self) -> Tag { self }\n}\nfn conv<S: Source, T: Convert<S.Item>>(s: S, t: T) -> S.Item { t.convert() }\nfn conv2<T: Convert<S.Item>, S: Source>(t: T, s: S) -> S.Item? { s.next() }\nfn t() {\n    let a: Tag = conv(Countdown(n: 1), Tag(id: 2))\n    let b: Tag? = conv2(Tag(id: 2), Countdown(n: 1))\n}\nfn arr<T: Convert<[S.Item]>, S: Source>(_t: T, _s: S) {}\nfn nest<T: Convert<Wrap<S.Item>>, S: Source>(_t: T, _s: S) {}",
+        // A chain through two associated types, and an argument beside one that is a type.
+        "interface Keyed {\n    type Key: Same\n    fn key(self) -> Key\n}\ninterface Bag {\n    type Elem: Keyed\n    fn pick(self) -> Elem\n}\ninterface Two<A, B> {}\nfn deep<T: Convert<B.Elem.Key>, B: Bag>(_t: T, _b: B) {}\nfn mixed<T: Two<i64, S.Item>, S: Source>(_t: T, _s: S) {}",
         // A chain: the bound of `U` needs the bound of `S`, which needs the bound of `T`.
         "interface Holds<Y> {\n    type Item\n}\nfn chain<S: Holds<T.Item>, U: Convert<S.Item>, T: Source>(_s: S, _t: T, u: U) -> S.Item { u.convert() }",
         // An associated type with two bounds, and an interface that inherits one that has them.
@@ -3416,6 +3418,11 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
         (
             "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\nfn f<T: A<S.Q>, S: B<T.P>, U: Convert<S.Q>>(t: T, s: S, u: U) {}".to_string(),
             vec![(Code::UnknownType, (7, 13)), (Code::UnknownType, (7, 24))],
+        ),
+        // A parameter of the class is in scope, and its associated type is no part of the loop.
+        (
+            "interface A<X> {\n    type P\n}\ninterface B<X, Y> {\n    type Q\n}\nclass H<O: Source> {\n    fn f<T: A<S.Q>, S: B<T.P, O.Item>>(self, t: T, s: S) {}\n}".to_string(),
+            vec![(Code::UnknownType, (8, 17)), (Code::UnknownType, (8, 28))],
         ),
         (
             "interface GSource<T> {\n    type Item\n}\nextend<U: Marker> Wrap<U>: GSource<i64> {\n    type Item = i64\n}\nfn gpass<S: GSource<T>, T>(s: S, x: S.Item, y: T) {}\nfn t() {\n    let node = Node(id: 1)\n    gpass(Wrap(value: node), \"x\", 5)\n}".to_string(),
