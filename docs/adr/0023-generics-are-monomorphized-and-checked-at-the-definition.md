@@ -48,8 +48,8 @@ the code of a copy written by hand.
 - **Static dispatch through `mono`.** A call of a requirement on a value of
   type `T` is an interface call in the checked tree. `mono` replaces it with
   a call of the method of the conformance that the type argument has. So
-  `total<Circle>` calls `Circle.area` directly, and the owner of the
-  later stages see an ordinary call. Interface values and dynamic dispatch
+  `total<Circle>` calls `Circle.area` directly, and the later stages
+  see an ordinary call. Interface values and dynamic dispatch
   are a later milestone. ADR 0029 infers the modes of a conformance method
   for each instantiation: `Circle.area` can borrow `self` while
   `Square.area` takes it, because a requirement's signature carries no
@@ -85,7 +85,9 @@ the code of a copy written by hand.
   interface has one hub node, and a path through the hub stands for an edge
   from the parameter of the caller to a parameter of each conformance. An
   edge out of the hub weighs minus the depth of the parameter in the
-  conformance's target. An associated type adds the growth of its choices.
+  conformance's target. An associated type adds the growth of its choices, and
+  a choice that names `T.A.B` adds the growth of `A` and of `B`. A cycle of
+  positive weight among the choices has no end, even when no choice starts it.
   A cycle with a total weight above zero is an error naming the call that
   grows.
 

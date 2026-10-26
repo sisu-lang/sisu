@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use super::interface::Bound;
 use super::{Checker, Definition, DiagnosticKind, Holder, Symbol};
 use crate::ast;
-use crate::conformance::normalize;
+use crate::conformance::normalize_noting;
 use crate::diagnostic::{CannotExtendForm, UnknownForm, WideKind};
 use crate::source::Span;
 use crate::tir::{FuncId, InterfaceId, Type, TypeArgs, TypeKind};
@@ -23,6 +23,37 @@ pub(super) struct Choice {
     pub(super) at: Span,
 }
 
+/// The choices of a class, an enum or a block, in the order they are written, and where each is
+/// by name, so that a lookup does not read the others.
+#[derive(Default)]
+pub(super) struct Choices {
+    list: Vec<Choice>,
+    by_name: FxHashMap<Symbol, usize>,
+}
+
+impl Choices {
+    /// `list`, whose names are all different (see `Checker::resolve_choices`).
+    pub(super) fn new(list: Vec<Choice>) -> Self {
+        let by_name = (list.iter().enumerate())
+            .map(|(i, choice)| (choice.name.name, i))
+            .collect();
+        Choices { list, by_name }
+    }
+
+    /// The choice of the associated type `name`.
+    pub(super) fn get(&self, name: Symbol) -> Option<&Choice> {
+        self.by_name.get(&name).map(|&i| &self.list[i])
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+
+    pub(super) fn iter(&self) -> std::slice::Iter<'_, Choice> {
+        self.list.iter()
+    }
+}
+
 /// What a bare name stands for where associated types are in scope.
 pub(super) enum Named {
     /// The associated type, or the type its conformance chose.
@@ -35,12 +66,26 @@ pub(super) enum Named {
 
 impl Checker<'_> {
     /// `ty` with the associated types of known types replaced (see `conformance::normalize`).
-    /// `None`, after the report of why, when a base has no conformance.
+    /// `None`, after the report of why, when a base has no conformance. A choice that needs its
+    /// own associated type is reported once all bodies are checked (see `report_loops`).
     pub(super) fn normalize(&self, ty: Type) -> Option<Type> {
         if !ty.has_assoc() {
             return Some(ty);
         }
-        normalize(&self.conformances, ty)
+        self.normalized(ty)
+    }
+
+    /// `normalize` of a type that holds an associated type.
+    fn normalized(&self, ty: Type) -> Option<Type> {
+        let mut loops = Vec::new();
+        let normal = normalize_noting(&self.conformances, ty, &mut loops);
+        if !loops.is_empty() {
+            let mut known = self.loops.borrow_mut();
+            for (assoc, interface, index, k) in loops {
+                known.entry((interface, index, k)).or_insert(assoc);
+            }
+        }
+        normal
     }
 
     /// `ty` with `args` for its type parameters, as `Type::subst`, and then each associated type
@@ -49,9 +94,26 @@ impl Checker<'_> {
     pub(super) fn subst(&self, ty: Type, args: &[Type]) -> Option<Type> {
         let (substituted, assoc) = ty.subst_noting_assoc(args);
         if assoc {
-            normalize(&self.conformances, substituted)
+            self.normalized(substituted)
         } else {
             Some(substituted)
+        }
+    }
+
+    /// Reports each choice that `normalize` found to need its own associated type, once, at the
+    /// type it writes (E0030). The associated types that depend on it stay unknown.
+    pub(super) fn report_loops(&mut self) {
+        let mut loops: Vec<_> = std::mem::take(&mut *self.loops.borrow_mut())
+            .into_iter()
+            .collect();
+        loops.sort_unstable_by_key(|&((interface, index, k), _)| (interface.0, index, k));
+        for (place, assoc) in loops {
+            let at = self.choice_ats[&place];
+            self.report(DiagnosticKind::UnknownType {
+                name: self.type_name(assoc),
+                at,
+                form: UnknownForm::ChoiceLoops,
+            });
         }
     }
 
@@ -132,12 +194,8 @@ impl Checker<'_> {
 
     /// Resolves the choices of a class or an enum `owner`, as `resolve_choices` does, and puts
     /// them in scope as the bare names its signatures and bodies may use.
-    pub(super) fn declare_choices(
-        &mut self,
-        choices: &[ast::AssocChoice],
-        owner: &str,
-    ) -> Vec<Choice> {
-        let resolved = self.resolve_choices(choices, owner);
+    pub(super) fn declare_choices(&mut self, choices: &[ast::AssocChoice], owner: &str) -> Choices {
+        let resolved = Choices::new(self.resolve_choices(choices, owner));
         self.body.assoc = resolved.iter().map(|c| (c.name.name, c.ty)).collect();
         resolved
     }

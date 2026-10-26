@@ -1,0 +1,34 @@
+interface Chain {
+    type Next: Chain
+    fn next(self) -> Next
+}
+
+class End: Chain {
+    type Next = Link<End>
+    n: i64
+
+    fn next(self) -> Next {
+        Link(inner: self)
+    }
+}
+
+class Link<T> {
+    inner: T
+}
+
+extend<T: Chain> Link<T>: Chain {
+    type Next = T.Next.Next
+
+    fn next(self) -> Next {
+        self.inner.next().next()
+    }
+}
+
+fn skip<S: Chain>(s: S) -> S.Next {
+    s.next()
+}
+
+fn main() {
+    let w = skip(Link(inner: End(n: 0)))
+    print(w.next().next().next())
+}

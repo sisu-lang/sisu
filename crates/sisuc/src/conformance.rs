@@ -61,61 +61,112 @@ pub(crate) fn find(
 /// it, innermost first. An associated type whose base is a type parameter, or another associated
 /// type of one, stays: a body is checked once for every type argument, and `mono` normalizes the
 /// instance. `None` when a base has no conformance to the interface, or the conformance chooses no
-/// type: the type does not exist, and the checker reported why.
+/// type: the type does not exist, and the checker reported why. Also `None` when the choice of an
+/// associated type needs the associated type itself (see `Loop`).
 ///
-/// A choice names an associated type only through a parameter of its own conformance, whose
-/// argument is a smaller type than the conformance's target, so the walk ends. Each distinct type
-/// is normalized once, whatever number of paths lead to it.
+/// A choice names an associated type only through a parameter of its own conformance, so a
+/// choice that grows its types does not end the walk by itself: the walk keeps the associated
+/// types it is in the middle of, and meeting one again ends it. Each distinct type is normalized
+/// once, whatever number of paths lead to it.
 pub(crate) fn normalize(conformances: &Conformances, ty: Type) -> Option<Type> {
-    if !ty.has_assoc() {
-        return Some(ty);
-    }
-    normalize_in(conformances, ty, &mut FxHashMap::default())
+    normalize_noting(conformances, ty, &mut Vec::new())
 }
 
-fn normalize_in(
+/// An associated type whose choice needs the associated type itself: the type, and the place of
+/// the choice that closes the loop, as the interface, the index of the conformance among those of
+/// the interface and the index of the associated type among the interface's.
+pub(crate) type Loop = (Type, InterfaceId, usize, usize);
+
+/// `normalize`, adding to `loops` each loop it meets, which its caller reports.
+pub(crate) fn normalize_noting(
     conformances: &Conformances,
     ty: Type,
-    memo: &mut FxHashMap<Type, Type>,
+    loops: &mut Vec<Loop>,
 ) -> Option<Type> {
     if !ty.has_assoc() {
         return Some(ty);
     }
-    if let Some(&done) = memo.get(&ty) {
-        return Some(done);
+    Normalizer {
+        conformances,
+        memo: FxHashMap::default(),
+        active: FxHashMap::default(),
+        loops,
     }
-    #[cfg(test)]
-    NORMALIZED.set(NORMALIZED.get() + 1);
-    let all = |args: TypeArgs, memo: &mut FxHashMap<Type, Type>| {
+    .walk(ty)
+}
+
+/// The state of one `normalize`.
+struct Normalizer<'a> {
+    conformances: &'a Conformances,
+    /// The result for each type done.
+    memo: FxHashMap<Type, Type>,
+    /// The associated types whose choice the walk is in, each with the place of that choice.
+    active: FxHashMap<Type, (InterfaceId, usize, usize)>,
+    loops: &'a mut Vec<Loop>,
+}
+
+impl Normalizer<'_> {
+    fn walk(&mut self, ty: Type) -> Option<Type> {
+        if !ty.has_assoc() {
+            return Some(ty);
+        }
+        if let Some(&done) = self.memo.get(&ty) {
+            return Some(done);
+        }
+        #[cfg(test)]
+        NORMALIZED.set(NORMALIZED.get() + 1);
+        let done = match ty.kind() {
+            TypeKind::Array(element) => Type::array(self.walk(element)?),
+            TypeKind::Optional(payload) => Type::optional(self.walk(payload)?),
+            TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.all(args)?)),
+            TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.all(args)?)),
+            TypeKind::Assoc(base, interface, args, k) => {
+                let base = self.walk(base)?;
+                let args = self.all(args)?;
+                match base.kind() {
+                    TypeKind::Class(..) | TypeKind::Enum(..) => {
+                        self.choice(Type::intern(TypeKind::Assoc(base, interface, args, k)))?
+                    }
+                    TypeKind::Param(..) | TypeKind::Assoc(..) => {
+                        Type::intern(TypeKind::Assoc(base, interface, args, k))
+                    }
+                    _ => return None,
+                }
+            }
+            _ => unreachable!("only a kind with a child can hold an associated type"),
+        };
+        self.memo.insert(ty, done);
+        Some(done)
+    }
+
+    fn all(&mut self, args: TypeArgs) -> Option<TypeArgs> {
         let list = (args.get().iter())
-            .map(|&ty| normalize_in(conformances, ty, memo))
+            .map(|&ty| self.walk(ty))
             .collect::<Option<Vec<Type>>>()?;
         Some(TypeArgs::intern(&list))
-    };
-    let done = match ty.kind() {
-        TypeKind::Array(element) => Type::array(normalize_in(conformances, element, memo)?),
-        TypeKind::Optional(payload) => Type::optional(normalize_in(conformances, payload, memo)?),
-        TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, all(args, memo)?)),
-        TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, all(args, memo)?)),
-        TypeKind::Assoc(base, interface, args, k) => {
-            let base = normalize_in(conformances, base, memo)?;
-            let args = all(args, memo)?;
-            match base.kind() {
-                TypeKind::Class(..) | TypeKind::Enum(..) => {
-                    let (index, stands) = find(conformances, interface, base, args)?;
-                    let chosen = (*conformances.get(interface, index).assoc.get(k as usize)?)?;
-                    normalize_in(conformances, chosen.subst(stands.get()), memo)?
-                }
-                TypeKind::Param(..) | TypeKind::Assoc(..) => {
-                    Type::intern(TypeKind::Assoc(base, interface, args, k))
-                }
-                _ => return None,
-            }
+    }
+
+    /// The type that the conformance of `assoc`'s base chooses for it, normalized. `assoc` is in
+    /// progress while its choice is walked: meeting it there is a loop.
+    fn choice(&mut self, assoc: Type) -> Option<Type> {
+        let TypeKind::Assoc(base, interface, args, k) = assoc.kind() else {
+            unreachable!("only an associated type should have a choice");
+        };
+        if let Some(&(interface, index, k)) = self.active.get(&assoc) {
+            self.loops.push((assoc, interface, index, k));
+            return None;
         }
-        _ => unreachable!("only a kind with a child can hold an associated type"),
-    };
-    memo.insert(ty, done);
-    Some(done)
+        let (index, stands) = find(self.conformances, interface, base, args)?;
+        let chosen = (*self
+            .conformances
+            .get(interface, index)
+            .assoc
+            .get(k as usize)?)?;
+        self.active.insert(assoc, (interface, index, k as usize));
+        let done = self.walk(chosen.subst(stands.get()));
+        self.active.remove(&assoc);
+        done
+    }
 }
 
 /// The first conformance of `interface` that covers a type together with a new one: `target`,
@@ -1067,6 +1118,45 @@ mod tests {
         ] {
             assert_eq!(normalize(&all, ty), None, "{ty:?}");
         }
+    }
+
+    /// `Leaf` chooses `Looper<Leaf>`, and `Looper<T>` chooses `T.A.A`: the associated type of
+    /// `Looper<Leaf>` needs itself. The walk ends at once, gives no type, and says which choice
+    /// closed the loop (the conformance of `Looper`, the second). A chain that ends is no loop.
+    #[test]
+    fn normalize_should_end_at_an_associated_type_that_needs_itself() {
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        let (leaf, looper) = (class(PILE + 20, &[]), |t| class(PILE + 21, &[t]));
+        let mut all = Conformances::default();
+        let rows = [
+            (leaf, 0, vec![Some(looper(leaf))]),
+            (looper(param(0)), 1, vec![Some(item(item(param(0))))]),
+            (class(PILE + 22, &[]), 0, vec![Some(Type::I64)]),
+        ];
+        for (target, type_params, assoc) in rows {
+            all.add(
+                InterfaceId(0),
+                Conformance {
+                    type_params,
+                    target,
+                    args: TypeArgs::NONE,
+                    methods: Vec::<FuncId>::new(),
+                    assoc,
+                },
+            );
+        }
+        let mut loops = Vec::new();
+        NORMALIZED.set(0);
+        assert_eq!(normalize_noting(&all, item(looper(leaf)), &mut loops), None);
+        assert_eq!(loops, vec![(item(looper(leaf)), InterfaceId(0), 1, 0)]);
+        assert!(NORMALIZED.get() <= 8, "{} visits", NORMALIZED.get());
+        // The associated type of the leaf alone is no loop.
+        loops.clear();
+        assert_eq!(
+            normalize_noting(&all, item(leaf), &mut loops),
+            Some(looper(leaf))
+        );
+        assert_eq!(loops, vec![]);
     }
 
     /// `t_0` is the associated type of `Circle`, and `t_{i+1}` is `Pair<t_i, t_i>`, so `t_20` has

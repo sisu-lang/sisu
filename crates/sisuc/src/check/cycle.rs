@@ -33,10 +33,12 @@
 //! it from `P` weighs the growth of `Item`: the greatest, over the conformances that choose it,
 //! of how much deeper the choice nests the types that stand for the conformance's parameters than
 //! the conformance's target does. `Wrap<T>`'s `type Item = Wrap<Wrap<T>>` grows by 1, and
-//! `type Item = T` by -1. A choice that names a parameter through another associated type adds
-//! that type's growth, which is a longest path over the choices, and unbounded on a cycle of
-//! positive weight. A choice that names no parameter gives a growth that is absent: `P.Item` is
-//! then a type that no argument changes, and the argument adds no edge.
+//! `type Item = T` by -1. A choice that names a parameter through other associated types adds
+//! the growth of each one in the chain, `T.A.B` adding that of `A` and of `B`. The growths are
+//! the least fixed point of these sums, and unbounded on a cycle of positive weight among the
+//! names, whether or not a direct parameter starts the cycle (see `Checker::growths`). A choice
+//! that names no parameter gives a growth that is absent: `P.Item` is then a type that no
+//! argument changes, and the argument adds no edge.
 //!
 //! The weights of a hub's edges are negative, and no known algorithm finds a cycle of positive
 //! weight in a graph with negative weights in linear time. This is an exception to
@@ -47,6 +49,10 @@
 //! a component can hold many functions. A component with no negative weight needs no search:
 //! any cycle through a positive edge is a cycle of positive weight. `check/tests` pins the cost
 //! of the worst input.
+//!
+//! The growths of the associated types take part in that exception too: they are found by passes
+//! over the choices' names, at most three times the number of associated types plus 1 of them,
+//! each pass reading every name once.
 
 use std::collections::VecDeque;
 
@@ -614,15 +620,17 @@ impl Checker<'_> {
     }
 
     /// Where the associated types of each interface start in the second list, and the growth of
-    /// each (see the module doc), `None` when absent. A longest path over the choices: the choice
-    /// of the associated type `a` names a parameter of its conformance at some depth, which gives
-    /// `a` a growth outright, and names `Q.b` at some depth, which gives `a` the growth of `b`
-    /// less the depth of `Q` in the target, and plus the depth of the name. Relaxing as many
-    /// times as there are associated types settles a path; one that still grows after that is on
-    /// a cycle of positive weight, and so is every growth that reaches it: `UNBOUNDED`.
+    /// each (see the module doc), `None` when absent. The choice of the associated type `a` names
+    /// a parameter of its conformance at some depth, which gives `a` a growth outright, and names
+    /// `Q.b.c` at some depth, which gives `a` the growth of `b` and of `c` (each step of the
+    /// chain) less the depth of `Q` in the target, and plus the depth of the name. The growth is
+    /// the greatest of these over the choices: a fixed point, since a choice may name `a` itself.
     ///
-    /// shortcut: a choice that names `Q.b.c` counts the growth of `c` and not of `b`. To add them,
-    /// give each associated type a node for each base it is written through.
+    /// One that grows without end is `UNBOUNDED`, and so is every growth that names it. A cycle
+    /// of positive weight among the names grows without end whether or not an outright growth
+    /// starts it: `type A = W<W<T.A>>` names a type that is built by the same choice, so each
+    /// base that it applies to is deeper than the last. A name that is absent counts as 0 in
+    /// that search, which finds such a cycle and nothing else (`cyclic`).
     fn growths(&self) -> (Vec<usize>, Vec<Option<i64>>) {
         let mut first = Vec::with_capacity(self.interfaces.len());
         let mut count = 0;
@@ -635,7 +643,7 @@ impl Checker<'_> {
             return (first, growth);
         }
         // The associated types a choice names through a parameter, by the type that chooses.
-        let mut edges: Vec<(usize, usize, i64)> = Vec::new();
+        let mut rules: Vec<Rule> = Vec::new();
         for (interface, conformance) in self.conformances.iter() {
             let target = param_depths(conformance.target, conformance.type_params);
             for (k, chosen) in conformance.assoc.iter().enumerate() {
@@ -647,41 +655,32 @@ impl Checker<'_> {
                     growth[at] = growth[at].max(outright);
                 }
                 for used in uses {
-                    let named = first[used.interface.0] + used.index;
-                    edges.push((at, named, used.depth - target[used.param]));
+                    rules.push(Rule {
+                        at,
+                        names: (used.chain.iter())
+                            .map(|&(interface, index)| first[interface.0] + index)
+                            .collect(),
+                        weight: used.depth - target[used.param],
+                    });
                 }
             }
         }
-        let relax = |growth: &mut Vec<Option<i64>>| {
-            let mut changed = Vec::new();
-            for &(from, to, weight) in &edges {
-                let Some(through) = growth[to].map(|g| g + weight) else {
-                    continue;
-                };
-                if growth[from].is_none_or(|g| through > g) {
-                    growth[from] = Some(through);
-                    changed.push(from);
-                }
-            }
-            changed
-        };
-        for _ in 0..=count {
-            if relax(&mut growth).is_empty() {
-                return (first, growth);
-            }
+        if rules.is_empty() {
+            return (first, growth);
         }
-        // Still growing: a cycle of positive weight. A type that a pass lengthens after that is on
-        // the cycle or reaches it, since a way that goes through no cycle is settled by now, so
-        // each such type is unbounded.
-        let mut unbounded = vec![false; count];
-        for _ in 0..=count {
-            for from in relax(&mut growth) {
-                unbounded[from] = true;
-            }
-        }
-        for (g, _) in growth.iter_mut().zip(unbounded).filter(|&(_, u)| u) {
+        let unbounded = cyclic(&growth, &rules);
+        for (g, _) in growth.iter_mut().zip(&unbounded).filter(|&(_, &u)| u) {
             *g = Some(UNBOUNDED);
         }
+        for _ in 0..=count {
+            if relax(&mut growth, &rules, &unbounded).is_empty() {
+                break;
+            }
+        }
+        debug_assert!(
+            relax(&mut growth, &rules, &unbounded).is_empty(),
+            "a growth that no cycle of positive weight reaches should settle in as many passes as there are associated types"
+        );
         (first, growth)
     }
 
@@ -739,11 +738,11 @@ fn param_depths(ty: Type, count: usize) -> Vec<i64> {
 }
 
 /// An associated type of a parameter in a type: the place of the parameter that its base names,
-/// the associated type, and the depth at which it stands.
+/// the associated types written after it from the first (`Q.b.c` is `b`, then `c`), each by its
+/// interface and place, and the depth at which the type stands.
 struct AssocUse {
     param: usize,
-    interface: tir::InterfaceId,
-    index: usize,
+    chain: Vec<(tir::InterfaceId, usize)>,
     depth: i64,
 }
 
@@ -767,9 +766,11 @@ fn depths_and_assoc(ty: Type, count: usize) -> (Vec<Option<i64>>, Vec<AssocUse>)
             TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
                 stack.extend(args.get().iter().map(|&a| (a, depth + 1)));
             }
-            TypeKind::Assoc(base, interface, args, k) => {
-                let mut root = base;
-                while let TypeKind::Assoc(inner, ..) = root.kind() {
+            TypeKind::Assoc(..) => {
+                let (mut root, mut chain) = (ty, Vec::new());
+                while let TypeKind::Assoc(inner, interface, args, k) = root.kind() {
+                    chain.push((interface, k as usize));
+                    stack.extend(args.get().iter().map(|&a| (a, depth)));
                     root = inner;
                 }
                 let TypeKind::Param(_, q) = root.kind() else {
@@ -777,18 +778,92 @@ fn depths_and_assoc(ty: Type, count: usize) -> (Vec<Option<i64>>, Vec<AssocUse>)
                         "an associated type of a type parameter should be written through one"
                     );
                 };
+                chain.reverse();
                 uses.push(AssocUse {
                     param: q as usize,
-                    interface,
-                    index: k as usize,
+                    chain,
                     depth,
                 });
-                stack.extend(args.get().iter().map(|&a| (a, depth)));
             }
             _ => unreachable!("only a part that names a parameter is walked"),
         }
     }
     (depths, uses)
+}
+
+/// A name of associated types in a choice: the growth of `at` is at least `weight` more than the
+/// growths of `names` together.
+struct Rule {
+    at: usize,
+    names: Vec<usize>,
+    weight: i64,
+}
+
+/// One pass over `rules`: raises the growth of each associated type that a rule gives a greater
+/// one, unless it is `fixed`. A rule applies when every type it names has a growth. Returns the
+/// associated types raised.
+fn relax(growth: &mut [Option<i64>], rules: &[Rule], fixed: &[bool]) -> Vec<usize> {
+    let mut raised = Vec::new();
+    for rule in rules.iter().filter(|rule| !fixed[rule.at]) {
+        let named: Option<i64> = rule.names.iter().map(|&n| growth[n]).sum();
+        let Some(through) = named.map(|named| named + rule.weight) else {
+            continue;
+        };
+        if growth[rule.at].is_none_or(|g| through > g) {
+            growth[rule.at] = Some(through);
+            raised.push(rule.at);
+        }
+    }
+    raised
+}
+
+/// Which associated types have a growth that does not end: those that a cycle of positive weight
+/// among the rules raises again and again, and those whose rules name one. `growth` holds the
+/// growths outright. Every associated type starts at the growth it has, or at 0, so a cycle
+/// counts whether or not an outright growth reaches it.
+///
+/// A growth that is bounded settles in as many passes as there are associated types: the
+/// greatest of its rules has no associated type twice along any path of names, since a path
+/// that repeats one adds a weight above 0, which is unbounded, or at most 0, which the path
+/// without the repeat matches. So a type that a pass raises after that is on a cycle or names
+/// one, and the search for the types that name it follows the names.
+fn cyclic(growth: &[Option<i64>], rules: &[Rule]) -> Vec<bool> {
+    let count = growth.len();
+    let mut ghost: Vec<Option<i64>> = growth.iter().map(|g| Some(g.unwrap_or(0))).collect();
+    let none = vec![false; count];
+    for _ in 0..=count {
+        if relax(&mut ghost, rules, &none).is_empty() {
+            return none;
+        }
+    }
+    // Still growing. A cycle makes some type on it grow in every turn around, and a turn takes at
+    // most as many passes as there are associated types.
+    let mut unbounded = vec![false; count];
+    let mut queue = Vec::new();
+    for _ in 0..=count {
+        for raised in relax(&mut ghost, rules, &none) {
+            if !unbounded[raised] {
+                unbounded[raised] = true;
+                queue.push(raised);
+            }
+        }
+    }
+    // The types that name an unbounded one.
+    let mut users: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for rule in rules {
+        for &named in &rule.names {
+            users[named].push(rule.at);
+        }
+    }
+    while let Some(n) = queue.pop() {
+        for &user in &users[n] {
+            if !unbounded[user] {
+                unbounded[user] = true;
+                queue.push(user);
+            }
+        }
+    }
+    unbounded
 }
 
 /// A cycle of positive weight among the edges inside the component `k`, whose nodes are `nodes`,

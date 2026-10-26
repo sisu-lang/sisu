@@ -433,6 +433,9 @@ struct Early {
     bounds: Vec<Vec<Bound>>,
     /// The bounds already checked, by the place of their parameter and their own place.
     checked: FxHashSet<(usize, usize)>,
+    /// The bounds of a parameter that is bound, that name a parameter that is not bound yet, by
+    /// the same places: they are checked as soon as the call binds what they name.
+    waiting: Vec<(usize, usize)>,
     /// Whether one failed: an associated type that the call writes through the parameter does not
     /// exist, so no argument waits for it any more.
     failed: bool,
@@ -459,6 +462,7 @@ impl Early {
             through,
             bounds: sig.bounds.to_vec(),
             checked: FxHashSet::default(),
+            waiting: Vec::new(),
             failed: false,
         })
     }
@@ -672,8 +676,12 @@ impl Checker<'_> {
             call.slots[i] = Some(Err(Poisoned::error()));
         }
         let broken = poison_broken_params(&mut call.bindings, sig.declared);
+        // Once every parameter is bound, an argument is still unchecked only when its parameter
+        // type names an associated type that has no choice. The conformance reported that, and
+        // the call fails after it.
+        let unchecked = call.slots.iter().any(Option::is_none);
         let list = match call.bindings.finish() {
-            Ok(list) if !call.failed && !broken => Some(list),
+            Ok(list) if !call.failed && !broken && !unchecked => Some(list),
             Ok(_) => None,
             Err(i) => {
                 // An argument that failed, or a parameter's or the return type that did, may be
@@ -774,45 +782,57 @@ impl Checker<'_> {
     /// Checks the bounds of the parameters `bound`, which a binding has just bound, when a
     /// parameter type writes an associated type through the parameter: the type it stands for
     /// exists only if the bound holds. A bound whose arguments name a parameter that is not bound
-    /// yet waits for the end of the call. A bound that fails is reported once, and the call fails.
+    /// yet waits, and is checked as soon as a binding binds what it names, before any argument
+    /// that waits for the associated type is checked. A bound that fails is reported once, and
+    /// the call fails.
     fn check_early(&mut self, call: &mut Inference, bound: &[usize], at: Span) {
-        for &i in bound {
-            let Some(early) = &call.early else { return };
-            if i < early.owned || !early.through[i] {
+        let Some(early) = &mut call.early else { return };
+        let mut due = std::mem::take(&mut early.waiting);
+        for &i in bound
+            .iter()
+            .filter(|&&i| i >= early.owned && early.through[i])
+        {
+            let count = early.bounds.get(i - early.owned).map_or(0, Vec::len);
+            due.extend((0..count).map(|j| (i, j)));
+        }
+        let mut with: Option<Vec<Type>> = None;
+        for (i, j) in due {
+            let early = call
+                .early
+                .as_ref()
+                .expect("a call that checks early should say so");
+            let bound = early.bounds[i - early.owned][j];
+            let named = bound.args.get().iter();
+            if !named
+                .into_iter()
+                .all(|&arg| self.known(&call.bindings, arg).is_some())
+            {
+                call.early
+                    .as_mut()
+                    .expect("a call that checks early should say so")
+                    .waiting
+                    .push((i, j));
                 continue;
             }
             let ty = call.bindings.found[i]
                 .expect("a parameter that a binding bound should have a type");
-            let place = i - early.owned;
-            let bounds = early.bounds.get(place).cloned().unwrap_or_default();
-            let with: Vec<Type> = call
-                .bindings
-                .found
-                .iter()
-                .map(|t| t.unwrap_or(UNKNOWN))
-                .collect();
-            for (j, bound) in bounds.into_iter().enumerate() {
-                let named = bound.args.get().iter();
-                if !named
-                    .into_iter()
-                    .all(|&arg| self.known(&call.bindings, arg).is_some())
-                {
-                    continue;
-                }
-                let early = call
-                    .early
+            let with = with.get_or_insert_with(|| {
+                (call.bindings.found.iter())
+                    .map(|t| t.unwrap_or(UNKNOWN))
+                    .collect()
+            });
+            let early = call
+                .early
+                .as_mut()
+                .expect("a call that checks early should say so");
+            early.checked.insert((i, j));
+            let at = call.origin[i].unwrap_or(at);
+            if !self.check_bound(at, ty, bound, with) {
+                call.failed = true;
+                call.early
                     .as_mut()
-                    .expect("a call that checks early should say so");
-                early.checked.insert((i, j));
-                let at = call.origin[i].unwrap_or(at);
-                if !self.check_bound(at, ty, bound, &with) {
-                    call.failed = true;
-                    let early = call
-                        .early
-                        .as_mut()
-                        .expect("a call that checks early should say so");
-                    early.failed = true;
-                }
+                    .expect("a call that checks early should say so")
+                    .failed = true;
             }
         }
     }

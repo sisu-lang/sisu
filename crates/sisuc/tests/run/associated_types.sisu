@@ -1,11 +1,12 @@
 // GIVEN `Source`, an interface with an associated type `Item`; `Countdown` that chooses `i64` for
 // it in its declaration list; `Words` that chooses the counted `string` in an `extend` block;
 // `Relay<S>` that chooses the `Item` of the `Source` it wraps; and generic functions, a class and
-// an enum that write `S.Item` as a result, a parameter, a field and a payload
+// an enum that write `S.Item` as a result, a parameter, a field and a payload; and functions
+// whose bound `T: Convert<S.Item>` names the `Item` of the parameter before or after it
 // WHEN they run over a `Countdown`, over a `Words` of strings built at run time and over a
 // `Relay` of each, with `pass2` waiting for the `S` of its second argument
-// THEN every `S.Item` is the type that the conformance chose, and the strings that `Words` holds
-// are released once
+// THEN every `S.Item` is the type that the conformance chose, the bounds with `S.Item` hold, and
+// the strings that `Words` holds are released once
 // o2-calls: main words 5
 interface Source {
     type Item
@@ -41,6 +42,18 @@ extend Words: Source {
         } else {
             None
         }
+    }
+}
+
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+class Twice: Convert<i64> {
+    k: i64
+
+    fn convert(self) -> i64 {
+        self.k * 2
     }
 }
 
@@ -103,6 +116,19 @@ fn pass2<S: Source>(x: S.Item, s: S) -> S.Item {
     }
 }
 
+fn after<S: Source, T: Convert<S.Item>>(s: S, t: T) -> S.Item? {
+    let first = s.next()
+    if first == None {
+        None
+    } else {
+        t.convert()
+    }
+}
+
+fn before<T: Convert<S.Item>, S: Source>(t: T, s: S) -> S.Item {
+    s.next() ?? t.convert()
+}
+
 fn words() -> Words {
     Words(words: ["a" + "b", "c" + "d", "e" + "f"], at: 0)
 }
@@ -122,6 +148,9 @@ fn main() {
         Got.Got(v) => print(v + 1)
         Got.Nothing => print(0)
     }
+    // A bound that names the `Item` of the parameter before or after it.
+    print(after(Countdown(n: 1), Twice(k: 21)) ?? 0)
+    print(before(Twice(k: 1), Countdown(n: 8)))
     // Words: the items are counted `string`s, and each is released once.
     let w: string? = first_of(words())
     print(w ?? "none")

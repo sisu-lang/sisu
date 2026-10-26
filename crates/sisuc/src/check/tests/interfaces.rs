@@ -1467,6 +1467,50 @@ fn a_declaration_should_close_its_listed_interfaces_in_one_walk() {
     assert_eq!(steps(64), 64);
 }
 
+/// The check of choices reads each conformance and each choice a fixed number of times, whatever
+/// else the program holds: `n` classes that choose one type each, `n` blocks that do, and one
+/// class that chooses `n` types of one interface. The reads of `2n` are at most twice those of `n`.
+#[test]
+fn the_checks_of_choices_should_read_each_conformance_and_choice_a_fixed_number_of_times() {
+    let steps = |src: String| {
+        CHOICE_STEPS.set(0);
+        clean(&src);
+        CHOICE_STEPS.get()
+    };
+    let classes = |n: usize| {
+        let each: Vec<String> = (0..n)
+            .map(|i| format!("class C{i}: Source {{\n    type Item = i64\n}}\n"))
+            .collect();
+        format!(
+            "interface Source {{\n    type Item\n}}\n{}fn main() {{}}",
+            each.concat()
+        )
+    };
+    let blocks = |n: usize| {
+        let each: Vec<String> = (0..n)
+            .map(|i| format!("class C{i} {{}}\nextend C{i}: Source {{\n    type Item = i64\n}}\n"))
+            .collect();
+        format!(
+            "interface Source {{\n    type Item\n}}\n{}fn main() {{}}",
+            each.concat()
+        )
+    };
+    let many = |n: usize| {
+        let declared: Vec<String> = (0..n).map(|i| format!("    type A{i}\n")).collect();
+        let chosen: Vec<String> = (0..n).map(|i| format!("    type A{i} = i64\n")).collect();
+        format!(
+            "interface Source {{\n{}}}\nclass C: Source {{\n{}}}\nfn main() {{}}",
+            declared.concat(),
+            chosen.concat()
+        )
+    };
+    for shape in [&classes as &dyn Fn(usize) -> String, &blocks, &many] {
+        let (small, large) = (steps(shape(32)), steps(shape(64)));
+        assert!(small >= 32, "{small} reads for 32");
+        assert!(large <= 2 * small, "{large} reads for 64, {small} for 32");
+    }
+}
+
 /// A block that lacks every interface its own inherits reports each one by the place the closure
 /// recorded for it, so no report reads an inheritance list again.
 #[test]
@@ -3131,6 +3175,9 @@ fn associated_types_should_normalize_through_generic_code() {
         // A choice that names the associated type of an associated type of its parameter, and one
         // that names an array, an optional and an enum around the parameter.
         "interface Deep {\n    type Item: Deep\n}\nclass Chain<T> {\n    value: T\n}\nextend<T: Deep> Chain<T>: Deep {\n    type Item = Chain<T.Item.Item>\n}\nclass Rows<T> {\n    value: T\n}\nextend<T> Rows<T>: Deep {\n    type Item = Rows<[T?]>\n}",
+        // A bound whose argument is an associated type of a sibling parameter, before and after
+        // the bound that gives the parameter its type, and a call of each.
+        "extend Tag: Convert<Tag> {\n    fn convert(self) -> Tag { self }\n}\nfn conv<S: Source, T: Convert<S.Item>>(s: S, t: T) -> S.Item { t.convert() }\nfn conv2<T: Convert<S.Item>, S: Source>(t: T, s: S) -> S.Item? { s.next() }\nfn t() {\n    let a: Tag = conv(Countdown(n: 1), Tag(id: 2))\n    let b: Tag? = conv2(Tag(id: 2), Countdown(n: 1))\n}\nfn arr<T: Convert<[S.Item]>, S: Source>(_t: T, _s: S) {}\nfn nest<T: Convert<Wrap<S.Item>>, S: Source>(_t: T, _s: S) {}",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3271,6 +3318,80 @@ fn associated_types_should_report_what_they_cannot_take() {
     }
 }
 
+/// A conformance that lacks its choice, or whose choice failed, is reported once. A call or a
+/// constructor that takes the associated type of such a conformance fails after that report: no
+/// mismatch, no crash. The argument that names the associated type comes after, before and apart
+/// from its base.
+#[test]
+fn a_call_through_a_conformance_without_its_choice_should_fail_after_the_one_report() {
+    let holder = "class Holder<S: Source> {\n    item: S.Item\n}\n";
+    for (conformance, report) in [
+        // No `type Item`: E0152 at the interface of the conformance.
+        (
+            "class Bad: Source {\n    n: i64\n    fn next(self) -> Tag? { None }\n}\n",
+            (Code::ConformanceBody, (4, 12)),
+        ),
+        // A choice whose type is unknown: E0030 at that type.
+        (
+            "class Bad: Source {\n    type Item = Missing\n    n: i64\n    fn next(self) -> Tag? { None }\n}\n",
+            (Code::UnknownType, (5, 17)),
+        ),
+    ] {
+        for local in [
+            "let a = pass(Bad(n: 1), 5)",
+            "let a = pass2(5, Bad(n: 1))",
+            "let a: Holder<Bad> = Holder(item: 3)",
+        ] {
+            let row = format!("{holder}{conformance}fn t() {{\n    {local}\n}}");
+            codes(&with_sources(&row), &[report]);
+        }
+    }
+}
+
+/// An associated type whose choice leads back to the associated type itself has no type. It is
+/// reported once, at the choice that closes the loop, however many calls use it, and the calls
+/// that use it fail without a second report. The same choices with a chain that ends are clean.
+#[test]
+fn an_associated_type_that_needs_itself_should_be_reported_once() {
+    let program = |leaf: &str, uses: &str| {
+        format!(
+            "interface I {{\n    type A: I\n    fn a(self) -> A\n}}\nclass Leaf: I {{\n    type A = {leaf}\n    fn a(self) -> A {{ panic(\"leaf\") }}\n}}\nclass W<T> {{\n    value: T\n}}\nextend<T: I> W<T>: I {{\n    type A = T.A.A\n    fn a(self) -> A {{ panic(\"wrapped\") }}\n}}\nfn get<S: I>(s: S) -> S.A {{ s.a() }}\nfn bare<S: I>(_s: S) {{}}\nfn keep<T>(t: T) {{}}\nfn main() {{\n{uses}}}\n"
+        )
+    };
+    let uses = "    keep(get(W(value: Leaf())))\n    keep(get(W(value: Leaf())))\n";
+    // `W<Leaf>.A` is `Leaf.A.A`, which is `W<Leaf>.A`.
+    codes(&program("W<Leaf>", uses), &[(Code::UnknownType, (13, 14))]);
+    // A call that writes no associated type finds it too, where the argument meets the bound.
+    codes(
+        &program("W<Leaf>", "    bare(W(value: Leaf()))\n"),
+        &[(Code::UnknownType, (13, 14))],
+    );
+    // `Leaf.A` ends the chain.
+    codes(&program("Leaf", uses), &[]);
+    codes(&program("Leaf", "    bare(W(value: Leaf()))\n"), &[]);
+}
+
+/// A bound whose argument names an associated type of a sibling parameter finds that parameter's
+/// bounds, so the only way to write the constraint works; a sibling that has no bound that
+/// declares the type is still reported. A bound that names a parameter that a later argument
+/// binds is checked once that argument binds it, before the argument that waits for `S.Item`:
+/// one report, and none for the argument.
+#[test]
+fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for() {
+    for (row, expected) in [
+        (
+            "fn f<S, T: Convert<S.Item>>(s: S, t: T) {}".to_string(),
+            vec![(Code::UnknownType, (1, 22))],
+        ),
+        (
+            "interface GSource<T> {\n    type Item\n}\nextend<U: Marker> Wrap<U>: GSource<i64> {\n    type Item = i64\n}\nfn gpass<S: GSource<T>, T>(s: S, x: S.Item, y: T) {}\nfn t() {\n    let node = Node(id: 1)\n    gpass(Wrap(value: node), \"x\", 5)\n}".to_string(),
+            vec![(Code::NotConform, (10, 11))],
+        ),
+    ] {
+        codes(&with_sources(&row), &expected);
+    }
+}
+
 /// A cycle through an associated type is a cycle of the type it stands for: its edge weighs how
 /// much more deeply the choices of its conformances nest the types that stand for their
 /// parameters than their targets do. A choice that grows by 1 closes a cycle with a call that
@@ -3344,6 +3465,38 @@ fn each_associated_type_of_an_interface_should_have_its_own_growth() {
             "{pair}fn go<R: Two>(r: R) {{\n    if let x = r.{method}() {{\n        go(x)\n    }}\n}}"
         );
         codes(&with_sources(&row), &expected);
+    }
+}
+
+/// The growth of an associated type is the growth of every associated type that its choice names
+/// in a chain, `T.A.A`, added up; and a cycle of positive weight among the names is unbounded
+/// though no direct parameter starts it, as in `W<W<T.A>>`. Each closes a cycle with a call that
+/// passes the associated type on. A chain that adds up to 0 or less, and a cycle of weight 0, do
+/// not.
+#[test]
+fn a_growth_should_add_up_a_chain_of_names_and_be_unbounded_on_a_cycle_that_nothing_starts() {
+    for (call, a, b, cycle) in [
+        // `A` grows by 1, so `T.A.A` adds 2 and the target takes 1 back.
+        ("b", "W<W<T>>", "T.A.A", true),
+        // The same for a chain of three names.
+        ("b", "W<W<T>>", "T.A.A.A", true),
+        // `A` grows by 0, and by 1 with a chain of one name: 1 - 1 + 0 and 1 - 1 + 1 - 1.
+        ("b", "W<T>", "T.A.A", false),
+        ("b", "W<W<T>>", "T.A", false),
+        // A name of itself under a choice that nests it deeper: no end, though nothing starts it.
+        ("a", "W<W<T.A>>", "T", true),
+        // The same name at the same depth as the target: a cycle of weight 0.
+        ("a", "W<T.A>", "T", false),
+    ] {
+        let row = format!(
+            "interface I {{\n    type A: I\n    type B: I\n    fn a(self) -> A\n    fn b(self) -> B\n}}\nclass Leaf: I {{\n    type A = Leaf\n    type B = Leaf\n    fn a(self) -> A {{ self }}\n    fn b(self) -> B {{ self }}\n}}\nclass W<T> {{\n    value: T\n}}\nextend<T: I> W<T>: I {{\n    type A = {a}\n    type B = {b}\n    fn a(self) -> A {{ panic(\"a\") }}\n    fn b(self) -> B {{ panic(\"b\") }}\n}}\nfn drain<S: I>(s: S, run: bool) {{\n    if run {{\n        drain(s.{call}(), run)\n    }}\n}}\nfn main() {{\n    drain(W(value: W(value: Leaf())), false)\n}}\n"
+        );
+        let expected = if cycle {
+            vec![(Code::InstantiationCycle, (24, 9))]
+        } else {
+            vec![]
+        };
+        codes(&row, &expected);
     }
 }
 

@@ -234,6 +234,19 @@ pub(crate) struct TypeExpr {
     pub(crate) bare: Span,
 }
 
+impl TypeExpr {
+    /// Whether the type, or an argument or element of it, is an associated type of another
+    /// type, as `S.Item`.
+    pub(crate) fn names_member(&self) -> bool {
+        match &self.kind {
+            TypeKind::Member { .. } => true,
+            TypeKind::Applied(applied) => applied.args.iter().any(TypeExpr::names_member),
+            TypeKind::Array(element) => element.names_member(),
+            TypeKind::Name(_) | TypeKind::SelfType => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TypeKind {
     Name(Symbol),

@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 use super::generic::named_params;
 use super::interface::Bound;
-use super::{Checker, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
+use super::{Checker, Choices, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
 use crate::ast;
 use crate::conformance::{bind, overlap};
 use crate::diagnostic::{CannotExtendForm, Earlier, Owner as MethodOwner};
@@ -28,7 +28,7 @@ pub(super) struct Extension {
     /// The interface of an `extend T: I` block, and where it is written.
     pub(super) interface: Option<(Bound, Span)>,
     /// The associated types the block chooses.
-    pub(super) assoc: Vec<super::Choice>,
+    pub(super) assoc: Choices,
     /// The first method of each name.
     pub(super) methods: FxHashMap<Symbol, tir::FuncId>,
     /// Whether the type already conforms to the interface, so that the block's methods answer no
@@ -61,11 +61,11 @@ impl<'a> Checker<'_> {
             }
             Some((bound, ty.bare))
         });
-        let assoc = if extend.interface.is_some() {
+        let assoc = Choices::new(if extend.interface.is_some() {
             self.resolve_choices(&extend.assoc, &extend.target.to_string())
         } else {
             Vec::new()
-        };
+        });
         let unused = target.is_some_and(|target| self.unused_params(extend, target));
         let failed = unused || matches!(interface, Some(None));
         let usable = target.filter(|_| !failed);

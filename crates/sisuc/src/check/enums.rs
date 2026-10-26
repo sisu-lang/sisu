@@ -30,7 +30,7 @@ pub(super) struct EnumInfo {
     /// The first method of each name that no variant takes, and every broken one.
     pub(super) methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// The associated types the declaration's body chooses.
-    pub(super) assoc: Vec<super::Choice>,
+    pub(super) assoc: super::Choices,
 }
 
 pub(super) struct VariantInfo {

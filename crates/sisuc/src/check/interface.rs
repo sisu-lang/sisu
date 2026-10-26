@@ -306,6 +306,11 @@ impl Checker<'_> {
     /// the bounds of the parameters from the place `first` on that come before `params`. Gives
     /// all of them.
     ///
+    /// A bound that names an associated type in its arguments, as `T: Convert<S.Item>`, needs the
+    /// bounds of the parameter it is written through, which may come after it. So the bounds that
+    /// name none are resolved first and put in scope, and then the others. An associated type
+    /// whose base has only a bound of the second kind is not found, and is reported once.
+    ///
     /// A check of an applied type that a bound names waits for every conformance. It takes the
     /// scope when it is queued, which has no bound of `params` yet, so it takes the scope that has
     /// them all once they are in place.
@@ -316,8 +321,42 @@ impl Checker<'_> {
         params: &[ast::TypeParam],
     ) -> Vec<Vec<Bound>> {
         let queued = self.queued();
+        let at = first + head.len();
+        let mut found: Vec<Vec<Option<Bound>>> = (params.iter())
+            .map(|param| vec![None; param.bounds.len()])
+            .collect();
+        let with_members = params
+            .iter()
+            .any(|param| param.bounds.iter().any(ast::TypeExpr::names_member));
+        for members in [false, true] {
+            if members && !with_members {
+                break;
+            }
+            for (i, param) in params.iter().enumerate() {
+                let place = u32::try_from(at + i)
+                    .expect("a declaration should have fewer than 2^32 parameters");
+                let this = Some(Type::intern(TypeKind::Param(param.name.name, place)));
+                for (j, ty) in param.bounds.iter().enumerate() {
+                    if ty.names_member() == members {
+                        found[i][j] = self.bound(ty, this);
+                    }
+                }
+            }
+            if !members && with_members {
+                let so_far = head.iter().cloned().chain(
+                    found
+                        .iter()
+                        .map(|bounds| bounds.iter().flatten().copied().collect()),
+                );
+                self.body.set_bounds(first, so_far.collect());
+            }
+        }
         let mut bounds = head;
-        bounds.extend(self.bounds_of(first + bounds.len(), params));
+        bounds.extend(
+            found
+                .into_iter()
+                .map(|bounds| bounds.into_iter().flatten().collect()),
+        );
         self.body.set_bounds(first, bounds.clone());
         if self.queued() > queued {
             let scope = self.scope();
@@ -326,21 +365,6 @@ impl Checker<'_> {
             }
         }
         bounds
-    }
-
-    /// Resolves the bounds of `params`, which are in scope from the place `first` on, and reports
-    /// each that names no interface. Gives the bounds of each parameter that name one.
-    fn bounds_of(&mut self, first: usize, params: &[ast::TypeParam]) -> Vec<Vec<Bound>> {
-        (params.iter().enumerate())
-            .map(|(i, param)| {
-                let place = u32::try_from(first + i)
-                    .expect("a declaration should have fewer than 2^32 parameters");
-                let this = Some(Type::intern(TypeKind::Param(param.name.name, place)));
-                (param.bounds.iter())
-                    .filter_map(|ty| self.bound(ty, this))
-                    .collect()
-            })
-            .collect()
     }
 
     /// The interface `ty` names with its arguments, for the type `this` that has it, if that is
@@ -824,6 +848,7 @@ impl Checker<'_> {
     pub(super) fn check_bound(&mut self, at: Span, ty: Type, bound: Bound, with: &[Type]) -> bool {
         let args = self.subst_args(bound.args, with);
         if self.conforms(ty, bound.interface, args) {
+            self.probe_associated(ty, bound.interface, args);
             return true;
         }
         let add = self.add_bound(ty, bound.interface);
@@ -842,6 +867,25 @@ impl Checker<'_> {
             },
         });
         false
+    }
+
+    /// Normalizes each associated type that `interface` declares for `ty`, a class or an enum
+    /// that conforms to it, so that a choice that needs itself is found where the type meets the
+    /// bound, though no signature writes the associated type. Only the checker can report it.
+    ///
+    /// shortcut: this finds a loop at the first associated type only; one at the associated type
+    /// of a chosen type is found where a signature writes it. Upgrade when a program needs `mono`
+    /// to meet no loop that the checker did not.
+    fn probe_associated(&self, ty: Type, interface: InterfaceId, args: TypeArgs) {
+        let count = self.interfaces[interface.0].assoc.len();
+        if count == 0 || !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
+            return;
+        }
+        for k in 0..count {
+            let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
+            let assoc = Type::intern(TypeKind::Assoc(ty, interface, args, k));
+            let _ = self.normalize(assoc);
+        }
     }
 
     /// The bound that would make the type parameter `ty` conform to `interface`, written with the

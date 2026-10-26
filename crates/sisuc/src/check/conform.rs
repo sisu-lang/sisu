@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::interface::{Bound, RequirementInfo};
-use super::{Body, Checker, Choice, Declared, Holder, own_args};
+use super::{Body, Checker, Choice, Choices, Declared, Holder, own_args};
 use crate::ast;
 use crate::conformance::{self, find};
 use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm};
@@ -273,6 +273,7 @@ impl Checker<'_> {
             });
             return None;
         }
+        let (assoc, written) = self.chosen(bound.interface, source);
         let index = self.conformances.add(
             bound.interface,
             tir::Conformance {
@@ -280,9 +281,12 @@ impl Checker<'_> {
                 target,
                 args: bound.args,
                 methods: Vec::new(),
-                assoc: self.chosen(bound.interface, source),
+                assoc,
             },
         );
+        for (k, at) in written {
+            self.choice_ats.insert((bound.interface, index, k), at);
+        }
         ats.insert((bound.interface, index), at);
         if bounds.iter().any(|bounds| !bounds.is_empty()) {
             self.conformance_bounds
@@ -386,11 +390,18 @@ impl Checker<'_> {
     /// Whether `source` writes a choice for the associated type `name`, whether or not its type
     /// resolved.
     fn chooses(&self, source: Source, name: Symbol) -> bool {
-        self.choices(source).iter().any(|c| c.name.name == name)
+        self.choice(source, name).is_some()
+    }
+
+    /// The choice of the associated type `name` that `source` makes.
+    fn choice(&self, source: Source, name: Symbol) -> Option<&Choice> {
+        #[cfg(test)]
+        super::CHOICE_STEPS.set(super::CHOICE_STEPS.get() + 1);
+        self.choices(source).get(name)
     }
 
     /// The associated types that `source` chooses.
-    fn choices(&self, source: Source) -> &[Choice] {
+    fn choices(&self, source: Source) -> &Choices {
         match source {
             Source::Body(Holder::Class(c)) => &self.classes[c.0].assoc,
             Source::Body(Holder::Enum(e)) => &self.enums[e.0].assoc,
@@ -415,8 +426,7 @@ impl Checker<'_> {
         // Each declared type, with the type that is chosen for it and where that is written.
         let chosen: Vec<Option<(Type, Span)>> = (self.interfaces[interface.0].assoc.iter())
             .map(|assoc| {
-                let choice =
-                    (self.choices(p.source).iter()).find(|c| c.name.name == assoc.name.name)?;
+                let choice = self.choice(p.source, assoc.name.name)?;
                 Some((choice.ty?, choice.at))
             })
             .collect();
@@ -435,23 +445,36 @@ impl Checker<'_> {
     /// Reports each choice of a class, an enum or an `extend` block that no interface it
     /// conforms to declares: the third form of E0152. `lists` are the declarations that list
     /// interfaces, and `pending` the conformances, which hold the interfaces that a list gets
-    /// from another.
+    /// from another. Each conformance is read once to find the associated types of its holder.
     fn stray_choices(&mut self, lists: &[Listed], pending: &[Pending]) {
         let mut reports = Vec::new();
+        // The names of the associated types that the interfaces of each listing holder declare.
+        let mut declared: FxHashMap<Holder, FxHashSet<Symbol>> = FxHashMap::default();
+        for p in pending {
+            let assoc = &self.interfaces[p.interface.interface.0].assoc;
+            #[cfg(test)]
+            super::CHOICE_STEPS.set(super::CHOICE_STEPS.get() + 1 + assoc.len());
+            if let Source::Body(holder) = p.source {
+                declared
+                    .entry(holder)
+                    .or_default()
+                    .extend(assoc.iter().map(|assoc| assoc.name.name));
+            }
+        }
         for (holder, receiver, roots) in lists {
             if roots.is_empty() {
                 continue;
             }
-            let declared: FxHashSet<Symbol> = (pending.iter())
-                .filter(|p| matches!(p.source, Source::Body(h) if h == *holder))
-                .flat_map(|p| &self.interfaces[p.interface.interface.0].assoc)
-                .map(|assoc| assoc.name.name)
-                .collect();
             let of: Vec<String> = (roots.iter())
                 .map(|(bound, _)| self.interfaces[bound.interface.0].name.name.to_string())
                 .collect();
-            for choice in self.choices(Source::Body(*holder)) {
-                if !declared.contains(&choice.name.name) {
+            for choice in self.choices(Source::Body(*holder)).iter() {
+                #[cfg(test)]
+                super::CHOICE_STEPS.set(super::CHOICE_STEPS.get() + 1);
+                if !declared
+                    .get(holder)
+                    .is_some_and(|names| names.contains(&choice.name.name))
+                {
                     reports.push(self.not_associated(*receiver, choice, &of));
                 }
             }
@@ -460,14 +483,19 @@ impl Checker<'_> {
             let Some((bound, _)) = ext.interface else {
                 continue;
             };
-            let declared = &self.interfaces[bound.interface.0];
-            let of = vec![declared.name.name.to_string()];
-            for choice in self.choices(Source::Block(b)) {
-                if !declared
-                    .assoc
-                    .iter()
-                    .any(|a| a.name.name == choice.name.name)
-                {
+            if ext.assoc.is_empty() {
+                continue;
+            }
+            let info = &self.interfaces[bound.interface.0];
+            #[cfg(test)]
+            super::CHOICE_STEPS.set(super::CHOICE_STEPS.get() + info.assoc.len());
+            let declared: FxHashSet<Symbol> =
+                info.assoc.iter().map(|assoc| assoc.name.name).collect();
+            let of = vec![info.name.name.to_string()];
+            for choice in self.choices(Source::Block(b)).iter() {
+                #[cfg(test)]
+                super::CHOICE_STEPS.set(super::CHOICE_STEPS.get() + 1);
+                if !declared.contains(&choice.name.name) {
                     reports.push(self.not_associated(ext.target, choice, &of));
                 }
             }
@@ -678,19 +706,25 @@ impl Checker<'_> {
     }
 
     /// The type that `source` chooses for each associated type of `interface`, in order; `None`
-    /// for one that it chooses no type for, or whose type failed.
-    fn chosen(&self, interface: InterfaceId, source: Source) -> Vec<Option<Type>> {
-        let choices = match source {
-            Source::Body(Holder::Class(c)) => &self.classes[c.0].assoc,
-            Source::Body(Holder::Enum(e)) => &self.enums[e.0].assoc,
-            Source::Block(b) => &self.extensions[b].assoc,
-        };
-        (self.interfaces[interface.0].assoc.iter())
-            .map(|declared| {
-                let choice = choices.iter().find(|c| c.name.name == declared.name.name);
-                choice.and_then(|choice| choice.ty)
+    /// for one that it chooses no type for, or whose type failed. Also where each type that holds
+    /// an associated type is written.
+    fn chosen(
+        &self,
+        interface: InterfaceId,
+        source: Source,
+    ) -> (Vec<Option<Type>>, Vec<(usize, Span)>) {
+        let mut written = Vec::new();
+        let chosen = (self.interfaces[interface.0].assoc.iter().enumerate())
+            .map(|(k, declared)| {
+                let choice = self.choice(source, declared.name.name)?;
+                let ty = choice.ty?;
+                if ty.has_assoc() {
+                    written.push((k, choice.at));
+                }
+                Some(ty)
             })
-            .collect()
+            .collect();
+        (chosen, written)
     }
 
     /// The source text at `span`.

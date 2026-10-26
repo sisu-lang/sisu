@@ -38,7 +38,7 @@ use crate::source::{self, Span};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{Head, write_type};
-use assoc::{Choice, Named};
+use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
@@ -144,7 +144,7 @@ struct ClassInfo {
     /// The first method of each name, and every broken one.
     methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// The associated types the declaration's body chooses.
-    assoc: Vec<Choice>,
+    assoc: Choices,
 }
 
 struct FieldInfo {
@@ -337,6 +337,9 @@ thread_local! {
     /// How many times `conforms` has looked for the conformance of a class or an enum, not
     /// counting an answer it kept.
     pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many conformances and choices the checks of the choices have read, or looked up by
+    /// the name of an associated type, on this thread.
+    pub(super) static CHOICE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -392,6 +395,12 @@ struct Checker<'src> {
     /// The type parameters of each conformance that has bounded ones, with their bounds, by
     /// interface and place among the interface's: the class's or the block's.
     conformance_bounds: FxHashMap<(tir::InterfaceId, usize), ParamBounds>,
+    /// Where each choice that writes an associated type is written, by conformance (interface and
+    /// place among the interface's) and place of the associated type among the interface's.
+    choice_ats: FxHashMap<(tir::InterfaceId, usize, usize), Span>,
+    /// The choices that `normalize` found to need their own associated type, each with the first
+    /// type found for it; reported once all bodies are checked (see `report_loops`).
+    loops: std::cell::RefCell<FxHashMap<(tir::InterfaceId, usize, usize), Type>>,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// The place among `extensions` of the first block that covers the receiver of the call being
@@ -682,6 +691,7 @@ pub(crate) fn check<'src>(
         .map(|(i, &(f, owner))| checker.method_or_function(f, tir::FuncId(i), owner))
         .collect();
     checker.instantiation_cycles(&functions, &unbuilt);
+    checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
     let mut diagnostics = std::mem::take(&mut checker.diagnostics).into_vec();
     diagnostics.sort_by_key(|d| d.span().start());
@@ -854,6 +864,8 @@ impl<'src> Checker<'src> {
             candidates: Vec::new(),
             conformances: tir::Conformances::default(),
             conformance_bounds: FxHashMap::default(),
+            choice_ats: FxHashMap::default(),
+            loops: std::cell::RefCell::default(),
             conformed: FxHashMap::default(),
             failed_block: None,
             lowered_enums: Vec::new(),
@@ -925,7 +937,7 @@ impl Checker<'_> {
                         bounds: Vec::new(),
                         fields: Vec::new(),
                         methods: FxHashMap::default(),
-                        assoc: Vec::new(),
+                        assoc: Choices::default(),
                     });
                     let name = &class.name;
                     if !self.built_in(name)
@@ -959,7 +971,7 @@ impl Checker<'_> {
                         variants: Vec::new(),
                         index: FxHashMap::default(),
                         methods: FxHashMap::default(),
-                        assoc: Vec::new(),
+                        assoc: Choices::default(),
                     });
                     if !self.built_in(&e.name)
                         && self.first_callable(&mut first, Definition::Enum, &e.name)

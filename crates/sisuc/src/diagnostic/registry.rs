@@ -1475,6 +1475,9 @@ pub(crate) enum UnknownForm {
     ConcreteBase { own: bool },
     /// The choice of an associated type names one of its own conformance.
     ChoiceNamesItself,
+    /// The choice of an associated type needs the associated type itself, which the diagnostic's
+    /// name gives with its base, as `W<Leaf>.A`: the types the choice names lead back to it.
+    ChoiceLoops,
 }
 
 /// Where the earlier definition of a name is.
@@ -2475,6 +2478,12 @@ impl From<DiagnosticKind> for Diagnostic {
                     format!("an associated type's choice cannot name `{name}`"),
                 )
                 .with_help("write the type itself"),
+                UnknownForm::ChoiceLoops => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("the associated type `{name}` needs itself to find its type"),
+                )
+                .with_help("write a choice that does not lead back to the same associated type"),
             },
             DiagnosticKind::BodyHasNoValue { function, want, at } => Diagnostic::coded(
                 code,
