@@ -719,7 +719,7 @@ impl Checker<'_> {
         let add = self.add_bound(ty, bound.interface);
         // A class or an enum may conform, when the types that stand for its parameters do.
         let needs = find(&self.conformances, bound.interface, ty, args)
-            .and_then(|(k, stands)| self.failed_bound(bound.interface, k, stands));
+            .map(|(k, stands)| self.failed_bound(bound.interface, k, stands));
         self.report(DiagnosticKind::NotConform {
             ty: self.type_name(ty),
             interface: self.bound_text(bound.interface, args),

@@ -563,16 +563,14 @@ impl Checker<'_> {
     /// The method `holder`, as the program writes it with its owner's and its own type
     /// parameters: `Box<T>.run`, `Ring.wrap<U>`.
     fn method_text(&self, functions: &[Option<tir::Function>], holder: usize) -> String {
-        let Some(function) = functions[holder].as_ref() else {
-            return self.signatures[holder].name.clone();
+        let function = functions[holder]
+            .as_ref()
+            .expect("a method on a cycle should have a body, which gives its edge on the cycle");
+        let (Some(method), Some(owner)) = (&function.method, function.owner) else {
+            unreachable!("a hub reaches methods only");
         };
         let mut out = String::new();
-        match (&function.method, function.owner) {
-            (Some(method), Some(owner)) => {
-                write_method(&mut out, owner, None, method, |head| self.head(head));
-            }
-            _ => out.push_str(&function.name),
-        }
+        write_method(&mut out, owner, None, method, |head| self.head(head));
         let own = &function.type_params[function.owner_params..];
         out.push_str(&angled(own).to_string());
         out
@@ -686,7 +684,7 @@ fn positive_cycle(
         let i = last[n].expect("a node whose way was lengthened should have an edge into it");
         (i, place[&graph.edges[i].from])
     };
-    let mut n = changed?;
+    let mut n = changed.expect("the last pass should have lengthened a way");
     for _ in 0..nodes.len() {
         n = back(n).1;
     }

@@ -422,7 +422,7 @@ impl Checker<'_> {
         match find(&self.conformances, interface, p.target, args) {
             // Following the advice would give `ConformsTwice`, so the report points at the bound
             // that the other conformance needs instead.
-            Some((k, bound)) => needs = self.failed_bound(interface, k, bound),
+            Some((k, bound)) => needs = Some(self.failed_bound(interface, k, bound)),
             // shortcut: an inherited interface that takes arguments gets no help, as a block
             // cannot write a generic interface yet; Task 6 writes it with the arguments.
             None if args.get().is_empty() => {
@@ -450,17 +450,19 @@ impl Checker<'_> {
         interface: InterfaceId,
         index: usize,
         bound: tir::TypeArgs,
-    ) -> Option<(String, Span)> {
-        let (params, bounds) = self.conformance_bounds.get(&(interface, index))?.clone();
+    ) -> (String, Span) {
+        let (params, bounds) = (self.conformance_bounds.get(&(interface, index)))
+            .expect("a conformance that a type does not meet should have bounds")
+            .clone();
         for (i, bounds) in bounds.iter().enumerate() {
             for b in bounds {
                 if !self.conforms(bound.get()[i], b.interface, b.args.subst(bound.get())) {
                     let text = format!("{}: {}", params[i], self.bound_text(b.interface, b.args));
-                    return Some((text, b.at));
+                    return (text, b.at);
                 }
             }
         }
-        None
+        unreachable!("a conformance that a type does not meet should have a bound that fails")
     }
 
     /// The block that would give the target of the block `block` the conformance to `inherited`,

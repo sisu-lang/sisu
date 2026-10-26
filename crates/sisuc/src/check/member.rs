@@ -334,7 +334,8 @@ impl Checker<'_> {
         let Some(at) = self.signatures[func.0].extension else {
             return Some(func);
         };
-        let stands = self.covers(at, ty)?;
+        let stands = (self.covers(at, ty))
+            .expect("the block of a method that a call found should cover the receiver");
         if self.block_holds(at, stands) {
             return Some(func);
         }

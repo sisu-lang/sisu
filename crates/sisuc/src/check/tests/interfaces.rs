@@ -2319,6 +2319,16 @@ fn generic_extension_should_check_clean() {
         "extend Stack<i64> {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { [x, y][0] }\nfn main() {\n    print(take(Stack(items: [1]).make(), [1]).len())\n}",
         // The parameter of a conformance may be a method's own too: a block's methods see it.
         "extend<T: Same> Stack<T> {\n    fn twice(self, other: Self) -> bool {\n        self.items[0].same(other.items[0])\n    }\n}\nfn main() {\n    let s = Stack(items: [Circle(r: 1.0)])\n    print(s.twice(s))\n}",
+        // Two conformance blocks of other instantiations hold a `name` too: the call takes the
+        // block that covers the receiver.
+        "extend Stack<i64>: Label {\n    fn name(self) -> string { \"ints\" }\n}\nextend Stack<f64>: Code {\n    fn name(self) -> i64 { 1 }\n}\nfn main() {\n    print(Stack(items: [1]).name())\n    print(Stack(items: [1.5]).name())\n}",
+        // Two blocks over every `T` hold a `dup`, and the expected type picks by the result with
+        // the receiver's arguments in it.
+        "interface DupA {\n    fn dup(self) -> Self\n}\ninterface DupB {\n    fn dup(self) -> [Self]\n}\nextend<T> Stack<T>: DupA {\n    fn dup(self) -> Self { self }\n}\nextend<T> Stack<T>: DupB {\n    fn dup(self) -> [Self] { [self] }\n}\nfn main() {\n    let d: Stack<i64> = Stack(items: [1]).dup()\n    print(d.items.len())\n}",
+        // Two blocks with parameters, each with a method of one name, that no type fits together.
+        "class Two<A, B> {\n    a: A\n    b: B\n}\nextend<T> Two<T, [T]> {\n    fn m(self) -> i64 { 1 }\n}\nextend<U> Two<[U], U> {\n    fn m(self) -> i64 { 2 }\n}",
+        // The depth of a parameter in a target counts arrays and optionals, and a leaf with none.
+        "interface Run {\n    fn run(self)\n}\nclass Box<T> {\n    value: T\n}\nclass Two<A, B> {\n    a: A\n    b: B\n}\nfn dispatch<T: Run>(x: T) {\n    x.run()\n}\nextend<T> Box<[T]>: Run {\n    fn run(self) {\n        dispatch(Box(value: self.value))\n    }\n}\nextend<T> Box<T?>: Run {\n    fn run(self) {\n        dispatch(Box(value: self.value))\n    }\n}\nextend<T> Two<[i64], T>: Run {\n    fn run(self) {}\n}",
         // Different parameters in different blocks do not overlap: the occurs check.
         "class Two<A, B> {\n    a: A\n    b: B\n}\nextend<T> Two<T, [T]>: Same {\n    fn same(self, other: Self) -> bool { true }\n}\nextend<U> Two<[U], U>: Same {\n    fn same(self, other: Self) -> bool { false }\n}",
         // A conformance whose method calls through its own bound, with the zero cycle of
@@ -2366,6 +2376,22 @@ fn generic_extension_should_report_what_it_cannot_take() {
             "extend Stack<i64> {\n    fn total(self) -> i64 { 1 }\n}\nfn main() {\n    print(Stack(items: [1.5]).total())\n}",
             vec![(Code::NoMember, (l(5), 31), vec![])],
         ),
+        // The block of one instantiation comes first, and the block for every `T` second.
+        (
+            "extend Stack<i64> {\n    fn top(self) -> i64 { 1 }\n}\nextend<T> Stack<T> {\n    fn top(self) -> i64 { 2 }\n}",
+            vec![(Code::DefinedTwice, (l(5), 8), vec![(l(2), 8)])],
+        ),
+        // The class holds the method, and the block for every `T` has one too.
+        (
+            "class Pile<V> {\n    items: [V]\n    fn top(self) -> i64 { 1 }\n}\nextend<T> Pile<T> {\n    fn top(self) -> i64 { 2 }\n}",
+            vec![(Code::DefinedTwice, (l(6), 8), vec![(l(3), 8)])],
+        ),
+        // A block without a conformance has its bounds checked at the call, as a conformance
+        // block does.
+        (
+            "extend<T: Same> Stack<T> {\n    fn twice(self) -> bool { true }\n}\nfn main() {\n    print(Stack(items: [Node(id: 1)]).twice())\n}",
+            vec![(Code::NotConform, (l(5), 11), vec![(l(1), 11)])],
+        ),
         // `T?` in the target matches an optional, and not a plain `i64`.
         (
             "class Cell<T> {\n    value: T\n}\nextend<T> Cell<T?> {\n    fn get(self) -> T { panic(\"x\") }\n}\nfn main() {\n    print(Cell(value: 1).get())\n}",
@@ -2399,6 +2425,13 @@ fn an_inherited_conformance_should_hold_under_the_conditions_of_the_block() {
     assert_eq!(
         found(&src),
         [(Code::NotConform, (10, 26), vec![(1, 17), (7, 11)])],
+        "{src}"
+    );
+    // A block with a parameter that has no bound: the help writes it as it is.
+    let src = row("extend<T> Heap<T>: Ord2 {\n    fn less(self, other: Self) -> bool { true }\n}");
+    assert_eq!(
+        found(&src),
+        [(Code::NotConform, (7, 20), vec![(1, 17)])],
         "{src}"
     );
     // The conformance holds when the block gives its condition, or more.
@@ -2619,4 +2652,60 @@ fn a_cycle_in_a_large_component_should_cost_the_nodes_times_the_edges() {
     assert_eq!(found, [Code::InstantiationCycle]);
     assert_eq!(cycle::EDGES.get(), 3 * N + 3);
     assert_eq!(cycle::BELLMAN_FORD_STEPS.get(), (2 * N + 4) * (3 * N + 2));
+}
+
+/// A cycle with two steps that grow is labeled at the first in source order, whichever of them is
+/// first on the cycle: the call of `f` in `run` and the call of `g` in `f` close it together.
+#[test]
+fn a_cycle_should_be_labeled_at_its_first_growing_step_in_source_order() {
+    let helpers =
+        "fn f<T: Run>(x: T) {\n    g(Box(value: x))\n}\nfn g<T: Run>(y: T) {\n    y.run()\n}\n";
+    let conformance =
+        "extend<T> Box<T>: Run {\n    fn run(self) {\n        f(Box(value: self))\n    }\n}\n";
+    let decls = "interface Run {\n    fn run(self)\n}\nclass Box<T> {\n    value: T\n}\n";
+    // The helpers come first: the call of `g` is the first in the source.
+    let src = with_main(&format!("{decls}{helpers}{conformance}"));
+    assert_eq!(
+        found(&src),
+        [(Code::InstantiationCycle, (8, 5), vec![(11, 5), (15, 9)])],
+        "{src}"
+    );
+    // The conformance comes first: the call of `f` is.
+    let src = with_main(&format!("{decls}{conformance}{helpers}"));
+    assert_eq!(
+        found(&src),
+        [(Code::InstantiationCycle, (9, 9), vec![(13, 5), (16, 5)])],
+        "{src}"
+    );
+}
+
+/// A bound that a conditional conformance asks for fails once, at the use: at the call of a
+/// method of the block, or at the argument that the conformance's bound is asked of, whether the
+/// type argument is a class or a type parameter that lacks the bound. The body of the function
+/// adds no report of its own.
+#[test]
+fn conditional_bound_violations_should_be_reported_once_at_the_use() {
+    let l = |n: usize| GENERIC_LINES + n;
+    let block = "extend<T: Same> Pair<T>: Same {\n    fn same(self, other: Self) -> bool { true }\n}\nfn agree<T: Same>(a: T, b: T) -> bool { a.same(b) }\n";
+    for (row, expected) in [
+        // The call of the method, on a type parameter that has no bound.
+        (
+            "fn h<T>(p: Pair<T>) -> bool {\n    p.same(p)\n}",
+            vec![(Code::NotConform, (l(6), 5), vec![(l(1), 11)])],
+        ),
+        // The call of a function, whose bound the conformance's bound decides: one report for
+        // the two arguments.
+        (
+            "fn g<T>(p: Pair<T>) -> bool {\n    agree(p, p)\n}",
+            vec![(Code::NotConform, (l(6), 11), vec![(l(4), 13), (l(1), 11)])],
+        ),
+        // The result of the failed call is unknown, and the uses of it add none.
+        (
+            "fn k<T>(p: Pair<T>) -> i64 {\n    let b = p.same(p)\n    if b { 1 } else { 0 }\n}",
+            vec![(Code::NotConform, (l(6), 13), vec![(l(1), 11)])],
+        ),
+    ] {
+        let src = with_generic(&format!("{block}{row}"));
+        assert_eq!(found(&src), expected, "{row}");
+    }
 }

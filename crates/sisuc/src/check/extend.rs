@@ -141,11 +141,12 @@ impl<'a> Checker<'_> {
     /// its `extend` block stand for.
     pub(super) fn owner_args(&self, func: tir::FuncId, ty: Type) -> tir::TypeArgs {
         if let Some(at) = self.signatures[func.0].extension {
-            return self.covers(at, ty).unwrap_or(tir::TypeArgs::NONE);
+            return (self.covers(at, ty))
+                .expect("the block of a method that a call found should cover the receiver");
         }
         match ty.kind() {
             TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args,
-            _ => tir::TypeArgs::NONE,
+            _ => unreachable!("only a class or an enum has methods"),
         }
     }
 
@@ -182,9 +183,9 @@ impl<'a> Checker<'_> {
         let stands = self
             .covers(extension, ty)
             .expect("a block that fails its bounds should cover the receiver");
-        if let Some((i, bound)) = self.first_failed_bound(extension, stands) {
-            self.check_bound(span, stands.get()[i], bound, stands.get());
-        }
+        let (i, bound) = (self.first_failed_bound(extension, stands))
+            .expect("a block that fails its bounds should have a bound that fails");
+        self.check_bound(span, stands.get()[i], bound, stands.get());
     }
 
     /// Reports each type parameter of `extend` that its target, `target`, does not name. The fix
@@ -302,18 +303,17 @@ impl<'a> Checker<'_> {
             // The first earlier definition, the first of each exact target, and the places of
             // the earlier ones that have parameters.
             let mut exact: FxHashMap<Type, usize> = FxHashMap::default();
-            let mut generic: Vec<usize> = Vec::new();
+            let mut generic: Vec<(usize, Type, usize)> = Vec::new();
             let mut universal = None;
             for (i, &(span, kind, target)) in defs.iter().enumerate() {
                 let earlier = match target {
                     None => (i > 0).then_some(0),
                     Some((ty, 0)) => {
-                        let overlapping = generic.iter().copied().find(|&g| {
-                            let Some((other, params)) = defs[g].2 else {
-                                return false;
-                            };
-                            overlap(&[ty], 0, &[other], params).is_some()
-                        });
+                        let overlapping = (generic.iter())
+                            .find(|&&(_, other, params)| {
+                                overlap(&[ty], 0, &[other], params).is_some()
+                            })
+                            .map(|&(g, ..)| g);
                         let hits = [universal, exact.get(&ty).copied(), overlapping];
                         hits.into_iter().flatten().min()
                     }
@@ -329,7 +329,7 @@ impl<'a> Checker<'_> {
                     Some((ty, 0)) => {
                         exact.entry(ty).or_insert(i);
                     }
-                    Some(_) => generic.push(i),
+                    Some((ty, params)) => generic.push((i, ty, params)),
                 }
                 if let Some(first) = earlier {
                     let (first, first_kind, _) = defs[first];

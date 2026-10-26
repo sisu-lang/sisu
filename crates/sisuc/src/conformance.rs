@@ -60,13 +60,13 @@ pub(crate) fn clash(
     mine.extend_from_slice(args.get());
     // A target without parameters meets the one of its exact type; one with parameters meets the
     // exact targets of its class or enum.
-    let head = head_of(target);
-    let exact = match head {
-        _ if params == 0 => conformances.exact(interface, target),
-        Some(head) => conformances.exact_of(interface, head),
-        None => &[],
+    let head = head_of(target).expect("the target of a conformance should be a class or an enum");
+    let exact = if params == 0 {
+        conformances.exact(interface, target)
+    } else {
+        conformances.exact_of(interface, head)
     };
-    let generic = head.map_or(&[][..], |head| conformances.generic(interface, head));
+    let generic = conformances.generic(interface, head);
     exact.iter().chain(generic).find_map(|&k| {
         #[cfg(test)]
         CANDIDATES_READ.set(CANDIDATES_READ.get() + 1);
