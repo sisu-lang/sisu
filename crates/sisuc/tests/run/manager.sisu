@@ -1,0 +1,12 @@
+class User {
+    name: string
+    manager: User?
+}
+
+fn main() {
+    let ada = User(name: "Ada", manager: None)
+    let bob = User(name: "Bob", manager: ada)
+    print(bob.manager?.name ?? "nobody")    // Ada
+    print(ada.manager?.name ?? "nobody")    // nobody
+    // print(ada.manager.name) gives error[E0062]: `ada.manager` may be `None`
+}

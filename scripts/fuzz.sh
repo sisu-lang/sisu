@@ -129,7 +129,14 @@ coverage() {
 # These exec cargo, so the trap below would never run: they come before the seeds exist.
 case ${1:-} in
 --replay) SISU_FUZZ_DUMP=$(dump_dir "$input") exec cargo fuzz run --sanitizer none "$target" "$input" -- "${limits[@]}" ;;
---tmin) exec cargo fuzz tmin --sanitizer none "$target" "$input" -- "${limits[@]}" ;;
+--tmin)
+    # A minimizing step sets the input's length itself, and libFuzzer asserts that -max_len did not.
+    tmin_limits=()
+    for limit in "${limits[@]}"; do
+        if [[ $limit != -max_len=* ]]; then tmin_limits+=("$limit"); fi
+    done
+    exec cargo fuzz tmin --sanitizer none "$target" "$input" -- "${tmin_limits[@]}"
+    ;;
 --cmin) exec cargo fuzz cmin --sanitizer none "$target" "$corpus" -- "${limits[@]}" ;;
 esac
 

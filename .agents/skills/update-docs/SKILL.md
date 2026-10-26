@@ -63,7 +63,7 @@ Read each target below before you decide it needs no edit.
 | The prose of `docs/benchmarks.md`, or `scripts/bench.sh` | The Benchmarks prose in `site/src/benchmarks.html`, and the page's hand-kept commit |
 | An ADR's status changing, such as proposed to accepted, or a planned one built | Its row's note on `site/src/decisions.html` (the `<small>` or `soon` after its title) and its label in `site/data/status.toml`, such as "ADR 0012 (proposed)", and the page's hand-kept commit |
 | You reviewed a hand-written page: Home's hand-written sections, Tour, Architecture, Decisions, Contribute, or Benchmarks prose | The commit written on it: "checked against the repository at commit" at the end of Home's "Built in the open" section and in the meta lines of Tour and Contribute; "Prose checked against the repository at commit" in the Benchmarks meta line; "at commit" in the meta lines of Architecture and Decisions. Generated pages and blocks show `{{commit}}` and need no update. |
-| `run/tree_sum.sisu`, `run/shared_arrays.sisu`, `run-fail/overflow.sisu` or `diagnostics/counter.sisu` under `crates/sisuc/tests`, or their expected output | The examples in `README.md`, which must stay identical to them |
+| `run/simplify.sisu`, `run/manager.sisu`, `run/shared_arrays.sisu`, `run-fail/factorial.sisu` or `diagnostics/counter.sisu` under `crates/sisuc/tests`, or their expected output | The examples in `README.md`, which must stay identical to them |
 
 If no row matches, report "no doc changes needed" and why. Do not edit to
 show activity.
@@ -116,8 +116,8 @@ gitignored, and the docs do not link to it.
 ```console
 $ python3 .agents/skills/update-docs/scripts/check_links.py README.md CONTRIBUTING.md AGENTS.md GLOSSARY.md CODING_STANDARDS.md docs/*.md docs/adr/*.md docs/agents/*.md
 broken: 0
-$ for case in 1:run/tree_sum.sisu 3:run/shared_arrays.sisu 5:run-fail/overflow.sisu 9:diagnostics/counter.sisu; do awk -v k="${case%%:*}" '/^```/{n++;next} n==k' README.md | diff - "crates/sisuc/tests/${case#*:}"; done
-$ awk '/^```/{n++;next} n==11' README.md | tail -n +2 | diff - crates/sisuc/tests/diagnostics/counter.err
+$ for case in 1:run/simplify.sisu 5:run/manager.sisu 7:run/shared_arrays.sisu 9:run-fail/factorial.sisu 13:diagnostics/counter.sisu; do awk -v k="${case%%:*}" '/^```/{n++;next} n==k' README.md | diff - "crates/sisuc/tests/${case#*:}"; done
+$ awk '/^```/{n++;next} n==15' README.md | tail -n +2 | diff - crates/sisuc/tests/diagnostics/counter.err
 $ make site
 $ prek run --files <each changed file>
 ```
@@ -125,8 +125,8 @@ $ prek run --files <each changed file>
 The two `awk` lines print nothing when the README's examples match their
 cases. The number before each case is its code block's position: block `k`
 is `n==2k-1`. Fix the numbers if a code block is added or moved. The panic
-output under the overflow example comes from `run-fail/overflow.out` and
-`overflow.err`; compare it by eye.
+output under the factorial example comes from `run-fail/factorial.out` and
+`factorial.err`, with lines 3 to 19 shown as `...`; compare it by eye.
 
 ## 6. Report and commit
 

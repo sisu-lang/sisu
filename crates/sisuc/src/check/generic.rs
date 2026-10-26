@@ -437,15 +437,16 @@ impl Checker<'_> {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i]);
         }
         if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
-            // The return type meets `want` whole if it can: `let x: i64? = id(5)` binds
-            // `T = i64?`. Else it meets the payload of an optional `want`, and the call's value
-            // is wrapped. What of it cannot meet either is reported where the value is used,
-            // unless the context fits alone: then the arguments that contradict it are
-            // reported, each at its own place. Type arguments that the call writes are its own.
-            if !call.bindings.unify(ret, want)
-                && !call.bindings.constrain(ret, payload(want))
-                && written.is_empty()
-            {
+            // The return type meets `want` whole if it can and an argument waits for it:
+            // `let x: i64? = pick(5, None)` binds `T = i64?`. Else it meets the payload of an
+            // optional `want`, and the call's value is wrapped: `y ?? id(2)` on an `i64?` `y`
+            // gives the `i64` that `y ?? 2` gives. What of it cannot meet either is reported
+            // where the value is used, unless the context fits alone: then the arguments that
+            // contradict it are reported, each at its own place. Type arguments that the call
+            // writes are its own.
+            let met = (ranks.contains(&2) && call.bindings.unify(ret, want))
+                || call.bindings.constrain(ret, payload(want));
+            if !met && written.is_empty() {
                 self.blame_arguments(&mut call, sig, args, ret, want);
             }
             self.report_fresh(&mut call, span);

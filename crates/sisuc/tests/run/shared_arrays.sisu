@@ -2,9 +2,12 @@ fn main() {
     let primes = [2, 3, 5, 7]
     let mut copy = primes    // shared until one of them is written
     copy[0] = 11
-    print(primes.sum())      // 17
-    print(copy.sum())        // 26
-    for p in primes {
-        if 2 < p <= 5 { print(p) }    // 3, then 5
+    print(primes[0])         // 2
+    print(copy[0])           // 11
+
+    let mut lower = 0
+    for c in "Hello, World".chars() {
+        if 'a' <= c <= 'z' { lower += 1 }
     }
+    print(lower)             // 8
 }

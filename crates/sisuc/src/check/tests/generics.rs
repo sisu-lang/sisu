@@ -990,6 +990,35 @@ fn the_expected_type_should_bind_the_rest() {
     ]);
 }
 
+/// An optional expected type binds a type parameter whole only for an argument that waits
+/// for it. Else it binds the payload: `y ?? id(2)` gives the `P` that `y ?? 2` gives.
+#[test]
+fn an_optional_expected_type_should_bind_the_payload_unless_an_argument_waits() {
+    infers(&[
+        (
+            "fn g() {\n    let x: i64? = id(5)\n}",
+            "id",
+            &["i64", "i64"],
+        ),
+        ("fn g(y: i64?) -> i64 { y ?? id(2) }", "id", &["i64", "i64"]),
+        (
+            "fn g(y: i64?, c: bool) -> i64 { y ?? (if c { id(2) } else { 3 }) }",
+            "id",
+            &["i64", "i64"],
+        ),
+        (
+            "fn g(y: i64?) -> i64? { y ?? id(None) }",
+            "id",
+            &["i64?", "i64?"],
+        ),
+        (
+            "fn pick<T>(a: T, b: T) -> T { a }\nfn g(y: i64?) -> i64? { y ?? pick(5, None) }",
+            "pick",
+            &["i64?", "i64?"],
+        ),
+    ]);
+}
+
 /// A generic call whose arguments cannot bind one of its type parameters needs its context,
 /// whatever its arguments are: the context of an outer generic call fixes the parameter.
 #[test]
