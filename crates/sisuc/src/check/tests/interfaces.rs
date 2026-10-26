@@ -3126,6 +3126,8 @@ fn associated_types_should_normalize_through_generic_code() {
         // A bound of the parameter that an associated type is written through waits for a
         // parameter that is not bound yet, and a parameter beside it is no concern of the check.
         "extend Countdown: Convert<i64> {\n    fn convert(self) -> i64 { 1 }\n}\nfn conv<U, S: Source & Convert<U>>(s: S, x: S.Item, u: U) -> U { s.convert() }\nfn two<S: Source, T>(s: S, x: S.Item, t: T) -> T { t }\nfn t() {\n    let a: i64 = conv(Countdown(n: 1), Tag(id: 1), 5)\n    let b: i64 = two(Countdown(n: 1), Tag(id: 1), 5)\n}",
+        // A choice that names an associated type of a parameter whose bound has an argument.
+        "interface Conv2<A> {\n    type Out\n}\ninterface Pick {\n    type Item\n}\nclass Duo2<T, U> {\n    a: T\n    b: U\n}\nextend<T: Conv2<U>, U> Duo2<T, U>: Pick {\n    type Item = T.Out\n}",
         // A choice that names the associated type of an associated type of its parameter, and one
         // that names an array, an optional and an enum around the parameter.
         "interface Deep {\n    type Item: Deep\n}\nclass Chain<T> {\n    value: T\n}\nextend<T: Deep> Chain<T>: Deep {\n    type Item = Chain<T.Item.Item>\n}\nclass Rows<T> {\n    value: T\n}\nextend<T> Rows<T>: Deep {\n    type Item = Rows<[T?]>\n}",

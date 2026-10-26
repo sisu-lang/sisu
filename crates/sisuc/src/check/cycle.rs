@@ -772,14 +772,17 @@ fn depths_and_assoc(ty: Type, count: usize) -> (Vec<Option<i64>>, Vec<AssocUse>)
                 while let TypeKind::Assoc(inner, ..) = root.kind() {
                     root = inner;
                 }
-                if let TypeKind::Param(_, q) = root.kind() {
-                    uses.push(AssocUse {
-                        param: q as usize,
-                        interface,
-                        index: k as usize,
-                        depth,
-                    });
-                }
+                let TypeKind::Param(_, q) = root.kind() else {
+                    unreachable!(
+                        "an associated type of a type parameter should be written through one"
+                    );
+                };
+                uses.push(AssocUse {
+                    param: q as usize,
+                    interface,
+                    index: k as usize,
+                    depth,
+                });
                 stack.extend(args.get().iter().map(|&a| (a, depth)));
             }
             _ => unreachable!("only a part that names a parameter is walked"),

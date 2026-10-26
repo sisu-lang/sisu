@@ -316,7 +316,7 @@ impl Bindings {
             TypeKind::Assoc(base, interface, args, k) => {
                 let base = self.resolve(base, unbound)?;
                 // A hole stands for the whole type, which its base fixes.
-                if base.holds_hole() && matches!(unbound, Unbound::Hole) {
+                if base.holds_hole() {
                     return Some(*HOLE);
                 }
                 let args = self.resolve_all(args, unbound)?;
@@ -799,15 +799,19 @@ impl Checker<'_> {
                 {
                     continue;
                 }
-                if let Some(early) = &mut call.early {
-                    early.checked.insert((i, j));
-                }
+                let early = call
+                    .early
+                    .as_mut()
+                    .expect("a call that checks early should say so");
+                early.checked.insert((i, j));
                 let at = call.origin[i].unwrap_or(at);
                 if !self.check_bound(at, ty, bound, &with) {
                     call.failed = true;
-                    if let Some(early) = &mut call.early {
-                        early.failed = true;
-                    }
+                    let early = call
+                        .early
+                        .as_mut()
+                        .expect("a call that checks early should say so");
+                    early.failed = true;
                 }
             }
         }
