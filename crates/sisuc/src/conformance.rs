@@ -568,6 +568,36 @@ mod tests {
         let mut unifier = Unifier::new(2);
         unifier.stood = vec![Some(Type::array(param(1))), Some(Type::array(param(0)))];
         assert_eq!(unifier.resolve(param(0)), None);
+        unifier.stood = vec![
+            Some(Type::optional(param(1))),
+            Some(Type::optional(param(0))),
+        ];
+        assert_eq!(unifier.resolve(param(0)), None);
+    }
+
+    /// Finding the class of a type points every type on the way at the root, so a chain of joins
+    /// is walked once and not again by each later find.
+    #[test]
+    fn class_should_point_every_type_on_the_path_at_the_root() {
+        let mut unifier = Unifier::new(0);
+        let chain = [Type::I64, Type::F64, Type::U8, Type::array(Type::I64)];
+        // Each join puts the root of the first under the second: a chain from the first type.
+        for pair in chain.windows(2) {
+            assert!(
+                !unifier.join(pair[0], pair[1]),
+                "{pair:?} should be two classes"
+            );
+        }
+        let root = unifier.class(chain[3]);
+        assert_eq!(unifier.class(chain[0]), root);
+        for ty in chain {
+            let at = unifier.classes[&ty];
+            assert!(
+                at == root || unifier.parents[at] == root,
+                "{ty:?} should point at the root"
+            );
+        }
+        assert!(unifier.join(chain[0], chain[2]), "one class joins itself");
     }
 
     /// The target of a conformance with parameters binds them from the structure of a type; a
