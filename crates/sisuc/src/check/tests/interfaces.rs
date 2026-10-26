@@ -1392,6 +1392,13 @@ fn the_fix_of_an_unused_extend_parameter_should_take_out_the_list_when_it_is_cer
     let d = diagnostic(&src, Code::CannotExtend, (4, 8, "T"), &[]);
     assert_eq!(applied(&src, &d), program("extend C {\n}"));
     fix_removes_its_code(&src, &d);
+    // A target with arguments names its own parameters, and a parameter it does not name goes.
+    let generic =
+        |block: &str| with_main(&format!("class Stack<T> {{\n    items: [T]\n}}\n{block}"));
+    let src = generic("extend<T> Stack<i64> {\n}");
+    let d = diagnostic(&src, Code::CannotExtend, (4, 8, "T"), &[]);
+    assert_eq!(applied(&src, &d), generic("extend Stack<i64> {\n}"));
+    fix_removes_its_code(&src, &d);
     // Another use of the name, a second parameter and a comment each leave the list in place.
     for block in [
         "extend<T> C {\n    fn keep(self, x: T) -> T { x }\n}",
@@ -2366,10 +2373,7 @@ fn generic_extension_should_report_what_it_cannot_take() {
         ),
     ] {
         let src = with_generic(row);
-        let actual = found(&src);
-        if actual != expected {
-            eprintln!("ROW {row}\n   actual {actual:?}\n expected {expected:?}");
-        }
+        assert_eq!(found(&src), expected, "{row}");
     }
 }
 
@@ -2580,4 +2584,39 @@ fn a_method_of_an_extend_block_should_print_the_type_it_extends() {
             "(fn Pair<T>.Same.same (",
         ],
     );
+}
+
+/// The worst input of the search for a cycle: one component that holds every function and the hub,
+/// with a cycle of positive weight, so that Bellman–Ford makes a pass for each node and one more,
+/// and each pass reads each edge of the component. `n` classes that conform to `Run` and `n`
+/// functions that call `x.run()`: `2n + 3` nodes (the hub, a parameter of each, and two types) and
+/// `3n + 2` edges. The cost is the nodes plus one, times the edges, which a pass that changes
+/// nothing would cut to the edges (`interface_edges_should_stay_linear`).
+#[test]
+fn a_cycle_in_a_large_component_should_cost_the_nodes_times_the_edges() {
+    const N: usize = 200;
+    let mut src = String::from(
+        "interface Run {\n    fn run(self)\n}\nclass Leaf: Run {\n    fn run(self) {}\n}\nclass Wrap<T> {\n    v: T\n}\nextend<T: Run> Wrap<T>: Run {\n    fn run(self) {}\n}\n",
+    );
+    for i in 0..N {
+        // The first method gives the next call a type that nests the parameter twice, and the
+        // conformance takes one level off.
+        let call = if i == 0 {
+            format!("go{i}(Wrap(v: Wrap(v: self.v)))")
+        } else {
+            format!("go{i}(self.v)")
+        };
+        write!(
+            src,
+            "class C{i}<T> {{\n    v: T\n}}\nextend<T: Run> C{i}<T>: Run {{\n    fn run(self) {{ {call} }}\n}}\nfn go{i}<U: Run>(x: U) {{\n    x.run()\n}}\n"
+        )
+        .expect("writing to a `String` should succeed");
+    }
+    src += "fn main() {\n    go0(Leaf())\n}";
+    cycle::EDGES.set(0);
+    cycle::BELLMAN_FORD_STEPS.set(0);
+    let found: Vec<_> = checked(&src).1.iter().map(Diagnostic::code).collect();
+    assert_eq!(found, [Code::InstantiationCycle]);
+    assert_eq!(cycle::EDGES.get(), 3 * N + 3);
+    assert_eq!(cycle::BELLMAN_FORD_STEPS.get(), (2 * N + 4) * (3 * N + 2));
 }

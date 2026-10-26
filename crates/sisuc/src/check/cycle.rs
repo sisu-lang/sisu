@@ -639,6 +639,13 @@ fn param_depths(ty: Type, count: usize) -> Vec<i64> {
 /// weights add up around a cycle that keeps making a way longer, and a pass that makes none
 /// ends the search. A node whose way a pass still lengthens after one pass for each node has a
 /// way that goes around such a cycle.
+///
+/// This is an exception to `CODING_STANDARDS.md`'s "A pass is linear in the program" (user,
+/// 2026-10-25). The hubs' edges have negative weights, and no known algorithm finds a cycle of
+/// positive weight in a graph with negative weights in linear time. The nodes and the edges are
+/// linear in the program and the passes stop at the first that changes nothing, but a component
+/// can hold many functions through a hub, and a cycle costs the nodes plus one passes of the
+/// component's edges. A component with no negative weight is not searched (see the module doc).
 fn positive_cycle(
     graph: &Graph,
     out: &[Vec<usize>],
