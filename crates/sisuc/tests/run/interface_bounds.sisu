@@ -2,7 +2,8 @@
 // that each hold a counted `string`, and a class with a body method, a method in a `Label` block
 // and one in a `Code` block, all named `name`
 // WHEN each function calls the requirements of its bounds, an inherited bound, two bounds at
-// once, a diamond of inherited bounds and a function that passes its own parameter on
+// once, a diamond of inherited bounds and a function that passes its own parameter on, and a
+// method of a class and of an enum with a parameter and no bound calls a bound of its own
 // THEN every call runs the method of the type it is called for, each of the three names of the
 // circle shows, and every string is released once
 // args: a b
@@ -115,6 +116,23 @@ class Sorted<T: Same> {
     items: [T]
 }
 
+// The parameter `T` has no bound. The bound of the method is `U`'s, and `T` stays without one.
+class Tray<T> {
+    item: T
+
+    fn fit<U: Shape>(self, x: U) -> f64 {
+        x.area()
+    }
+}
+
+enum Case<T> {
+    Holds(T)
+
+    fn fit<U: Shape>(self, x: U) -> f64 {
+        x.area()
+    }
+}
+
 fn total<T: Shape>(xs: [T]) -> f64 {
     let mut sum = 0.0
     for x in xs {
@@ -177,6 +195,10 @@ fn main(args: [string]) {
     print(equal(s, Square(tag: "t", side: 1.5)))  // true
     print(count(Sorted(items: [c, d, c])))        // 3
     print(count(Sorted(items: [s])))              // 1
+    let t = Tray(item: 7)
+    print(t.fit(c))                       // 4.0
+    print(t.item)                         // 7
+    print(Case.Holds("h").fit(s))         // 2.25
     print(kept(c))                        // kept 7
     print(c.name())                       // circle c
     print(label_of(c))                    // label of c

@@ -73,23 +73,29 @@ impl Checker<'_> {
         //
         // The third recorded exception to "A pass is linear in the program" (user, 2026-10-25;
         // ruling F9): a list's closure has an entry for each conformance that the list gives, and
-        // the closure of arguments may double at each level of inheritance, so the walk stops at
-        // `BOUND_CLOSURE_LIMIT` entries and E0157 is reported at the listed interface. The roots
-        // of one list share one visited set, so the work follows the closure and not the number
-        // of roots.
+        // the closure of arguments may double at each level of inheritance, so the walk of each
+        // listed interface stops at `BOUND_CLOSURE_LIMIT` entries and E0157 is reported at it.
+        // The work follows the sum of the closures, which are at most the limit each.
         for (holder, receiver, roots) in &lists {
             let mut closure = Vec::new();
             // The listed interface through which each entry of `closure` is reached.
             let mut via = Vec::new();
             let mut seen = FxHashSet::default();
+            let mut wide = false;
             for &(bound, at) in roots {
                 let walked =
                     self.extend_closure(*receiver, &[bound], &mut closure, &mut seen, |_, _| {});
                 via.resize(closure.len(), at);
                 if walked.is_err() {
-                    self.too_wide_at(at);
+                    // The conformances of the list are unknown now: what the walk reached before
+                    // the limit is no part of them.
+                    self.too_wide_at(*receiver, at);
+                    wide = true;
                     break;
                 }
+            }
+            if wide {
+                continue;
             }
             // The listed interface at which the stopgap is reported, once.
             let mut stopped = FxHashSet::default();
@@ -113,6 +119,9 @@ impl Checker<'_> {
                 pending.extend(self.add_conformance(bound, *receiver, at, source, &mut ats));
             }
         }
+        // Every conformance is known now: the checks that waited for them run, and a type that
+        // fails is unknown before a requirement is compared with a method.
+        self.run_pending_bounds();
         for p in &pending {
             self.meet_requirements(p);
         }
@@ -340,7 +349,8 @@ impl Checker<'_> {
             },
         );
         if walked.is_err() {
-            self.too_wide_at(p.at);
+            // The walk of the root added nothing, so no conformance is asked for.
+            self.too_wide_at(p.target, p.at);
         }
         for (k, &(interface, args)) in closure.iter().enumerate().skip(1) {
             if find(&self.conformances, interface, p.target, args).is_some() {

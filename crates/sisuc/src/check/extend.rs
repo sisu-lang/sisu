@@ -38,7 +38,7 @@ impl<'a> Checker<'_> {
     ) {
         let params = self.type_params(&[], &extend.type_params);
         self.body.set_type_params(&params);
-        self.bounds_of(&extend.type_params);
+        self.declare_bounds(0, Vec::new(), &extend.type_params);
         let target = self.extend_target(&extend.target);
         let interface =
             (extend.interface.as_ref()).map(|ty| self.bound(ty).map(|bound| (bound, ty.bare)));

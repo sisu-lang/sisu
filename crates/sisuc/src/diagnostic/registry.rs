@@ -405,10 +405,11 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         form: CannotExtendForm,
     },
-    /// The bound `bound`, written at `at`, with the interfaces it inherits gives more than `limit`
-    /// interfaces.
+    /// The bound or conformance `written`, written at `at`, with the interfaces it inherits gives
+    /// more than `limit` interfaces.
     BoundTooWide {
-        bound: String,
+        kind: WideKind,
+        written: String,
         limit: usize,
         at: Span,
     },
@@ -1402,6 +1403,24 @@ impl Definition {
     }
 }
 
+/// What gives more inherited interfaces than the limit.
+#[derive(Clone, Copy)]
+pub(crate) enum WideKind {
+    /// A bound of a type parameter: `T: Shape`.
+    Bound,
+    /// An interface in the list of a class or an enum, or in an `extend` block: `K: Shape`.
+    Conformance,
+}
+
+impl WideKind {
+    fn noun(self) -> &'static str {
+        match self {
+            WideKind::Bound => "bound",
+            WideKind::Conformance => "conformance",
+        }
+    }
+}
+
 /// What a name is that a bound, a conformance or an inherited interface names, and that is no
 /// interface.
 #[derive(Clone, Copy)]
@@ -2182,10 +2201,18 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::BoundTooWide { bound, limit, at } => Diagnostic::coded(
+            DiagnosticKind::BoundTooWide {
+                kind,
+                written,
+                limit,
+                at,
+            } => Diagnostic::coded(
                 code,
                 at,
-                format!("the bound `{bound}` gives more than {limit} inherited interfaces"),
+                format!(
+                    "the {} `{written}` gives more than {limit} inherited interfaces",
+                    kind.noun()
+                ),
             )
             .with_help(
                 "an interface that inherits one interface twice, with different arguments, \

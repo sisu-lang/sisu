@@ -9,11 +9,11 @@ use super::extend::holder_of;
 use super::{BindingKind, Body, Checker, Declared, Definition};
 use crate::ast;
 use crate::conformance::find;
-use crate::diagnostic::{AddBound, DiagnosticKind, NotConformForm, NotInterface};
+use crate::diagnostic::{AddBound, DiagnosticKind, NotConformForm, NotInterface, WideKind};
 use crate::graph::components;
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{FuncId, InterfaceId, Type, TypeArgs, TypeKind};
+use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind};
 
 /// The most interfaces that one bound, or one list of interfaces a type conforms to, may give
 /// with the interfaces they inherit. An interface that inherits another twice, with different
@@ -75,6 +75,21 @@ pub(super) struct PendingBound {
     ty: Type,
     ats: Vec<Span>,
     scope: usize,
+    /// Where the type that holds `ty` is kept, if it is kept: a type that fails the check is
+    /// unknown there.
+    place: Option<Slot>,
+}
+
+/// Where a resolved type is kept: the type of a parameter or a result of a signature, of a field,
+/// of a payload of a variant, or of a requirement's parameter or result.
+#[derive(Clone, Copy)]
+pub(super) enum Slot {
+    Param(FuncId, usize),
+    Ret(FuncId),
+    Field(ClassId, usize),
+    Payload(EnumId, usize, usize),
+    RequirementParam(InterfaceId, usize, usize),
+    RequirementRet(InterfaceId, usize),
 }
 
 /// The type parameters in scope where a pending check was queued, and their bounds.
@@ -132,10 +147,8 @@ impl Checker<'_> {
             args: TypeArgs::intern(&own),
             at: interface.name.span,
         };
-        let mut bounds = vec![vec![this]];
-        bounds.extend(self.bounds_of(&interface.type_params));
-        self.body.set_bounds(0, bounds.clone());
-        self.interfaces[id.0].bounds = bounds;
+        self.interfaces[id.0].bounds =
+            self.declare_bounds(0, vec![vec![this]], &interface.type_params);
         let (inherits, inherits_at) = interface
             .inherits
             .iter()
@@ -171,23 +184,33 @@ impl Checker<'_> {
                 .collect();
             self.body.push_type_params(&own);
             // The bounds first, so that a type in the signature meets them.
-            let bounds = self.bounds_of(&requirement.type_params);
-            self.body.set_bounds(scope, bounds.clone());
+            let bounds = self.declare_bounds(scope, Vec::new(), &requirement.type_params);
             // A requirement has no body: its parameters are checked as a function's are.
             self.body.scopes.push(FxHashMap::default());
             let mut params = Vec::new();
+            // The checks that each parameter's type queues, then the result's.
+            let mut queued = Vec::new();
             for param in &requirement.params {
+                let from = self.queued();
                 let ty = self.resolve(&param.ty);
+                queued.push(from..self.queued());
                 params.push(ty);
                 self.declare(&param.name, ty, BindingKind::Param, None);
             }
             self.pop_scope();
+            let from = self.queued();
             let ret = requirement
                 .ret
                 .as_ref()
                 .map_or(Some(Type::UNIT), |ret| self.resolve(ret));
+            let ret_queued = from..self.queued();
             self.body.truncate_type_params(scope);
             if first_of_name {
+                let r = self.interfaces[id.0].requirements.len();
+                for (i, queued) in queued.into_iter().enumerate() {
+                    self.keep_at(queued, Slot::RequirementParam(id, r, i));
+                }
+                self.keep_at(ret_queued, Slot::RequirementRet(id, r));
                 self.interfaces[id.0].requirements.push(RequirementInfo {
                     name: requirement.name.clone(),
                     span: requirement.span,
@@ -208,9 +231,38 @@ impl Checker<'_> {
         }
     }
 
+    /// Resolves the bounds of `params`, which are in scope, and puts them in scope after `head`,
+    /// the bounds of the parameters from the place `first` on that come before `params`. Gives
+    /// all of them.
+    ///
+    /// A check of an applied type that a bound names waits for every conformance. It takes the
+    /// scope when it is queued, which has no bound of `params` yet, so it takes the scope that has
+    /// them all once they are in place.
+    pub(super) fn declare_bounds(
+        &mut self,
+        first: usize,
+        head: Vec<Vec<Bound>>,
+        params: &[ast::TypeParam],
+    ) -> Vec<Vec<Bound>> {
+        let queued = self.queued();
+        let mut bounds = head;
+        bounds.extend(self.bounds_of(params));
+        self.body.set_bounds(first, bounds.clone());
+        if let Some(mut pending) = self.pending_bounds.take() {
+            if pending.len() > queued {
+                let scope = self.scope();
+                for p in &mut pending[queued..] {
+                    p.scope = scope;
+                }
+            }
+            self.pending_bounds = Some(pending);
+        }
+        bounds
+    }
+
     /// Resolves the bounds of `params`, which are in scope, and reports each that names no
     /// interface. Gives the bounds of each parameter that name one.
-    pub(super) fn bounds_of(&mut self, params: &[ast::TypeParam]) -> Vec<Vec<Bound>> {
+    fn bounds_of(&mut self, params: &[ast::TypeParam]) -> Vec<Vec<Bound>> {
         (params.iter())
             .map(|param| {
                 (param.bounds.iter())
@@ -461,10 +513,11 @@ impl Checker<'_> {
     /// a buffer for the walk, which the caller keeps from one closure to the next.
     ///
     /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25): a
-    /// bound's closure is computed per body that has it, so a body costs the closure's size. The
-    /// closure of arguments may double at each level of inheritance: an interface that inherits
-    /// one twice, once with a parameter and once with a type, has the two as two entries. So the
-    /// walk stops at `BOUND_CLOSURE_LIMIT` entries, and the caller reports E0157 at the bound.
+    /// bound's closure is computed where it is declared and per body that has it, so a body costs
+    /// the closure's size. The closure of arguments may double at each level of inheritance: an
+    /// interface that inherits one twice, once with a parameter and once with a type, has the two
+    /// as two entries. So the walk of each bound stops at `BOUND_CLOSURE_LIMIT` entries, and the
+    /// caller reports E0157 at the bound.
     /// The check for E0034 does not read the closure, as it needs no arguments.
     ///
     /// `Err` holds the place in `bounds` of the bound whose interfaces went past the limit.
@@ -524,21 +577,27 @@ impl Checker<'_> {
         if self.wide_reported.insert(bound.at) {
             let text = self.source.file.text(bound.at);
             self.report(DiagnosticKind::BoundTooWide {
-                bound: format!("{}: {text}", self.body.type_params[place]),
+                kind: WideKind::Bound,
+                written: format!("{}: {text}", self.body.type_params[place]),
                 limit: BOUND_CLOSURE_LIMIT,
                 at: bound.at,
             });
         }
     }
 
-    /// Reports that the interface written at `at` in the list of a type, or in an `extend` block,
-    /// gives more than `BOUND_CLOSURE_LIMIT` interfaces with those it inherits.
-    pub(super) fn too_wide_at(&mut self, at: Span) {
+    /// Reports that the interface written at `at` in the list of `ty`, or in an `extend` block of
+    /// it, gives more than `BOUND_CLOSURE_LIMIT` interfaces with those it inherits. The conformance
+    /// is then unknown: `ty` has no report for what the walk did reach, as for a broken block.
+    pub(super) fn too_wide_at(&mut self, ty: Type, at: Span) {
         self.report(DiagnosticKind::BoundTooWide {
-            bound: self.source.file.text(at).to_string(),
+            kind: WideKind::Conformance,
+            written: format!("{}: {}", self.type_name(ty), self.source.file.text(at)),
             limit: BOUND_CLOSURE_LIMIT,
             at,
         });
+        if let Some(holder) = holder_of(ty) {
+            self.broken_extensions.insert(self.holder_name(holder));
+        }
     }
 
     /// The requirements named `name` that the bounds of the type parameter at `place` give,
@@ -651,7 +710,12 @@ impl Checker<'_> {
     pub(super) fn check_applied(&mut self, ty: Type, ats: Vec<Span>) -> bool {
         let scope = self.pending_bounds.is_some().then(|| self.scope());
         if let (Some(scope), Some(pending)) = (scope, &mut self.pending_bounds) {
-            pending.push(PendingBound { ty, ats, scope });
+            pending.push(PendingBound {
+                ty,
+                ats,
+                scope,
+                place: None,
+            });
             return true;
         }
         self.check_applied_now(ty, &ats)
@@ -688,19 +752,67 @@ impl Checker<'_> {
         at
     }
 
+    /// How many bound checks wait for every conformance.
+    pub(super) fn queued(&self) -> usize {
+        self.pending_bounds.as_ref().map_or(0, Vec::len)
+    }
+
+    /// Says that the checks queued in `queued` are of a type kept at `place`.
+    pub(super) fn keep_at(&mut self, queued: std::ops::Range<usize>, place: Slot) {
+        if let Some(pending) = &mut self.pending_bounds {
+            for check in &mut pending[queued] {
+                check.place = Some(place);
+            }
+        }
+    }
+
     /// Runs the bound checks that waited for every conformance, in the order they were queued,
-    /// each in the scope it was queued in. Later types are checked as they are resolved.
+    /// each in the scope it was queued in, and makes unknown the type kept at the place of each
+    /// that fails. Later types are checked as they are resolved.
+    ///
+    /// The checks of one scope stand together in the queue, as a scope is made again when it
+    /// changes, so each scope is set up once for all its checks.
     pub(super) fn run_pending_bounds(&mut self) {
         let pending = self.pending_bounds.take().unwrap_or_default();
         let scopes = std::mem::take(&mut self.scopes);
-        for p in pending {
-            let scope = &scopes[p.scope];
-            self.with_body(Body::default(), |checker| {
+        let mut at = 0;
+        while at < pending.len() {
+            let id = pending[at].scope;
+            let scope = &scopes[id];
+            let group = pending[at..].iter().take_while(|p| p.scope == id).count();
+            let (failed, _) = self.with_body(Body::default(), |checker| {
                 checker.body.set_type_params(&scope.params);
                 checker.body.set_bounds(0, scope.bounds.clone());
                 checker.body.self_type = scope.self_type;
-                checker.check_applied_now(p.ty, &p.ats);
+                let mut failed = Vec::new();
+                for p in &pending[at..at + group] {
+                    if !checker.check_applied_now(p.ty, &p.ats) {
+                        failed.extend(p.place);
+                    }
+                }
+                failed
             });
+            for place in failed {
+                self.make_unknown(place);
+            }
+            at += group;
+        }
+    }
+
+    /// Makes the type kept at `place` unknown, as a type that fails its bound is where it is
+    /// written.
+    fn make_unknown(&mut self, place: Slot) {
+        match place {
+            Slot::Param(f, i) => self.signatures[f.0].params[i] = None,
+            Slot::Ret(f) => self.signatures[f.0].ret = None,
+            Slot::Field(c, i) => self.classes[c.0].fields[i].ty = None,
+            Slot::Payload(e, v, i) => self.enums[e.0].variants[v].fields[i] = None,
+            Slot::RequirementParam(interface, r, i) => {
+                self.interfaces[interface.0].requirements[r].params[i] = None;
+            }
+            Slot::RequirementRet(interface, r) => {
+                self.interfaces[interface.0].requirements[r].ret = None;
+            }
         }
     }
 
@@ -718,6 +830,11 @@ impl Checker<'_> {
     /// the closures of several bounds one after the other builds the set once. For each interface
     /// that it adds because another inherits it, `reached` gets the place of that other in `out`
     /// and where it writes the inheritance. The bounds themselves are not reported to it.
+    ///
+    /// The limit holds for each of `bounds` on its own: the closure of one is walked alone and then
+    /// merged, so the work follows the sum of the closures, which are at most the limit each, and
+    /// a bound is not reported for the interfaces of the bounds before it. The entries of `out`
+    /// must be closed: the interfaces that an entry of `seen` inherits are in `seen` too.
     pub(super) fn extend_closure(
         &self,
         receiver: Type,
@@ -726,43 +843,138 @@ impl Checker<'_> {
         seen: &mut FxHashSet<(InterfaceId, TypeArgs)>,
         mut reached: impl FnMut(usize, Span),
     ) -> Result<(), usize> {
-        let first = out.len();
-        let mut at = first;
-        // The place in `bounds` of the bound that each entry from `first` on comes from.
-        let mut roots = Vec::new();
+        // The closure of the bound being read, then for each entry of it after the first the place
+        // of the entry that inherits it and where that writes the inheritance, and for each entry
+        // the place in `out` that it has once merged, if it is new.
+        let mut own: Vec<(InterfaceId, TypeArgs)> = Vec::new();
+        let mut inherited_by: Vec<(usize, Span)> = Vec::new();
+        let mut alone = FxHashSet::default();
+        let mut placed: Vec<Option<usize>> = Vec::new();
+        // The arguments of the interface being read, led by `Self`.
+        let mut with = Vec::new();
         for (k, bound) in bounds.iter().enumerate() {
             #[cfg(test)]
             super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + 1);
-            if seen.insert((bound.interface, bound.args)) {
-                out.push((bound.interface, bound.args));
-                roots.push(k);
-                if out.len() > BOUND_CLOSURE_LIMIT {
-                    return Err(k);
-                }
-            }
-        }
-        // The arguments of the interface being read, led by `Self`.
-        let mut with = Vec::new();
-        while let Some(&(interface, args)) = out.get(at) {
-            let parent = at;
-            at += 1;
-            with.clear();
-            with.push(receiver);
-            with.extend_from_slice(args.get());
-            for (inherited, written) in self.inheritances(interface) {
-                let args = inherited.args.subst(&with);
-                if seen.insert((inherited.interface, args)) {
-                    out.push((inherited.interface, args));
-                    let root = roots[parent - first];
-                    roots.push(root);
-                    reached(parent, written);
-                    if out.len() > BOUND_CLOSURE_LIMIT {
-                        return Err(root);
+            own.clear();
+            inherited_by.clear();
+            alone.clear();
+            own.push((bound.interface, bound.args));
+            alone.insert((bound.interface, bound.args));
+            let mut at = 0;
+            while let Some(&(interface, args)) = own.get(at) {
+                let parent = at;
+                at += 1;
+                with.clear();
+                with.push(receiver);
+                with.extend_from_slice(args.get());
+                for (inherited, written) in self.inheritances(interface) {
+                    let args = inherited.args.subst(&with);
+                    if alone.insert((inherited.interface, args)) {
+                        own.push((inherited.interface, args));
+                        inherited_by.push((parent, written));
+                        if own.len() > BOUND_CLOSURE_LIMIT {
+                            return Err(k);
+                        }
                     }
                 }
             }
+            placed.clear();
+            for (i, &entry) in own.iter().enumerate() {
+                if !seen.insert(entry) {
+                    placed.push(None);
+                    continue;
+                }
+                if let Some(&(parent, written)) = i.checked_sub(1).map(|i| &inherited_by[i]) {
+                    let parent = placed[parent].expect(
+                        "the interface that inherits a new one should be new: the closure of an old one is in `out`",
+                    );
+                    reached(parent, written);
+                }
+                placed.push(Some(out.len()));
+                out.push(entry);
+            }
         }
         Ok(())
+    }
+
+    /// Pass 2c, after every signature: reads the interfaces of each bound where it is declared,
+    /// so that a bound that gives more than the limit is reported (E0157) whether a body asks for
+    /// its interfaces or not. A body that has the bound reads them again, and the bound is
+    /// reported once.
+    ///
+    /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25; ruling
+    /// F9 (b)): a closure is at most the limit, and each bound of a declaration is read once more.
+    pub(super) fn read_declared_bounds(&mut self) {
+        for f in 0..self.signatures.len() {
+            let sig = &self.signatures[f];
+            if sig.bounds.iter().all(Vec::is_empty) {
+                continue;
+            }
+            let owner = sig.type_params.len() - sig.own;
+            let mut bounds = vec![Vec::new(); owner];
+            bounds.extend(sig.bounds.iter().cloned());
+            let params = sig.type_params.clone();
+            self.read_bounds(&params, bounds, owner);
+        }
+        for c in 0..self.classes.len() {
+            let info = &self.classes[c];
+            if info.bounded {
+                let (params, bounds) = (info.type_params.clone(), info.bounds.clone());
+                self.read_bounds(&params, bounds, 0);
+            }
+        }
+        for e in 0..self.enums.len() {
+            let info = &self.enums[e];
+            if info.bounded {
+                let (params, bounds) = (info.type_params.clone(), info.bounds.clone());
+                self.read_bounds(&params, bounds, 0);
+            }
+        }
+        for i in 0..self.interfaces.len() {
+            let info = &self.interfaces[i];
+            let (params, bounds) = (info.type_params.clone(), info.bounds.clone());
+            let requirements: Vec<_> = (info.requirements.iter())
+                .filter(|r| r.bounds.iter().any(|bounds| !bounds.is_empty()))
+                .map(|r| (r.own.clone(), r.bounds.clone()))
+                .collect();
+            let bounded = bounds.iter().skip(1).any(|bounds| !bounds.is_empty());
+            if !bounded && requirements.is_empty() {
+                continue;
+            }
+            self.with_body(Body::default(), |checker| {
+                checker.body.set_type_params(&params);
+                checker.body.set_bounds(0, bounds);
+                // `Self` is first, and conforms to the interface itself.
+                checker.read_places(1);
+                // The scope of the interface is set up once, and a requirement adds its own.
+                for (own, bounds) in requirements {
+                    checker.body.push_type_params(&own);
+                    checker.body.set_bounds(params.len(), bounds);
+                    checker.read_places(params.len());
+                    checker.body.truncate_type_params(params.len());
+                }
+            });
+        }
+    }
+
+    /// Reads the bounds of the type parameters `params` from the place `from` on, which have the
+    /// `bounds` by place.
+    fn read_bounds(&mut self, params: &[Symbol], bounds: Vec<Vec<Bound>>, from: usize) {
+        self.with_body(Body::default(), |checker| {
+            checker.body.set_type_params(params);
+            checker.body.set_bounds(0, bounds);
+            checker.read_places(from);
+        });
+    }
+
+    /// Finds the interfaces of each type parameter in scope from the place `from` on that has a
+    /// bound.
+    fn read_places(&mut self, from: usize) {
+        for place in from..self.body.bounds.len() {
+            if !self.body.bounds[place].is_empty() {
+                self.param_interfaces(place);
+            }
+        }
     }
 }
 

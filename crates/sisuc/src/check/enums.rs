@@ -6,6 +6,7 @@ use std::{fmt, mem};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::generic::{GenericSig, Site, mismatched};
+use super::interface::Slot;
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, own_args};
 use crate::ast;
@@ -119,7 +120,7 @@ impl Checker<'_> {
         let receiver = Type::intern(TypeKind::Enum(id, own_args(&self.enums[id.0].type_params)));
         self.body.self_type = Some(receiver);
         self.body.set_type_params(&self.enums[id.0].type_params);
-        let bounds = self.bounds_of(&e.type_params);
+        let bounds = self.declare_bounds(0, Vec::new(), &e.type_params);
         if self.enums[id.0].bounded {
             self.enums[id.0].bounds = bounds;
         }
@@ -155,12 +156,23 @@ impl Checker<'_> {
             }
             self.body.set_type_params(&self.enums[id.0].type_params);
             self.body.set_bounds(0, self.enums[id.0].bounds.clone());
+            // The checks that each field's type queues.
+            let mut queued = Vec::new();
             let (fields, inner): (Vec<_>, Vec<_>) = payload
                 .iter()
-                .map(|field| self.resolve_written(&field.ty))
+                .map(|field| {
+                    let from = self.queued();
+                    let resolved = self.resolve_written(&field.ty);
+                    queued.push(from..self.queued());
+                    resolved
+                })
                 .unzip();
             self.body.set_type_params(&[]);
             if self.first_definition(&mut first, Definition::Variant, Some(owner), name) {
+                let variant = self.enums[id.0].variants.len();
+                for (i, queued) in queued.into_iter().enumerate() {
+                    self.keep_at(queued, Slot::Payload(id, variant, i));
+                }
                 let info = &mut self.enums[id.0];
                 info.index.insert(name.name, info.variants.len());
                 info.variants.push(VariantInfo {

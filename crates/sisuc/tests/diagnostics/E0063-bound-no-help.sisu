@@ -1,0 +1,23 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+interface Plot {
+    fn area(self) -> f64
+}
+
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+fn two<T>(x: T) -> f64 {
+    x.area()
+}
+
+fn generic<T>(x: T) -> i64 {
+    x.convert()
+}
+
+fn main() {
+    print(1)
+}

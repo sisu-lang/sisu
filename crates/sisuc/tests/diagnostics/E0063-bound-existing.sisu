@@ -1,0 +1,15 @@
+interface Named {
+    fn name(self) -> string
+}
+
+interface Shape {
+    fn area(self) -> f64
+}
+
+fn show<T: Named>(x: T) -> f64 {
+    x.area()
+}
+
+fn main() {
+    print(1)
+}

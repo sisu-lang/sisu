@@ -818,8 +818,13 @@ fn conformance_method_should_not_warn_when_its_type_is_built() {
         "enum Dir {\n    North\n}\nextend Dir: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let _ = Dir.North\n}",
         "enum Dir: Shape {\n    North\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let _ = Dir.North\n}",
     ] {
-        // A `_` function names the interface in a bound, so that the interface is used.
-        clean(&format!("{SHAPE}{src}\nfn _bound<T: Shape>(_x: T) {{}}"));
+        // Nothing calls the method or names the interface, so the interface is the one warning:
+        // the method of a conformance of a type that is built gives none of its own.
+        assert_eq!(
+            found(&format!("{SHAPE}{src}")),
+            [(W0012, (1, 11), vec![])],
+            "{src}"
+        );
     }
 }
 
@@ -838,11 +843,15 @@ fn conformance_method_should_not_warn_when_a_root_calls_it_before_its_class_is_b
 fn helper_should_warn_when_only_the_conformance_method_of_an_unbuilt_class_calls_it() {
     judge_unused();
     let src = format!(
-        "{SHAPE}fn helper() -> f64 {{\n    1.0\n}}\nclass Circle: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ helper() }}\n}}\nfn main() {{}}\nfn _bound<T: Shape>(_x: T) {{}}"
+        "{SHAPE}fn helper() -> f64 {{\n    1.0\n}}\nclass Circle: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ helper() }}\n}}\nfn main() {{}}"
     );
     assert_eq!(
         found(&src),
-        [(W0012, (4, 4), vec![(9, 28)]), (W0012, (7, 7), vec![])]
+        [
+            (W0012, (1, 11), vec![]),
+            (W0012, (4, 4), vec![(9, 28)]),
+            (W0012, (7, 7), vec![])
+        ]
     );
 }
 
@@ -927,4 +936,15 @@ fn interface_should_not_warn_when_live_code_uses_it() {
     ] {
         clean(&src);
     }
+}
+
+/// An interface of the prelude is out of the user's sight: nothing in it is unused, as nothing
+/// else in the prelude is.
+#[test]
+fn prelude_interface_should_not_warn_when_nothing_uses_it() {
+    judge_unused();
+    let prelude = prelude_program("interface Stock {\n    fn stock(self) -> i64\n}\n");
+    let src = "fn main() {}";
+    let (_, ds) = check(&parse_ok(src), &prelude, src, &[]);
+    assert!(ds.is_empty(), "{ds:?}");
 }

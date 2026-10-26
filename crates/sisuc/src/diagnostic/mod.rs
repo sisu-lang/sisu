@@ -13,7 +13,7 @@ pub(crate) use registry::{
     ForeignRange, GuardHelp, Immutable, InterfaceBodyForm, InterpolateHelp, Join, LetField,
     Literal, LiteralKind, MainForm, MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix,
     MismatchSource, NanFix, NotConformForm, NotInterface, Operand, Owner, Panic, Peel, PowerFix,
-    RETIRED, ReceiverArgument, TypedLiteral, Unbuilt, Unwrap, VariantLabels, invisible,
+    RETIRED, ReceiverArgument, TypedLiteral, Unbuilt, Unwrap, VariantLabels, WideKind, invisible,
 };
 pub(crate) use suggest::{Suggestion, alias, closest, suggestion};
 

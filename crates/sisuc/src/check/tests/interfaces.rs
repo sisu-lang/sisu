@@ -553,14 +553,14 @@ fn a_bound_should_give_each_inherited_interface_once() {
         closure(src, &[("F", &[])], receiver),
         [("F", vec![]), ("C", vec![receiver])]
     );
-    // Several bounds give the interfaces they share once.
+    // Several bounds give the interfaces they share once, each bound with those it inherits.
     assert_eq!(
         closure(
             src,
             &[("A", &[strs]), ("B", &[strs]), ("A", &[strs])],
             receiver
         ),
-        [("A", vec![strs]), ("B", vec![strs]), ("C", vec![strs])]
+        [("A", vec![strs]), ("C", vec![strs]), ("B", vec![strs])]
     );
     // A cycle ends.
     assert_eq!(
@@ -1897,10 +1897,10 @@ fn a_body_should_close_and_index_the_bounds_of_a_parameter_once() {
         clean(&src);
         CLOSURE_STEPS.get()
     };
-    // The interface itself, then a step for each of its requirements.
+    // The bound is read where it is declared and in the body, then a step for each requirement.
     for distinct in [true, false] {
-        assert_eq!(steps(8, distinct), 1 + 8);
-        assert_eq!(steps(32, distinct), 1 + 32);
+        assert_eq!(steps(8, distinct), 2 + 8);
+        assert_eq!(steps(32, distinct), 2 + 32);
     }
     // A bound that each call of another generic function checks is read from the closure.
     let checks = |n: usize| {
@@ -1920,12 +1920,18 @@ fn a_body_should_close_and_index_the_bounds_of_a_parameter_once() {
 fn chain(n: usize, call: &str) -> String {
     let mut src = format!("fn _use<T: C{n}>(x: T) {{\n{call}}}\n");
     src += "fn need<T: C1>(_y: T) {}\n";
-    src += "interface C1 {\n    fn deep(self) -> i64\n}\n";
+    src + &ladder("C", n) + "fn main() {}"
+}
+
+/// The interfaces `<prefix>1` through `<prefix>n`, each inheriting the one before it; the first
+/// declares `deep`.
+fn ladder(prefix: &str, n: usize) -> String {
+    let mut src = format!("interface {prefix}1 {{\n    fn deep(self) -> i64\n}}\n");
     for k in 2..=n {
-        writeln!(src, "interface C{k}: C{} {{}}", k - 1)
+        writeln!(src, "interface {prefix}{k}: {prefix}{} {{}}", k - 1)
             .expect("writing to a `String` should succeed");
     }
-    src + "fn main() {}"
+    src
 }
 
 /// The most interfaces that a bound gives is 256, with those it inherits: 256 is fine, and one
@@ -1953,7 +1959,8 @@ fn a_bound_should_give_at_most_the_limit_of_interfaces() {
             .expect("writing to a `String` should succeed");
     }
     codes(&(src + "fn main() {}"), &[(Code::BoundTooWide, (1, 12))]);
-    // Bounds that are many, with no inheritance, pass the limit too.
+    // The limit holds for each listed interface and not for all of them together: 257 bounds with
+    // no inheritance are fine, and so are two chains of 128 and 129 interfaces that share none.
     let names: Vec<String> = (1..=257).map(|k| format!("C{k}")).collect();
     let mut src = format!(
         "fn _use<T: {}>(x: T) {{\n    need(x)\n}}\nfn need<T: C1>(_y: T) {{}}\n",
@@ -1962,9 +1969,25 @@ fn a_bound_should_give_at_most_the_limit_of_interfaces() {
     for name in &names {
         writeln!(src, "interface {name} {{}}").expect("writing to a `String` should succeed");
     }
-    // The 257th bound is the one that passes the limit.
-    let col = 1 + "fn _use<T: ".len() + names[..256].join(" & ").len() + " & ".len();
-    codes(&(src + "fn main() {}"), &[(Code::BoundTooWide, (1, col))]);
+    clean(&(src + "fn main() {}"));
+    let (c, d) = (ladder("C", 128), ladder("D", 129));
+    let call = "fn _use<T: C128 & D129>(x: T) {\n    need(x)\n    need2(x)\n}\nfn need<T: C1>(_y: T) {}\nfn need2<T: D1>(_y: T) {}\n";
+    clean(&format!("{call}{c}{d}fn main() {{}}"));
+    // The merged closure is over the limit, and no bound's own is.
+    let (c, d) = (ladder("C", 200), ladder("D", 200));
+    clean(&format!(
+        "fn _use<T: C200 & D200>(x: T) {{}}\n{c}{d}fn main() {{}}"
+    ));
+    // The bound that passes the limit on its own is the one reported, wherever it stands.
+    let wide = ladder("C", 257);
+    codes(
+        &format!("fn _use<T: D1 & C257>(x: T) {{}}\n{wide}interface D1 {{}}\nfn main() {{}}"),
+        &[(Code::BoundTooWide, (1, 17))],
+    );
+    // The same for the list of a class: each listed interface on its own.
+    clean(&format!(
+        "class K: C200, D200 {{\n    fn deep(self) -> i64 {{ 1 }}\n}}\n{c}{d}fn main() {{}}"
+    ));
 }
 
 /// A method that more than one interface of a closure that passed the limit gives is no error
@@ -2044,21 +2067,28 @@ fn a_conformance_should_give_at_most_the_limit_of_interfaces() {
     // In the list of a class.
     let src = format!("class K: D257 {{}}\n{chain}");
     codes(&src, &[(Code::BoundTooWide, (1, 10))]);
+    // The conformances of the list are unknown: the interface that an earlier root inherits, and
+    // that the class does not meet, draws no report.
+    let src = format!(
+        "interface Base {{\n    fn base(self) -> i64\n}}\ninterface Extra: Base {{}}\nclass K: Extra, D257 {{}}\n{chain}"
+    );
+    codes(&src, &[(Code::BoundTooWide, (5, 17))]);
     // The roots after the one that passed the limit are not walked.
     let src = format!("class K: D257, Extra {{}}\ninterface Extra {{}}\n{chain}");
     codes(&src, &[(Code::BoundTooWide, (1, 10))]);
-    // In a block: the interfaces that the walk did not reach are not asked for, and each that it
-    // reached and the class lacks is a report of its own.
+    // In a block: the conformance is unknown after it, so what the walk reached before it passed
+    // the limit is not asked for.
     let src = format!("class K {{}}\nextend K: D257 {{}}\n{chain}");
-    let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
-    assert_eq!(
-        found.iter().filter(|&&c| c == Code::BoundTooWide).count(),
-        1
+    codes(&src, &[(Code::BoundTooWide, (2, 11))]);
+    // A use of the class asks for an interface of the walk's end: the class conforms.
+    let src = format!(
+        "class K: D257 {{}}\nfn go() {{\n    need(K())\n}}\nfn need<T: D1>(_y: T) {{}}\n{chain}"
     );
-    assert_eq!(
-        found.iter().filter(|&&c| c == Code::NotConform).count(),
-        256
+    codes(&src, &[(Code::BoundTooWide, (1, 10))]);
+    let src = format!(
+        "class K {{}}\nextend K: D257 {{}}\nfn go() {{\n    need(K())\n}}\nfn need<T: D1>(_y: T) {{}}\n{chain}"
     );
+    codes(&src, &[(Code::BoundTooWide, (2, 11))]);
 }
 
 /// A call that writes type arguments waits only when several methods answer it, whether the
@@ -2083,4 +2113,178 @@ fn a_call_with_written_type_arguments_should_wait_only_for_several_methods() {
         &format!("fn f() {{\n    take(5.max<i64>(2), 3)\n}}\n{decls}"),
         &[(Code::TypeArguments, (2, 15))],
     );
+}
+
+/// A class and an enum with a type parameter and no bound, whose methods have a bound of their
+/// own, and a `main` that calls both.
+const TRAY: &str = "interface Shape {\n    fn area(self) -> f64\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\nclass Tray<T> {\n    item: T\n    fn fit<U: Shape>(self, x: U) -> f64 {\n        x.area()\n    }\n}\nenum Case<T> {\n    Holds(T)\n    fn fit<U: Shape>(self, x: U) -> f64 {\n        x.area()\n    }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let t = Tray(item: 1)\n    print(t.fit(c))\n    print(t.item)\n    print(Case.Holds(1).fit(c))\n}";
+
+/// The bounds of a method's own parameters stand at the places of those parameters, after the
+/// parameters of its class or enum, which have none here: the bound is `U`'s, not `T`'s.
+#[test]
+fn a_methods_own_bound_should_stay_at_its_own_parameter() {
+    // The item has the type `T`, which has no bound: it has no `area`.
+    codes(
+        &TRAY.replacen("x.area()", "self.item.area()", 1),
+        &[(Code::NoMember, (13, 19))],
+    );
+    // The enum has the same rule: the payload has the type `T`.
+    codes(
+        &with_bounds(
+            "enum Case<T> {\n    Holds(T)\n    fn peek<U: Shape>(self, x: U) -> f64 {\n        match self {\n            Case.Holds(v) => v.area()\n        }\n    }\n}",
+        ),
+        &[(Code::NoMember, (5, 32))],
+    );
+    // The call through `U`'s bound is clean, and the bound uses the interface: no warning.
+    judge_unused();
+    clean(TRAY);
+}
+
+/// The bounds of one declaration all stand when the check of an applied type that one of them
+/// names runs: `C<T>` meets its bound through the `T: I` that is written beside it.
+#[test]
+fn an_applied_type_in_a_bound_should_see_the_other_bounds_of_its_declaration() {
+    let decls = "interface I {}\ninterface J<X> {}\nclass C<T: I> {\n    v: T\n}\nfn main() {}";
+    for row in [
+        "fn f<T: I, U: J<C<T>>>(x: U) {}",
+        "class K<T: I, U: J<C<T>>> {\n    a: T\n    b: U\n}",
+        "enum En<T: I, U: J<C<T>>> {\n    A(T, U)\n}",
+        "interface W<T: I, U: J<C<T>>> {}",
+        "interface R {\n    fn m<T: I, U: J<C<T>>>(self, x: U)\n}",
+        "class P {\n    fn m<T: I, U: J<C<T>>>(self, x: U) {}\n}",
+    ] {
+        clean(&format!("{row}\n{decls}"));
+    }
+    // The parameters of an `extend` block that its target does not name are reported, and the
+    // bounds among them meet each other all the same.
+    codes(
+        &format!("class Circle {{}}\nextend<T: I, U: J<C<T>>> Circle {{}}\n{decls}"),
+        &[(Code::CannotExtend, (2, 8)), (Code::CannotExtend, (2, 14))],
+    );
+    // A bound that is missing is still reported, once, at the argument.
+    codes(
+        &format!("fn f<T, U: J<C<T>>>(x: U) {{}}\n{decls}"),
+        &[(Code::NotConform, (1, 16))],
+    );
+}
+
+/// Every bound is read where it is declared, whether a body asks for its interfaces or not.
+#[test]
+fn a_bound_that_passes_the_limit_should_be_reported_where_it_is_declared() {
+    let wide = ladder("C", 257) + "fn main() {}";
+    for (row, at) in [
+        ("fn _f<T: C257>(_x: T) {}", (1, 10)),
+        ("class H<T: C257> {\n    v: T\n}", (1, 12)),
+        ("enum E<T: C257> {\n    V(T)\n}", (1, 11)),
+        ("interface R {\n    fn m<T: C257>(self, x: T)\n}", (2, 13)),
+        (
+            "class K {}\nextend K {\n    fn m<T: C257>(self, x: T) {}\n}",
+            (3, 13),
+        ),
+        ("interface J<X: C257> {}", (1, 16)),
+    ] {
+        codes(&format!("{row}\n{wide}"), &[(Code::BoundTooWide, at)]);
+    }
+    // A body that reads the same bound adds no second report.
+    codes(
+        &format!("fn _f<T: C257>(x: T) {{\n    need(x)\n}}\nfn need<T: C1>(_y: T) {{}}\n{wide}"),
+        &[(Code::BoundTooWide, (1, 10))],
+    );
+}
+
+/// The parameter whose bound passes the limit is unknown: no requirement is looked up for it, so a
+/// call that does not fit the one requirement the walk reached draws no report.
+#[test]
+fn a_bound_that_passes_the_limit_should_give_no_requirement() {
+    for call in [
+        // The count of the arguments.
+        "    print(x.deep(1))\n",
+        // The type of the result.
+        "    let s: string = x.deep()\n    print(s)\n",
+    ] {
+        codes(&chain(257, call), &[(Code::BoundTooWide, (1, 12))]);
+    }
+    // A bound before the one that passes the limit gives `deep` once, and it is not used either.
+    let wide = ladder("C", 257);
+    codes(
+        &format!(
+            "fn _use<T: D1 & C257>(x: T) {{\n    print(x.deep(1))\n}}\ninterface D1 {{\n    fn deep(self) -> i64\n}}\n{wide}fn main() {{}}"
+        ),
+        &[(Code::BoundTooWide, (1, 17))],
+    );
+}
+
+/// A check of an applied type that fails leaves no type at its place: a value of it is unknown,
+/// so it draws no second report where it meets another bound.
+#[test]
+fn a_type_that_fails_its_bound_should_be_unknown_at_its_place() {
+    let decls = "interface I {}\nclass Node {}\nclass C<T: I> {\n    v: T\n}\nfn g<T: I>(_y: T) {}\nfn main() {}";
+    for (row, at) in [
+        // A parameter, a field, a payload, a result, and an element of an array.
+        ("fn f(x: C<Node>) {\n    g(x)\n}", (1, 11)),
+        (
+            "class H {\n    c: C<Node>\n}\nfn f(h: H) {\n    g(h.c)\n}",
+            (2, 10),
+        ),
+        (
+            "enum E {\n    A(C<Node>)\n}\nfn f(e: E) {\n    match e {\n        E.A(c) => g(c)\n    }\n}",
+            (2, 9),
+        ),
+        (
+            "fn mk() -> C<Node> {\n    panic(\"x\")\n}\nfn f() {\n    g(mk())\n}",
+            (1, 14),
+        ),
+        (
+            "fn f(xs: [C<Node>]) {\n    for x in xs {\n        g(x)\n    }\n}",
+            (1, 13),
+        ),
+        // The parameter and the result of a requirement: a method that has another type there
+        // is no mismatch.
+        (
+            "interface R {\n    fn m(self, c: C<Node>)\n}\nclass X {}\nextend X: R {\n    fn m(self, c: i64) {}\n}",
+            (2, 21),
+        ),
+        (
+            "interface R {\n    fn m(self) -> C<Node>\n}\nclass X {}\nextend X: R {\n    fn m(self) -> i64 { 1 }\n}",
+            (2, 21),
+        ),
+    ] {
+        codes(&format!("{row}\n{decls}"), &[(Code::NotConform, at)]);
+    }
+}
+
+/// Two bounds that require `same(self) -> Self` return one type for a receiver `T`, which is not
+/// an open parameter of the call: the call is ambiguous at once, as for a result like `string`.
+#[test]
+fn equal_results_that_name_self_should_make_the_call_ambiguous_at_once() {
+    let src = "interface A {\n    fn same(self) -> Self\n}\ninterface B {\n    fn same(self) -> Self\n}\nfn id<T>(a: T) -> T {\n    a\n}\nfn f<T: A & B>(x: T) {\n    let n = id(x.same())\n}\nfn main() {}";
+    codes(src, &[(Code::Ambiguous, (11, 18))]);
+}
+
+/// The checks that wait for every conformance run with their scope set up once: `n` bounded
+/// parameters with an applied type each, in a signature and in the fields of a class, cost the
+/// parameters and the types, and not their product.
+#[test]
+fn bound_checks_that_wait_should_set_up_their_scope_once() {
+    let steps = |n: usize, class: bool| {
+        let params: Vec<String> = (0..n).map(|i| format!("T{i}: I")).collect();
+        let types: Vec<String> = (0..n).map(|i| format!("x{i}: C<T{i}>")).collect();
+        let fields: Vec<String> = (0..n).map(|i| format!("    f{i}: C<T{i}>\n")).collect();
+        let user = if class {
+            format!("class K<{}> {{\n{}}}", params.join(", "), fields.concat())
+        } else {
+            format!("fn f<{}>({}) {{}}", params.join(", "), types.join(", "))
+        };
+        let src =
+            format!("{user}\ninterface I {{}}\nclass C<T: I> {{\n    v: T\n}}\nfn main() {{}}");
+        PARAM_STEPS.set(0);
+        clean(&src);
+        PARAM_STEPS.get()
+    };
+    // A constant number of steps for each parameter, and 6 besides; a replay of the scope for
+    // each check would add a step for each pair.
+    for class in [false, true] {
+        assert_eq!(steps(16, class), 7 * 16 + 6);
+        assert_eq!(steps(32, class), 7 * 32 + 6);
+    }
 }

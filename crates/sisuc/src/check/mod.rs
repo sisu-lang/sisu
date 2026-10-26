@@ -40,7 +40,7 @@ use crate::types::{Head, write_type};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
-use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope};
+use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot};
 use prelude::PRELUDE;
 use unused_names::{Owner, Pending, Use, Used};
 
@@ -625,8 +625,8 @@ pub(crate) fn check<'src>(
     checker.collect_names(&items, program.items.len(), &program.broken);
     checker.interface_signatures(&items);
     let declared = checker.collect_signatures(&items);
+    checker.read_declared_bounds();
     checker.conformances(&items);
-    checker.run_pending_bounds();
     checker.fold_constants(&items);
     let cyclic = checker.never_constructed();
     let unbuilt;
@@ -1099,25 +1099,33 @@ impl Checker<'_> {
             let receiver = Type::intern(TypeKind::Class(id, own_args(&owner)));
             self.body.self_type = Some(receiver);
             self.body.set_type_params(&owner);
-            let bounds = self.bounds_of(&class.type_params);
+            let bounds = self.declare_bounds(0, Vec::new(), &class.type_params);
             if self.classes[id.0].bounded {
                 self.classes[id.0].bounds = bounds;
             }
             self.body.set_type_params(&[]);
             let mut first = FxHashMap::default();
+            let mut scoped = false;
             for member in &class.members {
                 match member {
                     ast::Member::Field(field) => {
-                        self.body.set_type_params(&owner);
-                        self.body.set_bounds(0, self.classes[id.0].bounds.clone());
+                        // The class's parameters stay in scope from one field to the next, and a
+                        // method takes them out.
+                        if !scoped {
+                            self.body.set_type_params(&owner);
+                            self.body.set_bounds(0, self.classes[id.0].bounds.clone());
+                            scoped = true;
+                        }
+                        let from = self.queued();
                         let (ty, inner) = self.resolve_written(&field.ty);
-                        self.body.set_type_params(&[]);
+                        let queued = from..self.queued();
                         if self.first_definition(
                             &mut first,
                             Definition::Field,
                             Some(class.name.name.as_str()),
                             &field.name,
                         ) {
+                            self.keep_at(queued, Slot::Field(id, self.classes[id.0].fields.len()));
                             self.classes[id.0].fields.push(FieldInfo {
                                 name: field.name.clone(),
                                 ty_span: field.ty.span,
@@ -1128,6 +1136,7 @@ impl Checker<'_> {
                         }
                     }
                     ast::Member::Method(method) => {
+                        scoped = false;
                         let func = tir::FuncId(self.signatures.len());
                         if self.first_definition(
                             &mut first,
@@ -1146,6 +1155,7 @@ impl Checker<'_> {
                     }
                 }
             }
+            self.body.set_type_params(&[]);
             for method in &class.broken_methods {
                 self.classes[id.0]
                     .methods
@@ -1168,13 +1178,22 @@ impl Checker<'_> {
         let type_params = self.type_params(owner, &f.type_params);
         self.body.set_type_params(&type_params);
         self.body.set_bounds(0, owner_bounds);
-        let bounds = self.bounds_of(&f.type_params);
-        self.body.set_bounds(owner.len(), bounds.clone());
-        let params = f.params.iter().map(|p| self.resolve(&p.ty)).collect();
+        let bounds = self.declare_bounds(owner.len(), Vec::new(), &f.type_params);
+        let func = tir::FuncId(self.signatures.len());
+        let params = (f.params.iter().enumerate())
+            .map(|(i, p)| {
+                let from = self.queued();
+                let ty = self.resolve(&p.ty);
+                self.keep_at(from..self.queued(), Slot::Param(func, i));
+                ty
+            })
+            .collect();
+        let from = self.queued();
         let ret = f
             .ret
             .as_ref()
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
+        self.keep_at(from..self.queued(), Slot::Ret(func));
         self.body.set_type_params(&[]);
         self.signatures.push(Signature {
             name,
@@ -1459,13 +1478,11 @@ impl Checker<'_> {
             ..Body::default()
         };
         fresh.set_type_params(&sig.type_params);
+        // The method's own bounds come after the places of its owner's parameters, which have none
+        // when the class or enum is not bounded.
         let mut bounds = self.owner_bounds(owner);
-        if bounds.is_empty() {
-            bounds.clone_from(&sig.bounds);
-        } else {
-            bounds.resize(owner_params, Vec::new());
-            bounds.extend(sig.bounds.iter().cloned());
-        }
+        bounds.resize(sig.type_params.len() - sig.own, Vec::new());
+        bounds.extend(sig.bounds.iter().cloned());
         fresh.set_bounds(0, bounds);
         let ((params, body), state) = self.with_body(fresh, |c| {
             // The signature's bounds name interfaces for this function.

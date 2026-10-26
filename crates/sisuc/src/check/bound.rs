@@ -108,8 +108,9 @@ impl Checker<'_> {
             matches!(ty.kind(), TypeKind::Param(_, p) if self.body.wide.contains(&(p as usize)));
         match found {
             // A parameter whose closure is too wide is reported already, and unknown: a method
-            // that its walk did not reach is no error, and nor is one that it reached twice.
-            [] | [_, _, ..] if wide => None,
+            // that its walk did not reach is no error, and nor is one that it did, whatever the
+            // call is.
+            _ if wide => None,
             [] => {
                 self.no_bound_method(ty, site.name);
                 None
@@ -140,7 +141,7 @@ impl Checker<'_> {
     /// The type that the requirement `one` returns, `ret` in its own terms, for a call on `ty`
     /// that writes `written` for the requirement's own type parameters. `None` when `ret` names
     /// one that the call leaves to inference: the context cannot tell that candidate apart.
-    fn requirement_result(
+    pub(super) fn requirement_result(
         &self,
         ty: Type,
         one: &Required,

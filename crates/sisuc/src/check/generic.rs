@@ -1221,9 +1221,19 @@ impl Checker<'_> {
                 }
             }
             _ => {
-                let first = requirement(&found[0]).ret;
-                let alike = first.is_some_and(|ret| !ret.has_param())
-                    && found.iter().all(|one| requirement(one).ret == first);
+                // The results for this receiver, where only the requirement's own parameters
+                // are open: `Self` is the receiver, whatever it is.
+                let receiver = Type::intern(TypeKind::Param(self.body.type_params[place], {
+                    u32::try_from(place)
+                        .expect("a declaration should have fewer than 2^32 parameters")
+                }));
+                let results: Vec<Option<Type>> = (found.iter())
+                    .map(|one| {
+                        let ret = requirement(one).ret?;
+                        self.requirement_result(receiver, one, ret, &[])
+                    })
+                    .collect();
+                let alike = results[0].is_some() && results.iter().all(|ret| *ret == results[0]);
                 if alike {
                     return CallShape::default();
                 }
