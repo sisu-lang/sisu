@@ -720,11 +720,12 @@ impl Checker<'_> {
     // flows into its branches and elements, `None`, `[]` and integer literals, and each would
     // need a rule for a hole. `Some(...)` gets none either: its argument takes the expected
     // type with no `bind`, as a branch does. Add them one kind at a time when a program needs
-    // one. Context is given in argument order, as the first waiting call to check binds what
-    // the next one's context holds: `g(mk2(), mk())` for `g<T>(c: Two<T, bool>, d: Result<T,
-    // string>)`, `mk2<E>() -> Two<E, bool>` and `mk<E>() -> Result<i64, E>` reports E0050 at
-    // `mk2`, while `g(mk(), mk2())` for `g<T>(d: Result<T, string>, c: Two<T, bool>)` checks.
-    // Checking a call again once a later one has bound its parameter would remove that (#217).
+    // one. The call gives context in argument order. The first waiting call that it checks
+    // binds what the context of the next one holds. For `mk2<E>() -> Two<E, bool>` and
+    // `mk<E>() -> Result<i64, E>`, `g(mk2(), mk())` with `g<T>(c: Two<T, bool>,
+    // d: Result<T, string>)` reports E0050 at `mk2`. `g(mk(), mk2())` with the parameters in
+    // the other order checks. To remove this, check a call again after a later call binds its
+    // parameter (#217).
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
         // A waiting call is a generic one, so its shape needs no `generic` check.
         let (shape, _) = self.call_shape(e)?;
@@ -902,7 +903,7 @@ impl Checker<'_> {
 
     /// Reports the call at `span` that leaves parameter `param` unbound: E0050, unless its
     /// result `found` cannot meet the context its caller gave (see `infer_waiting`). Then the
-    /// mismatch is the fault, and it is reported instead.
+    /// mismatch is the fault, and it reports the mismatch instead.
     fn report_unbound(
         &mut self,
         span: Span,
