@@ -533,7 +533,7 @@ impl Checker<'_> {
             // writes are its own.
             let met = (ranks.contains(&2) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
-            misfit = self.misfit(span, want, met).then_some(ret);
+            misfit = self.misfit(span, ret, want, met).then_some(ret);
             if !met && written.is_empty() {
                 self.blame_arguments(&mut call, sig, args, ret, want);
             }
@@ -607,16 +607,16 @@ impl Checker<'_> {
     }
 
     /// Whether the call at `span` is a misfit: `want`, its context, holds a hole, and the result
-    /// cannot meet it. `met` says if the return type met `want`. The result of a safe call is
-    /// optional, so a context that is not optional cannot meet it, whatever the return type
-    /// meets.
-    fn misfit(&self, span: Span, want: Type, met: bool) -> bool {
+    /// cannot meet it. `met` says if the return type `ret` met `want`. The result of a safe
+    /// call is optional, as is a result whose return type is, so a context that is not optional
+    /// cannot meet it, whatever the return type meets.
+    fn misfit(&self, span: Span, ret: Type, want: Type, met: bool) -> bool {
         let safe = self
             .body
             .context_hint
             .is_some_and(|hint| hint.at == span && hint.safe);
-        let optional = matches!(want.kind(), TypeKind::Optional(_));
-        want.holds_hole() && (!met || (safe && !optional))
+        let optional = |ty: Type| matches!(ty.kind(), TypeKind::Optional(_));
+        want.holds_hole() && (!met || ((safe || optional(ret)) && !optional(want)))
     }
 
     /// Reports each argument already checked whose type is not what `want`, the call's context,
@@ -925,7 +925,8 @@ impl Checker<'_> {
 
     /// Reports the call at `span` that leaves parameter `param` unbound: E0050, unless its
     /// result `found` cannot meet the context its caller gave (see `infer_waiting`). Then the
-    /// mismatch is the fault, and it reports the mismatch instead.
+    /// mismatch is the fault, and it reports the mismatch instead. A result with no value is
+    /// reported as any use of it is.
     fn report_unbound(
         &mut self,
         span: Span,
@@ -935,6 +936,10 @@ impl Checker<'_> {
     ) {
         let hint = self.body.context_hint.filter(|hint| hint.at == span);
         if let Some((found, hint)) = found.zip(hint) {
+            if matches!(found, Type::UNIT | Type::NEVER) {
+                self.no_value(span, found);
+                return;
+            }
             // The result of a safe call is optional (see `Checker::member`).
             let found = if hint.safe { as_optional(found) } else { found };
             let d = self.mismatch(span, None, hint.want, found);

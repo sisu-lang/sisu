@@ -2734,6 +2734,49 @@ fn no_parameter_part_should_not_meet_a_value_that_holds_a_hole() {
     codes(src, &[(Code::Mismatch, (4, 15))]);
 }
 
+/// A call whose own return type is optional cannot meet a context that is not optional, where
+/// it holds a hole. The call reports E0032 at itself, as a safe call does, and `mk` reports no
+/// `E`.
+#[test]
+fn optional_result_should_mismatch_a_context_that_is_not_optional() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn f<T>(r: Two<T, string>) {}\n\
+               fn mk<E>() -> Two<E, string>? { panic(\"e\") }\n\
+               fn main() {\n    f(mk())\n}";
+    codes(src, &[(Code::Mismatch, (8, 7))]);
+}
+
+/// A safe call has an optional result, so a context that is not optional cannot meet it: one
+/// E0032 at the call, and the method reports no `E`.
+#[test]
+fn safe_call_should_mismatch_a_context_that_is_not_optional() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               class Maker {\n    n: i64\n    fn make<E>(self) -> Two<E, string> { panic(\"e\") }\n}\n\
+               fn f<T>(r: Two<T, string>) {}\n\
+               fn main() {\n    let m: Maker? = None\n    f(m?.make())\n}";
+    codes(src, &[(Code::Mismatch, (12, 7))]);
+}
+
+/// A waiting call with no value is E0043, as a call with its type written is. It is not a
+/// mismatch of `unit`, and a safe call has no `unit?`.
+#[test]
+fn waiting_call_with_no_value_should_report_no_value() {
+    with_prelude();
+    let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
+    for (decls, lets, call) in [
+        ("fn mk<E>(x: E?) {}\n", "", "f(mk(None))"),
+        ("fn mk<E>(x: E?) {}\n", "", "f(mk<i64>(None))"),
+        (maker, "let m: Maker? = None\n    ", "f(m?.make(None))"),
+        (maker, "let m: Maker? = None\n    ", "f(m?.make<i64>(None))"),
+    ] {
+        let src = format!("{decls}fn f<T>(r: [T]) {{}}\nfn main() {{\n    {lets}{call}\n}}");
+        let line = decls.lines().count() + 3 + lets.matches('\n').count();
+        codes(&src, &[(Code::NoValue, (line, 7))]);
+    }
+}
+
 /// `mk` has a mistake of its own, an argument of the wrong type, and a result that cannot meet
 /// the context. It reports the argument only: the mismatch of the result would be a second error
 /// for one mistake.
