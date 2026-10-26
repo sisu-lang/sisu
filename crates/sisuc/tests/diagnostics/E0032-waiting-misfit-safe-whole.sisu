@@ -1,0 +1,19 @@
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+class Maker {
+    n: i64
+
+    fn make<E>(self) -> Two<E, string> {
+        panic("e")
+    }
+}
+
+fn f<T>(r: Two<T, string>) {}
+
+fn main() {
+    let m: Maker? = None
+    f(m?.make())
+}

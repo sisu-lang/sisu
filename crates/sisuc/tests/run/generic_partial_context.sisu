@@ -1,0 +1,26 @@
+// GIVEN a generic function whose parameter type `Result<T, string>` names `T` and fixes `string`,
+// called with `Ok(1)`, which cannot tell its `E` from its own arguments
+// AND a second function whose parameter type holds `T` below the top: `Result<[T], string>`
+// WHEN the program runs
+// THEN the call takes `string` for `E` from the parameter and `T` from `Ok(1)`, so the
+// program prints `1` and `2`
+fn unwrap<T>(r: Result<T, string>) -> T {
+    match r {
+        Ok(v) => v
+        Err(e) => panic(e)
+    }
+}
+
+fn unwrap_all<T>(r: Result<[T], string>) -> [T] {
+    match r {
+        Ok(v) => v
+        Err(e) => panic(e)
+    }
+}
+
+fn main() {
+    let x = unwrap(Ok(1))
+    print(x) // 1
+    let xs = unwrap_all(Ok([1, 2]))
+    print(xs.len()) // 2
+}

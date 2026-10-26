@@ -281,7 +281,9 @@ so the writes inside it skip the count check (ADR 0021). An index out of
 bounds calls `sisu_panic_bounds`. Codegen tags the loads and stores of an
 array's count and length, and every count update and check, with one TBAA
 tag, and those of an array element with another, so LLVM knows that writing
-an element changes none of them.
+an element changes none of them. A length load also carries `!range` and
+`!noundef`, so LLVM knows that a length is never negative: `alloc_array` is
+the only writer of a length, and no length it gets is negative.
 
 A string is one counted block with a header of three `i64`s: the count, the
 length and the capacity, then the UTF-8 bytes. A literal is a private global

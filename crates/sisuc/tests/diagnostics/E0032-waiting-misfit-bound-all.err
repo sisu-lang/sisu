@@ -1,0 +1,8 @@
+error[E0032]: expected `Three<i64, T, bool>`, found `Three<i64, i64, string>`
+  --> E0032-waiting-misfit-bound-all.sisu:14:7
+   |
+14 |     f(mk())
+   |       ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

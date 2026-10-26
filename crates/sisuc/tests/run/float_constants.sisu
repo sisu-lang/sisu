@@ -24,7 +24,7 @@ fn main(args: [string]) {
     print(INF)                  // inf
     print(1.0 / same(0.0, d))   // inf
     print(NEG_ZERO)             // -0.0
-    print(-same(0.0, d))        // -0.0
+    print(-same(0.0, d + 1))    // -0.0; `d + 1`, or `-O2` reuses the call above
     print(TINY)                 // 5e-324
     print(same(5e-324, d))      // 5e-324
     print(TWO_PI)               // 6.283185307179586

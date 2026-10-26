@@ -1,0 +1,8 @@
+fn f<T>(r: Result<T, string>) -> T {
+    panic("e")
+}
+
+fn main() {
+    let x = f(Err("e"))
+    print(x)
+}

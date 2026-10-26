@@ -1,0 +1,8 @@
+fn take<T>(xs: [T]) -> T {
+    panic("e")
+}
+
+fn main() {
+    let x = take(Ok(1))
+    print(x)
+}

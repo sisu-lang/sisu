@@ -1471,9 +1471,36 @@ fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
         (generic::WALKED.get(), mismatches)
     };
     let (one, _) = walked("x");
+    assert!(one > 0, "the counter should count the walk of `known`");
     assert_eq!(walked(&vec!["x"; 100].join(", ")), (one, 0));
     let (bad, _) = walked("b, x");
     assert_eq!(walked(&format!("{}x", "b, ".repeat(100))), (bad, 100));
+}
+
+/// Each waiting argument is a generic call for a parameter of its own, which its context binds.
+/// The sweeps look at each parameter type a fixed number of times. So the work grows with the
+/// arguments, not with their square.
+#[test]
+fn waiting_arguments_should_cost_the_same_walk_each() {
+    with_prelude();
+    let walked = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let params: Vec<_> = (0..n)
+            .map(|i| format!("x{i}: Result<T{i}, string>"))
+            .collect();
+        let src = format!(
+            "fn f<{}>({}) {{}}\nfn main() {{ f({}) }}",
+            types.join(", "),
+            params.join(", "),
+            vec!["Ok(1)"; n].join(", ")
+        );
+        generic::WALKED.set(0);
+        clean(&src);
+        generic::WALKED.get()
+    };
+    let fifty = walked(50);
+    assert!(fifty > 0, "the counter should count the walks");
+    assert_eq!(walked(100), 2 * fifty);
 }
 
 /// A call that leaves type parameters unbound looks at each declared name once to find the
@@ -2585,4 +2612,225 @@ fn generic_array_literals_should_report_each_mistake_once() {
     ] {
         codes(&with_optional_elements(body), &expected);
     }
+}
+
+/// `f` takes a parameter that its argument only partly fixes: `string` is fixed, `T` is not.
+const PARTLY_BOUND: &str = "fn f<T>(r: Result<T, string>) -> T { panic(\"e\") }\n";
+
+/// An argument that waits for context, and is itself a generic call, binds the rest of a
+/// partly bound parameter: `Ok(1)` takes `string` from `f`'s parameter, and `f` takes `T` from
+/// `Ok(1)`.
+#[test]
+fn waiting_generic_call_should_bind_the_rest_of_a_partly_bound_parameter() {
+    with_prelude();
+    let src = format!("{PARTLY_BOUND}fn main() {{\n    let x = f(Ok(1))\n    print(x)\n}}");
+    assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
+}
+
+/// A call of `f` with a method call as the waiting argument, for a callee that is not a
+/// variant: the argument is a generic call of any kind.
+#[test]
+fn waiting_generic_method_call_should_bind_the_rest_of_a_partly_bound_parameter() {
+    with_prelude();
+    let src = "fn f<T>(r: Result<T, string>) -> T { panic(\"e\") }\n\
+               class Maker {\n    fn make<U, E>(self, u: U) -> Result<U, E> { Ok(u) }\n}\n\
+               fn main() {\n    let m = Maker()\n    let x = f(m.make(1))\n    print(x)\n}";
+    assert_eq!(call_types(src, "f"), ["i64", "i64"]);
+}
+
+/// `T` sits below the top of the parameter type, so the context for `Ok` is `Result<[_], string>`
+/// and its `T` meets `[_]`, a type with a hole: the hole binds nothing.
+#[test]
+fn hole_below_the_top_of_a_parameter_should_bind_nothing() {
+    with_prelude();
+    let src = "fn f<T>(r: Result<[T], string>) -> [T] { panic(\"e\") }\n\
+               fn main() {\n    let x = f(Ok([1]))\n    print(x.len())\n}";
+    assert_eq!(call_types(src, "f"), ["i64", "[i64]"]);
+}
+
+/// A waiting `if` keeps the rule it had: it waits, and `f` cannot infer `T`.
+#[test]
+fn waiting_branch_should_keep_waiting_when_a_parameter_is_partly_bound() {
+    with_prelude();
+    let src = format!(
+        "{PARTLY_BOUND}fn main() {{\n    let c = true\n    let x = f(if c {{ Ok(1) }} else {{ Ok(2) }})\n    print(x)\n}}"
+    );
+    codes(&src, &[(Code::CannotInfer, (4, 13))]);
+}
+
+/// The context for an inner call has a hole where the outer call binds nothing yet. A part of
+/// the inner call's return type that names no parameter (`i64`) meets that hole and binds
+/// nothing from it.
+#[test]
+fn context_hole_should_meet_a_return_type_part_that_names_no_parameter() {
+    with_prelude();
+    let src = format!(
+        "{PARTLY_BOUND}fn mk<E>() -> Result<i64, E> {{ panic(\"e\") }}\n\
+         fn main() {{\n    let x = f(mk())\n    print(x)\n}}"
+    );
+    assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
+    assert_eq!(call_types(&src, "mk"), ["string", "Result<i64, string>"]);
+}
+
+/// `Result<T?, string>` gives `Ok` the context `Result<_?, string>`: its `T` meets `_?`, a part
+/// that holds a hole, and binds nothing.
+#[test]
+fn parameter_of_a_return_type_should_meet_a_part_that_holds_a_hole() {
+    with_prelude();
+    let src = "fn g<T>(r: Result<T?, string>) -> T { panic(\"e\") }\n\
+               fn main() {\n    let x = g(Ok(Some(1)))\n    print(x)\n}";
+    assert_eq!(call_types(src, "g"), ["i64", "i64"]);
+}
+
+/// A call whose return type has a structure of its own where the context has a hole (`[U]`
+/// against `_`) binds nothing from it: `U` is left for the call to report.
+#[test]
+fn context_hole_should_leave_a_parameter_below_it_unbound() {
+    with_prelude();
+    let src = format!(
+        "{PARTLY_BOUND}fn mk_all<U, E>() -> Result<[U], E> {{ panic(\"e\") }}\n\
+         fn main() {{\n    let x = f(mk_all())\n    print(x)\n}}"
+    );
+    codes(&src, &[(Code::CannotInfer, (4, 15))]);
+}
+
+/// A parameter type of `[T]` gives `Ok` an array context that it cannot meet: the error is
+/// E0032 at `Ok(1)`, the whole argument, and `Ok` reports no `E`.
+#[test]
+fn context_that_no_variant_meets_should_be_reported_as_a_mismatch_at_the_argument() {
+    with_prelude();
+    let src = "fn take<T>(xs: [T]) -> T { panic(\"e\") }\n\
+               fn main() {\n    let x = take(Ok(1))\n    print(x)\n}";
+    codes(src, &[(Code::Mismatch, (3, 18))]);
+}
+
+/// A call whose return type conflicts with a bound part of the context (`string` against
+/// `bool`) is reported at the call as a mismatch, and `mk` reports no `E`.
+#[test]
+fn waiting_call_that_conflicts_in_a_bound_part_should_mismatch_at_the_call() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn f<T>(p: Two<T, bool>) {}\n\
+               fn mk<E>() -> Two<E, string> { panic(\"e\") }\n\
+               fn main() {\n    f(mk())\n}";
+    codes(src, &[(Code::Mismatch, (8, 7))]);
+}
+
+/// A part of the return type that names no parameter, but meets a part of the context that
+/// holds a hole, must still meet its structure: `Result<i64, i64>` against `Result<T, string>`
+/// and `Result<i64, bool>` against `Result<_, string>` clash, so each call is a mismatch and
+/// `mk` reports no `E`.
+#[test]
+fn no_parameter_part_should_not_meet_a_value_that_holds_a_hole() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn f<T, U>(p: Two<Result<T, string>, U>) -> T { panic(\"e\") }\n\
+               fn mk<E>() -> Two<Result<i64, i64>, [E]> { panic(\"e\") }\n\
+               fn main() {\n    let x = f(mk())\n    print(x)\n}";
+    codes(src, &[(Code::Mismatch, (8, 15))]);
+    let src = "fn f<T>(r: Result<T, string>) -> T { panic(\"e\") }\n\
+               fn mk<E>(x: E?) -> Result<i64, bool> { panic(\"e\") }\n\
+               fn main() {\n    let x = f(mk(None))\n    print(x)\n}";
+    codes(src, &[(Code::Mismatch, (4, 15))]);
+}
+
+/// A call whose own return type is optional cannot meet a context that is not optional, where
+/// it holds a hole. The call reports E0032 at itself, as a safe call does, and `mk` reports no
+/// `E`.
+#[test]
+fn optional_result_should_mismatch_a_context_that_is_not_optional() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn f<T>(r: Two<T, string>) {}\n\
+               fn mk<E>() -> Two<E, string>? { panic(\"e\") }\n\
+               fn main() {\n    f(mk())\n}";
+    codes(src, &[(Code::Mismatch, (8, 7))]);
+}
+
+/// A safe call has an optional result, so a context that is not optional cannot meet it: one
+/// E0032 at the call, and the method reports no `E`.
+#[test]
+fn safe_call_should_mismatch_a_context_that_is_not_optional() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               class Maker {\n    n: i64\n    fn make<E>(self) -> Two<E, string> { panic(\"e\") }\n}\n\
+               fn f<T>(r: Two<T, string>) {}\n\
+               fn main() {\n    let m: Maker? = None\n    f(m?.make())\n}";
+    codes(src, &[(Code::Mismatch, (12, 7))]);
+}
+
+/// A waiting call with no value is E0043, as a call with its type written is. It is not a
+/// mismatch of `unit`, and a safe call has no `unit?`.
+#[test]
+fn waiting_call_with_no_value_should_report_no_value() {
+    with_prelude();
+    let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
+    for (decls, lets, call) in [
+        ("fn mk<E>(x: E?) {}\n", "", "f(mk(None))"),
+        ("fn mk<E>(x: E?) {}\n", "", "f(mk<i64>(None))"),
+        (maker, "let m: Maker? = None\n    ", "f(m?.make(None))"),
+        (maker, "let m: Maker? = None\n    ", "f(m?.make<i64>(None))"),
+    ] {
+        let src = format!("{decls}fn f<T>(r: [T]) {{}}\nfn main() {{\n    {lets}{call}\n}}");
+        let line = decls.lines().count() + 3 + lets.matches('\n').count();
+        codes(&src, &[(Code::NoValue, (line, 7))]);
+    }
+}
+
+/// `mk` has a mistake of its own, an argument of the wrong type, and a result that cannot meet
+/// the context. It reports the argument only: the mismatch of the result would be a second error
+/// for one mistake.
+#[test]
+fn waiting_call_with_its_own_mistake_should_report_only_that_mistake() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn f<T>(p: Two<T, bool>) {}\n\
+               fn mk<E>(n: i64) -> Two<E, string> { panic(\"e\") }\n\
+               fn main() {\n    f(mk(\"x\"))\n}";
+    codes(src, &[(Code::Mismatch, (8, 10))]);
+}
+
+/// `Ok(Ok(1))` for `[T]`: the outer `Ok` waits for its argument, which gets no context, so the
+/// outer `Ok` reports the mismatch at itself, and the inner `Ok` reports nothing.
+#[test]
+fn nested_waiting_call_that_cannot_fit_should_mismatch_once_at_the_outer_call() {
+    with_prelude();
+    let src = "fn take<T>(xs: [T]) -> T { panic(\"e\") }\n\
+               fn main() {\n    let x = take(Ok(Ok(1)))\n    print(x)\n}";
+    codes(src, &[(Code::Mismatch, (3, 18))]);
+}
+
+/// `Some(...)` checks its argument against the payload of its expected type with no binding,
+/// so a hole in a context would reach its diagnostics and its type. It gets no context: the
+/// call waits, as before, and `f` reports its `T`. A leak would give a mismatch or a panic.
+#[test]
+fn some_should_get_no_context_from_a_partly_bound_parameter() {
+    with_prelude();
+    for (decls, call) in [
+        ("fn f<T>(x: T?) -> T { panic(\"e\") }\n", "f(Some(None))"),
+        (
+            "fn f<T>(x: T?) -> T { panic(\"e\") }\n",
+            "f(Option.Some(None))",
+        ),
+        (
+            "fn f<T>(x: Result<T, string>?) -> T { panic(\"e\") }\n",
+            "f(Some(Ok(1)))",
+        ),
+        ("fn f<T>(x: [T]?) -> T { panic(\"e\") }\n", "f(Some([]))"),
+    ] {
+        let src = format!("{decls}fn main() {{\n    let y = {call}\n    print(y)\n}}");
+        let line = decls.lines().count() + 2;
+        codes(&src, &[(Code::CannotInfer, (line, 13))]);
+    }
+}
+
+/// `mk()` gets a context and binds `T`, which a `Some([])` before it waited for: the sweep
+/// that follows checks that `Some([])` against `[i64]?`, so the call has no error.
+#[test]
+fn some_should_be_checked_once_a_later_waiting_call_binds_its_parameter() {
+    with_prelude();
+    let src = "fn g<T>(x: [T]?, r: Result<T, string>) -> T { panic(\"e\") }\n\
+               fn mk<E>() -> Result<i64, E> { panic(\"e\") }\n\
+               fn main() {\n    let y = g(Some([]), mk())\n    print(y)\n}";
+    assert_eq!(call_types(src, "g"), ["i64", "i64"]);
 }

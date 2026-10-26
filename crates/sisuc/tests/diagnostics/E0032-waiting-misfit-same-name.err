@@ -1,0 +1,8 @@
+error[E0032]: expected `Two<T, bool>`, found `Two<T, string>`
+  --> E0032-waiting-misfit-same-name.sisu:13:7
+   |
+13 |     f(mk())
+   |       ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -91,7 +91,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
         <li>A string is one counted block: the count, the length, the capacity, then the UTF-8 bytes.</li>
         <li>An enum value has no heap block of its own: it is a tag and its variant's payload, held inline. A field that would make an enum contain itself goes behind a counted box.</li>
       </ul>
-      <p>For each type it emits the helpers that retain, release and compare it. It tags loads and stores with type-based alias information, so LLVM knows that writing a field or an element leaves every count and length alone. MIR tests the arms of a <code>match</code> in order, and <code>codegen/matching.rs</code> traps after the last one. The checker has proved that some arm matches, and a bug in the checker must not become undefined behaviour.</p>
+      <p>For each type it emits the helpers that retain, release and compare it. It tags loads and stores with type-based alias information, so LLVM knows that writing a field or an element leaves every count and length alone. A length load also tells LLVM that a length is never negative. MIR tests the arms of a <code>match</code> in order, and <code>codegen/matching.rs</code> traps after the last one. The checker has proved that some arm matches, and a bug in the checker must not become undefined behaviour.</p>
 
       <h3>LLVM</h3>
       <p class="files">LLVM 23, linked as a library</p>
