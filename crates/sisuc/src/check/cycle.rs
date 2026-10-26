@@ -818,15 +818,16 @@ fn relax(growth: &mut [Option<i64>], rules: &[Rule], fixed: &[bool]) -> Vec<usiz
 }
 
 /// Which associated types have a growth that does not end: those that a cycle of positive weight
-/// among the rules raises again and again, and those whose rules name one. `growth` holds the
-/// growths outright. Every associated type starts at the growth it has, or at 0, so a cycle
-/// counts whether or not an outright growth reaches it.
+/// among the rules raises again and again, and those that name one while it is raised. `growth`
+/// holds the growths outright. Every associated type starts at the growth it has, or at 0, so a
+/// cycle counts whether or not an outright growth reaches it.
 ///
 /// A growth that is bounded settles in as many passes as there are associated types: the
 /// greatest of its rules has no associated type twice along any path of names, since a path
 /// that repeats one adds a weight above 0, which is unbounded, or at most 0, which the path
 /// without the repeat matches. So a type that a pass raises after that is on a cycle or names
-/// one, and the search for the types that name it follows the names.
+/// one. A type that names an unbounded one and is not raised in these passes takes its growth
+/// from it when the growths are found, as a rule gives it.
 fn cyclic(growth: &[Option<i64>], rules: &[Rule]) -> Vec<bool> {
     let count = growth.len();
     let mut ghost: Vec<Option<i64>> = growth.iter().map(|g| Some(g.unwrap_or(0))).collect();
@@ -839,28 +840,9 @@ fn cyclic(growth: &[Option<i64>], rules: &[Rule]) -> Vec<bool> {
     // Still growing. A cycle makes some type on it grow in every turn around, and a turn takes at
     // most as many passes as there are associated types.
     let mut unbounded = vec![false; count];
-    let mut queue = Vec::new();
     for _ in 0..=count {
         for raised in relax(&mut ghost, rules, &none) {
-            if !unbounded[raised] {
-                unbounded[raised] = true;
-                queue.push(raised);
-            }
-        }
-    }
-    // The types that name an unbounded one.
-    let mut users: Vec<Vec<usize>> = vec![Vec::new(); count];
-    for rule in rules {
-        for &named in &rule.names {
-            users[named].push(rule.at);
-        }
-    }
-    while let Some(n) = queue.pop() {
-        for &user in &users[n] {
-            if !unbounded[user] {
-                unbounded[user] = true;
-                queue.push(user);
-            }
+            unbounded[raised] = true;
         }
     }
     unbounded

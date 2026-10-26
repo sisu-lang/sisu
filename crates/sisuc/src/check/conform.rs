@@ -483,9 +483,6 @@ impl Checker<'_> {
             let Some((bound, _)) = ext.interface else {
                 continue;
             };
-            if ext.assoc.is_empty() {
-                continue;
-            }
             let info = &self.interfaces[bound.interface.0];
             #[cfg(test)]
             super::CHOICE_STEPS.set(super::CHOICE_STEPS.get() + info.assoc.len());

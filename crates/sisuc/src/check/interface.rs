@@ -325,31 +325,18 @@ impl Checker<'_> {
         let mut found: Vec<Vec<Option<Bound>>> = (params.iter())
             .map(|param| vec![None; param.bounds.len()])
             .collect();
-        let with_members = params
+        self.resolve_bounds(at, params, &mut found, false);
+        if params
             .iter()
-            .any(|param| param.bounds.iter().any(ast::TypeExpr::names_member));
-        for members in [false, true] {
-            if members && !with_members {
-                break;
-            }
-            for (i, param) in params.iter().enumerate() {
-                let place = u32::try_from(at + i)
-                    .expect("a declaration should have fewer than 2^32 parameters");
-                let this = Some(Type::intern(TypeKind::Param(param.name.name, place)));
-                for (j, ty) in param.bounds.iter().enumerate() {
-                    if ty.names_member() == members {
-                        found[i][j] = self.bound(ty, this);
-                    }
-                }
-            }
-            if !members && with_members {
-                let so_far = head.iter().cloned().chain(
-                    found
-                        .iter()
-                        .map(|bounds| bounds.iter().flatten().copied().collect()),
-                );
-                self.body.set_bounds(first, so_far.collect());
-            }
+            .any(|param| param.bounds.iter().any(ast::TypeExpr::names_member))
+        {
+            let so_far = head.iter().cloned().chain(
+                found
+                    .iter()
+                    .map(|bounds| bounds.iter().flatten().copied().collect()),
+            );
+            self.body.set_bounds(first, so_far.collect());
+            self.resolve_bounds(at, params, &mut found, true);
         }
         let mut bounds = head;
         bounds.extend(
@@ -365,6 +352,28 @@ impl Checker<'_> {
             }
         }
         bounds
+    }
+
+    /// Resolves into `found` the bounds of `params`, which start at the place `at`, that name an
+    /// associated type of another type in their arguments when `members` is true, and the others
+    /// when it is false.
+    fn resolve_bounds(
+        &mut self,
+        at: usize,
+        params: &[ast::TypeParam],
+        found: &mut [Vec<Option<Bound>>],
+        members: bool,
+    ) {
+        for (i, param) in params.iter().enumerate() {
+            let place = u32::try_from(at + i)
+                .expect("a declaration should have fewer than 2^32 parameters");
+            let this = Some(Type::intern(TypeKind::Param(param.name.name, place)));
+            for (j, ty) in param.bounds.iter().enumerate() {
+                if ty.names_member() == members {
+                    found[i][j] = self.bound(ty, this);
+                }
+            }
+        }
     }
 
     /// The interface `ty` names with its arguments, for the type `this` that has it, if that is
@@ -873,12 +882,12 @@ impl Checker<'_> {
     /// that conforms to it, so that a choice that needs itself is found where the type meets the
     /// bound, though no signature writes the associated type. Only the checker can report it.
     ///
-    /// shortcut: this finds a loop at the first associated type only; one at the associated type
-    /// of a chosen type is found where a signature writes it. Upgrade when a program needs `mono`
-    /// to meet no loop that the checker did not.
+    /// shortcut: this normalizes the associated types of `interface`, not those of the types they
+    /// choose; a loop there is found where a signature writes it, and `mono` stops at one that
+    /// none writes. Upgrade when a program needs `mono` to meet no loop that the checker did not.
     fn probe_associated(&self, ty: Type, interface: InterfaceId, args: TypeArgs) {
         let count = self.interfaces[interface.0].assoc.len();
-        if count == 0 || !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
+        if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
             return;
         }
         for k in 0..count {

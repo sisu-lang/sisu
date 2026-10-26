@@ -45,10 +45,6 @@ impl Choices {
         self.by_name.get(&name).map(|&i| &self.list[i])
     }
 
-    pub(super) fn is_empty(&self) -> bool {
-        self.list.is_empty()
-    }
-
     pub(super) fn iter(&self) -> std::slice::Iter<'_, Choice> {
         self.list.iter()
     }
@@ -103,10 +99,8 @@ impl Checker<'_> {
     /// Reports each choice that `normalize` found to need its own associated type, once, at the
     /// type it writes (E0030). The associated types that depend on it stay unknown.
     pub(super) fn report_loops(&mut self) {
-        let mut loops: Vec<_> = std::mem::take(&mut *self.loops.borrow_mut())
-            .into_iter()
-            .collect();
-        loops.sort_unstable_by_key(|&((interface, index, k), _)| (interface.0, index, k));
+        // The diagnostics are sorted by their place, so the order of the map is no matter.
+        let loops = std::mem::take(&mut *self.loops.borrow_mut());
         for (place, assoc) in loops {
             let at = self.choice_ats[&place];
             self.report(DiagnosticKind::UnknownType {
