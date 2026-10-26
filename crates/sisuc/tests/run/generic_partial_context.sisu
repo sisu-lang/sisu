@@ -3,7 +3,7 @@
 // AND a second function whose parameter type holds `T` below the top: `Result<[T], string>`
 // WHEN the program runs
 // THEN the call takes `string` for `E` from the parameter and `T` from `Ok(1)`, so the
-// programs print `1` and `2`
+// program prints `1` and `2`
 fn unwrap<T>(r: Result<T, string>) -> T {
     match r {
         Ok(v) => v

@@ -113,6 +113,10 @@ fn leaves_open_in(
 
 /// A call of a generic callee as ranking sees it (see `Checker::waits`).
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact that ranking or the context asks of a call"
+)]
 struct CallShape {
     /// Whether the callee has type parameters of its own to infer.
     generic: bool,
@@ -121,6 +125,8 @@ struct CallShape {
     /// Whether no argument can bind one of its type parameters, and the type of the call names
     /// it, so only the call's context can bind it.
     open: bool,
+    /// Whether the call is `Some(...)` or `Option.Some(...)`, which `Checker::some` checks.
+    some: bool,
 }
 
 /// The hole, `_`: the type of a part that a context has not fixed yet (see `Bindings::partial`).
@@ -302,10 +308,6 @@ impl Bindings {
 
     /// Every parameter's binding; `Err` holds the first unbound one's index.
     pub(super) fn finish(self) -> Result<TypeArgs, usize> {
-        debug_assert!(
-            self.found.iter().flatten().all(|&ty| !holds_hole(ty)),
-            "no parameter should be bound to a type that holds a hole"
-        );
         let list = self
             .found
             .iter()
@@ -533,8 +535,14 @@ impl Checker<'_> {
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 1) {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
         }
-        for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 2) {
-            self.infer_waiting(&mut call, i, &arg.value, sig.params[i], fit[i]);
+        // A second sweep: a call checked after an argument that was left unchecked can have
+        // bound the parameter it waits for.
+        for _ in 0..2 {
+            for (i, arg) in args.iter().enumerate() {
+                if ranks[i] == 2 && call.slots[i].is_none() {
+                    self.infer_waiting(&mut call, i, &arg.value, sig.params[i], fit[i]);
+                }
+            }
         }
         for (i, ty) in std::mem::take(&mut call.last) {
             let (e, param) = (&args[i].value, sig.params[i]);
@@ -685,11 +693,13 @@ impl Checker<'_> {
     /// from it.
     // shortcut: a waiting `if`, `match`, block or array literal gets no context, as `expected`
     // flows into its branches and elements, `None`, `[]` and integer literals, and each would
-    // need a rule for a hole; add them one kind at a time when a program needs one.
+    // need a rule for a hole. `Some(...)` gets none either: its argument takes the expected
+    // type with no `bind`, as a branch does. Add them one kind at a time when a program needs
+    // one.
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
         // A waiting call is a generic one, so its shape needs no `generic` check.
-        self.call_shape(e)?;
-        let partial = call.bindings.partial(param);
+        let (shape, _) = self.call_shape(e)?;
+        let partial = (!shape.some).then(|| call.bindings.partial(param))?;
         (partial != *HOLE).then_some(partial)
     }
 
@@ -751,6 +761,10 @@ impl Checker<'_> {
             return self.inferred_array(call, e.span, elements, element);
         }
         let checked = self.expr(e, context);
+        debug_assert!(
+            type_of(&checked).is_none_or(|ty| !holds_hole(ty)),
+            "a context's hole should not reach the type of the argument it was for"
+        );
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
@@ -933,6 +947,7 @@ impl Checker<'_> {
                 generic,
                 shaped,
                 open,
+                ..
             },
             args,
         ) = match &e.kind {
@@ -1012,6 +1027,7 @@ impl Checker<'_> {
                         generic: true,
                         shaped,
                         open: shaped && leaves_open(v.fields.iter().copied(), names, 0),
+                        ..CallShape::default()
                     }
                 } else if !safe
                     && method.name.as_str() == "Some"
@@ -1022,6 +1038,7 @@ impl Checker<'_> {
                         generic: true,
                         shaped: matches!(&args[..], [arg] if arg.label.is_none()),
                         open: false,
+                        some: true,
                     }
                 } else {
                     self.generic_method(receiver, method, args, *safe)
@@ -1213,6 +1230,7 @@ impl Checker<'_> {
                 && sig.ret.is_some_and(|ret| {
                     leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, owner)
                 }),
+            ..CallShape::default()
         }
     }
 
@@ -1267,6 +1285,7 @@ impl Checker<'_> {
                     shaped,
                     open: shaped
                         && leaves_open(info.fields.iter().map(|f| f.ty), &info.type_params, 0),
+                    ..CallShape::default()
                 }
             }
             (None, Some(&Declared::Known(func))) => {
@@ -1280,6 +1299,7 @@ impl Checker<'_> {
                         && sig.ret.is_some_and(|ret| {
                             leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, 0)
                         }),
+                    ..CallShape::default()
                 }
             }
             // `Some<T>(x: T) -> T?`, and the prelude's `Ok` and `Err`, which no user item can
@@ -1288,6 +1308,7 @@ impl Checker<'_> {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
                 open: false,
+                some: true,
             },
             (None, None) => self
                 .result_variant(name)
@@ -1303,6 +1324,7 @@ impl Checker<'_> {
                                 &info.type_params,
                                 0,
                             ),
+                        ..CallShape::default()
                     }
                 }),
             _ => CallShape::default(),

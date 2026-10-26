@@ -2612,15 +2612,6 @@ fn waiting_generic_method_call_should_bind_the_rest_of_a_partly_bound_parameter(
     assert_eq!(call_types(src, "f"), ["i64", "i64"]);
 }
 
-/// The inner call `Err("e")` still cannot bind its `T`: the one error is at `Err`, and `f`
-/// adds none.
-#[test]
-fn waiting_generic_call_that_cannot_bind_should_report_at_itself() {
-    with_prelude();
-    let src = format!("{PARTLY_BOUND}fn main() {{\n    let x = f(Err(\"e\"))\n    print(x)\n}}");
-    codes(&src, &[(Code::CannotInfer, (3, 15))]);
-}
-
 /// `T` sits below the top of the parameter type, so the context for `Ok` is `Result<[_], string>`
 /// and its `T` meets `[_]`, a type with a hole: the hole binds nothing.
 #[test]
@@ -2642,33 +2633,76 @@ fn waiting_branch_should_keep_waiting_when_a_parameter_is_partly_bound() {
 }
 
 /// The context for an inner call has a hole where the outer call binds nothing yet. A part of
-/// the inner call's return type that names no parameter (`i64`), or is a type of its own
-/// (`[U]`), meets that hole and binds nothing from it; a call whose type is no `Result` at all
-/// is reported where it is, by the types of the outer call and not by the context.
+/// the inner call's return type that names no parameter (`i64`) meets that hole and binds
+/// nothing from it, and so does a hole inside an optional.
 #[test]
-fn context_hole_should_meet_any_part_of_the_return_type_and_stay_out_of_reports() {
+fn context_hole_should_meet_a_return_type_part_that_names_no_parameter() {
     with_prelude();
-    let decls = format!(
-        "{PARTLY_BOUND}fn mk<E>() -> Result<i64, E> {{ panic(\"e\") }}\nfn mk_all<U, E>() -> Result<[U], E> {{ panic(\"e\") }}\n"
+    let src = format!(
+        "{PARTLY_BOUND}fn mk<E>() -> Result<i64, E> {{ panic(\"e\") }}\n\
+         fn main() {{\n    let x = f(mk())\n    print(x)\n}}"
     );
-    let src = format!("{decls}fn main() {{\n    let x = f(mk())\n    print(x)\n}}");
     assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
     assert_eq!(call_types(&src, "mk"), ["string", "Result<i64, string>"]);
-    // The hole sits in an optional: `Result<T?, string>` gives `Ok` the context
-    // `Result<_?, string>`.
+    // `Result<T?, string>` gives `Ok` the context `Result<_?, string>`.
     let src = "fn g<T>(r: Result<T?, string>) -> T { panic(\"e\") }\n\
                fn main() {\n    let x = g(Ok(Some(1)))\n    print(x)\n}";
     assert_eq!(call_types(src, "g"), ["i64", "i64"]);
-    for (line, expected) in [
-        // `U` sits below the hole: nothing binds it.
-        ("f(mk_all())", vec![(Code::CannotInfer, (6, 15))]),
-        ("f(Some(1))", vec![(Code::Mismatch, (6, 15))]),
-        // A parameter type of `[T]` gives `Ok` an array context that it cannot meet.
-        ("take(Ok(1))", vec![(Code::CannotInfer, (6, 18))]),
+}
+
+/// A call whose return type has a structure of its own where the context has a hole (`[U]`
+/// against `_`) binds nothing from it: `U` is left for the call to report.
+#[test]
+fn context_hole_should_leave_a_parameter_below_it_unbound() {
+    with_prelude();
+    let src = format!(
+        "{PARTLY_BOUND}fn mk_all<U, E>() -> Result<[U], E> {{ panic(\"e\") }}\n\
+         fn main() {{\n    let x = f(mk_all())\n    print(x)\n}}"
+    );
+    codes(&src, &[(Code::CannotInfer, (4, 15))]);
+}
+
+/// A parameter type of `[T]` gives `Ok` an array context that it cannot meet: `Ok` reports its
+/// own `E`.
+#[test]
+fn context_that_no_variant_meets_should_be_reported_at_the_call() {
+    with_prelude();
+    let src = "fn take<T>(xs: [T]) -> T { panic(\"e\") }\n\
+               fn main() {\n    let x = take(Ok(1))\n    print(x)\n}";
+    codes(src, &[(Code::CannotInfer, (3, 18))]);
+}
+
+/// `Some(...)` checks its argument against the payload of its expected type with no binding,
+/// so a hole in a context would reach its diagnostics and its type. It gets no context: the
+/// call waits, as before, and `f` reports its `T`. A leak would give a mismatch or a panic.
+#[test]
+fn some_should_get_no_context_from_a_partly_bound_parameter() {
+    with_prelude();
+    for (decls, call) in [
+        ("fn f<T>(x: T?) -> T { panic(\"e\") }\n", "f(Some(None))"),
+        (
+            "fn f<T>(x: T?) -> T { panic(\"e\") }\n",
+            "f(Option.Some(None))",
+        ),
+        (
+            "fn f<T>(x: Result<T, string>?) -> T { panic(\"e\") }\n",
+            "f(Some(Ok(1)))",
+        ),
+        ("fn f<T>(x: [T]?) -> T { panic(\"e\") }\n", "f(Some([]))"),
     ] {
-        let src = format!(
-            "{decls}fn take<T>(xs: [T]) -> T {{ panic(\"e\") }}\nfn main() {{\n    let x = {line}\n    print(x)\n}}"
-        );
-        codes(&src, &expected);
+        let src = format!("{decls}fn main() {{\n    let y = {call}\n    print(y)\n}}");
+        let line = decls.lines().count() + 2;
+        codes(&src, &[(Code::CannotInfer, (line, 13))]);
     }
+}
+
+/// `mk()` gets a context and binds `T`, which a `Some([])` before it waited for: the sweep
+/// that follows checks that `Some([])` against `[i64]?`, so the call has no error.
+#[test]
+fn some_should_be_checked_once_a_later_waiting_call_binds_its_parameter() {
+    with_prelude();
+    let src = "fn g<T>(x: [T]?, r: Result<T, string>) -> T { panic(\"e\") }\n\
+               fn mk<E>() -> Result<i64, E> { panic(\"e\") }\n\
+               fn main() {\n    let y = g(Some([]), mk())\n    print(y)\n}";
+    assert_eq!(call_types(src, "g"), ["i64", "i64"]);
 }
