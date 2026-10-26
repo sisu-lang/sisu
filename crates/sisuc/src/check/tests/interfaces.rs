@@ -3328,3 +3328,80 @@ fn an_associated_type_that_passes_the_limit_should_be_reported_once_and_unknown(
         codes(&format!("{row}\n{wide}"), &expected);
     }
 }
+
+/// The growth belongs to the associated type that the choice is for, not to the first of its
+/// interface: of two types, the one that grows closes a cycle and the other does not.
+#[test]
+fn each_associated_type_of_an_interface_should_have_its_own_growth() {
+    let pair = "interface Two {\n    type Grows: Two\n    type Fixed: Two\n    fn grows(self) -> Grows?\n    fn fixed(self) -> Fixed?\n}\nclass Chain<T> {\n    value: T\n}\nclass Stop {}\nextend Stop: Two {\n    type Grows = Stop\n    type Fixed = Stop\n    fn grows(self) -> Grows? { None }\n    fn fixed(self) -> Fixed? { None }\n}\nextend<T: Two> Chain<T>: Two {\n    type Grows = Chain<Chain<T>>\n    type Fixed = Stop\n    fn grows(self) -> Grows? { None }\n    fn fixed(self) -> Fixed? { None }\n}\n";
+    for (method, expected) in [
+        ("grows", vec![(Code::InstantiationCycle, (25, 9))]),
+        ("fixed", vec![]),
+    ] {
+        let row = format!(
+            "{pair}fn go<R: Two>(r: R) {{\n    if let x = r.{method}() {{\n        go(x)\n    }}\n}}"
+        );
+        codes(&with_sources(&row), &expected);
+    }
+}
+
+/// An instantiation in the arguments of an associated type's interface is an instantiation of the
+/// type that holds it: `Nest<[T], X>` inside `X.Out` closes a cycle through `Nest`. The bound of
+/// `X` cannot hold, which is reported too.
+#[test]
+fn a_class_in_the_arguments_of_an_associated_type_should_close_a_cycle() {
+    let row = "interface Conv<A> {\n    type Out\n    fn conv(self) -> Out\n}\nclass Nest<T, X: Conv<Nest<[T], X>>> {\n    f: X.Out\n}";
+    codes(
+        &with_sources(row),
+        &[
+            (Code::NotConform, (5, 33)),
+            (Code::InstantiationCycle, (6, 8)),
+        ],
+    );
+}
+
+/// What a choice that names another associated type adds is that type's growth plus the depth at
+/// which the choice names the parameter, less the depth of the parameter in the target. The call
+/// that passes the item on shrinks by one through the conformance, so a growth of 1 closes no
+/// cycle and one of 2 does.
+#[test]
+fn a_choice_should_add_the_growth_of_the_associated_type_it_names() {
+    let two = "interface Two {\n    type A: Two\n    type B: Two\n    fn a(self) -> A?\n    fn poke(self)\n}\nclass Chain<T> {\n    value: T\n}\nfn go<S: Two>(s: S) {\n    if let x = s.a() {\n        x.poke()\n    }\n}\n";
+    // `A` names `B` at depth `edge` + 1 under the target's 1, and `B` grows by `direct`.
+    for (a, b, cycle) in [
+        // An edge of 0 and a growth of 1, an edge of 1 and a growth of 0: 1 in all.
+        ("Chain<T.B>", "Chain<Chain<T>>", false),
+        ("Chain<Chain<T.B>>", "Chain<T>", false),
+        // An edge of 0 and a growth of 2, an edge of 2 and a growth of 0: 2 in all.
+        ("Chain<T.B>", "Chain<Chain<Chain<T>>>", true),
+        ("Chain<Chain<Chain<T.B>>>", "Chain<T>", true),
+    ] {
+        let row = format!(
+            "{two}extend<T: Two> Chain<T>: Two {{\n    type A = {a}\n    type B = {b}\n    fn a(self) -> A? {{ None }}\n    fn poke(self) {{\n        go(self.value)\n    }}\n}}"
+        );
+        let expected = if cycle {
+            vec![(Code::InstantiationCycle, (12, 9))]
+        } else {
+            vec![]
+        };
+        codes(&with_sources(&row), &expected);
+    }
+}
+
+/// A method of a generic class has the class's parameters bound by its receiver, and checks the
+/// bound of its own parameter, which an associated type is written through, as soon as it is
+/// bound: one report, and none for the argument that waits. A parameter that no associated type
+/// is written through is checked with the others, and the argument that waits is still checked.
+#[test]
+fn a_method_should_check_the_bound_of_an_associated_types_parameter_first() {
+    let row = "extend<T: Marker> Wrap<T>: Source {\n    type Item = Tag\n    fn next(self) -> Item? { None }\n}\nclass Holder<S: Source> {\n    held: S\n    fn put<U: Source>(self, u: U, x: U.Item) -> i64 { 1 }\n    fn both<U: Source, V: Marker>(self, u: U, x: U.Item, v: V) -> i64 { 1 }\n    fn later<A, U: Source>(self, a: A, u: U, x: U.Item) -> i64 { 1 }\n}\nfn t() {\n    let node = Node(id: 1)\n    let h = Holder(held: Countdown(n: 1))\n    let a = h.put(Wrap(value: node), \"x\")\n    let b = h.both(Countdown(n: 1), \"y\", node)\n    let c = h.later(1, Wrap(value: node), \"z\")\n}";
+    codes(
+        &with_sources(row),
+        &[
+            (Code::NotConform, (14, 19)),
+            (Code::Mismatch, (15, 37)),
+            (Code::NotConform, (15, 42)),
+            (Code::NotConform, (16, 24)),
+        ],
+    );
+}

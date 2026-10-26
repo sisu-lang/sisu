@@ -670,17 +670,13 @@ impl Checker<'_> {
                 return (first, growth);
             }
         }
-        // Still growing: a cycle of positive weight. Each type it lengthens, and each that reaches
-        // one, is unbounded.
+        // Still growing: a cycle of positive weight. A type that a pass lengthens after that is on
+        // the cycle or reaches it, since a way that goes through no cycle is settled by now, so
+        // each such type is unbounded.
         let mut unbounded = vec![false; count];
         for _ in 0..=count {
             for from in relax(&mut growth) {
                 unbounded[from] = true;
-            }
-        }
-        for _ in 0..=count {
-            for &(from, to, _) in &edges {
-                unbounded[from] |= unbounded[to] && growth[to].is_some();
             }
         }
         for (g, _) in growth.iter_mut().zip(unbounded).filter(|&(_, u)| u) {
