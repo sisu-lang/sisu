@@ -57,6 +57,10 @@ thread_local! {
     pub(super) static EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many edges Bellman–Ford has relaxed on this thread.
     pub(super) static BELLMAN_FORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many nodes the search for a cycle has read to gather the nodes of the components.
+    pub(super) static GATHER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The nodes and the edges of the component that the last search for a cycle read.
+    pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 /// An instantiation, which a diagnostic writes as the program does.
@@ -287,9 +291,18 @@ impl Checker<'_> {
         // reported once.
         let mut reported = FxHashSet::default();
         let mut cycles = Vec::new();
+        // The nodes of each component with a negative weight, gathered in one pass.
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); nodes];
+        for (n, &k) in component.iter().enumerate() {
+            #[cfg(test)]
+            GATHER_STEPS.set(GATHER_STEPS.get() + 1);
+            if negative[k] {
+                members[k].push(n);
+            }
+        }
         for (k, &first) in growing.iter().enumerate() {
             if negative[k] {
-                if let Some(cycle) = positive_cycle(&graph, &out, &component, k) {
+                if let Some(cycle) = positive_cycle(&graph, &out, &component, k, &members[k]) {
                     cycles.push((None, cycle));
                 }
             } else if let Some(g) = first {
@@ -631,11 +644,11 @@ fn param_depths(ty: Type, count: usize) -> Vec<i64> {
     depths
 }
 
-/// A cycle of positive weight among the edges inside the component `k`, as the edges in order,
-/// if there is one: Bellman–Ford, the longest way to each node from all of them at once. The
-/// weights add up around a cycle that keeps making a way longer, and a pass that makes none
-/// ends the search. A node whose way a pass still lengthens after one pass for each node has a
-/// way that goes around such a cycle.
+/// A cycle of positive weight among the edges inside the component `k`, whose nodes are `nodes`,
+/// as the edges in order, if there is one: Bellman–Ford, the longest way to each node from all of
+/// them at once. The weights add up around a cycle that keeps making a way longer, and a pass
+/// that makes none ends the search. A node whose way a pass still lengthens after one pass for
+/// each node has a way that goes around such a cycle.
 ///
 /// This is an exception to `CODING_STANDARDS.md`'s "A pass is linear in the program" (user,
 /// 2026-10-25). The hubs' edges have negative weights, and no known algorithm finds a cycle of
@@ -648,8 +661,8 @@ fn positive_cycle(
     out: &[Vec<usize>],
     component: &[usize],
     k: usize,
+    nodes: &[usize],
 ) -> Option<Vec<usize>> {
-    let nodes: Vec<usize> = (0..out.len()).filter(|&n| component[n] == k).collect();
     // The place of each node of the component among them.
     let place: FxHashMap<usize, usize> = nodes.iter().enumerate().map(|(p, &n)| (n, p)).collect();
     // Each edge inside the component, as the edge and the places of its nodes.
@@ -659,6 +672,8 @@ fn positive_cycle(
         .filter(|&i| component[graph.edges[i].to] == k)
         .map(|i| (i, place[&graph.edges[i].from], place[&graph.edges[i].to]))
         .collect();
+    #[cfg(test)]
+    SEARCHED.set((nodes.len(), edges.len()));
     let mut length = vec![0_i64; nodes.len()];
     // The edge that gave each node its longest way so far.
     let mut last: Vec<Option<usize>> = vec![None; nodes.len()];

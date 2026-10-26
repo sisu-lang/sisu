@@ -34,6 +34,18 @@ struct Pending {
     index: usize,
 }
 
+/// An interface that the list of a class or an enum gets from another, when a block gave the type
+/// its conformance.
+struct Found {
+    holder: Holder,
+    receiver: Type,
+    inherited: (InterfaceId, tir::TypeArgs),
+    /// The listed interface that the entry is reached through, in the list.
+    at: Span,
+    /// The interface that inherits it, and where it writes the inheritance.
+    via: (InterfaceId, Span),
+}
+
 /// What a class or an enum lists: its holder, its type, and each interface with where it is
 /// written.
 type Listed = (Holder, Type, Vec<(Bound, Span)>);
@@ -76,15 +88,30 @@ impl Checker<'_> {
         // the closure of arguments may double at each level of inheritance, so the walk of each
         // listed interface stops at `BOUND_CLOSURE_LIMIT` entries and E0157 is reported at it.
         // The work follows the sum of the closures, which are at most the limit each.
+        let mut inherited_found = Vec::new();
         for (holder, receiver, roots) in &lists {
             let mut closure = Vec::new();
             // The listed interface through which each entry of `closure` is reached.
             let mut via = Vec::new();
+            // For each entry of `closure`: the entry that inherits it and where that writes the
+            // inheritance, or `None` for a listed interface.
+            let mut parents: Vec<Option<(usize, Span)>> = Vec::new();
             let mut seen = FxHashSet::default();
             let mut wide = false;
             for &(bound, at) in roots {
-                let walked =
-                    self.extend_closure(*receiver, &[bound], &mut closure, &mut seen, |_, _| {});
+                let mut reached = Vec::new();
+                let walked = self.extend_closure(
+                    *receiver,
+                    &[bound],
+                    &mut closure,
+                    &mut seen,
+                    |parent, written| reached.push(Some((parent, written))),
+                );
+                // A new root comes first, and the callback does not report it.
+                if closure.len() > parents.len() {
+                    reached.insert(0, None);
+                }
+                parents.extend(reached);
                 via.resize(closure.len(), at);
                 if walked.is_err() {
                     // The conformances of the list are unknown now: what the walk reached before
@@ -99,8 +126,19 @@ impl Checker<'_> {
             }
             // The listed interface at which the stopgap is reported, once.
             let mut stopped = FxHashSet::default();
-            for (&(interface, args), &at) in closure.iter().zip(&via) {
+            for (k, (&(interface, args), &at)) in closure.iter().zip(&via).enumerate() {
                 if find(&self.conformances, interface, *receiver, args).is_some() {
+                    // A block gave it: it holds under the conditions of the block, which the
+                    // list's own parameters must meet. Asked once every conformance is known.
+                    if let Some((parent, requires)) = parents[k] {
+                        inherited_found.push(Found {
+                            holder: *holder,
+                            receiver: *receiver,
+                            inherited: (interface, args),
+                            at,
+                            via: (closure[parent].0, requires),
+                        });
+                    }
                     continue;
                 }
                 // An inherited interface that takes arguments waits for Task 6, as a listed one.
@@ -130,6 +168,9 @@ impl Checker<'_> {
             .filter(|p| matches!(p.source, Source::Block(_)))
         {
             self.inherited_conformances(p);
+        }
+        for found in &inherited_found {
+            self.listed_inheritance(found);
         }
         for (interface, conformance) in self.conformances.iter() {
             for &method in &conformance.methods {
@@ -399,41 +440,66 @@ impl Checker<'_> {
                 }
                 let (parent, requires) = reached[k - 1];
                 let via = closure[parent].0;
-                checker.report_inherited(p, block, (interface, args), (via, requires));
+                checker.report_inherited(
+                    (p.target, p.at),
+                    Some(block),
+                    (interface, args),
+                    (via, requires),
+                );
             }
         });
     }
 
-    /// Reports that the type of the `extend` block `p`, the place `block` among the blocks, does
-    /// not conform to `inherited`, which the interface `via` inherits at `requires`. The type
-    /// has no conformance to it, or has one whose bounds fail under the block's conditions.
+    /// Reports an interface that the list of a class or an enum gets from another when the block
+    /// that gives it fails under the list's own parameters and bounds.
+    fn listed_inheritance(&mut self, found: &Found) {
+        let (params, bounds) = self.source_params(Source::Body(found.holder));
+        let (interface, args) = found.inherited;
+        self.with_body(Body::default(), |checker| {
+            checker.body.set_type_params(&params);
+            checker.body.set_bounds(0, bounds);
+            if !checker.conforms(found.receiver, interface, args) {
+                checker.report_inherited(
+                    (found.receiver, found.at),
+                    None,
+                    found.inherited,
+                    found.via,
+                );
+            }
+        });
+    }
+
+    /// Reports that `target` does not conform to `inherited`, which the interface `via` inherits
+    /// at `requires`, at `at` where the list or the `extend` block `block` writes the
+    /// conformance. The type has no conformance to it, or has one whose bounds fail under the
+    /// conditions of the list or the block.
     fn report_inherited(
         &mut self,
-        p: &Pending,
-        block: usize,
+        (target, at): (Type, Span),
+        block: Option<usize>,
         (interface, args): (InterfaceId, tir::TypeArgs),
         (via, requires): (InterfaceId, Span),
     ) {
         let (ty, inherited) = (
-            self.type_name(p.target),
+            self.type_name(target),
             self.interfaces[interface.0].name.name.to_string(),
         );
         let (mut extend, mut needs) = (None, None);
-        match find(&self.conformances, interface, p.target, args) {
+        match find(&self.conformances, interface, target, args) {
             // Following the advice would give `ConformsTwice`, so the report points at the bound
             // that the other conformance needs instead.
             Some((k, bound)) => needs = Some(self.failed_bound(interface, k, bound)),
             // shortcut: an inherited interface that takes arguments gets no help, as a block
             // cannot write a generic interface yet; Task 6 writes it with the arguments.
             None if args.get().is_empty() => {
-                extend = Some(self.extend_help(block, &ty, &inherited));
+                extend = block.map(|b| self.extend_help(b, &ty, &inherited));
             }
             None => {}
         }
         self.report(DiagnosticKind::NotConform {
             ty,
             interface: inherited,
-            at: p.at,
+            at,
             form: NotConformForm::Inherited {
                 via: self.interfaces[via.0].name.name.to_string(),
                 requires,

@@ -1,0 +1,25 @@
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+interface Ord2: Same {
+    fn less(self, other: Self) -> bool
+}
+
+class Stack<T>: Ord2 {
+    items: [T]
+
+    fn less(self, other: Self) -> bool {
+        true
+    }
+}
+
+extend<T: Ord2> Stack<T>: Same {
+    fn same(self, other: Self) -> bool {
+        true
+    }
+}
+
+fn main() {
+    print(Stack(items: [1]).items.len())
+}

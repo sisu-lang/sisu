@@ -2443,6 +2443,44 @@ fn an_inherited_conformance_should_hold_under_the_conditions_of_the_block() {
     ));
 }
 
+/// A class that lists an interface gets the interfaces it inherits from a block of its own, if
+/// the block's bounds hold for the class's parameters: the list meets them as a conformance in a
+/// block does.
+#[test]
+fn a_listed_conformance_should_hold_the_bounds_of_a_block_that_gives_an_inherited_one() {
+    let row = |class: &str, block: &str| {
+        with_shapes(&with_main(&format!(
+            "{ORD2}{class}\n{block}\nclass Node {{\n    id: i64\n}}"
+        )))
+    };
+    let body = "{\n    items: [T]\n    fn less(self, other: Self) -> bool { true }\n}";
+    let block = |bound: &str| {
+        format!(
+            "extend<T: {bound}> Stack<T>: Same {{\n    fn same(self, other: Self) -> bool {{ true }}\n}}"
+        )
+    };
+    // The block needs `T: Ord2` and the class gives none: reported at the listed interface, with
+    // a label on the bound the block needs and none on the help.
+    let src = row(&format!("class Stack<T>: Ord2 {body}"), &block("Ord2"));
+    assert_eq!(
+        found(&src),
+        [(Code::NotConform, (7, 17), vec![(1, 17), (11, 11)])],
+        "{src}"
+    );
+    // The same with a block that needs `T: Same`: the class lists no bound either.
+    let src = row(&format!("class Stack<T>: Ord2 {body}"), &block("Same"));
+    assert_eq!(
+        found(&src),
+        [(Code::NotConform, (7, 17), vec![(1, 17), (11, 11)])],
+        "{src}"
+    );
+    // The class gives what the block needs: clean.
+    clean(&row(
+        &format!("class Stack<T: Ord2>: Ord2 {body}"),
+        &block("Ord2"),
+    ));
+}
+
 /// The classes and functions the cycle rows share, after the row's line 1.
 const CYCLE_DECLS: &str = "interface First {\n    fn first(self)\n}\ninterface Run {\n    fn run(self)\n}\nclass Box<T> {\n    value: T\n}\nclass Done<T> {\n    value: T\n}\nextend<T> Done<T>: Run {\n    fn run(self) {}\n}\nfn dispatch<T: Run>(x: T) {\n    x.run()\n}\n";
 
@@ -2651,7 +2689,47 @@ fn a_cycle_in_a_large_component_should_cost_the_nodes_times_the_edges() {
     let found: Vec<_> = checked(&src).1.iter().map(Diagnostic::code).collect();
     assert_eq!(found, [Code::InstantiationCycle]);
     assert_eq!(cycle::EDGES.get(), 3 * N + 3);
-    assert_eq!(cycle::BELLMAN_FORD_STEPS.get(), (2 * N + 4) * (3 * N + 2));
+    // The contract of the search: at most one pass for each node and one more, of the edges inside
+    // the component. The search ran, and the size is the component's, not the graph's.
+    let (nodes, edges) = cycle::SEARCHED.get();
+    let steps = cycle::BELLMAN_FORD_STEPS.get();
+    assert!(nodes > N && edges > N, "{nodes} nodes, {edges} edges");
+    assert!(steps > 0, "the search should run");
+    assert!(
+        steps <= (nodes + 1) * edges,
+        "{steps} steps for {nodes} nodes and {edges} edges"
+    );
+}
+
+/// `n` interfaces that each have one conformance and one function, so that the graph holds `n`
+/// components of their own, each with a negative weight, searched on its own. Finding the nodes of
+/// a component reads the nodes once for all the components: an interface more gives the same few
+/// nodes more, not a pass over all of them.
+#[test]
+fn the_nodes_of_the_components_should_be_gathered_in_one_pass() {
+    let gathered = |n: usize| {
+        let mut src = String::new();
+        for i in 0..n {
+            write!(
+                src,
+                "interface R{i} {{\n    fn run(self)\n}}\nclass C{i}<T> {{\n    v: T\n}}\nextend<T: R{i}> C{i}<T>: R{i} {{\n    fn run(self) {{ go{i}(self.v) }}\n}}\nfn go{i}<U: R{i}>(x: U) {{\n    x.run()\n}}\n"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src += "fn main() {}";
+        cycle::GATHER_STEPS.set(0);
+        cycle::BELLMAN_FORD_STEPS.set(0);
+        clean(&src);
+        // Each component is searched: it reads at least one edge.
+        assert!(cycle::BELLMAN_FORD_STEPS.get() >= n);
+        cycle::GATHER_STEPS.get()
+    };
+    let (small, large) = (gathered(100), gathered(200));
+    assert!(small > 0, "the nodes should be gathered");
+    assert!(
+        large <= 2 * small,
+        "{small} nodes read for 100 interfaces, {large} for 200"
+    );
 }
 
 /// A cycle with two steps that grow is labeled at the first in source order, whichever of them is

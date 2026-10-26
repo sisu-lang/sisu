@@ -1,0 +1,14 @@
+error[E0154]: `Stack<T>` does not conform to `Same`
+  --> E0154-inherited-listed.sisu:9:17
+   |
+ 5 | interface Ord2: Same {
+   |                 ---- `Ord2` requires `Same`
+...
+ 9 | class Stack<T>: Ord2 {
+   |                 ^^^^
+...
+17 | extend<T: Ord2> Stack<T>: Same {
+   |           ---- this conformance needs `T: Ord2`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

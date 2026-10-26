@@ -278,6 +278,11 @@ impl<'a> Checker<'_> {
     /// hold a method of the name are read, and a block that extends one instantiation meets the
     /// others through a table, so the work follows the methods and not the pairs of blocks, but
     /// for a block with type parameters, which meets each earlier block of the name.
+    ///
+    /// That is the third recorded exception to "A pass is linear in the program" (user,
+    /// 2026-10-25; ruling F9): `n` plain blocks with parameters that hold a method of one name
+    /// make `n` overlap tests for the last, `n²` in all. An index on the whole target would
+    /// remove it, and waits until a program needs it.
     pub(super) fn extension_clashes(&mut self) {
         let mut reports = Vec::new();
         // The first field of each name of the classes that a block holds a method of, indexed once.
@@ -317,6 +322,8 @@ impl<'a> Checker<'_> {
                         let hits = [universal, exact.get(&ty).copied(), overlapping];
                         hits.into_iter().flatten().min()
                     }
+                    // The recorded exception of the doc comment: the block meets every earlier
+                    // definition of the name.
                     Some((ty, params)) => (0..i).find(|&g| match defs[g].2 {
                         None => true,
                         Some((other, others)) => overlap(&[ty], params, &[other], others).is_some(),

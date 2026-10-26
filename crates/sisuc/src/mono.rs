@@ -1180,13 +1180,17 @@ mod tests {
         let (interface, _) = method.conformance.expect("a conformance's method");
         method.conformance = Some((interface, TypeArgs::intern(&[deep])));
         let program = instantiate(program);
-        let name = (program.functions.iter())
-            .map(|f| f.name.as_str())
-            .find(|name| name.starts_with("C.Label<"))
+        let method = (program.functions.iter())
+            .find(|f| f.name.starts_with("C.Label<"))
             .expect("the method should be named");
+        let name = method.name.as_str();
         assert!(name.contains("...") && name.ends_with("#0"), "{name}");
-        let whole = program.functions.iter().find(|f| f.name == "main");
-        assert!(whole.is_some_and(|f| f.method.is_none()));
+        // The name is whole: the output prints it, `#0` included, not the parts it was cut from.
+        assert!(method.method.is_none());
+        assert!(
+            program.to_string().contains(&format!("(fn {name} (")),
+            "{program}"
+        );
     }
 
     /// The unused generic class comes before `C`, so `C` has another id in the output than in the

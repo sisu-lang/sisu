@@ -3,20 +3,48 @@
 // `T`, `Stack<[T]>`, `Stack<i64>` and `Stack<f64>` alone, with counted `string`s inside
 // WHEN the stacks and pairs call the methods of those blocks, a generic function compares
 // `Pair<Circle>` and `Pair<Pair<Circle>>` through the bound `T: Same`, and a call passes the
-// result of a block's generic method on to a function that waits for it
+// result of a block's generic method on to a function that waits for it, and a `Rack<T: Ord2>`
+// that lists `Ord2` and gets its inherited `Same` from a block that needs `T: Ord2`
 // THEN each call runs the method of the instantiation it is called for, the conditional
-// conformance holds two levels deep, and every string is released once
+// conformance holds two levels deep, the inherited one holds under the bound of the list, and
+// every string is released once
 interface Same {
     fn same(self, other: Self) -> bool
 }
 
-class Circle: Same {
+interface Ord2: Same {
+    fn less(self, other: Self) -> bool
+}
+
+class Circle: Ord2 {
     tag: string
     r: f64
 
     fn same(self, other: Circle) -> bool {
         self.r == other.r
     }
+
+    fn less(self, other: Circle) -> bool {
+        self.r < other.r
+    }
+}
+
+class Rack<T: Ord2>: Ord2 {
+    items: [T]
+
+    fn less(self, other: Self) -> bool {
+        self.items[0].less(other.items[0])
+    }
+}
+
+extend<T: Ord2> Rack<T>: Same {
+    fn same(self, other: Self) -> bool {
+        other.items[0].less(self.items[0]) == false
+    }
+}
+
+fn order<T: Ord2>(x: T) -> bool {
+    x.same(x)
 }
 
 class Stack<T>: Same {
@@ -103,5 +131,7 @@ fn main() {
     let deep = Pair(first: Pair(first: a, second: b), second: Pair(first: b, second: a))
     print(agree(deep, deep))                      // true
     print(Pair(first: a, second: c).same(Pair(first: a, second: c)))   // true
+    print(order(Rack(items: [a])))                // true
+    print(Rack(items: [c]).same(Rack(items: [a])))   // false
     print(a.tag)                                  // a1
 }

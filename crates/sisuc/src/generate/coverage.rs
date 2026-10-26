@@ -464,6 +464,13 @@ struct Walk {
     tir_func: String,
     /// The methods of the `extend` blocks over a generic type, by `FuncId`.
     generic_blocks: FxHashSet<usize>,
+    /// The conformances that hold when a bound of the block does: the class or enum that the block
+    /// extends and the interface it conforms to.
+    conditional: FxHashSet<(String, String)>,
+    /// The functions, classes and enums of the typed tree, by id.
+    function_names: Vec<String>,
+    class_names: Vec<String>,
+    enum_names: Vec<String>,
 }
 
 impl Walk {
@@ -487,6 +494,7 @@ impl Walk {
         self.compounds.clear();
         self.counted.clear();
         self.bounded.clear();
+        self.conditional.clear();
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -627,10 +635,18 @@ impl Walk {
         {
             self.mark("reach: an `extend` block extends one instantiation");
         }
-        if extend.interface.is_some() && extend.type_params.iter().any(|p| !p.bounds.is_empty()) {
-            self.mark("reach: a conditional conformance holds through a bound");
-        }
         if let Some(interface) = &extend.interface {
+            // Marked where a call meets a bound with it (`tir_call`), not here.
+            let head = match &extend.target.kind {
+                ast::TypeKind::Name(name) => Some(name.as_str().to_string()),
+                ast::TypeKind::Applied(applied) => Some(applied.name.as_str().to_string()),
+                _ => None,
+            };
+            if extend.type_params.iter().any(|p| !p.bounds.is_empty())
+                && let Some(head) = head
+            {
+                self.conditional.insert((head, interface.to_string()));
+            }
             self.mark("reach: a conformance is an `extend` block");
             self.type_expr(interface);
         }
@@ -1636,6 +1652,9 @@ impl Walk {
             self.option_shaped(id, e);
         }
         self.interface_names = program.interfaces.iter().map(|i| i.name.clone()).collect();
+        self.function_names = program.functions.iter().map(|f| f.name.clone()).collect();
+        self.class_names = program.classes.iter().map(|c| c.name.clone()).collect();
+        self.enum_names = program.enums.iter().map(|e| e.name.clone()).collect();
         // A method of an `extend` block over a generic type is named for the type it extends,
         // `G0<T>.top`, and a method of a class for its class alone.
         self.generic_blocks = (program.functions.iter().enumerate())
@@ -1651,6 +1670,24 @@ impl Walk {
             }
             self.tir_block(&function.body);
         }
+    }
+
+    /// Whether a call of the function `func` gives a type argument to a bound that the type meets
+    /// through a conformance of a block with bounds.
+    fn meets_conditional_bound(&self, func: usize, types: &[Type]) -> bool {
+        let Some(bounds) = self.bounded.get(&self.function_names[func]) else {
+            return false;
+        };
+        types.iter().any(|ty| {
+            let name = match ty.kind() {
+                TypeKind::Class(id, _) => &self.class_names[id.0],
+                TypeKind::Enum(id, _) => &self.enum_names[id.0],
+                _ => return false,
+            };
+            bounds
+                .iter()
+                .any(|bound| self.conditional.contains(&(name.clone(), bound.clone())))
+        })
     }
 
     /// Records an enum `id` of two variants, one with no payload and one with one field. The
@@ -1892,6 +1929,9 @@ impl Walk {
                 self.mark("tir::ExprKind::Call");
                 if self.generic_blocks.contains(&func.0) {
                     self.mark("reach: a generic `extend` block is called");
+                }
+                if self.meets_conditional_bound(func.0, types.get()) {
+                    self.mark("reach: a conditional conformance holds through a bound");
                 }
                 if types
                     .get()
@@ -5490,11 +5530,28 @@ fn the_walk_should_mark_what_extension_holds() {
         ),
         [true, false, false]
     );
+    // A conditional conformance that nothing meets a bound with is declared, not used.
+    let block = "extend<T: Named> R<T>: Named {\n    fn name(self) -> string { \"r\" }\n}\nfn show<T: Named>(x: T) -> string {\n    x.name()\n}\nfn keep<T>(x: T) -> T {\n    x\n}\n";
     assert_eq!(
-        marked(
-            "extend<T: Named> R<T>: Named {\n    fn name(self) -> string { \"r\" }\n}\nfn main() {}\n"
-        ),
+        marked(&format!("{block}fn main() {{}}\n")),
+        [false, false, false]
+    );
+    // A bound met by the conditional conformance, and not by the class's own, or not by a bound.
+    assert_eq!(
+        marked(&format!(
+            "{block}fn main() {{\n    print(show(R(v: C())))\n}}\n"
+        )),
         [false, true, false]
+    );
+    assert_eq!(
+        marked(&format!("{block}fn main() {{\n    print(show(C()))\n}}\n")),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{block}fn main() {{\n    print(keep(R(v: C())).v.name())\n}}\n"
+        )),
+        [false, false, false]
     );
     assert_eq!(
         marked("extend R<i64> {\n    fn solo(self) -> i64 { 1 }\n}\nfn main() {}\n"),
