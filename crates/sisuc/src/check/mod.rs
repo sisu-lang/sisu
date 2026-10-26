@@ -94,6 +94,9 @@ enum Holder {
     Enum(tir::EnumId),
 }
 
+/// The type parameters of a declaration with the bounds of each.
+type ParamBounds = (Vec<Symbol>, Vec<Vec<Bound>>);
+
 /// A type of `None` is `Error`: its error is reported where the signature names it.
 struct Signature {
     /// `f`, or `P.m` for a method.
@@ -113,6 +116,9 @@ struct Signature {
     header: Span,
     /// The interface, with its arguments, of the `extend` block that declares a method.
     conformance: Option<(tir::InterfaceId, TypeArgs)>,
+    /// The place among `Checker.extensions` of the `extend` block that declares a method, if the
+    /// checker takes the block: its target and bounds are the owner's.
+    extension: Option<usize>,
 }
 
 /// What a function, class, constant or method name stands for: the first intact item of that
@@ -324,6 +330,9 @@ thread_local! {
     pub(super) static CLOSURE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many fields of a class the check for a method named like a field has indexed.
     pub(super) static FIELDS_INDEXED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `conforms` has looked for the conformance of a class or an enum, not
+    /// counting an answer it kept.
+    pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -373,6 +382,14 @@ struct Checker<'src> {
     candidates: Vec<(tir::FuncId, tir::InterfaceId)>,
     /// Every conformance of a class or an enum to an interface.
     conformances: tir::Conformances,
+    /// The type parameters of each conformance that has bounded ones, with their bounds, by
+    /// interface and place among the interface's: the class's or the block's.
+    conformance_bounds: FxHashMap<(tir::InterfaceId, usize), ParamBounds>,
+    /// The answers of `conforms` for a type with no type parameter, which no body changes.
+    conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
+    /// The place among `extensions` of the first block that covers the receiver of the call being
+    /// found and whose bounds fail, when `conforming_methods` finds no method for it.
+    failed_block: Option<usize>,
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
@@ -474,6 +491,9 @@ struct Body {
     /// The requirements of the bounds of each type parameter by place and name, once indexed
     /// (`required`). Both caches change with the bounds, and a body's are cleared with it.
     required: FxHashMap<usize, FxHashMap<Symbol, Vec<Required>>>,
+    /// The answers of `conforms` for a type that holds a type parameter: they change with the
+    /// bounds, and a body's are cleared with them.
+    conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// Where in `Checker.scopes` the type parameters now in scope are, once a check waits.
     scope: Option<usize>,
     /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
@@ -585,6 +605,7 @@ impl Body {
         self.conforming.clear();
         self.wide.clear();
         self.required.clear();
+        self.conformed.clear();
         self.scope = None;
     }
 
@@ -815,6 +836,9 @@ impl<'src> Checker<'src> {
             broken_extension_methods: FxHashSet::default(),
             candidates: Vec::new(),
             conformances: tir::Conformances::default(),
+            conformance_bounds: FxHashMap::default(),
+            conformed: FxHashMap::default(),
+            failed_block: None,
             lowered_enums: Vec::new(),
             written: None,
             constants: FxHashMap::default(),
@@ -1205,6 +1229,7 @@ impl Checker<'_> {
             span: f.name.span,
             header: Span::new(f.span.start(), f.body.span.start()),
             conformance: None,
+            extension: None,
         });
     }
 
@@ -1466,11 +1491,8 @@ impl Checker<'_> {
         let sig = &self.signatures[id.0];
         let (name, param_types, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
         let conformance = sig.conformance;
-        let owner_params = match owner.map(Type::kind) {
-            Some(TypeKind::Class(class, _)) => self.classes[class.0].type_params.len(),
-            Some(TypeKind::Enum(e, _)) => self.enums[e.0].type_params.len(),
-            _ => 0,
-        };
+        // The parameters of a method's owner: its class's, or its `extend` block's.
+        let owner_params = sig.type_params.len() - sig.own;
         let mut fresh = Body {
             owner: Some(Owner::Func(id)),
             ret,
@@ -1480,8 +1502,11 @@ impl Checker<'_> {
         fresh.set_type_params(&sig.type_params);
         // The method's own bounds come after the places of its owner's parameters, which have none
         // when the class or enum is not bounded.
-        let mut bounds = self.owner_bounds(owner);
-        bounds.resize(sig.type_params.len() - sig.own, Vec::new());
+        let mut bounds = match sig.extension {
+            Some(at) => self.extensions[at].bounds.clone(),
+            None => self.owner_bounds(owner),
+        };
+        bounds.resize(owner_params, Vec::new());
         bounds.extend(sig.bounds.iter().cloned());
         fresh.set_bounds(0, bounds);
         let ((params, body), state) = self.with_body(fresh, |c| {
@@ -1552,6 +1577,7 @@ impl Checker<'_> {
             name,
             owner,
             conformance,
+            method: owner.map(|_| f.name.name.to_string()),
             type_params,
             owner_params,
             params,

@@ -3,18 +3,28 @@
 
 use rustc_hash::FxHashMap;
 
+use super::generic::named_params;
 use super::interface::Bound;
 use super::{Checker, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
 use crate::ast;
+use crate::conformance::{bind, overlap};
 use crate::diagnostic::{CannotExtendForm, Earlier, Owner as MethodOwner};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
+/// A definition of a method name, among those of a class or an enum: where its name is, its
+/// kind, and the target and type parameters of the block that holds it; none for the body.
+type Def = (Span, Definition, Option<(Type, usize)>);
+
 /// An `extend` block whose target is a class or an enum.
 pub(super) struct Extension {
     pub(super) holder: Holder,
     pub(super) target: Type,
+    /// The block's type parameters, which are the `Param`s of `target`, numbered from 0.
+    pub(super) type_params: Vec<Symbol>,
+    /// The bounds of each of `type_params`.
+    pub(super) bounds: Vec<Vec<Bound>>,
     /// The interface of an `extend T: I` block, and where it is written.
     pub(super) interface: Option<(Bound, Span)>,
     /// The first method of each name.
@@ -38,7 +48,7 @@ impl<'a> Checker<'_> {
     ) {
         let params = self.type_params(&[], &extend.type_params);
         self.body.set_type_params(&params);
-        self.declare_bounds(0, Vec::new(), &extend.type_params);
+        let bounds = self.declare_bounds(0, Vec::new(), &extend.type_params);
         let target = self.extend_target(&extend.target);
         let interface =
             (extend.interface.as_ref()).map(|ty| self.bound(ty).map(|bound| (bound, ty.bare)));
@@ -46,19 +56,13 @@ impl<'a> Checker<'_> {
             // Task 7 takes an associated type.
             self.unsupported_at(choice.name.span);
         }
-        // A target with type arguments, and an interface that takes some, wait for Tasks 5 and 6.
-        let generic_target = target.is_some_and(|ty| !takes_none(ty));
+        // An interface that takes type arguments waits for Task 6.
         let generic_interface = matches!(interface, Some(Some((b, _))) if !b.args.get().is_empty());
-        if generic_target {
-            self.unsupported(&extend.target);
-        }
         if generic_interface && let Some(ty) = &extend.interface {
             self.unsupported(ty);
         }
-        // A target that takes no arguments names no type parameter of the block.
-        let unused = target.is_some() && !generic_target && self.unused_params(extend);
-        let failed =
-            generic_target || generic_interface || unused || matches!(interface, Some(None));
+        let unused = target.is_some_and(|target| self.unused_params(extend, target));
+        let failed = generic_interface || unused || matches!(interface, Some(None));
         let usable = target.filter(|_| !failed);
         let receiver = usable.unwrap_or(UNKNOWN);
         let holder = usable.and_then(holder_of);
@@ -79,7 +83,10 @@ impl<'a> Checker<'_> {
                     .push((at, func));
             }
             let signature = format!("{name}.{}", method.name.name);
-            self.signature(method, signature, &extend.type_params, Vec::new());
+            self.signature(method, signature, &extend.type_params, bounds.clone());
+            if usable.is_some() {
+                self.signatures[func.0].extension = Some(at);
+            }
             if let Some(Some((bound, _))) = interface {
                 self.signatures[func.0].conformance = Some((bound.interface, bound.args));
             }
@@ -106,6 +113,8 @@ impl<'a> Checker<'_> {
             self.extensions.push(Extension {
                 holder,
                 target,
+                type_params: params,
+                bounds,
                 interface: interface.flatten(),
                 methods,
                 duplicate: false,
@@ -117,18 +126,81 @@ impl<'a> Checker<'_> {
         }
     }
 
-    /// Reports each type parameter of `extend`, whose target takes no type arguments and so names
-    /// none. Whether there was one. The fix takes the list out, when it holds one parameter that
-    /// the rest of the block does not name, and no comment is in it.
-    fn unused_params(&mut self, extend: &ast::Extend) -> bool {
+    /// What the type parameters of the block `extension` stand for when its target covers `ty`.
+    /// `None` when it does not cover `ty`. Its bounds are not checked.
+    pub(super) fn covers(&self, extension: usize, ty: Type) -> Option<tir::TypeArgs> {
+        let ext = &self.extensions[extension];
+        if ext.type_params.is_empty() {
+            return (ext.target == ty).then_some(tir::TypeArgs::NONE);
+        }
+        bind(ext.target, ext.type_params.len(), ty)
+    }
+
+    /// The type arguments of the owner of the method `func`, which a call on a receiver of type
+    /// `ty` gives its first type parameters: its class's or enum's, or what the parameters of
+    /// its `extend` block stand for.
+    pub(super) fn owner_args(&self, func: tir::FuncId, ty: Type) -> tir::TypeArgs {
+        if let Some(at) = self.signatures[func.0].extension {
+            return self.covers(at, ty).unwrap_or(tir::TypeArgs::NONE);
+        }
+        match ty.kind() {
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args,
+            _ => tir::TypeArgs::NONE,
+        }
+    }
+
+    /// Whether the bounds of the block `extension` hold for `stands`, what its type parameters
+    /// stand for.
+    pub(super) fn block_holds(&mut self, extension: usize, stands: tir::TypeArgs) -> bool {
+        self.first_failed_bound(extension, stands).is_none()
+    }
+
+    /// The first bound of the block `extension` that fails for `stands`, as the place of its type
+    /// parameter and the bound.
+    fn first_failed_bound(
+        &mut self,
+        extension: usize,
+        stands: tir::TypeArgs,
+    ) -> Option<(usize, Bound)> {
+        if self.extensions[extension].bounds.iter().all(Vec::is_empty) {
+            return None;
+        }
+        let bounds = self.extensions[extension].bounds.clone();
+        for (i, bounds) in bounds.iter().enumerate() {
+            for &b in bounds {
+                if !self.conforms(stands.get()[i], b.interface, b.args.subst(stands.get())) {
+                    return Some((i, b));
+                }
+            }
+        }
+        None
+    }
+
+    /// Reports the first bound of the block `extension` that fails for a receiver of type `ty`,
+    /// at the call that starts at `span`: the receiver's type arguments do not meet it.
+    pub(super) fn report_block_bound(&mut self, extension: usize, ty: Type, span: Span) {
+        let stands = self
+            .covers(extension, ty)
+            .expect("a block that fails its bounds should cover the receiver");
+        if let Some((i, bound)) = self.first_failed_bound(extension, stands) {
+            self.check_bound(span, stands.get()[i], bound, stands.get());
+        }
+    }
+
+    /// Reports each type parameter of `extend` that its target, `target`, does not name. The fix
+    /// takes the list out, when it holds one parameter that the rest of the block does not name,
+    /// and no comment is in it. Whether there was one.
+    fn unused_params(&mut self, extend: &ast::Extend, target: Type) -> bool {
         let params = &extend.type_params;
-        let target = extend.target.to_string();
+        let named = named_params(std::iter::once(Some(target)), params.len());
+        let written = extend.target.to_string();
         // The text from `extend` to the target, which the fix writes as one space.
         let header = Span::new(
             extend.span.start() + "extend".len(),
             extend.target.span.start(),
         );
-        for param in params {
+        let mut unused = false;
+        for (param, _) in params.iter().zip(&named).filter(|(_, named)| !**named) {
             let remove = (params.len() == 1 && !self.names_in_block(extend, param.name.name))
                 .then_some(header)
                 .filter(|header| !self.comment_in(&[header.range()]));
@@ -136,12 +208,13 @@ impl<'a> Checker<'_> {
                 written: param.name.name.to_string(),
                 at: param.name.span,
                 form: CannotExtendForm::Unused {
-                    target: target.clone(),
+                    target: written.clone(),
                     remove,
                 },
             });
+            unused = true;
         }
-        !params.is_empty()
+        unused
     }
 
     /// Whether `name` is written in `extend` after its type parameters, outside strings and
@@ -197,12 +270,13 @@ impl<'a> Checker<'_> {
     }
 
     /// Reports each method that a class or an enum holds in its body and in plain `extend`
-    /// blocks, or in two plain blocks, by one name, and each plain block's method named like a
-    /// field or a variant. They share a namespace; the one that starts last is the one reported.
-    /// The methods of a conformance block are another namespace: the block's. Only the blocks that
-    /// hold a method of the name are read, so the work follows the methods and not the pairs of
-    /// blocks. The targets of the plain blocks of one class or enum overlap, as they cannot name
-    /// type arguments yet.
+    /// blocks, or in two plain blocks whose targets overlap, by one name, and each plain block's
+    /// method named like a field or a variant. They share a namespace; the one that starts last
+    /// is the one reported, against the first earlier one that covers a type with it. The
+    /// methods of a conformance block are another namespace: the block's. Only the blocks that
+    /// hold a method of the name are read, and a block that extends one instantiation meets the
+    /// others through a table, so the work follows the methods and not the pairs of blocks, but
+    /// for a block with type parameters, which meets each earlier block of the name.
     pub(super) fn extension_clashes(&mut self) {
         let mut reports = Vec::new();
         // The first field of each name of the classes that a block holds a method of, indexed once.
@@ -212,26 +286,63 @@ impl<'a> Checker<'_> {
             let plain = list
                 .iter()
                 .filter(|&&(at, _)| self.extensions[at].interface.is_none());
-            // (start, kind, name's span) of each definition of the name.
-            let mut defs: Vec<(Span, Definition)> = self
+            // Each definition of the name: where it is, its kind, and the target it covers, with
+            // its parameters. The body's has none: it covers every instantiation.
+            let mut defs: Vec<Def> = self
                 .body_definition(&mut fields, holder, name)
                 .into_iter()
+                .map(|(span, kind)| (span, kind, None))
                 .collect();
-            defs.extend(plain.map(|&(_, f)| (self.signatures[f.0].span, Definition::Method)));
-            defs.sort_by_key(|(span, _)| span.start());
-            let Some(&(first, first_kind)) = defs.first() else {
-                continue;
-            };
-            for &(span, kind) in &defs[1..] {
-                reports.push(super::defined_twice(
-                    kind,
-                    &ast::Ident { name, span },
-                    Earlier::At {
-                        span: first,
-                        kind: first_kind,
-                        owner: Some(owner.clone()),
-                    },
-                ));
+            defs.extend(plain.map(|&(at, f)| {
+                let ext = &self.extensions[at];
+                let target = Some((ext.target, ext.type_params.len()));
+                (self.signatures[f.0].span, Definition::Method, target)
+            }));
+            defs.sort_by_key(|(span, ..)| span.start());
+            // The first earlier definition, the first of each exact target, and the places of
+            // the earlier ones that have parameters.
+            let mut exact: FxHashMap<Type, usize> = FxHashMap::default();
+            let mut generic: Vec<usize> = Vec::new();
+            let mut universal = None;
+            for (i, &(span, kind, target)) in defs.iter().enumerate() {
+                let earlier = match target {
+                    None => (i > 0).then_some(0),
+                    Some((ty, 0)) => {
+                        let overlapping = generic.iter().copied().find(|&g| {
+                            let Some((other, params)) = defs[g].2 else {
+                                return false;
+                            };
+                            overlap(&[ty], 0, &[other], params).is_some()
+                        });
+                        let hits = [universal, exact.get(&ty).copied(), overlapping];
+                        hits.into_iter().flatten().min()
+                    }
+                    Some((ty, params)) => (0..i).find(|&g| match defs[g].2 {
+                        None => true,
+                        Some((other, others)) => overlap(&[ty], params, &[other], others).is_some(),
+                    }),
+                };
+                match target {
+                    None => {
+                        universal.get_or_insert(i);
+                    }
+                    Some((ty, 0)) => {
+                        exact.entry(ty).or_insert(i);
+                    }
+                    Some(_) => generic.push(i),
+                }
+                if let Some(first) = earlier {
+                    let (first, first_kind, _) = defs[first];
+                    reports.push(super::defined_twice(
+                        kind,
+                        &ast::Ident { name, span },
+                        Earlier::At {
+                            span: first,
+                            kind: first_kind,
+                            owner: Some(owner.clone()),
+                        },
+                    ));
+                }
             }
         }
         for report in reports {
@@ -283,14 +394,6 @@ impl<'a> Checker<'_> {
             }
         }
     }
-}
-
-/// Whether the class or enum type `ty` takes no type arguments.
-fn takes_none(ty: Type) -> bool {
-    !matches!(
-        ty.kind(),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) if !args.get().is_empty()
-    )
 }
 
 /// The class or enum that `ty` is.

@@ -4,6 +4,7 @@
 use std::fmt::Write as _;
 
 use super::*;
+use crate::check::cycle;
 use crate::check::interface::Bound;
 
 /// The interfaces and classes the rows name, and an empty `main`, after the line a row tests,
@@ -997,15 +998,15 @@ fn an_extend_target_that_is_no_class_or_enum_should_be_reported() {
             "interface Plain {}\nclass Circle {\n    r: f64\n}\nextend Circle: Plain {\n    type Item = i64\n}",
             vec![(Code::UnknownType, (6, 10))],
         ),
-        // The methods of a block that failed for its interface, its generic target or its
+        // The methods of a block that failed for its interface, its unused parameter or its
         // generic interface are not checked.
         (
             "class Circle {\n    r: f64\n}\nextend Circle: Missing {\n    fn grow(self) {\n        let b: bool = 1\n    }\n}",
             vec![(Code::UnknownType, (4, 16))],
         ),
         (
-            "class Pile<T> {\n    items: [T]\n}\nextend<T> Pile<T> {\n    fn f(self) {\n        let b: bool = 1\n    }\n}",
-            vec![(Code::UnknownType, (4, 11))],
+            "class Pile<T> {\n    items: [T]\n}\nextend<U> Pile<i64> {\n    fn f(self) {\n        let b: bool = 1\n    }\n}",
+            vec![(Code::CannotExtend, (4, 8))],
         ),
         (
             "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Convert<i64> {\n    fn convert(self) -> i64 {\n        let b: bool = 1\n        1\n    }\n}",
@@ -1088,31 +1089,11 @@ fn mut_self_in_an_extend_block_should_be_reported_as_in_a_declaration() {
     );
 }
 
-/// A type with parameters and an interface that takes some wait for a later task, and report the
-/// name they cannot handle yet.
+/// An interface that takes type parameters waits for a later task, and reports the name it cannot
+/// handle yet.
 #[test]
-fn generic_conformances_should_report_the_name_they_cannot_take_yet() {
+fn generic_interfaces_should_report_the_name_they_cannot_take_yet() {
     for (row, expected) in [
-        (
-            "class Pile<T> {\n    items: [T]\n}\nextend<T> Pile<T> {\n}",
-            vec![(Code::UnknownType, (4, 11))],
-        ),
-        (
-            "class Pile<T> {\n    items: [T]\n}\nextend Pile<i64> {\n}",
-            vec![(Code::UnknownType, (4, 8))],
-        ),
-        (
-            "enum Tree<T> {\n    Leaf\n}\nextend<T> Tree<T> {\n}",
-            vec![(Code::UnknownType, (4, 11))],
-        ),
-        (
-            "class Pile<T>: Same {\n    items: [T]\n}",
-            vec![(Code::UnknownType, (1, 16))],
-        ),
-        (
-            "enum Tree<T>: Same {\n    Leaf\n}",
-            vec![(Code::UnknownType, (1, 15))],
-        ),
         (
             "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Convert<i64> {\n    fn convert(self) -> i64 { 1 }\n}",
             vec![(Code::UnknownType, (7, 16))],
@@ -1377,10 +1358,14 @@ fn an_extend_parameter_that_its_target_does_not_name_should_be_reported() {
             "extend<T, U> C: Named {\n    fn name(self) -> string { \"c\" }\n}",
             vec![(Code::CannotExtend, (4, 8)), (Code::CannotExtend, (4, 11))],
         ),
-        // A target with arguments waits for Task 5, and reports that alone.
+        // A target with arguments names the parameters it holds, and no others.
         (
             "class Pile<V> {\n    items: [V]\n}\nextend<T> Pile<i64> {\n}",
-            vec![(Code::UnknownType, (7, 11))],
+            vec![(Code::CannotExtend, (7, 8))],
+        ),
+        (
+            "class Pile<V> {\n    items: [V]\n}\nextend<T, U> Pile<U> {\n}",
+            vec![(Code::CannotExtend, (7, 8))],
         ),
     ] {
         codes(
@@ -2292,4 +2277,307 @@ fn bound_checks_that_wait_should_set_up_their_scope_once() {
         assert_eq!(steps(16, class), 7 * 16 + 6);
         assert_eq!(steps(32, class), 7 * 32 + 6);
     }
+}
+
+/// The classes the generic extension rows share, and an empty `main` for a row that has none.
+const GENERIC_DECLS: &str = "class Stack<T>: Same {\n    items: [T]\n    fn same(self, other: Self) -> bool { self.items.len() == other.items.len() }\n}\nclass Pair<T> {\n    first: T\n    second: T\n}\nclass Circle: Same {\n    r: f64\n    fn same(self, other: Circle) -> bool { self.r == other.r }\n}\nclass Node {\n    id: i64\n}\n";
+
+/// `row`, after the classes of `GENERIC_DECLS`, then the interfaces. A row's positions are its own
+/// lines, counted from the line after the classes: `GENERIC_LINES` lines.
+fn with_generic(row: &str) -> String {
+    with_shapes(&with_main(&format!("{GENERIC_DECLS}{row}")))
+}
+
+/// The lines of `GENERIC_DECLS`.
+const GENERIC_LINES: usize = 15;
+
+/// A block that extends every instantiation of a class, one instantiation, and an instantiation
+/// that holds a type parameter; a conformance that holds when the arguments conform; the blocks
+/// meet at a call on any instantiation they cover.
+#[test]
+fn generic_extension_should_check_clean() {
+    for row in [
+        // `Stack<T>` conforms in its body; a block for every `T` is called on two instantiations.
+        "extend<T> Stack<T> {\n    fn top(self) -> T? {\n        if self.items.len() == 0 { None } else { self.items[0] }\n    }\n}\nfn main() {\n    print(Stack(items: [1]).top() ?? 0)\n    print(Stack(items: [\"a\"]).top() ?? \"\")\n}",
+        // A block for one instantiation.
+        "extend Stack<i64> {\n    fn total(self) -> i64 { self.items.sum() }\n}\nfn main() {\n    print(Stack(items: [1, 2]).total())\n}",
+        // A conformance that holds when `T` conforms, used through a bound and two levels deep.
+        "extend<T: Same> Pair<T>: Same {\n    fn same(self, other: Self) -> bool {\n        self.first.same(other.first) && self.second.same(other.second)\n    }\n}\nfn agree<T: Same>(a: T, b: T) -> bool { a.same(b) }\nfn main() {\n    let c = Circle(r: 1.0)\n    let p = Pair(first: c, second: c)\n    print(agree(p, p))\n    print(agree(Pair(first: p, second: p), Pair(first: p, second: p)))\n    print(p.same(p))\n}",
+        // A block whose target holds the parameter inside an array.
+        "extend<T> Stack<[T]> {\n    fn flat(self) -> [T] { self.items[0] }\n}\nfn main() {\n    print(Stack(items: [[1], [2]]).flat().len())\n}",
+        // Two instantiations, each with a method of one name.
+        "extend Stack<i64> {\n    fn sum2(self) -> i64 { self.items.sum() * 2 }\n}\nextend Stack<f64> {\n    fn sum2(self) -> f64 { self.items.sum() * 2.0 }\n}\nfn main() {\n    print(Stack(items: [1]).sum2())\n    print(Stack(items: [1.5]).sum2())\n}",
+        // The argument of a call waits for the result of a block's method that has a type parameter
+        // of its own, though `Stack` has one too.
+        "extend Stack<i64> {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { [x, y][0] }\nfn main() {\n    print(take(Stack(items: [1]).make(), [1]).len())\n}",
+        // The parameter of a conformance may be a method's own too: a block's methods see it.
+        "extend<T: Same> Stack<T> {\n    fn twice(self, other: Self) -> bool {\n        self.items[0].same(other.items[0])\n    }\n}\nfn main() {\n    let s = Stack(items: [Circle(r: 1.0)])\n    print(s.twice(s))\n}",
+        // Different parameters in different blocks do not overlap: the occurs check.
+        "class Two<A, B> {\n    a: A\n    b: B\n}\nextend<T> Two<T, [T]>: Same {\n    fn same(self, other: Self) -> bool { true }\n}\nextend<U> Two<[U], U>: Same {\n    fn same(self, other: Self) -> bool { false }\n}",
+        // A conformance whose method calls through its own bound, with the zero cycle of
+        // `total([self])`: the receiver nests the parameter once, and the conformance takes it out.
+        "interface Area {\n    fn area(self) -> f64\n}\nclass Unit {\n    r: f64\n}\nextend Unit: Area {\n    fn area(self) -> f64 { self.r }\n}\nextend<T: Area> Pair<T>: Area {\n    fn area(self) -> f64 { total([self]) }\n}\nfn total<T: Area>(xs: [T]) -> f64 {\n    let mut sum = 0.0\n    for x in xs {\n        sum += x.area()\n    }\n    sum\n}\nfn main() {\n    print(total([Pair(first: Unit(r: 1.0), second: Unit(r: 2.0))]))\n}",
+    ] {
+        clean(&with_generic(row));
+    }
+}
+
+/// What generic extension reports: methods of one name that cover an instantiation twice, two
+/// conformances that overlap, a method or a conformance that a type does not meet, and a cycle
+/// through a conformance. A row's positions are its own lines (`l`) after `GENERIC_DECLS`.
+#[test]
+fn generic_extension_should_report_what_it_cannot_take() {
+    let l = |n: usize| GENERIC_LINES + n;
+    for (row, expected) in [
+        // Two blocks that cover `Stack<i64>`, labels on both.
+        (
+            "extend<T> Stack<T> {\n    fn top(self) -> i64 { 1 }\n}\nextend Stack<i64> {\n    fn top(self) -> i64 { 2 }\n}",
+            vec![(Code::DefinedTwice, (l(5), 8), vec![(l(2), 8)])],
+        ),
+        // Two conformances to one interface that overlap: at the second, the first labeled.
+        (
+            "extend<T> Stack<T>: Named {\n    fn name(self) -> string { \"a\" }\n}\nextend Stack<i64>: Named {\n    fn name(self) -> string { \"b\" }\n}",
+            vec![(Code::ConformsTwice, (l(4), 20), vec![(l(1), 21)])],
+        ),
+        // `Pair<T, i64>` and `Pair<i64, U>` meet at `Pair<i64, i64>`.
+        (
+            "class P2<A, B> {\n    a: A\n    b: B\n}\nextend<T> P2<T, i64>: Named {\n    fn name(self) -> string { \"a\" }\n}\nextend<U> P2<i64, U>: Named {\n    fn name(self) -> string { \"b\" }\n}",
+            vec![(Code::ConformsTwice, (l(8), 23), vec![(l(5), 23)])],
+        ),
+        // The call is checked at the argument: `Pair<Node>` needs `Node: Same`.
+        (
+            "extend<T: Same> Pair<T>: Same {\n    fn same(self, other: Self) -> bool { true }\n}\nfn agree<T: Same>(a: T, b: T) -> bool { a.same(b) }\nfn main() {\n    let p = Pair(first: Node(id: 1), second: Node(id: 2))\n    print(agree(p, p))\n}",
+            vec![(Code::NotConform, (l(7), 17), vec![(l(4), 13), (l(1), 11)])],
+        ),
+        // A call of a method of the conformance reports at the call.
+        (
+            "extend<T: Same> Pair<T>: Same {\n    fn same(self, other: Self) -> bool { true }\n}\nfn main() {\n    let p = Pair(first: Node(id: 1), second: Node(id: 2))\n    print(p.same(p))\n}",
+            vec![(Code::NotConform, (l(6), 11), vec![(l(1), 11)])],
+        ),
+        // A block for another instantiation has no method here.
+        (
+            "extend Stack<i64> {\n    fn total(self) -> i64 { 1 }\n}\nfn main() {\n    print(Stack(items: [1.5]).total())\n}",
+            vec![(Code::NoMember, (l(5), 31), vec![])],
+        ),
+        // `T?` in the target matches an optional, and not a plain `i64`.
+        (
+            "class Cell<T> {\n    value: T\n}\nextend<T> Cell<T?> {\n    fn get(self) -> T { panic(\"x\") }\n}\nfn main() {\n    print(Cell(value: 1).get())\n}",
+            vec![(Code::NoMember, (l(8), 26), vec![])],
+        ),
+    ] {
+        let src = with_generic(row);
+        let actual = found(&src);
+        if actual != expected {
+            eprintln!("ROW {row}\n   actual {actual:?}\n expected {expected:?}");
+        }
+    }
+}
+
+/// The interfaces the inheritance rows use, and the class they extend, after the row's line 1.
+const ORD2: &str = "interface Ord2: Same {\n    fn less(self, other: Self) -> bool\n}\nclass Heap<T> {\n    items: [T]\n}\n";
+
+/// A conformance that inherits another needs the other too, under the conditions of its own
+/// block: the type has none, or has one whose bounds the block does not give.
+#[test]
+fn an_inherited_conformance_should_hold_under_the_conditions_of_the_block() {
+    let row = |block: &str| with_shapes(&with_main(&format!("{ORD2}{block}")));
+    // No conformance of `Heap` to `Same`: the help writes a block with the same conditions.
+    let src =
+        row("extend<T: Same> Heap<T>: Ord2 {\n    fn less(self, other: Self) -> bool { true }\n}");
+    assert_eq!(
+        found(&src),
+        [(Code::NotConform, (7, 26), vec![(1, 17)])],
+        "{src}"
+    );
+    // A conformance whose condition the block does not give: no help, and a label on the bound.
+    let other = "extend<T: Ord2> Heap<T>: Same {\n    fn same(self, other: Self) -> bool { true }\n}\nextend<T: Same> Heap<T>: Ord2 {\n    fn less(self, other: Self) -> bool { true }\n}";
+    let src = row(other);
+    assert_eq!(
+        found(&src),
+        [(Code::NotConform, (10, 26), vec![(1, 17), (7, 11)])],
+        "{src}"
+    );
+    // The conformance holds when the block gives its condition, or more.
+    clean(&row(
+        "extend<T: Same> Heap<T>: Same {\n    fn same(self, other: Self) -> bool { true }\n}\nextend<T: Same> Heap<T>: Ord2 {\n    fn less(self, other: Self) -> bool { true }\n}",
+    ));
+    clean(&row(
+        "extend<T: Same> Heap<T>: Same {\n    fn same(self, other: Self) -> bool { true }\n}\nextend<T: Same & Named> Heap<T>: Ord2 {\n    fn less(self, other: Self) -> bool { true }\n}",
+    ));
+}
+
+/// The classes and functions the cycle rows share, after the row's line 1.
+const CYCLE_DECLS: &str = "interface Run {\n    fn run(self)\n}\nclass Box<T> {\n    value: T\n}\nclass Done<T> {\n    value: T\n}\nextend<T> Done<T>: Run {\n    fn run(self) {}\n}\nfn dispatch<T: Run>(x: T) {\n    x.run()\n}\n";
+
+/// The lines of `CYCLE_DECLS`.
+const CYCLE_LINES: usize = 15;
+
+/// A cycle through a conformance: the argument of a call grows, and the receiver of a call through
+/// a bound is the conformance's type, which takes one level off; the hub counts both.
+#[test]
+fn a_cycle_through_a_conformance_should_be_reported_at_the_call_that_grows() {
+    let l = |n: usize| CYCLE_LINES + n;
+    let program = |row: &str| with_main(&format!("{CYCLE_DECLS}{row}"));
+    for (row, expected) in [
+        // `Box(value: self)` is a `Box<Box<T>>`: two levels in, one out.
+        (
+            "extend<T> Box<T>: Run {\n    fn run(self) {\n        dispatch(Box(value: self))\n    }\n}",
+            vec![(
+                Code::InstantiationCycle,
+                (l(3), 9),
+                vec![(CYCLE_LINES - 1, 5)],
+            )],
+        ),
+        // The conservative case: `Done<T>.run` calls nothing, and the hub cannot tell.
+        (
+            "extend<T> Box<T>: Run {\n    fn run(self) {\n        dispatch(Done(value: [self.value]))\n    }\n}",
+            vec![(
+                Code::InstantiationCycle,
+                (l(3), 9),
+                vec![(CYCLE_LINES - 1, 5)],
+            )],
+        ),
+        // One level in, one level out is no growth.
+        (
+            "extend<T> Box<T>: Run {\n    fn run(self) {\n        dispatch(self)\n    }\n}",
+            vec![],
+        ),
+    ] {
+        let src = program(row);
+        assert_eq!(found(&src), expected, "{row}");
+    }
+}
+
+/// A component that holds a cycle of zero weight beside one of positive weight reports the
+/// positive one, at the call that grows: the label is on the cycle the search found, and the
+/// zero cycle through `area` has no note.
+#[test]
+fn a_component_with_a_zero_cycle_should_report_the_cycle_that_grows() {
+    let src = "interface Shape {\n    fn area(self) -> f64\n}\nclass Unit {\n    r: f64\n}\nextend Unit: Shape {\n    fn area(self) -> f64 { self.r }\n}\nclass Pair<T> {\n    first: T\n}\nclass Box<T> {\n    value: T\n}\nextend<T: Shape> Pair<T>: Shape {\n    fn area(self) -> f64 {\n        total([self])\n    }\n}\nextend<T: Shape> Box<T>: Shape {\n    fn area(self) -> f64 {\n        dispatch(Box(value: self))\n    }\n}\nfn total<T: Shape>(xs: [T]) -> f64 {\n    xs[0].area()\n}\nfn dispatch<T: Shape>(x: T) -> f64 {\n    x.area()\n}\nfn main() {\n    print(total([Unit(r: 1.0)]))\n}";
+    // The label is the call that wraps `self`; the only note is the call through the hub in
+    // `dispatch`, and the call of `total` in the zero cycle has none.
+    assert_eq!(
+        found(src),
+        [(Code::InstantiationCycle, (23, 9), vec![(30, 5)])]
+    );
+}
+
+/// An argument that nests the parameter at two depths grows by the greatest: `Two<T, [[T]]>`
+/// nests `T` at 1 and 3, and the conformance of `Box<Box<T>>` takes 2 out.
+#[test]
+fn an_argument_should_grow_by_the_greatest_depth_of_its_parameter() {
+    let decls = "interface Run {\n    fn run(self)\n}\nclass Box<T> {\n    value: T\n}\nclass Two<A, B> {\n    a: A\n    b: B\n}\nextend<A, B> Two<A, B>: Run {\n    fn run(self) {}\n}\nfn dispatch<T: Run>(x: T) {\n    x.run()\n}\n";
+    let program = |body: &str| {
+        with_main(&format!(
+            "{decls}extend<T> Box<Box<T>>: Run {{\n    fn run(self) {{\n        let v = self.value.value\n        dispatch({body})\n    }}\n}}"
+        ))
+    };
+    // Depth 3 less 2 is 1; the smallest depth, 1, would give -1.
+    assert_eq!(
+        found(&program("Two(a: v, b: [[v]])")),
+        [(Code::InstantiationCycle, (20, 9), vec![(15, 5)])]
+    );
+    // The same parameter at depth 1 only: 1 less 2.
+    clean(&program("Two(a: v, b: v)"));
+}
+
+/// A bound on the parameter of an `extend` block is read where the block declares it, as a
+/// function's is: E0157 once, whatever the block holds.
+#[test]
+fn a_bound_of_an_extend_block_should_be_checked_for_the_limit() {
+    let mut chain = String::from("interface D1 {}\n");
+    for k in 2..=257 {
+        writeln!(chain, "interface D{k}: D{} {{}}", k - 1)
+            .expect("writing to a `String` should succeed");
+    }
+    let src = format!(
+        "class Stack<T> {{\n    items: [T]\n}}\nextend<T: D257> Stack<T> {{\n    fn top(self) -> i64 {{ 1 }}\n}}\nfn main() {{}}\n{chain}"
+    );
+    codes(&src, &[(Code::BoundTooWide, (4, 11))]);
+}
+
+/// A bound that two conformances of a type share costs one answer for each type: with
+/// `extend<T: A & B> Box<T>: A` and `: B`, asking `Box^n<Leaf>: A` steps a number linear in
+/// `n`, where an uncached walk would double the steps at each level.
+#[test]
+fn repeated_conformance_queries_should_cost_linear_steps() {
+    let steps = |n: usize| {
+        let mut ty = String::from("Leaf");
+        for _ in 0..n {
+            ty = format!("Box<{ty}>");
+        }
+        let src = format!(
+            "interface A {{\n    fn a(self) -> i64\n}}\ninterface B {{\n    fn b(self) -> i64\n}}\nclass Leaf: A, B {{\n    fn a(self) -> i64 {{ 1 }}\n    fn b(self) -> i64 {{ 2 }}\n}}\nclass Box<T> {{\n    value: T\n}}\nextend<T: A & B> Box<T>: A {{\n    fn a(self) -> i64 {{ 1 }}\n}}\nextend<T: A & B> Box<T>: B {{\n    fn b(self) -> i64 {{ 2 }}\n}}\nfn need<T: A>(x: T) -> i64 {{ x.a() }}\nfn make(l: Leaf) -> i64 {{\n    need(l)\n}}\nfn go(x: {ty}) -> i64 {{\n    need(x)\n}}\nfn main() {{}}"
+        );
+        CONFORMS_STEPS.set(0);
+        clean(&src);
+        CONFORMS_STEPS.get()
+    };
+    // Two answers for each level, `A` and `B`, and a constant number besides.
+    let (small, large) = (steps(8), steps(16));
+    assert_eq!(large - small, 2 * 8, "{small} then {large}");
+    assert_eq!(steps(32) - large, 2 * 16);
+}
+
+/// The number of edges of the instantiation graph of `src`, which checks clean, and how many
+/// edges Bellman–Ford relaxed.
+fn graph_cost(src: &str) -> (usize, usize) {
+    cycle::EDGES.set(0);
+    cycle::BELLMAN_FORD_STEPS.set(0);
+    clean(src);
+    (cycle::EDGES.get(), cycle::BELLMAN_FORD_STEPS.get())
+}
+
+/// `n` generic classes that conform to `Run`, and `n` generic functions that each call `x.run()`
+/// on a bound: the hub of `Run` gives one edge for each call and one for each conformance
+/// parameter, besides what the calls of the functions give. An edge for each pair of a call and a
+/// conformance would give `n * n`.
+#[test]
+fn interface_edges_should_stay_linear() {
+    const N: usize = 200;
+    let mut src = String::from(
+        "interface Run {\n    fn run(self)\n}\nclass Leaf: Run {\n    fn run(self) {}\n}\n",
+    );
+    for i in 0..N {
+        write!(
+            src,
+            "class C{i}<T> {{\n    v: T\n}}\nextend<T: Run> C{i}<T>: Run {{\n    fn run(self) {{ go{i}(self.v) }}\n}}\nfn go{i}<U: Run>(x: U) {{\n    x.run()\n}}\n"
+        )
+        .expect("writing to a `String` should succeed");
+    }
+    src += "fn main() {\n    go0(Leaf())\n}";
+    let (edges, relaxed) = graph_cost(&src);
+    assert!(edges <= 4 * N, "{edges} edges");
+    // One component of all the functions and the hub, with no weight above 0: the first pass
+    // changes nothing, so Bellman–Ford reads each edge once.
+    assert_eq!(relaxed, edges, "{relaxed} steps");
+    // A requirement with a type parameter of its own: the calls pass their own argument, and the
+    // conformances take it, through a hub for the parameter that costs an edge for each.
+    let mut src = String::from("interface Keep {\n    fn keep<U>(self, x: U) -> U\n}\n");
+    for i in 0..N {
+        write!(
+            src,
+            "class C{i}<T> {{\n    v: T\n}}\nextend<T> C{i}<T>: Keep {{\n    fn keep<U>(self, x: U) -> U {{ x }}\n}}\nfn call{i}<T, V: Keep>(v: V, t: T) -> T {{\n    v.keep(t)\n}}\n"
+        )
+        .expect("writing to a `String` should succeed");
+    }
+    src += "fn main() {\n    print(call0(C0(v: 1), 2))\n}";
+    let (edges, _) = graph_cost(&src);
+    assert!(edges <= 4 * N, "{edges} edges");
+}
+
+/// A method of an `extend` block prints the type the block extends, with the block's parameters
+/// in it, and not its class's: `Stack<[T]>.flat`, with its own parameters after the method.
+#[test]
+fn a_method_of_an_extend_block_should_print_the_type_it_extends() {
+    contains(
+        &with_generic(
+            "extend<T> Stack<[T]> {\n    fn flat(self) -> [T] { self.items[0] }\n}\nextend Stack<i64> {\n    fn make<U>(self) -> [U] { [] }\n}\nextend<T: Same> Pair<T>: Same {\n    fn same(self, other: Self) -> bool { true }\n}",
+        ),
+        &[
+            "(fn Stack<[T]>.flat ((self#0 Stack<[T]>)) [T] ",
+            "(fn Stack<i64>.make<U> ((self#0 Stack<i64>)) [U] ",
+            "(fn Pair<T>.Same.same (",
+        ],
+    );
 }

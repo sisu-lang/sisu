@@ -1,0 +1,24 @@
+interface Named {
+    fn name(self) -> string
+}
+
+class Pair<A, B> {
+    first: A
+    second: B
+}
+
+extend<T> Pair<T, i64>: Named {
+    fn name(self) -> string {
+        "first"
+    }
+}
+
+extend<U> Pair<i64, U>: Named {
+    fn name(self) -> string {
+        "second"
+    }
+}
+
+fn main() {
+    print(Pair(first: 1.5, second: 2).name())
+}

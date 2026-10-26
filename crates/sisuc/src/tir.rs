@@ -10,7 +10,7 @@ use crate::graph::components;
 use crate::source::Span;
 
 pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
-use crate::types::{Head, write_args, write_type};
+use crate::types::{Head, write_args, write_method, write_type};
 pub(crate) use crate::types::{Type, TypeArgs, TypeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -148,11 +148,14 @@ pub(crate) struct Conformance {
 
 /// The conformances of a program, by interface. A target without parameters is indexed by its
 /// exact type, and a target with parameters by its class or enum, so that a lookup reads the
-/// exact entry and then only the generic targets of the receiver's class or enum.
+/// exact entry and then only the generic targets of the receiver's class or enum. A target
+/// without parameters is indexed by its class or enum too, for a new target with parameters to
+/// meet.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Conformances {
     list: Vec<Vec<Conformance>>,
     exact: FxHashMap<(InterfaceId, Type), Vec<usize>>,
+    exact_heads: FxHashMap<(InterfaceId, Head), Vec<usize>>,
     generic: FxHashMap<(InterfaceId, Head), Vec<usize>>,
 }
 
@@ -165,14 +168,18 @@ impl Conformances {
         }
         let list = &mut self.list[interface.0];
         let index = list.len();
+        let head = head_of(conformance.target)
+            .expect("the target of a conformance should be a class or an enum type");
         if conformance.type_params == 0 {
             self.exact
                 .entry((interface, conformance.target))
                 .or_default()
                 .push(index);
+            self.exact_heads
+                .entry((interface, head))
+                .or_default()
+                .push(index);
         } else {
-            let head = head_of(conformance.target)
-                .expect("the target of a conformance should be a class or an enum type");
             self.generic
                 .entry((interface, head))
                 .or_default()
@@ -201,6 +208,11 @@ impl Conformances {
     /// The conformances of `interface` whose target is `ty`, which has no parameters.
     pub(crate) fn exact(&self, interface: InterfaceId, ty: Type) -> &[usize] {
         self.exact.get(&(interface, ty)).map_or(&[], Vec::as_slice)
+    }
+
+    /// The conformances of `interface` whose target has no parameters and names `head`.
+    pub(crate) fn exact_of(&self, interface: InterfaceId, head: Head) -> &[usize] {
+        (self.exact_heads.get(&(interface, head))).map_or(&[], Vec::as_slice)
     }
 
     /// The conformances of `interface` whose target has parameters and names `head`.
@@ -301,6 +313,10 @@ pub(crate) struct Function {
     /// The interface, with its arguments, of the `extend` block that declares a method; `None`
     /// for every other function.
     pub(crate) conformance: Option<(InterfaceId, TypeArgs)>,
+    /// A method's bare name, which `owner` and `conformance` write the rest of its name around
+    /// (`write_method`). `None` for a function, and for an instance that `mono` named: its `name`
+    /// is then the whole symbol.
+    pub(crate) method: Option<String>,
     /// The names of the type parameters in scope: a method's owner's, then its own.
     pub(crate) type_params: Vec<String>,
     /// How many of `type_params` belong to the class or enum of a method.
@@ -1173,8 +1189,8 @@ impl Printer<'_> {
             ExprKind::Local(id) => self.local(f, *id),
             ExprKind::Call { func, types, args } => {
                 let callee = &self.program.functions[func.0];
-                let name =
-                    (self.program.conformance_name(callee)).unwrap_or_else(|| callee.name.clone());
+                let name = (callee.conformance.and(self.program.method_name(callee)))
+                    .map_or_else(|| callee.name.clone(), |(name, _)| name);
                 let types = self.program.args_name(types.get());
                 self.list(f, format_args!("call {name}{types}"), args)
             }
@@ -1516,22 +1532,21 @@ impl Program {
         name
     }
 
-    /// The name of `function`, a method of a conformance block, as `--emit tir` prints it: its
-    /// interface stands between the type and the method, so two conformances may each hold a
-    /// `name`. `None` for every other function; `Function::name` keeps the text without the
-    /// interface.
-    fn conformance_name(&self, function: &Function) -> Option<String> {
-        let (interface, args) = function.conformance?;
-        let ty = (function.owner)
-            .expect("a method of a conformance block should have the type it extends");
-        let (_, method) = (function.name.split_once('.'))
-            .expect("a method of a conformance block should be named `Type.method`");
-        Some(format!(
-            "{}.{}{}.{method}",
-            self.type_name(ty),
-            self.interfaces[interface.0].name,
-            self.args_name(args.get()),
-        ))
+    /// The name of `function`, a method, as `--emit tir` prints it, written from the type it is
+    /// declared on, the interface of its conformance block and its bare name: the interface
+    /// stands between the type and the method, so two conformances may each hold a `name`. Its
+    /// own type arguments follow. `None` for a function, and for an instance that `mono` named:
+    /// `Function::name` is then the whole name. Before `mono`, `Function::name` keeps the text
+    /// without the interface.
+    pub(crate) fn method_name(&self, function: &Function) -> Option<(String, bool)> {
+        let method = function.method.as_deref()?;
+        let owner = (function.owner).expect("a method should have the type it is declared on");
+        let interface = function
+            .conformance
+            .map(|(interface, args)| (self.interfaces[interface.0].name.as_str(), args));
+        let mut name = String::new();
+        let cut = write_method(&mut name, owner, interface, method, |head| self.head(head));
+        Some((name, cut))
     }
 
     fn head(&self, head: Head) -> &str {
@@ -1589,14 +1604,10 @@ impl fmt::Display for Program {
                 program: self,
                 function,
             };
-            let (owner, own) = function.type_params.split_at(function.owner_params);
-            if let Some(name) = self.conformance_name(function) {
-                write!(f, "(fn {name}{} (", angled(own))?;
-            } else if let Some((class, method)) = function.name.split_once('.') {
-                write!(f, "(fn {class}{}.{method}{} (", angled(owner), angled(own))?;
-            } else {
-                write!(f, "(fn {}{} (", function.name, angled(own))?;
-            }
+            let own = &function.type_params[function.owner_params..];
+            let name = (self.method_name(function))
+                .map_or_else(|| function.name.clone(), |(name, _)| name);
+            write!(f, "(fn {name}{} (", angled(own))?;
             for (j, param) in function.params.iter().enumerate() {
                 if j > 0 {
                     f.write_str(" ")?;
@@ -1685,6 +1696,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: vec![],
                 owner_params: 0,
                 params: vec![],
@@ -1804,6 +1816,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -1911,6 +1924,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -1995,6 +2009,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2043,6 +2058,7 @@ mod tests {
             name: "C.name".into(),
             owner: Some(class),
             conformance: Some((InterfaceId(0), TypeArgs::NONE)),
+            method: Some("name".into()),
             type_params: Vec::new(),
             owner_params: 0,
             params: vec![LocalId(0)],
@@ -2058,6 +2074,7 @@ mod tests {
         let own = Function {
             name: "C.get".into(),
             conformance: None,
+            method: Some("get".into()),
             body: Block {
                 stmts: vec![],
                 value: Some(Box::new(int(2))),
@@ -2069,6 +2086,7 @@ mod tests {
             name: "f".into(),
             owner: None,
             conformance: None,
+            method: None,
             type_params: Vec::new(),
             owner_params: 0,
             params: vec![LocalId(0)],
@@ -2146,6 +2164,7 @@ mod tests {
             name: "first".into(),
             owner: None,
             conformance: None,
+            method: None,
             type_params: Vec::new(),
             owner_params: 0,
             params: vec![],
@@ -2182,6 +2201,7 @@ mod tests {
             name: "second".into(),
             owner: None,
             conformance: None,
+            method: None,
             type_params: Vec::new(),
             owner_params: 0,
             params: vec![LocalId(0), LocalId(1)],
@@ -2233,6 +2253,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2270,6 +2291,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2302,6 +2324,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2325,6 +2348,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2349,6 +2373,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2381,6 +2406,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2419,6 +2445,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
@@ -2472,6 +2499,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
@@ -2501,6 +2529,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2548,6 +2577,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2585,6 +2615,7 @@ mod tests {
                 name: "f".into(),
                 owner: None,
                 conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],

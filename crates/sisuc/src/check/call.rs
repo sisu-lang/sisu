@@ -226,7 +226,7 @@ impl Checker<'_> {
     /// How the method `name` belongs to a receiver of type `ty`: a built-in array or number
     /// method, or a method of a class or an enum. `None` when the type has no such method.
     fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
-        let owner = match ty.kind() {
+        match ty.kind() {
             TypeKind::Array(element)
                 if matches!(name.as_str(), "len" | "contains")
                     || name.as_str() == "sum" && matches!(element, Type::I64 | Type::F64) =>
@@ -234,11 +234,11 @@ impl Checker<'_> {
                 return Some(Idiom::Built);
             }
             _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
-            TypeKind::Class(_, owner) | TypeKind::Enum(_, owner) => owner,
+            TypeKind::Class(..) | TypeKind::Enum(..) => {}
             _ => return None,
-        };
+        }
         match self.own_method(ty, name) {
-            Some(Declared::Known(func)) => Some(Idiom::Method(func, owner)),
+            Some(Declared::Known(func)) => Some(Idiom::Method(func, self.owner_args(func, ty))),
             _ => None,
         }
     }
@@ -481,9 +481,9 @@ impl Checker<'_> {
         let bounds = sig.bounds.clone();
         let conforming = sig.conformance.is_some();
         // A method's receiver binds its owner's parameters.
-        let owner = match receiver.as_ref().and_then(type_of).map(Type::kind) {
-            Some(TypeKind::Class(_, owner) | TypeKind::Enum(_, owner)) => owner.get(),
-            _ => &[],
+        let owner = match receiver.as_ref().and_then(type_of) {
+            Some(ty) => self.owner_args(func, ty).get(),
+            None => &[],
         };
         // The method of a conformance block is found by the call, so the list a method that takes
         // none of its own is given is reported here, as `method_args` does for the others.

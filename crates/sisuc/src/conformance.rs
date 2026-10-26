@@ -49,9 +49,6 @@ pub(crate) fn find(
 /// which has `params` parameters, with the interface arguments `args`; and the types they both
 /// cover. Only the conformances that the index names are read: those of the same exact target,
 /// and those of the same class or enum with parameters.
-// shortcut: a new target with parameters meets only the other targets with parameters of its
-// class or enum, not the exact ones; Task 5 adds the exact targets of a class or enum when
-// `extend<T> Stack<T>` can name them.
 pub(crate) fn clash(
     conformances: &Conformances,
     interface: InterfaceId,
@@ -61,12 +58,15 @@ pub(crate) fn clash(
 ) -> Option<(usize, Vec<Type>)> {
     let mut mine = vec![target];
     mine.extend_from_slice(args.get());
-    let exact = if params == 0 {
-        conformances.exact(interface, target)
-    } else {
-        &[]
+    // A target without parameters meets the one of its exact type; one with parameters meets the
+    // exact targets of its class or enum.
+    let head = head_of(target);
+    let exact = match head {
+        _ if params == 0 => conformances.exact(interface, target),
+        Some(head) => conformances.exact_of(interface, head),
+        None => &[],
     };
-    let generic = head_of(target).map_or(&[][..], |head| conformances.generic(interface, head));
+    let generic = head.map_or(&[][..], |head| conformances.generic(interface, head));
     exact.iter().chain(generic).find_map(|&k| {
         #[cfg(test)]
         CANDIDATES_READ.set(CANDIDATES_READ.get() + 1);
@@ -153,8 +153,12 @@ pub(crate) fn overlap(
             return None;
         }
     }
-    Some(a.iter().map(|&ty| unifier.resolve(ty)).collect())
+    Some(a.iter().map(|&ty| unifier.resolve(ty, 0)).collect())
 }
+
+/// Why a chain of replacements cannot be longer than the parameters.
+const OCCURS: &str =
+    "the occurs check should keep a parameter from standing for a type that holds it";
 
 /// The two-sided unifier of `overlap`: what each parameter stands for so far.
 struct Unifier {
@@ -162,36 +166,51 @@ struct Unifier {
 }
 
 impl Unifier {
-    /// `ty`, with the parameter at its root replaced while one stands for something.
-    fn walk(&self, mut ty: Type) -> Type {
+    /// `ty`, with the parameter at its root replaced while one stands for something, and how
+    /// many were replaced. A chain of parameters that stand for each other is no longer than the
+    /// parameters, so a longer one is a parameter that stands for a type that holds it.
+    fn walk(&self, mut ty: Type) -> (Type, usize) {
+        let mut steps = 0;
         while let TypeKind::Param(_, i) = ty.kind()
             && let Some(Some(next)) = self.stood.get(i as usize)
         {
             ty = *next;
+            steps += 1;
+            assert!(steps <= self.stood.len(), "{OCCURS}");
         }
-        ty
+        (ty, steps)
     }
 
-    /// `ty` with every parameter replaced that stands for something.
-    fn resolve(&self, ty: Type) -> Type {
-        let ty = self.walk(ty);
+    /// `ty` with every parameter replaced that stands for something. `replaced` is how many
+    /// replacements the path to `ty` made: each one is a parameter of its own, unless a parameter
+    /// stands for a type that holds it.
+    fn resolve(&self, ty: Type, replaced: usize) -> Type {
+        let (ty, steps) = self.walk(ty);
+        let replaced = replaced + steps;
+        assert!(replaced <= self.stood.len(), "{OCCURS}");
         match ty.kind() {
-            TypeKind::Array(element) => Type::array(self.resolve(element)),
-            TypeKind::Optional(payload) => Type::optional(self.resolve(payload)),
-            TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args))),
-            TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args))),
+            TypeKind::Array(element) => Type::array(self.resolve(element, replaced)),
+            TypeKind::Optional(payload) => Type::optional(self.resolve(payload, replaced)),
+            TypeKind::Class(id, args) => {
+                Type::intern(TypeKind::Class(id, self.resolve_all(args, replaced)))
+            }
+            TypeKind::Enum(id, args) => {
+                Type::intern(TypeKind::Enum(id, self.resolve_all(args, replaced)))
+            }
             _ => ty,
         }
     }
 
-    fn resolve_all(&self, args: TypeArgs) -> TypeArgs {
-        let list: Vec<Type> = args.get().iter().map(|&ty| self.resolve(ty)).collect();
+    fn resolve_all(&self, args: TypeArgs, replaced: usize) -> TypeArgs {
+        let list: Vec<Type> = (args.get().iter())
+            .map(|&ty| self.resolve(ty, replaced))
+            .collect();
         TypeArgs::intern(&list)
     }
 
     /// Whether the parameter `i` is in `ty`, once what stands for each parameter is in.
     fn occurs(&self, i: u32, ty: Type) -> bool {
-        let ty = self.walk(ty);
+        let ty = self.walk(ty).0;
         match ty.kind() {
             TypeKind::Param(_, j) => i == j,
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.occurs(i, inner),
@@ -204,11 +223,13 @@ impl Unifier {
 
     /// Makes `x` and `y` the same type, if some types can stand for their parameters.
     fn unify(&mut self, left: Type, right: Type) -> bool {
-        let (left, right) = (self.walk(left), self.walk(right));
+        let (left, right) = (self.walk(left).0, self.walk(right).0);
         if left == right {
             return true;
         }
         match (left.kind(), right.kind()) {
+            // The later parameter stands for the earlier, so the first side's names stay.
+            (TypeKind::Param(_, i), TypeKind::Param(_, j)) if i < j => self.stand(j, left),
             (TypeKind::Param(_, i), _) => self.stand(i, right),
             (_, TypeKind::Param(_, i)) => self.stand(i, left),
             (TypeKind::Array(l), TypeKind::Array(r))
@@ -295,7 +316,7 @@ mod tests {
         let (t, u) = (param(0), param(0));
         let pair = |a, b| class(PAIR, &[a, b]);
         let circle = class(CIRCLE, &[]);
-        let rows: [Row; 21] = [
+        let rows: [Row; 23] = [
             // `extend<T> Box<T>: Convert<T>` and `extend<U> Box<U>: Convert<i64>`.
             (
                 &[boxed(t), t],
@@ -370,6 +391,16 @@ mod tests {
                 1,
                 None,
             ),
+            // `Pair<T, [T]>` and `Pair<[U], U>` each need the other to hold itself.
+            (
+                &[pair(t, Type::array(t))],
+                1,
+                &[pair(Type::array(u), u)],
+                1,
+                None,
+            ),
+            // Two parameters meet at the first side's, so a report names it.
+            (&[boxed(t)], 1, &[boxed(u)], 1, Some(vec![boxed(t)])),
         ];
         for (i, (a, a_params, b, b_params, expected)) in rows.into_iter().enumerate() {
             assert_eq!(overlap(a, a_params, b, b_params), expected, "row {i}");
@@ -495,6 +526,70 @@ mod tests {
         assert_eq!(reads(&|| clash(boxed(param(0)), 1, &[Type::I64])), 1);
     }
 
+    /// A lookup inspects the candidates of its receiver's class or enum only: `n` classes, or `n`
+    /// instantiations of one class, each looked up once, cost `n` candidates and not `n` for each.
+    /// The recorded exception, `n` blocks `extend<T> Pair<TagK, T>: Run`, makes a lookup inspect
+    /// at most `n`, and no block of another class: the `Box` blocks beside them add none.
+    #[test]
+    fn lookups_should_inspect_only_the_receivers_head() {
+        const N: usize = 200;
+        let t = param(0);
+        // `Stack`, `Pair` and `Box` are classes 3, 4 and 5; the tags and the classes that conform
+        // are numbered above them.
+        let (stack, pair, boxed3) = (6, 7, 8);
+        let tag = |k: usize| class(1000 + k, &[]);
+        let reads = |lookup: &dyn Fn()| {
+            CANDIDATES_READ.set(0);
+            lookup();
+            CANDIDATES_READ.get()
+        };
+        // `n` classes that conform, and `n` instantiations of `Stack`, each found once.
+        let mut rows = Vec::new();
+        for k in 0..N {
+            rows.push((class(2000 + k, &[]), 0, &[][..]));
+            rows.push((class(stack, &[tag(k)]), 0, &[][..]));
+        }
+        let all = conformances(&rows);
+        let found = |ty| assert!(find(&all, InterfaceId(0), ty, TypeArgs::NONE).is_some());
+        let total = reads(&|| {
+            for k in 0..N {
+                found(class(2000 + k, &[]));
+                found(class(stack, &[tag(k)]));
+            }
+        });
+        assert!(total <= 2 * N, "{total} candidates for {} lookups", 2 * N);
+        // `n` blocks of one class with a parameter: each lookup inspects at most `n`.
+        let mut blocks = Vec::new();
+        for k in 0..N {
+            blocks.push((class(pair, &[tag(k), t]), 1, &[][..]));
+        }
+        let pairs = conformances(&blocks);
+        let mut worst = 0;
+        for k in 0..N {
+            let ty = class(pair, &[tag(k), Type::I64]);
+            let n = reads(&|| {
+                assert!(find(&pairs, InterfaceId(0), ty, TypeArgs::NONE).is_some());
+            });
+            worst = worst.max(n);
+        }
+        assert!(worst <= N, "{worst} candidates for one lookup");
+        // The blocks of another class beside them are no candidates.
+        for k in 0..N {
+            blocks.push((class(boxed3, &[tag(k), t]), 1, &[][..]));
+        }
+        let beside = conformances(&blocks);
+        for k in 0..N {
+            let ty = class(pair, &[tag(k), Type::I64]);
+            let with = reads(&|| {
+                assert!(find(&beside, InterfaceId(0), ty, TypeArgs::NONE).is_some());
+            });
+            let without = reads(&|| {
+                assert!(find(&pairs, InterfaceId(0), ty, TypeArgs::NONE).is_some());
+            });
+            assert_eq!(with, without);
+        }
+    }
+
     /// The targets with parameters of an enum are read as those of a class, and a target that
     /// does not bind is skipped.
     #[test]
@@ -544,5 +639,24 @@ mod tests {
             clash(0, boxed(Type::I64), 0, &[Type::I64]),
             Some((1, vec![boxed(Type::I64), Type::I64]))
         );
+        // A target with parameters meets the exact targets of its class or enum.
+        let exact = conformances(&[(boxed(Type::F64), 0, &[Type::F64])]);
+        let meets = |target, params, args: &[Type]| {
+            super::clash(
+                &exact,
+                InterfaceId(0),
+                target,
+                params,
+                TypeArgs::intern(args),
+            )
+        };
+        assert_eq!(
+            meets(boxed(u), 1, &[Type::F64]),
+            Some((0, vec![boxed(Type::F64), Type::F64]))
+        );
+        assert_eq!(meets(boxed(u), 1, &[Type::I64]), None);
+        // Another class has none, and an exact target meets the exact one only if it is the same.
+        assert_eq!(meets(class(PILE, &[u]), 1, &[Type::F64]), None);
+        assert_eq!(meets(boxed(Type::I64), 0, &[Type::F64]), None);
     }
 }

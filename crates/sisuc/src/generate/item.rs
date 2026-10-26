@@ -89,6 +89,21 @@ fn requirements_of<'a>(declared: &'a [Shape], of: &[usize]) -> Vec<&'a Requireme
     all
 }
 
+/// The interface `k` and every interface it inherits, each once.
+fn interfaces_of(declared: &[Shape], k: usize) -> Vec<usize> {
+    let mut seen = vec![false; declared.len()];
+    let mut stack = vec![k];
+    let mut all = Vec::new();
+    while let Some(m) = stack.pop() {
+        if std::mem::replace(&mut seen[m], true) {
+            continue;
+        }
+        all.push(m);
+        stack.extend(declared[m].inherits.iter().rev().copied());
+    }
+    all
+}
+
 impl Requirement {
     /// A method that meets the requirement: `fn r(self, _p: T) -> R { value }`.
     fn method(&self) -> String {
@@ -551,6 +566,7 @@ impl Gen<'_> {
             self.w.line();
             calls.push(format!("let h{k} = H{k}(v: {})", values[0]));
             calls.push(format!("print(h{k}.v.plain())"));
+            calls.extend(self.generic_extension(k, declared, &values[0]));
         }
         // Two interfaces in one bound: a class that conforms to both.
         if let [first, second, ..] = conformable[..] {
@@ -579,6 +595,53 @@ impl Gen<'_> {
         }
         self.w.close();
         self.w.line();
+    }
+
+    /// A generic class `R<k><T>` that conforms to the interface `k`, and to those it inherits,
+    /// when `T` does, each in a block with the bound `T: I<k>`; a block for every `T` with a
+    /// method that reads the field; and a block for `R<k><i64>` alone. Gives the statements of
+    /// `shapes` that use them, with `value`, a value of a type that conforms to `k`: the
+    /// conformance holds through the bound of `via<k>`. Its methods call nothing, so no cycle
+    /// goes through them, and each interface has one block, so no two conformances overlap.
+    fn generic_extension(&mut self, k: usize, declared: &[Shape], value: &str) -> Vec<String> {
+        let class = format!("R{k}");
+        self.w.text(&format!("class {class}<T> "));
+        self.w.open();
+        self.w.line();
+        self.w.text("v: T");
+        self.w.close();
+        self.w.line();
+        for m in interfaces_of(declared, k) {
+            self.w.text(&format!(
+                "extend<T: {}> {class}<T>: {} ",
+                declared[k].name, declared[m].name
+            ));
+            self.w.open();
+            for requirement in &declared[m].requirements {
+                self.w.line();
+                self.w.text(&requirement.method());
+            }
+            self.w.close();
+            self.w.line();
+        }
+        self.w.text(&format!("extend<T> {class}<T> "));
+        self.w.open();
+        self.w.line();
+        self.w.text("fn top(self) -> T { self.v }");
+        self.w.close();
+        self.w.line();
+        self.w.text(&format!("extend {class}<i64> "));
+        self.w.open();
+        self.w.line();
+        self.w.text("fn solo(self) -> i64 { 1 }");
+        self.w.close();
+        self.w.line();
+        vec![
+            format!("let w{k} = {class}(v: {value})"),
+            format!("via{k}(w{k})"),
+            format!("print(w{k}.top().plain())"),
+            format!("print({class}(v: 1).solo())"),
+        ]
     }
 
     /// A class `ty` or an enum, if not `class`, that conforms to the interfaces `of`: in its

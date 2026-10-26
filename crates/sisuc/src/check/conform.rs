@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
 use super::interface::Bound;
-use super::{Checker, Declared, Holder, own_args};
+use super::{Body, Checker, Declared, Holder, own_args};
 use crate::ast;
 use crate::conformance::{self, find};
 use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm};
@@ -41,9 +41,9 @@ type Listed = (Holder, Type, Vec<(Bound, Span)>);
 impl Checker<'_> {
     /// Pass 2b, after every signature: reports the methods of one name that a type holds twice,
     /// records each conformance and reports the second of any two that overlap, then checks that
-    /// each meets its requirements and, for an `extend` block, the conformances it needs. A
-    /// class or an enum with type parameters, and an interface that takes some, wait for Tasks 5
-    /// and 6: they report the E0030 stopgap at the interface.
+    /// each meets its requirements and, for an `extend` block, the conformances it needs. An
+    /// interface that takes type parameters waits for Task 6: it reports the E0030 stopgap at the
+    /// interface.
     pub(super) fn conformances(&mut self, items: &[&ast::Item]) {
         self.extension_clashes();
         // Where each conformance is written, by interface and index.
@@ -136,6 +136,8 @@ impl Checker<'_> {
                 self.meets.entry(method).or_default().push(interface);
             }
         }
+        // A broken block may be named late: what was answered before it is asked again.
+        self.conformed.clear();
     }
 
     /// For each class and enum that lists interfaces, what it lists. Reports a list entry that
@@ -174,9 +176,8 @@ impl Checker<'_> {
                 let Some(bound) = self.bound(ty) else {
                     continue;
                 };
-                // A type with parameters, and an interface that takes some, wait for Tasks 5 and
-                // 6.
-                if !params.is_empty() || !bound.args.get().is_empty() {
+                // An interface that takes type parameters waits for Task 6.
+                if !bound.args.get().is_empty() {
                     self.unsupported(ty);
                     continue;
                 }
@@ -193,8 +194,28 @@ impl Checker<'_> {
         lists
     }
 
+    /// The type parameters of the class, enum or block that `source` is, which are those of the
+    /// conformance, and their bounds.
+    fn source_params(&self, source: Source) -> (Vec<Symbol>, Vec<Vec<Bound>>) {
+        match source {
+            Source::Body(Holder::Class(c)) => {
+                let info = &self.classes[c.0];
+                (info.type_params.clone(), info.bounds.clone())
+            }
+            Source::Body(Holder::Enum(e)) => {
+                let info = &self.enums[e.0];
+                (info.type_params.clone(), info.bounds.clone())
+            }
+            Source::Block(b) => {
+                let ext = &self.extensions[b];
+                (ext.type_params.clone(), ext.bounds.clone())
+            }
+        }
+    }
+
     /// Records the conformance of `target` to `bound`, which is written at `at`, unless it
-    /// overlaps one recorded: that is reported at the one that starts last.
+    /// overlaps one recorded: that is reported at the one that starts last. The type parameters
+    /// of the conformance are those of `source`.
     fn add_conformance(
         &mut self,
         bound: Bound,
@@ -203,7 +224,14 @@ impl Checker<'_> {
         source: Source,
         ats: &mut FxHashMap<(InterfaceId, usize), Span>,
     ) -> Option<Pending> {
-        let clash = conformance::clash(&self.conformances, bound.interface, target, 0, bound.args);
+        let (params, bounds) = self.source_params(source);
+        let clash = conformance::clash(
+            &self.conformances,
+            bound.interface,
+            target,
+            params.len(),
+            bound.args,
+        );
         if let Some((k, common)) = clash {
             let earlier = ats[&(bound.interface, k)];
             let (first, second) = if earlier.start() <= at.start() {
@@ -222,13 +250,17 @@ impl Checker<'_> {
         let index = self.conformances.add(
             bound.interface,
             tir::Conformance {
-                type_params: 0,
+                type_params: params.len(),
                 target,
                 args: bound.args,
                 methods: Vec::new(),
             },
         );
         ats.insert((bound.interface, index), at);
+        if bounds.iter().any(|bounds| !bounds.is_empty()) {
+            self.conformance_bounds
+                .insert((bound.interface, index), (params, bounds));
+        }
         Some(Pending {
             interface: bound,
             target,
@@ -352,33 +384,107 @@ impl Checker<'_> {
             // The walk of the root added nothing, so no conformance is asked for.
             self.too_wide_at(p.target, p.at);
         }
-        for (k, &(interface, args)) in closure.iter().enumerate().skip(1) {
-            if find(&self.conformances, interface, p.target, args).is_some() {
-                continue;
+        let Source::Block(block) = p.source else {
+            unreachable!("only an `extend` block should ask for its inherited conformances");
+        };
+        // The conformance holds under the conditions of the block: its bounds are in scope.
+        let (params, bounds) = self.source_params(p.source);
+        let scope = Body::default();
+        self.with_body(scope, |checker| {
+            checker.body.set_type_params(&params);
+            checker.body.set_bounds(0, bounds);
+            for (k, &(interface, args)) in closure.iter().enumerate().skip(1) {
+                if checker.conforms(p.target, interface, args) {
+                    continue;
+                }
+                let (parent, requires) = reached[k - 1];
+                let via = closure[parent].0;
+                checker.report_inherited(p, block, (interface, args), (via, requires));
             }
-            let (parent, requires) = reached[k - 1];
-            let via = closure[parent].0;
-            let (ty, inherited) = (
-                self.type_name(p.target),
-                self.interfaces[interface.0].name.name.to_string(),
-            );
+        });
+    }
+
+    /// Reports that the type of the `extend` block `p`, the place `block` among the blocks, does
+    /// not conform to `inherited`, which the interface `via` inherits at `requires`. The type
+    /// has no conformance to it, or has one whose bounds fail under the block's conditions.
+    fn report_inherited(
+        &mut self,
+        p: &Pending,
+        block: usize,
+        (interface, args): (InterfaceId, tir::TypeArgs),
+        (via, requires): (InterfaceId, Span),
+    ) {
+        let (ty, inherited) = (
+            self.type_name(p.target),
+            self.interfaces[interface.0].name.name.to_string(),
+        );
+        let (mut extend, mut needs) = (None, None);
+        match find(&self.conformances, interface, p.target, args) {
+            // Following the advice would give `ConformsTwice`, so the report points at the bound
+            // that the other conformance needs instead.
+            Some((k, bound)) => needs = self.failed_bound(interface, k, bound),
             // shortcut: an inherited interface that takes arguments gets no help, as a block
             // cannot write a generic interface yet; Task 6 writes it with the arguments.
-            let extend = args
-                .get()
-                .is_empty()
-                .then(|| format!("extend {ty}: {inherited} {{ ... }}"));
-            self.report(DiagnosticKind::NotConform {
-                ty,
-                interface: inherited,
-                at: p.at,
-                form: NotConformForm::Inherited {
-                    via: self.interfaces[via.0].name.name.to_string(),
-                    requires,
-                    extend,
-                },
-            });
+            None if args.get().is_empty() => {
+                extend = Some(self.extend_help(block, &ty, &inherited));
+            }
+            None => {}
         }
+        self.report(DiagnosticKind::NotConform {
+            ty,
+            interface: inherited,
+            at: p.at,
+            form: NotConformForm::Inherited {
+                via: self.interfaces[via.0].name.name.to_string(),
+                requires,
+                extend,
+                needs,
+            },
+        });
+    }
+
+    /// The first bound of the conformance `index` of `interface` that fails for `bound`, what
+    /// stands for its parameters: the bound as that conformance writes it, and where.
+    pub(super) fn failed_bound(
+        &mut self,
+        interface: InterfaceId,
+        index: usize,
+        bound: tir::TypeArgs,
+    ) -> Option<(String, Span)> {
+        let (params, bounds) = self.conformance_bounds.get(&(interface, index))?.clone();
+        for (i, bounds) in bounds.iter().enumerate() {
+            for b in bounds {
+                if !self.conforms(bound.get()[i], b.interface, b.args.subst(bound.get())) {
+                    let text = format!("{}: {}", params[i], self.bound_text(b.interface, b.args));
+                    return Some((text, b.at));
+                }
+            }
+        }
+        None
+    }
+
+    /// The block that would give the target of the block `block` the conformance to `inherited`,
+    /// written with the block's own parameters and bounds.
+    fn extend_help(&self, block: usize, ty: &str, inherited: &str) -> String {
+        let ext = &self.extensions[block];
+        let params: Vec<String> = (ext.type_params.iter().zip(&ext.bounds))
+            .map(|(name, bounds)| {
+                let bounds: Vec<String> = (bounds.iter())
+                    .map(|b| self.bound_text(b.interface, b.args))
+                    .collect();
+                if bounds.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{name}: {}", bounds.join(" & "))
+                }
+            })
+            .collect();
+        let list = if params.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", params.join(", "))
+        };
+        format!("extend{list} {ty}: {inherited} {{ ... }}")
     }
 
     /// The source text at `span`.

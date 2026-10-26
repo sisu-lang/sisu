@@ -172,6 +172,29 @@ pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> 
     write_steps(out, vec![Step::Type(ty)], head)
 }
 
+/// Writes the name of a method to `out`: the type `owner` it is declared on, the interface of its
+/// conformance block with the interface's arguments, then `method`. Every symbol and every
+/// `--emit tir` name of a method is written here, from the parts, so that no code splits a
+/// rendered name: a written owner may be cut with `...` before its `.`. Returns whether the text
+/// was cut.
+pub(crate) fn write_method<'n>(
+    out: &mut String,
+    owner: Type,
+    interface: Option<(&str, TypeArgs)>,
+    method: &str,
+    head: impl Fn(Head) -> &'n str + Copy,
+) -> bool {
+    let mut cut = write_type(out, owner, head);
+    if let Some((name, args)) = interface {
+        out.push('.');
+        out.push_str(name);
+        cut |= write_args(out, args.get(), head);
+    }
+    out.push('.');
+    out.push_str(method);
+    cut
+}
+
 /// Writes `<a, b>` for `args` to `out`, and nothing for none, as `write_type` writes each type.
 /// Returns whether the text was cut.
 pub(crate) fn write_args<'n>(

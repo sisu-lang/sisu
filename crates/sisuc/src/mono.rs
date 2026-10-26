@@ -16,7 +16,7 @@ use crate::tir::{
     Arm, Block, Class, ClassId, Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId,
     Function, Place, Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
 };
-use crate::types::{Head, write_args};
+use crate::types::{Head, write_args, write_method};
 
 /// `program` with each generic function, class and enum replaced by the instantiations it
 /// reaches, and its enums laid out again.
@@ -38,6 +38,18 @@ pub(crate) fn instantiate(mut program: Program) -> Program {
         program.functions.truncate(prelude.funcs);
         program.classes.truncate(prelude.classes);
         program.enums.truncate(prelude.enums);
+        // A method of a conformance block has its interface in its symbol.
+        for i in 0..program.functions.len() {
+            if let Some((mut name, cut)) = program.method_name(&program.functions[i]) {
+                if cut {
+                    name.push('#');
+                    name.push_str(&i.to_string());
+                }
+                let f = &mut program.functions[i];
+                f.name = name;
+                f.method = None;
+            }
+        }
         return program;
     }
     let program = Mono::new(program).run();
@@ -161,6 +173,9 @@ impl Mono {
             let mut f = self.functions[i]
                 .take()
                 .expect("every non-generic function should be in place before the worklist runs");
+            if f.method.is_some() {
+                f.name = self.instance_name(&f, &[], i);
+            }
             self.function(&mut f, &[]);
             self.functions[i] = Some(f);
         }
@@ -258,25 +273,43 @@ impl Mono {
         }
     }
 
-    /// The name of the instance `id` of the declaration `name`, with the concrete checked `args`.
-    /// The first `owner` of `args` are its class's. The name writes the arguments as a program
-    /// does: `Stack<i64>.push`. It writes the checked types, because an output type's head is a
-    /// whole instance name. A name cut at `NAME_LIMIT` ends in `#id`, so it stays distinct.
-    fn instance_name(&self, name: &str, args: &[Type], owner: usize, id: usize) -> String {
+    /// The name of the instance `id` of the function `decl`, with the concrete checked `args`. A
+    /// method is written from its owner type, the interface of its conformance block and its
+    /// bare name (`write_method`), then its own arguments: `Stack<i64>.top`,
+    /// `Pair<Circle>.Same.same`, `Stack<[i64]>.flat`. It writes the checked types, because an
+    /// output type's head is a whole instance name. A name cut at `NAME_LIMIT` in any part ends
+    /// in `#id`, so it stays distinct.
+    fn instance_name(&self, decl: &Function, args: &[Type], id: usize) -> String {
         let head = |head| self.head(head);
-        let (owner_args, own) = args.split_at(owner);
         let mut out = String::new();
-        let mut cut = false;
-        if let Some((class, method)) = name.split_once('.') {
-            out.push_str(class);
-            cut = write_args(&mut out, owner_args, head);
-            out.push('.');
-            out.push_str(method);
+        let (own, mut cut) = if let (Some(method), Some(owner)) = (&decl.method, decl.owner) {
+            let interface = decl.conformance.map(|(interface, args_of)| {
+                (
+                    self.out.interfaces[interface.0].name.as_str(),
+                    args_of.subst(args),
+                )
+            });
+            let cut = write_method(&mut out, owner.subst(args), interface, method, head);
+            (&args[decl.owner_params..], cut)
         } else {
-            out.push_str(name);
-        }
-        if write_args(&mut out, own, head) || cut {
+            out.push_str(&decl.name);
+            (args, false)
+        };
+        cut |= write_args(&mut out, own, head);
+        if cut {
             // `#` cannot occur in an identifier, so a cut name never meets a whole one.
+            out.push('#');
+            out.push_str(&id.to_string());
+        }
+        out
+    }
+
+    /// The name of the instance `id` of the class or enum `name`, with the concrete checked
+    /// `args`, written as a program writes it: `Stack<i64>`. A name cut at `NAME_LIMIT` ends in
+    /// `#id`.
+    fn type_instance_name(&self, name: &str, args: &[Type], id: usize) -> String {
+        let mut out = name.to_string();
+        if write_args(&mut out, args, |head| self.head(head)) {
             out.push('#');
             out.push_str(&id.to_string());
         }
@@ -308,7 +341,7 @@ impl Mono {
             .as_ref()
             .expect("a class reached with arguments should be generic");
         let class = Class {
-            name: self.instance_name(&decl.name, args.get(), 0, done.0),
+            name: self.type_instance_name(&decl.name, args.get(), done.0),
             type_params: Vec::new(),
             fields: Vec::new(),
         };
@@ -333,7 +366,7 @@ impl Mono {
             .as_ref()
             .expect("an enum reached with arguments should be generic");
         let e = Enum {
-            name: self.instance_name(&decl.name, args.get(), 0, done.0),
+            name: self.type_instance_name(&decl.name, args.get(), done.0),
             type_params: Vec::new(),
             variants: Vec::new(),
             counted: false,
@@ -360,7 +393,7 @@ impl Mono {
         let decl = self.decls[id.0]
             .as_ref()
             .expect("a function reached with arguments should be generic");
-        let name = self.instance_name(&decl.name, args.get(), decl.owner_params, done.0);
+        let name = self.instance_name(decl, args.get(), done.0);
         self.functions.push(None);
         self.function_ids.insert((id, args), done);
         self.work.push_back(Work::Function {
@@ -384,6 +417,8 @@ impl Mono {
             let types: Vec<Type> = (types.get().iter()).map(|&ty| self.ty(ty, args)).collect();
             (interface, TypeArgs::intern(&types))
         });
+        // The name is written whole.
+        f.method = None;
         self.block(&mut f.body, args);
     }
 
@@ -1088,7 +1123,7 @@ mod tests {
         method.conformance = Some((interface, TypeArgs::intern(&[g])));
         let program = instantiate(program);
         let method = (program.functions.iter())
-            .find(|f| f.name == "C.name")
+            .find(|f| f.name == "C.Label<G<i64>>.name")
             .expect("the method should be kept");
         let (_, args) = method.conformance.expect("the conformance should be kept");
         let [TypeKind::Class(id, _)] = args.get().iter().map(|t| t.kind()).collect::<Vec<_>>()[..]
@@ -1096,6 +1131,62 @@ mod tests {
             panic!("the argument should be a class: {args:?}");
         };
         assert_eq!(program.classes[id.0].name, "G<i64>");
+    }
+
+    /// A method is named from the type it is declared on, as the block writes it, whichever
+    /// parameters the block has: `Stack<i64>.top` for `extend<T> Stack<T>`, `Stack<[i64]>.flat`
+    /// for `extend<T> Stack<[T]>`, and the interface of a conformance block between the type and
+    /// the method.
+    #[test]
+    fn a_method_of_an_extend_block_should_be_named_from_its_owner() {
+        let program = instantiated(
+            "interface Same {\n    fn same(self, other: Self) -> bool\n}\n\
+             class Circle: Same {\n    r: f64\n    fn same(self, other: Circle) -> bool { self.r == other.r }\n}\n\
+             class Stack<T> {\n    items: [T]\n}\n\
+             class Pair<T> {\n    first: T\n    second: T\n}\n\
+             extend<T> Stack<T> {\n    fn top(self) -> T? { self.items[0] }\n}\n\
+             extend<T> Stack<[T]> {\n    fn flat(self) -> [T] { self.items[0] }\n}\n\
+             extend Stack<f64> {\n    fn sum2<U>(self, u: U) -> U { u }\n}\n\
+             extend<T: Same> Pair<T>: Same {\n    fn same(self, other: Self) -> bool { self.first.same(other.first) }\n}\n\
+             fn agree<T: Same>(a: T, b: T) -> bool { a.same(b) }\n\
+             fn main() {\n    let c = Circle(r: 1.0)\n    print(Stack(items: [1]).top() ?? 0)\n    print(Stack(items: [[1]]).flat().len())\n    print(Stack(items: [1.5]).sum2(\"s\"))\n    print(agree(Pair(first: c, second: c), Pair(first: c, second: c)))\n}",
+        );
+        let names = function_names(&program);
+        for want in [
+            "Stack<i64>.top",
+            "Stack<[i64]>.flat",
+            "Stack<f64>.sum2<string>",
+            "Pair<Circle>.Same.same",
+        ] {
+            assert!(names.contains(&want), "{want} in {names:?}");
+        }
+    }
+
+    /// A method name that is cut in any component ends in the id of the function, so that two cut
+    /// names stay two, on the path that names no instance too.
+    #[test]
+    fn a_cut_method_name_should_end_in_the_id_of_the_function_when_nothing_is_instantiated() {
+        let src = "interface Label {\n    fn name(self) -> string\n}\nclass C {}\nextend C: Label {\n    fn name(self) -> string { \"c\" }\n}\nfn main() {\n    print(C().name())\n}";
+        let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+        let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        // The interface's arguments name a type longer than a name may be.
+        let mut deep = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        for _ in 0..NAME_LIMIT {
+            deep = Type::array(deep);
+        }
+        let method = (program.functions.iter_mut())
+            .find(|f| f.name == "C.name")
+            .expect("the method should be declared");
+        let (interface, _) = method.conformance.expect("a conformance's method");
+        method.conformance = Some((interface, TypeArgs::intern(&[deep])));
+        let program = instantiate(program);
+        let name = (program.functions.iter())
+            .map(|f| f.name.as_str())
+            .find(|name| name.starts_with("C.Label<"))
+            .expect("the method should be named");
+        assert!(name.contains("...") && name.ends_with("#0"), "{name}");
+        let whole = program.functions.iter().find(|f| f.name == "main");
+        assert!(whole.is_some_and(|f| f.method.is_none()));
     }
 
     /// The unused generic class comes before `C`, so `C` has another id in the output than in the
@@ -1145,7 +1236,7 @@ mod tests {
              fn main() {\n    print(go(C()))\n}",
         );
         let names = function_names(&program);
-        assert!(names.contains(&"C.keep<i64>"), "{names:?}");
-        assert!(names.contains(&"C.keep<string>"), "{names:?}");
+        assert!(names.contains(&"C.Keep.keep<i64>"), "{names:?}");
+        assert!(names.contains(&"C.Keep.keep<string>"), "{names:?}");
     }
 }

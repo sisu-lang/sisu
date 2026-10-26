@@ -5,7 +5,9 @@ error[E0140]: `Ring.wrap` instantiates itself without end
    |         ^^^^^^^^^^^^^ `go<Ring, [U]>` here
 ...
 16 |     t.wrap(x)
-   |     --------- which instantiates `Wrap.wrap<U>`
+   |     --------- which may call `Ring.wrap<U>` through `Wrap`
+   |
+   = help: a call through `Wrap` counts as reaching every conformance to `Wrap`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0140

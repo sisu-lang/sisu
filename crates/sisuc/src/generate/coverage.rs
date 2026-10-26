@@ -104,7 +104,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 71] = [
+const REACH: [&str; 74] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -176,6 +176,9 @@ const REACH: [&str; 71] = [
     "reach: a bound lists two interfaces with `&`",
     "reach: a call goes through an inherited bound",
     "reach: a generic class has a bound",
+    "reach: a generic `extend` block is called",
+    "reach: a conditional conformance holds through a bound",
+    "reach: an `extend` block extends one instantiation",
 ];
 
 /// Whether a program's text holds a form.
@@ -459,6 +462,8 @@ struct Walk {
     /// The interfaces of the typed tree, by `InterfaceId`, and the function being walked in it.
     interface_names: Vec<String>,
     tir_func: String,
+    /// The methods of the `extend` blocks over a generic type, by `FuncId`.
+    generic_blocks: FxHashSet<usize>,
 }
 
 impl Walk {
@@ -618,6 +623,13 @@ impl Walk {
         self.mark("ast::Item::Extend");
         self.bounds(&extend.type_params);
         self.type_expr(&extend.target);
+        if extend.type_params.is_empty() && matches!(extend.target.kind, ast::TypeKind::Applied(_))
+        {
+            self.mark("reach: an `extend` block extends one instantiation");
+        }
+        if extend.interface.is_some() && extend.type_params.iter().any(|p| !p.bounds.is_empty()) {
+            self.mark("reach: a conditional conformance holds through a bound");
+        }
         if let Some(interface) = &extend.interface {
             self.mark("reach: a conformance is an `extend` block");
             self.type_expr(interface);
@@ -1624,6 +1636,12 @@ impl Walk {
             self.option_shaped(id, e);
         }
         self.interface_names = program.interfaces.iter().map(|i| i.name.clone()).collect();
+        // A method of an `extend` block over a generic type is named for the type it extends,
+        // `G0<T>.top`, and a method of a class for its class alone.
+        self.generic_blocks = (program.functions.iter().enumerate())
+            .filter(|(_, f)| f.owner_params > 0 && f.name.contains('<'))
+            .map(|(i, _)| i)
+            .collect();
         for function in &program.functions {
             self.tir_func.clone_from(&function.name);
             self.ty(function.ret);
@@ -1870,8 +1888,11 @@ impl Walk {
             tir::ExprKind::Str(_) => self.mark("tir::ExprKind::Str"),
             tir::ExprKind::None => self.mark("tir::ExprKind::None"),
             tir::ExprKind::Local(_) => self.mark("tir::ExprKind::Local"),
-            tir::ExprKind::Call { types, args, .. } => {
+            tir::ExprKind::Call { func, types, args } => {
                 self.mark("tir::ExprKind::Call");
+                if self.generic_blocks.contains(&func.0) {
+                    self.mark("reach: a generic `extend` block is called");
+                }
                 if types
                     .get()
                     .iter()
@@ -5433,6 +5454,50 @@ fn the_walk_should_mark_what_bounds_hold() {
     );
     assert_eq!(
         marked("class H<T: Shape> {\n    v: T\n}\n"),
+        [false, false, true]
+    );
+}
+
+/// The walk marks an `extend` block over a generic type that a call reaches, a conditional
+/// conformance and a block over one instantiation, and only those.
+#[test]
+fn the_walk_should_mark_what_extension_holds() {
+    let decls = "interface Named {\n    fn name(self) -> string\n}\nclass C: Named {\n    fn name(self) -> string { \"c\" }\n}\nclass R<T> {\n    v: T\n}\n";
+    let keys = [
+        "reach: a generic `extend` block is called",
+        "reach: a conditional conformance holds through a bound",
+        "reach: an `extend` block extends one instantiation",
+    ];
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{decls}{rest}"));
+        keys.map(|key| walk.seen.contains(key))
+    };
+    // A block over every `T` that nothing calls, and a method of the class that something does.
+    assert_eq!(
+        marked("extend<T> R<T> {\n    fn top(self) -> T { self.v }\n}\nfn main() {}\n"),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked(
+            "class P<T> {\n    v: T\n    fn top(self) -> T { self.v }\n}\nfn main() {\n    print(P(v: 1).top())\n}\n"
+        ),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked(
+            "extend<T> R<T> {\n    fn top(self) -> T { self.v }\n}\nfn main() {\n    print(R(v: 1).top())\n}\n"
+        ),
+        [true, false, false]
+    );
+    assert_eq!(
+        marked(
+            "extend<T: Named> R<T>: Named {\n    fn name(self) -> string { \"r\" }\n}\nfn main() {}\n"
+        ),
+        [false, true, false]
+    );
+    assert_eq!(
+        marked("extend R<i64> {\n    fn solo(self) -> i64 { 1 }\n}\nfn main() {}\n"),
         [false, false, true]
     );
 }

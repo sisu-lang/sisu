@@ -660,11 +660,15 @@ fn conformance_methods_should_infer_their_own_modes() {
          fn main() {\n    print(total(Circle(r: 1.0)))\n    print(total(Square(side: 2.0)))\n}",
     );
     has(&printed, "total<Circle>", &["call Circle.area("]);
-    has(&printed, "total<Square>", &["call Square.area("]);
+    has(&printed, "total<Square>", &["call Square.Shape.area("]);
     signature(
         &printed,
         "Circle.area",
         "fn Circle.area(self#0: borrow Circle)",
     );
-    signature(&printed, "Square.area", "fn Square.area(self#0: Square)");
+    signature(
+        &printed,
+        "Square.Shape.area",
+        "fn Square.Shape.area(self#0: Square)",
+    );
 }

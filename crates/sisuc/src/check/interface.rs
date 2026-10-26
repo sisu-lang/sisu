@@ -628,8 +628,15 @@ impl Checker<'_> {
     }
 
     /// Whether `ty` conforms to `interface` with `args` (without `Self`): a type parameter
-    /// through its bounds and what they inherit, a class or an enum through its conformance. A
-    /// broken `extend` block may have given its target the conformance, so that holds.
+    /// through its bounds and what they inherit, a class or an enum through its conformance,
+    /// when what the conformance's parameters stand for meets their bounds. A broken `extend`
+    /// block may have given its target the conformance, so that holds.
+    ///
+    /// An answer is kept by the type, the interface and its arguments, so a bound that several
+    /// conformances share costs one answer for each type, not one for each way to it: with
+    /// `extend<T: A & B> Box<T>: A` and `: B`, `Box^n<Leaf>: A` costs steps linear in `n`. The
+    /// answer for a type that holds a type parameter changes with the bounds, so it is kept with
+    /// the body (`Body.conformed`).
     pub(super) fn conforms(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
         match ty.kind() {
             TypeKind::Param(_, place) => {
@@ -641,10 +648,54 @@ impl Checker<'_> {
                 let broken = holder_of(ty).is_some_and(|holder| {
                     self.broken_extensions.contains(&self.holder_name(holder))
                 });
-                broken || find(&self.conformances, interface, ty, args).is_some()
+                if broken {
+                    return true;
+                }
+                let key = (ty, interface, args);
+                let kept = if ty.has_param() {
+                    self.body.conformed.get(&key)
+                } else {
+                    self.conformed.get(&key)
+                };
+                if let Some(&answer) = kept {
+                    return answer;
+                }
+                let answer = self.conforms_by_conformance(ty, interface, args);
+                if ty.has_param() {
+                    self.body.conformed.insert(key, answer);
+                } else {
+                    self.conformed.insert(key, answer);
+                }
+                answer
             }
             _ => false,
         }
+    }
+
+    /// `conforms` for the class or enum type `ty`, asking for the conformance.
+    fn conforms_by_conformance(
+        &mut self,
+        ty: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+    ) -> bool {
+        #[cfg(test)]
+        super::CONFORMS_STEPS.set(super::CONFORMS_STEPS.get() + 1);
+        let Some((k, stands)) = find(&self.conformances, interface, ty, args) else {
+            return false;
+        };
+        let Some((_, bounds)) = self.conformance_bounds.get(&(interface, k)) else {
+            return true;
+        };
+        let bounds = bounds.clone();
+        for (i, bounds) in bounds.iter().enumerate() {
+            for b in bounds {
+                if !self.conforms(stands.get()[i], b.interface, b.args.subst(stands.get())) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// `interface` with `args`, as a program writes a bound.
@@ -666,6 +717,9 @@ impl Checker<'_> {
             return true;
         }
         let add = self.add_bound(ty, bound.interface);
+        // A class or an enum may conform, when the types that stand for its parameters do.
+        let needs = find(&self.conformances, bound.interface, ty, args)
+            .and_then(|(k, stands)| self.failed_bound(bound.interface, k, stands));
         self.report(DiagnosticKind::NotConform {
             ty: self.type_name(ty),
             interface: self.bound_text(bound.interface, args),
@@ -674,6 +728,7 @@ impl Checker<'_> {
                 // No label points into the prelude.
                 bound: (!bound.at.in_prelude()).then_some(bound.at),
                 add,
+                needs,
             },
         });
         false
@@ -918,6 +973,13 @@ impl Checker<'_> {
             let info = &self.enums[e];
             if info.bounded {
                 let (params, bounds) = (info.type_params.clone(), info.bounds.clone());
+                self.read_bounds(&params, bounds, 0);
+            }
+        }
+        for e in 0..self.extensions.len() {
+            let ext = &self.extensions[e];
+            if ext.bounds.iter().any(|bounds| !bounds.is_empty()) {
+                let (params, bounds) = (ext.type_params.clone(), ext.bounds.clone());
                 self.read_bounds(&params, bounds, 0);
             }
         }

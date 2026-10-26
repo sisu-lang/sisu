@@ -432,9 +432,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             Some(ret) => ret.fn_type(&params, false),
             None => self.context.void_type().fn_type(&params, false),
         };
-        // shortcut: two conformance blocks that each hold `name` get the symbol `sisu.C.name`
-        // and, once LLVM renames the second, `sisu.C.name.1`, where `--emit tir` writes
-        // `C.Label.name`; Task 5's symbol helper writes the interface segment.
+        // `mono` names a method of a conformance block with its interface (`C.Label.name`), so
+        // two blocks that each hold `name` get two symbols.
         let function = self.module.add_function(
             &format!("sisu.{}", f.name),
             fn_type,

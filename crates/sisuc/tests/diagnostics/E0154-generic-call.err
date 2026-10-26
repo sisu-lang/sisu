@@ -1,0 +1,11 @@
+error[E0154]: `Node` does not conform to `Same`
+  --> E0154-generic-call.sisu:22:11
+   |
+14 | extend<T: Same> Pair<T>: Same {
+   |           ---- required by this bound
+...
+22 |     print(p.same(p))
+   |           ^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

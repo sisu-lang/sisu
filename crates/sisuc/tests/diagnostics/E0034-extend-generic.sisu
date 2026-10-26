@@ -1,0 +1,19 @@
+class Stack<T> {
+    items: [T]
+}
+
+extend<T> Stack<T> {
+    fn top(self) -> T {
+        self.items[0]
+    }
+}
+
+extend Stack<i64> {
+    fn top(self) -> i64 {
+        self.items[1]
+    }
+}
+
+fn main() {
+    print(Stack(items: [1, 2]).top())
+}

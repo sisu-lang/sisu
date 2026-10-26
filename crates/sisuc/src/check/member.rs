@@ -4,7 +4,7 @@ use rustc_hash::FxHashMap;
 
 use super::expr::{if_some, local, no_member, path};
 use super::extend::holder_of;
-use super::generic::Site;
+use super::generic::{Site, named_params};
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, type_of, wrap};
 use crate::ast;
@@ -199,7 +199,8 @@ impl Checker<'_> {
         let blocks = self.extension_methods.get(&(holder, name));
         let plain = blocks.into_iter().flatten().find_map(|&(at, func)| {
             let ext = &self.extensions[at];
-            (ext.interface.is_none() && ext.target == ty).then_some(Declared::Known(func))
+            (ext.interface.is_none() && self.covers(at, ty).is_some())
+                .then_some(Declared::Known(func))
         });
         plain.or_else(|| {
             (self.broken_extension_methods.contains(&(holder, name))).then_some(Declared::Broken)
@@ -207,25 +208,34 @@ impl Checker<'_> {
     }
 
     /// Fills `Checker.candidates` with the methods named `name` of the conformance blocks that
-    /// cover `ty`, each with its block's interface, in source order.
+    /// cover `ty` and whose bounds hold, each with its block's interface, in source order. The
+    /// first block that covers `ty` and fails its bounds is `failed_block`.
     ///
     /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25; ruling
     /// F9 (e)): a call reads every block that holds a method of its name, `n` for `n` blocks, and
     /// only those.
     pub(super) fn conforming_methods(&mut self, ty: Type, name: Symbol) {
         self.candidates.clear();
+        self.failed_block = None;
         let Some(holder) = holder_of(ty) else {
             return;
         };
-        let blocks = self.extension_methods.get(&(holder, name));
-        for &(at, func) in blocks.into_iter().flatten() {
+        let key = (holder, name);
+        let count = self.extension_methods.get(&key).map_or(0, Vec::len);
+        for k in 0..count {
+            let (at, func) = self.extension_methods[&key][k];
             let ext = &self.extensions[at];
             // A plain block has no interface, and so no conformance.
-            if let Some((bound, _)) = ext.interface
-                && ext.target == ty
-                && !ext.duplicate
-            {
+            let Some((bound, _)) = ext.interface.filter(|_| !ext.duplicate) else {
+                continue;
+            };
+            let Some(stands) = self.covers(at, ty) else {
+                continue;
+            };
+            if self.block_holds(at, stands) {
                 self.candidates.push((func, bound.interface));
+            } else {
+                self.failed_block.get_or_insert(at);
             }
         }
     }
@@ -246,14 +256,20 @@ impl Checker<'_> {
         let ty = ty?;
         let name = site.name;
         match self.own_method(ty, name.name) {
-            Some(Declared::Known(func)) => return Some(func),
+            Some(Declared::Known(func)) => return self.block_holds_at_call(func, ty, span),
             // Its own error is reported; the caller checks the arguments.
             Some(Declared::Broken) => return None,
             None => {}
         }
         self.conforming_methods(ty, name.name);
         match self.candidates[..] {
-            [] => {}
+            [] => {
+                // A block covered the receiver, and its bounds fail: the type argument is wrong.
+                if let Some(at) = self.failed_block {
+                    self.report_block_bound(at, ty, span);
+                    return None;
+                }
+            }
             [(func, _)] => return Some(func),
             _ => {
                 // Taken while the call picks, so that the buffer is free to the calls it reads.
@@ -306,18 +322,51 @@ impl Checker<'_> {
         None
     }
 
-    /// The type `ret` that a candidate method returns, in a call that writes `written` for the
-    /// method's own type parameters. `None` when `ret` still holds a parameter that the call
+    /// The method `func`, which a plain block gives or the body, found for a receiver of type
+    /// `ty`: it, unless the bounds of its block fail for `ty`. They are reported at the call that
+    /// starts at `span`.
+    fn block_holds_at_call(
+        &mut self,
+        func: tir::FuncId,
+        ty: Type,
+        span: Span,
+    ) -> Option<tir::FuncId> {
+        let Some(at) = self.signatures[func.0].extension else {
+            return Some(func);
+        };
+        let stands = self.covers(at, ty)?;
+        if self.block_holds(at, stands) {
+            return Some(func);
+        }
+        self.report_block_bound(at, ty, span);
+        None
+    }
+
+    /// The type `ret` that a candidate method returns on a receiver of type `ty`, in a call that
+    /// writes `written` for the method's own type parameters: the type arguments of its owner
+    /// stand for the owner's parameters. `None` when `ret` still holds a parameter that the call
     /// leaves to inference: the context cannot tell that candidate apart.
-    ///
-    /// shortcut: the target of a conformance takes no type arguments yet, so the type parameters
-    /// of its methods are their own; Task 5 binds the owner's from the receiver.
-    fn candidate_result(&self, func: tir::FuncId, ret: Type, written: &[Type]) -> Option<Type> {
+    fn candidate_result(
+        &self,
+        func: tir::FuncId,
+        ty: Type,
+        ret: Type,
+        written: &[Type],
+    ) -> Option<Type> {
         if !ret.has_param() {
             return Some(ret);
         }
-        let own = &self.signatures[func.0].type_params;
-        (written.len() == own.len()).then(|| ret.subst(written))
+        let mut with = self.owner_args(func, ty).get().to_vec();
+        let owner = with.len();
+        let sig = &self.signatures[func.0];
+        let names = named_params(std::iter::once(Some(ret)), owner + sig.own);
+        if !names[owner..].contains(&true) {
+            return Some(ret.subst(&with));
+        }
+        (written.len() == sig.own).then(|| {
+            with.extend_from_slice(written);
+            ret.subst(&with)
+        })
     }
 
     /// The method among `candidates`, which are methods of conformance blocks that cover `ty`,
@@ -339,7 +388,7 @@ impl Checker<'_> {
         let results = results?;
         let written = self.written_list(site)?;
         let rets: Vec<Option<Type>> = (candidates.iter().zip(results))
-            .map(|(&(func, _), ret)| self.candidate_result(func, ret, &written))
+            .map(|(&(func, _), ret)| self.candidate_result(func, ty, ret, &written))
             .collect();
         let interfaces = (candidates.iter())
             .map(|&(_, interface)| self.interfaces[interface.0].name.name.to_string())

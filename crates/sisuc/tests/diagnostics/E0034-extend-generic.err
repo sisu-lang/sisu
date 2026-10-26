@@ -1,0 +1,11 @@
+error[E0034]: method `top` is defined twice
+  --> E0034-extend-generic.sisu:12:8
+   |
+ 6 |     fn top(self) -> T {
+   |        --- first defined here
+...
+12 |     fn top(self) -> i64 {
+   |        ^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

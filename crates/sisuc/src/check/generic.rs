@@ -1108,12 +1108,11 @@ impl Checker<'_> {
         let Some(ty) = ty else {
             return CallShape::default();
         };
-        let owner = match ty.kind() {
-            TypeKind::Class(id, _) => self.classes[id.0].type_params.len(),
-            TypeKind::Enum(id, _) => self.enums[id.0].type_params.len(),
+        match ty.kind() {
+            TypeKind::Class(..) | TypeKind::Enum(..) => {}
             TypeKind::Param(_, place) => return self.bound_shape(place as usize, method, args),
             _ => return CallShape::default(),
-        };
+        }
         // The method the call will find, as `find_method` finds it, without its reports.
         let func = match self.own_method(ty, method.name) {
             Some(Declared::Known(func)) => func,
@@ -1149,9 +1148,11 @@ impl Checker<'_> {
             }
         };
         let sig = &self.signatures[func.0];
+        // The receiver binds the owner's type parameters: its class's, or its block's.
+        let owner = sig.type_params.len() - sig.own;
         let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
         CallShape {
-            generic: sig.type_params.len() > owner,
+            generic: sig.own > 0,
             shaped,
             // The receiver binds the owner's type parameters.
             open: shaped
@@ -1657,20 +1658,17 @@ impl Checker<'_> {
         angles: Span,
     ) -> Option<Poisoned> {
         let ty = type_of(receiver)?;
-        let (owner_params, field) = match ty.kind() {
+        let field = match ty.kind() {
             TypeKind::Class(id, _) => {
-                let info = &self.classes[id.0];
-                let field = info.fields.iter().any(|f| f.name.name == method.name);
-                (info.type_params.len(), field)
+                (self.classes[id.0].fields.iter()).any(|f| f.name.name == method.name)
             }
-            TypeKind::Enum(id, _) => (self.enums[id.0].type_params.len(), false),
+            TypeKind::Enum(..) => false,
             // A built-in's list is reported once its method is found.
             _ => return None,
         };
         match self.own_method(ty, method.name) {
             // A method with parameters of its own takes the list at its call.
-            Some(Declared::Known(func))
-                if self.signatures[func.0].type_params.len() > owner_params => {}
+            Some(Declared::Known(func)) if self.signatures[func.0].own > 0 => {}
             Some(Declared::Known(_)) => self.not_generic(method.name, angles),
             None if field => {
                 return Some(self.misread(receiver_expr.span.to(method.span), Some(first)));

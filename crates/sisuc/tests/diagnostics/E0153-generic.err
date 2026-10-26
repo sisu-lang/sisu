@@ -1,0 +1,11 @@
+error[E0153]: `Stack<i64>` conforms to `Named` twice
+  --> E0153-generic.sisu:15:20
+   |
+ 9 | extend<T> Stack<T>: Named {
+   |                     ----- first conformance here
+...
+15 | extend Stack<i64>: Named {
+   |                    ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153

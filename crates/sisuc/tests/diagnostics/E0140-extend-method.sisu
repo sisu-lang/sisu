@@ -1,0 +1,13 @@
+class Stack<T> {
+    items: [T]
+}
+
+extend<T> Stack<T> {
+    fn nest(self) -> i64 {
+        Stack(items: [self.items]).nest()
+    }
+}
+
+fn main() {
+    print(Stack(items: [1]).items.len())
+}

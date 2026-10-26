@@ -1114,8 +1114,19 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         instance: String,
-        through: Vec<(Span, String)>,
+        through: Vec<(Span, Hop)>,
+        /// The interface whose hub the cycle passes: a call through it counts as reaching every
+        /// conformance to it.
+        reach: Option<String>,
     },
+}
+
+/// What an instantiation on a cycle does, as a note at its site says.
+pub(crate) enum Hop {
+    /// It instantiates `instance`, as written.
+    Instantiates(String),
+    /// It calls through `interface`, which may run `method`, the one the cycle takes.
+    Calls { method: String, interface: String },
 }
 
 /// The receiver of a method that a call writes as a function.
@@ -1657,12 +1668,18 @@ pub(crate) enum NotConformForm {
         via: String,
         requires: Span,
         extend: Option<String>,
+        /// A conformance the type has already, whose bound fails: the bound as written there,
+        /// and where it is.
+        needs: Option<(String, Span)>,
     },
     /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
     /// needs it. `add` is the bound that a type parameter would need.
     Bound {
         bound: Option<Span>,
         add: Option<AddBound>,
+        /// A conformance the type has already, whose bound fails: the bound as written there,
+        /// and where it is.
+        needs: Option<(String, Span)>,
     },
 }
 
@@ -2128,19 +2145,32 @@ impl From<DiagnosticKind> for Diagnostic {
                         via,
                         requires,
                         extend,
+                        needs,
                     } => {
                         let d = d.with_secondary(
                             requires,
                             format!("`{via}` requires `{interface}`"),
                         );
+                        let d = match needs {
+                            Some((bound, at)) => {
+                                d.with_secondary(at, format!("this conformance needs `{bound}`"))
+                            }
+                            None => d,
+                        };
                         match extend {
                             Some(block) => d.with_help(format!("write `{block}`")),
                             None => d,
                         }
                     }
-                    NotConformForm::Bound { bound, add } => {
+                    NotConformForm::Bound { bound, add, needs } => {
                         let d = match bound {
                             Some(bound) => d.with_secondary(bound, "required by this bound"),
+                            None => d,
+                        };
+                        let d = match needs {
+                            Some((bound, at)) => {
+                                d.with_secondary(at, format!("this conformance needs `{bound}`"))
+                            }
                             None => d,
                         };
                         match add {
@@ -4057,13 +4087,34 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 instance,
                 through,
-            } => through.into_iter().fold(
-                Diagnostic::coded(code, at, format!("`{name}` instantiates itself without end"))
+                reach,
+            } => {
+                let d = through.into_iter().fold(
+                    Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{name}` instantiates itself without end"),
+                    )
                     .with_label(format!("`{instance}` here")),
-                |d, (site, instance)| {
-                    d.with_secondary(site, format!("which instantiates `{instance}`"))
-                },
-            ),
+                    |d, (site, hop)| {
+                        let text = match hop {
+                            Hop::Instantiates(instance) => {
+                                format!("which instantiates `{instance}`")
+                            }
+                            Hop::Calls { method, interface } => {
+                                format!("which may call `{method}` through `{interface}`")
+                            }
+                        };
+                        d.with_secondary(site, text)
+                    },
+                );
+                match reach {
+                    Some(i) => d.with_help(format!(
+                        "a call through `{i}` counts as reaching every conformance to `{i}`"
+                    )),
+                    None => d,
+                }
+            }
             DiagnosticKind::NanComparison { at, negated, fix } => {
                 let always = if negated { "true" } else { "false" };
                 let d = Diagnostic::coded(

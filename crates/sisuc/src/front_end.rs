@@ -1165,20 +1165,12 @@ fn main() {
         }
     }
 
-    /// The checker takes no generic conformance, associated type or member type yet: each is
+    /// The checker takes no generic interface, associated type or member type yet: each is
     /// E0030 at the name it cannot take.
     #[test]
     fn what_the_checker_cannot_take_yet_should_be_an_unknown_type() {
         for (src, at) in [
             ("fn f<T: Ord>(x: T) {}\nfn main() {}\n", (1, 9)),
-            (
-                "interface Shape {}\nclass C<T>: Shape {}\nfn main() {}\n",
-                (2, 13),
-            ),
-            (
-                "interface Shape {}\nenum E<T>: Shape {\n    A\n}\nfn main() {}\n",
-                (2, 12),
-            ),
             (
                 "interface Source {}\nclass C: Source {\n    type Item = i64\n}\nfn main() {}\n",
                 (3, 10),
