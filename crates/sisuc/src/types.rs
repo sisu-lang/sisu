@@ -186,6 +186,8 @@ thread_local! {
     static SUBSTITUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The kinds `TypeKind::names` has looked at on this thread, one for each type interned.
     static NAMED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The entries `Type::entry` has read on this thread: each read of a kind or a flag.
+    static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The most steps `write_steps` has held at once on this thread.
     static HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -395,6 +397,8 @@ impl Type {
     }
 
     fn entry(self) -> Entry {
+        #[cfg(test)]
+        READS.set(READS.get() + 1);
         let i = self.0 as usize;
         // A constant is read before anything is interned, so its kind is not in `KINDS`.
         if let Some(&kind) = SEEDS.get(i) {
@@ -573,9 +577,10 @@ mod tests {
         assert!(SUBSTITUTED.get() <= 2 * 21, "{} visits", SUBSTITUTED.get());
     }
 
-    /// `t_20` has 21 distinct types but 2^20 paths to its leaf.
+    /// `t_20` has 21 distinct types but 2^20 paths to its leaf. A walk of it reads many entries; a
+    /// flag read reads one.
     #[test]
-    fn holds_hole_should_read_a_flag_and_not_walk_a_shared_type() {
+    fn flag_queries_should_read_one_entry_whatever_the_depth_of_a_type() {
         let hole = Type::intern(TypeKind::Param(Symbol::intern("_"), HOLE_INDEX));
         let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
         NAMED.set(0);
@@ -584,12 +589,20 @@ mod tests {
             doubled(param, 20),
             doubled(Type::I64, 20),
         );
-        let interned = NAMED.get();
-        assert!(interned <= 3 * 21, "{interned} kinds looked at");
-        assert!(holed.holds_hole() && holed.has_param());
-        assert!(!named.holds_hole() && named.has_param());
-        assert!(!plain.holds_hole() && !plain.has_param());
-        assert_eq!(NAMED.get(), interned, "a read should look at no kind");
+        assert!(NAMED.get() <= 3 * 21, "{} kinds looked at", NAMED.get());
+        let reads = |query: fn(Type) -> bool, ty: Type| {
+            READS.set(0);
+            let answer = query(ty);
+            (answer, READS.get())
+        };
+        for (ty, hole, param) in [
+            (holed, true, true),
+            (named, false, true),
+            (plain, false, false),
+        ] {
+            assert_eq!(reads(Type::holds_hole, ty), (hole, 1));
+            assert_eq!(reads(Type::has_param, ty), (param, 1));
+        }
     }
 
     #[test]
