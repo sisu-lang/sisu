@@ -29,6 +29,15 @@
 //! the edges grow with the program, and a path through the hub stands for an edge from `P` to
 //! `Q` for each call and conformance, which a pair of edges for each would make a product.
 //!
+//! An associated type `P.Item` as an argument is a type of its own in the graph, and an edge into
+//! it from `P` weighs the growth of `Item`: the greatest, over the conformances that choose it,
+//! of how much deeper the choice nests the types that stand for the conformance's parameters than
+//! the conformance's target does. `Wrap<T>`'s `type Item = Wrap<Wrap<T>>` grows by 1, and
+//! `type Item = T` by -1. A choice that names a parameter through another associated type adds
+//! that type's growth, which is a longest path over the choices, and unbounded on a cycle of
+//! positive weight. A choice that names no parameter gives a growth that is absent: `P.Item` is
+//! then a type that no argument changes, and the argument adds no edge.
+//!
 //! The weights of a hub's edges are negative, and no known algorithm finds a cycle of positive
 //! weight in a graph with negative weights in linear time. This is an exception to
 //! `CODING_STANDARDS.md`'s "A pass is linear in the program", agreed by the user on 2026-10-25:
@@ -63,6 +72,10 @@ thread_local! {
     pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
+/// The weight of an edge into an associated type whose growth is unbounded: more than any path
+/// of the graph can take back.
+const UNBOUNDED: i64 = 1 << 32;
+
 /// An instantiation, which a diagnostic writes as the program does.
 #[derive(Clone, Copy)]
 enum Instance {
@@ -88,6 +101,9 @@ struct Edge {
     growing: bool,
     /// Whether the edge runs from a hub to a parameter of a method that meets what it stands for.
     out: bool,
+    /// Whether the edge runs into an associated type from its base, so that its weight is a
+    /// growth, which may not be above 0.
+    assoc: bool,
     holder: usize,
     site: Span,
     /// What a diagnostic underlines: `site`, or the instance inside it. Only `site` picks and
@@ -110,6 +126,10 @@ struct Graph {
     typed: FxHashMap<(usize, Type), usize>,
     /// The types `types` has walked, with the site each was written at.
     walked: FxHashSet<(Span, Type)>,
+    /// By interface, where its associated types start in `growth`.
+    assoc_first: Vec<usize>,
+    /// The growth of each associated type of each interface (`growths`); `None` when absent.
+    growth: Vec<Option<i64>>,
 }
 
 impl Graph {
@@ -132,6 +152,7 @@ impl Graph {
                 weight: 0,
                 growing: !matches!(arg.kind(), TypeKind::Param(..)),
                 out: false,
+                assoc: false,
                 holder,
                 site,
                 mark,
@@ -148,6 +169,7 @@ impl Graph {
             weight,
             growing: false,
             out: true,
+            assoc: false,
             holder: method,
             site: Span::new(0, 0),
             mark: Span::new(0, 0),
@@ -166,21 +188,22 @@ impl Graph {
             }
             if !parts_made {
                 stack.push((t, true));
-                stack.extend(parts(t).map(|part| (part, false)));
+                stack.extend(self.parts(t).into_iter().map(|(part, _)| (part, false)));
                 continue;
             }
             let n = self.first[self.first.len() - 1] + self.typed.len();
             self.typed.insert((holder, t), n);
-            for part in parts(t) {
+            for (part, weight) in self.parts(t) {
                 let from = self
                     .made(holder, part)
                     .expect("a type's parts should be made before it");
                 self.edges.push(Edge {
                     from,
                     to: n,
-                    weight: 1,
+                    weight,
                     growing: false,
                     out: false,
+                    assoc: matches!(t.kind(), TypeKind::Assoc(..)),
                     holder,
                     site: Span::new(0, 0),
                     mark: Span::new(0, 0),
@@ -190,6 +213,28 @@ impl Graph {
         }
         self.made(holder, ty)
             .expect("the walk should make the type it starts at")
+    }
+
+    /// The parts of `ty` that mention a parameter, each with the weight of the edge from its node
+    /// into `ty`'s: 1 for the type inside an array or an optional and for an argument of a class
+    /// or an enum, and the growth of the associated type for its base and the arguments of its
+    /// interface. An associated type with no growth has no part.
+    fn parts(&self, ty: Type) -> Vec<(Type, i64)> {
+        let (inner, args, weight) = match ty.kind() {
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => (Some(inner), &[][..], 1),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => (None, args.get(), 1),
+            TypeKind::Assoc(base, interface, args, k) => {
+                let Some(growth) = self.growth[self.assoc_first[interface.0] + k as usize] else {
+                    return Vec::new();
+                };
+                (Some(base), args.get(), growth)
+            }
+            _ => (None, &[][..], 1),
+        };
+        (inner.into_iter().chain(args.iter().copied()))
+            .filter(|part| part.has_param())
+            .map(|part| (part, weight))
+            .collect()
     }
 
     /// The node of `ty` inside `holder`, if it has one yet.
@@ -223,6 +268,11 @@ impl Graph {
                 }
                 TypeKind::Class(id, args) => (self.functions + id.0, args),
                 TypeKind::Enum(id, args) => (self.functions + self.classes + id.0, args),
+                TypeKind::Assoc(base, _, args, _) => {
+                    stack.push(base);
+                    stack.extend(args.get());
+                    continue;
+                }
                 _ => continue,
             };
             let mark = spans.get(&ty).copied().unwrap_or(site);
@@ -230,20 +280,6 @@ impl Graph {
             stack.extend(args.get());
         }
     }
-}
-
-/// The parts of `ty` that mention a parameter. It looks into the kinds `TypeKind::has_param`
-/// does, so a type other than a parameter that mentions one has a part that does.
-fn parts(ty: Type) -> impl Iterator<Item = Type> {
-    let (inner, args) = match ty.kind() {
-        TypeKind::Array(inner) | TypeKind::Optional(inner) => (Some(inner), &[][..]),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => (None, args.get()),
-        _ => (None, &[][..]),
-    };
-    inner
-        .into_iter()
-        .chain(args.iter().copied())
-        .filter(|part| part.has_param())
 }
 
 impl Checker<'_> {
@@ -280,7 +316,9 @@ impl Checker<'_> {
             if component[edge.to] != k {
                 continue;
             }
-            negative[k] |= edge.weight < 0;
+            // A growth that is not above 0 breaks the rule of a component with no negative
+            // weight, that a cycle through a growing edge is a cycle of positive weight.
+            negative[k] |= edge.weight < 0 || (edge.assoc && edge.weight == 0);
             if edge.growing
                 && growing[k].is_none_or(|g| edge.site.start() < graph.edges[g].site.start())
             {
@@ -465,7 +503,10 @@ impl Checker<'_> {
             edges: Vec::new(),
             typed: FxHashMap::default(),
             walked: FxHashSet::default(),
+            assoc_first: Vec::new(),
+            growth: Vec::new(),
         };
+        (graph.assoc_first, graph.growth) = self.growths();
         let mut exprs = Vec::new();
         for (holder, function) in functions.iter().enumerate() {
             let Some(function) = function.as_ref().filter(|f| !f.type_params.is_empty()) else {
@@ -570,6 +611,103 @@ impl Checker<'_> {
                 }
             }
         }
+    }
+
+    /// Where the associated types of each interface start in the second list, and the growth of
+    /// each (see the module doc), `None` when absent. A longest path over the choices: the choice
+    /// of the associated type `a` names a parameter of its conformance at some depth, which gives
+    /// `a` a growth outright, and names `Q.b` at some depth, which gives `a` the growth of `b`
+    /// less the depth of `Q` in the target, and plus the depth of the name. Relaxing as many
+    /// times as there are associated types settles a path; one that still grows after that is on
+    /// a cycle of positive weight, and so is every growth that reaches it: `UNBOUNDED`.
+    ///
+    /// shortcut: a choice that names `Q.b.c` counts the growth of `c` and not of `b`. To add them,
+    /// give each associated type a node for each base it is written through.
+    fn growths(&self) -> (Vec<usize>, Vec<Option<i64>>) {
+        let mut first = Vec::with_capacity(self.interfaces.len());
+        let mut count = 0;
+        for info in &self.interfaces {
+            first.push(count);
+            count += info.assoc.len();
+        }
+        let mut growth: Vec<Option<i64>> = vec![None; count];
+        if count == 0 {
+            return (first, growth);
+        }
+        // The associated types a choice names through a parameter, by the type that chooses.
+        let mut edges: Vec<(usize, usize, i64)> = Vec::new();
+        for (interface, conformance) in self.conformances.iter() {
+            let depths = param_depths(conformance.target, conformance.type_params);
+            for (k, chosen) in conformance.assoc.iter().enumerate() {
+                let Some(chosen) = *chosen else { continue };
+                let at = first[interface.0] + k;
+                let mut stack = vec![(chosen, 0_i64)];
+                while let Some((ty, depth)) = stack.pop() {
+                    if !ty.has_param() {
+                        continue;
+                    }
+                    match ty.kind() {
+                        TypeKind::Param(_, q) => {
+                            let outright = depth - depths[q as usize];
+                            growth[at] = growth[at].max(Some(outright));
+                        }
+                        TypeKind::Array(inner) | TypeKind::Optional(inner) => {
+                            stack.push((inner, depth + 1));
+                        }
+                        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+                            stack.extend(args.get().iter().map(|&arg| (arg, depth + 1)));
+                        }
+                        TypeKind::Assoc(base, other, args, j) => {
+                            let mut root = base;
+                            while let TypeKind::Assoc(inner, ..) = root.kind() {
+                                root = inner;
+                            }
+                            if let TypeKind::Param(_, q) = root.kind() {
+                                let named = first[other.0] + j as usize;
+                                edges.push((at, named, depth - depths[q as usize]));
+                            }
+                            stack.extend(args.get().iter().map(|&arg| (arg, depth)));
+                        }
+                        _ => unreachable!("only a part that names a parameter is walked"),
+                    }
+                }
+            }
+        }
+        let relax = |growth: &mut Vec<Option<i64>>| {
+            let mut changed = Vec::new();
+            for &(from, to, weight) in &edges {
+                let Some(through) = growth[to].map(|g| g + weight) else {
+                    continue;
+                };
+                if growth[from].is_none_or(|g| through > g) {
+                    growth[from] = Some(through);
+                    changed.push(from);
+                }
+            }
+            changed
+        };
+        for _ in 0..=count {
+            if relax(&mut growth).is_empty() {
+                return (first, growth);
+            }
+        }
+        // Still growing: a cycle of positive weight. Each type it lengthens, and each that reaches
+        // one, is unbounded.
+        let mut unbounded = vec![false; count];
+        for _ in 0..=count {
+            for from in relax(&mut growth) {
+                unbounded[from] = true;
+            }
+        }
+        for _ in 0..=count {
+            for &(from, to, _) in &edges {
+                unbounded[from] |= unbounded[to] && growth[to].is_some();
+            }
+        }
+        for (g, _) in growth.iter_mut().zip(unbounded).filter(|&(_, u)| u) {
+            *g = Some(UNBOUNDED);
+        }
+        (first, growth)
     }
 
     /// The method `holder`, as the program writes it with its owner's and its own type
@@ -783,6 +921,8 @@ mod tests {
             edges: Vec::new(),
             typed: FxHashMap::default(),
             walked: FxHashSet::default(),
+            assoc_first: Vec::new(),
+            growth: Vec::new(),
         }
     }
 
@@ -865,6 +1005,6 @@ mod tests {
     /// A parameter has no parts: its node is its own, never one made of parts.
     #[test]
     fn a_parameter_should_have_no_parts() {
-        assert_eq!(parts(param(0)).count(), 0);
+        assert_eq!(graph(1).parts(param(0)), Vec::new());
     }
 }

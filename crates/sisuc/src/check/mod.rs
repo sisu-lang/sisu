@@ -2,6 +2,7 @@
 //! checks, and records every error instead of stopping at the first.
 
 mod array;
+mod assoc;
 mod bound;
 mod branch;
 mod call;
@@ -31,12 +32,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ast;
 use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
-    MismatchSource, Severity, Unbuilt, suggestion,
+    MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::source::{self, Span};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{Head, write_type};
+use assoc::{Choice, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
@@ -141,6 +143,8 @@ struct ClassInfo {
     fields: Vec<FieldInfo>,
     /// The first method of each name, and every broken one.
     methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// The associated types the declaration's body chooses.
+    assoc: Vec<Choice>,
 }
 
 struct FieldInfo {
@@ -356,6 +360,8 @@ struct Checker<'src> {
     meets: FxHashMap<tir::FuncId, Vec<tir::InterfaceId>>,
     /// For each method name, the interfaces that declare a requirement of it.
     declaring: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
+    /// For each name of an associated type, the interfaces that declare one of it.
+    declaring_assoc: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
     /// The bound checks of types resolved before every conformance is known; `None` once they
     /// run, and later types are checked as they are resolved.
     pending_bounds: Option<Vec<PendingBound>>,
@@ -489,9 +495,22 @@ struct Body {
     wide: Vec<usize>,
     /// The interfaces each type parameter conforms to, by place, once found (`param_interfaces`).
     conforming: Vec<Option<Vec<(tir::InterfaceId, TypeArgs)>>>,
-    /// The requirements of the bounds of each type parameter by place and name, once indexed
-    /// (`required`). Both caches change with the bounds, and a body's are cleared with it.
-    required: FxHashMap<usize, FxHashMap<Symbol, Vec<Required>>>,
+    /// The interfaces each associated type of a type parameter conforms to through the bounds of
+    /// its declaration, once found (`assoc_interfaces`).
+    assoc_conforming: FxHashMap<Type, Vec<(tir::InterfaceId, TypeArgs)>>,
+    /// The associated types whose closure went past `BOUND_CLOSURE_LIMIT`: they stay unknown in
+    /// this body.
+    wide_assoc: FxHashSet<Type>,
+    /// The requirements of the bounds of each type parameter or associated type by name, once
+    /// indexed (`required`). All these caches change with the bounds, and a body's are cleared
+    /// with it.
+    required: FxHashMap<Type, FxHashMap<Symbol, Vec<Required>>>,
+    /// The associated types that a bare name stands for: the interface's own in an interface,
+    /// the conformance's choices in a class, an enum or an `extend` block. `None` is `Error`.
+    assoc: Vec<(Symbol, Option<Type>)>,
+    /// The names of the associated types whose choices are being resolved: a choice cannot name
+    /// one of them.
+    choosing: Vec<Symbol>,
     /// The answers of `conforms` for a type that holds a type parameter: they change with the
     /// bounds, and a body's are cleared with them.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
@@ -607,6 +626,10 @@ impl Body {
         self.bounds.truncate(first);
         self.conforming.clear();
         self.wide.clear();
+        if !self.assoc_conforming.is_empty() {
+            self.assoc_conforming.clear();
+            self.wide_assoc.clear();
+        }
         self.required.clear();
         self.conformed.clear();
         self.scope = None;
@@ -713,16 +736,9 @@ pub(crate) fn check<'src>(
             // resolves such calls, and until then the program has an error of its own.
             ast::Item::Function(_) | ast::Item::Const(_) | ast::Item::Interface(_) => false,
         });
+    let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
     let (instantiates, prelude) = (checker.instantiates, checker.prelude);
-    let interfaces = (checker.interfaces.iter())
-        .map(|info| tir::Interface {
-            name: info.name.name.to_string(),
-            methods: (info.requirements.iter())
-                .map(|requirement| requirement.name.name.to_string())
-                .collect(),
-        })
-        .collect();
     let conformances = checker.conformances;
     let program = functions
         .into_iter()
@@ -828,6 +844,7 @@ impl<'src> Checker<'src> {
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
             declaring: FxHashMap::default(),
+            declaring_assoc: FxHashMap::default(),
             pending_bounds: Some(Vec::new()),
             scopes: Vec::new(),
             wide_reported: FxHashSet::default(),
@@ -866,6 +883,21 @@ impl<'src> Checker<'src> {
 }
 
 impl Checker<'_> {
+    /// The interfaces as `tir` names them.
+    fn lowered_interfaces(&self) -> Vec<tir::Interface> {
+        (self.interfaces.iter())
+            .map(|info| tir::Interface {
+                name: info.name.name.to_string(),
+                methods: (info.requirements.iter())
+                    .map(|requirement| requirement.name.name.to_string())
+                    .collect(),
+                assoc: (info.assoc.iter())
+                    .map(|assoc| assoc.name.name.to_string())
+                    .collect(),
+            })
+            .collect()
+    }
+
     /// Records a coded diagnostic.
     fn report(&mut self, kind: DiagnosticKind) {
         self.diagnostics.push(kind.into());
@@ -896,6 +928,7 @@ impl Checker<'_> {
                         bounds: Vec::new(),
                         fields: Vec::new(),
                         methods: FxHashMap::default(),
+                        assoc: Vec::new(),
                     });
                     let name = &class.name;
                     if !self.built_in(name)
@@ -929,6 +962,7 @@ impl Checker<'_> {
                         variants: Vec::new(),
                         index: FxHashMap::default(),
                         methods: FxHashMap::default(),
+                        assoc: Vec::new(),
                     });
                     if !self.built_in(&e.name)
                         && self.first_callable(&mut first, Definition::Enum, &e.name)
@@ -959,6 +993,7 @@ impl Checker<'_> {
                         inherits_at: Vec::new(),
                         requirements: Vec::new(),
                         bounds: Vec::new(),
+                        assoc: Vec::new(),
                     });
                     let name = &interface.name;
                     if !self.built_in(name)
@@ -1130,6 +1165,8 @@ impl Checker<'_> {
             if self.classes[id.0].bounded {
                 self.classes[id.0].bounds = bounds;
             }
+            // The choices come before the fields and the signatures, which may name them.
+            self.classes[id.0].assoc = self.declare_choices(&class.assoc, class.name.name.as_str());
             self.body.set_type_params(&[]);
             let mut first = FxHashMap::default();
             let mut scoped = false;
@@ -1189,6 +1226,7 @@ impl Checker<'_> {
                     .insert(method.name, Declared::Broken);
             }
             self.body.self_type = None;
+            self.body.assoc.clear();
         }
         declared
     }
@@ -1354,11 +1392,7 @@ impl Checker<'_> {
                 };
                 declared
             }
-            // Task 7 takes a member type.
-            ast::TypeKind::Member { .. } => {
-                self.unsupported(ty);
-                return None;
-            }
+            ast::TypeKind::Member { base, name } => self.member_type(ty, base, name)?,
         };
         // Only an applied name can be an instance that grows: a plain name has no arguments.
         // Arguments on a parameter or a built-in type are E0137, and no instance has that type.
@@ -1393,6 +1427,11 @@ impl Checker<'_> {
         if let Some(i) = self.body.type_param(name) {
             let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
             return plain(self, Type::intern(TypeKind::Param(name, i)));
+        }
+        match self.assoc_named(name, ident().span) {
+            Named::Type(ty) => return plain(self, ty),
+            Named::Failed => return None,
+            Named::Unknown => {}
         }
         let declared = (
             self.class_ids.get(&name).copied(),
@@ -1454,7 +1493,9 @@ impl Checker<'_> {
                 self.report(DiagnosticKind::UnknownType {
                     name: name.to_string(),
                     at: ident().span,
-                    suggestion: suggestion(name.as_str(), candidates),
+                    form: UnknownForm::Name {
+                        suggestion: suggestion(name.as_str(), candidates),
+                    },
                 });
                 None
             }
@@ -1503,6 +1544,7 @@ impl Checker<'_> {
             ..Body::default()
         };
         fresh.set_type_params(&sig.type_params);
+        fresh.assoc = self.assoc_scope(id, owner);
         // The method's own bounds come after the places of its owner's parameters, which have none
         // when the class or enum is not bounded.
         let mut bounds = match sig.extension {
@@ -1728,6 +1770,10 @@ impl Checker<'_> {
         match head {
             Head::Class(id) => self.classes[id.0].name.name.as_str(),
             Head::Enum(id) => self.enums[id.0].name.name.as_str(),
+            Head::Assoc(interface, k) => self.interfaces[interface.0].assoc[k as usize]
+                .name
+                .name
+                .as_str(),
         }
     }
 

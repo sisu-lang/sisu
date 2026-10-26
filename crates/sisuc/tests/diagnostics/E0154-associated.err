@@ -1,0 +1,11 @@
+error[E0154]: `Node` does not conform to `Same`
+  --> E0154-associated.sisu:15:17
+   |
+ 6 |     type Item: Same
+   |                ---- required by this bound
+...
+15 |     type Item = Node
+   |                 ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

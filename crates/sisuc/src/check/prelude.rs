@@ -74,7 +74,10 @@ impl Checker<'_> {
             Some(ty)
                 if matches!(
                     ty.kind(),
-                    TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Param(..)
+                    TypeKind::Class(..)
+                        | TypeKind::Enum(..)
+                        | TypeKind::Param(..)
+                        | TypeKind::Assoc(..)
                 ) =>
             {
                 DiagnosticKind::PrintArgument {

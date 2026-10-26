@@ -17,6 +17,8 @@ thread_local! {
     static RESOLVE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `Unifier::unify` has read on this thread.
     static UNIFY_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `normalize` has walked on this thread.
+    static NORMALIZED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The conformance of `interface` to `ty` with the interface arguments `args`, as its index
@@ -52,6 +54,68 @@ pub(crate) fn find(
         let bound = bind(c.target, c.type_params, ty)?;
         (c.args.subst(bound.get()) == args).then_some((k, bound))
     })
+}
+
+/// `ty` with every associated type replaced whose base is a class or an enum: by the type that
+/// the base's conformance chooses, with the types that stand for the conformance's parameters in
+/// it, innermost first. An associated type whose base is a type parameter, or another associated
+/// type of one, stays: a body is checked once for every type argument, and `mono` normalizes the
+/// instance. `None` when a base has no conformance to the interface, or the conformance chooses no
+/// type: the type does not exist, and the checker reported why.
+///
+/// A choice names an associated type only through a parameter of its own conformance, whose
+/// argument is a smaller type than the conformance's target, so the walk ends. Each distinct type
+/// is normalized once, whatever number of paths lead to it.
+pub(crate) fn normalize(conformances: &Conformances, ty: Type) -> Option<Type> {
+    if !ty.has_assoc() {
+        return Some(ty);
+    }
+    normalize_in(conformances, ty, &mut FxHashMap::default())
+}
+
+fn normalize_in(
+    conformances: &Conformances,
+    ty: Type,
+    memo: &mut FxHashMap<Type, Type>,
+) -> Option<Type> {
+    if !ty.has_assoc() {
+        return Some(ty);
+    }
+    if let Some(&done) = memo.get(&ty) {
+        return Some(done);
+    }
+    #[cfg(test)]
+    NORMALIZED.set(NORMALIZED.get() + 1);
+    let all = |args: TypeArgs, memo: &mut FxHashMap<Type, Type>| {
+        let list = (args.get().iter())
+            .map(|&ty| normalize_in(conformances, ty, memo))
+            .collect::<Option<Vec<Type>>>()?;
+        Some(TypeArgs::intern(&list))
+    };
+    let done = match ty.kind() {
+        TypeKind::Array(element) => Type::array(normalize_in(conformances, element, memo)?),
+        TypeKind::Optional(payload) => Type::optional(normalize_in(conformances, payload, memo)?),
+        TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, all(args, memo)?)),
+        TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, all(args, memo)?)),
+        TypeKind::Assoc(base, interface, args, k) => {
+            let base = normalize_in(conformances, base, memo)?;
+            let args = all(args, memo)?;
+            match base.kind() {
+                TypeKind::Class(..) | TypeKind::Enum(..) => {
+                    let (index, stands) = find(conformances, interface, base, args)?;
+                    let chosen = (*conformances.get(interface, index).assoc.get(k as usize)?)?;
+                    normalize_in(conformances, chosen.subst(stands.get()), memo)?
+                }
+                TypeKind::Param(..) | TypeKind::Assoc(..) => {
+                    Type::intern(TypeKind::Assoc(base, interface, args, k))
+                }
+                _ => return None,
+            }
+        }
+        _ => unreachable!("only a kind with a child can hold an associated type"),
+    };
+    memo.insert(ty, done);
+    Some(done)
 }
 
 /// The first conformance of `interface` that covers a type together with a new one: `target`,
@@ -371,6 +435,7 @@ mod tests {
                     target,
                     args: TypeArgs::intern(args),
                     methods: Vec::<FuncId>::new(),
+                    assoc: Vec::new(),
                 },
             );
         }
@@ -804,6 +869,7 @@ mod tests {
                     target: circle,
                     args: tag(k),
                     methods: Vec::<FuncId>::new(),
+                    assoc: Vec::new(),
                 },
             );
         }
@@ -885,5 +951,93 @@ mod tests {
         // Another class has none, and an exact target meets the exact one only if it is the same.
         assert_eq!(meets(class(PILE, &[u]), 1, &[Type::F64]), None);
         assert_eq!(meets(boxed(Type::I64), 0, &[Type::F64]), None);
+    }
+
+    /// Interface 0 has one associated type. `Circle` chooses `i64`, `Box<T>` chooses `[T]`,
+    /// `Pair<T, U>` chooses the associated type of `U`, and `Pile` chooses none.
+    fn with_choices() -> Conformances {
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        let mut all = Conformances::default();
+        let rows = [
+            (class(CIRCLE, &[]), 0, Some(Type::I64)),
+            (boxed(param(0)), 1, Some(Type::array(param(0)))),
+            (class(PAIR, &[param(0), param(1)]), 2, Some(item(param(1)))),
+            (class(PILE, &[]), 0, None),
+        ];
+        for (target, type_params, choice) in rows {
+            all.add(
+                InterfaceId(0),
+                Conformance {
+                    type_params,
+                    target,
+                    args: TypeArgs::NONE,
+                    methods: Vec::<FuncId>::new(),
+                    assoc: vec![choice],
+                },
+            );
+        }
+        all
+    }
+
+    /// A type whose associated type has a base that is a class or an enum is the choice of the
+    /// base's conformance, with the types that stand for its parameters in it, innermost first; a
+    /// base that is a parameter keeps it.
+    #[test]
+    fn normalize_should_replace_the_associated_type_of_a_known_type_by_its_choice() {
+        let all = with_choices();
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        let circle = class(CIRCLE, &[]);
+        let normalized = |ty| normalize(&all, ty);
+        assert_eq!(normalized(item(circle)), Some(Type::I64));
+        assert_eq!(
+            normalized(item(boxed(Type::STRING))),
+            Some(Type::array(Type::STRING))
+        );
+        // Inside an optional, an array and the arguments of a class, and twice over.
+        assert_eq!(
+            normalized(Type::optional(Type::array(item(circle)))),
+            Some(Type::optional(Type::array(Type::I64)))
+        );
+        assert_eq!(
+            normalized(boxed(item(boxed(Type::U8)))),
+            Some(boxed(Type::array(Type::U8)))
+        );
+        // `Pair<A, B>` chooses the associated type of `B`: a choice that names one.
+        let pair = class(PAIR, &[circle, boxed(Type::F64)]);
+        assert_eq!(normalized(item(pair)), Some(Type::array(Type::F64)));
+        // A parameter's stays, and so does the associated type of one's own associated type.
+        let kept = item(item(param(0)));
+        assert_eq!(normalized(kept), Some(kept));
+        assert_eq!(normalized(boxed(kept)), Some(boxed(kept)));
+        // A class that chooses none, a class that conforms not, and a type that is no class.
+        assert_eq!(normalized(item(class(PILE, &[]))), None);
+        assert_eq!(normalized(item(class(PILE + 1, &[]))), None);
+        assert_eq!(normalized(item(Type::I64)), None);
+        // A type without an associated type is itself.
+        assert_eq!(normalized(boxed(Type::I64)), Some(boxed(Type::I64)));
+    }
+
+    /// `t_0` is the associated type of `Circle`, and `t_{i+1}` is `Pair<t_i, t_i>`, so `t_20` has
+    /// 21 distinct types and 2^20 paths to its leaf. Each distinct type is normalized once.
+    #[test]
+    fn normalize_should_visit_each_shared_type_once() {
+        let all = with_choices();
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        let circle = class(CIRCLE, &[]);
+        let doubled = |leaf, depth| (0..depth).fold(leaf, |t, _| class(PAIR + 10, &[t, t]));
+        NORMALIZED.set(0);
+        assert_eq!(
+            normalize(&all, doubled(item(circle), 20)),
+            Some(doubled(Type::I64, 20))
+        );
+        // The leaf is one associated type and its base, and each level is one type.
+        assert!(NORMALIZED.get() <= 2 * 22, "{} visits", NORMALIZED.get());
+        // A type without an associated type is not walked at all.
+        NORMALIZED.set(0);
+        assert_eq!(
+            normalize(&all, doubled(Type::I64, 20)),
+            Some(doubled(Type::I64, 20))
+        );
+        assert_eq!(NORMALIZED.get(), 0);
     }
 }

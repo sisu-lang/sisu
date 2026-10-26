@@ -1,0 +1,22 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+class Peek<S> {
+    inner: S
+}
+
+extend<S: Source> Peek<S>: Convert<S.Item> {
+    fn convert(self) -> S.Item {
+        self.inner.next() ?? self.inner.next()
+    }
+}
+
+fn main() {
+    print(1)
+}

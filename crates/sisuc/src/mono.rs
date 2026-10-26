@@ -11,7 +11,7 @@ use std::mem;
 
 use rustc_hash::FxHashMap;
 
-use crate::conformance::find;
+use crate::conformance::{find, normalize};
 use crate::tir::{
     Arm, Block, Class, ClassId, Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId,
     Function, Place, Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
@@ -246,7 +246,22 @@ impl Mono {
 
     /// `ty` of a body instantiated with `args`, as the output names it.
     fn ty(&mut self, ty: Type, args: &[Type]) -> Type {
-        self.output(ty.subst(args))
+        let ty = self.subst(ty, args);
+        self.output(ty)
+    }
+
+    /// `ty` with `args` for its type parameters and each associated type replaced by the type its
+    /// conformance chose. The checker has accepted the program, and checked the bound that gives
+    /// each base its conformance.
+    fn subst(&self, ty: Type, args: &[Type]) -> Type {
+        normalize(&self.conformances, ty.subst(args))
+            .expect("a call that checks should find the conformance of every associated type")
+    }
+
+    /// `subst` for a list of arguments.
+    fn subst_args(&self, list: TypeArgs, args: &[Type]) -> TypeArgs {
+        let list: Vec<Type> = list.get().iter().map(|&ty| self.subst(ty, args)).collect();
+        TypeArgs::intern(&list)
     }
 
     /// The output's type for the concrete checked type `ty`: each class and enum by its output
@@ -294,10 +309,10 @@ impl Mono {
             let interface = decl.conformance.map(|(interface, args_of)| {
                 (
                     self.out.interfaces[interface.0].name.as_str(),
-                    args_of.subst(args),
+                    self.subst_args(args_of, args),
                 )
             });
-            let cut = write_method(&mut out, owner.subst(args), interface, method, head);
+            let cut = write_method(&mut out, self.subst(owner, args), interface, method, head);
             (&args[decl.owner_params..], cut)
         } else {
             out.push_str(&decl.name);
@@ -327,6 +342,7 @@ impl Mono {
     /// The declared name of the checked class or enum `head`.
     fn head(&self, head: Head) -> &str {
         match head {
+            Head::Assoc(interface, k) => &self.out.interfaces[interface.0].assoc[k as usize],
             Head::Class(id) => match &self.class_decls[id.0] {
                 Some(decl) => &decl.name,
                 None => &self.out.classes[self.class_ids[&(id, TypeArgs::NONE)].0].name,
@@ -482,7 +498,7 @@ impl Mono {
                 types,
                 args: operands,
             } => {
-                *func = self.function_id(*func, types.subst(args));
+                *func = self.function_id(*func, self.subst_args(*types, args));
                 *types = TypeArgs::NONE;
                 self.exprs(operands, args);
             }
@@ -494,7 +510,7 @@ impl Mono {
                 args: operands,
             } => {
                 // The conformance of the receiver's type, which the checker found a bound for.
-                let (receiver, rest) = (iargs.subst(args).get().split_first())
+                let (receiver, rest) = (self.subst_args(*iargs, args).get().split_first())
                     .map(|(&receiver, rest)| (receiver, TypeArgs::intern(rest)))
                     .expect("an interface call should name its receiver's type");
                 let (index, bindings) = find(&self.conformances, *interface, receiver, rest)
@@ -502,7 +518,7 @@ impl Mono {
                 let found = self.conformances.get(*interface, index).methods[*method as usize];
                 // The conformance's parameters, then the requirement's own.
                 let mut with = bindings.get().to_vec();
-                with.extend_from_slice(types.subst(args).get());
+                with.extend_from_slice(self.subst_args(*types, args).get());
                 let func = self.function_id(found, TypeArgs::intern(&with));
                 let mut operands = mem::take(operands);
                 self.exprs(&mut operands, args);
@@ -679,7 +695,7 @@ fn assert_concrete(program: &Program) {
 /// Whether `ty` names no type parameter and holds no type arguments, at any depth.
 fn concrete(ty: Type) -> bool {
     match ty.kind() {
-        TypeKind::Param(..) => false,
+        TypeKind::Param(..) | TypeKind::Assoc(..) => false,
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args == TypeArgs::NONE,
         TypeKind::Array(inner) | TypeKind::Optional(inner) => concrete(inner),
         _ => true,

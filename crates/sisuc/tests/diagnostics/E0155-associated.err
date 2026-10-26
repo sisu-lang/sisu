@@ -1,0 +1,8 @@
+error[E0155]: an `extend` block cannot name an associated type in `Wrap<S.Item>`
+  --> E0155-associated.sisu:10:19
+   |
+10 | extend<S: Source> Wrap<S.Item> {
+   |                   ^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0155

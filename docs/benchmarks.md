@@ -332,6 +332,7 @@ This table lists each feature or path and the benchmark that measures it:
 | Enum payloads under `match`: inline in an array of optionals, whose `None` is a spare tag, and boxed in a recursive tree | enum_match |
 | A match that takes boxes apart and builds new ones of the same enum | tree_rewrite |
 | Text scanned from `bytes()` into a boxed tree, rewritten and evaluated | interp |
+| Calls through a bound, static at two conforming classes, and an associated type read through a bound | interfaces |
 | The front end | check_binary_trees, check_large |
 | An `-O2` build | build_hello, build_binary_trees, build_large_20; build_large on `main` only |
 

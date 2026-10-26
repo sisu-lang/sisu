@@ -1,0 +1,147 @@
+// GIVEN `Source`, an interface with an associated type `Item`; `Countdown` that chooses `i64` for
+// it in its declaration list; `Words` that chooses the counted `string` in an `extend` block;
+// `Relay<S>` that chooses the `Item` of the `Source` it wraps; and generic functions, a class and
+// an enum that write `S.Item` as a result, a parameter, a field and a payload
+// WHEN they run over a `Countdown`, over a `Words` of strings built at run time and over a
+// `Relay` of each, with `pass2` waiting for the `S` of its second argument
+// THEN every `S.Item` is the type that the conformance chose, and the strings that `Words` holds
+// are released once
+// o2-calls: main words 5
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+class Countdown: Source {
+    type Item = i64
+    mut n: i64
+
+    fn next(self) -> Item? {
+        if self.n > 0 {
+            self.n -= 1
+            self.n + 1
+        } else {
+            None
+        }
+    }
+}
+
+class Words {
+    words: [string]
+    mut at: i64
+}
+
+extend Words: Source {
+    type Item = string
+
+    fn next(self) -> Item? {
+        if self.at < self.words.len() {
+            self.at += 1
+            self.words[self.at - 1]
+        } else {
+            None
+        }
+    }
+}
+
+class Relay<S: Source> {
+    inner: S
+}
+
+extend<S: Source> Relay<S>: Source {
+    type Item = S.Item
+
+    fn next(self) -> Item? {
+        self.inner.next()
+    }
+}
+
+class Holder<S: Source> {
+    item: S.Item
+
+    fn get(self) -> S.Item {
+        self.item
+    }
+}
+
+enum Got<S: Source> {
+    Got(S.Item)
+    Nothing
+}
+
+fn first_of<S: Source>(s: S) -> S.Item? {
+    s.next()
+}
+
+fn g<S: Source>(s: S) -> S.Item? {
+    first_of(s)
+}
+
+fn drain<S: Source>(s: S) -> [S.Item] {
+    let mut last: [S.Item] = []
+    while let x = s.next() {
+        last = [x]
+    }
+    last
+}
+
+fn pass<S: Source>(s: S, x: S.Item) -> S.Item {
+    let rest = s.next()
+    if rest == None {
+        x
+    } else {
+        x
+    }
+}
+
+fn pass2<S: Source>(x: S.Item, s: S) -> S.Item {
+    let rest = s.next()
+    if rest == None {
+        x
+    } else {
+        x
+    }
+}
+
+fn words() -> Words {
+    Words(words: ["a" + "b", "c" + "d", "e" + "f"], at: 0)
+}
+
+fn main() {
+    // Countdown: the items are `i64`s.
+    let n: i64? = first_of(Countdown(n: 3))
+    print(n ?? 0)
+    let m: i64? = g(Relay(inner: Countdown(n: 5)))
+    print(m ?? 0)
+    print(drain(Countdown(n: 4))[0])
+    print(pass(Countdown(n: 1), 40) + pass2(2, Countdown(n: 1)))
+    let held: Holder<Countdown> = Holder(item: 7)
+    print(held.item + held.get())
+    let got: Got<Countdown> = Got.Got(9)
+    match got {
+        Got.Got(v) => print(v + 1)
+        Got.Nothing => print(0)
+    }
+    // Words: the items are counted `string`s, and each is released once.
+    let w: string? = first_of(words())
+    print(w ?? "none")
+    let r: string? = g(Relay(inner: words()))
+    print(r ?? "none")
+    let all = drain(words())
+    print(all[0])
+    print(all.len())
+    print(pass(words(), "x" + "y"))
+    print(pass2("p" + "q", words()))
+    let kept: Holder<Words> = Holder(item: "h" + "i")
+    print(kept.item + kept.get())
+    let there: Got<Words> = Got.Got("m" + "n")
+    match there {
+        Got.Got(v) => print(v + "!")
+        Got.Nothing => print("nothing")
+    }
+    let nothing: Got<Words> = Got.Nothing
+    match nothing {
+        Got.Got(v) => print(v)
+        Got.Nothing => print("nothing")
+    }
+}

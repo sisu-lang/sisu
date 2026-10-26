@@ -29,6 +29,8 @@ pub(super) struct EnumInfo {
     pub(super) index: FxHashMap<Symbol, usize>,
     /// The first method of each name that no variant takes, and every broken one.
     pub(super) methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// The associated types the declaration's body chooses.
+    pub(super) assoc: Vec<super::Choice>,
 }
 
 pub(super) struct VariantInfo {
@@ -124,6 +126,8 @@ impl Checker<'_> {
         if self.enums[id.0].bounded {
             self.enums[id.0].bounds = bounds;
         }
+        // The choices come before the payloads and the signatures, which may name them.
+        self.enums[id.0].assoc = self.declare_choices(&e.assoc, owner);
         self.body.set_type_params(&[]);
         let mut first = FxHashMap::default();
         for variant in &e.variants {
@@ -209,6 +213,7 @@ impl Checker<'_> {
                 .insert(method.name, Declared::Broken);
         }
         self.body.self_type = None;
+        self.body.assoc.clear();
     }
 
     /// `Enum.member`, or `Enum.member(args)` when `call` gives the arguments and the span of their
@@ -619,7 +624,7 @@ impl Checker<'_> {
         let mut key = start;
         while on_chain.insert(key) {
             let with = args.get();
-            let held = |ty: &Option<Type>| ty.map(|ty| ty.subst(with));
+            let held = |ty: &Option<Type>| ty.and_then(|ty| self.subst(ty, with));
             let (holder, field) = if at < classes {
                 let class = &self.classes[at];
                 let mut fields = class

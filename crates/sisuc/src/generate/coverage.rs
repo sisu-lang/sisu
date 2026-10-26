@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 13] = [
+const EXCLUDED: [(&str, &str); 14] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -50,10 +50,6 @@ const EXCLUDED: [(&str, &str); 13] = [
         "only an item with a syntax error is broken",
     ),
     (
-        "ast::TypeKind::Member",
-        "lands in Task 7 of milestone 8 part 4",
-    ),
-    (
         "ast::Bound::Name",
         "a named range bound is an error (E0126)",
     ),
@@ -70,11 +66,19 @@ const EXCLUDED: [(&str, &str); 13] = [
         "a private worklist item of `types::write_steps`, which is no type",
     ),
     (
+        "types::Step::Assoc",
+        "a private worklist item of `types::write_steps`, which is no type",
+    ),
+    (
         "types::Head::Class",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
     (
         "types::Head::Enum",
+        "the key by which `types::write_type` asks for a name, which is no type",
+    ),
+    (
+        "types::Head::Assoc",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
 ];
@@ -104,7 +108,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 77] = [
+const REACH: [&str; 79] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -182,6 +186,8 @@ const REACH: [&str; 77] = [
     "reach: a generic interface has two conformances on one type",
     "reach: an expected type picks a conformance",
     "reach: a bound has interface arguments",
+    "reach: an associated type has a bound",
+    "reach: an associated type's choice is counted",
 ];
 
 /// Whether a program's text holds a form.
@@ -723,6 +729,7 @@ impl Walk {
             self.type_expr(inherited);
         }
         for bound in interface.assoc.iter().flat_map(|a| &a.bounds) {
+            self.mark("reach: an associated type has a bound");
             self.type_expr(bound);
         }
         for requirement in &interface.methods {
@@ -757,6 +764,10 @@ impl Walk {
     /// Walks the types of the associated types a conformance chooses.
     fn choices(&mut self, assoc: &[ast::AssocChoice]) {
         for choice in assoc {
+            // A `string` or an object: the choice is reference counted.
+            if choice.ty.optional == 0 && counted_name(&choice.ty.kind) {
+                self.mark("reach: an associated type's choice is counted");
+            }
             self.type_expr(&choice.ty);
         }
     }
@@ -1809,6 +1820,7 @@ impl Walk {
             TypeKind::Param(..) => ("types::TypeKind::Param", None),
             TypeKind::Array(element) => ("types::TypeKind::Array", Some(element)),
             TypeKind::Optional(inner) => ("types::TypeKind::Optional", Some(inner)),
+            TypeKind::Assoc(base, ..) => ("types::TypeKind::Assoc", Some(base)),
         };
         self.mark(key);
         if let Some(inner) = inner {
@@ -1874,7 +1886,7 @@ impl Walk {
     /// type parameter of a generic body may stand for a class.
     fn holds_class(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
         match ty.kind() {
-            TypeKind::Class(..) | TypeKind::Param(..) => true,
+            TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..) => true,
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.holds_class(inner, seen),
             TypeKind::Enum(id, args) => {
                 !seen.contains(&id) && {
@@ -1944,7 +1956,8 @@ impl Walk {
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
                 | TypeKind::Enum(..)
-                | TypeKind::Param(..) => {}
+                | TypeKind::Param(..)
+                | TypeKind::Assoc(..) => {}
             }
         }
         if written && left && matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8) {
@@ -2277,6 +2290,17 @@ impl Walk {
     }
 }
 
+/// Whether the written type `kind` names `string` or a class of the generator (`K<n>` and
+/// `Q<n>`, and `R<n>` over an argument), whose values are reference counted.
+fn counted_name(kind: &ast::TypeKind) -> bool {
+    let name = match kind {
+        ast::TypeKind::Name(name) => name.as_str(),
+        ast::TypeKind::Applied(applied) => applied.name.as_str(),
+        _ => return false,
+    };
+    name == "string" || name.starts_with(['K', 'Q', 'R'])
+}
+
 /// A type's kind, as `RECEIVERS` and `CONVERSIONS` write it.
 fn kind_name(ty: Type) -> &'static str {
     match ty.kind() {
@@ -2293,6 +2317,7 @@ fn kind_name(ty: Type) -> &'static str {
         TypeKind::Param(..) => "Param",
         TypeKind::Array(_) => "Array",
         TypeKind::Optional(_) => "Optional",
+        TypeKind::Assoc(..) => "Assoc",
     }
 }
 

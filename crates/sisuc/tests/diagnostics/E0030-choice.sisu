@@ -1,0 +1,17 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+class Names: Source {
+    type Item = [Item]
+    mut n: i64
+
+    fn next(self) -> Item? {
+        None
+    }
+}
+
+fn main() {
+    print(Names(n: 0).n)
+}

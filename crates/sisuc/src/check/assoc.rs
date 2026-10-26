@@ -1,0 +1,293 @@
+//! Associated types: the types an interface declares and a conformance chooses, `S.Item` written
+//! through a type parameter, and the substitution that replaces an associated type of a known
+//! type by the type its conformance chose.
+
+use rustc_hash::FxHashMap;
+
+use super::interface::Bound;
+use super::{Checker, Definition, DiagnosticKind, Holder, Symbol};
+use crate::ast;
+use crate::conformance::normalize;
+use crate::diagnostic::{CannotExtendForm, UnknownForm, WideKind};
+use crate::source::Span;
+use crate::tir::{FuncId, InterfaceId, Type, TypeArgs, TypeKind};
+
+use super::interface::BOUND_CLOSURE_LIMIT;
+
+/// The associated type that a conformance chooses: `type Item = i64`.
+pub(super) struct Choice {
+    pub(super) name: ast::Ident,
+    /// The type chosen; `None` is `Error`.
+    pub(super) ty: Option<Type>,
+    /// Where the type is written.
+    pub(super) at: Span,
+}
+
+/// What a bare name stands for where associated types are in scope.
+pub(super) enum Named {
+    /// The associated type, or the type its conformance chose.
+    Type(Type),
+    /// A type that failed to resolve, or a choice that names itself: reported already.
+    Failed,
+    /// No associated type of that name.
+    Unknown,
+}
+
+impl Checker<'_> {
+    /// `ty` with the associated types of known types replaced (see `conformance::normalize`).
+    /// `None`, after the report of why, when a base has no conformance.
+    pub(super) fn normalize(&self, ty: Type) -> Option<Type> {
+        if !ty.has_assoc() {
+            return Some(ty);
+        }
+        normalize(&self.conformances, ty)
+    }
+
+    /// `ty` with `args` for its type parameters, as `Type::subst`, and then each associated type
+    /// of a known type replaced. Every substitution that can put a class or an enum under an
+    /// associated type goes through here. `None` poisons the caller, as an unresolved type does.
+    pub(super) fn subst(&self, ty: Type, args: &[Type]) -> Option<Type> {
+        let (substituted, assoc) = ty.subst_noting_assoc(args);
+        if assoc {
+            normalize(&self.conformances, substituted)
+        } else {
+            Some(substituted)
+        }
+    }
+
+    /// `subst` for a list of arguments. A type that does not normalize stays as it is: the
+    /// report of why comes from the place that built it.
+    pub(super) fn subst_args(&self, list: TypeArgs, args: &[Type]) -> TypeArgs {
+        let list = list.subst(args);
+        if !list.has_assoc() {
+            return list;
+        }
+        let known: Option<Vec<Type>> = list.get().iter().map(|&ty| self.normalize(ty)).collect();
+        known.map_or(list, |known| TypeArgs::intern(&known))
+    }
+
+    /// Resolves the choices `choices` of a class, an enum or a block `owner`, where its type
+    /// parameters are in scope. A choice cannot name an associated type of its own conformance.
+    /// A choice that repeats a name is reported, and the first stays.
+    pub(super) fn resolve_choices(
+        &mut self,
+        choices: &[ast::AssocChoice],
+        owner: &str,
+    ) -> Vec<Choice> {
+        if choices.is_empty() {
+            return Vec::new();
+        }
+        self.body.choosing = choices.iter().map(|choice| choice.name.name).collect();
+        let mut first = FxHashMap::default();
+        let mut resolved = Vec::new();
+        for choice in choices {
+            let ty = self.resolve(&choice.ty);
+            if self.first_definition(&mut first, Definition::Type, Some(owner), &choice.name) {
+                resolved.push(Choice {
+                    name: choice.name.clone(),
+                    ty,
+                    at: choice.ty.span,
+                });
+            }
+        }
+        self.body.choosing.clear();
+        resolved
+    }
+
+    /// The associated types that a bare name stands for in the method `func` of `owner`: the
+    /// choices of its `extend` block, or of its class or enum.
+    pub(super) fn assoc_scope(
+        &self,
+        func: FuncId,
+        owner: Option<Type>,
+    ) -> Vec<(Symbol, Option<Type>)> {
+        let choices = match self.signatures[func.0].extension {
+            Some(at) => &self.extensions[at].assoc,
+            None => match owner.and_then(super::extend::holder_of) {
+                Some(Holder::Class(c)) => &self.classes[c.0].assoc,
+                Some(Holder::Enum(e)) => &self.enums[e.0].assoc,
+                None => return Vec::new(),
+            },
+        };
+        choices.iter().map(|c| (c.name.name, c.ty)).collect()
+    }
+
+    /// What the bare `name`, written at `at`, stands for. A name whose choice is being resolved
+    /// is reported (E0030).
+    pub(super) fn assoc_named(&mut self, name: Symbol, at: Span) -> Named {
+        if self.body.choosing.contains(&name) {
+            self.report(DiagnosticKind::UnknownType {
+                name: name.to_string(),
+                at,
+                form: UnknownForm::ChoiceNamesItself,
+            });
+            return Named::Failed;
+        }
+        match self.body.assoc.iter().find(|(n, _)| *n == name) {
+            Some((_, Some(ty))) => Named::Type(*ty),
+            Some((_, None)) => Named::Failed,
+            None => Named::Unknown,
+        }
+    }
+
+    /// Resolves the choices of a class or an enum `owner`, as `resolve_choices` does, and puts
+    /// them in scope as the bare names its signatures and bodies may use.
+    pub(super) fn declare_choices(
+        &mut self,
+        choices: &[ast::AssocChoice],
+        owner: &str,
+    ) -> Vec<Choice> {
+        let resolved = self.resolve_choices(choices, owner);
+        self.body.assoc = resolved.iter().map(|c| (c.name.name, c.ty)).collect();
+        resolved
+    }
+
+    /// Reports that the written type `ty`, a target or an interface argument of an `extend`
+    /// block, names an associated type.
+    pub(super) fn cannot_extend_assoc(&mut self, ty: &ast::TypeExpr) {
+        self.report(DiagnosticKind::CannotExtend {
+            written: ty.to_string(),
+            at: ty.bare,
+            form: CannotExtendForm::Associated,
+        });
+    }
+
+    /// The type `base.name`, written as `ty`: the associated type `name` of the type parameter or
+    /// associated type `base` names, through the one interface of its bounds that declares it.
+    /// `None`, reported, for a base that is no type parameter, a base with no such associated
+    /// type, and a base with two.
+    pub(super) fn member_type(
+        &mut self,
+        ty: &ast::TypeExpr,
+        base: &ast::TypeExpr,
+        name: &ast::Ident,
+    ) -> Option<Type> {
+        let base_ty = self.resolve(base)?;
+        if !matches!(base_ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
+            let own = matches!(base.kind, ast::TypeKind::SelfType)
+                && self.body.assoc.iter().any(|(n, _)| *n == name.name);
+            self.report(DiagnosticKind::UnknownType {
+                name: name.name.to_string(),
+                at: ty.bare,
+                form: UnknownForm::ConcreteBase { own },
+            });
+            return None;
+        }
+        // A parameter whose bounds went past the limit is reported already, and unknown.
+        if matches!(base_ty.kind(), TypeKind::Param(_, p) if self.body.wide.contains(&(p as usize)))
+        {
+            return None;
+        }
+        let mut found = Vec::new();
+        for (interface, args) in self.interfaces_for(base_ty) {
+            let assoc = &self.interfaces[interface.0].assoc;
+            for (k, declared) in assoc.iter().enumerate() {
+                if declared.name.name == name.name {
+                    found.push((interface, args, k));
+                }
+            }
+        }
+        match found[..] {
+            [(interface, args, k)] => {
+                let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
+                Some(Type::intern(TypeKind::Assoc(base_ty, interface, args, k)))
+            }
+            [] => {
+                let add = match self.declaring_assoc.get(&name.name).map(Vec::as_slice) {
+                    Some(&[only]) => self.add_bound(base_ty, only),
+                    _ => None,
+                };
+                self.report(DiagnosticKind::UnknownType {
+                    name: name.name.to_string(),
+                    at: name.span,
+                    form: UnknownForm::NoAssociated {
+                        base: self.type_name(base_ty),
+                        add,
+                    },
+                });
+                None
+            }
+            _ => {
+                self.report(DiagnosticKind::Ambiguous {
+                    method: name.name.to_string(),
+                    receiver: self.type_name(base_ty),
+                    interfaces: (found.iter())
+                        .map(|&(interface, args, _)| self.bound_text(interface, args))
+                        .collect(),
+                    at: name.span,
+                    annotate: None,
+                });
+                None
+            }
+        }
+    }
+
+    /// The interfaces that the type parameter or associated type `ty` conforms to through its
+    /// bounds and what they inherit, each with its arguments once.
+    pub(super) fn interfaces_for(&mut self, ty: Type) -> Vec<(InterfaceId, TypeArgs)> {
+        match ty.kind() {
+            TypeKind::Param(_, place) => self.param_interfaces(place as usize).to_vec(),
+            TypeKind::Assoc(..) => self.assoc_interfaces(ty).to_vec(),
+            _ => unreachable!("only a type parameter or an associated type has bounds"),
+        }
+    }
+
+    /// Whether the associated type `ty` conforms to `interface` with `args`: through the bounds
+    /// of its declaration, or because its bounds went past the limit and it is unknown.
+    pub(super) fn assoc_conforms(
+        &mut self,
+        ty: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+    ) -> bool {
+        self.assoc_interfaces(ty).contains(&(interface, args)) || self.body.wide_assoc.contains(&ty)
+    }
+
+    /// The interfaces that the associated type `ty` conforms to through the bounds of its
+    /// declaration, found when first asked for in a body.
+    ///
+    /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25; ruling
+    /// F9 (b)), as for `param_interfaces`: the closure is computed once for each associated type
+    /// that a body names, so a body costs the closure's size.
+    fn assoc_interfaces(&mut self, ty: Type) -> &[(InterfaceId, TypeArgs)] {
+        if !self.body.assoc_conforming.contains_key(&ty) {
+            let TypeKind::Assoc(base, interface, args, k) = ty.kind() else {
+                unreachable!("only an associated type should be asked for its closure");
+            };
+            // The declaration's bounds are over the interface's parameters, `Self` first.
+            let mut with = vec![base];
+            with.extend_from_slice(args.get());
+            let bounds: Vec<Bound> = (self.interfaces[interface.0].assoc[k as usize].bounds.iter())
+                .map(|b| Bound {
+                    interface: b.interface,
+                    args: b.args.subst(&with),
+                    at: b.at,
+                })
+                .collect();
+            let mut out = Vec::new();
+            let mut seen = std::mem::take(&mut self.closure_seen);
+            let wide = self.interfaces_of(ty, &bounds, &mut out, &mut seen);
+            self.closure_seen = seen;
+            if let Err(j) = wide {
+                self.too_wide_assoc(ty, bounds[j].at);
+            }
+            self.body.assoc_conforming.insert(ty, out);
+        }
+        &self.body.assoc_conforming[&ty]
+    }
+
+    /// Reports the bound written at `at` of the associated type `ty`, whose closure went past the
+    /// limit: once for the bound, whatever bodies read it. The type is then unknown in this body.
+    pub(super) fn too_wide_assoc(&mut self, ty: Type, at: Span) {
+        self.body.wide_assoc.insert(ty);
+        if self.wide_reported.insert(at) {
+            let text = self.source.file.text(at);
+            self.report(DiagnosticKind::BoundTooWide {
+                kind: WideKind::Bound,
+                written: format!("{}: {text}", self.type_name(ty)),
+                limit: BOUND_CLOSURE_LIMIT,
+                at,
+            });
+        }
+    }
+}

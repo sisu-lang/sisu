@@ -756,7 +756,14 @@ impl Statements {
                 Colon | Arrow => s.annotation = Some(0),
                 // A `>=` after a type annotation closes it and starts its value. So does a loop
                 // keyword: it follows a loop label's `:`, which is no annotation.
-                Eq | Ge | TokenKind::While | TokenKind::For | Loop => s.annotation = None,
+                Eq | Ge | TokenKind::While | TokenKind::For | Loop => {
+                    // The `=` that is the third token of `type Item = ...` starts the type of an
+                    // associated type's choice, as a `:` starts a type annotation.
+                    let chooses = matches!(t.kind, Eq)
+                        && s.tokens == 3
+                        && tokens[s.start].kind == TokenKind::Reserved("type");
+                    s.annotation = chooses.then_some(0);
+                }
                 Gt => {
                     s.annotation = s.annotation.map(|a| a + 1);
                     if s.params {
@@ -3052,6 +3059,15 @@ mod tests {
         assert_eq!(newlines("class D {\n    b: Box<[i64]>\n    n: i64\n}"), 3);
         assert_eq!(newlines("class D {\n    b: Box<i64>;\n    n: i64\n}"), 3);
         assert_eq!(newlines("fn f() -> bool {\n    x < y >\n        z\n}"), 2);
+        // The type of an associated type's choice is one too, and a later `=` is not.
+        assert_eq!(
+            newlines("class D: S {\n    type Item = Box<Box<i64>>\n    n: i64\n}"),
+            3
+        );
+        assert_eq!(
+            newlines("fn f() {\n    let type = a < b >\n        c\n}"),
+            2
+        );
     }
 
     /// A line-end `??` ends the statement where it closes a type annotation, and goes on to its

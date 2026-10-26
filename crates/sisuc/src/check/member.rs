@@ -122,7 +122,9 @@ impl Checker<'_> {
             info.type_params.len(),
             "a class type should give each of its class's type parameters an argument"
         );
-        info.fields[index].ty.map(|ty| ty.subst(args.get()))
+        info.fields[index]
+            .ty
+            .and_then(|ty| self.subst(ty, args.get()))
     }
 
     /// The class, index and type of field `name` of `receiver`, a value of type `base`. `None` when
@@ -233,8 +235,11 @@ impl Checker<'_> {
                 continue;
             };
             if self.block_holds(at, stands) {
-                self.candidates
-                    .push((func, bound.interface, bound.args.subst(stands.get())));
+                self.candidates.push((
+                    func,
+                    bound.interface,
+                    self.subst_args(bound.args, stands.get()),
+                ));
             } else {
                 self.failed_block.get_or_insert(at);
             }
@@ -363,12 +368,13 @@ impl Checker<'_> {
         let sig = &self.signatures[func.0];
         let names = named_params(std::iter::once(Some(ret)), owner + sig.own);
         if !names[owner..].contains(&true) {
-            return Some(ret.subst(&with));
+            return self.subst(ret, &with);
         }
-        (written.len() == sig.own).then(|| {
-            with.extend_from_slice(written);
-            ret.subst(&with)
-        })
+        if written.len() != sig.own {
+            return None;
+        }
+        with.extend_from_slice(written);
+        self.subst(ret, &with)
     }
 
     /// The method among `candidates`, which are methods of conformance blocks that cover `ty`,

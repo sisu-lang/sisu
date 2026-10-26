@@ -220,7 +220,7 @@ impl Checker<'_> {
             .first()
             .copied()
             .flatten()
-            .map(|ty| ty.subst(owner))
+            .and_then(|ty| self.subst(ty, owner))
     }
 
     /// How the method `name` belongs to a receiver of type `ty`: a built-in array or number
@@ -307,7 +307,7 @@ impl Checker<'_> {
             .params
             .iter()
             .take(args.len())
-            .map(|ty| ty.map(|ty| ty.subst(owner)))
+            .map(|ty| ty.and_then(|ty| self.subst(ty, owner)))
             .collect();
         let mut first = first;
         for (arg, &want) in args
@@ -443,7 +443,7 @@ impl Checker<'_> {
             Some(ty @ (Type::I64 | Type::F64)) => {
                 return self.number_method(span, receiver, ty, method, args);
             }
-            Some(ty) if matches!(ty.kind(), TypeKind::Param(..)) => {
+            Some(ty) if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) => {
                 return self.bound_method(span, receiver, ty, site, args);
             }
             _ => {}

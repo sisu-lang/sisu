@@ -10,10 +10,10 @@ use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
-    /// `receiver.method(args)` on a value of type `ty`, a type parameter, which `site` writes:
-    /// the call of the requirement that its bounds give. The call's own type arguments are
-    /// inferred against the requirement, as for a generic method, and the bounds of the
-    /// requirement's own parameters are checked.
+    /// `receiver.method(args)` on a value of type `ty`, a type parameter or an associated type,
+    /// which `site` writes: the call of the requirement that its bounds give. The call's own type
+    /// arguments are inferred against the requirement, as for a generic method, and the bounds of
+    /// the requirement's own parameters are checked.
     pub(super) fn bound_method(
         &mut self,
         span: Span,
@@ -22,10 +22,7 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
-        let TypeKind::Param(_, place) = ty.kind() else {
-            unreachable!("a bound method should be called on a type parameter");
-        };
-        let found = self.required(place as usize, site.name.name);
+        let found = self.required(ty, site.name.name);
         let Some(picked) = self.pick_required(ty, site, span, &found) else {
             self.labels(args);
             self.stray(args);
@@ -156,12 +153,13 @@ impl Checker<'_> {
         let base = with.len();
         let names = named_params(std::iter::once(Some(ret)), base + own);
         if !names[base..].contains(&true) {
-            return Some(ret.subst(&with));
+            return self.subst(ret, &with);
         }
-        (written.len() == own).then(|| {
-            with.extend_from_slice(written);
-            ret.subst(&with)
-        })
+        if written.len() != own {
+            return None;
+        }
+        with.extend_from_slice(written);
+        self.subst(ret, &with)
     }
 
     /// Reports that the type parameter `ty` has no method `name`: no interface of its bounds

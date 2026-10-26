@@ -78,10 +78,16 @@ pub(super) struct Unreachable {
 }
 
 /// Which `rows`, the arms of a `match` on `ty` in order, no value reaches, and a value that
-/// none matches. `enums` are the program's.
-pub(super) fn check(enums: &[tir::Enum], ty: Type, rows: &[Row<'_>]) -> Report {
+/// none matches. `enums` and `conformances` are the program's.
+pub(super) fn check(
+    enums: &[tir::Enum],
+    conformances: &tir::Conformances,
+    ty: Type,
+    rows: &[Row<'_>],
+) -> Report {
     let mut solver = Solver {
         enums,
+        conformances,
         pats: vec![Pat::Wild],
         ors: vec![false],
         pat_ids: FxHashMap::default(),
@@ -430,6 +436,7 @@ impl Frame {
 
 struct Solver<'a> {
     enums: &'a [tir::Enum],
+    conformances: &'a tir::Conformances,
     pats: Vec<Pat>,
     /// Whether each pattern holds an `|`.
     ors: Vec<bool>,
@@ -469,6 +476,13 @@ fn join(
 }
 
 impl Solver<'_> {
+    /// `ty` with `args` for its type parameters and each associated type of a known type
+    /// replaced (see `Checker::subst`). A type that does not normalize keeps its form.
+    fn subst(&self, ty: Type, args: &[Type]) -> Type {
+        let ty = ty.subst(args);
+        crate::conformance::normalize(self.conformances, ty).unwrap_or(ty)
+    }
+
     fn pat(&mut self, pat: Pat) -> PatId {
         let (pats, ors) = (&mut self.pats, &mut self.ors);
         *self.pat_ids.entry(pat).or_insert_with_key(|pat| {
@@ -497,7 +511,8 @@ impl Solver<'_> {
                     .iter()
                     .zip(payload)
                     .map(|(field, payload)| {
-                        self.intern(field, column(payload.ty.subst(args.get())))
+                        let ty = self.subst(payload.ty, args.get());
+                        self.intern(field, column(ty))
                     })
                     .collect();
                 self.pat(Pat::Variant {
@@ -988,7 +1003,8 @@ impl Solver<'_> {
                     .rev()
                     .fold(head.tail, |tail, (k, field)| {
                         let pat = self.field(head.head, k);
-                        self.push(pat, column(field.ty.subst(args.get())), tail)
+                        let ty = self.subst(field.ty, args.get());
+                        self.push(pat, column(ty), tail)
                     })
             })
             .collect()
@@ -1135,7 +1151,7 @@ mod tests {
                 guarded: arm.guard.is_some(),
             })
             .collect();
-        check(&program.enums, scrutinee.ty, &rows)
+        check(&program.enums, &program.conformances, scrutinee.ty, &rows)
     }
 
     /// The texts of `Missing.partly`: the arm's pattern and its payload.

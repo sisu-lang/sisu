@@ -1,0 +1,17 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+interface Feed {
+    type Item
+    fn feed(self) -> i64
+}
+
+fn show<S: Source & Feed>(x: S.Item) {
+    print(1)
+}
+
+fn main() {
+    print(1)
+}

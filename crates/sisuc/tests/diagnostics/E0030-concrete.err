@@ -1,0 +1,8 @@
+error[E0030]: an associated type is written through a type parameter, as `S.Item` for `S: Source`
+  --> E0030-concrete.sisu:20:14
+   |
+20 | fn double(x: Countdown.Item) -> i64 {
+   |              ^^^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

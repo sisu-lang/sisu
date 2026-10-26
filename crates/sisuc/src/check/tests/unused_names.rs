@@ -962,6 +962,16 @@ fn interface_should_not_warn_when_the_bound_of_a_used_interfaces_parameter_names
     );
 }
 
+/// An interface that only the bound of a used interface's associated type names is used: the
+/// class that is the item conforms to it, and a conformance is no use.
+#[test]
+fn interface_should_not_warn_when_the_bound_of_a_used_interfaces_associated_type_names_it() {
+    judge_unused();
+    clean(
+        "interface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Source {\n    type Item: Same\n    fn next(self) -> Item?\n}\nclass Tag: Same {\n    id: i64\n    fn same(self, other: Tag) -> bool { self.id == other.id }\n}\nclass Countdown: Source {\n    type Item = Tag\n    n: i64\n    fn next(self) -> Item? { if self.n > 0 { Tag(id: self.n) } else { None } }\n}\nfn first_of<S: Source>(s: S) -> S.Item? {\n    s.next()\n}\nfn main() {\n    print(first_of(Countdown(n: 1)) == None)\n    print(Tag(id: 1).id)\n}",
+    );
+}
+
 /// An interface of the prelude is out of the user's sight: nothing in it is unused, as nothing
 /// else in the prelude is.
 #[test]

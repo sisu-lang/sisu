@@ -1165,31 +1165,6 @@ fn main() {
         }
     }
 
-    /// The checker takes no associated type or member type yet: each is E0030 at the name it
-    /// cannot take.
-    #[test]
-    fn what_the_checker_cannot_take_yet_should_be_an_unknown_type() {
-        for (src, at) in [
-            ("fn f<T: Ord>(x: T) {}\nfn main() {}\n", (1, 9)),
-            (
-                "interface Source {}\nclass C: Source {\n    type Item = i64\n}\nfn main() {}\n",
-                (3, 10),
-            ),
-            ("extend C {}\nfn main() {}\n", (1, 8)),
-            ("fn f<S>(x: S.Item) {}\nfn main() {}\n", (1, 12)),
-            (
-                "interface Source {\n    type Item: Same\n}\nfn main() {}\n",
-                (2, 10),
-            ),
-        ] {
-            let found = codes(src);
-            assert_eq!(found.first(), Some(&(Code::UnknownType, at)), "{src}");
-        }
-        // An unknown type is reported without its `?`.
-        let src = "fn f<T: Ord?>(x: T) {}\nfn main() {}\n";
-        assert_eq!(front_end(src).1[0].span(), Span::new(8, 11));
-    }
-
     /// A line break or a space before a `?` is no part of the type: the report covers the type
     /// alone and renders (the renderer rejects a span that ends with a line break).
     #[test]
@@ -1201,9 +1176,9 @@ fn main() {
                 "Self",
             ),
             (
-                "fn f<S>(x: S.Item\n?) {}\nfn main() {}\n",
+                "class C {}\nfn f(x: C.Item\n?) {}\nfn main() {}\n",
                 Code::UnknownType,
-                "S.Item",
+                "C.Item",
             ),
             (
                 "fn f<T: Ord ? ?>(x: T) {}\nfn main() {}\n",

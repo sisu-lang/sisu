@@ -27,6 +27,8 @@ pub(super) struct Extension {
     pub(super) bounds: Vec<Vec<Bound>>,
     /// The interface of an `extend T: I` block, and where it is written.
     pub(super) interface: Option<(Bound, Span)>,
+    /// The associated types the block chooses.
+    pub(super) assoc: Vec<super::Choice>,
     /// The first method of each name.
     pub(super) methods: FxHashMap<Symbol, tir::FuncId>,
     /// Whether the type already conforms to the interface, so that the block's methods answer no
@@ -50,18 +52,27 @@ impl<'a> Checker<'_> {
         self.body.set_type_params(&params);
         let bounds = self.declare_bounds(0, Vec::new(), &extend.type_params);
         let target = self.extend_target(&extend.target);
-        let interface = (extend.interface.as_ref())
-            .map(|ty| self.bound(ty, target).map(|bound| (bound, ty.bare)));
-        for choice in &extend.assoc {
-            // Task 7 takes an associated type.
-            self.unsupported_at(choice.name.span);
-        }
+        let interface = (extend.interface.as_ref()).map(|ty| {
+            let bound = self.bound(ty, target)?;
+            // The block's parameters could not be found from the receiver (see `extend_target`).
+            if bound.args.get().iter().any(|arg| arg.has_assoc()) {
+                self.cannot_extend_assoc(ty);
+                return None;
+            }
+            Some((bound, ty.bare))
+        });
+        let assoc = if extend.interface.is_some() {
+            self.resolve_choices(&extend.assoc, &extend.target.to_string())
+        } else {
+            Vec::new()
+        };
         let unused = target.is_some_and(|target| self.unused_params(extend, target));
         let failed = unused || matches!(interface, Some(None));
         let usable = target.filter(|_| !failed);
         let receiver = usable.unwrap_or(UNKNOWN);
         let holder = usable.and_then(holder_of);
         self.body.self_type = Some(receiver);
+        self.body.assoc = assoc.iter().map(|c| (c.name.name, c.ty)).collect();
         let name = self.type_name(receiver);
         let at = self.extensions.len();
         let mut methods = FxHashMap::default();
@@ -101,6 +112,7 @@ impl<'a> Checker<'_> {
         }
         self.body.set_type_params(&[]);
         self.body.self_type = None;
+        self.body.assoc.clear();
         if let (Some(target), Some(holder)) = (usable, holder) {
             for method in &extend.broken_methods {
                 self.broken_extension_methods.insert((holder, method.name));
@@ -111,6 +123,7 @@ impl<'a> Checker<'_> {
                 type_params: params,
                 bounds,
                 interface: interface.flatten(),
+                assoc,
                 methods,
                 duplicate: false,
             });
@@ -164,7 +177,8 @@ impl<'a> Checker<'_> {
         let bounds = self.extensions[extension].bounds.clone();
         for (i, bounds) in bounds.iter().enumerate() {
             for &b in bounds {
-                if !self.conforms(stands.get()[i], b.interface, b.args.subst(stands.get())) {
+                let args = self.subst_args(b.args, stands.get());
+                if !self.conforms(stands.get()[i], b.interface, args) {
                     return Some((i, b));
                 }
             }
@@ -245,7 +259,15 @@ impl<'a> Checker<'_> {
         }
         let resolved = self.resolve(ty)?;
         let form = match resolved.kind() {
-            TypeKind::Class(..) | TypeKind::Enum(..) => return Some(resolved),
+            TypeKind::Class(..) | TypeKind::Enum(..) if !resolved.has_assoc() => {
+                return Some(resolved);
+            }
+            // An associated type in the target: the block's parameters could not be found from
+            // the receiver, and `overlap` and `find` compare types structurally.
+            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Assoc(..) => {
+                self.cannot_extend_assoc(ty);
+                return None;
+            }
             TypeKind::Param(..) => CannotExtendForm::TypeParam,
             _ => CannotExtendForm::BuiltIn,
         };

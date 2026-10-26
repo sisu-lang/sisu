@@ -1,0 +1,10 @@
+error[E0030]: an associated type's choice cannot name `Item`
+ --> E0030-choice.sisu:7:18
+  |
+7 |     type Item = [Item]
+  |                  ^^^^
+  |
+  = help: write the type itself
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

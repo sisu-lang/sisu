@@ -78,7 +78,11 @@ impl Checker<'_> {
                 }
                 Some(TypeKind::Array(_) | TypeKind::Optional(_)) => Some(InterpolateHelp::ForLoop),
                 Some(
-                    TypeKind::Unit | TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Param(..),
+                    TypeKind::Unit
+                    | TypeKind::Class(..)
+                    | TypeKind::Enum(..)
+                    | TypeKind::Param(..)
+                    | TypeKind::Assoc(..),
                 ) => None,
             };
             let found = type_of(&value).expect("a part reported here should have a type");

@@ -634,8 +634,8 @@ impl Checker<'_> {
     }
 
     /// Marks as used the interfaces that the used ones in `to_follow` name: those they inherit,
-    /// those in the bounds of their requirements and those in the bounds of their own type
-    /// parameters.
+    /// those in the bounds of their requirements and of their associated types and those in the
+    /// bounds of their own type parameters.
     fn follow_interfaces(&self, used: &mut [bool], mut to_follow: Vec<usize>) {
         while let Some(i) = to_follow.pop() {
             let info = &self.interfaces[i];
@@ -643,7 +643,8 @@ impl Checker<'_> {
             let requirements = (info.requirements.iter()).flat_map(|r| r.bounds.iter().flatten());
             // `Self`'s bound, first, is the interface itself.
             let own = info.bounds.iter().skip(1).flatten();
-            for bound in inherited.chain(requirements).chain(own) {
+            let assoc = info.assoc.iter().flat_map(|a| a.bounds.iter());
+            for bound in inherited.chain(requirements).chain(own).chain(assoc) {
                 use_interface(used, &mut to_follow, bound.interface.0);
             }
         }

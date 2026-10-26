@@ -1,0 +1,10 @@
+error[E0152]: `Counter` does not meet `Source`
+ --> E0152-associated.sisu:6:16
+  |
+6 | class Counter: Source {
+  |                ^^^^^^
+  |
+  = help: type Item
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

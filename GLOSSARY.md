@@ -347,10 +347,18 @@ One of the four prelude interfaces the language itself uses: `Display` for
 `print` and interpolation, `Eq` for `==` and `!=`, `Ord` for `<`, `<=`, `>`
 and `>=`, and `AnyObject` for `is` and `weak` in generic code.
 
+**Requirement**:
+A method signature or associated type an interface declares, which each
+conforming type meets: a method with the same signature, or a choice such as
+`type Item = i64`. The word appears in diagnostics as the missing parts of a
+conformance (E0152).
+_Avoid_: obligation
+
 **Associated type**:
 A type an interface names and each conforming type chooses once, such as
 `type Item` in `interface Source`. Outside the interface it is written
-through the type: `S.Item`.
+through the type: `S.Item`. Inside a conformance, the choice is written
+`Item`.
 
 **`extend`**:
 A block that adds methods to a type declared elsewhere (`extend T { ... }`),

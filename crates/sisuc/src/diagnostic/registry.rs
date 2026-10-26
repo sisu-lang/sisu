@@ -376,6 +376,8 @@ pub(crate) enum DiagnosticKind {
         owner: String,
         at: Span,
         first: Span,
+        /// Whether `name` is an associated type, not a method.
+        assoc: bool,
     },
     /// The conformance of `ty` to `interface`, whose name is at `at`, and what is wrong with it.
     ConformanceBody {
@@ -455,11 +457,12 @@ pub(crate) enum DiagnosticKind {
     /// A `main` at `at` that takes anything but nothing or one `[string]`, or returns a value;
     /// or, by `form`, that takes type parameters.
     MainSignature { at: Span, form: MainForm },
-    /// The type `name`, at `at`, which is not built in and names no class.
+    /// The type `name`, at `at`, which is not built in and names no class; or, by `form`, an
+    /// associated type that cannot be written there.
     UnknownType {
         name: String,
         at: Span,
-        suggestion: Option<Suggestion>,
+        form: UnknownForm,
     },
     /// The function `function`, whose body, ending at `at`, has no value of type `want`.
     BodyHasNoValue {
@@ -1459,6 +1462,21 @@ impl NotInterface {
     }
 }
 
+/// Why a type is unknown.
+#[derive(Clone)]
+pub(crate) enum UnknownForm {
+    /// The name is no type; `suggestion` is a name in scope that it may have meant.
+    Name { suggestion: Option<Suggestion> },
+    /// The type parameter or associated type `base` has no associated type of the diagnostic's
+    /// name. `add` is the bound that gives it one, when one interface declares it.
+    NoAssociated { base: String, add: Option<AddBound> },
+    /// The associated type is written through a class, an enum or another type that is no type
+    /// parameter. `own` when the base is `Self` in a conformance, which writes the name alone.
+    ConcreteBase { own: bool },
+    /// The choice of an associated type names one of its own conformance.
+    ChoiceNamesItself,
+}
+
 /// Where the earlier definition of a name is.
 #[derive(Clone)]
 pub(crate) enum Earlier {
@@ -1642,6 +1660,8 @@ pub(crate) enum ConformanceForm {
     /// The method `method` of an `extend` block, which is no requirement; `target` is the type
     /// that its own block would extend.
     NotRequirement { method: String, target: String },
+    /// The choice of the associated type `name`, which none of the interfaces `of` declares.
+    NotAssociated { name: String, of: Vec<String> },
 }
 
 /// Why an `extend` block cannot extend.
@@ -1658,6 +1678,8 @@ pub(crate) enum CannotExtendForm {
         target: String,
         remove: Option<Span>,
     },
+    /// The target or an interface argument, as written, names an associated type.
+    Associated,
 }
 
 /// Why a type must conform to an interface.
@@ -2122,6 +2144,14 @@ impl From<DiagnosticKind> for Diagnostic {
                     format!("`{method}` is not a requirement of `{interface}`"),
                 )
                 .with_help(format!("move it to `extend {target} {{ ... }}`")),
+                ConformanceForm::NotAssociated { name, of } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!(
+                        "`{name}` is not an associated type of {}",
+                        listed(&of, "or")
+                    ),
+                ),
             },
             DiagnosticKind::ConformsTwice {
                 ty,
@@ -2206,6 +2236,10 @@ impl From<DiagnosticKind> for Diagnostic {
                     CannotExtendForm::Unused { target, remove } => {
                         (format!("`{written}` does not appear in `{target}`"), remove)
                     }
+                    CannotExtendForm::Associated => (
+                        format!("an `extend` block cannot name an associated type in `{written}`"),
+                        None,
+                    ),
                 };
                 let d = Diagnostic::coded(code, at, message);
                 match remove {
@@ -2300,11 +2334,17 @@ impl From<DiagnosticKind> for Diagnostic {
                 owner,
                 at,
                 first,
+                assoc,
             } => Diagnostic::coded(
                 code,
                 at,
                 format!(
-                    "`{name}` is already a requirement of `{owner}`, which `{interface}` inherits"
+                    "`{name}` is already {} of `{owner}`, which `{interface}` inherits",
+                    if assoc {
+                        "an associated type"
+                    } else {
+                        "a requirement"
+                    }
                 ),
             )
             .with_secondary(first, "first declared here"),
@@ -2398,17 +2438,44 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::UnknownType {
-                name,
-                at,
-                suggestion,
-            } => similar(
-                Diagnostic::coded(code, at, format!("cannot find type `{name}`")).with_help(
-                    "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`",
+            DiagnosticKind::UnknownType { name, at, form } => match form {
+                UnknownForm::Name { suggestion } => similar(
+                    Diagnostic::coded(code, at, format!("cannot find type `{name}`")).with_help(
+                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`",
+                    ),
+                    at,
+                    suggestion,
                 ),
-                at,
-                suggestion,
-            ),
+                UnknownForm::NoAssociated { base, add } => {
+                    let d = Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{base}` has no associated type `{name}`"),
+                    );
+                    match add {
+                        Some(add) => d.with_help(add.help()),
+                        None => d,
+                    }
+                }
+                UnknownForm::ConcreteBase { own } => {
+                    let d = Diagnostic::coded(
+                        code,
+                        at,
+                        "an associated type is written through a type parameter, as `S.Item` for `S: Source`",
+                    );
+                    if own {
+                        d.with_help(format!("write `{name}`"))
+                    } else {
+                        d
+                    }
+                }
+                UnknownForm::ChoiceNamesItself => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("an associated type's choice cannot name `{name}`"),
+                )
+                .with_help("write the type itself"),
+            },
             DiagnosticKind::BodyHasNoValue { function, want, at } => Diagnostic::coded(
                 code,
                 at,

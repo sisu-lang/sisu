@@ -993,10 +993,10 @@ fn an_extend_target_that_is_no_class_or_enum_should_be_reported() {
             "interface Convert<T> {\n    fn convert(self) -> T\n}\nextend Convert<i64> {\n}",
             vec![(Code::InterfaceAsType, (4, 8))],
         ),
-        // An associated type waits for a later task.
+        // A choice of an associated type that the block's interface does not declare.
         (
             "interface Plain {}\nclass Circle {\n    r: f64\n}\nextend Circle: Plain {\n    type Item = i64\n}",
-            vec![(Code::UnknownType, (6, 10))],
+            vec![(Code::ConformanceBody, (6, 10))],
         ),
         // The methods of a block that failed for its interface or its unused parameter are not
         // checked.
@@ -3086,4 +3086,183 @@ fn generic_conformance_methods_should_lower_with_their_interface_arguments() {
         ),
         &["(fn Box<T>.Convert<T>.convert ((self#0 Box<T>)) T "],
     );
+}
+
+/// The interfaces and classes the associated type rows use. A row is a whole program, and these
+/// follow it, so that a position in the row is its own line and column.
+const SOURCES: &str = "interface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Named {\n    fn name(self) -> string\n}\ninterface Marker {\n    fn mark(self) -> i64\n}\ninterface Source {\n    type Item: Same\n    fn next(self) -> Item?\n}\ninterface Convert<T> {\n    fn convert(self) -> T\n}\nclass Node {\n    id: i64\n}\nclass Tag: Same {\n    id: i64\n    fn same(self, other: Tag) -> bool { self.id == other.id }\n}\nclass Countdown: Source {\n    type Item = Tag\n    mut n: i64\n    fn next(self) -> Item? { None }\n}\nclass Wrap<T> {\n    value: T\n}\nclass Peek<S> {\n    inner: S\n}\nfn pass<S: Source>(s: S, x: S.Item) -> S.Item { s.next() ?? x }\nfn pass2<S: Source>(x: S.Item, s: S) -> S.Item { s.next() ?? x }\nfn main() {}\n";
+
+/// `row`, a program, then the interfaces and classes.
+fn with_sources(row: &str) -> String {
+    format!("{row}\n{SOURCES}")
+}
+
+/// An associated type of a type parameter or of another associated type is the type that the
+/// conformance of the argument chooses, in a result, a parameter, a local, a field and a payload,
+/// through `?` and `[ ]`, and in a call that passes its own parameter on.
+#[test]
+fn associated_types_should_normalize_through_generic_code() {
+    for row in [
+        // A result, and a call that passes the parameter on.
+        "fn first_of<S: Source>(s: S) -> S.Item? { s.next() }\nfn g<S: Source>(s: S) -> S.Item? { first_of(s) }\nfn t() {\n    let a: Tag? = g(Countdown(n: 1))\n    let b: Tag? = first_of(Countdown(n: 1))\n}",
+        // A local, an array and an optional of them.
+        "fn drain<S: Source>(s: S) -> [S.Item] {\n    let mut last: [S.Item] = []\n    while let x = s.next() {\n        let y: S.Item = x\n        last = [y]\n    }\n    last\n}\nfn firsts<S: Source>(s: S) -> [S.Item?] { [s.next()] }\nfn t() {\n    let xs: [Tag] = drain(Countdown(n: 1))\n    let ys: [Tag?] = firsts(Countdown(n: 1))\n}",
+        // An argument for `S.Item` is checked once `S` is bound, before or after it.
+        "fn t() {\n    let c = Countdown(n: 1)\n    let a: Tag = pass(c, Tag(id: 5))\n    let b: Tag = pass2(Tag(id: 6), c)\n}",
+        // The bounds of an associated type give its methods, and a nested one has its own.
+        "interface Keyed {\n    type Key: Same\n    fn key(self) -> Key\n}\ninterface Bag {\n    type Elem: Keyed\n    fn pick(self) -> Elem\n}\nfn both<S: Source>(a: S.Item, b: S.Item) -> bool { a.same(b) }\nfn key_of<B: Bag>(b: B) -> B.Elem.Key { b.pick().key() }\nclass Row: Keyed {\n    type Key = Tag\n    fn key(self) -> Key { Tag(id: 1) }\n}\nclass Rows: Bag {\n    type Elem = Row\n    fn pick(self) -> Elem { Row() }\n}\nfn t() {\n    let r = both<Countdown>(Tag(id: 1), Tag(id: 2))\n    let k: Tag = key_of(Rows())\n}",
+        // A conformance in an `extend` block chooses a type, also over a type parameter and over
+        // the associated type of another conformance.
+        "class Words {\n    n: i64\n}\nextend Words: Source {\n    type Item = Tag\n    fn next(self) -> Item? { None }\n}\nextend<T: Same> Wrap<T>: Source {\n    type Item = T\n    fn next(self) -> Item? { self.value }\n}\nclass Relay<S: Source> {\n    inner: S\n}\nextend<S: Source> Relay<S>: Source {\n    type Item = S.Item\n    fn next(self) -> Item? { self.inner.next() }\n}\nfn t() {\n    let a: Tag = pass(Words(n: 1), Tag(id: 1))\n    let b: Tag = pass(Wrap(value: Tag(id: 1)), Tag(id: 2))\n    let c: Tag = pass(Relay(inner: Countdown(n: 1)), Tag(id: 3))\n}",
+        // A field, a payload and a method of a generic type.
+        "class Holder<S: Source> {\n    item: S.Item\n    fn get(self) -> S.Item { self.item }\n}\nenum Got<S: Source> {\n    Got(S.Item)\n    Nothing\n}\nfn t() {\n    let h: Holder<Countdown> = Holder(item: Tag(id: 4))\n    let x: Tag = h.item\n    let y: Tag = h.get()\n    let e: Got<Countdown> = Got.Got(Tag(id: 1))\n    match e {\n        Got.Got(v) => print(v.id)\n        Got.Nothing => print(0)\n    }\n}",
+        // A choice that names no parameter adds no edge: the children of a `Dir` are `Dir`s.
+        "interface Tree {\n    type Child: Tree\n    fn kids(self) -> [Child]\n}\nfn size<T: Tree>(t: T) -> i64 {\n    let mut n = 1\n    for k in t.kids() {\n        n += size(k)\n    }\n    n\n}\nclass Dir: Tree {\n    type Child = Dir\n    name: string\n    fn kids(self) -> [Child] { [] }\n}\nfn t() {\n    print(size(Dir(name: \"a\")))\n}",
+        // An associated type with two bounds, and an interface that inherits one that has them.
+        "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
+    ] {
+        clean(&with_sources(row));
+    }
+    // The printed form of an associated type is `S.Item`, through a bound and inside `?`.
+    contains(
+        &with_sources(
+            "fn first_of<S: Source>(s: S) -> S.Item? { s.next() }\nfn t() {\n    let a: Tag? = first_of(Countdown(n: 1))\n}",
+        ),
+        &[
+            "(fn first_of<S> ((s#0 S)) S.Item? ",
+            "(fn t () unit (block (let a#0 (call first_of<Countdown> (new Countdown 1)))))",
+        ],
+    );
+}
+
+/// What an associated type cannot be: a conformance without it or with a type that misses a
+/// bound, a type written through no bound, through a class, or by a choice that names an
+/// associated type of its own conformance; a bound that no argument meets; an argument that the
+/// chosen type rejects; two interfaces that both declare it; a choice no interface declares; and
+/// a block that names it in its target.
+#[test]
+fn associated_types_should_report_what_they_cannot_take() {
+    let feed = "interface Feed {\n    type Item\n}\n";
+    for (row, expected) in [
+        // A conformance without `type Item`, and with a type that misses the bound.
+        (
+            "class Bare: Source {\n    n: i64\n    fn next(self) -> Tag? { None }\n}".to_string(),
+            vec![(Code::ConformanceBody, (1, 13))],
+        ),
+        (
+            "class Bad: Source {\n    type Item = Node\n    n: i64\n    fn next(self) -> Node? { None }\n}".to_string(),
+            vec![(Code::NotConform, (2, 17))],
+        ),
+        // Written through a parameter with no bound, through a class, and through `Self` in a
+        // conformance.
+        (
+            "fn f<S>(x: S.Item) {}".to_string(),
+            vec![(Code::UnknownType, (1, 14))],
+        ),
+        (
+            "fn f(x: Countdown.Item) {}".to_string(),
+            vec![(Code::UnknownType, (1, 9))],
+        ),
+        (
+            "class Bad2: Source {\n    type Item = Tag\n    n: i64\n    fn next(self) -> Self.Item? { None }\n}".to_string(),
+            vec![(Code::UnknownType, (4, 22))],
+        ),
+        // An inherited interface cannot take `Item`, which names `Self`.
+        (
+            "interface Feed2: Convert<Item> {\n    type Item\n}".to_string(),
+            vec![(Code::InheritedArgument, (1, 26))],
+        ),
+        // A call whose argument misses the bound that gives the associated type its meaning: one
+        // report, and no mismatch for the argument that waited.
+        (
+            "fn t() {\n    let node = Node(id: 1)\n    let a = pass(node, 0)\n}".to_string(),
+            vec![(Code::NotConform, (3, 18))],
+        ),
+        (
+            "extend<T: Marker> Wrap<T>: Source {\n    type Item = Tag\n    fn next(self) -> Item? { None }\n}\nfn t() {\n    let node = Node(id: 1)\n    let a = pass(Wrap(value: node), \"x\")\n}".to_string(),
+            vec![(Code::NotConform, (7, 18))],
+        ),
+        // An argument of the wrong type for the associated type, before or after its base.
+        (
+            "fn t() {\n    let c = Countdown(n: 1)\n    let a = pass(c, \"a\")\n    let b = pass2(\"a\", c)\n}".to_string(),
+            vec![(Code::Mismatch, (3, 21)), (Code::Mismatch, (4, 19))],
+        ),
+        // Two interfaces that declare `Item`.
+        (
+            format!("{feed}fn f<S: Source & Feed>(x: S.Item) {{}}"),
+            vec![(Code::Ambiguous, (4, 29))],
+        ),
+        // A choice no interface declares.
+        (
+            "extend Node: Marker {\n    type Item = i64\n    fn mark(self) -> i64 { 1 }\n}".to_string(),
+            vec![(Code::ConformanceBody, (2, 10))],
+        ),
+        // A choice that names an associated type of its own conformance.
+        (
+            format!("{feed}class Own: Feed {{\n    type Item = [Item]\n}}"),
+            vec![(Code::UnknownType, (5, 18))],
+        ),
+        (
+            "interface Two {\n    type A\n    type B\n}\nclass Own: Two {\n    type A = B\n    type B = A\n}".to_string(),
+            vec![(Code::UnknownType, (6, 14)), (Code::UnknownType, (7, 14))],
+        ),
+        // A block names an associated type in its target or in the argument of its interface.
+        (
+            "extend<S: Source> Wrap<S.Item> {\n    fn a(self) -> i64 { 1 }\n}".to_string(),
+            vec![(Code::CannotExtend, (1, 19))],
+        ),
+        (
+            "extend<S: Source> Peek<S>: Convert<S.Item> {\n    fn convert(self) -> S.Item { self.inner.next() ?? self.inner.next() }\n}".to_string(),
+            vec![(Code::CannotExtend, (1, 28))],
+        ),
+        // An associated type declared again, and one an inherited interface declares.
+        (
+            "interface Again {\n    type Item\n    type Item\n}".to_string(),
+            vec![(Code::DefinedTwice, (3, 10))],
+        ),
+        (
+            format!("{feed}interface Sub: Feed {{\n    type Item\n}}"),
+            vec![(Code::DefinedTwice, (5, 10))],
+        ),
+    ] {
+        codes(&with_sources(&row), &expected);
+    }
+}
+
+/// A cycle through an associated type is a cycle of the type it stands for: its edge weighs how
+/// much more deeply the choices of its conformances nest the types that stand for their
+/// parameters than their targets do. A choice that grows by 1 closes a cycle with a call that
+/// passes the associated type on; one that grows by 0 or less does not.
+#[test]
+fn an_associated_type_should_grow_a_cycle_by_what_its_choices_add() {
+    let deep = "interface Deep {\n    type Item: Deep\n    fn next(self) -> Item?\n}\nclass Chain<T> {\n    value: T\n}\nfn drain_all<S: Deep>(s: S) {\n    if let x = s.next() {\n        drain_all(x)\n    }\n}\n";
+    for (choice, expected) in [
+        // One more level: a cycle, labeled at the call that passes the item on.
+        ("Chain<Chain<T>>", vec![(Code::InstantiationCycle, (10, 9))]),
+        ("Chain<T>", vec![]),
+        ("T", vec![]),
+        // Two more levels, through the same.
+        (
+            "Chain<Chain<Chain<T>>>",
+            vec![(Code::InstantiationCycle, (10, 9))],
+        ),
+    ] {
+        let row = format!(
+            "{deep}extend<T: Deep> Chain<T>: Deep {{\n    type Item = {choice}\n    fn next(self) -> Item? {{ None }}\n}}"
+        );
+        codes(&with_sources(&row), &expected);
+    }
+}
+
+/// A growth that goes around a cycle of positive weight is unbounded, and so is the growth of
+/// each associated type that reaches it: a call that passes either on closes a cycle.
+#[test]
+fn an_unbounded_growth_should_close_a_cycle_through_each_type_that_reaches_it() {
+    let ring = "interface Ring {\n    type A: Ring\n    type B: Ring\n    type C: Ring\n    fn a(self) -> A?\n    fn b(self) -> B?\n    fn c(self) -> C?\n}\nclass Duo<X, Y> {\n    x: X\n    y: Y\n}\nextend<T: Ring, U: Ring> Duo<T, U>: Ring {\n    type A = Duo<Duo<T.B, U>, U>\n    type B = Duo<T.A, U>\n    type C = Duo<T.B, U>\n    fn a(self) -> A? { None }\n    fn b(self) -> B? { None }\n    fn c(self) -> C? { None }\n}\n";
+    for method in ["a", "b", "c"] {
+        let row = format!(
+            "{ring}fn go<R: Ring>(r: R) {{\n    if let x = r.{method}() {{\n        go(x)\n    }}\n}}"
+        );
+        codes(&with_sources(&row), &[(Code::InstantiationCycle, (23, 9))]);
+    }
 }

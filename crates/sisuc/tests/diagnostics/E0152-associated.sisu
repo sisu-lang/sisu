@@ -1,0 +1,16 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+class Counter: Source {
+    mut n: i64
+
+    fn next(self) -> i64? {
+        None
+    }
+}
+
+fn main() {
+    print(Counter(n: 0).n)
+}

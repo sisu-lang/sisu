@@ -232,7 +232,7 @@ red.
 CodSpeed measures Sisu against itself in simulation mode. The benchmarks are
 in `codspeed.yml`: the `fib`, `sieve`, `binary_trees`, `quicksort`, `nbody`,
 `mandelbrot` and `fannkuch_redux` programs at reduced inputs, the `strings`,
-`enum_match`, `shared_arrays`, `compare`, `tree_rewrite` and `interp` programs from
+`enum_match`, `shared_arrays`, `compare`, `tree_rewrite`, `interp` and `interfaces` programs from
 `bench/features/`, and the compiler on `bench/hello` (an `-O2` build), on
 `bench/binary_trees` (`check` and an `-O2` build) and on a generated
 200-section input that uses most of the language. The `-O2` build of that

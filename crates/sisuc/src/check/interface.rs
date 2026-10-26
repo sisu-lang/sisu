@@ -9,7 +9,9 @@ use super::extend::holder_of;
 use super::{BindingKind, Body, Checker, Declared, Definition};
 use crate::ast;
 use crate::conformance::find;
-use crate::diagnostic::{AddBound, DiagnosticKind, NotConformForm, NotInterface, WideKind};
+use crate::diagnostic::{
+    AddBound, Definition as Kind, DiagnosticKind, NotConformForm, NotInterface, WideKind,
+};
 use crate::graph::components;
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -33,6 +35,15 @@ pub(super) struct InterfaceInfo {
     pub(super) requirements: Vec<RequirementInfo>,
     /// The bounds of each of `type_params`: `Self` conforms to the interface itself.
     pub(super) bounds: Vec<Vec<Bound>>,
+    /// The first associated type of each name, in declaration order.
+    pub(super) assoc: Vec<AssocInfo>,
+}
+
+/// An associated type of an interface.
+pub(super) struct AssocInfo {
+    pub(super) name: ast::Ident,
+    /// The interfaces it conforms to, over the interface's parameters (`Self` first).
+    pub(super) bounds: Vec<Bound>,
 }
 
 /// A requirement's signature, over the interface's parameters (`Self` first) and then its own.
@@ -145,7 +156,44 @@ impl Checker<'_> {
             for requirement in &info.requirements {
                 (self.declaring.entry(requirement.name.name).or_default()).push(InterfaceId(i));
             }
+            for assoc in &info.assoc {
+                (self.declaring_assoc.entry(assoc.name.name).or_default()).push(InterfaceId(i));
+            }
         }
+    }
+
+    /// Records the associated types of `interface`, whose id is `id` and whose parameters are
+    /// `own` as arguments, and puts them in scope as bare names over `Self`. Gives the ones that
+    /// are first of their name.
+    fn declare_assoc<'a>(
+        &mut self,
+        interface: &'a ast::Interface,
+        id: InterfaceId,
+        own: TypeArgs,
+    ) -> Vec<&'a ast::AssocType> {
+        let this_type = Type::intern(TypeKind::Param(self.interfaces[id.0].type_params[0], 0));
+        let mut named = FxHashMap::default();
+        let mut declared = Vec::new();
+        for assoc in &interface.assoc {
+            let owner = Some(interface.name.name.as_str());
+            if self.first_definition(&mut named, Kind::Type, owner, &assoc.name) {
+                declared.push(assoc);
+            }
+        }
+        self.body.assoc = (declared.iter().enumerate())
+            .map(|(k, assoc)| {
+                let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
+                let ty = Type::intern(TypeKind::Assoc(this_type, id, own, k));
+                (assoc.name.name, Some(ty))
+            })
+            .collect();
+        self.interfaces[id.0].assoc = (declared.iter())
+            .map(|assoc| AssocInfo {
+                name: assoc.name.clone(),
+                bounds: Vec::new(),
+            })
+            .collect();
+        declared
     }
 
     /// Resolves the bounds, inheritance and requirements of `interface`, whose id is `id`.
@@ -165,6 +213,8 @@ impl Checker<'_> {
         };
         self.interfaces[id.0].bounds =
             self.declare_bounds(0, vec![vec![this]], &interface.type_params);
+        // The associated types come first: a bare name stands for one in the interface.
+        let declared = self.declare_assoc(interface, id, this.args);
         let (inherits, inherits_at) = interface
             .inherits
             .iter()
@@ -172,9 +222,12 @@ impl Checker<'_> {
             .unzip();
         self.interfaces[id.0].inherits = inherits;
         self.interfaces[id.0].inherits_at = inherits_at;
-        // Task 7 takes associated types.
-        for assoc in &interface.assoc {
-            self.unsupported_at(assoc.name.span);
+        for (k, assoc) in declared.iter().enumerate() {
+            let (_, ty) = self.body.assoc[k];
+            let bounds = (assoc.bounds.iter())
+                .filter_map(|bound| self.bound(bound, ty))
+                .collect();
+            self.interfaces[id.0].assoc[k].bounds = bounds;
         }
         let mut first = FxHashMap::default();
         // The names of the interface's parameters, and then the requirement's own: the scope of
@@ -458,12 +511,14 @@ impl Checker<'_> {
         let mut seen = FxHashSet::default();
         let mut queue = Vec::new();
         let mut owners: FxHashMap<Symbol, (InterfaceId, Span)> = FxHashMap::default();
+        let mut assoc_owners: FxHashMap<Symbol, (InterfaceId, Span)> = FxHashMap::default();
         for (i, interface) in interfaces.iter().enumerate() {
             seen.clear();
             seen.insert(i);
             queue.clear();
             queue.push(i);
             owners.clear();
+            assoc_owners.clear();
             // Nearest first, so that the owner named is the nearest that has the requirement.
             let mut at = 0;
             while let Some(&n) = queue.get(at) {
@@ -483,6 +538,11 @@ impl Checker<'_> {
                             .entry(requirement.name.name)
                             .or_insert((InterfaceId(inherited), requirement.name.span));
                     }
+                    for assoc in &self.interfaces[inherited].assoc {
+                        assoc_owners
+                            .entry(assoc.name.name)
+                            .or_insert((InterfaceId(inherited), assoc.name.span));
+                    }
                 }
             }
             let mut reports = Vec::new();
@@ -494,6 +554,19 @@ impl Checker<'_> {
                         owner: self.interfaces[owner.0].name.name.to_string(),
                         at: requirement.name.span,
                         first,
+                        assoc: false,
+                    });
+                }
+            }
+            for assoc in &self.interfaces[i].assoc {
+                if let Some(&(owner, first)) = assoc_owners.get(&assoc.name.name) {
+                    reports.push(DiagnosticKind::InheritedRequirement {
+                        name: assoc.name.name.to_string(),
+                        interface: interface.name.name.to_string(),
+                        owner: self.interfaces[owner.0].name.name.to_string(),
+                        at: assoc.name.span,
+                        first,
+                        assoc: true,
                     });
                 }
             }
@@ -518,7 +591,12 @@ impl Checker<'_> {
             let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
             with.push(Type::intern(TypeKind::Param(name, i)));
         }
-        let differs = |want: Option<Type>, found: Option<Type>| matches!((want, found), (Some(want), Some(found)) if want.subst(&with) != found);
+        // A requirement that names an associated type the conformance chooses no type for has its
+        // own report, and meets any method.
+        let differs = |want: Option<Type>, found: Option<Type>| match (want, found) {
+            (Some(want), Some(found)) => self.subst(want, &with).is_some_and(|want| want != found),
+            _ => false,
+        };
         if (requirement.params.iter().zip(&sig.params)).any(|(&want, &found)| differs(want, found))
             || differs(requirement.ret, sig.ret)
         {
@@ -526,7 +604,7 @@ impl Checker<'_> {
         }
         (requirement.bounds.iter().zip(&sig.bounds)).all(|(want, found)| {
             let want: Vec<_> = (want.iter())
-                .map(|b| (b.interface, b.args.subst(&with)))
+                .map(|b| (b.interface, self.subst_args(b.args, &with)))
                 .collect();
             let found: Vec<_> = found.iter().map(|b| (b.interface, b.args)).collect();
             want.iter().all(|b| found.contains(b)) && found.iter().all(|b| want.contains(b))
@@ -626,17 +704,17 @@ impl Checker<'_> {
         self.broken_extensions.insert(self.holder_name(holder));
     }
 
-    /// The requirements named `name` that the bounds of the type parameter at `place` give,
-    /// each once, in the order of the bounds. The first ask for a place in a body indexes by name
-    /// the requirements of its interfaces, and the rest read the index: a call costs a lookup,
-    /// not a walk of the bounds.
+    /// The requirements named `name` that the bounds of the type parameter or associated type `ty`
+    /// give, each once, in the order of the bounds. The first ask for a type in a body indexes by
+    /// name the requirements of its interfaces, and the rest read the index: a call costs a
+    /// lookup, not a walk of the bounds.
     ///
     /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25; ruling
     /// F9 (e)): the candidates of a name are `n` for `n` interfaces of the bounds that declare it,
     /// and a call keeps them while it checks its arguments.
-    pub(super) fn required(&mut self, place: usize, name: Symbol) -> Vec<Required> {
-        if !self.body.required.contains_key(&place) {
-            let entries = self.param_interfaces(place).to_vec();
+    pub(super) fn required(&mut self, ty: Type, name: Symbol) -> Vec<Required> {
+        if !self.body.required.contains_key(&ty) {
+            let entries = self.interfaces_for(ty);
             let mut by_name: FxHashMap<Symbol, Vec<Required>> = FxHashMap::default();
             for (interface, args) in entries {
                 let requirements = &self.interfaces[interface.0].requirements;
@@ -650,9 +728,9 @@ impl Checker<'_> {
                     });
                 }
             }
-            self.body.required.insert(place, by_name);
+            self.body.required.insert(ty, by_name);
         }
-        (self.body.required[&place].get(&name))
+        (self.body.required[&ty].get(&name))
             .cloned()
             .unwrap_or_default()
     }
@@ -674,6 +752,7 @@ impl Checker<'_> {
                 self.param_interfaces(place).contains(&(interface, args))
                     || self.body.wide.contains(&place)
             }
+            TypeKind::Assoc(..) => self.assoc_conforms(ty, interface, args),
             TypeKind::Class(..) | TypeKind::Enum(..) => {
                 let broken = holder_of(ty).is_some_and(|holder| {
                     self.broken_extensions.contains(&self.holder_name(holder))
@@ -720,7 +799,8 @@ impl Checker<'_> {
         let bounds = bounds.clone();
         for (i, bounds) in bounds.iter().enumerate() {
             for b in bounds {
-                if !self.conforms(stands.get()[i], b.interface, b.args.subst(stands.get())) {
+                let args = self.subst_args(b.args, stands.get());
+                if !self.conforms(stands.get()[i], b.interface, args) {
                     return false;
                 }
             }
@@ -742,7 +822,7 @@ impl Checker<'_> {
     /// Checks that `ty` meets `bound`, whose arguments name the parameters that `with` gives
     /// types to. Reports it at `at` when not.
     pub(super) fn check_bound(&mut self, at: Span, ty: Type, bound: Bound, with: &[Type]) -> bool {
-        let args = bound.args.subst(with);
+        let args = self.subst_args(bound.args, with);
         if self.conforms(ty, bound.interface, args) {
             return true;
         }

@@ -1,0 +1,12 @@
+interface Feed {
+    type Item
+}
+
+interface Source: Feed {
+    type Item
+    fn next(self) -> Item?
+}
+
+fn main() {
+    print(1)
+}

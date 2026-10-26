@@ -7,7 +7,7 @@ use std::fmt;
 use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use crate::symbol::Symbol;
-use crate::tir::{ClassId, EnumId};
+use crate::tir::{ClassId, EnumId, InterfaceId};
 
 /// A type, interned: two types are equal exactly when their structures are. `kind` reads the
 /// structure.
@@ -35,8 +35,14 @@ pub(crate) enum TypeKind {
     Param(Symbol, u32),
     /// `[T]`.
     Array(Type),
-    /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Enum`, `Param` or `Array`.
+    /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Enum`, `Param`, `Assoc` or
+    /// `Array`.
     Optional(Type),
+    /// An associated type of a base: `S.Item`. It is the type at the index of the associated type
+    /// among the interface's, through the interface with its arguments (without `Self`). The base
+    /// is a type parameter, another associated type, or (until `conformance::normalize` replaces
+    /// it) a class or an enum.
+    Assoc(Type, InterfaceId, TypeArgs, u32),
 }
 
 /// The index of the hole, the type parameter that stands for a part a context has not fixed yet
@@ -51,6 +57,8 @@ struct Names {
     param: bool,
     /// The hole, the parameter at `HOLE_INDEX`.
     hole: bool,
+    /// An associated type.
+    assoc: bool,
 }
 
 impl Names {
@@ -58,13 +66,15 @@ impl Names {
         Names {
             param: self.param || other.param,
             hole: self.hole || other.hole,
+            assoc: self.assoc || other.assoc,
         }
     }
 }
 
 impl TypeKind {
     /// What a type of this kind names, from what its children say.
-    // `check::cycle::parts` looks into the same kinds: a kind that holds a type goes in both.
+    // `check::cycle::Graph::parts` looks into the same kinds: a kind that holds a type goes in
+    // both.
     fn names(self) -> Names {
         #[cfg(test)]
         NAMED.set(NAMED.get() + 1);
@@ -72,8 +82,13 @@ impl TypeKind {
             TypeKind::Param(_, i) => Names {
                 param: true,
                 hole: i == HOLE_INDEX,
+                assoc: false,
             },
             TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.names(),
+            TypeKind::Assoc(base, _, args, _) => Names {
+                assoc: true,
+                ..base.names().or(args.names())
+            },
             TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.names(),
             TypeKind::I64
             | TypeKind::U8
@@ -143,6 +158,11 @@ impl TypeArgs {
         args().lists[self.0 as usize].1
     }
 
+    /// Whether an element holds an associated type, anywhere inside it.
+    pub(crate) fn has_assoc(self) -> bool {
+        self.names().assoc
+    }
+
     /// The list with `Type::subst` applied to each element. A list without a parameter comes
     /// back as it is.
     pub(crate) fn subst(self, with: &[Type]) -> TypeArgs {
@@ -173,11 +193,13 @@ impl fmt::Debug for TypeArgs {
 /// The bytes of type text that `write_type` writes before it cuts the text.
 pub(crate) const NAME_LIMIT: usize = 256;
 
-/// A class or an enum, which a type's text names by its head.
+/// A class, an enum or an associated type (an interface and the index of the associated type
+/// among its), which a type's text names by its head.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Head {
     Class(ClassId),
     Enum(EnumId),
+    Assoc(InterfaceId, u32),
 }
 
 #[cfg(test)]
@@ -192,12 +214,14 @@ thread_local! {
     static HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// What `write_steps` writes next: a type, the text that closes one, or the arguments of a list
-/// after its first, each after a `, `. A list waits as one slice, so a wide list costs one step.
+/// What `write_steps` writes next: a type, the text that closes one, the arguments of a list
+/// after its first, each after a `, `, or the `.` and name of an associated type. A list waits as
+/// one slice, so a wide list costs one step.
 enum Step<'a> {
     Type(Type),
     Close(&'static str),
     Rest(&'a [Type]),
+    Assoc(InterfaceId, u32),
 }
 
 /// Writes `ty` to `out` as a program writes it, each class and enum named by `head`. Returns
@@ -258,7 +282,7 @@ fn write_steps<'n>(
                 continue;
             }
             Step::Rest([]) => continue,
-            Step::Type(_) | Step::Rest(_) if out.len() >= NAME_LIMIT => {
+            Step::Type(_) | Step::Rest(_) | Step::Assoc(..) if out.len() >= NAME_LIMIT => {
                 out.push_str("...");
                 for step in steps.iter().rev() {
                     if let Step::Close(text) = step {
@@ -266,6 +290,11 @@ fn write_steps<'n>(
                     }
                 }
                 return true;
+            }
+            Step::Assoc(interface, k) => {
+                out.push('.');
+                out.push_str(head(Head::Assoc(interface, k)));
+                continue;
             }
             Step::Rest([ty, rest @ ..]) => {
                 out.push_str(", ");
@@ -290,6 +319,10 @@ fn write_steps<'n>(
             }
             TypeKind::Optional(payload) => {
                 steps.extend([Step::Close("?"), Step::Type(payload)]);
+                continue;
+            }
+            TypeKind::Assoc(base, interface, _, k) => {
+                steps.extend([Step::Assoc(interface, k), Step::Type(base)]);
                 continue;
             }
             _ => {
@@ -415,6 +448,11 @@ impl Type {
         self.names().hole
     }
 
+    /// Whether the type holds an associated type, anywhere inside it.
+    pub(crate) fn has_assoc(self) -> bool {
+        self.names().assoc
+    }
+
     fn names(self) -> Names {
         self.entry().1
     }
@@ -441,11 +479,30 @@ impl Type {
         self.subst_in(args, &mut FxHashMap::default())
     }
 
+    /// `subst`, and whether `self` holds an associated type, read with the one look at what the
+    /// type names that `subst` takes. A caller that replaces the associated types of the result
+    /// asks this, and not `has_assoc` of the result, which is a second look.
+    pub(crate) fn subst_noting_assoc(self, args: &[Type]) -> (Type, bool) {
+        let names = self.names();
+        if !names.param {
+            return (self, names.assoc);
+        }
+        (
+            self.subst_walk(args, &mut FxHashMap::default()),
+            names.assoc,
+        )
+    }
+
     /// `subst`, with `memo` holding each type that the walk has already substituted.
     fn subst_in(self, args: &[Type], memo: &mut FxHashMap<Type, Type>) -> Type {
         if !self.has_param() {
             return self;
         }
+        self.subst_walk(args, memo)
+    }
+
+    /// `subst_in` for a type that names a parameter.
+    fn subst_walk(self, args: &[Type], memo: &mut FxHashMap<Type, Type>) -> Type {
         if let Some(&done) = memo.get(&self) {
             return done;
         }
@@ -459,6 +516,12 @@ impl Type {
                 Type::intern(TypeKind::Class(id, list.subst_in(args, memo)))
             }
             TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, list.subst_in(args, memo))),
+            TypeKind::Assoc(base, interface, list, k) => Type::intern(TypeKind::Assoc(
+                base.subst_in(args, memo),
+                interface,
+                list.subst_in(args, memo),
+                k,
+            )),
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -708,5 +771,56 @@ mod tests {
                 first
             );
         }
+    }
+
+    /// An associated type names the parameters of its base and its arguments, holds an associated
+    /// type, and is written `S.Item`, also inside the types that hold it.
+    #[test]
+    fn an_associated_type_should_substitute_and_write_as_a_member() {
+        let param = Type::intern(TypeKind::Param(Symbol::intern("S"), 0));
+        let item = |base, args| Type::intern(TypeKind::Assoc(base, InterfaceId(2), args, 1));
+        let ty = item(param, TypeArgs::NONE);
+        assert!(ty.has_param() && ty.has_assoc());
+        assert!(!Type::I64.has_assoc() && !param.has_assoc());
+        assert!(!Type::array(Type::optional(param)).has_assoc());
+        assert!(Type::array(Type::optional(ty)).has_assoc());
+        // The arguments of the interface count too.
+        let with_arg = item(Type::I64, TypeArgs::intern(&[param]));
+        assert!(with_arg.has_param() && with_arg.has_assoc());
+        assert!(TypeArgs::intern(&[Type::I64, ty]).has_assoc());
+        assert!(!TypeArgs::intern(&[Type::I64, param]).has_assoc());
+        // Substituting the base keeps the associated type, which normalizing replaces later.
+        let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let substituted = ty.subst(&[class]);
+        assert_eq!(substituted, item(class, TypeArgs::NONE));
+        assert!(!substituted.has_param() && substituted.has_assoc());
+        assert_eq!(ty.subst_noting_assoc(&[class]), (substituted, true));
+        assert_eq!(Type::I64.subst_noting_assoc(&[class]), (Type::I64, false));
+        assert_eq!(param.subst_noting_assoc(&[class]), (class, false));
+        // `S.Item`, and `S.Item.Item`, with the name of the associated type from the head.
+        let named = |ty| {
+            let mut out = String::new();
+            let cut = write_type(&mut out, ty, |head| match head {
+                Head::Assoc(InterfaceId(2), 1) => "Item",
+                _ => "P",
+            });
+            (out, cut)
+        };
+        assert_eq!(named(ty), ("S.Item".to_string(), false));
+        assert_eq!(
+            named(Type::array(Type::optional(item(ty, TypeArgs::NONE)))),
+            ("[S.Item.Item?]".to_string(), false)
+        );
+        // A chain of them is cut at the limit, as a wide list is.
+        let mut deep = ty;
+        for _ in 0..200 {
+            deep = item(deep, TypeArgs::NONE);
+        }
+        let (text, cut) = named(deep);
+        assert!(cut && text.ends_with("..."), "{text}");
+        assert!(
+            text.starts_with("S.Item.Item") && text.len() <= NAME_LIMIT + 8,
+            "{text}"
+        );
     }
 }

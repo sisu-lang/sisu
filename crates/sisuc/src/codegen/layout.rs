@@ -136,6 +136,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Param(..) => {
                 panic!("mono should replace every type parameter before codegen")
             }
+            TypeKind::Assoc(..) => {
+                panic!("mono should replace every associated type before codegen")
+            }
             // An optional with a niche is its payload's storage, and any other is `{ i1, T }`:
             // whether it holds a value, then the value.
             TypeKind::Optional(payload) => match self.niche(payload) {

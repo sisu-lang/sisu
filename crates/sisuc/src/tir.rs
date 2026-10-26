@@ -131,19 +131,24 @@ pub(crate) struct Interface {
     pub(crate) name: String,
     /// The names of its requirements, in the order of `InterfaceCall::method`.
     pub(crate) methods: Vec<String>,
+    /// The names of its associated types, in the order of `TypeKind::Assoc`'s index.
+    pub(crate) assoc: Vec<String>,
 }
 
 /// The conformance of the class or enum `target` to an interface with the arguments `args`
 /// (without `Self`). `type_params` is how many type parameters of an `extend` block the target
 /// binds: they are the `Param`s of `target` and `args`. `methods` hold, in the order of the
 /// interface's requirements, the method that meets each; the list is complete only in a program
-/// that checks without an error.
+/// that checks without an error. `assoc` holds, in the order of the interface's associated types,
+/// the type that the conformance chooses for each, over the same type parameters as `target`;
+/// `None` where it chooses none, which is an error.
 #[derive(Clone, Debug)]
 pub(crate) struct Conformance {
     pub(crate) type_params: usize,
     pub(crate) target: Type,
     pub(crate) args: TypeArgs,
     pub(crate) methods: Vec<FuncId>,
+    pub(crate) assoc: Vec<Option<Type>>,
 }
 
 /// The conformances of a program, by interface. A target without parameters is indexed by its
@@ -1103,6 +1108,7 @@ impl fmt::Display for Type {
             TypeKind::Never => "never",
             // A class's name lives in the program: `Program::type_name` prints it.
             TypeKind::Param(name, _) => return write!(f, "{name}"),
+            TypeKind::Assoc(base, _, _, k) => return write!(f, "{base}.assoc#{k}"),
             TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
             TypeKind::Enum(id, _) => return write!(f, "enum#{}", id.0),
             TypeKind::Array(element) => return write!(f, "[{element}]"),
@@ -1555,6 +1561,7 @@ impl Program {
         match head {
             Head::Class(id) => &self.classes[id.0].name,
             Head::Enum(id) => &self.enums[id.0].name,
+            Head::Assoc(interface, k) => &self.interfaces[interface.0].assoc[k as usize],
         }
     }
 }
@@ -2115,6 +2122,7 @@ mod tests {
             }],
             interfaces: vec![Interface {
                 methods: Vec::new(),
+                assoc: Vec::new(),
                 name: "Label".into(),
             }],
             functions: vec![caller, method, own],

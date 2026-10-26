@@ -1,0 +1,24 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+interface Named {
+    fn name(self) -> string
+}
+
+class Tag {
+    id: i64
+}
+
+extend Tag: Named {
+    type Item = i64
+
+    fn name(self) -> string {
+        "tag"
+    }
+}
+
+fn main() {
+    print(Tag(id: 1).name())
+}

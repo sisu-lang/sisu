@@ -55,6 +55,38 @@ struct Shape {
     /// The interfaces it inherits, by place among the declared, and how each writes its argument.
     inherits: Vec<(usize, Inherited)>,
     requirements: Vec<Requirement>,
+    /// The associated type it declares, if it does.
+    assoc: Option<Assoc>,
+}
+
+/// An associated type `A<n>` of an interface. A conformance chooses `plain` for it, or, when the
+/// interface bounds it, the conforming type itself, which conforms to the interface.
+struct Assoc {
+    name: String,
+    bounded: bool,
+    /// The type a conformance chooses when the type is not bounded: `i64`, or the counted `string`.
+    plain: &'static str,
+}
+
+impl Assoc {
+    /// The type chosen for it where `ty` conforms.
+    fn chosen<'a>(&'a self, ty: &'a str) -> &'a str {
+        if self.bounded { ty } else { self.plain }
+    }
+
+    /// The `type` line of a conformance of `ty`.
+    fn choice(&self, ty: &str) -> String {
+        format!("type {} = {}", self.name, self.chosen(ty))
+    }
+
+    /// A value of the chosen type, where `var` is a value of the type that conforms.
+    fn value(&self, var: &str) -> String {
+        match (self.bounded, self.plain) {
+            (true, _) => var.to_string(),
+            (false, "string") => "\"s\"".to_string(),
+            (false, _) => "0".to_string(),
+        }
+    }
 }
 
 /// How the inheritance list of an interface writes the argument of an interface it inherits.
@@ -505,7 +537,11 @@ impl Gen<'_> {
     fn interfaces(&mut self) -> Vec<Shape> {
         let mut shapes: Vec<Shape> = Vec::new();
         for id in 0..self.pick(MAX_INTERFACES + 1) {
-            let takes = self.pick(3) == 0;
+            // One byte decides whether it takes a parameter, as before, and which associated type
+            // it declares, so that the choices after it stay where they were: 18 is a multiple of
+            // 3.
+            let draw = self.pick(18);
+            let takes = draw.is_multiple_of(3);
             let mut inherits: Vec<(usize, Inherited)> = Vec::new();
             if id > 0 {
                 for _ in 0..self.pick(3) {
@@ -521,6 +557,12 @@ impl Gen<'_> {
                 }
             }
             let param = if takes { "<T>" } else { "" };
+            // An associated type in half of them, bounded by the interface itself in a third.
+            let assoc = (draw / 3 >= 3).then(|| Assoc {
+                name: format!("A{id}"),
+                bounded: draw / 3 == 5,
+                plain: if draw / 3 == 3 { "i64" } else { "string" },
+            });
             self.w.text(&format!("interface I{id}{param}"));
             if !inherits.is_empty() {
                 let list: Vec<String> = inherits
@@ -535,6 +577,15 @@ impl Gen<'_> {
             }
             self.w.text(" ");
             self.w.open();
+            if let Some(assoc) = &assoc {
+                self.w.line();
+                let bound = if assoc.bounded {
+                    format!(": I{id}{}", if takes { "<T>" } else { "" })
+                } else {
+                    String::new()
+                };
+                self.w.text(&format!("type {}{bound}", assoc.name));
+            }
             let mut requirements = Vec::new();
             for _ in 0..self.pick(MAX_REQUIREMENTS + 1) {
                 let name = self.scope.fresh("r");
@@ -542,13 +593,13 @@ impl Gen<'_> {
                 let mut params = Vec::new();
                 for _ in 0..self.pick(3) {
                     let param = self.scope.fresh("p");
-                    let ty = self.requirement_type(takes);
+                    let ty = self.requirement_type(takes, None);
                     write!(signature, ", {param}: {}", ty.written)
                         .expect("writing to a `String` should succeed");
                     params.push((param, ty));
                 }
                 signature += ")";
-                let ret = (self.pick(3) != 0).then(|| self.requirement_type(takes));
+                let ret = (self.pick(3) != 0).then(|| self.requirement_type(takes, assoc.as_ref()));
                 if let Some(ty) = &ret {
                     write!(signature, " -> {}", ty.written)
                         .expect("writing to a `String` should succeed");
@@ -564,14 +615,16 @@ impl Gen<'_> {
                 generic: takes,
                 inherits,
                 requirements,
+                assoc,
             });
         }
         shapes
     }
 
-    /// A type a requirement of an interface may name: `Self`, `T` when it has a parameter, or one
-    /// that names neither.
-    fn requirement_type(&mut self, takes: bool) -> RequirementType {
+    /// A type a requirement of an interface may name: `Self`, `T` when it has a parameter, its
+    /// associated type `assoc` (as a result only: a caller has no value of it), or one that names
+    /// none.
+    fn requirement_type(&mut self, takes: bool, assoc: Option<&Assoc>) -> RequirementType {
         let plain = |written: &str, value: &str| RequirementType {
             written: written.to_string(),
             value: value.to_string(),
@@ -585,6 +638,10 @@ impl Gen<'_> {
         ];
         if takes {
             choices.push(plain("T", "@"));
+        }
+        // In place of `Self?`, so that the picks of an interface without one stay as they were.
+        if let Some(assoc) = assoc {
+            choices[4] = plain(&assoc.name, &assoc.value("$"));
         }
         if !self.scope.types.is_empty() {
             let at = self.pick(self.scope.types.len());
@@ -658,6 +715,12 @@ impl Gen<'_> {
             for var in &values {
                 calls.push(format!("via{k}({var})"));
             }
+            if let Some(assoc) = &shape.assoc {
+                self.via_assoc(k, declared);
+                for var in &values {
+                    calls.push(format!("let _ = pick{k}({var}, {})", assoc.value(var)));
+                }
+            }
             self.w
                 .text(&format!("class H{k}<T: {}> ", once(k).written(declared)));
             self.w.open();
@@ -714,6 +777,10 @@ impl Gen<'_> {
                 entry.written(declared)
             ));
             self.w.open();
+            if let Some(assoc) = &declared[entry.interface].assoc {
+                self.w.line();
+                self.w.text(&assoc.choice(&format!("{class}<T>")));
+            }
             for requirement in &declared[entry.interface].requirements {
                 self.w.line();
                 self.w.text(&requirement.method(entry.arg));
@@ -764,6 +831,15 @@ impl Gen<'_> {
         };
         self.w.text(&format!("{keyword} {ty}{conformance} "));
         self.w.open();
+        if listed {
+            // The associated types of every interface the list gives, listed or inherited.
+            for entry in &entries {
+                if let Some(assoc) = &declared[entry.interface].assoc {
+                    self.w.line();
+                    self.w.text(&assoc.choice(ty));
+                }
+            }
+        }
         self.w.line();
         self.w.text(if class { "v: i64" } else { "A\n    B(i64)" });
         if listed {
@@ -779,6 +855,10 @@ impl Gen<'_> {
                 self.w
                     .text(&format!("extend {ty}: {} ", entry.written(declared)));
                 self.w.open();
+                if let Some(assoc) = &declared[entry.interface].assoc {
+                    self.w.line();
+                    self.w.text(&assoc.choice(ty));
+                }
                 for requirement in &declared[entry.interface].requirements {
                     self.w.line();
                     self.w.text(&requirement.method(entry.arg));
@@ -794,6 +874,36 @@ impl Gen<'_> {
         self.w.close();
         self.w.line();
         entries
+    }
+
+    /// `fn pick<n><T: I<n>>(_x: T, y: T.A<n>) -> T.A<n> { y }`: the associated type of the
+    /// interface `k` as the type of a parameter and of a result, with a call of each requirement on
+    /// `y` when the interface bounds the type by itself.
+    fn via_assoc(&mut self, k: usize, declared: &[Shape]) {
+        let assoc = declared[k]
+            .assoc
+            .as_ref()
+            .expect("an interface with an associated type should be picked through");
+        let bound = Conformed {
+            interface: k,
+            arg: declared[k].generic.then_some("i64"),
+        };
+        let name = &assoc.name;
+        self.w.text(&format!(
+            "fn pick{k}<T: {}>(_x: T, y: T.{name}) -> T.{name} ",
+            bound.written(declared)
+        ));
+        self.w.open();
+        if assoc.bounded {
+            for requirement in &declared[k].requirements {
+                self.w.line();
+                self.w.text(&requirement.call("y", bound.arg));
+            }
+        }
+        self.w.line();
+        self.w.text("y");
+        self.w.close();
+        self.w.line();
     }
 
     /// `fn name<T: bounds>(x: T)`, which calls each of `requirements` on `x`.
