@@ -590,11 +590,12 @@ fn closure(
             Bound {
                 interface,
                 args: TypeArgs::intern(args),
+                at: Span::new(0, 0),
             }
         })
         .collect();
     let mut out = Vec::new();
-    checker.interfaces_of(receiver, &bounds, &mut out);
+    checker.interfaces_of(receiver, &bounds, &mut out, &mut FxHashSet::default());
     out.into_iter()
         .map(|(id, args)| {
             (
@@ -640,7 +641,7 @@ fn conformances_should_check_clean() {
         // A method of the requirement's own type parameters, named alike or not.
         "class Box {\n    n: i64\n    fn keep<V>(self, x: V) -> V { x }\n}\nclass Crate: Keep {\n    n: i64\n    fn keep<V>(self, x: V) -> V { x }\n}\nfn main() {\n    print(Crate(n: 1).keep(2))\n}",
         // The set of bounds counts, not their order.
-        "interface Both {\n    fn both<U: Named & Same>(self, x: U)\n}\nclass Crate: Both {\n    fn both<V: Same & Named>(self, x: V) {}\n}\nfn main() {\n    Crate().both(1)\n}",
+        "interface Both {\n    fn both<U: Named & Same>(self, x: U)\n}\nclass Crate: Both {\n    fn both<V: Same & Named>(self, x: V) {}\n}\nclass Pin: Named, Same {\n    fn name(self) -> string { \"pin\" }\n    fn same(self, other: Pin) -> bool { true }\n}\nfn main() {\n    Crate().both(Pin())\n}",
         // A body method beside a block's method of the same name: the call takes the body's.
         "class Circle {\n    r: f64\n    fn name(self) -> string { \"body\" }\n}\nextend Circle: Label {\n    fn name(self) -> string { \"label\" }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let s = c.name()\n    print(s)\n    print(c.r)\n}",
         // The same, with the method in a block of a conformance.
@@ -1534,4 +1535,259 @@ fn an_ambiguous_call_should_read_each_candidate_a_fixed_number_of_times() {
     };
     assert_eq!(steps(32), 2 * 32);
     assert_eq!(steps(64), 2 * 64);
+}
+
+/// The interfaces, classes and conformances the bound rows use, and an empty `main`. A row is a
+/// whole program that these follow, so that a position in the row is its own line and column.
+const BOUNDS: &str = "interface Named {\n    fn name(self) -> string\n}\ninterface Shape: Named {\n    fn area(self) -> f64\n}\ninterface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Ord2: Same {\n    fn less(self, other: Self) -> bool\n}\ninterface Keep {\n    fn keep<U>(self, x: U) -> U\n}\ninterface Make {\n    fn make<U>(self) -> [U]\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Named {\n    fn name(self) -> string { \"circle\" }\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\nextend Circle: Same {\n    fn same(self, other: Circle) -> bool { self.r == other.r }\n}\nextend Circle: Ord2 {\n    fn less(self, other: Circle) -> bool { self.r < other.r }\n}\nextend Circle: Keep {\n    fn keep<V>(self, x: V) -> V { x }\n}\nextend Circle: Make {\n    fn make<V>(self) -> [V] { [] }\n}\nclass Node {\n    id: i64\n}\nclass Sorted<T: Same> {\n    items: [T]\n    fn me(self) -> Sorted<T> { self }\n}\nenum Pick<T: Same> {\n    One(T)\n}\nfn main() {}";
+
+/// `row`, a program, then the interfaces and classes of `BOUNDS`.
+fn with_bounds(row: &str) -> String {
+    format!("{row}\n{BOUNDS}")
+}
+
+/// A generic body uses what its bounds give: the requirements of the interfaces a bound names and
+/// inherits, each once, through a bound, an optional with `?.`, another generic call, and a type
+/// that is bounded.
+#[test]
+fn bounds_should_check_clean() {
+    for row in [
+        // A requirement of a bound, in a loop.
+        "fn total<T: Shape>(xs: [T]) -> f64 {\n    let mut sum = 0.0\n    for x in xs {\n        sum += x.area()\n    }\n    sum\n}",
+        // Two bounds, and a requirement with `Self` as a parameter.
+        "fn both<T: Shape & Same>(a: T, b: T) -> bool {\n    a.same(b) && a.area() > 0.0\n}",
+        // An inherited bound.
+        "fn named<T: Shape>(x: T) -> string {\n    x.name()\n}",
+        // A diamond: `C` reaches `D` twice, and its method is found once.
+        "interface C {\n    fn c(self) -> i64\n}\ninterface A: C {}\ninterface B: C {}\ninterface D: A, B {}\nfn d<T: D>(x: T) -> i64 {\n    x.c()\n}",
+        // A generic function passes its parameter on, to a bound it has and to one it inherits.
+        "fn f<T: Same>(x: T) -> bool {\n    x.same(x)\n}\nfn g<T: Same>(x: T) -> bool {\n    f(x)\n}",
+        "fn f<T: Same>(x: T) -> bool {\n    x.same(x)\n}\nfn g<T: Ord2>(x: T) -> bool {\n    f(x)\n}",
+        // `?.` calls the requirement on the payload.
+        "fn opt<T: Shape>(x: T?) -> f64? {\n    x?.area()\n}",
+        // A bounded class and enum, built, named and returned.
+        "fn make() -> Sorted<Circle> {\n    Sorted(items: [Circle(r: 1.0)])\n}\nfn pick(c: Circle) -> Pick<Circle> {\n    Pick.One(c)\n}\nfn local() {\n    let s: Sorted<Circle> = Sorted(items: [])\n}",
+        // The checks of a signature, a field and a payload run with the declaration's bounds.
+        "fn f<T: Same>(s: Sorted<T>) -> i64 {\n    1\n}\nclass Holder<T: Same> {\n    s: Sorted<T>\n}\nenum Hold<T: Same> {\n    H(Pick<T>)\n}\ninterface I: Same {\n    fn f(self) -> Sorted<Self>\n}\nfn g<T: Same>(s: Sorted<T>) -> Sorted<T> {\n    s.me()\n}",
+        // A method of a bounded class or enum, and a method of a plain block, call through the
+        // bounds they have.
+        "class Holder<T: Shape> {\n    v: T\n    fn area(self) -> f64 {\n        self.v.area()\n    }\n}\nenum Wrap<T: Shape> {\n    W(T)\n    fn name(self) -> string {\n        match self {\n            Wrap.W(x) => x.name()\n        }\n    }\n}\nextend Circle {\n    fn fit<T: Shape>(self, x: T) -> f64 {\n        x.area() + self.r\n    }\n}\nfn h(c: Circle) -> f64 {\n    Holder(v: c).area() + c.fit(c)\n}",
+        // A requirement with a type parameter of its own, called at two types.
+        "fn k<T: Keep>(x: T) -> string {\n    let a: i64 = x.keep(1)\n    x.keep(\"a\")\n}",
+        // The argument that waits for the other: `make` is generic in its own parameter.
+        "fn take<T>(x: T, y: T) -> T {\n    x\n}\nfn use_make<S: Make>(s: S) -> i64 {\n    take(s.make(), [1]).len()\n}",
+        // The call on a type parameter that has one bound of two that require a name.
+        "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> i64\n}\nfn pick<T: A & B>(x: T, s: string) -> i64 {\n    let n: i64 = x.name()\n    take(x.name(), s)\n    n\n}\nfn take<T>(a: T, b: T) {}",
+    ] {
+        clean(&with_bounds(row));
+    }
+}
+
+/// A call through a bound is `Interface.method(receiver)` before `mono`.
+#[test]
+fn a_call_through_a_bound_should_lower_to_an_interface_call() {
+    contains(
+        &with_bounds("fn total<T: Shape>(x: T) -> f64 {\n    x.area()\n}"),
+        &["(fn total<T> ((x#0 T)) f64 ", "(call Shape.area x#0)"],
+    );
+    // The call's own type arguments, and an inherited requirement.
+    contains(
+        &with_bounds(
+            "fn k<T: Keep>(x: T) -> string {\n    x.keep(\"a\")\n}\nfn n<T: Shape>(x: T) -> string {\n    x.name()\n}",
+        ),
+        &[
+            "(call Keep.keep<string> x#0 \"a\")",
+            "(call Named.name x#0)",
+        ],
+    );
+}
+
+/// The errors of a bound that a type does not meet, at the call, the type or the argument that
+/// meets it, each once.
+#[test]
+fn bound_violations_should_be_reported_once_at_the_call() {
+    for (row, expected) in [
+        // The argument that binds the parameter.
+        (
+            "fn total<T: Shape>(xs: [T]) -> f64 {\n    0.0\n}\nfn go(n: Node) -> f64 {\n    total([n])\n}",
+            vec![(Code::NotConform, (5, 11))],
+        ),
+        // A parameter without the bound: one report, and the body is not checked again.
+        (
+            "fn f<T: Same>(x: T) -> bool {\n    true\n}\nfn g<T>(x: T) -> bool {\n    f(x)\n}",
+            vec![(Code::NotConform, (5, 7))],
+        ),
+        // A bounded class named by a local, a parameter, a field and a payload.
+        (
+            "fn h(s: Sorted<Node>) {}",
+            vec![(Code::NotConform, (1, 16))],
+        ),
+        (
+            "fn h() {\n    let s: Sorted<Node> = Sorted(items: [])\n}",
+            vec![(Code::NotConform, (2, 19))],
+        ),
+        (
+            "class Bad {\n    s: Sorted<Node>\n}",
+            vec![(Code::NotConform, (2, 15))],
+        ),
+        (
+            "enum Bad {\n    B(Sorted<Node>)\n}",
+            vec![(Code::NotConform, (2, 14))],
+        ),
+        // A class and a variant built with arguments that do not meet the bound.
+        (
+            "fn mk(n: Node) {\n    let s = Sorted(items: [n])\n}",
+            vec![(Code::NotConform, (2, 27))],
+        ),
+        (
+            "fn mk(n: Node) {\n    let p = Pick.One(n)\n}",
+            vec![(Code::NotConform, (2, 22))],
+        ),
+        // A type argument written for the call.
+        (
+            "fn f<T: Same>(x: T) {}\nfn g(n: Node) {\n    f<Node>(n)\n}",
+            vec![(Code::NotConform, (3, 7))],
+        ),
+        // A parameter bound for the type it is a parameter of, with no bound of its own.
+        (
+            "fn f<T>(s: Sorted<T>) {}",
+            vec![(Code::NotConform, (1, 19))],
+        ),
+        // A bound on the requirement's own parameter.
+        (
+            "interface Bind {\n    fn bind<U: Same>(self, x: U)\n}\nclass B: Bind {\n    fn bind<V: Same>(self, x: V) {}\n}\nfn go(b: B, n: Node) {\n    b.bind(n)\n}\nfn through<T: Bind>(t: T, n: Node) {\n    t.bind(n)\n}",
+            vec![(Code::NotConform, (8, 12)), (Code::NotConform, (11, 12))],
+        ),
+    ] {
+        codes(&with_bounds(row), &expected);
+    }
+}
+
+/// A body that uses what its bounds do not give is a missing method on the parameter.
+#[test]
+fn a_method_that_no_bound_gives_should_be_reported() {
+    for (row, expected) in [
+        (
+            "fn f<T>(x: T) -> f64 {\n    x.area()\n}",
+            vec![(Code::NoMember, (2, 7))],
+        ),
+        (
+            "fn f<T: Named>(x: T) -> f64 {\n    x.area()\n}",
+            vec![(Code::NoMember, (2, 7))],
+        ),
+        // Two interfaces declare it, and one that takes a parameter does: no bound to add.
+        (
+            "interface Area2 {\n    fn area(self) -> f64\n}\nfn f<T>(x: T) -> f64 {\n    x.area()\n}",
+            vec![(Code::NoMember, (5, 7))],
+        ),
+        (
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nfn f<T>(x: T) -> f64 {\n    x.convert()\n}",
+            vec![(Code::NoMember, (5, 7))],
+        ),
+        // The arguments of the call are checked all the same.
+        (
+            "fn f<T>(x: T) -> f64 {\n    x.area(1 + \"a\")\n}",
+            vec![(Code::NoMember, (2, 7)), (Code::Mismatch, (2, 12))],
+        ),
+    ] {
+        codes(&with_bounds(row), &expected);
+    }
+}
+
+/// An own type parameter of the requirement that the instantiation cycle passes through: the
+/// argument grows each time `go` calls `wrap` and `wrap` calls `go`.
+#[test]
+fn a_cycle_through_a_requirements_own_parameter_should_be_reported() {
+    let row = "interface Wrap {\n    fn wrap<U>(self, x: U)\n}\nclass Ring {\n    r: f64\n}\nextend Ring: Wrap {\n    fn wrap<U>(self, x: U) {\n        go(self, [x])\n    }\n}\nfn go<T: Wrap, U>(t: T, x: U) {\n    t.wrap(x)\n}\nfn main() {}";
+    codes(row, &[(Code::InstantiationCycle, (9, 9))]);
+    // The argument shrinks back: not a cycle.
+    let steady = "interface Wrap {\n    fn wrap<U>(self, x: U)\n}\nclass Ring {\n    r: f64\n}\nextend Ring: Wrap {\n    fn wrap<U>(self, x: U) {\n        go(self, x)\n    }\n}\nfn go<T: Wrap, U>(t: T, x: U) {\n    t.wrap(x)\n}\nfn main() {}";
+    clean(steady);
+}
+
+/// A call through two bounds that both require the method is ambiguous, unless the call's
+/// context picks one; the bounds are all there is to tell the candidates apart.
+#[test]
+fn a_method_that_two_bounds_require_should_be_ambiguous_without_a_context() {
+    let both = "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> string\n}\n";
+    let other = "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> i64\n}\n";
+    for (src, expected) in [
+        // One return type: nothing tells them apart.
+        (
+            format!("{both}fn f<T: A & B>(x: T) -> string {{\n    x.name()\n}}\nfn main() {{}}"),
+            vec![(Code::Ambiguous, (8, 7))],
+        ),
+        // Two, and a `let` with no type.
+        (
+            format!("{other}fn f<T: A & B>(x: T) {{\n    let n = x.name()\n}}\nfn main() {{}}"),
+            vec![(Code::Ambiguous, (8, 15))],
+        ),
+        // The context picks one.
+        (
+            format!(
+                "{other}fn f<T: A & B>(x: T) -> i64 {{\n    let n: i64 = x.name()\n    n\n}}\nfn main() {{}}"
+            ),
+            vec![],
+        ),
+        // The other argument of a generic call picks one; it is not the call's context.
+        (
+            format!(
+                "{other}fn take<T>(a: T, b: T) {{}}\nfn f<T: A & B>(x: T, s: string) {{\n    take(x.name(), s)\n}}\nfn main() {{}}"
+            ),
+            vec![],
+        ),
+        // The candidates are only told apart by an argument, which a call must not wait for.
+        (
+            format!(
+                "{other}fn take<T>(a: T, b: T) {{}}\nfn f<T: A & B>(x: T) {{\n    take(x.name(), 1)\n}}\nfn main() {{}}"
+            ),
+            vec![],
+        ),
+    ] {
+        codes(&src, &expected);
+    }
+}
+
+/// A call whose type arguments are written waits too, when several candidates answer it: its
+/// context picks, here the other argument of `take`.
+#[test]
+fn a_call_with_written_type_arguments_and_several_candidates_should_wait_for_context() {
+    let src = "interface A {\n    fn make<U>(self, x: U) -> U\n}\ninterface B {\n    fn make<V>(self, x: V) -> [V]\n}\nfn take<T>(a: T, b: T) {}\nfn f<T: A & B>(x: T, s: [i64]) {\n    take(x.make<i64>(1), s)\n}\nfn main() {}";
+    clean(src);
+}
+
+/// A body costs the closure of each bound once, and the index of its requirements by name once:
+/// the calls in it read what the first found, whether they repeat a name or not.
+#[test]
+fn a_body_should_close_and_index_the_bounds_of_a_parameter_once() {
+    let steps = |n: usize, distinct: bool| {
+        let methods = (0..n).fold(String::new(), |text, i| {
+            text + &format!("    fn m{i}(self) -> i64\n")
+        });
+        let calls = (0..n).fold(String::new(), |text, i| {
+            text + &format!("    let _ = x.m{}()\n", if distinct { i } else { 0 })
+        });
+        let src = format!(
+            "interface Wide {{\n{methods}}}\nfn f<T: Wide>(x: T) {{\n{calls}}}\nfn main() {{}}"
+        );
+        CLOSURE_STEPS.set(0);
+        clean(&src);
+        CLOSURE_STEPS.get()
+    };
+    // The interface itself, then a step for each of its requirements.
+    for distinct in [true, false] {
+        assert_eq!(steps(8, distinct), 1 + 8);
+        assert_eq!(steps(32, distinct), 1 + 32);
+    }
+    // A bound that each call of another generic function checks is read from the closure.
+    let checks = |n: usize| {
+        let calls = "    g(x)\n".repeat(n);
+        let src = format!(
+            "interface Same {{\n    fn same(self) -> bool\n}}\nfn g<T: Same>(x: T) {{}}\nfn f<T: Same>(x: T) {{\n{calls}}}\nfn main() {{}}"
+        );
+        CLOSURE_STEPS.set(0);
+        clean(&src);
+        CLOSURE_STEPS.get()
+    };
+    assert_eq!(checks(32), checks(1));
 }

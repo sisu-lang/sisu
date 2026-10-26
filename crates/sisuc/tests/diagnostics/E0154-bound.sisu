@@ -1,0 +1,15 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Node {
+    id: i64
+}
+
+fn total<T: Shape>(items: [T]) -> f64 {
+    0.0
+}
+
+fn main() {
+    print(total([Node(id: 1)]))
+}

@@ -5,9 +5,11 @@ use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::extend::holder_of;
 use super::{BindingKind, Body, Checker, Declared, Definition};
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, NotInterface};
+use crate::conformance::find;
+use crate::diagnostic::{AddBound, DiagnosticKind, NotConformForm, NotInterface};
 use crate::graph::components;
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -24,6 +26,8 @@ pub(super) struct InterfaceInfo {
     pub(super) inherits_at: Vec<Span>,
     /// The first requirement of each name, in declaration order.
     pub(super) requirements: Vec<RequirementInfo>,
+    /// The bounds of each of `type_params`: `Self` conforms to the interface itself.
+    pub(super) bounds: Vec<Vec<Bound>>,
 }
 
 /// A requirement's signature, over the interface's parameters (`Self` first) and then its own.
@@ -47,6 +51,32 @@ pub(super) struct RequirementInfo {
 pub(super) struct Bound {
     pub(super) interface: InterfaceId,
     pub(super) args: TypeArgs,
+    /// Where the bound is written.
+    pub(super) at: Span,
+}
+
+/// A requirement that a type parameter's bounds give: the interface that declares it, with its
+/// arguments (without `Self`), and the requirement's place among the interface's.
+#[derive(Clone, Copy)]
+pub(super) struct Required {
+    pub(super) interface: InterfaceId,
+    pub(super) args: TypeArgs,
+    pub(super) method: usize,
+}
+
+/// A bound check that waits for every conformance: the applied class or enum type `ty`, each of
+/// whose arguments is written at the span of `ats`, in the scope `scope`.
+pub(super) struct PendingBound {
+    ty: Type,
+    ats: Vec<Span>,
+    scope: usize,
+}
+
+/// The type parameters in scope where a pending check was queued, and their bounds.
+pub(super) struct Scope {
+    params: Vec<Symbol>,
+    bounds: Vec<Vec<Bound>>,
+    self_type: Option<Type>,
 }
 
 impl Checker<'_> {
@@ -75,6 +105,11 @@ impl Checker<'_> {
         let component = components(&edges);
         self.inheritance_cycles(&interfaces, &edges, &component);
         self.inherited_requirements(&interfaces, &edges, &component);
+        for (i, info) in self.interfaces.iter().enumerate() {
+            for requirement in &info.requirements {
+                (self.declaring.entry(requirement.name.name).or_default()).push(InterfaceId(i));
+            }
+        }
     }
 
     /// Resolves the bounds, inheritance and requirements of `interface`, whose id is `id`.
@@ -82,7 +117,20 @@ impl Checker<'_> {
         let params = self.interfaces[id.0].type_params.clone();
         self.body.set_type_params(&params);
         self.body.self_type = Some(Type::intern(TypeKind::Param(params[0], 0)));
-        self.bounds_of(&interface.type_params);
+        // `Self` conforms to the interface itself, with its own parameters as the arguments.
+        let own: Vec<Type> = (1..)
+            .zip(&params[1..])
+            .map(|(i, &name)| Type::intern(TypeKind::Param(name, i)))
+            .collect();
+        let this = Bound {
+            interface: id,
+            args: TypeArgs::intern(&own),
+            at: interface.name.span,
+        };
+        let mut bounds = vec![vec![this]];
+        bounds.extend(self.bounds_of(&interface.type_params));
+        self.body.set_bounds(0, bounds.clone());
+        self.interfaces[id.0].bounds = bounds;
         let (inherits, inherits_at) = interface
             .inherits
             .iter()
@@ -117,6 +165,9 @@ impl Checker<'_> {
                 .map(|param| param.name.name)
                 .collect();
             self.body.push_type_params(&own);
+            // The bounds first, so that a type in the signature meets them.
+            let bounds = self.bounds_of(&requirement.type_params);
+            self.body.set_bounds(scope, bounds.clone());
             // A requirement has no body: its parameters are checked as a function's are.
             self.body.scopes.push(FxHashMap::default());
             let mut params = Vec::new();
@@ -130,7 +181,6 @@ impl Checker<'_> {
                 .ret
                 .as_ref()
                 .map_or(Some(Type::UNIT), |ret| self.resolve(ret));
-            let bounds = self.bounds_of(&requirement.type_params);
             self.body.truncate_type_params(scope);
             if first_of_name {
                 self.interfaces[id.0].requirements.push(RequirementInfo {
@@ -191,6 +241,7 @@ impl Checker<'_> {
             return Some(Bound {
                 interface: id,
                 args,
+                at: ty.bare,
             });
         }
         // An optional or an array of an interface is a type that is no interface. `resolve` would
@@ -401,31 +452,221 @@ impl Checker<'_> {
     /// Appends to `out` the interfaces of `bounds` and every interface they inherit, each
     /// `(interface, arguments)` once, where `receiver` is the type that meets the bounds. The
     /// arguments of an inherited interface are copied from the bound's, or from `receiver` for
-    /// `Self`, or written without a parameter, so the closure never grows an argument.
+    /// `Self`, or written without a parameter, so the closure never grows an argument. `seen` is
+    /// a buffer for the walk, which the caller keeps from one closure to the next.
     ///
     /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25): a
-    /// bound's closure is computed per use, so a use costs the closure's size. The closure of
-    /// arguments may double at each level of inheritance, as the spec says ("Inheritance"): an
-    /// interface that inherits one twice, once with a parameter and once with a type, has the
-    /// two as two entries. The check for E0034 does not read the closure, as it needs no
-    /// arguments.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Task 4's bound checks call it; the conformance checks use `extend_closure`"
-        )
-    )]
+    /// bound's closure is computed per body that has it, so a body costs the closure's size. The
+    /// closure of arguments may double at each level of inheritance, as the spec says
+    /// ("Inheritance"): an interface that inherits one twice, once with a parameter and once with
+    /// a type, has the two as two entries. The check for E0034 does not read the closure, as it
+    /// needs no arguments.
     pub(super) fn interfaces_of(
         &self,
         receiver: Type,
         bounds: &[Bound],
         out: &mut Vec<(InterfaceId, TypeArgs)>,
+        seen: &mut FxHashSet<(InterfaceId, TypeArgs)>,
     ) {
-        let mut seen: FxHashSet<(InterfaceId, TypeArgs)> = out.iter().copied().collect();
+        seen.clear();
+        seen.extend(out.iter().copied());
         #[cfg(test)]
         super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + seen.len());
-        self.extend_closure(receiver, bounds, out, &mut seen, |_, _| {});
+        self.extend_closure(receiver, bounds, out, seen, |_, _| {});
+    }
+
+    /// The interfaces that the type parameter at `place` in scope conforms to through its bounds,
+    /// each with its arguments once, found when first asked for in a body.
+    ///
+    /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25; ruling
+    /// F9 (b)): the closure is computed once for each body that has the bound, so a body costs
+    /// the closure's size.
+    pub(super) fn param_interfaces(&mut self, place: usize) -> &[(InterfaceId, TypeArgs)] {
+        let body = &mut self.body;
+        if body.conforming.len() <= place {
+            body.conforming.resize(place + 1, None);
+        }
+        if self.body.conforming[place].is_none() {
+            let mut out = Vec::new();
+            if let Some(&name) = self.body.type_params.get(place) {
+                let receiver = Type::intern(TypeKind::Param(
+                    name,
+                    u32::try_from(place)
+                        .expect("a declaration should have fewer than 2^32 parameters"),
+                ));
+                let bounds = self.body.bounds.get(place).map_or(&[][..], Vec::as_slice);
+                let mut seen = std::mem::take(&mut self.closure_seen);
+                self.interfaces_of(receiver, bounds, &mut out, &mut seen);
+                self.closure_seen = seen;
+            }
+            self.body.conforming[place] = Some(out);
+        }
+        self.body.conforming[place]
+            .as_deref()
+            .expect("the closure of a type parameter should be found by now")
+    }
+
+    /// The requirements named `name` that the bounds of the type parameter at `place` give,
+    /// each once, in the order of the bounds. The first ask for a place in a body indexes by name
+    /// the requirements of its interfaces, and the rest read the index: a call costs a lookup,
+    /// not a walk of the bounds.
+    ///
+    /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25; ruling
+    /// F9 (e)): the candidates of a name are `n` for `n` interfaces of the bounds that declare it,
+    /// and a call keeps them while it checks its arguments.
+    pub(super) fn required(&mut self, place: usize, name: Symbol) -> Vec<Required> {
+        if !self.body.required.contains_key(&place) {
+            let entries = self.param_interfaces(place).to_vec();
+            let mut by_name: FxHashMap<Symbol, Vec<Required>> = FxHashMap::default();
+            for (interface, args) in entries {
+                let requirements = &self.interfaces[interface.0].requirements;
+                for (method, requirement) in requirements.iter().enumerate() {
+                    #[cfg(test)]
+                    super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + 1);
+                    (by_name.entry(requirement.name.name).or_default()).push(Required {
+                        interface,
+                        args,
+                        method,
+                    });
+                }
+            }
+            self.body.required.insert(place, by_name);
+        }
+        (self.body.required[&place].get(&name))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Whether `ty` conforms to `interface` with `args` (without `Self`): a type parameter
+    /// through its bounds and what they inherit, a class or an enum through its conformance. A
+    /// broken `extend` block may have given its target the conformance, so that holds.
+    pub(super) fn conforms(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
+        match ty.kind() {
+            TypeKind::Param(_, place) => self
+                .param_interfaces(place as usize)
+                .contains(&(interface, args)),
+            TypeKind::Class(..) | TypeKind::Enum(..) => {
+                let broken = holder_of(ty).is_some_and(|holder| {
+                    self.broken_extensions.contains(&self.holder_name(holder))
+                });
+                broken || find(&self.conformances, interface, ty, args).is_some()
+            }
+            _ => false,
+        }
+    }
+
+    /// `interface` with `args`, as a program writes a bound.
+    pub(super) fn bound_text(&self, interface: InterfaceId, args: TypeArgs) -> String {
+        let name = self.interfaces[interface.0].name.name.as_str();
+        let args: Vec<String> = args.get().iter().map(|&ty| self.type_name(ty)).collect();
+        if args.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name}<{}>", args.join(", "))
+        }
+    }
+
+    /// Checks that `ty` meets `bound`, whose arguments name the parameters that `with` gives
+    /// types to. Reports it at `at` when not.
+    pub(super) fn check_bound(&mut self, at: Span, ty: Type, bound: Bound, with: &[Type]) -> bool {
+        let args = bound.args.subst(with);
+        if self.conforms(ty, bound.interface, args) {
+            return true;
+        }
+        let add = self.add_bound(ty, bound.interface);
+        self.report(DiagnosticKind::NotConform {
+            ty: self.type_name(ty),
+            interface: self.bound_text(bound.interface, args),
+            at,
+            form: NotConformForm::Bound {
+                // No label points into the prelude.
+                bound: (!bound.at.in_prelude()).then_some(bound.at),
+                add,
+            },
+        });
+        false
+    }
+
+    /// The bound that would make the type parameter `ty` conform to `interface`, written with the
+    /// bounds it has: `None` unless `ty` is a type parameter in scope and `interface` takes no
+    /// type parameters.
+    pub(super) fn add_bound(&self, ty: Type, interface: InterfaceId) -> Option<AddBound> {
+        let TypeKind::Param(name, place) = ty.kind() else {
+            return None;
+        };
+        if self.body.type_param(name) != Some(place as usize)
+            || self.interfaces[interface.0].type_params.len() != 1
+        {
+            return None;
+        }
+        let have = self.body.bounds.get(place as usize).into_iter().flatten();
+        let mut bounds: Vec<String> = have.map(|b| self.bound_text(b.interface, b.args)).collect();
+        bounds.push(self.bound_text(interface, TypeArgs::NONE));
+        Some(AddBound {
+            param: name.to_string(),
+            bounds,
+        })
+    }
+
+    /// Checks that each argument of the applied type `ty`, written at `ats`, meets the bounds
+    /// that its class or enum declares. When every conformance is not yet known, the check waits.
+    /// Whether it holds, or waits.
+    pub(super) fn check_applied(&mut self, ty: Type, ats: Vec<Span>) -> bool {
+        if self.pending_bounds.is_some() {
+            let scope = self.scope();
+            if let Some(pending) = &mut self.pending_bounds {
+                pending.push(PendingBound { ty, ats, scope });
+            }
+            return true;
+        }
+        self.check_applied_now(ty, &ats)
+    }
+
+    fn check_applied_now(&mut self, ty: Type, ats: &[Span]) -> bool {
+        let (bounds, args) = match ty.kind() {
+            TypeKind::Class(id, args) => (self.classes[id.0].bounds.clone(), args),
+            TypeKind::Enum(id, args) => (self.enums[id.0].bounds.clone(), args),
+            _ => return true,
+        };
+        let mut holds = true;
+        for (k, bounds) in bounds.iter().enumerate() {
+            for &bound in bounds {
+                holds &= self.check_bound(ats[k], args.get()[k], bound, args.get());
+            }
+        }
+        holds
+    }
+
+    /// The place among `scopes` of the type parameters now in scope, with their bounds: made on
+    /// the first ask, until they change.
+    fn scope(&mut self) -> usize {
+        if let Some(at) = self.body.scope {
+            return at;
+        }
+        let at = self.scopes.len();
+        self.scopes.push(Scope {
+            params: self.body.type_params.clone(),
+            bounds: self.body.bounds.clone(),
+            self_type: self.body.self_type,
+        });
+        self.body.scope = Some(at);
+        at
+    }
+
+    /// Runs the bound checks that waited for every conformance, in the order they were queued,
+    /// each in the scope it was queued in. Later types are checked as they are resolved.
+    pub(super) fn run_pending_bounds(&mut self) {
+        let pending = self.pending_bounds.take().unwrap_or_default();
+        let scopes = std::mem::take(&mut self.scopes);
+        for p in pending {
+            let scope = &scopes[p.scope];
+            self.with_body(Body::default(), |checker| {
+                checker.body.set_type_params(&scope.params);
+                checker.body.set_bounds(0, scope.bounds.clone());
+                checker.body.self_type = scope.self_type;
+                checker.check_applied_now(p.ty, &p.ats);
+            });
+        }
     }
 
     /// The interfaces that `interface` inherits, each with where it writes the inheritance. The

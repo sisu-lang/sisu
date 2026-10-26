@@ -1,0 +1,19 @@
+interface Named {
+    fn name(self) -> string
+}
+
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+fn both<T: Same>(a: T, b: T) -> bool {
+    a.same(b)
+}
+
+fn pair<T: Named>(a: T, b: T) -> bool {
+    both(a, b)
+}
+
+fn main() {
+    print(1)
+}

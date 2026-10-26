@@ -79,7 +79,7 @@ impl<'a> Checker<'_> {
                     .push((at, func));
             }
             let signature = format!("{name}.{}", method.name.name);
-            self.signature(method, signature, &extend.type_params);
+            self.signature(method, signature, &extend.type_params, Vec::new());
             if let Some(Some((bound, _))) = interface {
                 self.signatures[func.0].conformance = Some((bound.interface, bound.args));
             }

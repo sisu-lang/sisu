@@ -7,6 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
 use super::expr::{bare_none, int_literal, option_written, rank};
+use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
@@ -53,7 +54,7 @@ fn mark_params(ty: Type, named: &mut [bool]) {
 
 /// Which of the first `len` type parameters `types` name. A type that did not resolve names
 /// nothing.
-fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
+pub(super) fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
     let mut named = vec![false; len];
     for ty in types.flatten() {
         mark_params(ty, &mut named);
@@ -66,6 +67,27 @@ fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bo
 /// rather than leave it uninferred, and no call waits for it.
 fn broken_param(seen: &mut FxHashSet<Symbol>, name: Symbol) -> bool {
     !seen.insert(name) || built_in_type(name.as_str()).is_some()
+}
+
+/// Binds each of `names`, a declaration's type parameters, that is broken (see `broken_param`)
+/// and that no argument bound to `UNKNOWN`, and whether any was. Such a parameter may be one no
+/// type names: it poisons the call rather than go uninferred. One pass over the names finds
+/// them, and only a call that leaves one unbound makes it.
+fn poison_broken_params(bindings: &mut Bindings, names: &[Symbol]) -> bool {
+    let mut broken = false;
+    if bindings.found.contains(&None) {
+        let mut seen = FxHashSet::default();
+        for (i, &name) in names.iter().enumerate() {
+            #[cfg(test)]
+            SCANNED.set(SCANNED.get() + 1);
+            let broken_name = broken_param(&mut seen, name);
+            if bindings.found[i].is_none() && broken_name {
+                bindings.found[i] = Some(UNKNOWN);
+                broken = true;
+            }
+        }
+    }
+    broken
 }
 
 /// Which of `names`, a declaration's type parameters, are broken (see `broken_param`).
@@ -112,6 +134,10 @@ fn leaves_open_in(
 
 /// A call of a generic callee as ranking sees it (see `Checker::waits`).
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact about the call, set by a different check"
+)]
 struct CallShape {
     /// Whether the callee has type parameters of its own to infer.
     generic: bool,
@@ -120,6 +146,8 @@ struct CallShape {
     /// Whether no argument can bind one of its type parameters, and the type of the call names
     /// it, so only the call's context can bind it.
     open: bool,
+    /// Whether several methods answer the call, which its context picks among.
+    several: bool,
 }
 
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
@@ -268,6 +296,9 @@ pub(super) struct GenericSig<'a> {
     pub(super) owner: &'a [Type],
     pub(super) params: &'a [Option<Type>],
     pub(super) ret: Option<Type>,
+    /// The bounds of the parameters after the receiver's, in order; a parameter past the end has
+    /// none. The call checks them once it has inferred the arguments.
+    pub(super) bounds: &'a [Vec<Bound>],
 }
 
 /// How a call writes its callee: its name, the type arguments in `angles` (none written when
@@ -289,6 +320,8 @@ struct Inference {
     last: Vec<(usize, Type)>,
     /// Whether a parameter was bound to a type that no parameter takes.
     failed: bool,
+    /// Where each parameter was bound: the argument, or the type argument written for it.
+    origin: Vec<Option<Span>>,
 }
 
 /// `checked`, an argument, made `Error` that its rule rejected when `mismatched`.
@@ -412,6 +445,7 @@ impl Checker<'_> {
             slots: args.iter().map(|_| None).collect(),
             last: Vec::new(),
             failed: false,
+            origin: vec![None; sig.declared.len()],
         };
         if !written.is_empty() {
             let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
@@ -422,6 +456,7 @@ impl Checker<'_> {
             // `type_args` rejects each type that `report_fresh` would.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
+                call.origin[owned + i] = written.get(i).map(|ty| ty.span);
             }
         }
         // Whether every call in an argument fits its declaration.
@@ -472,22 +507,7 @@ impl Checker<'_> {
             self.no_value(e.span, ty);
             call.slots[i] = Some(Err(Poisoned::error()));
         }
-        // A parameter whose name `type_params` reported, a second `T` or a built-in name, may
-        // be one no type names: it poisons the call rather than go uninferred. One pass over
-        // the names finds them, and only a call that leaves one unbound makes it.
-        let mut broken = false;
-        if call.bindings.found.contains(&None) {
-            let mut seen = FxHashSet::default();
-            for (i, &name) in sig.declared.iter().enumerate() {
-                #[cfg(test)]
-                SCANNED.set(SCANNED.get() + 1);
-                let broken_name = broken_param(&mut seen, name);
-                if call.bindings.found[i].is_none() && broken_name {
-                    call.bindings.found[i] = Some(UNKNOWN);
-                    broken = true;
-                }
-            }
-        }
+        let broken = poison_broken_params(&mut call.bindings, sig.declared);
         let list = match call.bindings.finish() {
             Ok(list) if !call.failed && !broken => Some(list),
             Ok(_) => None,
@@ -513,6 +533,9 @@ impl Checker<'_> {
             }
             return None;
         };
+        if !self.check_call_bounds(span, sig, &call.origin, list) {
+            return None;
+        }
         self.instantiates = true;
         let checked = call
             .slots
@@ -522,6 +545,26 @@ impl Checker<'_> {
             })
             .collect();
         Some((checked, list, sig.ret.map(|ret| ret.subst(list.get()))))
+    }
+
+    /// Whether the arguments `list` of the call at `span` meet the bounds of `sig`. A parameter
+    /// whose argument fails is reported once, at the place that bound the parameter (`origin`).
+    fn check_call_bounds(
+        &mut self,
+        span: Span,
+        sig: &GenericSig<'_>,
+        origin: &[Option<Span>],
+        list: TypeArgs,
+    ) -> bool {
+        let owned = sig.owner.len();
+        let mut holds = true;
+        for (k, bounds) in sig.bounds.iter().enumerate() {
+            for &bound in bounds {
+                let at = origin[owned + k].unwrap_or(span);
+                holds &= self.check_bound(at, list.get()[owned + k], bound, list.get());
+            }
+        }
+        holds
     }
 
     /// Reports each argument already checked whose type is not what `want`, the call's context,
@@ -717,6 +760,7 @@ impl Checker<'_> {
         for &i in &call.bindings.fresh {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
+            call.origin[i].get_or_insert(at);
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
             if matches!(ty, Type::UNIT | Type::NEVER) {
                 self.report(DiagnosticKind::TypeArgument {
@@ -804,6 +848,7 @@ impl Checker<'_> {
                 generic,
                 shaped,
                 open,
+                ..
             },
             args,
         ) = match &e.kind {
@@ -825,34 +870,10 @@ impl Checker<'_> {
                 args,
                 safe,
                 ..
-            } if types.is_empty() => {
-                let variant = self.generic_variant(receiver, method).filter(|_| !safe);
-                let shape = if let Some((names, v)) = variant {
-                    // Mixed labels are reported at the declaration.
-                    let shaped = !v.fields.is_empty()
-                        && (v.labels.iter().all(Option::is_some)
-                            || v.labels.iter().all(Option::is_none))
-                        && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
-                    CallShape {
-                        generic: true,
-                        shaped,
-                        open: shaped && leaves_open(v.fields.iter().copied(), names, 0),
-                    }
-                } else if !safe
-                    && method.name.as_str() == "Some"
-                    && option_written(receiver) == Some(false)
-                {
-                    // `Option.Some` is `Some`, as `generic_callee` takes it.
-                    CallShape {
-                        generic: true,
-                        shaped: matches!(&args[..], [arg] if arg.label.is_none()),
-                        open: false,
-                    }
-                } else {
-                    self.generic_method(receiver, method, args, *safe)
-                };
-                (shape, args)
-            }
+            } => match self.method_shape(receiver, method, !types.is_empty(), args, *safe) {
+                Some(shape) => (shape, args),
+                None => return false,
+            },
             K::Call {
                 callee,
                 types,
@@ -894,6 +915,47 @@ impl Checker<'_> {
         let waits = generic && (open || args.iter().all(|arg| self.waits(&arg.value, fit)));
         *fit &= !waits || shaped;
         waits
+    }
+
+    /// The shape of `receiver.method(args)`, or of `receiver?.method(args)` with `safe`, which a
+    /// call of a variant, of `Option.Some` or of a method has. `None` when it never waits: a call
+    /// that writes type arguments fixes its own parameters, so it waits only when several methods
+    /// answer it, and its context picks one.
+    fn method_shape(
+        &mut self,
+        receiver: &ast::Expr,
+        method: &ast::Ident,
+        written: bool,
+        args: &[ast::Arg],
+        safe: bool,
+    ) -> Option<CallShape> {
+        if written {
+            return Some(self.generic_method(receiver, method, args, safe)).filter(|s| s.several);
+        }
+        let variant = self.generic_variant(receiver, method).filter(|_| !safe);
+        Some(if let Some((names, v)) = variant {
+            // Mixed labels are reported at the declaration.
+            let shaped = !v.fields.is_empty()
+                && (v.labels.iter().all(Option::is_some) || v.labels.iter().all(Option::is_none))
+                && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
+            CallShape {
+                generic: true,
+                shaped,
+                open: shaped && leaves_open(v.fields.iter().copied(), names, 0),
+                ..CallShape::default()
+            }
+        } else if !safe && method.name.as_str() == "Some" && option_written(receiver) == Some(false)
+        {
+            // `Option.Some` is `Some`, as `generic_callee` takes it.
+            CallShape {
+                generic: true,
+                shaped: matches!(args, [arg] if arg.label.is_none()),
+                open: false,
+                ..CallShape::default()
+            }
+        } else {
+            self.generic_method(receiver, method, args, safe)
+        })
     }
 
     /// Whether the `if let pattern = value { then_block } else { else_block }` waits, as
@@ -1053,6 +1115,7 @@ impl Checker<'_> {
         let owner = match ty.kind() {
             TypeKind::Class(id, _) => self.classes[id.0].type_params.len(),
             TypeKind::Enum(id, _) => self.enums[id.0].type_params.len(),
+            TypeKind::Param(_, place) => return self.bound_shape(place as usize, method, args),
             _ => return CallShape::default(),
         };
         // The method the call will find, as `find_method` finds it, without its reports.
@@ -1084,6 +1147,7 @@ impl Checker<'_> {
                             generic: true,
                             shaped,
                             open: shaped,
+                            several: true,
                         };
                     }
                 }
@@ -1099,6 +1163,57 @@ impl Checker<'_> {
                 && sig.ret.is_some_and(|ret| {
                     leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, owner)
                 }),
+            ..CallShape::default()
+        }
+    }
+
+    /// The shape of a call of `method` on a value whose type is the type parameter at `place`:
+    /// the requirements its bounds give. One is a generic call if it has type parameters of its
+    /// own. Several wait for the context that picks one, unless all return one type.
+    fn bound_shape(&mut self, place: usize, method: &ast::Ident, args: &[ast::Arg]) -> CallShape {
+        let found = self.required(place, method.name);
+        let requirement = |found: &Required| {
+            let interface = &self.interfaces[found.interface.0];
+            &interface.requirements[found.method]
+        };
+        let shaped = |found: &Required| {
+            let requirement = requirement(found);
+            requirement.ret.is_some() && fits(requirement.params.iter().map(|&ty| (ty, None)), args)
+        };
+        match &found[..] {
+            [] => CallShape::default(),
+            [one] => {
+                let interface = &self.interfaces[one.interface.0];
+                let requirement = &interface.requirements[one.method];
+                let shaped = shaped(one);
+                let mut names = interface.type_params.clone();
+                names.extend_from_slice(&requirement.own);
+                CallShape {
+                    generic: !requirement.own.is_empty(),
+                    shaped,
+                    open: shaped
+                        && requirement.ret.is_some_and(|ret| {
+                            let params = requirement.params.iter().copied();
+                            leaves_open_in(params, ret, &names, interface.type_params.len())
+                        }),
+                    several: false,
+                }
+            }
+            _ => {
+                let first = requirement(&found[0]).ret;
+                let alike = first.is_some_and(|ret| !ret.has_param())
+                    && found.iter().all(|one| requirement(one).ret == first);
+                if alike {
+                    return CallShape::default();
+                }
+                let shaped = found.iter().all(shaped);
+                CallShape {
+                    generic: true,
+                    shaped,
+                    open: shaped,
+                    several: true,
+                }
+            }
         }
     }
 
@@ -1153,6 +1268,7 @@ impl Checker<'_> {
                     shaped,
                     open: shaped
                         && leaves_open(info.fields.iter().map(|f| f.ty), &info.type_params, 0),
+                    ..CallShape::default()
                 }
             }
             (None, Some(&Declared::Known(func))) => {
@@ -1166,6 +1282,7 @@ impl Checker<'_> {
                         && sig.ret.is_some_and(|ret| {
                             leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, 0)
                         }),
+                    ..CallShape::default()
                 }
             }
             // `Some<T>(x: T) -> T?`, and the prelude's `Ok` and `Err`, which no user item can
@@ -1174,6 +1291,7 @@ impl Checker<'_> {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
                 open: false,
+                ..CallShape::default()
             },
             (None, None) => self
                 .result_variant(name)
@@ -1189,6 +1307,7 @@ impl Checker<'_> {
                                 &info.type_params,
                                 0,
                             ),
+                        ..CallShape::default()
                     }
                 }),
             _ => CallShape::default(),

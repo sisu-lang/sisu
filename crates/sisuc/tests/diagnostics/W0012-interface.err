@@ -1,0 +1,29 @@
+warning[W0012]: interface `Shape` is never used
+ --> W0012-interface.sisu:1:11
+  |
+1 | interface Shape {
+  |           ^^^^^ never used
+  |
+  = help: delete it, or name it `_Shape` if it is kept on purpose
+
+warning[W0012]: interface `Named` is never used
+  --> W0012-interface.sisu:5:11
+   |
+ 5 | interface Named {
+   |           ^^^^^ never used
+...
+19 | fn dead<T: Named>(x: T) -> T {
+   |            ----- used here, in `dead`, which is never called
+   |
+   = help: delete it, or name it `_Named` if it is kept on purpose
+
+warning[W0012]: function `dead` is never called
+  --> W0012-interface.sisu:19:4
+   |
+19 | fn dead<T: Named>(x: T) -> T {
+   |    ^^^^ never called
+   |
+   = help: delete it, or name it `_dead` if it is kept on purpose
+
+sisu: 3 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012

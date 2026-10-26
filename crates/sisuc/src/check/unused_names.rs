@@ -34,6 +34,9 @@ pub(super) enum Used {
     /// A field read, by the field's index in its class.
     Field(tir::ClassId, usize),
     Const(usize),
+    /// An interface: a bound that names it, or a call of a method that meets one of its
+    /// requirements, or of the requirement itself.
+    Interface(tir::InterfaceId),
     /// An `==`, `!=` or `contains` on values of this type, which reads every field of each class
     /// that the type holds.
     Equal(Type),
@@ -99,8 +102,19 @@ impl Used {
         match self {
             Used::Func(f) => Some(Owner::Func(f)),
             Used::Const(c) => Some(Owner::Const(c)),
-            Used::Class(_) | Used::Variant(..) | Used::Field(..) | Used::Equal(_) => None,
+            Used::Class(_)
+            | Used::Variant(..)
+            | Used::Field(..)
+            | Used::Interface(_)
+            | Used::Equal(_) => None,
         }
+    }
+}
+
+/// Marks the interface `i` as used by live code, and queues it to be followed once.
+fn use_interface(used: &mut [bool], queue: &mut Vec<usize>, i: usize) {
+    if !std::mem::replace(&mut used[i], true) {
+        queue.push(i);
     }
 }
 
@@ -118,6 +132,8 @@ struct Reached {
     read: Vec<Vec<bool>>,
     /// Each class whose fields a comparison in live code reads.
     compared: Vec<bool>,
+    /// Each interface that live code uses (see `reach`).
+    interfaces: Vec<bool>,
     /// The held type parameters (`held_params`), found when a comparison first walks a class or
     /// an enum with type arguments.
     held: OnceCell<FxHashSet<(Holder, usize)>>,
@@ -140,6 +156,8 @@ struct Slots {
     fields: Vec<usize>,
     /// The first slot of each enum's variants.
     variants: Vec<usize>,
+    /// The first slot of the interfaces.
+    interfaces: usize,
     len: usize,
 }
 
@@ -160,6 +178,10 @@ impl Checker<'_> {
     /// code. Each pending finding of a live function is W0014. A pending finding of a dead
     /// function gives only the W0002 that it holds, if any. The function's warning tells you to
     /// delete all of it.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one report loop for each kind of item, so the warnings read in one place"
+    )]
     pub(super) fn unused(&mut self) -> Vec<Diagnostic> {
         let pending = std::mem::take(&mut self.pending);
         let functions = self.signatures.len();
@@ -248,6 +270,11 @@ impl Checker<'_> {
                 }
             }
         }
+        for (i, info) in self.interfaces.iter().enumerate() {
+            if !reached.interfaces[i] {
+                report(Definition::Interface, info.name.span, slots.interfaces + i);
+            }
+        }
         for (c, span) in constants.iter().enumerate() {
             if let Some(span) = *span
                 && !reached.live[Owner::Const(c).index(functions)]
@@ -283,11 +310,13 @@ impl Checker<'_> {
         };
         let fields = self.classes.iter().map(|c| next(c.fields.len())).collect();
         let variants = self.enums.iter().map(|e| next(e.variants.len())).collect();
+        let interfaces = next(self.interfaces.len());
         Slots {
             classes,
             enums,
             fields,
             variants,
+            interfaces,
             len,
         }
     }
@@ -310,6 +339,9 @@ impl Checker<'_> {
                     self.cite(&mut cited[slots.variants[e.0] + v], i);
                 }
                 Used::Field(c, f) => self.cite(&mut cited[slots.fields[c.0] + f], i),
+                Used::Interface(interface) => {
+                    self.cite(&mut cited[slots.interfaces + interface.0], i);
+                }
                 // An owner is cited next, and a comparison once the dead comparisons are walked.
                 Used::Func(_) | Used::Const(_) | Used::Equal(_) => {}
             }
@@ -537,6 +569,9 @@ impl Checker<'_> {
             (conforming.entry(holder).or_default()).extend(conformance.methods.iter().map(|f| f.0));
         }
         let mut enum_started = vec![false; self.enums.len()];
+        // The interfaces live code uses, and those not yet followed to the ones they name.
+        let mut interfaces = vec![false; self.interfaces.len()];
+        let mut to_follow = Vec::new();
         while let Some(o) = stack.pop() {
             for &i in &edges[o] {
                 let to = self.uses[i].to;
@@ -556,12 +591,23 @@ impl Checker<'_> {
                             stack.push(method);
                         }
                     }
+                    // A class or an enum that is built names the interfaces of its bounds.
+                    let bounds = match holder {
+                        Holder::Class(c) => &self.classes[c.0].bounds,
+                        Holder::Enum(e) => &self.enums[e.0].bounds,
+                    };
+                    for bound in bounds.iter().flatten() {
+                        use_interface(&mut interfaces, &mut to_follow, bound.interface.0);
+                    }
                 }
                 match to {
                     Used::Variant(e, v) => variants[e.0][v] = true,
                     Used::Field(c, f) => read[c.0][f] = true,
                     Used::Equal(ty) => {
                         self.held_classes(ty, &held, &mut seen, |c| compared[c.0] = true);
+                    }
+                    Used::Interface(interface) => {
+                        use_interface(&mut interfaces, &mut to_follow, interface.0);
                     }
                     // A class is built above, and an owner is reached next.
                     Used::Class(_) | Used::Func(_) | Used::Const(_) => {}
@@ -574,6 +620,7 @@ impl Checker<'_> {
                 }
             }
         }
+        self.follow_interfaces(&mut interfaces, to_follow);
         Reached {
             live,
             built,
@@ -581,7 +628,24 @@ impl Checker<'_> {
             variants,
             read,
             compared,
+            interfaces,
             held,
+        }
+    }
+
+    /// Marks as used the interfaces that the used ones in `to_follow` name: those they inherit,
+    /// those in the bounds of their requirements and those in the bounds of their own type
+    /// parameters.
+    fn follow_interfaces(&self, used: &mut [bool], mut to_follow: Vec<usize>) {
+        while let Some(i) = to_follow.pop() {
+            let info = &self.interfaces[i];
+            let inherited = info.inherits.iter();
+            let requirements = (info.requirements.iter()).flat_map(|r| r.bounds.iter().flatten());
+            // `Self`'s bound, first, is the interface itself.
+            let own = info.bounds.iter().skip(1).flatten();
+            for bound in inherited.chain(requirements).chain(own) {
+                use_interface(used, &mut to_follow, bound.interface.0);
+            }
         }
     }
 

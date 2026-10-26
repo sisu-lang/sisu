@@ -443,6 +443,9 @@ impl Checker<'_> {
             Some(ty @ (Type::I64 | Type::F64)) => {
                 return self.number_method(span, receiver, ty, method, args);
             }
+            Some(ty) if matches!(ty.kind(), TypeKind::Param(..)) => {
+                return self.bound_method(span, receiver, ty, site, args);
+            }
             _ => {}
         }
         let Some(func) = self.find_method(type_of(&receiver), receiver_expr, site, target, span)
@@ -465,10 +468,17 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         self.record(Used::Func(func), span);
+        // A method that meets a requirement uses the interfaces that it meets.
+        if let Some(interfaces) = self.meets.get(&func).cloned() {
+            for interface in interfaces {
+                self.record(Used::Interface(interface), span);
+            }
+        }
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
         let declared = sig.type_params.clone();
+        let bounds = sig.bounds.clone();
         let conforming = sig.conformance.is_some();
         // A method's receiver binds its owner's parameters.
         let owner = match receiver.as_ref().and_then(type_of).map(Type::kind) {
@@ -513,6 +523,7 @@ impl Checker<'_> {
                 owner,
                 params: &params,
                 ret,
+                bounds: &bounds,
             };
             match self.generic_call(span, &sig, (written, site.angles), args, site.expected) {
                 Some(call) => call,
@@ -597,6 +608,7 @@ impl Checker<'_> {
             info.fields.iter().map(|f| (f.name.name, f.ty)).collect();
         if !info.type_params.is_empty() {
             let declared = info.type_params.clone();
+            let bounds = info.bounds.clone();
             let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
             if !self.shaped(span, &name, &names, args) {
                 return Err(Poisoned::error());
@@ -609,6 +621,7 @@ impl Checker<'_> {
                 owner: &[],
                 params: &params,
                 ret: Some(Type::intern(TypeKind::Class(class, own_args(&declared)))),
+                bounds: &bounds,
             };
             let written = (site.written, site.angles);
             let Some((args, _, Some(ty))) =

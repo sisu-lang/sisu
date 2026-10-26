@@ -818,7 +818,8 @@ fn conformance_method_should_not_warn_when_its_type_is_built() {
         "enum Dir {\n    North\n}\nextend Dir: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let _ = Dir.North\n}",
         "enum Dir: Shape {\n    North\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let _ = Dir.North\n}",
     ] {
-        clean(&format!("{SHAPE}{src}"));
+        // A `_` function names the interface in a bound, so that the interface is used.
+        clean(&format!("{SHAPE}{src}\nfn _bound<T: Shape>(_x: T) {{}}"));
     }
 }
 
@@ -837,7 +838,7 @@ fn conformance_method_should_not_warn_when_a_root_calls_it_before_its_class_is_b
 fn helper_should_warn_when_only_the_conformance_method_of_an_unbuilt_class_calls_it() {
     judge_unused();
     let src = format!(
-        "{SHAPE}fn helper() -> f64 {{\n    1.0\n}}\nclass Circle: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ helper() }}\n}}\nfn main() {{}}"
+        "{SHAPE}fn helper() -> f64 {{\n    1.0\n}}\nclass Circle: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ helper() }}\n}}\nfn main() {{}}\nfn _bound<T: Shape>(_x: T) {{}}"
     );
     assert_eq!(
         found(&src),
@@ -868,4 +869,62 @@ fn extend_method_should_warn_only_when_its_type_is_built() {
     clean(&format!(
         "{class}{block}fn main() {{\n    let c = Circle(r: 1.0)\n    print(c.grow() + c.r)\n}}"
     ));
+}
+
+/// A class that conforms to `Shape` with an `area` that nothing calls, and `main` that builds it.
+const CIRCLE: &str = "class Circle {\n    r: f64\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\n";
+
+/// An interface that nothing names is unused, and so is one that only a conformance names: a
+/// conformance dispatches nothing. The methods of the conformance of a type that is built are live,
+/// so they give no warning of their own. A bound in dead code names the interface for no live
+/// code, and the warning cites it.
+#[test]
+fn interface_should_warn_when_no_live_code_names_or_calls_it() {
+    judge_unused();
+    diagnostic(
+        &format!("{SHAPE}fn main() {{}}"),
+        W0012,
+        (1, 11, "Shape"),
+        &[],
+    );
+    // Only `extend Circle: Shape` names it, and `Circle` is built.
+    diagnostic(
+        &format!("{SHAPE}{CIRCLE}fn main() {{\n    print(Circle(r: 1.0).r)\n}}"),
+        W0012,
+        (1, 11, "Shape"),
+        &[],
+    );
+    // Only a dead function's bound names it: the warning cites the bound.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}fn dead<T: Shape>(x: T) -> T {{ x }}\nfn main() {{}}"
+        )),
+        [(W0012, (1, 11), vec![(4, 12)]), (W0012, (4, 4), vec![])]
+    );
+}
+
+/// An interface that live code names in a bound, calls through a requirement or a method of a
+/// conformance, or that a used interface names, is used.
+#[test]
+fn interface_should_not_warn_when_live_code_uses_it() {
+    judge_unused();
+    let circle = |rest: &str| format!("{SHAPE}{CIRCLE}{rest}");
+    for src in [
+        // (a) A live function's bound, a live method's bound, and a built class's bound.
+        circle("fn total<T: Shape>(_x: T) -> f64 {\n    1.0\n}\nfn main() {\n    print(total(Circle(r: 1.0)))\n}"),
+        circle("extend Circle {\n    fn fit<T: Shape>(self, _x: T) -> f64 { 1.0 }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    print(c.fit(c))\n}"),
+        circle("class Sorted<T: Shape> {\n    items: [T]\n}\nfn main() {\n    let s: Sorted<Circle> = Sorted(items: [Circle(r: 1.0)])\n    print(s.items.len())\n}"),
+        // (b) A method of a conformance, with no bound: the call selects it.
+        circle("fn main() {\n    print(Circle(r: 1.0).area())\n}"),
+        // A method of the body that meets a requirement of a listed interface.
+        format!("{SHAPE}class Disc: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ self.r }}\n}}\nfn main() {{\n    print(Disc(r: 1.0).area())\n}}"),
+        // (c) An interface that a used interface inherits.
+        "interface Named {\n    fn name(self) -> string\n}\ninterface Shape: Named {\n    fn area(self) -> f64\n}\nclass Disc: Shape {\n    fn name(self) -> string { \"d\" }\n    fn area(self) -> f64 { 1.0 }\n}\nfn total<T: Shape>(_x: T) -> f64 {\n    1.0\n}\nfn main() {\n    print(total(Disc()))\n}".to_string(),
+        // (c) An interface that the bound of a used requirement's own parameter names.
+        "interface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Mapper {\n    fn map<U: Same>(self, x: U) -> U\n}\nclass Id: Mapper {\n    fn map<U: Same>(self, x: U) -> U { x }\n}\nfn use_mapper<T: Mapper>(_m: T) -> i64 {\n    1\n}\nfn main() {\n    print(use_mapper(Id()))\n}".to_string(),
+        // A name that starts with `_` is kept on purpose.
+        "interface _Shape {\n    fn area(self) -> f64\n}\nfn main() {}".to_string(),
+    ] {
+        clean(&src);
+    }
 }

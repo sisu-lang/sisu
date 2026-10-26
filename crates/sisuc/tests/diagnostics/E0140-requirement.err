@@ -1,0 +1,11 @@
+error[E0140]: `Ring.wrap` instantiates itself without end
+  --> E0140-requirement.sisu:11:9
+   |
+11 |         go(self, [x])
+   |         ^^^^^^^^^^^^^ `go<Ring, [U]>` here
+...
+16 |     t.wrap(x)
+   |     --------- which instantiates `Wrap.wrap<U>`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

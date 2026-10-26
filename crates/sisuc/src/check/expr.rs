@@ -593,6 +593,7 @@ pub(super) fn no_member<'a>(
             name.name.as_str(),
             members.into_iter().map(|member| (member, kind)),
         ),
+        add: None,
     }
     .into()
 }

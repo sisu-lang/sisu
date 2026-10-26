@@ -321,11 +321,7 @@ impl Checker<'_> {
     }
 
     /// The method among `candidates`, which are methods of conformance blocks that cover `ty`,
-    /// that the call at `span`, which `site` writes, names: the only one whose result is the type
-    /// its context expects, or, when none is, the only one whose result is the payload of an
-    /// expected optional. A result that holds a type parameter of the method which the call does
-    /// not write cannot be told from the others. Otherwise the call is ambiguous, reported with
-    /// the `let` that picks one answer. An expected type that failed is no reason to report it.
+    /// that the call at `span`, which `site` writes, names (see `pick_among`).
     fn pick_conforming(
         &mut self,
         ty: Type,
@@ -333,9 +329,7 @@ impl Checker<'_> {
         span: Span,
         candidates: &[(tir::FuncId, InterfaceId)],
     ) -> Option<tir::FuncId> {
-        let expected = site.expected;
-        // The context failed, and reported it: this call is poisoned with it.
-        if expected == Some(UNKNOWN) || self.quiet(span, expected) {
+        if self.context_failed(site, span) {
             return None;
         }
         // A result that is `Error` has its own error.
@@ -343,20 +337,52 @@ impl Checker<'_> {
             .map(|&(func, _)| self.signatures[func.0].ret)
             .collect();
         let results = results?;
-        // A list that does not resolve is reported, and poisons the call.
-        let written = if site.written.is_empty() {
-            Vec::new()
-        } else {
-            self.written_types(site.written)?
-        };
+        let written = self.written_list(site)?;
         let rets: Vec<Option<Type>> = (candidates.iter().zip(results))
             .map(|(&(func, _), ret)| self.candidate_result(func, ret, &written))
             .collect();
+        let interfaces = (candidates.iter())
+            .map(|&(_, interface)| self.interfaces[interface.0].name.name.to_string())
+            .collect();
+        let picked = self.pick_among(ty, site, span, &rets, interfaces)?;
+        Some(candidates[picked].0)
+    }
+
+    /// Whether the context of the call at `span` failed, and reported it: this call is poisoned
+    /// with it, and picking among its candidates would only add to it.
+    pub(super) fn context_failed(&self, site: Site<'_>, span: Span) -> bool {
+        site.expected == Some(UNKNOWN) || self.quiet(span, site.expected)
+    }
+
+    /// The type arguments that `site` writes, resolved without a report; none when it writes
+    /// none. `None` when a list does not resolve: it is reported, and poisons the call.
+    pub(super) fn written_list(&mut self, site: Site<'_>) -> Option<Vec<Type>> {
+        if site.written.is_empty() {
+            Some(Vec::new())
+        } else {
+            self.written_types(site.written)
+        }
+    }
+
+    /// The place among the candidates of a call of `site` at `span`, on a receiver of type `ty`,
+    /// of the only one whose result `rets` is the type its context expects, or, when none is, the
+    /// only one whose result is the payload of an expected optional. A result that is `None`
+    /// cannot be told from the others. Otherwise the call is ambiguous, reported with the `let`
+    /// that picks one answer; `interfaces` name the candidates for the report.
+    pub(super) fn pick_among(
+        &mut self,
+        ty: Type,
+        site: Site<'_>,
+        span: Span,
+        rets: &[Option<Type>],
+        interfaces: Vec<String>,
+    ) -> Option<usize> {
+        let expected = site.expected;
         // Whether a result is unknown, so that its candidate may return anything the others do.
         let open = rets.contains(&None);
         if let Some(expected) = expected.filter(|_| !open) {
             let matching = |want: Type| {
-                let mut hits = candidate_results(&rets).filter(|&(_, ret)| ret == Some(want));
+                let mut hits = candidate_results(rets).filter(|&(_, ret)| ret == Some(want));
                 let first = hits.next().map(|(i, _)| i);
                 (first, hits.next().is_some())
             };
@@ -367,16 +393,16 @@ impl Checker<'_> {
                 (first, more) = matching(payload);
             }
             if let (Some(only), false) = (first, more) {
-                return Some(candidates[only].0);
+                return Some(only);
             }
         }
         // The first result that exactly one candidate has tells the `let` what to write.
         let mut counts: FxHashMap<Type, usize> = FxHashMap::default();
-        for ret in candidate_results(&rets).filter_map(|(_, ret)| ret) {
+        for ret in candidate_results(rets).filter_map(|(_, ret)| ret) {
             *counts.entry(ret).or_default() += 1;
         }
         let unique =
-            candidate_results(&rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
+            candidate_results(rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
         let annotate = unique.filter(|_| !open).map(|ret| Annotate {
             call: self.source.file.text(span).to_string(),
             binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
@@ -385,9 +411,7 @@ impl Checker<'_> {
         self.report(DiagnosticKind::Ambiguous {
             method: site.name.name.to_string(),
             receiver: self.type_name(ty),
-            interfaces: (candidates.iter())
-                .map(|&(_, interface)| self.interfaces[interface.0].name.name.to_string())
-                .collect(),
+            interfaces,
             at: site.name.span,
             annotate,
         });

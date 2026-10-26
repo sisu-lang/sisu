@@ -104,7 +104,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 68] = [
+const REACH: [&str; 71] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -173,6 +173,9 @@ const REACH: [&str; 68] = [
     "reach: an enum method names `Self`",
     "reach: a conformance is in a declaration list",
     "reach: a conformance is an `extend` block",
+    "reach: a bound lists two interfaces with `&`",
+    "reach: a call goes through an inherited bound",
+    "reach: a generic class has a bound",
 ];
 
 /// Whether a program's text holds a form.
@@ -451,6 +454,11 @@ struct Walk {
     labels: Vec<Option<Symbol>>,
     /// Where each `loop` that counts down starts.
     counted: FxHashSet<usize>,
+    /// The interfaces that the bounds of each function name, by the function's name.
+    bounded: FxHashMap<String, Vec<String>>,
+    /// The interfaces of the typed tree, by `InterfaceId`, and the function being walked in it.
+    interface_names: Vec<String>,
+    tir_func: String,
 }
 
 impl Walk {
@@ -473,6 +481,7 @@ impl Walk {
         self.arithmetic.clear();
         self.compounds.clear();
         self.counted.clear();
+        self.bounded.clear();
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -622,6 +631,9 @@ impl Walk {
     /// Walks the bounds and members of `c`.
     fn ast_class(&mut self, c: &ast::Class) {
         self.mark("ast::Item::Class");
+        if c.type_params.iter().any(|p| !p.bounds.is_empty()) {
+            self.mark("reach: a generic class has a bound");
+        }
         self.bounds(&c.type_params);
         self.listed(&c.conforms, &c.assoc);
         for member in &c.members {
@@ -693,6 +705,9 @@ impl Walk {
 
     /// Walks the bounds of `params`.
     fn bounds(&mut self, params: &[ast::TypeParam]) {
+        if params.iter().any(|p| p.bounds.len() > 1) {
+            self.mark("reach: a bound lists two interfaces with `&`");
+        }
         for bound in params.iter().flat_map(|p| &p.bounds) {
             self.type_expr(bound);
         }
@@ -702,6 +717,8 @@ impl Walk {
         self.func = f.name.name.as_str().to_string();
         self.in_generic = !f.type_params.is_empty();
         self.bounds(&f.type_params);
+        let named = (f.type_params.iter().flat_map(|p| &p.bounds)).map(ToString::to_string);
+        self.bounded.insert(self.func.clone(), named.collect());
         self.params.clear();
         for param in &f.params {
             self.type_expr(&param.ty);
@@ -1606,7 +1623,9 @@ impl Walk {
         for (id, e) in program.enums.iter().enumerate() {
             self.option_shaped(id, e);
         }
+        self.interface_names = program.interfaces.iter().map(|i| i.name.clone()).collect();
         for function in &program.functions {
+            self.tir_func.clone_from(&function.name);
             self.ty(function.ret);
             for local in &function.locals {
                 self.ty(local.ty);
@@ -1859,6 +1878,17 @@ impl Walk {
                     .any(|t| matches!(t.kind(), TypeKind::Optional(_)))
                 {
                     self.mark("reach: an optional is a type argument");
+                }
+                self.tir_exprs(args);
+            }
+            tir::ExprKind::InterfaceCall {
+                interface, args, ..
+            } => {
+                self.mark("tir::ExprKind::InterfaceCall");
+                // The bounds of the function name the interface, or one that inherits it.
+                let name = &self.interface_names[interface.0];
+                if !(self.bounded.get(&self.tir_func)).is_some_and(|named| named.contains(name)) {
+                    self.mark("reach: a call goes through an inherited bound");
                 }
                 self.tir_exprs(args);
             }
@@ -4801,6 +4831,7 @@ impl<'f> Lets<'f> {
                 }
             }
             tir::ExprKind::Call { args, .. }
+            | tir::ExprKind::InterfaceCall { args, .. }
             | tir::ExprKind::New { args, .. }
             | tir::ExprKind::Variant { args, .. }
             | tir::ExprKind::ArrayLit(args)
@@ -4912,6 +4943,7 @@ impl<'f> Lets<'f> {
             tir::ExprKind::Local(local) => reads || !self.locals[local.0].mutable,
             tir::ExprKind::Field { base, .. } => reads && self.pure(base, reads),
             tir::ExprKind::Call { .. }
+            | tir::ExprKind::InterfaceCall { .. }
             | tir::ExprKind::Print { .. }
             | tir::ExprKind::Panic(_)
             | tir::ExprKind::ReadLine
@@ -5368,6 +5400,60 @@ fn generated_conformances_should_reach_every_form() {
         }
     }
     assert_eq!(forms.len(), 4, "{forms:?}");
+}
+
+/// The walk marks a bound that lists two interfaces, a generic class with a bound and a call
+/// through an inherited bound, and only those.
+#[test]
+fn the_walk_should_mark_what_bounds_hold() {
+    let interfaces = "interface Named {\n    fn name(self) -> string\n}\ninterface Shape: Named {\n    fn area(self) -> f64\n}\nclass C: Shape {\n    fn name(self) -> string { \"c\" }\n    fn area(self) -> f64 { 1.0 }\n}\n";
+    let keys = [
+        "reach: a bound lists two interfaces with `&`",
+        "reach: a call goes through an inherited bound",
+        "reach: a generic class has a bound",
+    ];
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{interfaces}{rest}fn main() {{}}\n"));
+        keys.map(|key| walk.seen.contains(key))
+    };
+    // One bound, named by the call: none.
+    assert_eq!(
+        marked("fn f<T: Named>(x: T) -> string {\n    x.name()\n}\n"),
+        [false, false, false]
+    );
+    // The call names `Named`, and the bound `Shape`, which inherits it.
+    assert_eq!(
+        marked("fn f<T: Shape>(x: T) -> string {\n    x.name()\n}\n"),
+        [false, true, false]
+    );
+    assert_eq!(
+        marked("fn f<T: Shape & Named>(x: T) -> f64 {\n    x.area()\n}\n"),
+        [true, false, false]
+    );
+    assert_eq!(
+        marked("class H<T: Shape> {\n    v: T\n}\n"),
+        [false, false, true]
+    );
+}
+
+/// Every interface that the generator writes is used: named in a live bound, or called through a
+/// conformance. No generated program gives W0012 on an interface.
+#[test]
+fn generated_interfaces_should_be_used() {
+    let mut interfaces = 0;
+    for data in seeds() {
+        let source = generate(&data).plain;
+        let (_, diagnostics) = crate::front_end::checked(&source);
+        interfaces += source.matches("interface ").count();
+        for d in &diagnostics {
+            // The name of an interface follows its keyword.
+            let unused =
+                d.code().as_str() == "W0012" && source[..d.span().start()].ends_with("interface ");
+            assert!(!unused, "an interface is never used in\n{source}");
+        }
+    }
+    assert!(interfaces > 0, "no seed writes an interface");
 }
 
 /// `shapes` calls every requirement of each interface that a generated type conforms to.

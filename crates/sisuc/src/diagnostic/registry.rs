@@ -391,15 +391,12 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         first: Span,
     },
-    /// `ty` conforms to `interface`, at `at`, which `via` requires at `requires`, yet not to
-    /// `inherited`. `extend` is the block that would add the conformance, when `ty` has none.
+    /// `ty` does not conform to `interface`, which `form` says why that is needed, at `at`.
     NotConform {
         ty: String,
-        inherited: String,
-        via: String,
+        interface: String,
         at: Span,
-        requires: Span,
-        extend: Option<String>,
+        form: NotConformForm,
     },
     /// An `extend` of `written`, at `at`, which is no class or enum.
     CannotExtend {
@@ -679,6 +676,8 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         suggestion: Option<Suggestion>,
+        /// For a type parameter: the bound that gives the method.
+        add: Option<AddBound>,
     },
     /// The constructor argument at `at`, after the last of the `fields` fields of `class`.
     TooManyArguments {
@@ -1622,6 +1621,38 @@ pub(crate) enum CannotExtendForm {
     },
 }
 
+/// Why a type must conform to an interface.
+#[derive(Clone)]
+pub(crate) enum NotConformForm {
+    /// The type conforms to `via`, at the diagnostic's span, which requires `interface` at
+    /// `requires`. `extend` is the block that would add the conformance, when the type has none.
+    Inherited {
+        via: String,
+        requires: Span,
+        extend: Option<String>,
+    },
+    /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
+    /// needs it. `add` is the bound that a type parameter would need.
+    Bound {
+        bound: Option<Span>,
+        add: Option<AddBound>,
+    },
+}
+
+/// A bound that a type parameter lacks: `param`, then every bound it would have, in order.
+#[derive(Clone)]
+pub(crate) struct AddBound {
+    pub(crate) param: String,
+    pub(crate) bounds: Vec<String>,
+}
+
+impl AddBound {
+    /// The help that tells what to write.
+    fn help(&self) -> String {
+        format!("add a bound: `{}: {}`", self.param, self.bounds.join(" & "))
+    }
+}
+
 /// The `let` that picks one answer of an ambiguous call: the call as written, the name of the
 /// binding, and the type that exactly one answer returns.
 #[derive(Clone)]
@@ -2056,21 +2087,40 @@ impl From<DiagnosticKind> for Diagnostic {
                 .with_secondary(first, "first conformance here"),
             DiagnosticKind::NotConform {
                 ty,
-                inherited,
-                via,
+                interface,
                 at,
-                requires,
-                extend,
+                form,
             } => {
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    format!("`{ty}` does not conform to `{inherited}`"),
-                )
-                .with_secondary(requires, format!("`{via}` requires `{inherited}`"));
-                match extend {
-                    Some(block) => d.with_help(format!("write `{block}`")),
-                    None => d,
+                    format!("`{ty}` does not conform to `{interface}`"),
+                );
+                match form {
+                    NotConformForm::Inherited {
+                        via,
+                        requires,
+                        extend,
+                    } => {
+                        let d = d.with_secondary(
+                            requires,
+                            format!("`{via}` requires `{interface}`"),
+                        );
+                        match extend {
+                            Some(block) => d.with_help(format!("write `{block}`")),
+                            None => d,
+                        }
+                    }
+                    NotConformForm::Bound { bound, add } => {
+                        let d = match bound {
+                            Some(bound) => d.with_secondary(bound, "required by this bound"),
+                            None => d,
+                        };
+                        match add {
+                            Some(add) => d.with_help(add.help()),
+                            None => d,
+                        }
+                    }
                 }
             }
             DiagnosticKind::CannotExtend { written, at, form } => {
@@ -2803,15 +2853,22 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 at,
                 suggestion,
-            } => similar(
-                Diagnostic::coded(
-                    code,
+                add,
+            } => {
+                let d = similar(
+                    Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{owner}` has no {} `{name}`", kind.word()),
+                    ),
                     at,
-                    format!("`{owner}` has no {} `{name}`", kind.word()),
-                ),
-                at,
-                suggestion,
-            ),
+                    suggestion,
+                );
+                match add {
+                    Some(add) => d.with_help(add.help()),
+                    None => d,
+                }
+            }
             DiagnosticKind::TooManyArguments { class, fields, at } => {
                 let plural = if fields == 1 { "" } else { "s" };
                 Diagnostic::coded(

@@ -310,7 +310,7 @@ The rules:
 
 An *interface* lists the methods that a type must have. A class or an enum names its interfaces after its name. A method in an interface has `self` and no body.
 
-```sisu pending
+```sisu
 interface Shape {
     fn area(self) -> f64
 }
@@ -332,7 +332,7 @@ fn total_area<T: Shape>(shapes: [T]) -> f64 {
 }
 
 fn main() {
-    print(total_area([Circle(r: 1.0), Circle(r: 2.0)]))
+    print(total_area([Circle(r: 1.0), Circle(r: 2.0)]))   // 15.707963267948966
 }
 ```
 

@@ -45,6 +45,7 @@ impl Checker<'_> {
                     owner: &[],
                     params: &[Some(ty)],
                     ret: Some(optional_of(ty)),
+                    bounds: &[],
                 };
                 let written = (site.written, site.angles);
                 let Some((args, _, Some(found))) =

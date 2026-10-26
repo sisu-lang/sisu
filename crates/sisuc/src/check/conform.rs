@@ -8,7 +8,7 @@ use super::interface::Bound;
 use super::{Checker, Declared, Holder, own_args};
 use crate::ast;
 use crate::conformance::{self, find};
-use crate::diagnostic::{ConformanceForm, DiagnosticKind};
+use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeKind};
@@ -98,7 +98,11 @@ impl Checker<'_> {
                     }
                     continue;
                 }
-                let bound = Bound { interface, args };
+                let bound = Bound {
+                    interface,
+                    args,
+                    at,
+                };
                 let source = Source::Body(*holder);
                 pending.extend(self.add_conformance(bound, *receiver, at, source, &mut ats));
             }
@@ -111,6 +115,11 @@ impl Checker<'_> {
             .filter(|p| matches!(p.source, Source::Block(_)))
         {
             self.inherited_conformances(p);
+        }
+        for (interface, conformance) in self.conformances.iter() {
+            for &method in &conformance.methods {
+                self.meets.entry(method).or_default().push(interface);
+            }
         }
     }
 
@@ -342,11 +351,13 @@ impl Checker<'_> {
                 .then(|| format!("extend {ty}: {inherited} {{ ... }}"));
             self.report(DiagnosticKind::NotConform {
                 ty,
-                inherited,
-                via: self.interfaces[via.0].name.name.to_string(),
+                interface: inherited,
                 at: p.at,
-                requires,
-                extend,
+                form: NotConformForm::Inherited {
+                    via: self.interfaces[via.0].name.name.to_string(),
+                    requires,
+                    extend,
+                },
             });
         }
     }

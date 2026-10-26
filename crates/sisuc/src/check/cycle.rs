@@ -10,6 +10,10 @@
 //! run into a class's or an enum's parameters, whose own edges never lead back into a function's,
 //! so they close no cycle and are left out; nor does a class's or an enum's parameter lead into
 //! its methods', which `mono` instantiates only when a call reaches them.
+//!
+//! A call of a requirement with type parameters of its own reaches every method that meets it,
+//! so each such parameter is a hub: an argument of the call is an argument of the hub, and the
+//! hub passes it, at no cost, to the same parameter of each method of that requirement.
 
 use std::collections::VecDeque;
 
@@ -29,6 +33,9 @@ enum Instance {
     Call(tir::FuncId, TypeArgs),
     /// A generic class or enum, as a type.
     Type(Type),
+    /// A call of a requirement of an interface, by the requirement's place, with its own type
+    /// arguments.
+    Required(tir::InterfaceId, usize, TypeArgs),
 }
 
 /// An edge of the graph, from an instantiation at `site` inside the declaration `holder`; or,
@@ -251,9 +258,23 @@ impl Checker<'_> {
 
     /// The instantiation graph of the program: see `instantiation_cycles`.
     fn instantiation_graph(&self, functions: &[Option<tir::Function>], unbuilt: &[bool]) -> Graph {
+        // Each own type parameter of a requirement is a hub, a node of a declaration of its own:
+        // every call of the requirement passes its argument to the hub, and the hub passes it to
+        // the same parameter of each method that meets the requirement.
+        let mut hubs = FxHashMap::default();
+        let mut declarations = self.signatures.len() + self.classes.len() + self.enums.len();
+        for (i, info) in self.interfaces.iter().enumerate() {
+            for (m, requirement) in info.requirements.iter().enumerate() {
+                for j in 0..requirement.own.len() {
+                    hubs.insert((i, m, j), declarations);
+                    declarations += 1;
+                }
+            }
+        }
         let counts = self.signatures.iter().map(|s| s.type_params.len());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
+        let counts = counts.chain(std::iter::repeat_n(1, hubs.len()));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -275,18 +296,33 @@ impl Checker<'_> {
             exprs.clear();
             function.body.exprs(&mut exprs);
             for e in &exprs {
-                if let tir::ExprKind::Call { func, types, .. } = e.kind {
-                    graph.args(
+                match e.kind {
+                    tir::ExprKind::Call { func, types, .. } => graph.args(
                         holder,
                         types.get(),
                         func.0,
                         e.span,
                         e.span,
                         Instance::Call(func, types),
-                    );
+                    ),
+                    tir::ExprKind::InterfaceCall {
+                        interface,
+                        method,
+                        types,
+                        ..
+                    } => {
+                        let method = method as usize;
+                        let instance = Instance::Required(interface, method, types);
+                        for (j, arg) in types.get().iter().enumerate() {
+                            let hub = hubs[&(interface.0, method, j)];
+                            graph.args(holder, &[*arg], hub, e.span, e.span, instance);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
+        self.hub_edges(&mut graph, &hubs);
         for (c, class) in self.classes.iter().enumerate() {
             if unbuilt[c] {
                 continue;
@@ -317,10 +353,46 @@ impl Checker<'_> {
         graph
     }
 
+    /// The edges from each hub to the parameter of the same place in each method that meets the
+    /// requirement of the hub. They cost nothing: a call through the requirement may reach any of
+    /// the methods, and is counted where it is made.
+    fn hub_edges(&self, graph: &mut Graph, hubs: &FxHashMap<(usize, usize, usize), usize>) {
+        for (interface, conformance) in self.conformances.iter() {
+            let requirements = &self.interfaces[interface.0].requirements;
+            // A conformance that lacks a method has its own error.
+            if conformance.methods.len() != requirements.len() {
+                continue;
+            }
+            for (m, (requirement, &method)) in
+                requirements.iter().zip(&conformance.methods).enumerate()
+            {
+                let sig = &self.signatures[method.0];
+                for j in 0..requirement.own.len() {
+                    graph.edges.push(Edge {
+                        from: graph.first[hubs[&(interface.0, m, j)]],
+                        to: graph.first[method.0] + sig.type_params.len() - sig.own + j,
+                        growing: false,
+                        holder: method.0,
+                        site: Span::new(0, 0),
+                        mark: Span::new(0, 0),
+                        instance: None,
+                    });
+                }
+            }
+        }
+    }
+
     /// `instance` as the program writes it: `f<[T]>`, `C<[T]>.m<U>`, or a type.
     fn instance_name(&self, functions: &[Option<tir::Function>], instance: Instance) -> String {
         let (func, types) = match instance {
             Instance::Type(ty) => return self.type_name(ty),
+            Instance::Required(interface, method, types) => {
+                let info = &self.interfaces[interface.0];
+                let name = info.requirements[method].name.name;
+                let mut out = format!("{}.{name}", info.name.name);
+                write_args(&mut out, types.get(), |head| self.head(head));
+                return out;
+            }
             Instance::Call(func, types) => (func, types),
         };
         let owner = functions[func.0]

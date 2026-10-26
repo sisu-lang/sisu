@@ -11,9 +11,10 @@ use std::mem;
 
 use rustc_hash::FxHashMap;
 
+use crate::conformance::find;
 use crate::tir::{
-    Arm, Block, Class, ClassId, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, Place,
-    Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
+    Arm, Block, Class, ClassId, Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId,
+    Function, Place, Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
 };
 use crate::types::{Head, write_args};
 
@@ -85,6 +86,8 @@ struct Mono {
     functions: Vec<Option<Function>>,
     /// The output, without its functions until the end: its classes name types as they arrive.
     out: Program,
+    /// The checked program's conformances, which resolve each interface call.
+    conformances: Conformances,
     work: VecDeque<Work>,
 }
 
@@ -103,6 +106,7 @@ impl Mono {
                 interfaces: program.interfaces,
                 ..Program::default()
             },
+            conformances: program.conformances,
             work: VecDeque::new(),
         };
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -439,6 +443,32 @@ impl Mono {
                 *types = TypeArgs::NONE;
                 self.exprs(operands, args);
             }
+            K::InterfaceCall {
+                interface,
+                iargs,
+                method,
+                types,
+                args: operands,
+            } => {
+                // The conformance of the receiver's type, which the checker found a bound for.
+                let (receiver, rest) = (iargs.subst(args).get().split_first())
+                    .map(|(&receiver, rest)| (receiver, TypeArgs::intern(rest)))
+                    .expect("an interface call should name its receiver's type");
+                let (index, bindings) = find(&self.conformances, *interface, receiver, rest)
+                    .expect("a call that checks should find the conformance of its receiver");
+                let found = self.conformances.get(*interface, index).methods[*method as usize];
+                // The conformance's parameters, then the requirement's own.
+                let mut with = bindings.get().to_vec();
+                with.extend_from_slice(types.subst(args).get());
+                let func = self.function_id(found, TypeArgs::intern(&with));
+                let mut operands = mem::take(operands);
+                self.exprs(&mut operands, args);
+                e.kind = K::Call {
+                    func,
+                    types: TypeArgs::NONE,
+                    args: operands,
+                };
+            }
             K::New {
                 class,
                 args: operands,
@@ -594,6 +624,11 @@ fn assert_concrete(program: &Program) {
                     f.name
                 );
             }
+            assert!(
+                !matches!(e.kind, ExprKind::InterfaceCall { .. }),
+                "mono should leave no interface call in {}",
+                f.name
+            );
         }
     }
 }
@@ -1073,5 +1108,44 @@ mod tests {
             program.to_string().contains("(fn C.Label.name ("),
             "{program}"
         );
+    }
+
+    /// An interface call becomes a call of the method of the conformance that the receiver's type
+    /// has, in each instantiation: no interface call is left in the output.
+    #[test]
+    fn an_interface_call_should_become_a_call_of_the_conformance_method() {
+        let program = instantiated(
+            "interface Shape {\n    fn area(self) -> f64\n}\n\
+             class Circle {\n    r: f64\n}\n\
+             extend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\n\
+             class Square: Shape {\n    side: f64\n    fn area(self) -> f64 { self.side }\n}\n\
+             fn total<T: Shape>(x: T) -> f64 {\n    x.area()\n}\n\
+             fn main() {\n    print(total(Circle(r: 1.0)))\n    print(total(Square(side: 2.0)))\n}",
+        );
+        let printed = program.to_string();
+        for part in [
+            "(fn total<Circle> ((x#0 Circle)) f64 (block (call Circle.Shape.area x#0)))",
+            "(fn total<Square> ((x#0 Square)) f64 (block (call Square.area x#0)))",
+        ] {
+            assert!(printed.contains(part), "{part} in {printed}");
+        }
+        assert!(!printed.contains("(call Shape.area"), "{printed}");
+    }
+
+    /// The conformance's parameters come before the method's own type arguments in the
+    /// instantiation: the interface call of a requirement with a type parameter of its own names
+    /// the method with the argument the call infers.
+    #[test]
+    fn an_interface_call_should_instantiate_the_method_with_its_own_type_arguments() {
+        let program = instantiated(
+            "interface Keep {\n    fn keep<U>(self, x: U) -> U\n}\n\
+             class C {}\n\
+             extend C: Keep {\n    fn keep<V>(self, x: V) -> V { x }\n}\n\
+             fn go<T: Keep>(t: T) -> string {\n    let n: i64 = t.keep(1)\n    t.keep(\"a\")\n}\n\
+             fn main() {\n    print(go(C()))\n}",
+        );
+        let names = function_names(&program);
+        assert!(names.contains(&"C.keep<i64>"), "{names:?}");
+        assert!(names.contains(&"C.keep<string>"), "{names:?}");
     }
 }

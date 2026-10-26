@@ -50,8 +50,13 @@ struct KnownSite {
 /// A declared interface, as `shapes` needs it.
 struct Shape {
     name: String,
-    /// Whether a type can conform to it: it takes no parameter and inherits nothing.
+    /// Whether a type can conform to it: it takes no parameter and inherits only interfaces that
+    /// a type can conform to.
     conformable: bool,
+    /// Whether it takes a type parameter.
+    generic: bool,
+    /// The interfaces it inherits, by place among the declared.
+    inherits: Vec<usize>,
     requirements: Vec<Requirement>,
 }
 
@@ -67,6 +72,21 @@ struct Requirement {
 struct RequirementType {
     written: String,
     value: String,
+}
+
+/// Every requirement of the interfaces `of` and of those they inherit, each interface once.
+fn requirements_of<'a>(declared: &'a [Shape], of: &[usize]) -> Vec<&'a Requirement> {
+    let mut seen = vec![false; declared.len()];
+    let mut stack: Vec<usize> = of.iter().rev().copied().collect();
+    let mut all = Vec::new();
+    while let Some(k) = stack.pop() {
+        if std::mem::replace(&mut seen[k], true) {
+            continue;
+        }
+        all.extend(declared[k].requirements.iter());
+        stack.extend(declared[k].inherits.iter().rev().copied());
+    }
+    all
 }
 
 impl Requirement {
@@ -192,9 +212,10 @@ impl Gen<'_> {
                 g.w.line();
             });
         }
-        // After `main`, so that the interfaces move no choice of the items before them.
-        let declared = self.interfaces();
+        // After `main`, so that the interfaces move no choice of the items before them. They are
+        // written only when `main` calls `shapes`, which uses each one.
         if called {
+            let declared = self.interfaces();
             self.shapes(&declared);
         }
         // The stdin comes last, so the first bytes choose the program's shape.
@@ -392,7 +413,7 @@ impl Gen<'_> {
     fn interfaces(&mut self) -> Vec<Shape> {
         // Whether each declared interface takes a type parameter.
         let mut generic: Vec<bool> = Vec::new();
-        let mut shapes = Vec::new();
+        let mut shapes: Vec<Shape> = Vec::new();
         for id in 0..self.pick(MAX_INTERFACES + 1) {
             let takes = self.pick(3) == 0;
             let mut inherits: Vec<usize> = Vec::new();
@@ -444,11 +465,14 @@ impl Gen<'_> {
             self.w.close();
             self.w.line();
             generic.push(takes);
-            // An interface that takes a parameter, or inherits one, waits for a later task: no
-            // type conforms to it.
+            // An interface that takes a parameter has no conforming type until a later task, and
+            // one that inherits such an interface has none either.
+            let conformable = !takes && inherits.iter().all(|&m| shapes[m].conformable);
             shapes.push(Shape {
                 name: format!("I{id}"),
-                conformable: !takes && inherits.is_empty(),
+                conformable,
+                generic: takes,
+                inherits,
                 requirements,
             });
         }
@@ -481,67 +505,140 @@ impl Gen<'_> {
         choices.swap_remove(choice)
     }
 
-    /// For each interface that a type can conform to, a class or an enum that conforms to it, in
-    /// its declaration list or in an `extend` block, with a plain `extend` block, and `fn
-    /// shapes()`, which calls each method on a value of the type and prints what an `i64` or a
-    /// `string` result is. The methods hold the smallest value of their result.
+    /// For each interface that a type can conform to, a class and an enum that conform to it, each
+    /// in its declaration list or in an `extend` block (a list, for an interface that inherits),
+    /// with a plain `extend` block; a generic function `via<n>` whose bound is the interface and
+    /// that calls every requirement through it, including those of the interfaces it inherits; a
+    /// generic class `H<n>` with the interface as the bound of its parameter; and, when two
+    /// interfaces can be conformed to, a class that conforms to both and a function with both as
+    /// bounds. An interface that no type conforms to is the bound of a function that starts with
+    /// `_`. And `fn shapes()`, which calls each method on a value of each type and the generic
+    /// functions with both types, and builds the class. The methods hold the smallest value of
+    /// their result. Each interface is used, so none is reported.
     fn shapes(&mut self, declared: &[Shape]) {
         let mut calls = Vec::new();
-        for (k, shape) in declared.iter().enumerate().filter(|(_, s)| s.conformable) {
-            // A class in its list, a class in a block, an enum in its list, an enum in a block.
-            let form = self.pick(4);
-            let (class, listed) = (form < 2, form.is_multiple_of(2));
-            let (ty, value, var) = if class {
-                (format!("Q{k}"), format!("Q{k}(v: 1)"), format!("q{k}"))
-            } else {
-                (format!("N{k}"), format!("N{k}.A"), format!("n{k}"))
-            };
-            let methods: Vec<String> = shape.requirements.iter().map(Requirement::method).collect();
-            let conformance = if listed {
-                format!(": {}", shape.name)
-            } else {
-                String::new()
-            };
-            let keyword = if class { "class" } else { "enum" };
-            self.w.text(&format!("{keyword} {ty}{conformance} "));
+        let conformable: Vec<usize> = (0..declared.len())
+            .filter(|&k| declared[k].conformable)
+            .collect();
+        for &k in &conformable {
+            let shape = &declared[k];
+            let all = requirements_of(declared, &[k]);
+            let mut values = Vec::new();
+            // A class and an enum.
+            for class in [true, false] {
+                let (ty, value, var) = if class {
+                    (format!("Q{k}"), format!("Q{k}(v: 1)"), format!("q{k}"))
+                } else {
+                    (format!("N{k}"), format!("N{k}.A"), format!("n{k}"))
+                };
+                let listed = !shape.inherits.is_empty() || self.pick(2) == 0;
+                self.conforming_type(class, &ty, &[k], declared, listed);
+                calls.push(format!("let {var} = {value}"));
+                // The requirements of the interface, and of those it inherits.
+                calls.extend(all.iter().map(|r| r.call(&var)));
+                calls.push(format!("print({var}.plain())"));
+                values.push(var);
+            }
+            self.via(&format!("via{k}"), &shape.name, &all);
+            for var in &values {
+                calls.push(format!("via{k}({var})"));
+            }
+            self.w.text(&format!("class H{k}<T: {}> ", shape.name));
             self.w.open();
             self.w.line();
-            self.w.text(if class { "v: i64" } else { "A\n    B(i64)" });
-            if listed {
-                for method in &methods {
-                    self.w.line();
-                    self.w.text(method);
-                }
-            }
+            self.w.text("v: T");
             self.w.close();
             self.w.line();
-            if !listed {
-                self.w.text(&format!("extend {ty}: {} ", shape.name));
-                self.w.open();
-                for method in &methods {
-                    self.w.line();
-                    self.w.text(method);
-                }
-                self.w.close();
-                self.w.line();
-            }
-            self.w.text(&format!("extend {ty} "));
-            self.w.open();
+            calls.push(format!("let h{k} = H{k}(v: {})", values[0]));
+            calls.push(format!("print(h{k}.v.plain())"));
+        }
+        // Two interfaces in one bound: a class that conforms to both.
+        if let [first, second, ..] = conformable[..] {
+            let (a, b) = (&declared[first].name, &declared[second].name);
+            let all = requirements_of(declared, &[first, second]);
+            self.conforming_type(true, "QBoth", &[first, second], declared, true);
+            self.via("both", &format!("{a} & {b}"), &all);
+            calls.push("let qboth = QBoth(v: 1)".to_string());
+            calls.push("both(qboth)".to_string());
+        }
+        // No type conforms to the rest: a bound of a function that is live without a call.
+        for (k, shape) in declared.iter().enumerate().filter(|(_, s)| !s.conformable) {
+            let bound = if shape.generic {
+                format!("{}<i64>", shape.name)
+            } else {
+                shape.name.clone()
+            };
+            self.w.text(&format!("fn _via{k}<T: {bound}>(_x: T) {{}}"));
             self.w.line();
-            self.w.text("fn plain(self) -> i64 { 1 }");
-            self.w.close();
-            self.w.line();
-            calls.push(format!("let {var} = {value}"));
-            for requirement in &shape.requirements {
-                calls.push(requirement.call(&var));
-            }
-            calls.push(format!("print({var}.plain())"));
         }
         self.w.text("fn shapes() ");
         self.w.open();
         for call in &calls {
             self.w.line();
             self.w.text(call);
+        }
+        self.w.close();
+        self.w.line();
+    }
+
+    /// A class `ty` or an enum, if not `class`, that conforms to the interfaces `of`: in its
+    /// declaration list, which holds the methods, or in a block for each, with a plain `extend`
+    /// block.
+    fn conforming_type(
+        &mut self,
+        class: bool,
+        ty: &str,
+        of: &[usize],
+        declared: &[Shape],
+        listed: bool,
+    ) {
+        let keyword = if class { "class" } else { "enum" };
+        let names: Vec<&str> = of.iter().map(|&k| declared[k].name.as_str()).collect();
+        let conformance = if listed {
+            format!(": {}", names.join(", "))
+        } else {
+            String::new()
+        };
+        self.w.text(&format!("{keyword} {ty}{conformance} "));
+        self.w.open();
+        self.w.line();
+        self.w.text(if class { "v: i64" } else { "A\n    B(i64)" });
+        if listed {
+            for requirement in requirements_of(declared, of) {
+                self.w.line();
+                self.w.text(&requirement.method());
+            }
+        }
+        self.w.close();
+        self.w.line();
+        if !listed {
+            for &k in of {
+                self.w.text(&format!("extend {ty}: {} ", declared[k].name));
+                self.w.open();
+                for requirement in &declared[k].requirements {
+                    self.w.line();
+                    self.w.text(&requirement.method());
+                }
+                self.w.close();
+                self.w.line();
+            }
+        }
+        self.w.text(&format!("extend {ty} "));
+        self.w.open();
+        self.w.line();
+        self.w.text("fn plain(self) -> i64 { 1 }");
+        self.w.close();
+        self.w.line();
+    }
+
+    /// `fn name<T: bounds>(x: T)`, which calls each of `requirements` on `x`.
+    fn via(&mut self, name: &str, bounds: &str, requirements: &[&Requirement]) {
+        let param = if requirements.is_empty() { "_x" } else { "x" };
+        self.w.text(&format!("fn {name}<T: {bounds}>({param}: T) "));
+        self.w.open();
+        for requirement in requirements {
+            self.w.line();
+            self.w.text(&requirement.call("x"));
         }
         self.w.close();
         self.w.line();

@@ -122,13 +122,6 @@ pub(crate) struct Program {
     /// Indexed by `InterfaceId`. Only the checker sets it.
     pub(crate) interfaces: Vec<Interface>,
     /// Every conformance of a class or an enum to an interface. Only the checker sets it.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Task 4's `mono` resolves an interface call with it"
-        )
-    )]
     pub(crate) conformances: Conformances,
 }
 
@@ -136,6 +129,8 @@ pub(crate) struct Program {
 #[derive(Clone, Debug)]
 pub(crate) struct Interface {
     pub(crate) name: String,
+    /// The names of its requirements, in the order of `InterfaceCall::method`.
+    pub(crate) methods: Vec<String>,
 }
 
 /// The conformance of the class or enum `target` to an interface with the arguments `args`
@@ -443,6 +438,17 @@ pub(crate) enum ExprKind {
         types: TypeArgs,
         args: Vec<Expr>,
     },
+    /// A call of the requirement `method` of `interface` on a receiver whose type is a type
+    /// parameter: `iargs` are `Self` and then the interface's own arguments, `types` the
+    /// requirement's own, and `args` hold the receiver first. `mono` replaces it with a `Call` of
+    /// the conformance's method.
+    InterfaceCall {
+        interface: InterfaceId,
+        iargs: TypeArgs,
+        method: u32,
+        types: TypeArgs,
+        args: Vec<Expr>,
+    },
     New {
         class: ClassId,
         args: Vec<Expr>,
@@ -739,6 +745,7 @@ impl Expr {
             | ExprKind::Local(_) => false,
             ExprKind::Break { .. } | ExprKind::Continue { .. } | ExprKind::Return(_) => true,
             ExprKind::Call { args, .. }
+            | ExprKind::InterfaceCall { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. } => args.iter().any(Expr::exits),
             ExprKind::Compare { operands, .. }
@@ -822,6 +829,7 @@ impl Expr {
             | ExprKind::Break { value: None, .. }
             | ExprKind::Return(None) => {}
             ExprKind::Call { args, .. }
+            | ExprKind::InterfaceCall { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. }
             | ExprKind::Compare { operands: args, .. }
@@ -973,6 +981,7 @@ impl Expr {
             | K::Continue { .. }
             | K::Return(None) => {}
             K::Call { args, .. }
+            | K::InterfaceCall { args, .. }
             | K::New { args, .. }
             | K::Variant { args, .. }
             | K::ArrayLit(args)
@@ -1168,6 +1177,23 @@ impl Printer<'_> {
                     (self.program.conformance_name(callee)).unwrap_or_else(|| callee.name.clone());
                 let types = self.program.args_name(types.get());
                 self.list(f, format_args!("call {name}{types}"), args)
+            }
+            ExprKind::InterfaceCall {
+                interface,
+                iargs,
+                method,
+                types,
+                args,
+            } => {
+                let info = &self.program.interfaces[interface.0];
+                let name = format!(
+                    "{}{}.{}{}",
+                    info.name,
+                    self.program.args_name(&iargs.get()[1..]),
+                    info.methods[*method as usize],
+                    self.program.args_name(types.get()),
+                );
+                self.list(f, format_args!("call {name}"), args)
             }
             ExprKind::New { class, args } => {
                 let name = &self.program.classes[class.0].name;
@@ -2068,6 +2094,7 @@ mod tests {
                 fields: Vec::new(),
             }],
             interfaces: vec![Interface {
+                methods: Vec::new(),
                 name: "Label".into(),
             }],
             functions: vec![caller, method, own],

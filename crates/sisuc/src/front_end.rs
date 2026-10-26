@@ -1117,6 +1117,14 @@ fn main() {
         assert_eq!(codes(&src), [(Code::Expected, (13, 11))]);
     }
 
+    /// A bound that the target of a broken `extend` block may have met holds, so the call of a
+    /// function with that bound reports the parse error alone.
+    #[test]
+    fn a_bound_should_hold_for_the_target_of_a_broken_extend() {
+        let src = "interface Same {\n    fn same(self, other: Self) -> bool\n}\nclass C {\n    x: i64\n}\nextend C: {}\nfn f<T: Same>(x: T) {}\nfn main() {\n    f(C(x: 1))\n}\n";
+        assert_eq!(codes(src), [(Code::Expected, (7, 11))]);
+    }
+
     /// A prelude that extends a built-in type is an internal error.
     #[test]
     #[should_panic(expected = "internal compiler error: the prelude does not check clean")]

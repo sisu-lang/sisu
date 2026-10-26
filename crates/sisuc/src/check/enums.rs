@@ -18,6 +18,10 @@ use crate::tir::{self, EnumId, Rank, Type, TypeArgs, TypeKind};
 pub(super) struct EnumInfo {
     pub(super) name: ast::Ident,
     pub(super) type_params: Vec<Symbol>,
+    /// Whether a type parameter is written with a bound.
+    pub(super) bounded: bool,
+    /// The bounds of each of `type_params`; empty when `bounded` is false.
+    pub(super) bounds: Vec<Vec<super::Bound>>,
     /// The first variant of each name, in declaration order.
     pub(super) variants: Vec<VariantInfo>,
     /// Each variant's index in `variants`, by name.
@@ -115,7 +119,10 @@ impl Checker<'_> {
         let receiver = Type::intern(TypeKind::Enum(id, own_args(&self.enums[id.0].type_params)));
         self.body.self_type = Some(receiver);
         self.body.set_type_params(&self.enums[id.0].type_params);
-        self.bounds_of(&e.type_params);
+        let bounds = self.bounds_of(&e.type_params);
+        if self.enums[id.0].bounded {
+            self.enums[id.0].bounds = bounds;
+        }
         self.body.set_type_params(&[]);
         let mut first = FxHashMap::default();
         for variant in &e.variants {
@@ -147,6 +154,7 @@ impl Checker<'_> {
                 self.first_definition(&mut labels, Definition::Field, Some(owner), label);
             }
             self.body.set_type_params(&self.enums[id.0].type_params);
+            self.body.set_bounds(0, self.enums[id.0].bounds.clone());
             let (fields, inner): (Vec<_>, Vec<_>) = payload
                 .iter()
                 .map(|field| self.resolve_written(&field.ty))
@@ -174,10 +182,12 @@ impl Checker<'_> {
                     .methods
                     .insert(method.name.name, Declared::Known(func));
             }
+            let bounds = self.enums[id.0].bounds.clone();
             self.signature(
                 method,
                 format!("{owner}.{}", method.name.name),
                 &e.type_params,
+                bounds,
             );
             declared.push((method, Some(receiver)));
         }
@@ -314,6 +324,7 @@ impl Checker<'_> {
         let path = format_args!("{enum_name}.{}", member.name);
         let (declared, fields, labels) =
             (info.type_params.clone(), v.fields.clone(), v.labels.clone());
+        let bounds = info.bounds.clone();
         let args = call.map_or(&[][..], |(args, _)| args);
         let labeled = if labels.iter().all(Option::is_some) && !labels.is_empty() {
             let names: Vec<_> = labels.iter().flatten().copied().collect();
@@ -338,6 +349,7 @@ impl Checker<'_> {
             owner: &[],
             params: &fields,
             ret: Some(Type::intern(TypeKind::Enum(id, own_args(&declared)))),
+            bounds: &bounds,
         };
         let written = (site.written, site.angles);
         let Some((args, _, Some(ty))) = self.generic_call(span, &sig, written, args, site.expected)

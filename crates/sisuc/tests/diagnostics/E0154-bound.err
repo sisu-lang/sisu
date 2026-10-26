@@ -1,0 +1,11 @@
+error[E0154]: `Node` does not conform to `Shape`
+  --> E0154-bound.sisu:14:17
+   |
+ 9 | fn total<T: Shape>(items: [T]) -> f64 {
+   |             ----- required by this bound
+...
+14 |     print(total([Node(id: 1)]))
+   |                 ^^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154
