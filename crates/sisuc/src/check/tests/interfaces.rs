@@ -3313,6 +3313,10 @@ fn associated_types_should_normalize_through_generic_code() {
         // A bound that a parameter's bounds wait for in turn: the bound of `U` declares `Out`, and
         // waits for the one of `S` that declares `Item`, which is not the last of its parameter.
         "interface Holds2<Y> {\n    type Item\n}\ninterface HasOut<X> {\n    type Out\n}\nfn retry<U: HasOut<S.Item>, S: Holds2<T.Item> & Convert<U.Out> & Convert<U.Out>, T: Source>(_u: U, _s: S, _t: T) {}",
+        // A bound waits for two parameters, and its parameter's bound inherits one interface by two
+        // ways. A closure found before the bound is added grows by the interfaces it inherits.
+        "interface Holds2<Y> {\n    type Item\n}\ninterface Two<A, B> {}\nfn two<U: Two<S.Item, T.Item>, S: Holds2<R.Item>, T: Holds2<R.Item>, R: Source>(_u: U, _s: S, _t: T, _r: R) {}",
+        "interface Base2 {\n    type Key\n}\ninterface L2: Base2 {}\ninterface R2: Base2 {}\ninterface BothG<X>: L2, R2 {}\nfn diamond<S: Source & BothG<T.Item>, V: Convert<S.Item>, U: Convert<S.Key>, T: Source>(_s: S, _v: V, _u: U, _t: T) {}",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3566,6 +3570,15 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
                 (Code::TypeArguments, (1, 24)),
                 (Code::UnknownType, (1, 47)),
             ],
+        ),
+        (
+            "fn f<S: Source, U: [Convert<S.Item>], V: Convert<U.Out>>(_s: S, _u: U, _v: V) {}".to_string(),
+            vec![(Code::NotAnInterface, (1, 20)), (Code::UnknownType, (1, 52))],
+        ),
+        // Two bounds of one parameter declare the name that another bound writes.
+        (
+            "interface Holds2<Y> {\n    type Item\n}\ninterface Holds3<Y> {\n    type Item\n}\nfn f<U: Convert<S.Item>, S: Holds2<R.Item> & Holds3<R.Item>, R: Source>(_u: U, _s: S, _r: R) {}".to_string(),
+            vec![(Code::Ambiguous, (7, 19))],
         ),
         (
             "fn f<S: Source, U: Convert<S.Item>?, V: Convert<U.Out>>(_s: S, _u: U, _v: V) {}".to_string(),

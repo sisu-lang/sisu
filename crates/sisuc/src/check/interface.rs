@@ -515,12 +515,12 @@ impl Checker<'_> {
     }
 
     /// The interface that `ty`, the bound of a parameter, names, if it names one that is declared.
+    /// A bound that writes an associated type has arguments, so it is never a plain name.
     fn written_interface(&self, ty: &ast::TypeExpr) -> Option<InterfaceId> {
-        let name = match &ty.kind {
-            ast::TypeKind::Name(name) if ty.optional == 0 => *name,
-            ast::TypeKind::Applied(applied) if ty.optional == 0 => applied.name,
-            _ => return None,
+        let ast::TypeKind::Applied(applied) = &ty.kind else {
+            return None;
         };
+        let name = applied.name;
         if self.body.type_param(name).is_some() {
             return None;
         }
@@ -1538,10 +1538,8 @@ impl Waits {
         // The bounds first, then the keys: a bound waits for its keys, and a key for its declarers.
         let bounds = self.writes.len();
         let mut edges = vec![Vec::new(); bounds + self.keys.len()];
-        for m in (0..bounds).filter(|&m| self.blocked[m] > 0) {
-            let waits = self.writes[m]
-                .iter()
-                .filter(|&&key| self.keys[key].blocks(m));
+        for (m, keys) in self.writes.iter().enumerate() {
+            let waits = keys.iter().filter(|&&key| self.keys[key].blocks(m));
             edges[m] = waits.map(|&key| bounds + key).collect();
         }
         for (key, wait) in self.keys.iter().enumerate() {
@@ -1553,7 +1551,7 @@ impl Waits {
             size[c] += 1;
         }
         let mut out = Vec::new();
-        for m in (0..bounds).filter(|&m| self.blocked[m] > 0 && size[component[m]] > 1) {
+        for m in (0..bounds).filter(|&m| size[component[m]] > 1) {
             for &(root, name) in &written[m] {
                 if self.keys[self.key_of[&(root, name.name)]].blocks(m) {
                     out.push((root, name));
