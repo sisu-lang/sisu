@@ -2662,14 +2662,49 @@ fn context_hole_should_leave_a_parameter_below_it_unbound() {
     codes(&src, &[(Code::CannotInfer, (4, 15))]);
 }
 
-/// A parameter type of `[T]` gives `Ok` an array context that it cannot meet: `Ok` reports its
-/// own `E`.
+/// A parameter type of `[T]` gives `Ok` an array context that it cannot meet: the error is
+/// E0032 at `Ok(1)`, the whole argument, and `Ok` reports no `E`.
 #[test]
-fn context_that_no_variant_meets_should_be_reported_at_the_call() {
+fn context_that_no_variant_meets_should_be_reported_as_a_mismatch_at_the_argument() {
     with_prelude();
     let src = "fn take<T>(xs: [T]) -> T { panic(\"e\") }\n\
                fn main() {\n    let x = take(Ok(1))\n    print(x)\n}";
-    codes(src, &[(Code::CannotInfer, (3, 18))]);
+    codes(src, &[(Code::Mismatch, (3, 18))]);
+}
+
+/// A call whose return type conflicts with a bound part of the context (`string` against
+/// `bool`) is reported at the call as a mismatch, and `mk` reports no `E`.
+#[test]
+fn waiting_call_that_conflicts_in_a_bound_part_should_be_reported_as_a_mismatch_at_the_call() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn f<T>(p: Two<T, bool>) {}\n\
+               fn mk<E>() -> Two<E, string> { panic(\"e\") }\n\
+               fn main() {\n    f(mk())\n}";
+    codes(src, &[(Code::Mismatch, (8, 7))]);
+}
+
+/// `mk` has a mistake of its own, an argument of the wrong type, and a result that cannot meet
+/// the context. It reports the argument only: the mismatch of the result would be a second error
+/// for one mistake.
+#[test]
+fn waiting_call_with_its_own_mistake_should_report_only_that_mistake() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn f<T>(p: Two<T, bool>) {}\n\
+               fn mk<E>(n: i64) -> Two<E, string> { panic(\"e\") }\n\
+               fn main() {\n    f(mk(\"x\"))\n}";
+    codes(src, &[(Code::Mismatch, (8, 10))]);
+}
+
+/// `Ok(Ok(1))` for `[T]`: the outer `Ok` waits for its argument, which gets no context, so the
+/// outer `Ok` reports the mismatch at itself, and the inner `Ok` reports nothing.
+#[test]
+fn nested_waiting_call_that_cannot_fit_should_report_one_mismatch_at_the_outer_call() {
+    with_prelude();
+    let src = "fn take<T>(xs: [T]) -> T { panic(\"e\") }\n\
+               fn main() {\n    let x = take(Ok(Ok(1)))\n    print(x)\n}";
+    codes(src, &[(Code::Mismatch, (3, 18))]);
 }
 
 /// `Some(...)` checks its argument against the payload of its expected type with no binding,

@@ -307,7 +307,7 @@ impl Bindings {
     }
 
     /// Every parameter's binding; `Err` holds the first unbound one's index.
-    pub(super) fn finish(self) -> Result<TypeArgs, usize> {
+    pub(super) fn finish(&self) -> Result<TypeArgs, usize> {
         let list = self
             .found
             .iter()
@@ -448,6 +448,9 @@ impl Checker<'_> {
     ///    optional `expected` whole, it meets its payload. When it meets neither with the help
     ///    of pass 1, but does meet one alone, each argument of pass 1 that contradicts it is
     ///    reported at the argument.
+    ///    When `expected` holds a hole (see `call_context`) that the return type cannot meet,
+    ///    and a parameter is left unbound, the call reports a mismatch at itself in place of
+    ///    E0050.
     /// 3. The literal-like arguments, as in pass 1.
     /// 4. The arguments that need context, against their parameter's type.
     ///
@@ -517,6 +520,7 @@ impl Checker<'_> {
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 0) {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
         }
+        let mut misfit = None;
         if let (Some(ret), Some(want)) = (sig.ret, expected.filter(|&ty| ty != UNKNOWN)) {
             // The return type meets `want` whole if it can and an argument waits for it:
             // `let x: i64? = pick(5, None)` binds `T = i64?`. Else it meets the payload of an
@@ -527,6 +531,7 @@ impl Checker<'_> {
             // writes are its own.
             let met = (ranks.contains(&2) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
+            misfit = (!met && holds_hole(want)).then_some(ret);
             if !met && written.is_empty() {
                 self.blame_arguments(&mut call, sig, args, ret, want);
             }
@@ -535,15 +540,7 @@ impl Checker<'_> {
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 1) {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
         }
-        // A second sweep: a call checked after an argument that was left unchecked can have
-        // bound the parameter it waits for.
-        for _ in 0..2 {
-            for (i, arg) in args.iter().enumerate() {
-                if ranks[i] == 2 && call.slots[i].is_none() {
-                    self.infer_waiting(&mut call, i, &arg.value, sig.params[i], fit[i]);
-                }
-            }
-        }
+        self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
         for (i, ty) in std::mem::take(&mut call.last) {
             let (e, param) = (&args[i].value, sig.params[i]);
             if let Some(param) = param
@@ -581,7 +578,7 @@ impl Checker<'_> {
                     || sig.params.contains(&None)
                     || sig.ret.is_none();
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
-                    self.cannot_infer(sig, i);
+                    self.report_unbound(span, sig, i, misfit.map(|ret| call.bindings.printed(ret)));
                 }
                 None
             }
@@ -668,10 +665,32 @@ impl Checker<'_> {
         }
     }
 
+    /// Checks the arguments that need context (rank 2) once the others are checked, in two
+    /// sweeps: a call checked after an argument that was left unchecked can have bound the
+    /// parameter it waits for. Two are enough: an argument that the second sweep checks has its
+    /// parameter bound, so it binds nothing new, and a third sweep would find nothing.
+    fn sweep_waiting(
+        &mut self,
+        call: &mut Inference,
+        sig: &GenericSig<'_>,
+        args: &[ast::Arg],
+        ranks: &[u8],
+        fit: &[bool],
+    ) {
+        for _ in 0..2 {
+            for (i, arg) in args.iter().enumerate() {
+                if ranks[i] == 2 && call.slots[i].is_none() {
+                    self.infer_waiting(call, i, &arg.value, sig.params[i], fit[i]);
+                }
+            }
+        }
+    }
+
     /// Checks `e`, the waiting argument at `i` for `param`. It stays unchecked while `param`
     /// names an unbound parameter, unless it holds a call that reports its own mistake (`fit`
     /// is false), which is checked on its own, or is a generic call, which is checked against
-    /// what the call binds of `param` (see `call_context`).
+    /// what the call binds of `param` (see `call_context`). That call reports a result that
+    /// cannot meet the context as a mismatch with `param`, by `context_hint`.
     fn infer_waiting(
         &mut self,
         call: &mut Inference,
@@ -682,8 +701,14 @@ impl Checker<'_> {
     ) {
         if !fit || param.is_none_or(|param| call.bindings.known(param).is_some()) {
             self.infer_arg(call, i, e, param, None);
-        } else if let Some(context) = param.and_then(|param| self.call_context(call, e, param)) {
-            self.infer_arg(call, i, e, param, Some(context));
+        } else if let Some(param) = param
+            && let Some(context) = self.call_context(call, e, param)
+        {
+            // The call reports a context it cannot meet as a mismatch with this type.
+            let hint = (e.span, call.bindings.printed(param));
+            let outer = self.body.context_hint.replace(hint);
+            self.infer_arg(call, i, e, Some(param), Some(context));
+            self.body.context_hint = outer;
         }
     }
 
@@ -695,7 +720,11 @@ impl Checker<'_> {
     // flows into its branches and elements, `None`, `[]` and integer literals, and each would
     // need a rule for a hole. `Some(...)` gets none either: its argument takes the expected
     // type with no `bind`, as a branch does. Add them one kind at a time when a program needs
-    // one.
+    // one. Context is given in argument order, as the first waiting call to check binds what
+    // the next one's context holds: `g(mk2(), mk())` for `g<T>(c: Two<T, bool>, d: Result<T,
+    // string>)`, `mk2<E>() -> Two<E, bool>` and `mk<E>() -> Result<i64, E>` reports E0050 at
+    // `mk2`, while `g(mk(), mk2())` for `g<T>(d: Result<T, string>, c: Two<T, bool>)` checks.
+    // Checking a call again once a later one has bound its parameter would remove that (#217).
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
         // A waiting call is a generic one, so its shape needs no `generic` check.
         let (shape, _) = self.call_shape(e)?;
@@ -868,6 +897,25 @@ impl Checker<'_> {
                 });
                 call.failed = true;
             }
+        }
+    }
+
+    /// Reports the call at `span` that leaves parameter `param` unbound: E0050, unless its
+    /// result `found` cannot meet the context its caller gave (see `infer_waiting`). Then the
+    /// mismatch is the fault, and it is reported instead.
+    fn report_unbound(
+        &mut self,
+        span: Span,
+        sig: &GenericSig<'_>,
+        param: usize,
+        found: Option<Type>,
+    ) {
+        let hint = self.body.context_hint.filter(|&(at, _)| at == span);
+        if let Some((found, (_, want))) = found.zip(hint) {
+            let d = self.mismatch(span, None, want, found);
+            self.diagnostics.push(d);
+        } else {
+            self.cannot_infer(sig, param);
         }
     }
 

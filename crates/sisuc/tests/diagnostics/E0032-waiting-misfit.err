@@ -1,0 +1,8 @@
+error[E0032]: expected `[T]`, found `Result<i64, E>`
+ --> E0032-waiting-misfit.sisu:6:18
+  |
+6 |     let x = take(Ok(1))
+  |                  ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032
