@@ -50,6 +50,9 @@ fn interface_declarations_should_check_clean() {
         "class Holder<T: Shape> {\n    value: T\n    fn get<U: Convert<T>>(self, u: U) -> T { self.value }\n}",
         "enum Opt<T: Same> {\n    No\n    Yes(T)\n}",
         "interface Wrap<T: Same> {\n    fn f<U: Convert<T>>(self, u: U) -> T\n}",
+        // Two requirements may name a parameter alike, and one that repeats the interface's own
+        // is reported at it and leaves the interface's in scope.
+        "interface Twice {\n    fn a<U>(self, u: U)\n    fn b<U>(self, u: U)\n}",
     ] {
         clean(&with_decls(src));
     }
@@ -232,10 +235,9 @@ fn a_bound_should_name_an_interface() {
     }
 }
 
-/// `Self` outside a class, an enum and an interface, a cycle of inheritance, and an inherited
-/// argument built from a type parameter.
+/// `Self` outside a class, an enum and an interface, in a type and in a bound.
 #[test]
-fn self_outside_and_inheritance_errors_should_be_reported() {
+fn self_outside_a_class_an_enum_and_an_interface_should_be_reported() {
     for (src, expected) in [
         // `Self` outside a class, an enum and an interface.
         (
@@ -263,6 +265,24 @@ fn self_outside_and_inheritance_errors_should_be_reported() {
             with_decls("interface I {\n    fn f(self) -> Self\n}\nfn f() -> Self {}"),
             vec![(Code::SelfOutside, (4, 11))],
         ),
+        // `Self` is no bound, wherever it stands in one.
+        (
+            with_decls("fn f<T: Self?>() {}"),
+            vec![(Code::SelfOutside, (1, 9))],
+        ),
+        (
+            with_decls("fn f<T: [Self]>() {}"),
+            vec![(Code::SelfOutside, (1, 10))],
+        ),
+    ] {
+        codes(&src, &expected);
+    }
+}
+
+/// A cycle of inheritance, and an inherited argument built from a type parameter.
+#[test]
+fn inheritance_errors_should_be_reported() {
+    for (src, expected) in [
         // A cycle is reported once, on its first interface.
         (
             "interface A: B {}\ninterface B: A {}\nfn main() {}".to_string(),
@@ -355,6 +375,16 @@ fn an_interface_name_and_its_requirements_should_be_defined_once() {
             with_decls("interface Dup {\n    fn a(self)\n    fn a(self)\n}"),
             vec![(Code::DefinedTwice, (3, 8))],
         ),
+        // A type parameter of a requirement that repeats one of the interface, each time; the
+        // interface's stays in scope.
+        (
+            "interface Dup<T> {\n    fn a<T>(self, x: T)\n    fn b<T>(self, y: T)\n    fn c(self, z: T)\n}\nfn main() {}"
+                .to_string(),
+            vec![
+                (Code::DefinedTwice, (2, 10)),
+                (Code::DefinedTwice, (3, 10)),
+            ],
+        ),
         // A requirement that an inherited interface has.
         (
             with_decls("interface Solid: Named {\n    fn name(self) -> string\n}"),
@@ -363,6 +393,11 @@ fn an_interface_name_and_its_requirements_should_be_defined_once() {
         (
             with_decls("interface Solid: Named {\n    fn area(self) -> f64\n    fn name(self) -> string\n}"),
             vec![(Code::DefinedTwice, (3, 8))],
+        ),
+        // A type parameter of a requirement is not one of the next.
+        (
+            with_decls("interface Gone {\n    fn a<U>(self, u: U)\n    fn b(self, u: U)\n}"),
+            vec![(Code::UnknownType, (3, 19))],
         ),
         // A cycle is E0150 alone, whatever its members declare.
         (
