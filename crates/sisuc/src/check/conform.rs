@@ -4,7 +4,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
-use super::interface::Bound;
+use super::interface::{Bound, RequirementInfo};
 use super::{Body, Checker, Declared, Holder, own_args};
 use crate::ast;
 use crate::conformance::{self, find};
@@ -203,7 +203,7 @@ impl Checker<'_> {
             self.body.set_type_params(&params);
             let mut roots = Vec::new();
             for ty in conforms {
-                let Some(bound) = self.bound(ty) else {
+                let Some(bound) = self.bound(ty, Some(receiver)) else {
                     continue;
                 };
                 roots.push((bound, ty.bare));
@@ -323,7 +323,7 @@ impl Checker<'_> {
                 }
             };
             match found {
-                None => missing.push(self.source_text(requirement.span).to_string()),
+                None => missing.push(self.required_text(p.interface, requirement)),
                 // Its own error is reported.
                 Some(Declared::Broken) => {}
                 Some(Declared::Known(f)) if self.meets(requirement, f, &base) => methods.push(f),
@@ -336,7 +336,7 @@ impl Checker<'_> {
                         form: ConformanceForm::Wrong {
                             method: name.to_string(),
                             found: self.source_text(sig.header).trim_end().to_string(),
-                            want: self.source_text(requirement.span).to_string(),
+                            want: self.required_text(p.interface, requirement),
                         },
                     });
                 }
@@ -530,6 +530,34 @@ impl Checker<'_> {
             format!("<{}>", params.join(", "))
         };
         format!("extend{list} {ty}: {inherited} {{ ... }}")
+    }
+
+    /// The text of `requirement` as a block writes it for the conformance to `bound`: the
+    /// interface's arguments stand where its parameters do, and `Self` stays. Shortcut: a bound of
+    /// the requirement's own type parameters is written as the interface declares it.
+    fn required_text(&self, bound: Bound, requirement: &RequirementInfo) -> String {
+        let params = &self.interfaces[bound.interface.0].type_params;
+        let mut with = vec![Type::intern(TypeKind::Param(params[0], 0))];
+        with.extend_from_slice(bound.args.get());
+        for (i, &name) in (params.len()..).zip(&requirement.own) {
+            let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
+            with.push(Type::intern(TypeKind::Param(name, i)));
+        }
+        let written = (requirement.params_at.iter().copied())
+            .zip(requirement.params.iter().copied())
+            .chain(requirement.ret_at.into_iter().zip([requirement.ret]));
+        let mut out = String::new();
+        let mut from = requirement.span.start();
+        for (at, ty) in written {
+            let Some(ty) = ty.filter(|ty| ty.subst(&with) != *ty) else {
+                continue;
+            };
+            out.push_str(self.source.file.slice(from..at.start()));
+            out.push_str(&self.type_name(ty.subst(&with)));
+            from = at.end();
+        }
+        out.push_str(self.source.file.slice(from..requirement.span.end()));
+        out
     }
 
     /// The source text at `span`.

@@ -1,0 +1,11 @@
+error[E0154]: `Node` does not conform to `Same`
+  --> E0154-interface-block.sisu:17:21
+   |
+ 5 | interface Feed<T: Same> {
+   |                   ---- required by this bound
+...
+17 | extend Feeder: Feed<Node> {
+   |                     ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

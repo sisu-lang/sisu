@@ -21,8 +21,9 @@ thread_local! {
 
 /// The conformance of `interface` to `ty` with the interface arguments `args`, as its index
 /// among those of `interface` and the types that its block's parameters stand for. The bounds of
-/// the block are not checked. A target without parameters is found by its exact type. The scan
-/// among the targets with parameters reads only those of `ty`'s class or enum.
+/// the block are not checked. A target without parameters is found by its exact type and the
+/// interface arguments. The scan among the targets with parameters reads only those of `ty`'s
+/// class or enum.
 ///
 /// The second recorded exception to "A pass is linear in the program" (user, 2026-10-25): `N`
 /// blocks `extend<T> Pair<TagK, T>: Run` make each lookup at `Pair` inspect up to `N`
@@ -35,7 +36,7 @@ pub(crate) fn find(
     ty: Type,
     args: TypeArgs,
 ) -> Option<(usize, TypeArgs)> {
-    let exact = conformances.exact(interface, ty);
+    let exact = conformances.exact(interface, ty, args);
     if let Some(&k) = exact.iter().find(|&&k| {
         #[cfg(test)]
         CANDIDATES_READ.set(CANDIDATES_READ.get() + 1);
@@ -74,7 +75,7 @@ pub(crate) fn clash(
     // exact targets of its class or enum (the recorded exception of the doc comment).
     let head = head_of(target).expect("the target of a conformance should be a class or an enum");
     let exact = if params == 0 {
-        conformances.exact(interface, target)
+        conformances.exact(interface, target, args)
     } else {
         conformances.exact_of(interface, head)
     };
@@ -782,6 +783,38 @@ mod tests {
             });
             assert_eq!(with, without);
         }
+    }
+
+    /// `n` conformances of one type without parameters to `Convert<Tag1>` ... `Convert<Tagn>` are
+    /// told apart by the index: each insertion and each lookup reads at most one candidate, so
+    /// `n` of each cost at most `2n` and not `n²` (the exact index holds the interface arguments).
+    #[test]
+    fn conformances_of_one_type_to_many_interface_arguments_should_cost_linear_candidates() {
+        const N: usize = 256;
+        let circle = class(CIRCLE, &[]);
+        let tag = |k: usize| TypeArgs::intern(&[class(1000 + k, &[])]);
+        let mut all = Conformances::default();
+        CANDIDATES_READ.set(0);
+        for k in 0..N {
+            assert!(clash(&all, InterfaceId(0), circle, 0, tag(k)).is_none());
+            all.add(
+                InterfaceId(0),
+                Conformance {
+                    type_params: 0,
+                    target: circle,
+                    args: tag(k),
+                    methods: Vec::<FuncId>::new(),
+                },
+            );
+        }
+        for k in 0..N {
+            assert!(find(&all, InterfaceId(0), circle, tag(k)).is_some());
+        }
+        let total = CANDIDATES_READ.get();
+        assert!(
+            total <= 2 * N,
+            "{total} candidates for {N} insertions and {N} lookups"
+        );
     }
 
     /// The targets with parameters of an enum are read as those of a class, and a target that

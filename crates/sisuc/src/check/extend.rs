@@ -50,8 +50,8 @@ impl<'a> Checker<'_> {
         self.body.set_type_params(&params);
         let bounds = self.declare_bounds(0, Vec::new(), &extend.type_params);
         let target = self.extend_target(&extend.target);
-        let interface =
-            (extend.interface.as_ref()).map(|ty| self.bound(ty).map(|bound| (bound, ty.bare)));
+        let interface = (extend.interface.as_ref())
+            .map(|ty| self.bound(ty, target).map(|bound| (bound, ty.bare)));
         for choice in &extend.assoc {
             // Task 7 takes an associated type.
             self.unsupported_at(choice.name.span);

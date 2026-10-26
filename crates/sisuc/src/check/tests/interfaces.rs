@@ -2953,6 +2953,53 @@ fn generic_interfaces_should_report_what_the_context_cannot_pick() {
     assert!(ds[0].help().is_some(), "{ds:?}");
 }
 
+/// The interface `Feed<T: Same>` and the classes the rows of the next two tests use.
+const FEED: &str = "interface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Feed<T: Same> {\n    fn feed(self) -> T\n}\nclass Node {\n    id: i64\n}\nclass Feeder {\n    n: i64\n}\n";
+
+/// An argument of an interface meets the bounds of its parameter, in every place that writes an
+/// interface with arguments: a conformance list, an `extend` block, a bound, an inherited
+/// interface. The wording is pinned by the `E0154-interface-*` fixtures.
+#[test]
+fn interface_arguments_should_meet_the_bounds_of_their_parameters() {
+    for (row, expected) in [
+        (
+            "class Wire: Feed<Node> {\n    fn feed(self) -> Node { Node(id: 1) }\n}\nfn main() {}",
+            (13, 18),
+        ),
+        (
+            "extend Feeder: Feed<Node> {\n    fn feed(self) -> Node { Node(id: 1) }\n}\nfn main() {}",
+            (13, 21),
+        ),
+        (
+            "fn first<F: Feed<Node>>(feeder: F) -> i64 { 0 }\nfn main() {}",
+            (13, 18),
+        ),
+        ("interface Relay<T>: Feed<T> {}\nfn main() {}", (13, 26)),
+    ] {
+        codes(&format!("{FEED}{row}"), &[(Code::NotConform, expected)]);
+    }
+}
+
+/// An argument meets the bound when its type conforms, whichever item gives the conformance and
+/// wherever it stands in the source, and when it is a parameter that has the bound.
+#[test]
+fn interface_arguments_that_meet_the_bounds_should_check_clean() {
+    let later =
+        "extend Node: Same {\n    fn same(self, other: Node) -> bool { self.id == other.id }\n}\n";
+    for row in [
+        // The conformance comes after the item that needs it.
+        "class Wire: Feed<Node> {\n    fn feed(self) -> Node { Node(id: 1) }\n}",
+        "extend Feeder: Feed<Node> {\n    fn feed(self) -> Node { Node(id: 1) }\n}",
+        "fn first<F: Feed<Node>>(feeder: F) -> i64 { 0 }",
+        // The parameter has the bound that the interface asks for.
+        "interface Relay<T: Same>: Feed<T> {}",
+        "fn second<T: Same, F: Feed<T>>(feeder: F) -> i64 { 0 }",
+        "class Crate<T> {\n    value: T\n}\nextend<T: Same> Crate<T>: Feed<T> {\n    fn feed(self) -> T { self.value }\n}",
+    ] {
+        clean(&format!("{FEED}{row}\n{later}fn main() {{}}"));
+    }
+}
+
 /// The interface of the first method that `main` calls in a `let`, and its arguments.
 fn called_conformance(src: &str) -> Option<String> {
     let (program, ds) = checked(src);

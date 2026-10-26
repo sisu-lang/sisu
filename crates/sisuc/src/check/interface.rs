@@ -46,8 +46,12 @@ pub(super) struct RequirementInfo {
     pub(super) bounds: Vec<Vec<Bound>>,
     /// Without `self`; `None` is `Error`.
     pub(super) params: Vec<Option<Type>>,
+    /// Where the type of each of `params` is written.
+    pub(super) params_at: Vec<Span>,
     /// `None` is `Error`; no return type is `unit`.
     pub(super) ret: Option<Type>,
+    /// Where the return type is written, if it is.
+    pub(super) ret_at: Option<Span>,
 }
 
 /// A bound `T: I<A, ...>`, a conformance or an inheritance: the interface and its arguments,
@@ -69,15 +73,27 @@ pub(super) struct Required {
     pub(super) method: usize,
 }
 
-/// A bound check that waits for every conformance: the applied class or enum type `ty`, each of
-/// whose arguments is written at the span of `ats`, in the scope `scope`.
+/// A bound check that waits for every conformance, in the scope `scope`.
 pub(super) struct PendingBound {
-    ty: Type,
-    ats: Vec<Span>,
+    check: Check,
     scope: usize,
     /// Where the type that holds `ty` is kept, if it is kept: a type that fails the check is
     /// unknown there.
     place: Option<Slot>,
+}
+
+/// What a pending bound check reads.
+enum Check {
+    /// The applied class or enum type `ty`, each of whose arguments is written at the span of
+    /// `ats`: each argument meets the bounds of its parameter.
+    Applied { ty: Type, ats: Vec<Span> },
+    /// The arguments of `bound`, each written at the span of `ats`, for the type `this` that
+    /// has the interface: each argument meets the bounds of the interface's parameter.
+    Arguments {
+        bound: Bound,
+        this: Type,
+        ats: Vec<Span>,
+    },
 }
 
 /// Where a resolved type is kept: the type of a parameter or a result of a signature, of a field,
@@ -217,7 +233,9 @@ impl Checker<'_> {
                     own,
                     bounds,
                     params,
+                    params_at: requirement.params.iter().map(|p| p.ty.span).collect(),
                     ret,
+                    ret_at: requirement.ret.as_ref().map(|ret| ret.span),
                 });
             }
             for param in &requirement.type_params {
@@ -246,7 +264,7 @@ impl Checker<'_> {
     ) -> Vec<Vec<Bound>> {
         let queued = self.queued();
         let mut bounds = head;
-        bounds.extend(self.bounds_of(params));
+        bounds.extend(self.bounds_of(first + bounds.len(), params));
         self.body.set_bounds(first, bounds.clone());
         if self.queued() > queued {
             let scope = self.scope();
@@ -257,21 +275,26 @@ impl Checker<'_> {
         bounds
     }
 
-    /// Resolves the bounds of `params`, which are in scope, and reports each that names no
-    /// interface. Gives the bounds of each parameter that name one.
-    fn bounds_of(&mut self, params: &[ast::TypeParam]) -> Vec<Vec<Bound>> {
-        (params.iter())
-            .map(|param| {
+    /// Resolves the bounds of `params`, which are in scope from the place `first` on, and reports
+    /// each that names no interface. Gives the bounds of each parameter that name one.
+    fn bounds_of(&mut self, first: usize, params: &[ast::TypeParam]) -> Vec<Vec<Bound>> {
+        (params.iter().enumerate())
+            .map(|(i, param)| {
+                let place = u32::try_from(first + i)
+                    .expect("a declaration should have fewer than 2^32 parameters");
+                let this = Some(Type::intern(TypeKind::Param(param.name.name, place)));
                 (param.bounds.iter())
-                    .filter_map(|ty| self.bound(ty))
+                    .filter_map(|ty| self.bound(ty, this))
                     .collect()
             })
             .collect()
     }
 
-    /// The interface `ty` names with its arguments. `None`, reported, when it names no
-    /// interface, or its arguments do not fit; `None` without a report for a broken name.
-    pub(super) fn bound(&mut self, ty: &ast::TypeExpr) -> Option<Bound> {
+    /// The interface `ty` names with its arguments, for the type `this` that has it, if that is
+    /// known. `None`, reported, when it names no interface, or its arguments do not fit; `None`
+    /// without a report for a broken name. The arguments are checked against the bounds of the
+    /// interface's parameters once every conformance is known.
+    pub(super) fn bound(&mut self, ty: &ast::TypeExpr, this: Option<Type>) -> Option<Bound> {
         let named = match &ty.kind {
             ast::TypeKind::Name(name) if ty.optional == 0 => Some((*name, &[][..], ty.span)),
             ast::TypeKind::Applied(applied) if ty.optional == 0 => {
@@ -292,12 +315,18 @@ impl Checker<'_> {
             };
             let declared = self.interfaces[id.0].type_params[1..].to_vec();
             // An interface is copied by no one, so its arguments record no instantiation.
-            let args = self.type_args_of(&ident, &declared, args, angles, false)?;
-            return Some(Bound {
+            let written = args;
+            let args = self.type_args_of(&ident, &declared, written, angles, false)?;
+            let bound = Bound {
                 interface: id,
                 args,
                 at: ty.bare,
-            });
+            };
+            if let (Some(this), false) = (this, written.is_empty()) {
+                let ats = written.iter().map(|arg| arg.span).collect();
+                self.check_arguments(bound, this, ats);
+            }
+            return Some(bound);
         }
         // An optional or an array of an interface is a type that is no interface. `resolve` would
         // say that the interface is no type, and advise a bound, which this already is.
@@ -359,7 +388,7 @@ impl Checker<'_> {
     /// neither a parameter of `interface` nor free of parameters is reported, and so the
     /// inheritance is dropped: the closure of a bound copies arguments and never builds one.
     fn inherited(&mut self, ty: &ast::TypeExpr, interface: &ast::Interface) -> Option<Bound> {
-        let bound = self.bound(ty)?;
+        let bound = self.bound(ty, self.body.self_type)?;
         let ast::TypeKind::Applied(applied) = &ty.kind else {
             return Some(bound);
         };
@@ -760,17 +789,48 @@ impl Checker<'_> {
     /// that its class or enum declares. When every conformance is not yet known, the check waits.
     /// Whether it holds, or waits.
     pub(super) fn check_applied(&mut self, ty: Type, ats: Vec<Span>) -> bool {
+        self.check_or_wait(Check::Applied { ty, ats })
+    }
+
+    /// Checks that each argument of `bound`, written at `ats`, meets the bounds that its
+    /// interface declares for its parameter, as `check_applied` does for a class or an enum. The
+    /// type `this` has the interface.
+    fn check_arguments(&mut self, bound: Bound, this: Type, ats: Vec<Span>) {
+        self.check_or_wait(Check::Arguments { bound, this, ats });
+    }
+
+    /// Queues `check` while the conformances are not yet known, and else runs it. Whether it
+    /// holds, or waits.
+    fn check_or_wait(&mut self, check: Check) -> bool {
         let scope = self.pending_bounds.is_some().then(|| self.scope());
         if let (Some(scope), Some(pending)) = (scope, &mut self.pending_bounds) {
             pending.push(PendingBound {
-                ty,
-                ats,
+                check,
                 scope,
                 place: None,
             });
             return true;
         }
-        self.check_applied_now(ty, &ats)
+        self.check_now(&check)
+    }
+
+    fn check_now(&mut self, check: &Check) -> bool {
+        match check {
+            Check::Applied { ty, ats } => self.check_applied_now(*ty, ats),
+            Check::Arguments { bound, this, ats } => {
+                // The bounds of the interface lead with `Self`'s own, which this does not check.
+                let bounds = self.interfaces[bound.interface.0].bounds.clone();
+                let mut with = vec![*this];
+                with.extend_from_slice(bound.args.get());
+                let mut holds = true;
+                for (k, bounds) in bounds.iter().enumerate().skip(1) {
+                    for &b in bounds {
+                        holds &= self.check_bound(ats[k - 1], with[k], b, &with);
+                    }
+                }
+                holds
+            }
+        }
     }
 
     fn check_applied_now(&mut self, ty: Type, ats: &[Span]) -> bool {
@@ -834,7 +894,7 @@ impl Checker<'_> {
                 checker.body.self_type = scope.self_type;
                 let mut failed = Vec::new();
                 for p in group {
-                    if !checker.check_applied_now(p.ty, &p.ats) {
+                    if !checker.check_now(&p.check) {
                         failed.extend(p.place);
                     }
                 }

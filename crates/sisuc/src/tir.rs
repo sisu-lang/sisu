@@ -147,14 +147,15 @@ pub(crate) struct Conformance {
 }
 
 /// The conformances of a program, by interface. A target without parameters is indexed by its
-/// exact type, and a target with parameters by its class or enum, so that a lookup reads the
-/// exact entry and then only the generic targets of the receiver's class or enum. A target
+/// exact type and the interface's arguments, and a target with parameters by its class or enum,
+/// so that a lookup reads the exact entry and then only the generic targets of the receiver's
+/// class or enum. A target
 /// without parameters is indexed by its class or enum too, for a new target with parameters to
 /// meet.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Conformances {
     list: Vec<Vec<Conformance>>,
-    exact: FxHashMap<(InterfaceId, Type), Vec<usize>>,
+    exact: FxHashMap<(InterfaceId, Type, TypeArgs), Vec<usize>>,
     exact_heads: FxHashMap<(InterfaceId, Head), Vec<usize>>,
     generic: FxHashMap<(InterfaceId, Head), Vec<usize>>,
 }
@@ -172,7 +173,7 @@ impl Conformances {
             .expect("the target of a conformance should be a class or an enum type");
         if conformance.type_params == 0 {
             self.exact
-                .entry((interface, conformance.target))
+                .entry((interface, conformance.target, conformance.args))
                 .or_default()
                 .push(index);
             self.exact_heads
@@ -205,9 +206,10 @@ impl Conformances {
             .flat_map(|(i, list)| list.iter().map(move |c| (InterfaceId(i), c)))
     }
 
-    /// The conformances of `interface` whose target is `ty`, which has no parameters.
-    pub(crate) fn exact(&self, interface: InterfaceId, ty: Type) -> &[usize] {
-        self.exact.get(&(interface, ty)).map_or(&[], Vec::as_slice)
+    /// The conformances of `interface` with the arguments `args` whose target is `ty`, which has
+    /// no parameters.
+    pub(crate) fn exact(&self, interface: InterfaceId, ty: Type, args: TypeArgs) -> &[usize] {
+        (self.exact.get(&(interface, ty, args))).map_or(&[], Vec::as_slice)
     }
 
     /// The conformances of `interface` whose target has no parameters and names `head`.
