@@ -122,6 +122,13 @@ struct CallShape {
     open: bool,
 }
 
+/// The hole, `_`: what `Bindings::partial` puts for an unbound parameter. No declaration has a
+/// parameter of this name, and its index is out of range for `found`, so a hole that leaks into
+/// `known` or `subst` panics at once and does not give a wrong type.
+fn hole() -> Type {
+    Type::intern(TypeKind::Param(Symbol::intern("_"), u32::MAX))
+}
+
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
 /// the receiver, an argument or the expected type fixes it.
 pub(super) struct Bindings {
@@ -206,23 +213,46 @@ impl Bindings {
     /// `ty`, a callee's, with its parameters' bindings in their place; `None` while it names
     /// one that is unbound.
     pub(super) fn known(&self, ty: Type) -> Option<Type> {
+        self.resolve(ty, None)
+    }
+
+    /// As `known`, with a hole for each unbound parameter, so it always gives a type. Only for
+    /// a type that a diagnostic prints: a hole must not reach `found`.
+    pub(super) fn partial(&self, ty: Type) -> Type {
+        self.resolve(ty, Some(hole()))
+            .expect("a hole should stand for each unbound parameter")
+    }
+
+    /// The walk of `known` and `partial`: `hole` stands for an unbound parameter, and `None`
+    /// there gives `None`.
+    fn resolve(&self, ty: Type, hole: Option<Type>) -> Option<Type> {
         #[cfg(test)]
-        WALKED.set(WALKED.get() + 1);
+        if hole.is_none() {
+            WALKED.set(WALKED.get() + 1);
+        }
         if !ty.has_param() {
             return Some(ty);
         }
         Some(match ty.kind() {
-            TypeKind::Param(_, i) => self.found[i as usize]?,
-            TypeKind::Array(element) => Type::array(self.known(element)?),
-            TypeKind::Optional(payload) => Type::optional(self.known(payload)?),
-            TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.known_all(args)?)),
-            TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.known_all(args)?)),
+            TypeKind::Param(_, i) => self.found[i as usize].or(hole)?,
+            TypeKind::Array(element) => Type::array(self.resolve(element, hole)?),
+            TypeKind::Optional(payload) => Type::optional(self.resolve(payload, hole)?),
+            TypeKind::Class(id, args) => {
+                Type::intern(TypeKind::Class(id, self.resolve_all(args, hole)?))
+            }
+            TypeKind::Enum(id, args) => {
+                Type::intern(TypeKind::Enum(id, self.resolve_all(args, hole)?))
+            }
             _ => unreachable!("only a kind with a child can name a parameter"),
         })
     }
 
-    fn known_all(&self, args: TypeArgs) -> Option<TypeArgs> {
-        let list: Option<Vec<Type>> = args.get().iter().map(|&ty| self.known(ty)).collect();
+    fn resolve_all(&self, args: TypeArgs, hole: Option<Type>) -> Option<TypeArgs> {
+        let list: Option<Vec<Type>> = args
+            .get()
+            .iter()
+            .map(|&ty| self.resolve(ty, hole))
+            .collect();
         list.map(|list| TypeArgs::intern(&list))
     }
 
@@ -242,7 +272,8 @@ impl Bindings {
 thread_local! {
     /// How many bindings inference has checked or undone on this thread.
     pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many types `Bindings::known` has looked at on this thread.
+    /// How many types `Bindings::known` has looked at on this thread. A `partial` walk, which
+    /// only a diagnostic uses, is not counted.
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names the search for reported ones has looked at on this
     /// thread.
@@ -626,7 +657,13 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                let d = self.mismatch(e.span, Some(e), pattern, ty);
+                // With nothing bound, the callee's own names say more than holes.
+                let want = if call.bindings.found.iter().any(Option::is_some) {
+                    call.bindings.partial(pattern)
+                } else {
+                    pattern
+                };
+                let d = self.mismatch(e.span, Some(e), want, ty);
                 self.diagnostics.push(d);
                 mark((checked, true))
             }

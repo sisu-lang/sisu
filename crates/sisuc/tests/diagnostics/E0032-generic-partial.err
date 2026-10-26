@@ -1,0 +1,8 @@
+error[E0032]: expected `Two<string, _>`, found `Two<i64, bool>`
+  --> E0032-generic-partial.sisu:10:12
+   |
+10 |     f("s", t)
+   |            ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

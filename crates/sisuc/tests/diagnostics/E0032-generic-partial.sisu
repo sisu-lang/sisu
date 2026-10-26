@@ -1,0 +1,11 @@
+class Two<A, B> {
+    a: A
+    b: B
+}
+
+fn f<A, B>(a: A, p: Two<A, B>) {}
+
+fn main() {
+    let t = Two(a: 1, b: true)
+    f("s", t)
+}

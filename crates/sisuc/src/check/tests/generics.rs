@@ -2586,3 +2586,10 @@ fn generic_array_literals_should_report_each_mistake_once() {
         codes(&with_optional_elements(body), &expected);
     }
 }
+
+/// The argument for `p` is the one reported, and the call's other arguments are not.
+#[test]
+fn a_generic_argument_should_be_reported_where_it_meets_what_the_call_binds() {
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\nfn f<A, B>(a: A, p: Two<A, B>) {}\nfn main() {\n    let t = Two(a: 1, b: true)\n    f(\"s\", t)\n}";
+    diagnostic(src, Code::Mismatch, (8, 12, "t"), &[]);
+}
