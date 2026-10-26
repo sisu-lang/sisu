@@ -22,7 +22,7 @@ fn main(args: [string]) {
     print(same(1e308, d) * 10.0)    // inf: overflow
     print(same(5e-324, d) / 2.0)    // 0.0: underflow
     let g = same(9.81, d)
-    let mut v = same(0.0, d)
+    let mut v = same(-0.0, d)       // not 0.0: `-O2` would reuse `zero`'s call
     v -= g * 0.01
     print(v)                        // -0.0981
     eprint(same(2.5, d))            // 2.5, on standard error

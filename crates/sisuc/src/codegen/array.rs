@@ -3,7 +3,7 @@
 //! and the bodies of the array helpers, which `define_helpers` reaches through
 //! `define_array_helper`.
 
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
 use super::abi::{RC_FAULT_RELEASE, RC_FAULT_RETAIN};
@@ -53,14 +53,30 @@ impl<'ctx> Codegen<'ctx, '_> {
         array
     }
 
+    /// The length of `array`, marked `!range [0, 2^63)` and `!noundef`: `alloc_array` is the only
+    /// writer of a length, and no length it gets is negative. A new way to make an array must
+    /// keep this true.
     pub(super) fn array_len(&self, array: PointerValue<'ctx>) -> IntValue<'ctx> {
-        self.load_tagged(
-            self.context.i64_type().into(),
-            self.len_ptr(array),
-            "len",
-            self.header_tag,
+        let i64_type = self.context.i64_type();
+        let len = self
+            .load_tagged(i64_type.into(), self.len_ptr(array), "len", self.header_tag)
+            .into_int_value();
+        let load = len
+            .as_instruction_value()
+            .expect("a load should be an instruction");
+        // The upper bound is exclusive and wraps, so `1 << 63` is 2^63.
+        let range = self.context.metadata_node(&[
+            i64_type.const_zero().into(),
+            i64_type.const_int(1 << 63, false).into(),
+        ]);
+        load.set_metadata(range, self.context.get_kind_id("range"))
+            .expect("a range should be a metadata node");
+        load.set_metadata(
+            self.context.metadata_node(&[]),
+            self.context.get_kind_id("noundef"),
         )
-        .into_int_value()
+        .expect("an empty node should be a metadata node");
+        len
     }
 
     #[expect(
