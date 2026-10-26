@@ -1255,6 +1255,35 @@ fn a_call_with_several_candidates_should_wait_for_the_context_of_the_outer_call(
     }
 }
 
+/// A call waits for the context of an outer generic call only when several blocks answer it and its
+/// arguments fit them; with one block, none, or arguments that fit none, it is checked at once.
+#[test]
+fn a_call_that_the_context_does_not_pick_should_not_wait_for_it() {
+    let program = |blocks: &str, statement: &str| {
+        with_shapes(&format!(
+            "class C {{}}\n{blocks}fn id<T>(x: T) -> T {{ x }}\nfn main() {{\n    let c = C()\n    {statement}\n}}"
+        ))
+    };
+    let label = "extend C: Label {\n    fn name(self) -> string { \"a\" }\n}\n";
+    let two = format!("{label}extend C: Code {{\n    fn name(self) -> i64 {{ 7 }}\n}}\n");
+    // One block answers: `T` is the type of the call, with no expected type.
+    clean(&program(label, "let x = id(c.name())"));
+    // No block answers: the call is unknown, and `T` is not reported besides.
+    codes(
+        &program(label, "let x = id(c.other())"),
+        &[(Code::NoMember, (8, 18))],
+    );
+    // Arguments that fit no block: the call is checked at once, and is ambiguous.
+    codes(
+        &program(&two, "let x = id(c.name(1))"),
+        &[(Code::Ambiguous, (11, 18))],
+    );
+    // Parameters that fit: the candidates wait for the context of the outer call.
+    let tags = "interface Tag1 {\n    fn tag(self, n: i64) -> string\n}\ninterface Tag2 {\n    fn tag(self, n: i64) -> i64\n}\nextend C: Tag1 {\n    fn tag(self, n: i64) -> string { \"a\" }\n}\nextend C: Tag2 {\n    fn tag(self, n: i64) -> i64 { n }\n}\n";
+    clean(&program(tags, "let s: string = id(c.tag(1))"));
+    clean(&program(tags, "let k: i64 = id(c.tag(1))"));
+}
+
 /// An expected type that failed is reported already, and the call it reaches is poisoned with it.
 #[test]
 fn an_ambiguous_call_should_not_be_reported_when_its_context_failed() {

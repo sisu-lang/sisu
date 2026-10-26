@@ -306,23 +306,18 @@ impl Checker<'_> {
         None
     }
 
-    /// The type that the method `func` returns on a receiver of type `ty` in a call that writes
-    /// `written` for the method's own type parameters. `None` when the result still holds a
-    /// parameter that the call leaves to inference: the context cannot tell that candidate apart.
-    fn candidate_result(&self, func: tir::FuncId, ty: Type, written: &[Type]) -> Option<Type> {
-        let sig = &self.signatures[func.0];
-        let ret = sig.ret?;
+    /// The type `ret` that a candidate method returns, in a call that writes `written` for the
+    /// method's own type parameters. `None` when `ret` still holds a parameter that the call
+    /// leaves to inference: the context cannot tell that candidate apart.
+    ///
+    /// shortcut: the target of a conformance takes no type arguments yet, so the type parameters
+    /// of its methods are their own; Task 5 binds the owner's from the receiver.
+    fn candidate_result(&self, func: tir::FuncId, ret: Type, written: &[Type]) -> Option<Type> {
         if !ret.has_param() {
             return Some(ret);
         }
-        let owner = match ty.kind() {
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.get(),
-            _ => &[],
-        };
-        if written.len() != sig.own || owner.len() + sig.own != sig.type_params.len() {
-            return None;
-        }
-        Some(ret.subst(&[owner, written].concat()))
+        let own = &self.signatures[func.0].type_params;
+        (written.len() == own.len()).then(|| ret.subst(written))
     }
 
     /// The method among `candidates`, which are methods of conformance blocks that cover `ty`,
@@ -344,18 +339,16 @@ impl Checker<'_> {
             return None;
         }
         // A result that is `Error` has its own error.
-        if candidates
-            .iter()
-            .any(|&(func, _)| self.signatures[func.0].ret.is_none())
-        {
-            return None;
-        }
+        let results: Option<Vec<Type>> = (candidates.iter())
+            .map(|&(func, _)| self.signatures[func.0].ret)
+            .collect();
+        let results = results?;
         let written = (!site.written.is_empty())
             .then(|| self.written_types(site.written))
             .flatten()
             .unwrap_or_default();
-        let rets: Vec<Option<Type>> = (candidates.iter())
-            .map(|&(func, _)| self.candidate_result(func, ty, &written))
+        let rets: Vec<Option<Type>> = (candidates.iter().zip(results))
+            .map(|(&(func, _), ret)| self.candidate_result(func, ret, &written))
             .collect();
         // Whether a result is unknown, so that its candidate may return anything the others do.
         let open = rets.contains(&None);

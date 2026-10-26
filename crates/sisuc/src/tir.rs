@@ -1495,8 +1495,11 @@ impl Program {
     /// `name`. `None` for every other function; `Function::name` keeps the text without the
     /// interface.
     fn conformance_name(&self, function: &Function) -> Option<String> {
-        let (_, method) = function.name.split_once('.')?;
-        let (ty, (interface, args)) = (function.owner?, function.conformance?);
+        let (interface, args) = function.conformance?;
+        let ty = (function.owner)
+            .expect("a method of a conformance block should have the type it extends");
+        let (_, method) = (function.name.split_once('.'))
+            .expect("a method of a conformance block should be named `Type.method`");
         Some(format!(
             "{}.{}{}.{method}",
             self.type_name(ty),
@@ -2003,7 +2006,8 @@ mod tests {
     }
 
     /// A method of a conformance block prints its interface between its type and its name, in its
-    /// definition and in a call; a write that fails in either gives that error.
+    /// definition and in a call, and a method of the class itself prints none; a write that fails
+    /// in any of them gives that error.
     #[test]
     fn print_should_name_a_conformance_method_with_its_interface() {
         use fmt::Write as _;
@@ -2023,6 +2027,17 @@ mod tests {
                 value: Some(Box::new(int(1))),
                 ty: Type::I64,
             },
+        };
+        // A method of the class itself prints no interface.
+        let own = Function {
+            name: "C.get".into(),
+            conformance: None,
+            body: Block {
+                stmts: vec![],
+                value: Some(Box::new(int(2))),
+                ty: Type::I64,
+            },
+            ..method.clone()
         };
         let caller = Function {
             name: "f".into(),
@@ -2055,14 +2070,15 @@ mod tests {
             interfaces: vec![Interface {
                 name: "Label".into(),
             }],
-            functions: vec![caller, method],
+            functions: vec![caller, method, own],
             ..Program::default()
         };
         assert_eq!(
             program.to_string(),
             "(class C)\n\
              (fn f ((c#0 C)) i64 (block (call C.Label.name c#0)))\n\
-             (fn C.Label.name ((self#0 C)) i64 (block 1))"
+             (fn C.Label.name ((self#0 C)) i64 (block 1))\n\
+             (fn C.get ((self#0 C)) i64 (block 2))"
         );
         // Whichever single write fails, the print gives that error and does not go on.
         let mut counter = FailsAt {

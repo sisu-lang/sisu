@@ -1036,6 +1036,33 @@ mod tests {
         assert_eq!(program.functions.len(), count);
     }
 
+    /// The arguments of a conformance's interface name output classes. The checker makes none yet,
+    /// since a generic interface waits for Task 6, so the row sets one on the checked program.
+    #[test]
+    fn a_conformance_method_should_name_its_interface_arguments_by_output_ids() {
+        let src = "interface Label {\n    fn name(self) -> string\n}\nclass G<T> {\n    value: T\n}\nclass C {}\nextend C: Label {\n    fn name(self) -> string { \"c\" }\n}\nfn main() {\n    print(C().name())\n}";
+        let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+        let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        let g = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[Type::I64])));
+        let method = (program.functions.iter_mut())
+            .find(|f| f.name == "C.name")
+            .expect("the method should be declared");
+        let (interface, _) = method
+            .conformance
+            .expect("the method should be a conformance's");
+        method.conformance = Some((interface, TypeArgs::intern(&[g])));
+        let program = instantiate(program);
+        let method = (program.functions.iter())
+            .find(|f| f.name == "C.name")
+            .expect("the method should be kept");
+        let (_, args) = method.conformance.expect("the conformance should be kept");
+        let [TypeKind::Class(id, _)] = args.get().iter().map(|t| t.kind()).collect::<Vec<_>>()[..]
+        else {
+            panic!("the argument should be a class: {args:?}");
+        };
+        assert_eq!(program.classes[id.0].name, "G<i64>");
+    }
+
     /// The unused generic class comes before `C`, so `C` has another id in the output than in the
     /// checked program, and the printed owner of its conformance method reads the output's.
     #[test]
