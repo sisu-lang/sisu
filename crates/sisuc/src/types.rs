@@ -39,14 +39,42 @@ pub(crate) enum TypeKind {
     Optional(Type),
 }
 
+/// The index of the hole, the type parameter that stands for a part a context has not fixed yet
+/// (see `check::generic`). No declaration has a parameter at this index.
+pub(crate) const HOLE_INDEX: u32 = u32::MAX;
+
+/// What a type names, anywhere inside it. Each interned type and list holds its own, so a read
+/// does not walk the type.
+#[derive(Clone, Copy, Debug, Default)]
+struct Names {
+    /// A type parameter.
+    param: bool,
+    /// The hole, the parameter at `HOLE_INDEX`.
+    hole: bool,
+}
+
+impl Names {
+    fn or(self, other: Names) -> Names {
+        Names {
+            param: self.param || other.param,
+            hole: self.hole || other.hole,
+        }
+    }
+}
+
 impl TypeKind {
-    /// Whether a type of this kind names a type parameter, from what its children say.
+    /// What a type of this kind names, from what its children say.
     // `check::cycle::parts` looks into the same kinds: a kind that holds a type goes in both.
-    fn has_param(self) -> bool {
+    fn names(self) -> Names {
+        #[cfg(test)]
+        NAMED.set(NAMED.get() + 1);
         match self {
-            TypeKind::Param(..) => true,
-            TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.has_param(),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.has_param(),
+            TypeKind::Param(_, i) => Names {
+                param: true,
+                hole: i == HOLE_INDEX,
+            },
+            TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.names(),
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.names(),
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -54,7 +82,7 @@ impl TypeKind {
             | TypeKind::Char
             | TypeKind::String
             | TypeKind::Unit
-            | TypeKind::Never => false,
+            | TypeKind::Never => Names::default(),
         }
     }
 }
@@ -66,8 +94,8 @@ pub(crate) struct TypeArgs(u32);
 #[derive(Default)]
 struct ArgsInterner {
     ids: FxHashMap<&'static [Type], TypeArgs>,
-    /// Each list, with whether an element names a type parameter, at its handle.
-    lists: Vec<(&'static [Type], bool)>,
+    /// Each list, with what its elements name, at its handle.
+    lists: Vec<(&'static [Type], Names)>,
 }
 
 /// Every list interned in this process, with the empty list at index 0. Each slice is leaked so
@@ -75,7 +103,7 @@ struct ArgsInterner {
 static ARGS: LazyLock<Mutex<ArgsInterner>> = LazyLock::new(|| {
     Mutex::new(ArgsInterner {
         ids: FxHashMap::from_iter([(&[][..], TypeArgs(0))]),
-        lists: vec![(&[], false)],
+        lists: vec![(&[], Names::default())],
     })
 });
 
@@ -99,8 +127,10 @@ impl TypeArgs {
                 .expect("a process should intern fewer than 2^32 argument lists"),
         );
         let list: &'static [Type] = Box::leak(list.into());
-        args.lists
-            .push((list, list.iter().any(|ty| ty.has_param())));
+        let names = list
+            .iter()
+            .fold(Names::default(), |names, ty| names.or(ty.names()));
+        args.lists.push((list, names));
         args.ids.insert(list, interned);
         interned
     }
@@ -109,8 +139,12 @@ impl TypeArgs {
         args().lists[self.0 as usize].0
     }
 
-    fn has_param(self) -> bool {
+    fn names(self) -> Names {
         args().lists[self.0 as usize].1
+    }
+
+    fn has_param(self) -> bool {
+        self.names().param
     }
 
     /// The list with `Type::subst` applied to each element. A list without a parameter comes
@@ -154,6 +188,8 @@ pub(crate) enum Head {
 thread_local! {
     /// The types `Type::subst` has substituted on this thread: those that name a parameter.
     static SUBSTITUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The kinds `TypeKind::names` has looked at on this thread, one for each type interned.
+    static NAMED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The most steps `write_steps` has held at once on this thread.
     static HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -301,13 +337,12 @@ const SEGMENTS: usize = 27;
 
 const _: () = assert!(FIRST * ((1 << SEGMENTS) - 1) > u32::MAX as usize);
 
-/// A type's kind, and whether it names a type parameter.
-type Entry = (TypeKind, bool);
+/// A type's kind, and what it names.
+type Entry = (TypeKind, Names);
 
-/// The kind of each interned handle past `SEEDS`, at its index, with whether it names a type
-/// parameter. `intern` sets a slot under the lock before it hands out the handle, and segments
-/// never move, so `kind` reads without the lock: `Type::kind` is the hottest read of the checker
-/// and codegen.
+/// The kind of each interned handle past `SEEDS`, at its index, with what it names. `intern` sets
+/// a slot under the lock before it hands out the handle, and segments never move, so `kind` reads
+/// without the lock: `Type::kind` is the hottest read of the checker and codegen.
 static KINDS: [OnceLock<Box<[OnceLock<Entry>]>>; SEGMENTS] = [const { OnceLock::new() }; SEGMENTS];
 
 /// The segment of `KINDS` that holds handle index `i`, and `i`'s slot in it.
@@ -337,7 +372,7 @@ impl Type {
         let slots =
             KINDS[segment].get_or_init(|| (0..FIRST << segment).map(|_| OnceLock::new()).collect());
         slots[at]
-            .set((kind, kind.has_param()))
+            .set((kind, kind.names()))
             .expect("only `intern` should set a slot, under the lock, at the next index");
         types.len += 1;
         types.ids.insert(kind, ty);
@@ -351,6 +386,15 @@ impl Type {
 
     /// Whether the type names a type parameter, anywhere inside it.
     pub(crate) fn has_param(self) -> bool {
+        self.names().param
+    }
+
+    /// Whether the type names the hole (`HOLE_INDEX`), anywhere inside it.
+    pub(crate) fn holds_hole(self) -> bool {
+        self.names().hole
+    }
+
+    fn names(self) -> Names {
         self.entry().1
     }
 
@@ -358,7 +402,7 @@ impl Type {
         let i = self.0 as usize;
         // A constant is read before anything is interned, so its kind is not in `KINDS`.
         if let Some(&kind) = SEEDS.get(i) {
-            return (kind, false);
+            return (kind, Names::default());
         }
         let (segment, at) = slot(i);
         *KINDS[segment]
@@ -517,7 +561,7 @@ mod tests {
     #[test]
     fn seed_kinds_should_name_no_parameter() {
         for kind in SEEDS {
-            assert!(!kind.has_param(), "{kind:?}");
+            assert!(!kind.names().param, "{kind:?}");
         }
     }
 
@@ -531,6 +575,25 @@ mod tests {
             doubled(Type::I64, 20)
         );
         assert!(SUBSTITUTED.get() <= 2 * 21, "{} visits", SUBSTITUTED.get());
+    }
+
+    /// `t_20` has 21 distinct types but 2^20 paths to its leaf.
+    #[test]
+    fn holds_hole_should_read_a_flag_and_not_walk_a_shared_type() {
+        let hole = Type::intern(TypeKind::Param(Symbol::intern("_"), HOLE_INDEX));
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        NAMED.set(0);
+        let (holed, named, plain) = (
+            doubled(hole, 20),
+            doubled(param, 20),
+            doubled(Type::I64, 20),
+        );
+        let interned = NAMED.get();
+        assert!(interned <= 3 * 21, "{interned} kinds looked at");
+        assert!(holed.holds_hole() && holed.has_param());
+        assert!(!named.holds_hole() && named.has_param());
+        assert!(!plain.holds_hole() && !plain.has_param());
+        assert_eq!(NAMED.get(), interned, "a read should look at no kind");
     }
 
     #[test]

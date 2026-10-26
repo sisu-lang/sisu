@@ -21,6 +21,7 @@ use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{Type, TypeArgs, TypeKind};
+use crate::types::HOLE_INDEX;
 
 /// Whether `ty`, an array's element, is an optional, or arrays of them: the shape of element
 /// that `against` cannot wrap an array literal's elements to.
@@ -130,25 +131,11 @@ struct CallShape {
 }
 
 /// The hole, `_`: the type of a part that a context has not fixed yet (see `Bindings::partial`).
-/// No declaration has a parameter of this name, and its index is out of range for `found`, so a
-/// hole that leaks into `known` or `subst` panics at once and does not give a wrong type.
+/// No declaration has a parameter of this name, and its index (`HOLE_INDEX`) is out of range for
+/// `found`, so a hole that leaks into `known` or `subst` panics at once and does not give a
+/// wrong type.
 static HOLE: LazyLock<Type> =
-    LazyLock::new(|| Type::intern(TypeKind::Param(Symbol::intern("_"), u32::MAX)));
-
-/// Whether `ty` holds the hole, at any depth.
-fn holds_hole(ty: Type) -> bool {
-    if !ty.has_param() {
-        return false;
-    }
-    match ty.kind() {
-        TypeKind::Param(..) => ty == *HOLE,
-        TypeKind::Array(inner) | TypeKind::Optional(inner) => holds_hole(inner),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
-            args.get().iter().any(|&arg| holds_hole(arg))
-        }
-        _ => unreachable!("only a kind with a child can name a parameter"),
-    }
-}
+    LazyLock::new(|| Type::intern(TypeKind::Param(Symbol::intern("_"), HOLE_INDEX)));
 
 /// What `Bindings::resolve` puts for a parameter that is unbound.
 #[derive(Clone, Copy)]
@@ -213,12 +200,12 @@ impl Bindings {
     /// one, meets any part of `pattern` and binds nothing: the context has not fixed it.
     fn bind(&mut self, pattern: Type, value: Type) -> bool {
         if !pattern.has_param() {
-            return pattern == value || holds_hole(value);
+            return pattern == value || value.holds_hole();
         }
         match (pattern.kind(), value.kind()) {
             _ if value == *HOLE => true,
             (TypeKind::Param(_, i), _) => {
-                if holds_hole(value) {
+                if value.holds_hole() {
                     return true;
                 }
                 let i = i as usize;
@@ -531,7 +518,7 @@ impl Checker<'_> {
             // writes are its own.
             let met = (ranks.contains(&2) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
-            misfit = (!met && holds_hole(want)).then_some(ret);
+            misfit = (!met && want.holds_hole()).then_some(ret);
             if !met && written.is_empty() {
                 self.blame_arguments(&mut call, sig, args, ret, want);
             }
@@ -792,7 +779,7 @@ impl Checker<'_> {
         }
         let checked = self.expr(e, context);
         debug_assert!(
-            type_of(&checked).is_none_or(|ty| !holds_hole(ty)),
+            type_of(&checked).is_none_or(|ty| !ty.holds_hole()),
             "a context's hole should not reach the type of the argument it was for"
         );
         match type_of(&checked) {
