@@ -173,13 +173,13 @@ impl Checker<'_> {
             });
             return None;
         }
-        // A parameter whose bounds went past the limit is reported already, and unknown.
-        if matches!(base_ty.kind(), TypeKind::Param(_, p) if self.body.wide.contains(&(p as usize)))
-        {
+        let entries = self.interfaces_for(base_ty);
+        // A base whose bounds went past the limit is reported already, and unknown.
+        if self.is_wide(base_ty) {
             return None;
         }
         let mut found = Vec::new();
-        for (interface, args) in self.interfaces_for(base_ty) {
+        for (interface, args) in entries {
             let assoc = &self.interfaces[interface.0].assoc;
             for (k, declared) in assoc.iter().enumerate() {
                 if declared.name.name == name.name {
@@ -219,6 +219,15 @@ impl Checker<'_> {
                 });
                 None
             }
+        }
+    }
+
+    /// Whether the bounds of the type parameter or associated type `ty` went past the limit,
+    /// which `interfaces_for` has found out: it is reported, and unknown in this body.
+    pub(super) fn is_wide(&self, ty: Type) -> bool {
+        match ty.kind() {
+            TypeKind::Param(_, place) => self.body.wide.contains(&(place as usize)),
+            _ => self.body.wide_assoc.contains(&ty),
         }
     }
 

@@ -496,7 +496,8 @@ struct Body {
     /// The interfaces each type parameter conforms to, by place, once found (`param_interfaces`).
     conforming: Vec<Option<Vec<(tir::InterfaceId, TypeArgs)>>>,
     /// The interfaces each associated type of a type parameter conforms to through the bounds of
-    /// its declaration, once found (`assoc_interfaces`).
+    /// its declaration, once found (`assoc_interfaces`). The bounds of the type parameters in scope
+    /// do not change them, so a body keeps them as it goes.
     assoc_conforming: FxHashMap<Type, Vec<(tir::InterfaceId, TypeArgs)>>,
     /// The associated types whose closure went past `BOUND_CLOSURE_LIMIT`: they stay unknown in
     /// this body.
@@ -626,10 +627,6 @@ impl Body {
         self.bounds.truncate(first);
         self.conforming.clear();
         self.wide.clear();
-        if !self.assoc_conforming.is_empty() {
-            self.assoc_conforming.clear();
-            self.wide_assoc.clear();
-        }
         self.required.clear();
         self.conformed.clear();
         self.scope = None;

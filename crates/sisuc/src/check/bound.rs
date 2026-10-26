@@ -7,7 +7,7 @@ use super::{Checked, Checker, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
 use crate::source::Span;
-use crate::tir::{self, Type, TypeArgs, TypeKind};
+use crate::tir::{self, Type, TypeArgs};
 
 impl Checker<'_> {
     /// `receiver.method(args)` on a value of type `ty`, a type parameter or an associated type,
@@ -101,8 +101,7 @@ impl Checker<'_> {
         span: Span,
         found: &[Required],
     ) -> Option<Required> {
-        let wide =
-            matches!(ty.kind(), TypeKind::Param(_, p) if self.body.wide.contains(&(p as usize)));
+        let wide = self.is_wide(ty);
         match found {
             // A parameter whose closure is too wide is reported already, and unknown: a method
             // that its walk did not reach is no error, and nor is one that it did, whatever the

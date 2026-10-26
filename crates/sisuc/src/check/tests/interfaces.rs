@@ -3118,6 +3118,17 @@ fn associated_types_should_normalize_through_generic_code() {
         "class Holder<S: Source> {\n    item: S.Item\n    fn get(self) -> S.Item { self.item }\n}\nenum Got<S: Source> {\n    Got(S.Item)\n    Nothing\n}\nfn t() {\n    let h: Holder<Countdown> = Holder(item: Tag(id: 4))\n    let x: Tag = h.item\n    let y: Tag = h.get()\n    let e: Got<Countdown> = Got.Got(Tag(id: 1))\n    match e {\n        Got.Got(v) => print(v.id)\n        Got.Nothing => print(0)\n    }\n}",
         // A choice that names no parameter adds no edge: the children of a `Dir` are `Dir`s.
         "interface Tree {\n    type Child: Tree\n    fn kids(self) -> [Child]\n}\nfn size<T: Tree>(t: T) -> i64 {\n    let mut n = 1\n    for k in t.kids() {\n        n += size(k)\n    }\n    n\n}\nclass Dir: Tree {\n    type Child = Dir\n    name: string\n    fn kids(self) -> [Child] { [] }\n}\nfn t() {\n    print(size(Dir(name: \"a\")))\n}",
+        // A local of the associated type, written `Item` in a body of the conformance.
+        "class Local: Source {\n    type Item = Tag\n    fn next(self) -> Item? {\n        let t: Item = Tag(id: 1)\n        t\n    }\n}\nextend Wrap<Tag>: Source {\n    type Item = Tag\n    fn next(self) -> Item? {\n        let t: [Item] = []\n        if t.len() == 0 { self.value } else { None }\n    }\n}",
+        // A requirement whose own parameter has a bound that names the associated type: the
+        // method of the conformance meets it with the type chosen.
+        "interface Mapper {\n    type Item\n    fn put<U: Convert<Item>>(self, u: U) -> i64\n}\nclass Sink: Mapper {\n    type Item = Tag\n    n: i64\n    fn put<U: Convert<Item>>(self, u: U) -> i64 { self.n }\n}",
+        // A bound of the parameter that an associated type is written through waits for a
+        // parameter that is not bound yet, and a parameter beside it is no concern of the check.
+        "extend Countdown: Convert<i64> {\n    fn convert(self) -> i64 { 1 }\n}\nfn conv<U, S: Source & Convert<U>>(s: S, x: S.Item, u: U) -> U { s.convert() }\nfn two<S: Source, T>(s: S, x: S.Item, t: T) -> T { t }\nfn t() {\n    let a: i64 = conv(Countdown(n: 1), Tag(id: 1), 5)\n    let b: i64 = two(Countdown(n: 1), Tag(id: 1), 5)\n}",
+        // A choice that names the associated type of an associated type of its parameter, and one
+        // that names an array, an optional and an enum around the parameter.
+        "interface Deep {\n    type Item: Deep\n}\nclass Chain<T> {\n    value: T\n}\nextend<T: Deep> Chain<T>: Deep {\n    type Item = Chain<T.Item.Item>\n}\nclass Rows<T> {\n    value: T\n}\nextend<T> Rows<T>: Deep {\n    type Item = Rows<[T?]>\n}",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3192,6 +3203,35 @@ fn associated_types_should_report_what_they_cannot_take() {
             format!("{feed}fn f<S: Source & Feed>(x: S.Item) {{}}"),
             vec![(Code::Ambiguous, (4, 29))],
         ),
+        // An associated type conforms to what its declaration bounds it by, and to no more.
+        (
+            "fn need<T: Marker>(t: T) {}\nfn f<S: Source>(x: S.Item) {\n    need(x)\n}".to_string(),
+            vec![(Code::NotConform, (3, 10))],
+        ),
+        // A choice repeated, one whose type is unknown (no report beside the unknown name), and
+        // one that no interface of the list declares.
+        (
+            format!("{feed}class Dup: Feed {{\n    type Item = i64\n    type Item = i64\n}}"),
+            vec![(Code::DefinedTwice, (6, 10))],
+        ),
+        (
+            "class Gone: Source {\n    type Item = Missing\n    n: i64\n    fn next(self) -> Item? { None }\n}".to_string(),
+            vec![(Code::UnknownType, (2, 17))],
+        ),
+        (
+            "class Odd: Source {\n    type Item = Tag\n    type Other = i64\n    n: i64\n    fn next(self) -> Item? { None }\n}".to_string(),
+            vec![(Code::ConformanceBody, (3, 10))],
+        ),
+        // The base of an associated type is unknown, and two interfaces declare `Item` (no bound
+        // to add).
+        (
+            "fn f(x: Missing.Item) {}".to_string(),
+            vec![(Code::UnknownType, (1, 9))],
+        ),
+        (
+            format!("{feed}fn f<S>(x: S.Item) {{}}"),
+            vec![(Code::UnknownType, (4, 14))],
+        ),
         // A choice no interface declares.
         (
             "extend Node: Marker {\n    type Item = i64\n    fn mark(self) -> i64 { 1 }\n}".to_string(),
@@ -3264,5 +3304,27 @@ fn an_unbounded_growth_should_close_a_cycle_through_each_type_that_reaches_it() 
             "{ring}fn go<R: Ring>(r: R) {{\n    if let x = r.{method}() {{\n        go(x)\n    }}\n}}"
         );
         codes(&with_sources(&row), &[(Code::InstantiationCycle, (23, 9))]);
+    }
+}
+
+/// An associated type whose bound gives more than 256 interfaces is reported where the bound is
+/// declared, once, and is unknown: it conforms to everything and no method of it is missing.
+#[test]
+fn an_associated_type_that_passes_the_limit_should_be_reported_once_and_unknown() {
+    let wide = ladder("C", 257) + "fn main() {}";
+    for (row, expected) in [
+        // Declared and never used.
+        ("interface W {\n    type Item: C257\n}", vec![(2, 16)]),
+        // Used as a bound, as the base of a method call, and as a nested base.
+        (
+            "interface W {\n    type Item: C257\n}\nfn f<S: W>(x: S.Item) {\n    need(x)\n    x.nothing()\n    let y: S.Item.Item = x\n}\nfn need<T: C1>(_y: T) {}",
+            vec![(2, 16)],
+        ),
+    ] {
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|at| (Code::BoundTooWide, at))
+            .collect();
+        codes(&format!("{row}\n{wide}"), &expected);
     }
 }

@@ -3097,4 +3097,16 @@ mod tests {
             assert_eq!(seen, (1..=children).collect::<Vec<_>>(), "{:?}", e.kind);
         }
     }
+
+    /// A type is written without its program, so an associated type shows its base and its place.
+    #[test]
+    fn display_should_write_an_associated_type_through_its_base() {
+        let t = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let item = Type::intern(TypeKind::Assoc(t, InterfaceId(0), TypeArgs::NONE, 3));
+        assert_eq!(item.to_string(), "T.assoc#3");
+        assert_eq!(
+            Type::array(Type::optional(item)).to_string(),
+            "[T.assoc#3?]"
+        );
+    }
 }

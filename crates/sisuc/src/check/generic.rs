@@ -781,9 +781,8 @@ impl Checker<'_> {
             if i < early.owned || !early.through[i] {
                 continue;
             }
-            let Some(ty) = call.bindings.found[i] else {
-                continue;
-            };
+            let ty = call.bindings.found[i]
+                .expect("a parameter that a binding bound should have a type");
             let place = i - early.owned;
             let bounds = early.bounds.get(place).cloned().unwrap_or_default();
             let with: Vec<Type> = call
@@ -2159,5 +2158,37 @@ mod tests {
                 0
             )))
         );
+    }
+
+    /// An associated type of a parameter that is not bound is the hole as a whole, and is not known
+    /// while its base or an argument of its interface is unbound; `printed` keeps the names.
+    #[test]
+    fn an_associated_type_should_wait_for_its_base_and_its_arguments() {
+        let param = |name, place| Type::intern(TypeKind::Param(Symbol::intern(name), place));
+        let (s, t) = (param("S", 0), param("T", 1));
+        let item = Type::intern(TypeKind::Assoc(s, InterfaceId(0), TypeArgs::NONE, 0));
+        let with_arg = Type::intern(TypeKind::Assoc(
+            s,
+            InterfaceId(0),
+            TypeArgs::intern(&[t]),
+            0,
+        ));
+        let mut bindings = Bindings::new(2, &[]);
+        assert_eq!(bindings.partial(item), *HOLE);
+        assert_eq!(bindings.known(item), None);
+        assert_eq!(bindings.printed(item), item);
+        assert!(bindings.unify(s, Type::STRING));
+        // The base is bound, and the argument is not: the type waits, and a hole stands for it.
+        assert_eq!(bindings.known(with_arg), None);
+        assert_ne!(bindings.partial(with_arg), *HOLE);
+        assert!(bindings.partial(with_arg).holds_hole());
+        assert!(bindings.unify(t, Type::I64));
+        let string_item = Type::intern(TypeKind::Assoc(
+            Type::STRING,
+            InterfaceId(0),
+            TypeArgs::intern(&[Type::I64]),
+            0,
+        ));
+        assert_eq!(bindings.known(with_arg), Some(string_item));
     }
 }

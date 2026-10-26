@@ -1133,14 +1133,34 @@ impl Checker<'_> {
                 .map(|r| (r.own.clone(), r.bounds.clone()))
                 .collect();
             let bounded = bounds.iter().skip(1).any(|bounds| !bounds.is_empty());
-            if !bounded && requirements.is_empty() {
+            let assoc: Vec<usize> = (info.assoc.iter().enumerate())
+                .filter(|(_, assoc)| !assoc.bounds.is_empty())
+                .map(|(k, _)| k)
+                .collect();
+            if !bounded && requirements.is_empty() && assoc.is_empty() {
                 continue;
             }
+            let own: Vec<Type> = (params.iter().enumerate().skip(1))
+                .map(|(i, &name)| {
+                    let i = u32::try_from(i)
+                        .expect("a declaration should have fewer than 2^32 parameters");
+                    Type::intern(TypeKind::Param(name, i))
+                })
+                .collect();
+            let own = TypeArgs::intern(&own);
             self.with_body(Body::default(), |checker| {
                 checker.body.set_type_params(&params);
                 checker.body.set_bounds(0, bounds);
                 // `Self` is first, and conforms to the interface itself.
                 checker.read_places(1);
+                // The associated types: each over `Self`.
+                let this = Type::intern(TypeKind::Param(params[0], 0));
+                for k in assoc {
+                    let k =
+                        u32::try_from(k).expect("an interface should have fewer than 2^32 types");
+                    let ty = Type::intern(TypeKind::Assoc(this, InterfaceId(i), own, k));
+                    checker.interfaces_for(ty);
+                }
                 // The scope of the interface is set up once, and a requirement adds its own.
                 for (own, bounds) in requirements {
                     checker.body.push_type_params(&own);

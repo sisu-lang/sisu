@@ -954,17 +954,26 @@ mod tests {
     }
 
     /// Interface 0 has one associated type. `Circle` chooses `i64`, `Box<T>` chooses `[T]`,
-    /// `Pair<T, U>` chooses the associated type of `U`, and `Pile` chooses none.
+    /// `Pair<T, U>` chooses the associated type of `U`, and `Pile` chooses none. A class that
+    /// lacks the choice (`PILE + 1`), one whose choice names the associated type of `Pile`
+    /// (`PILE + 2`) and an enum that chooses `bool` stand beside them.
     fn with_choices() -> Conformances {
         let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
         let mut all = Conformances::default();
         let rows = [
-            (class(CIRCLE, &[]), 0, Some(Type::I64)),
-            (boxed(param(0)), 1, Some(Type::array(param(0)))),
-            (class(PAIR, &[param(0), param(1)]), 2, Some(item(param(1)))),
-            (class(PILE, &[]), 0, None),
+            (class(CIRCLE, &[]), 0, vec![Some(Type::I64)]),
+            (boxed(param(0)), 1, vec![Some(Type::array(param(0)))]),
+            (
+                class(PAIR, &[param(0), param(1)]),
+                2,
+                vec![Some(item(param(1)))],
+            ),
+            (class(PILE, &[]), 0, vec![None]),
+            (class(PILE + 1, &[]), 0, vec![]),
+            (class(PILE + 2, &[]), 0, vec![Some(item(class(PILE, &[])))]),
+            (tree(0, &[]), 0, vec![Some(Type::BOOL)]),
         ];
-        for (target, type_params, choice) in rows {
+        for (target, type_params, assoc) in rows {
             all.add(
                 InterfaceId(0),
                 Conformance {
@@ -972,7 +981,7 @@ mod tests {
                     target,
                     args: TypeArgs::NONE,
                     methods: Vec::<FuncId>::new(),
-                    assoc: vec![choice],
+                    assoc,
                 },
             );
         }
@@ -993,7 +1002,9 @@ mod tests {
             normalized(item(boxed(Type::STRING))),
             Some(Type::array(Type::STRING))
         );
-        // Inside an optional, an array and the arguments of a class, and twice over.
+        // An enum is a base too.
+        assert_eq!(normalized(item(tree(0, &[]))), Some(Type::BOOL));
+        // Inside an optional, an array and the arguments of a class or an enum, and twice over.
         assert_eq!(
             normalized(Type::optional(Type::array(item(circle)))),
             Some(Type::optional(Type::array(Type::I64)))
@@ -1002,6 +1013,10 @@ mod tests {
             normalized(boxed(item(boxed(Type::U8)))),
             Some(boxed(Type::array(Type::U8)))
         );
+        assert_eq!(
+            normalized(tree(1, &[item(circle)])),
+            Some(tree(1, &[Type::I64]))
+        );
         // `Pair<A, B>` chooses the associated type of `B`: a choice that names one.
         let pair = class(PAIR, &[circle, boxed(Type::F64)]);
         assert_eq!(normalized(item(pair)), Some(Type::array(Type::F64)));
@@ -1009,12 +1024,49 @@ mod tests {
         let kept = item(item(param(0)));
         assert_eq!(normalized(kept), Some(kept));
         assert_eq!(normalized(boxed(kept)), Some(boxed(kept)));
-        // A class that chooses none, a class that conforms not, and a type that is no class.
-        assert_eq!(normalized(item(class(PILE, &[]))), None);
-        assert_eq!(normalized(item(class(PILE + 1, &[]))), None);
-        assert_eq!(normalized(item(Type::I64)), None);
         // A type without an associated type is itself.
         assert_eq!(normalized(boxed(Type::I64)), Some(boxed(Type::I64)));
+    }
+
+    /// A type does not exist when a base has no conformance, the conformance chooses no type or
+    /// one that does not exist, or any part of the type is such: nothing is left to use.
+    #[test]
+    fn normalize_should_give_nothing_for_a_type_that_does_not_exist() {
+        let all = with_choices();
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        let pile = item(class(PILE, &[]));
+        // A class that chooses none, one without the slot, one whose choice names the associated
+        // type of a class that chooses none, a class that conforms not, and a type that is no
+        // class.
+        for base in [
+            class(PILE, &[]),
+            class(PILE + 1, &[]),
+            class(PILE + 2, &[]),
+            class(PILE + 3, &[]),
+            Type::I64,
+        ] {
+            assert_eq!(normalize(&all, item(base)), None, "{base:?}");
+        }
+        // Each place that holds the type fails with it, and so does a base and an argument.
+        let circle = class(CIRCLE, &[]);
+        let with_args = |args: &[Type]| {
+            Type::intern(TypeKind::Assoc(
+                circle,
+                InterfaceId(0),
+                TypeArgs::intern(args),
+                0,
+            ))
+        };
+        for ty in [
+            Type::array(pile),
+            Type::optional(pile),
+            boxed(pile),
+            tree(1, &[pile]),
+            item(pile),
+            with_args(&[pile]),
+        ] {
+            assert_eq!(normalize(&all, ty), None, "{ty:?}");
+        }
     }
 
     /// `t_0` is the associated type of `Circle`, and `t_{i+1}` is `Pair<t_i, t_i>`, so `t_20` has

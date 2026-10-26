@@ -342,7 +342,7 @@ impl Mono {
     /// The declared name of the checked class or enum `head`.
     fn head(&self, head: Head) -> &str {
         match head {
-            Head::Assoc(interface, k) => &self.out.interfaces[interface.0].assoc[k as usize],
+            Head::Assoc(..) => unreachable!("mono should replace every associated type"),
             Head::Class(id) => match &self.class_decls[id.0] {
                 Some(decl) => &decl.name,
                 None => &self.out.classes[self.class_ids[&(id, TypeArgs::NONE)].0].name,

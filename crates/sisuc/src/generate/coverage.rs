@@ -5788,3 +5788,50 @@ fn generated_interfaces_should_inherit_each_interface_once() {
     }
     assert!(lists > 0, "no seed writes an interface that inherits two");
 }
+
+/// The walk marks an associated type with a bound, and a choice that is a `string` or a class,
+/// and only those.
+#[test]
+fn the_walk_should_mark_what_associated_types_hold() {
+    let decls = "interface Plain {\n    type Item\n}\ninterface Bounded {\n    type Item: Plain\n}\nclass K0 {}\n";
+    let keys = [
+        "reach: an associated type has a bound",
+        "reach: an associated type's choice is counted",
+    ];
+    let marked = |rest: &str| {
+        let src = format!("{decls}{rest}");
+        let parsed = parser::parse(lexer::lex(&src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        keys.map(|key| walk.seen.contains(key))
+    };
+    // A bound is in the interface; each choice is read where a type writes it.
+    assert_eq!(marked("fn main() {}\n"), [true, false]);
+    // Without the bounded interface, no bound is marked.
+    let plain = "interface Plain {\n    type Item\n}\n";
+    let parsed = parser::parse(lexer::lex(plain).expect("the source should lex"), false);
+    let mut walk = Walk::default();
+    walk.ast(&parsed.program);
+    assert!(!walk.seen.contains(keys[0]));
+    for (choice, counted) in [
+        ("string", true),
+        ("K0", true),
+        ("Q1", true),
+        ("R2<i64>", true),
+        ("i64", false),
+        ("N1", false),
+        ("[string]", false),
+        ("string?", false),
+    ] {
+        let rest = format!("class C: Plain {{\n    type Item = {choice}\n}}\nfn main() {{}}\n");
+        assert_eq!(marked(&rest)[1], counted, "{choice}");
+    }
+    // The name of a type's kind, as the receiver rows write it.
+    let item = Type::intern(TypeKind::Assoc(
+        Type::I64,
+        tir::InterfaceId(0),
+        crate::types::TypeArgs::NONE,
+        0,
+    ));
+    assert_eq!(kind_name(item), "Assoc");
+}

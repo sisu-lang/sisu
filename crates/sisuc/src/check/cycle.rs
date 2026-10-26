@@ -637,39 +637,18 @@ impl Checker<'_> {
         // The associated types a choice names through a parameter, by the type that chooses.
         let mut edges: Vec<(usize, usize, i64)> = Vec::new();
         for (interface, conformance) in self.conformances.iter() {
-            let depths = param_depths(conformance.target, conformance.type_params);
+            let target = param_depths(conformance.target, conformance.type_params);
             for (k, chosen) in conformance.assoc.iter().enumerate() {
                 let Some(chosen) = *chosen else { continue };
                 let at = first[interface.0] + k;
-                let mut stack = vec![(chosen, 0_i64)];
-                while let Some((ty, depth)) = stack.pop() {
-                    if !ty.has_param() {
-                        continue;
-                    }
-                    match ty.kind() {
-                        TypeKind::Param(_, q) => {
-                            let outright = depth - depths[q as usize];
-                            growth[at] = growth[at].max(Some(outright));
-                        }
-                        TypeKind::Array(inner) | TypeKind::Optional(inner) => {
-                            stack.push((inner, depth + 1));
-                        }
-                        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
-                            stack.extend(args.get().iter().map(|&arg| (arg, depth + 1)));
-                        }
-                        TypeKind::Assoc(base, other, args, j) => {
-                            let mut root = base;
-                            while let TypeKind::Assoc(inner, ..) = root.kind() {
-                                root = inner;
-                            }
-                            if let TypeKind::Param(_, q) = root.kind() {
-                                let named = first[other.0] + j as usize;
-                                edges.push((at, named, depth - depths[q as usize]));
-                            }
-                            stack.extend(args.get().iter().map(|&arg| (arg, depth)));
-                        }
-                        _ => unreachable!("only a part that names a parameter is walked"),
-                    }
+                let (depths, uses) = depths_and_assoc(chosen, conformance.type_params);
+                for (q, depth) in depths.iter().enumerate() {
+                    let outright = depth.map(|depth| depth - target[q]);
+                    growth[at] = growth[at].max(outright);
+                }
+                for used in uses {
+                    let named = first[used.interface.0] + used.index;
+                    edges.push((at, named, used.depth - target[used.param]));
                 }
             }
         }
@@ -759,27 +738,58 @@ impl Checker<'_> {
 /// The greatest depth at which each of the first `count` parameters nests in `ty`, a
 /// conformance's target: 1 for a parameter that is an argument of the class or enum itself.
 fn param_depths(ty: Type, count: usize) -> Vec<i64> {
-    let mut depths = vec![0; count];
+    let (depths, _) = depths_and_assoc(ty, count);
+    depths.into_iter().map(|depth| depth.unwrap_or(0)).collect()
+}
+
+/// An associated type of a parameter in a type: the place of the parameter that its base names,
+/// the associated type, and the depth at which it stands.
+struct AssocUse {
+    param: usize,
+    interface: tir::InterfaceId,
+    index: usize,
+    depth: i64,
+}
+
+/// `param_depths`, with `None` for a parameter that `ty` does not name, and each associated type
+/// of a parameter that `ty` names. The arguments of an associated type's interface stand at its
+/// depth.
+fn depths_and_assoc(ty: Type, count: usize) -> (Vec<Option<i64>>, Vec<AssocUse>) {
+    let mut depths = vec![None; count];
+    let mut uses = Vec::new();
     let mut stack = vec![(ty, 0)];
     while let Some((ty, depth)) = stack.pop() {
+        if !ty.has_param() {
+            continue;
+        }
         match ty.kind() {
             TypeKind::Param(_, i) => {
                 let slot = &mut depths[i as usize];
-                *slot = (*slot).max(depth);
+                *slot = (*slot).max(Some(depth));
             }
             TypeKind::Array(inner) | TypeKind::Optional(inner) => stack.push((inner, depth + 1)),
             TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
-                stack.extend(
-                    args.get()
-                        .iter()
-                        .filter(|a| a.has_param())
-                        .map(|&a| (a, depth + 1)),
-                );
+                stack.extend(args.get().iter().map(|&a| (a, depth + 1)));
+            }
+            TypeKind::Assoc(base, interface, args, k) => {
+                let mut root = base;
+                while let TypeKind::Assoc(inner, ..) = root.kind() {
+                    root = inner;
+                }
+                if let TypeKind::Param(_, q) = root.kind() {
+                    uses.push(AssocUse {
+                        param: q as usize,
+                        interface,
+                        index: k as usize,
+                        depth,
+                    });
+                }
+                stack.extend(args.get().iter().map(|&a| (a, depth)));
             }
             _ => unreachable!("only a part that names a parameter is walked"),
         }
     }
-    depths
+    (depths, uses)
 }
 
 /// A cycle of positive weight among the edges inside the component `k`, whose nodes are `nodes`,

@@ -1,0 +1,21 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+class Countdown: Source {
+    type Item = i64
+    mut n: i64
+
+    fn next(self) -> Item? {
+        None
+    }
+
+    fn twice(self, x: Countdown.Item) -> i64 {
+        x * 2
+    }
+}
+
+fn main() {
+    print(Countdown(n: 1).twice(2))
+}

@@ -800,10 +800,14 @@ mod tests {
         // `S.Item`, and `S.Item.Item`, with the name of the associated type from the head.
         let named = |ty| {
             let mut out = String::new();
-            let cut = write_type(&mut out, ty, |head| match head {
-                Head::Assoc(InterfaceId(2), 1) => "Item",
-                _ => "P",
-            });
+            let name = |head| {
+                if head == Head::Assoc(InterfaceId(2), 1) {
+                    "Item"
+                } else {
+                    "P"
+                }
+            };
+            let cut = write_type(&mut out, ty, name);
             (out, cut)
         };
         assert_eq!(named(ty), ("S.Item".to_string(), false));
