@@ -1291,6 +1291,9 @@ fn a_call_that_the_context_does_not_pick_should_not_wait_for_it() {
         &program(label, "let x = id(c.other())"),
         &[(Code::NoMember, (8, 18))],
     );
+    // One block, whose generic result its argument binds: nothing is left to the context.
+    let one = "interface Make {\n    fn make<U>(self, x: U) -> U\n}\nextend C: Make {\n    fn make<U>(self, x: U) -> U { x }\n}\n";
+    clean(&program(one, "let x = id(c.make(1))"));
     // Arguments that fit no block: the call is checked at once, and is ambiguous.
     codes(
         &program(&two, "let x = id(c.name(1))"),
