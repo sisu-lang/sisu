@@ -1059,10 +1059,26 @@ impl Checker<'_> {
         let func = match self.own_method(ty, method.name) {
             Some(Declared::Known(func)) => func,
             Some(Declared::Broken) => return CallShape::default(),
-            None => match self.conforming_methods(ty, method.name)[..] {
-                [(func, _)] => func,
-                _ => return CallShape::default(),
-            },
+            None => {
+                self.conforming_methods(ty, method.name);
+                match self.candidates[..] {
+                    [] => return CallShape::default(),
+                    [(func, _)] => func,
+                    // The call's context picks among several (`pick_conforming`): it waits for
+                    // it, as a call whose arguments cannot bind its parameters does.
+                    _ => {
+                        let shaped = self.candidates.iter().all(|&(func, _)| {
+                            let sig = &self.signatures[func.0];
+                            sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args)
+                        });
+                        return CallShape {
+                            generic: true,
+                            shaped,
+                            open: shaped,
+                        };
+                    }
+                }
+            }
         };
         let sig = &self.signatures[func.0];
         let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
@@ -1486,20 +1502,18 @@ impl Checker<'_> {
         first: &ast::TypeExpr,
         angles: Span,
     ) -> Option<Poisoned> {
-        let (methods, owner_params, field) = match type_of(receiver)?.kind() {
+        let ty = type_of(receiver)?;
+        let (owner_params, field) = match ty.kind() {
             TypeKind::Class(id, _) => {
                 let info = &self.classes[id.0];
                 let field = info.fields.iter().any(|f| f.name.name == method.name);
-                (&info.methods, info.type_params.len(), field)
+                (info.type_params.len(), field)
             }
-            TypeKind::Enum(id, _) => {
-                let info = &self.enums[id.0];
-                (&info.methods, info.type_params.len(), false)
-            }
+            TypeKind::Enum(id, _) => (self.enums[id.0].type_params.len(), false),
             // A built-in's list is reported once its method is found.
             _ => return None,
         };
-        match methods.get(&method.name).copied() {
+        match self.own_method(ty, method.name) {
             // A method with parameters of its own takes the list at its call.
             Some(Declared::Known(func))
                 if self.signatures[func.0].type_params.len() > owner_params => {}

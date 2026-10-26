@@ -1,7 +1,10 @@
 //! Members: fields and methods found through `.` and `?.`.
 
+use rustc_hash::FxHashMap;
+
 use super::expr::{if_some, local, no_member, path};
 use super::extend::holder_of;
+use super::generic::Site;
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Poisoned, UNKNOWN, as_optional, type_of, wrap};
 use crate::ast;
@@ -203,56 +206,62 @@ impl Checker<'_> {
         })
     }
 
-    /// The methods named `name` of the conformance blocks that cover `ty`, each with its block's
-    /// interface, in source order.
+    /// Fills `Checker.candidates` with the methods named `name` of the conformance blocks that
+    /// cover `ty`, each with its block's interface, in source order.
     ///
     /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25; ruling
     /// F9 (e)): a call reads every block that holds a method of its name, `n` for `n` blocks, and
     /// only those.
-    pub(super) fn conforming_methods(
-        &self,
-        ty: Type,
-        name: Symbol,
-    ) -> Vec<(tir::FuncId, InterfaceId)> {
+    pub(super) fn conforming_methods(&mut self, ty: Type, name: Symbol) {
+        self.candidates.clear();
         let Some(holder) = holder_of(ty) else {
-            return Vec::new();
+            return;
         };
         let blocks = self.extension_methods.get(&(holder, name));
-        (blocks.into_iter().flatten())
-            .flat_map(|&(at, func)| {
-                let ext = &self.extensions[at];
-                // A plain block has no interface, and so no conformance.
-                (ext.interface.into_iter())
-                    .filter(move |_| ext.target == ty && !ext.duplicate)
-                    .map(move |(bound, _)| (func, bound.interface))
-            })
-            .collect()
+        for &(at, func) in blocks.into_iter().flatten() {
+            let ext = &self.extensions[at];
+            // A plain block has no interface, and so no conformance.
+            if let Some((bound, _)) = ext.interface
+                && ext.target == ty
+                && !ext.duplicate
+            {
+                self.candidates.push((func, bound.interface));
+            }
+        }
     }
 
-    /// The method `name` of `receiver`, a value of type `ty`, which the call `call` (its span, and
-    /// the type its context expects) names. The type's own method wins; else the method of the
-    /// one conformance block that has one, or of the one whose result is the expected type.
-    /// `None` when there is none, reported unless `ty` is `Error`. `target` when the call is in an
-    /// assignment target's chain, where `?.` cannot follow the receiver.
+    /// The method named by `site` of `receiver`, a value of type `ty`, in the call that starts at
+    /// `span`. The type's own method wins; else the method of the one conformance block that has
+    /// one, or the one that the call's context picks (`pick_conforming`). `None` when there is
+    /// none, reported unless `ty` is `Error`. `target` when the call is in an assignment target's
+    /// chain, where `?.` cannot follow the receiver.
     pub(super) fn find_method(
         &mut self,
         ty: Option<Type>,
         receiver: &ast::Expr,
-        name: &ast::Ident,
+        site: Site<'_>,
         target: bool,
-        call: (Span, Option<Type>),
+        span: Span,
     ) -> Option<tir::FuncId> {
         let ty = ty?;
+        let name = site.name;
         match self.own_method(ty, name.name) {
             Some(Declared::Known(func)) => return Some(func),
             // Its own error is reported; the caller checks the arguments.
             Some(Declared::Broken) => return None,
             None => {}
         }
-        match self.conforming_methods(ty, name.name)[..] {
+        self.conforming_methods(ty, name.name);
+        match self.candidates[..] {
             [] => {}
             [(func, _)] => return Some(func),
-            ref several => return self.pick_conforming(ty, name, several, call),
+            _ => {
+                // Taken while the call picks, so that the buffer is free to the calls it reads.
+                let candidates = std::mem::take(&mut self.candidates);
+                let picked = self.pick_conforming(ty, site, span, &candidates);
+                self.candidates = candidates;
+                return picked;
+            }
         }
         // A broken block may have given the type the method.
         let broken = holder_of(ty)
@@ -297,57 +306,105 @@ impl Checker<'_> {
         None
     }
 
+    /// The type that the method `func` returns on a receiver of type `ty` in a call that writes
+    /// `written` for the method's own type parameters. `None` when the result still holds a
+    /// parameter that the call leaves to inference: the context cannot tell that candidate apart.
+    fn candidate_result(&self, func: tir::FuncId, ty: Type, written: &[Type]) -> Option<Type> {
+        let sig = &self.signatures[func.0];
+        let ret = sig.ret?;
+        if !ret.has_param() {
+            return Some(ret);
+        }
+        let owner = match ty.kind() {
+            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.get(),
+            _ => &[],
+        };
+        if written.len() != sig.own || owner.len() + sig.own != sig.type_params.len() {
+            return None;
+        }
+        Some(ret.subst(&[owner, written].concat()))
+    }
+
     /// The method among `candidates`, which are methods of conformance blocks that cover `ty`,
-    /// that the call `call` names: the only one whose result is the type its context expects, or,
-    /// when none is, the only one whose result is the payload of an expected optional. Otherwise
-    /// the call is ambiguous, reported with the `let` that picks one answer.
+    /// that the call at `span`, which `site` writes, names: the only one whose result is the type
+    /// its context expects, or, when none is, the only one whose result is the payload of an
+    /// expected optional. A result that holds a type parameter of the method which the call does
+    /// not write cannot be told from the others. Otherwise the call is ambiguous, reported with
+    /// the `let` that picks one answer. An expected type that failed is no reason to report it.
     fn pick_conforming(
         &mut self,
         ty: Type,
-        name: &ast::Ident,
+        site: Site<'_>,
+        span: Span,
         candidates: &[(tir::FuncId, InterfaceId)],
-        (span, expected): (Span, Option<Type>),
     ) -> Option<tir::FuncId> {
+        let expected = site.expected;
+        // The context failed, and reported it: this call is poisoned with it.
+        if expected == Some(UNKNOWN) || self.quiet(span, expected) {
+            return None;
+        }
+        // A result that is `Error` has its own error.
+        if candidates
+            .iter()
+            .any(|&(func, _)| self.signatures[func.0].ret.is_none())
+        {
+            return None;
+        }
+        let written = (!site.written.is_empty())
+            .then(|| self.written_types(site.written))
+            .flatten()
+            .unwrap_or_default();
         let rets: Vec<Option<Type>> = (candidates.iter())
-            .map(|&(func, _)| self.signatures[func.0].ret)
+            .map(|&(func, _)| self.candidate_result(func, ty, &written))
             .collect();
-        let returning = |want: Type| -> Vec<usize> {
-            (rets.iter().enumerate())
-                .filter(|&(_, &ret)| ret == Some(want))
-                .map(|(i, _)| i)
-                .collect()
-        };
-        if let Some(expected) = expected {
-            let mut hits = returning(expected);
-            if hits.is_empty()
+        // Whether a result is unknown, so that its candidate may return anything the others do.
+        let open = rets.contains(&None);
+        if let Some(expected) = expected.filter(|_| !open) {
+            let matching = |want: Type| {
+                let mut hits = read(&rets).filter(|&(_, ret)| ret == Some(want));
+                let first = hits.next().map(|(i, _)| i);
+                (first, hits.next().is_some())
+            };
+            let (mut first, mut more) = matching(expected);
+            if first.is_none()
                 && let TypeKind::Optional(payload) = expected.kind()
             {
-                hits = returning(payload);
+                (first, more) = matching(payload);
             }
-            if let [only] = hits[..] {
+            if let (Some(only), false) = (first, more) {
                 return Some(candidates[only].0);
             }
         }
         // The first result that exactly one candidate has tells the `let` what to write.
-        let unique = rets
-            .iter()
-            .flatten()
-            .find(|&&ret| returning(ret).len() == 1);
-        let annotate = unique.map(|&ret| Annotate {
+        let mut counts: FxHashMap<Type, usize> = FxHashMap::default();
+        for ret in read(&rets).filter_map(|(_, ret)| ret) {
+            *counts.entry(ret).or_default() += 1;
+        }
+        let unique = read(&rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
+        let annotate = unique.filter(|_| !open).map(|ret| Annotate {
             call: self.source.file.text(span).to_string(),
             binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
             ty: self.type_name(ret),
         });
         self.report(DiagnosticKind::Ambiguous {
-            method: name.name.to_string(),
+            method: site.name.name.to_string(),
             receiver: self.type_name(ty),
             interfaces: (candidates.iter())
                 .map(|&(_, interface)| self.interfaces[interface.0].name.name.to_string())
                 .collect(),
-            at: name.span,
+            at: site.name.span,
             annotate,
         });
         None
+    }
+
+    /// The types `written`, resolved as a call's type arguments are, without a report: the call
+    /// reports them when it checks its arguments. `None` when one does not resolve.
+    fn written_types(&mut self, written: &[ast::TypeExpr]) -> Option<Vec<Type>> {
+        let before = self.diagnostics.len();
+        let types = written.iter().map(|ty| self.resolve(ty)).collect();
+        self.diagnostics.truncate(before);
+        types
     }
 
     /// Checks the arguments of a call that cannot take them, for their own mistakes.
@@ -357,6 +414,15 @@ impl Checker<'_> {
             let _ = self.expr(&arg.value, Some(UNKNOWN));
         }
     }
+}
+
+/// The results of the candidates of a call, each with its place. The passes over them read through
+/// here, so that a test counts the steps.
+fn read(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Option<Type>)> {
+    rets.iter().copied().enumerate().inspect(|_| {
+        #[cfg(test)]
+        super::PICK_STEPS.set(super::PICK_STEPS.get() + 1);
+    })
 }
 
 /// "`node` may be `None`", at the optional `receiver` of a `.` before `name`. With `fix`, a

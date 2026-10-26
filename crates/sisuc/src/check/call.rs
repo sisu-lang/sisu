@@ -445,8 +445,7 @@ impl Checker<'_> {
             }
             _ => {}
         }
-        let call = (span, site.expected);
-        let Some(func) = self.find_method(type_of(&receiver), receiver_expr, method, target, call)
+        let Some(func) = self.find_method(type_of(&receiver), receiver_expr, site, target, span)
         else {
             self.labels(args);
             self.stray(args);
@@ -470,6 +469,17 @@ impl Checker<'_> {
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
         let declared = sig.type_params.clone();
+        let conforming = sig.conformance.is_some();
+        // A method's receiver binds its owner's parameters.
+        let owner = match receiver.as_ref().and_then(type_of).map(Type::kind) {
+            Some(TypeKind::Class(_, owner) | TypeKind::Enum(_, owner)) => owner.get(),
+            _ => &[],
+        };
+        // The method of a conformance block is found by the call, so the list a method that takes
+        // none of its own is given is reported here, as `method_args` does for the others.
+        if conforming && !site.written.is_empty() && declared.len() <= owner.len() {
+            self.not_generic(site.name.name, site.angles);
+        }
         if params.len() != args.len() {
             self.stray(args);
             if !self.misread_in(args) {
@@ -490,11 +500,6 @@ impl Checker<'_> {
                 .collect();
             (checked, TypeArgs::NONE, ret)
         } else {
-            // A method's receiver binds its owner's parameters.
-            let owner = match receiver.as_ref().and_then(type_of).map(Type::kind) {
-                Some(TypeKind::Class(_, owner) | TypeKind::Enum(_, owner)) => owner.get(),
-                _ => &[],
-            };
             // A list on a method that takes none of its own is reported already.
             let written = if declared.len() > owner.len() {
                 site.written

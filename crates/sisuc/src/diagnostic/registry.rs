@@ -1606,11 +1606,19 @@ pub(crate) enum ConformanceForm {
     NotRequirement { method: String, target: String },
 }
 
-/// Why an `extend` target is no class or enum.
-#[derive(Clone, Copy)]
+/// Why an `extend` block cannot extend.
+#[derive(Clone)]
 pub(crate) enum CannotExtendForm {
+    /// The target is a built-in type.
     BuiltIn,
+    /// The target is a type parameter.
     TypeParam,
+    /// A type parameter of the block that `target`, as written, does not name. `remove` is the
+    /// list of type parameters, when the fix may take it out.
+    Unused {
+        target: String,
+        remove: Option<Span>,
+    },
 }
 
 /// The `let` that picks one answer of an ambiguous call: the call as written, the name of the
@@ -2018,7 +2026,7 @@ impl From<DiagnosticKind> for Diagnostic {
             } => match form {
                 ConformanceForm::Missing(signatures) => {
                     Diagnostic::coded(code, at, format!("`{ty}` does not meet `{interface}`"))
-                        .with_help(format!("add these members:\n{}", signatures.join("\n")))
+                        .with_help(signatures.join("\n"))
                 }
                 ConformanceForm::Wrong {
                     method,
@@ -2064,18 +2072,35 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::CannotExtend { written, at, form } => Diagnostic::coded(
-                code,
-                at,
-                match form {
-                    CannotExtendForm::BuiltIn => {
-                        format!("`{written}` is a built-in type; only the prelude extends it")
-                    }
-                    CannotExtendForm::TypeParam => format!(
-                        "`extend` takes a class or enum, and `{written}` is a type parameter"
+            DiagnosticKind::CannotExtend { written, at, form } => {
+                let (message, remove) = match form {
+                    CannotExtendForm::BuiltIn => (
+                        format!("`{written}` is a built-in type; only the prelude extends it"),
+                        None,
                     ),
-                },
-            ),
+                    CannotExtendForm::TypeParam => (
+                        format!(
+                            "`extend` takes a class or enum, and `{written}` is a type parameter"
+                        ),
+                        None,
+                    ),
+                    CannotExtendForm::Unused { target, remove } => {
+                        (format!("`{written}` does not appear in `{target}`"), remove)
+                    }
+                };
+                let d = Diagnostic::coded(code, at, message);
+                match remove {
+                    Some(span) => d.with_fix(Fix {
+                        message: "remove the type parameters".to_string(),
+                        safe: true,
+                        edits: vec![Edit {
+                            span,
+                            replacement: String::new(),
+                        }],
+                    }),
+                    None => d,
+                }
+            }
             DiagnosticKind::Ambiguous {
                 method,
                 receiver,

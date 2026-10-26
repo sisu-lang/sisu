@@ -7,6 +7,7 @@ use super::interface::Bound;
 use super::{Checker, Declared, Definition, DiagnosticKind, Holder, Symbol, UNKNOWN};
 use crate::ast;
 use crate::diagnostic::{CannotExtendForm, Earlier, Owner as MethodOwner};
+use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
@@ -54,7 +55,10 @@ impl<'a> Checker<'_> {
         if generic_interface && let Some(ty) = &extend.interface {
             self.unsupported(ty);
         }
-        let failed = generic_target || generic_interface || matches!(interface, Some(None));
+        // A target that takes no arguments names no type parameter of the block.
+        let unused = target.is_some() && !generic_target && self.unused_params(extend);
+        let failed =
+            generic_target || generic_interface || unused || matches!(interface, Some(None));
         let usable = target.filter(|_| !failed);
         let receiver = usable.unwrap_or(UNKNOWN);
         let holder = usable.and_then(holder_of);
@@ -113,6 +117,41 @@ impl<'a> Checker<'_> {
         }
     }
 
+    /// Reports each type parameter of `extend`, whose target takes no type arguments and so names
+    /// none. Whether there was one. The fix takes the list out, when it holds one parameter that
+    /// the rest of the block does not name, and no comment is in it.
+    fn unused_params(&mut self, extend: &ast::Extend) -> bool {
+        let params = &extend.type_params;
+        let target = extend.target.to_string();
+        for param in params {
+            let remove = (params.len() == 1 && !self.names_in_block(extend, param.name.name))
+                .then_some(extend.angles)
+                .filter(|angles| !self.comment_in(&[angles.range()]));
+            self.report(DiagnosticKind::CannotExtend {
+                written: param.name.name.to_string(),
+                at: param.name.span,
+                form: CannotExtendForm::Unused {
+                    target: target.clone(),
+                    remove,
+                },
+            });
+        }
+        !params.is_empty()
+    }
+
+    /// Whether `name` is written in `extend` after its type parameters, outside strings and
+    /// comments. Text that does not lex alone is held to name it.
+    fn names_in_block(&self, extend: &ast::Extend, name: Symbol) -> bool {
+        let rest = self
+            .source
+            .file
+            .slice(extend.angles.end()..extend.span.end());
+        lex(rest).map_or(true, |lexed| {
+            (lexed.tokens.iter())
+                .any(|token| matches!(token.kind, TokenKind::Ident(n) if n == name))
+        })
+    }
+
     /// The type that `ty`, the target of an `extend` block, names: a class or an enum. Reports a
     /// target that is not one, and `None` for it.
     fn extend_target(&mut self, ty: &ast::TypeExpr) -> Option<Type> {
@@ -161,14 +200,18 @@ impl<'a> Checker<'_> {
     /// type arguments yet.
     pub(super) fn extension_clashes(&mut self) {
         let mut reports = Vec::new();
+        // The first field of each name of the classes that a block holds a method of, indexed once.
+        let mut fields = FxHashMap::default();
         for (&(holder, name), list) in &self.extension_methods {
             let owner = self.holder_name(holder).to_string();
             let plain = list
                 .iter()
                 .filter(|&&(at, _)| self.extensions[at].interface.is_none());
             // (start, kind, name's span) of each definition of the name.
-            let mut defs: Vec<(Span, Definition)> =
-                self.body_definition(holder, name).into_iter().collect();
+            let mut defs: Vec<(Span, Definition)> = self
+                .body_definition(&mut fields, holder, name)
+                .into_iter()
+                .collect();
             defs.extend(plain.map(|&(_, f)| (self.signatures[f.0].span, Definition::Method)));
             defs.sort_by_key(|(span, _)| span.start());
             let Some(&(first, first_kind)) = defs.first() else {
@@ -192,7 +235,13 @@ impl<'a> Checker<'_> {
     }
 
     /// The method, field or variant `name` of `holder`'s own declaration, and where its name is.
-    fn body_definition(&self, holder: Holder, name: Symbol) -> Option<(Span, Definition)> {
+    /// `fields` holds the index of the first field of each name of the classes read so far.
+    fn body_definition(
+        &self,
+        fields: &mut FxHashMap<tir::ClassId, FxHashMap<Symbol, Span>>,
+        holder: Holder,
+        name: Symbol,
+    ) -> Option<(Span, Definition)> {
         match holder {
             Holder::Class(c) => {
                 let info = &self.classes[c.0];
@@ -200,9 +249,19 @@ impl<'a> Checker<'_> {
                     Some(&Declared::Known(f)) => {
                         Some((self.signatures[f.0].span, Definition::Method))
                     }
-                    _ => (info.fields.iter())
-                        .find(|f| f.name.name == name)
-                        .map(|f| (f.name.span, Definition::Field)),
+                    _ => fields
+                        .entry(c)
+                        .or_insert_with(|| {
+                            let mut index = FxHashMap::default();
+                            for field in &info.fields {
+                                #[cfg(test)]
+                                super::FIELDS_INDEXED.set(super::FIELDS_INDEXED.get() + 1);
+                                index.entry(field.name.name).or_insert(field.name.span);
+                            }
+                            index
+                        })
+                        .get(&name)
+                        .map(|&span| (span, Definition::Field)),
                 }
             }
             Holder::Enum(e) => {

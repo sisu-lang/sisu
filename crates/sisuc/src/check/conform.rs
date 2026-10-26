@@ -70,16 +70,32 @@ impl Checker<'_> {
         }
         // The interfaces a listed one inherits are the type's too, unless a block gives them: the
         // body holds their methods as well.
+        //
+        // The third recorded exception to "A pass is linear in the program" (user, 2026-10-25;
+        // ruling F9): a list's closure has an entry for each conformance that the list gives, and
+        // the closure of arguments may double at each level of inheritance (spec, "Inheritance").
+        // The roots of one list share one visited set, so the work follows the closure and not
+        // the number of roots.
         for (holder, receiver, roots) in &lists {
             let mut closure = Vec::new();
             // The listed interface through which each entry of `closure` is reached.
             let mut via = Vec::new();
+            let mut seen = FxHashSet::default();
             for &(bound, at) in roots {
-                self.interfaces_of(*receiver, &[bound], &mut closure);
+                self.extend_closure(*receiver, &[bound], &mut closure, &mut seen, |_, _| {});
                 via.resize(closure.len(), at);
             }
+            // The listed interface at which the stopgap is reported, once.
+            let mut stopped = FxHashSet::default();
             for (&(interface, args), &at) in closure.iter().zip(&via) {
                 if find(&self.conformances, interface, *receiver, args).is_some() {
+                    continue;
+                }
+                // An inherited interface that takes arguments waits for Task 6, as a listed one.
+                if !args.get().is_empty() {
+                    if stopped.insert(at) {
+                        self.unsupported_at(at);
+                    }
                     continue;
                 }
                 let bound = Bound { interface, args };
@@ -281,6 +297,11 @@ impl Checker<'_> {
     /// Reports each interface that the one in the `extend` block `p` inherits and the type does
     /// not conform to. A block holds the methods of its interface only, so an inherited
     /// interface comes from the type's list or from a block of its own.
+    ///
+    /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25;
+    /// ruling F9): the closure of the block's interface has an entry for each conformance that
+    /// the type may need, and each missing one is its own report. The closure records which entry
+    /// inherits each other, so a report reads that and does not search.
     fn inherited_conformances(&mut self, p: &Pending) {
         let holder =
             holder_of(p.target).expect("a conformance's target should be a class or an enum");
@@ -289,28 +310,32 @@ impl Checker<'_> {
             return;
         }
         let mut closure = Vec::new();
-        self.interfaces_of(p.target, &[p.interface], &mut closure);
+        // For each entry of `closure` after the first: the entry that inherits it, nearest first,
+        // and where that one writes the inheritance.
+        let mut reached = Vec::new();
+        let mut seen = FxHashSet::default();
+        let bounds = [p.interface];
+        self.extend_closure(
+            p.target,
+            &bounds,
+            &mut closure,
+            &mut seen,
+            |from, written| {
+                reached.push((from, written));
+            },
+        );
         for (k, &(interface, args)) in closure.iter().enumerate().skip(1) {
             if find(&self.conformances, interface, p.target, args).is_some() {
                 continue;
             }
-            // Nearest first, so that the interface named is the first in the closure that
-            // inherits it.
-            let (via, requires) = closure[..k]
-                .iter()
-                .find_map(|&(parent, _)| {
-                    let info = &self.interfaces[parent.0];
-                    let at = info
-                        .inherits
-                        .iter()
-                        .position(|b| b.interface == interface)?;
-                    Some((parent, info.inherits_at[at]))
-                })
-                .expect("an inherited interface should follow the interface that inherits it");
+            let (parent, requires) = reached[k - 1];
+            let via = closure[parent].0;
             let (ty, inherited) = (
                 self.type_name(p.target),
                 self.interfaces[interface.0].name.name.to_string(),
             );
+            // shortcut: an inherited interface that takes arguments gets no help, as a block
+            // cannot write a generic interface yet; Task 6 writes it with the arguments.
             let extend = args
                 .get()
                 .is_empty()

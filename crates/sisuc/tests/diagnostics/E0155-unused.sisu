@@ -1,0 +1,13 @@
+class Meters {
+    value: i64
+}
+
+extend<T> Meters {
+    fn double(self) -> i64 {
+        self.value * 2
+    }
+}
+
+fn main() {
+    print(Meters(value: 1).double())
+}

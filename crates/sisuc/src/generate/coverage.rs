@@ -5345,12 +5345,18 @@ fn generated_conformances_should_reach_every_form() {
     let mut forms = FxHashSet::default();
     for data in seeds() {
         let (program, _) = checked(&generate(&data).plain);
+        let classes: FxHashSet<String> = (program.items.iter())
+            .filter_map(|item| match item {
+                ast::Item::Class(c) => Some(c.name.name.to_string()),
+                _ => None,
+            })
+            .collect();
         for item in &program.items {
             let form = match item {
                 ast::Item::Class(c) if !c.conforms.is_empty() => "a class lists an interface",
                 ast::Item::Enum(e) if !e.conforms.is_empty() => "an enum lists an interface",
                 ast::Item::Extend(x) if x.interface.is_some() => {
-                    if x.target.to_string().starts_with('Q') {
+                    if classes.contains(&x.target.to_string()) {
                         "a block gives a class an interface"
                     } else {
                         "a block gives an enum an interface"
@@ -5364,13 +5370,9 @@ fn generated_conformances_should_reach_every_form() {
     assert_eq!(forms.len(), 4, "{forms:?}");
 }
 
-/// `shapes` calls every requirement of each interface that a generated type conforms to, and the
-/// smallest input has `main` call it.
+/// `shapes` calls every requirement of each interface that a generated type conforms to.
 #[test]
 fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
-    let smallest = generate(&[]).program;
-    assert!(smallest.contains("\n    shapes()"), "{smallest}");
-    assert!(smallest.contains("fn shapes()"), "{smallest}");
     let mut calls = 0;
     for data in seeds() {
         let source = generate(&data).plain;

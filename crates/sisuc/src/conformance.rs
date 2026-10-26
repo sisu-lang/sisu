@@ -5,6 +5,12 @@
 use crate::symbol::Symbol;
 use crate::tir::{Conformances, InterfaceId, Type, TypeArgs, TypeKind, head_of};
 
+#[cfg(test)]
+thread_local! {
+    /// How many conformances `find` and `clash` have read on this thread.
+    static CANDIDATES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The conformance of `interface` to `ty` with the interface arguments `args`, as its index
 /// among those of `interface` and the types that its block's parameters stand for. The bounds of
 /// the block are not checked. A target without parameters is found by its exact type. The scan
@@ -22,14 +28,17 @@ pub(crate) fn find(
     args: TypeArgs,
 ) -> Option<(usize, TypeArgs)> {
     let exact = conformances.exact(interface, ty);
-    if let Some(&k) = exact
-        .iter()
-        .find(|&&k| conformances.get(interface, k).args == args)
-    {
+    if let Some(&k) = exact.iter().find(|&&k| {
+        #[cfg(test)]
+        CANDIDATES_READ.set(CANDIDATES_READ.get() + 1);
+        conformances.get(interface, k).args == args
+    }) {
         return Some((k, TypeArgs::NONE));
     }
     let head = head_of(ty)?;
     conformances.generic(interface, head).iter().find_map(|&k| {
+        #[cfg(test)]
+        CANDIDATES_READ.set(CANDIDATES_READ.get() + 1);
         let c = conformances.get(interface, k);
         let bound = bind(c.target, c.type_params, ty)?;
         (c.args.subst(bound.get()) == args).then_some((k, bound))
@@ -59,6 +68,8 @@ pub(crate) fn clash(
     };
     let generic = head_of(target).map_or(&[][..], |head| conformances.generic(interface, head));
     exact.iter().chain(generic).find_map(|&k| {
+        #[cfg(test)]
+        CANDIDATES_READ.set(CANDIDATES_READ.get() + 1);
         let c = conformances.get(interface, k);
         let mut theirs = vec![c.target];
         theirs.extend_from_slice(c.args.get());
@@ -448,6 +459,40 @@ mod tests {
         assert!(super::find(&all, InterfaceId(1), circle, TypeArgs::NONE).is_none());
         // A type that is no class or enum has no head.
         assert_eq!(find(Type::I64, &[]), None);
+    }
+
+    /// Among conformances of many unrelated targets, a lookup reads the one exact target and the
+    /// targets with parameters of its own class or enum: the candidates the index names.
+    #[test]
+    fn lookups_should_read_only_the_candidates_of_the_index() {
+        let (circle, t) = (class(CIRCLE, &[]), param(0));
+        let own = [t];
+        let mut rows = Vec::new();
+        for k in 0..64 {
+            rows.push((class(10 + k, &[]), 0, &[][..]));
+            rows.push((tree(10 + k, &[t]), 1, &[][..]));
+        }
+        // After the others, so that a scan of the whole list reads them all.
+        rows.push((circle, 0, &[][..]));
+        rows.push((boxed(t), 1, &own[..]));
+        let all = conformances(&rows);
+        let reads = |lookup: &dyn Fn()| {
+            CANDIDATES_READ.set(0);
+            lookup();
+            CANDIDATES_READ.get()
+        };
+        let find = |ty, args: &[Type]| {
+            let found = find(&all, InterfaceId(0), ty, TypeArgs::intern(args));
+            assert!(found.is_some(), "{ty:?} should have a conformance");
+        };
+        let clash = |target, params, args: &[Type]| {
+            let found = clash(&all, InterfaceId(0), target, params, TypeArgs::intern(args));
+            assert!(found.is_some(), "{target:?} should clash");
+        };
+        assert_eq!(reads(&|| find(circle, &[])), 1);
+        assert_eq!(reads(&|| find(boxed(Type::I64), &[Type::I64])), 1);
+        assert_eq!(reads(&|| clash(circle, 0, &[])), 1);
+        assert_eq!(reads(&|| clash(boxed(param(0)), 1, &[Type::I64])), 1);
     }
 
     /// The targets with parameters of an enum are read as those of a class, and a target that

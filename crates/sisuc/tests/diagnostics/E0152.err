@@ -4,8 +4,7 @@ error[E0152]: `Circle` does not meet `Shape`
 5 | class Circle: Shape {
   |               ^^^^^
   |
-  = help: add these members:
-          fn area(self) -> f64
+  = help: fn area(self) -> f64
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0152

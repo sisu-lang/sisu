@@ -1,0 +1,8 @@
+error[E0156]: `make` on `C` could come from `One` or `Many`
+  --> E0156-generic.sisu:24:22
+   |
+24 |     let n: i64 = C().make(1)
+   |                      ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0156

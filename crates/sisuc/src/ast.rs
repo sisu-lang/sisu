@@ -91,6 +91,8 @@ pub(crate) struct Interface {
 pub(crate) struct Extend {
     /// `<T, U>` after `extend`; empty when there are none.
     pub(crate) type_params: Vec<TypeParam>,
+    /// `<` through `>` of `type_params`; empty, after `extend`, when there are none.
+    pub(crate) angles: Span,
     /// The type the block extends, as written; the checker says whether it can be.
     pub(crate) target: TypeExpr,
     /// The type after the `:`, as written.

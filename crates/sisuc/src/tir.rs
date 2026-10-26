@@ -1163,7 +1163,9 @@ impl Printer<'_> {
             ExprKind::None => f.write_str("None"),
             ExprKind::Local(id) => self.local(f, *id),
             ExprKind::Call { func, types, args } => {
-                let name = &self.program.functions[func.0].name;
+                let callee = &self.program.functions[func.0];
+                let name =
+                    (self.program.conformance_name(callee)).unwrap_or_else(|| callee.name.clone());
                 let types = self.program.args_name(types.get());
                 self.list(f, format_args!("call {name}{types}"), args)
             }
@@ -1488,6 +1490,21 @@ impl Program {
         name
     }
 
+    /// The name of `function`, a method of a conformance block, as `--emit tir` prints it: its
+    /// interface stands between the type and the method, so two conformances may each hold a
+    /// `name`. `None` for every other function; `Function::name` keeps the text without the
+    /// interface.
+    fn conformance_name(&self, function: &Function) -> Option<String> {
+        let (_, method) = function.name.split_once('.')?;
+        let (ty, (interface, args)) = (function.owner?, function.conformance?);
+        Some(format!(
+            "{}.{}{}.{method}",
+            self.type_name(ty),
+            self.interfaces[interface.0].name,
+            self.args_name(args.get()),
+        ))
+    }
+
     fn head(&self, head: Head) -> &str {
         match head {
             Head::Class(id) => &self.classes[id.0].name,
@@ -1544,25 +1561,12 @@ impl fmt::Display for Program {
                 function,
             };
             let (owner, own) = function.type_params.split_at(function.owner_params);
-            match (
-                function.name.split_once('.'),
-                function.owner,
-                function.conformance,
-            ) {
-                // A method of a conformance block: its interface stands between the type and
-                // the method, so two conformances may each hold a `name`.
-                (Some((_, method)), Some(ty), Some((interface, args))) => write!(
-                    f,
-                    "(fn {}.{}{}.{method}{} (",
-                    self.type_name(ty),
-                    self.interfaces[interface.0].name,
-                    self.args_name(args.get()),
-                    angled(own)
-                )?,
-                (Some((class, method)), ..) => {
-                    write!(f, "(fn {class}{}.{method}{} (", angled(owner), angled(own))?;
-                }
-                (None, ..) => write!(f, "(fn {}{} (", function.name, angled(own))?,
+            if let Some(name) = self.conformance_name(function) {
+                write!(f, "(fn {name}{} (", angled(own))?;
+            } else if let Some((class, method)) = function.name.split_once('.') {
+                write!(f, "(fn {class}{}.{method}{} (", angled(owner), angled(own))?;
+            } else {
+                write!(f, "(fn {}{} (", function.name, angled(own))?;
             }
             for (j, param) in function.params.iter().enumerate() {
                 if j > 0 {
@@ -1985,6 +1989,80 @@ mod tests {
         assert_eq!(
             program.to_string(),
             "(fn f ((o#0 i64?)) i64 (block (match o#0 (arm (Some _) (block 1)) (arm None (block 0)))))"
+        );
+        // Whichever single write fails, the print gives that error and does not go on.
+        let mut counter = FailsAt {
+            at: usize::MAX,
+            writes: 0,
+        };
+        write!(counter, "{program}").expect("a writer that never fails takes the print");
+        for at in 0..counter.writes {
+            let mut writer = FailsAt { at, writes: 0 };
+            assert!(write!(writer, "{program}").is_err(), "write {at}");
+        }
+    }
+
+    /// A method of a conformance block prints its interface between its type and its name, in its
+    /// definition and in a call; a write that fails in either gives that error.
+    #[test]
+    fn print_should_name_a_conformance_method_with_its_interface() {
+        use fmt::Write as _;
+
+        let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let method = Function {
+            name: "C.name".into(),
+            owner: Some(class),
+            conformance: Some((InterfaceId(0), TypeArgs::NONE)),
+            type_params: Vec::new(),
+            owner_params: 0,
+            params: vec![LocalId(0)],
+            ret: Type::I64,
+            locals: vec![param("self", class)],
+            body: Block {
+                stmts: vec![],
+                value: Some(Box::new(int(1))),
+                ty: Type::I64,
+            },
+        };
+        let caller = Function {
+            name: "f".into(),
+            owner: None,
+            conformance: None,
+            type_params: Vec::new(),
+            owner_params: 0,
+            params: vec![LocalId(0)],
+            ret: Type::I64,
+            locals: vec![param("c", class)],
+            body: Block {
+                stmts: vec![],
+                value: Some(Box::new(expr(
+                    ExprKind::Call {
+                        func: FuncId(1),
+                        types: TypeArgs::NONE,
+                        args: vec![expr(ExprKind::Local(LocalId(0)), class)],
+                    },
+                    Type::I64,
+                ))),
+                ty: Type::I64,
+            },
+        };
+        let program = Program {
+            classes: vec![Class {
+                name: "C".into(),
+                type_params: Vec::new(),
+                fields: Vec::new(),
+            }],
+            interfaces: vec![Interface {
+                name: "Label".into(),
+            }],
+            functions: vec![caller, method],
+            ..Program::default()
+        };
+        assert_eq!(
+            program.to_string(),
+            "(class C)\n\
+             (fn f ((c#0 C)) i64 (block (call C.Label.name c#0)))\n\
+             (fn C.Label.name ((self#0 C)) i64 (block 1))"
         );
         // Whichever single write fails, the print gives that error and does not go on.
         let mut counter = FailsAt {

@@ -312,6 +312,13 @@ thread_local! {
     /// How many inherited interfaces the check for a requirement that an interface declares
     /// again has visited on this thread.
     pub(super) static INHERIT_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many candidate results a call that picks among conformance blocks has read.
+    pub(super) static PICK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many interfaces the closures of a type's conformances have put in a visited set, read
+    /// as an inherited one, or traced back to the interface that inherits them.
+    pub(super) static CLOSURE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many fields of a class the check for a method named like a field has indexed.
+    pub(super) static FIELDS_INDEXED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -343,6 +350,9 @@ struct Checker<'src> {
     broken_extensions: FxHashSet<Symbol>,
     /// The methods that a block of an intact target lost to a syntax error.
     broken_extension_methods: FxHashSet<(Holder, Symbol)>,
+    /// The methods of the conformance blocks that cover the receiver of the call being found, with
+    /// the block's interface: a buffer that `find_method` fills and clears per call.
+    candidates: Vec<(tir::FuncId, tir::InterfaceId)>,
     /// Every conformance of a class or an enum to an interface.
     conformances: tir::Conformances,
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
@@ -744,6 +754,7 @@ impl<'src> Checker<'src> {
             extension_methods: FxHashMap::default(),
             broken_extensions: FxHashSet::default(),
             broken_extension_methods: FxHashSet::default(),
+            candidates: Vec::new(),
             conformances: tir::Conformances::default(),
             lowered_enums: Vec::new(),
             written: None,

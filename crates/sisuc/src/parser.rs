@@ -1733,7 +1733,13 @@ impl<'a> Parser<'a> {
         methods: &mut Vec<Range<usize>>,
     ) -> Result<Extend, Diagnostic> {
         let keyword = self.bump().span;
+        let open = self.peek().span;
         let type_params = self.type_params()?;
+        let angles = if type_params.is_empty() {
+            keyword.end_point()
+        } else {
+            open.to(self.last_span())
+        };
         self.depth = 0;
         let target = self.parse_type()?;
         let interface = match self.eat(&TokenKind::Colon) {
@@ -1758,6 +1764,7 @@ impl<'a> Parser<'a> {
         let close = self.bump().span;
         Ok(Extend {
             type_params,
+            angles,
             target,
             interface,
             assoc,

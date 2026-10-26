@@ -668,6 +668,13 @@ fn conformance_methods_should_lower_with_their_interface_in_the_symbol() {
             "(call Circle.name c#",
         ],
     );
+    // A call of a block's method writes the interface as its definition does.
+    contains(
+        &with_shapes(
+            "class Circle {\n    r: f64\n}\nextend Circle: Label {\n    fn name(self) -> string { \"label\" }\n}\nfn main() {\n    let s = Circle(r: 1.0).name()\n}",
+        ),
+        &["(fn Circle.Label.name (", "(call Circle.Label.name "],
+    );
 }
 
 /// The interface of the method that the first `let` of `main` that calls one initializes from,
@@ -846,7 +853,8 @@ fn a_conformance_without_an_inherited_conformance_should_be_reported() {
             "class Square {\n    side: f64\n}\nextend Square: Named {\n    fn name(self) -> string { \"s\" }\n}\nextend Square: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {}",
             vec![],
         ),
-        // An inherited interface that takes arguments has no block to write.
+        // An inherited interface that takes arguments has no help until Task 6: a block cannot
+        // write a generic interface yet.
         (
             "interface Convert<T> {\n    fn convert(self) -> T\n}\ninterface Wide: Convert<i64> {\n    fn wide(self) -> f64\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Wide {\n    fn wide(self) -> f64 { 1.0 }\n}\nfn main() {}",
             vec![(Code::NotConform, (10, 16))],
@@ -1174,4 +1182,301 @@ fn a_call_of_a_method_lost_to_a_syntax_error_should_withhold_the_program() {
         let (program, ds) = check(&parsed.program, &empty, src, &parsed.diagnostics);
         assert!(program.is_none() && ds.is_empty(), "{src}: {ds:?}");
     }
+}
+
+/// Two blocks whose `make` has a type parameter of its own, one returning it and one an array of
+/// it, and a `main` that calls it on line 16.
+fn make_blocks(statement: &str) -> String {
+    format!(
+        "interface One {{\n    fn make<U>(self, x: U) -> U\n}}\ninterface Many {{\n    fn make<V>(self, x: V) -> [V]\n}}\nclass C {{}}\nextend C: One {{\n    fn make<U>(self, x: U) -> U {{ x }}\n}}\nextend C: Many {{\n    fn make<V>(self, x: V) -> [V] {{ [x] }}\n}}\nfn main() {{\n    let c = C()\n    {statement}\n}}"
+    )
+}
+
+/// The result of a candidate is compared after the call's type arguments replace the method's own
+/// type parameters; a result that still holds a parameter cannot be told from the others.
+#[test]
+fn written_type_arguments_should_pick_the_conformance_block_by_its_result() {
+    for (statement, expected) in [
+        ("let n: i64 = c.make<i64>(1)", "One"),
+        ("let a: [i64] = c.make<i64>(1)", "Many"),
+        // The payload of an expected optional, when no result is the optional.
+        ("let n: i64? = c.make<i64>(1)", "One"),
+    ] {
+        assert_eq!(
+            called_interface(&make_blocks(statement)).as_deref(),
+            Some(expected),
+            "{statement}"
+        );
+    }
+    for (statement, expected) in [
+        // No type argument is written: the parameters are not bound, and the results are not known.
+        ("let n: i64 = c.make(1)", vec![(Code::Ambiguous, (16, 20))]),
+        // The results are known and the expected type is neither.
+        (
+            "let b: bool = c.make<i64>(1)",
+            vec![(Code::Ambiguous, (16, 21))],
+        ),
+        // Written arguments of a wrong number leave the results unknown.
+        (
+            "let n: i64 = c.make<i64, i64>(1)",
+            vec![(Code::Ambiguous, (16, 20))],
+        ),
+    ] {
+        codes(&make_blocks(statement), &expected);
+    }
+}
+
+/// A call with several candidates waits for its context in a generic call, as a call whose
+/// arguments cannot bind its parameters does; the expected type of the outer call picks one.
+#[test]
+fn a_call_with_several_candidates_should_wait_for_the_context_of_the_outer_call() {
+    let program = |statement: &str| {
+        with_shapes(&format!(
+            "class C {{}}\nextend C: Label {{\n    fn name(self) -> string {{ \"a\" }}\n}}\nextend C: Code {{\n    fn name(self) -> i64 {{ 7 }}\n}}\nfn id<T>(x: T) -> T {{ x }}\nfn main() {{\n    let c = C()\n    {statement}\n}}"
+        ))
+    };
+    for (statement, part) in [
+        ("let s: string = id(c.name())", "(call C.Label.name"),
+        ("let k: i64 = id(c.name())", "(call C.Code.name"),
+        ("let s: string = id(id(c.name()))", "(call C.Label.name"),
+    ] {
+        contains(&program(statement), &[part]);
+    }
+    for (statement, expected) in [
+        // The outer call fixes `T`, and neither candidate returns it.
+        (
+            "let b: bool = id(c.name())",
+            vec![(Code::Ambiguous, (11, 24))],
+        ),
+        // Nothing fixes `T`: the outer call is reported, and the inner one is not.
+        ("let x = id(c.name())", vec![(Code::CannotInfer, (11, 13))]),
+    ] {
+        codes(&program(statement), &expected);
+    }
+}
+
+/// An expected type that failed is reported already, and the call it reaches is poisoned with it.
+#[test]
+fn an_ambiguous_call_should_not_be_reported_when_its_context_failed() {
+    let blocks = "class C {}\nextend C: Label {\n    fn name(self) -> string { \"a\" }\n}\nextend C: Code {\n    fn name(self) -> i64 { 7 }\n}\n";
+    for (tail, expected) in [
+        (
+            "fn main() {\n    let c = C()\n    let x: Missing = c.name()\n}",
+            vec![(Code::UnknownType, (10, 12))],
+        ),
+        (
+            "fn take(a: Missing) {}\nfn main() {\n    let c = C()\n    take(c.name())\n}",
+            vec![(Code::UnknownType, (8, 12))],
+        ),
+    ] {
+        codes(&with_shapes(&format!("{blocks}{tail}")), &expected);
+    }
+}
+
+/// A candidate whose result type failed to resolve has reported it, and the call is poisoned with
+/// it.
+#[test]
+fn an_ambiguous_call_should_not_be_reported_when_a_candidate_failed() {
+    codes(
+        &with_shapes(
+            "class C {}\nextend C: Label {\n    fn name(self) -> Missing { \"a\" }\n}\nextend C: Code {\n    fn name(self) -> i64 { 7 }\n}\nfn main() {\n    let c = C()\n    let n = c.name()\n}",
+        ),
+        &[(Code::UnknownType, (3, 22))],
+    );
+}
+
+/// Type arguments on a method that takes none of its own are reported for every kind of method:
+/// a body's, a plain block's and a conformance block's.
+#[test]
+fn type_arguments_on_a_method_of_a_block_should_be_reported() {
+    let program = |statement: &str| {
+        with_shapes(&format!(
+            "class C {{\n    x: i64\n    fn body(self) {{}}\n}}\nextend C {{\n    fn grow(self) {{}}\n}}\nextend C: Label {{\n    fn name(self) -> string {{ \"a\" }}\n}}\nfn main() {{\n    let c = C(x: 1)\n    {statement}\n}}"
+        ))
+    };
+    for (statement, col) in [
+        ("c.body<i64>()", 11),
+        ("c.grow<i64>()", 11),
+        ("let _ = c.name<i64>()", 19),
+    ] {
+        codes(&program(statement), &[(Code::TypeArguments, (13, col))]);
+    }
+    // A method with type parameters of its own takes them.
+    clean(&make_blocks("let n: i64 = c.make<i64>(1)"));
+}
+
+/// A parameter of an `extend` block that its target does not name is reported at the parameter,
+/// and the block's methods give the target nothing.
+#[test]
+fn an_extend_parameter_that_its_target_does_not_name_should_be_reported() {
+    let class = "class C {\n    x: i64\n}\n";
+    for (row, expected) in [
+        ("extend<T> C {\n}", vec![(Code::CannotExtend, (4, 8))]),
+        // The methods of the block are not checked, and a call of one is not reported.
+        (
+            "extend<T> C {\n    fn keep(self, x: T) -> T { x }\n}\nfn main() {\n    C(x: 1).keep(1)\n}",
+            vec![(Code::CannotExtend, (4, 8))],
+        ),
+        // Each parameter is reported; the target and the interface are found all the same.
+        (
+            "extend<T, U> C: Named {\n    fn name(self) -> string { \"c\" }\n}",
+            vec![(Code::CannotExtend, (4, 8)), (Code::CannotExtend, (4, 11))],
+        ),
+        // A target with arguments waits for Task 5, and reports that alone.
+        (
+            "class Pile<V> {\n    items: [V]\n}\nextend<T> Pile<i64> {\n}",
+            vec![(Code::UnknownType, (7, 11))],
+        ),
+    ] {
+        codes(
+            &with_shapes(&with_main(&format!("{class}{row}"))),
+            &expected,
+        );
+    }
+}
+
+/// The fix of a parameter that its target does not name takes the list out when it holds that
+/// parameter alone, and the block names it nowhere else.
+#[test]
+fn the_fix_of_an_unused_extend_parameter_should_take_out_the_list_when_it_is_certain() {
+    let program = |block: &str| with_main(&format!("class C {{\n    x: i64\n}}\n{block}"));
+    let src = program("extend<T> C {\n}");
+    let d = diagnostic(&src, Code::CannotExtend, (4, 8, "T"), &[]);
+    assert_eq!(
+        fixes(&src, &d),
+        [(true, vec![(4, 7, "<T>", String::new())])]
+    );
+    fix_removes_its_code(&src, &d);
+    // Another use of the name, a second parameter and a comment each leave the list in place.
+    for block in [
+        "extend<T> C {\n    fn keep(self, x: T) -> T { x }\n}",
+        "extend<T, U> C {\n}",
+        "extend<T // why\n> C {\n}",
+    ] {
+        let src = program(block);
+        let (_, ds) = checked(&src);
+        assert!(ds.iter().all(|d| d.fixes().is_empty()), "{block}: {ds:?}");
+    }
+}
+
+/// An interface inherited with arguments waits for Task 6 as a listed one does, at the listed
+/// interface, once.
+#[test]
+fn an_inherited_generic_interface_should_report_the_stopgap_at_the_listed_interface() {
+    for (row, expected) in [
+        (
+            "interface G<T> {}\ninterface I: G<i64> {}\nclass C: I {}",
+            vec![(Code::UnknownType, (3, 10))],
+        ),
+        // Two entries of one interface, one report.
+        (
+            "interface G<T> {}\ninterface I: G<i64>, G<f64> {}\nclass C: I {}",
+            vec![(Code::UnknownType, (3, 10))],
+        ),
+        // Two listed interfaces that inherit it: the first listed one has it, in the one walk.
+        (
+            "interface G<T> {}\ninterface I: G<i64> {}\ninterface J: G<i64> {}\nclass C: I, J {}",
+            vec![(Code::UnknownType, (4, 10))],
+        ),
+        // Another argument is another entry, reached through another listed interface.
+        (
+            "interface G<T> {}\ninterface I: G<i64> {}\ninterface J: G<f64> {}\nclass C: I, J {}",
+            vec![(Code::UnknownType, (4, 10)), (Code::UnknownType, (4, 13))],
+        ),
+        // The block path reports the missing conformance, as it does.
+        (
+            "interface G<T> {}\ninterface I: G<i64> {}\nclass C {}\nextend C: I {}",
+            vec![(Code::NotConform, (4, 11))],
+        ),
+    ] {
+        codes(&with_main(row), &expected);
+    }
+}
+
+/// An extension's method is checked against the fields of its class through one index, built once
+/// for the class: the work follows the fields and not the product with the methods.
+#[test]
+fn extension_methods_should_read_the_fields_of_their_class_once() {
+    let indexed = |n: usize| {
+        let fields: Vec<String> = (0..n).map(|i| format!("    f{i}: i64\n")).collect();
+        let methods: Vec<String> = (0..n)
+            .map(|i| format!("    fn m{i}(self) {{}}\n"))
+            .collect();
+        let (fields, methods) = (fields.concat(), methods.concat());
+        let src = format!("class C {{\n{fields}}}\nextend C {{\n{methods}}}\nfn main() {{}}");
+        FIELDS_INDEXED.set(0);
+        clean(&src);
+        FIELDS_INDEXED.get()
+    };
+    assert_eq!(indexed(32), 32);
+    assert_eq!(indexed(64), 64);
+}
+
+/// The interfaces that one declaration lists share one visited set: each listed interface costs a
+/// step, and the steps do not grow with the interfaces listed before it.
+#[test]
+fn a_declaration_should_close_its_listed_interfaces_in_one_walk() {
+    let steps = |n: usize| {
+        let interfaces: Vec<String> = (0..n).map(|i| format!("interface I{i} {{}}\n")).collect();
+        let listed: Vec<String> = (0..n).map(|i| format!("I{i}")).collect();
+        let src = format!(
+            "{}class C: {} {{}}\nfn main() {{}}",
+            interfaces.concat(),
+            listed.join(", ")
+        );
+        CLOSURE_STEPS.set(0);
+        clean(&src);
+        CLOSURE_STEPS.get()
+    };
+    assert_eq!(steps(32), 32);
+    assert_eq!(steps(64), 64);
+}
+
+/// A block that lacks every interface its own inherits reports each one by the place the closure
+/// recorded for it, so no report reads an inheritance list again.
+#[test]
+fn each_missing_inherited_interface_should_be_traced_back_without_a_search() {
+    let steps = |n: usize| {
+        let interfaces: Vec<String> = (0..n).map(|i| format!("interface I{i} {{}}\n")).collect();
+        let listed: Vec<String> = (0..n).map(|i| format!("I{i}")).collect();
+        let src = format!(
+            "{}interface Root: {} {{}}\nclass X {{}}\nextend X: Root {{}}\nfn main() {{}}",
+            interfaces.concat(),
+            listed.join(", ")
+        );
+        CLOSURE_STEPS.set(0);
+        let ds = diags(&src);
+        assert_eq!(ds.len(), n, "{ds:?}");
+        CLOSURE_STEPS.get()
+    };
+    // The root, then one read of the inheritance of `Root` for each of the others.
+    assert_eq!(steps(32), 1 + 32);
+    assert_eq!(steps(64), 1 + 64);
+}
+
+/// A call that more than one block answers reads the results of its candidates a fixed number of
+/// times: once to count them and once to find the first that one candidate has, however many
+/// results are alike.
+#[test]
+fn an_ambiguous_call_should_read_each_candidate_a_fixed_number_of_times() {
+    let steps = |n: usize| {
+        // All but the last return a `string`, so a search for the one result that only one
+        // candidate has would pass the others `n` times.
+        let blocks: Vec<String> = (0..n)
+            .map(|i| {
+                let (ret, value) = if i + 1 == n { ("i64", "1") } else { ("string", "\"\"") };
+                format!(
+                    "interface L{i} {{\n    fn name(self) -> {ret}\n}}\nextend C: L{i} {{\n    fn name(self) -> {ret} {{ {value} }}\n}}\n"
+                )
+            }).collect();
+        let src = format!(
+            "class C {{}}\n{}fn main() {{\n    let n = C().name()\n}}",
+            blocks.concat()
+        );
+        PICK_STEPS.set(0);
+        codes(&src, &[(Code::Ambiguous, (6 * n + 3, 17))]);
+        PICK_STEPS.get()
+    };
+    assert_eq!(steps(32), 2 * 32);
+    assert_eq!(steps(64), 2 * 64);
 }

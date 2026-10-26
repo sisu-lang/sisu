@@ -409,15 +409,51 @@ impl Checker<'_> {
     /// interface that inherits one twice, once with a parameter and once with a type, has the
     /// two as two entries. The check for E0034 does not read the closure, as it needs no
     /// arguments.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Task 4's bound checks call it; the conformance checks use `extend_closure`"
+        )
+    )]
     pub(super) fn interfaces_of(
         &self,
         receiver: Type,
         bounds: &[Bound],
         out: &mut Vec<(InterfaceId, TypeArgs)>,
     ) {
-        let mut at = out.len();
         let mut seen: FxHashSet<(InterfaceId, TypeArgs)> = out.iter().copied().collect();
+        #[cfg(test)]
+        super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + seen.len());
+        self.extend_closure(receiver, bounds, out, &mut seen, |_, _| {});
+    }
+
+    /// The interfaces that `interface` inherits, each with where it writes the inheritance. The
+    /// closures read an inheritance list through here, so that a test counts the steps.
+    fn inheritances(&self, interface: InterfaceId) -> impl Iterator<Item = (&Bound, Span)> {
+        let info = &self.interfaces[interface.0];
+        (info.inherits.iter().zip(info.inherits_at.iter().copied())).inspect(|_| {
+            #[cfg(test)]
+            super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + 1);
+        })
+    }
+
+    /// `interfaces_of`, where `seen` holds the entries of `out` already, so that a caller who adds
+    /// the closures of several bounds one after the other builds the set once. For each interface
+    /// that it adds because another inherits it, `reached` gets the place of that other in `out`
+    /// and where it writes the inheritance. The bounds themselves are not reported to it.
+    pub(super) fn extend_closure(
+        &self,
+        receiver: Type,
+        bounds: &[Bound],
+        out: &mut Vec<(InterfaceId, TypeArgs)>,
+        seen: &mut FxHashSet<(InterfaceId, TypeArgs)>,
+        mut reached: impl FnMut(usize, Span),
+    ) {
+        let mut at = out.len();
         for bound in bounds {
+            #[cfg(test)]
+            super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + 1);
             if seen.insert((bound.interface, bound.args)) {
                 out.push((bound.interface, bound.args));
             }
@@ -425,14 +461,16 @@ impl Checker<'_> {
         // The arguments of the interface being read, led by `Self`.
         let mut with = Vec::new();
         while let Some(&(interface, args)) = out.get(at) {
+            let parent = at;
             at += 1;
             with.clear();
             with.push(receiver);
             with.extend_from_slice(args.get());
-            for inherited in &self.interfaces[interface.0].inherits {
+            for (inherited, written) in self.inheritances(interface) {
                 let args = inherited.args.subst(&with);
                 if seen.insert((inherited.interface, args)) {
                     out.push((inherited.interface, args));
+                    reached(parent, written);
                 }
             }
         }

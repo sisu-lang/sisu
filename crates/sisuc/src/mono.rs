@@ -374,6 +374,12 @@ impl Mono {
             local.ty = self.ty(local.ty, args);
         }
         f.ret = self.ty(f.ret, args);
+        // The output's ids replace the checker's in the types a method names as its own.
+        f.owner = f.owner.map(|ty| self.ty(ty, args));
+        f.conformance = f.conformance.map(|(interface, types)| {
+            let types: Vec<Type> = (types.get().iter()).map(|&ty| self.ty(ty, args)).collect();
+            (interface, TypeArgs::intern(&types))
+        });
         self.block(&mut f.body, args);
     }
 
@@ -1028,5 +1034,17 @@ mod tests {
         let program = instantiate(program);
         assert_eq!(program.to_string(), text);
         assert_eq!(program.functions.len(), count);
+    }
+
+    /// The unused generic class comes before `C`, so `C` has another id in the output than in the
+    /// checked program, and the printed owner of its conformance method reads the output's.
+    #[test]
+    fn a_conformance_method_should_name_its_owner_by_the_output_id() {
+        let src = "interface Label {\n    fn name(self) -> string\n}\nclass G<T> {\n    value: T\n}\nclass C {}\nextend C: Label {\n    fn name(self) -> string { \"c\" }\n}\nfn main() {\n    print(C().name())\n}";
+        let program = instantiated(src);
+        assert!(
+            program.to_string().contains("(fn C.Label.name ("),
+            "{program}"
+        );
     }
 }
