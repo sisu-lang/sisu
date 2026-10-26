@@ -23,8 +23,8 @@ const MAX_TYPES: usize = 3;
 /// The most methods of a class.
 const MAX_METHODS: usize = 2;
 /// The most interfaces a program declares, and the most requirements of one.
-const MAX_INTERFACES: usize = 3;
-const MAX_REQUIREMENTS: usize = 2;
+pub(crate) const MAX_INTERFACES: usize = 3;
+pub(crate) const MAX_REQUIREMENTS: usize = 2;
 /// The most variants of an enum.
 const MAX_VARIANTS: usize = 4;
 /// The room a field of a size has beyond its floor.

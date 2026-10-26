@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::item::{MAX_KNOWN, MOST};
+use super::item::{MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
@@ -2416,6 +2416,20 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
     ] {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
     }
+    // `Self` inside another type in a requirement is `Self` too.
+    for src in [
+        "interface I {\n    fn f(self, b: Box<Self>)\n}\n",
+        "interface I {\n    fn f(self, x: Self.Item)\n}\n",
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert!(
+            walk.seen
+                .contains("reach: an interface requirement names `Self`"),
+            "the walk should find `Self` in {src}"
+        );
+    }
     // A bound is a type of its own: the only `?` in each source is on a bound, so the key shows
     // that the walk read it there.
     for src in [
@@ -2436,6 +2450,31 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
             "the walk should read the bound in {src}"
         );
     }
+}
+
+/// A program may declare as many interfaces as `MAX_INTERFACES` and give one as many requirements
+/// as `MAX_REQUIREMENTS`.
+#[test]
+fn generated_interfaces_should_reach_their_maxima() {
+    let (mut most, mut requirements) = (0, 0);
+    for data in seeds() {
+        let (program, _) = checked(&generate(&data).plain);
+        let interfaces: Vec<&ast::Interface> = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::Interface(interface) => Some(interface),
+                _ => None,
+            })
+            .collect();
+        most = most.max(interfaces.len());
+        requirements = interfaces
+            .iter()
+            .map(|interface| interface.methods.len())
+            .fold(requirements, usize::max);
+    }
+    assert_eq!(most, MAX_INTERFACES);
+    assert_eq!(requirements, MAX_REQUIREMENTS);
 }
 
 #[test]
