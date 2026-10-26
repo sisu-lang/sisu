@@ -643,6 +643,8 @@ fn conformances_should_check_clean() {
         "interface Both {\n    fn both<U: Named & Same>(self, x: U)\n}\nclass Crate: Both {\n    fn both<V: Same & Named>(self, x: V) {}\n}\nfn main() {\n    Crate().both(1)\n}",
         // A body method beside a block's method of the same name: the call takes the body's.
         "class Circle {\n    r: f64\n    fn name(self) -> string { \"body\" }\n}\nextend Circle: Label {\n    fn name(self) -> string { \"label\" }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let s = c.name()\n    print(s)\n    print(c.r)\n}",
+        // The same, with the method in a block of a conformance.
+        "interface Maker {\n    fn make<U>(self) -> [U]\n}\nclass C {\n    x: i64\n}\nextend C: Maker {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { x }\nfn main() {\n    let c = C(x: 1)\n    print(take(c.make(), [1]).len())\n}",
         // An argument of a generic call waits for the other, with the method in a block.
         "class C {\n    x: i64\n}\nextend C {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { x }\nfn main() {\n    let c = C(x: 1)\n    print(take(c.make(), [1]).len())\n}",
     ] {
@@ -844,6 +846,11 @@ fn a_conformance_without_an_inherited_conformance_should_be_reported() {
             "class Square {\n    side: f64\n}\nextend Square: Named {\n    fn name(self) -> string { \"s\" }\n}\nextend Square: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {}",
             vec![],
         ),
+        // An inherited interface that takes arguments has no block to write.
+        (
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\ninterface Wide: Convert<i64> {\n    fn wide(self) -> f64\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Wide {\n    fn wide(self) -> f64 { 1.0 }\n}\nfn main() {}",
+            vec![(Code::NotConform, (10, 16))],
+        ),
         // An enum is a type like a class.
         (
             "enum Dir {\n    North\n}\nextend Dir: Solid {\n    fn volume(self) -> f64 { 1.0 }\n}\nfn main() {}",
@@ -870,6 +877,11 @@ fn a_call_that_two_conformances_answer_should_be_ambiguous() {
         (
             blocks(code, "let n = c.name()"),
             vec![(Code::Ambiguous, (12, 15))],
+        ),
+        // A call that no `let` initializes.
+        (
+            blocks(code, "print(c.name())"),
+            vec![(Code::Ambiguous, (12, 13))],
         ),
         // The same result type in both: no annotation tells them apart.
         (
@@ -962,6 +974,30 @@ fn an_extend_target_that_is_no_class_or_enum_should_be_reported() {
             "class Circle {\n    r: f64\n}\nextend Circle: Circle {\n}",
             vec![(Code::NotAnInterface, (4, 16))],
         ),
+        // An interface with arguments is an interface all the same.
+        (
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nextend Convert<i64> {\n}",
+            vec![(Code::InterfaceAsType, (4, 8))],
+        ),
+        // An associated type waits for a later task.
+        (
+            "interface Plain {}\nclass Circle {\n    r: f64\n}\nextend Circle: Plain {\n    type Item = i64\n}",
+            vec![(Code::UnknownType, (6, 10))],
+        ),
+        // The methods of a block that failed for its interface, its generic target or its
+        // generic interface are not checked.
+        (
+            "class Circle {\n    r: f64\n}\nextend Circle: Missing {\n    fn grow(self) {\n        let b: bool = 1\n    }\n}",
+            vec![(Code::UnknownType, (4, 16))],
+        ),
+        (
+            "class Pile<T> {\n    items: [T]\n}\nextend<T> Pile<T> {\n    fn f(self) {\n        let b: bool = 1\n    }\n}",
+            vec![(Code::UnknownType, (4, 11))],
+        ),
+        (
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Convert<i64> {\n    fn convert(self) -> i64 {\n        let b: bool = 1\n        1\n    }\n}",
+            vec![(Code::UnknownType, (7, 16))],
+        ),
     ] {
         codes(&with_shapes(&with_main(row)), &expected);
     }
@@ -987,6 +1023,10 @@ fn a_method_defined_in_the_body_and_in_a_block_should_be_reported_twice() {
         ),
         (
             "class Circle {\n    r: f64\n}\nextend Circle {\n    fn grow(self) -> f64 { 1.0 }\n    fn grow(self) -> f64 { 2.0 }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (6, 8))],
+        ),
+        (
+            "enum Dir {\n    North\n    fn grow(self) -> f64 { 1.0 }\n}\nextend Dir {\n    fn grow(self) -> f64 { 2.0 }\n}\nfn main() {}",
             vec![(Code::DefinedTwice, (6, 8))],
         ),
         // A field, and a variant, with the name of a method of a block.

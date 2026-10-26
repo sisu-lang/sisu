@@ -822,6 +822,15 @@ fn conformance_method_should_not_warn_when_its_type_is_built() {
     }
 }
 
+/// A conformance method that live code calls before its class is built is live already.
+#[test]
+fn conformance_method_should_not_warn_when_a_root_calls_it_before_its_class_is_built() {
+    judge_unused();
+    clean(&format!(
+        "{SHAPE}fn main() {{\n    print(Circle(r: 1.0).r)\n}}\nfn _show(c: Circle) -> f64 {{\n    c.area()\n}}\nclass Circle: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ self.r }}\n}}"
+    ));
+}
+
 /// What only the method of a conformance of an unbuilt class calls is not live: the method is
 /// not, so rustc reports the helper, and the class is reported, not its method.
 #[test]

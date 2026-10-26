@@ -1080,6 +1080,32 @@ fn main() {
             codes(src),
             [(Code::Expected, (6, 13)), (Code::NoMember, (12, 7))]
         );
+        // Nothing else is reported, so the program is withheld for the lost method alone.
+        let lost = [
+            "class C {\n    x: i64\n}\nextend C {\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    C(x: 1).grow()\n}\n",
+            "enum E {\n    A\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    E.A.grow()\n}\n",
+        ];
+        for (src, at) in lost.into_iter().zip([(6, 13), (4, 13)]) {
+            assert_eq!(codes(src), [(Code::Expected, at)], "{src}");
+        }
+        // A lost method in a generic call's argument is a call of unknown shape.
+        let generic = "fn take<T>(x: T, y: T) -> T { x }\n";
+        for (src, at) in [
+            (
+                "class C {\n    x: i64\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    take(C(x: 1).grow(), 1)\n}\n",
+                (4, 13),
+            ),
+            (
+                "class C {\n    x: i64\n}\nextend C {\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    take(C(x: 1).grow(), 1)\n}\n",
+                (6, 13),
+            ),
+        ] {
+            assert_eq!(
+                codes(&format!("{src}{generic}")),
+                [(Code::Expected, at)],
+                "{src}"
+            );
+        }
         let interfaces = "interface Named {\n    fn name(self) -> string\n}\ninterface Solid: Named {\n    fn volume(self) -> f64\n}\nclass C {\n    x: i64\n}\n";
         let src = format!(
             "{interfaces}extend C: Solid {{\n    fn volume(self) -> f64 {{ 1.0 }}\n}}\nextend C: Named {{\n    fn name(self) -> string {{\n        let = 1\n    }}\n}}\nfn main() {{}}\n"

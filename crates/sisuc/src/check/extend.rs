@@ -223,10 +223,10 @@ impl<'a> Checker<'_> {
 
 /// Whether the class or enum type `ty` takes no type arguments.
 fn takes_none(ty: Type) -> bool {
-    match ty.kind() {
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.get().is_empty(),
-        _ => true,
-    }
+    !matches!(
+        ty.kind(),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) if !args.get().is_empty()
+    )
 }
 
 /// The class or enum that `ty` is.

@@ -5337,3 +5337,73 @@ fn known_answers_are_integer() {
     }
     assert!(calls > 0, "no seed calls a known function");
 }
+
+/// A class or an enum conforms to a generated interface in its declaration list or in an
+/// `extend` block, and the four forms all occur.
+#[test]
+fn generated_conformances_should_reach_every_form() {
+    let mut forms = FxHashSet::default();
+    for data in seeds() {
+        let (program, _) = checked(&generate(&data).plain);
+        for item in &program.items {
+            let form = match item {
+                ast::Item::Class(c) if !c.conforms.is_empty() => "a class lists an interface",
+                ast::Item::Enum(e) if !e.conforms.is_empty() => "an enum lists an interface",
+                ast::Item::Extend(x) if x.interface.is_some() => {
+                    if x.target.to_string().starts_with('Q') {
+                        "a block gives a class an interface"
+                    } else {
+                        "a block gives an enum an interface"
+                    }
+                }
+                _ => continue,
+            };
+            forms.insert(form);
+        }
+    }
+    assert_eq!(forms.len(), 4, "{forms:?}");
+}
+
+/// `shapes` calls every requirement of each interface that a generated type conforms to, and the
+/// smallest input has `main` call it.
+#[test]
+fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
+    let smallest = generate(&[]).program;
+    assert!(smallest.contains("\n    shapes()"), "{smallest}");
+    assert!(smallest.contains("fn shapes()"), "{smallest}");
+    let mut calls = 0;
+    for data in seeds() {
+        let source = generate(&data).plain;
+        let (program, _) = checked(&source);
+        let shapes = (program.items.iter()).find_map(|item| match item {
+            ast::Item::Function(f) if f.name.name.as_str() == "shapes" => {
+                Some(&source[f.span.range()])
+            }
+            _ => None,
+        });
+        let Some(shapes) = shapes else { continue };
+        let conformed = program.items.iter().flat_map(|item| match item {
+            ast::Item::Class(c) => c.conforms.iter().collect::<Vec<_>>(),
+            ast::Item::Enum(e) => e.conforms.iter().collect(),
+            ast::Item::Extend(x) => x.interface.iter().collect(),
+            _ => Vec::new(),
+        });
+        for interface in conformed {
+            let requirements = program.items.iter().find_map(|item| match item {
+                ast::Item::Interface(i) if i.name.name.as_str() == interface.to_string() => {
+                    Some(&i.methods)
+                }
+                _ => None,
+            });
+            for requirement in requirements.expect("a conformed interface should be declared") {
+                let call = format!(".{}(", requirement.name.name);
+                assert!(shapes.contains(&call), "{call} in {shapes}");
+                calls += 1;
+            }
+        }
+    }
+    assert!(
+        calls > 0,
+        "some seed's types should conform to an interface"
+    );
+}

@@ -83,7 +83,7 @@ pub(crate) fn bind(target: Type, params: usize, ty: Type) -> Option<TypeArgs> {
 fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
     match (pattern.kind(), ty.kind()) {
         (TypeKind::Param(_, i), _) => {
-            let slot = slots.get_mut(i as usize)?;
+            let slot = &mut slots[i as usize];
             if let Some(bound) = *slot {
                 return (bound == ty).then_some(());
             }
@@ -252,6 +252,10 @@ mod tests {
         class(BOX, &[arg])
     }
 
+    fn tree(id: usize, args: &[Type]) -> Type {
+        Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::intern(args)))
+    }
+
     /// The conformances of interface 0 that `rows` write: the target with `params` parameters,
     /// and the interface's arguments.
     fn conformances(rows: &[(Type, usize, &[Type])]) -> Conformances {
@@ -280,7 +284,7 @@ mod tests {
         let (t, u) = (param(0), param(0));
         let pair = |a, b| class(PAIR, &[a, b]);
         let circle = class(CIRCLE, &[]);
-        let rows: [Row; 11] = [
+        let rows: [Row; 21] = [
             // `extend<T> Box<T>: Convert<T>` and `extend<U> Box<U>: Convert<i64>`.
             (
                 &[boxed(t), t],
@@ -317,6 +321,44 @@ mod tests {
             ),
             // Lists of another length are of other interfaces.
             (&[circle], 0, &[circle, Type::I64], 0, None),
+            // Arrays and optionals unify by their elements, and meet only their own kind.
+            (
+                &[Type::array(t)],
+                1,
+                &[Type::array(Type::I64)],
+                0,
+                Some(vec![Type::array(Type::I64)]),
+            ),
+            (
+                &[Type::optional(t)],
+                1,
+                &[Type::optional(Type::I64)],
+                0,
+                Some(vec![Type::optional(Type::I64)]),
+            ),
+            (&[Type::array(t)], 1, &[Type::optional(u)], 1, None),
+            // Enums as classes: the same enum with arguments that unify; another enum; another
+            // number of arguments; a class of another number of arguments; another class.
+            (
+                &[tree(0, &[t])],
+                1,
+                &[tree(0, &[Type::I64])],
+                0,
+                Some(vec![tree(0, &[Type::I64])]),
+            ),
+            (&[tree(0, &[t])], 1, &[tree(1, &[u])], 1, None),
+            (&[tree(0, &[t, t])], 1, &[tree(0, &[u])], 1, None),
+            (&[class(BOX, &[t, t])], 1, &[class(BOX, &[u])], 1, None),
+            (&[boxed(t)], 1, &[class(PILE, &[u])], 1, None),
+            // A parameter never stands for a type that holds it, in a class or an enum.
+            (&[boxed(t), t], 1, &[boxed(u), boxed(u)], 1, None),
+            (
+                &[tree(0, &[t]), t],
+                1,
+                &[tree(0, &[u]), tree(0, &[u])],
+                1,
+                None,
+            ),
         ];
         for (i, (a, a_params, b, b_params, expected)) in rows.into_iter().enumerate() {
             assert_eq!(overlap(a, a_params, b, b_params), expected, "row {i}");
@@ -344,6 +386,9 @@ mod tests {
         assert_eq!(binds(boxed(t), 1, class(PILE, &[Type::I64])), None);
         assert_eq!(binds(boxed(t), 1, Type::I64), None);
         assert_eq!(binds(boxed(Type::I64), 1, boxed(Type::I64)), None);
+        // A target with no parameter must be the type.
+        assert_eq!(binds(boxed(Type::I64), 0, boxed(Type::I64)), Some(vec![]));
+        assert_eq!(binds(boxed(Type::I64), 0, boxed(Type::F64)), None);
         assert_eq!(
             binds(Type::array(t), 1, Type::array(Type::U8)),
             Some(vec![Type::U8])
@@ -403,6 +448,25 @@ mod tests {
         assert!(super::find(&all, InterfaceId(1), circle, TypeArgs::NONE).is_none());
         // A type that is no class or enum has no head.
         assert_eq!(find(Type::I64, &[]), None);
+    }
+
+    /// The targets with parameters of an enum are read as those of a class, and a target that
+    /// does not bind is skipped.
+    #[test]
+    fn find_should_skip_a_generic_target_that_does_not_bind() {
+        let t = param(0);
+        let all = conformances(&[(tree(0, &[t]), 1, &[]), (boxed(Type::optional(t)), 1, &[])]);
+        let find = |ty| {
+            find(&all, InterfaceId(0), ty, TypeArgs::NONE)
+                .map(|(k, bound)| (k, bound.get().to_vec()))
+        };
+        assert_eq!(find(tree(0, &[Type::I64])), Some((0, vec![Type::I64])));
+        assert_eq!(find(tree(1, &[Type::I64])), None);
+        assert_eq!(find(boxed(Type::I64)), None);
+        assert_eq!(
+            find(boxed(Type::optional(Type::I64))),
+            Some((1, vec![Type::I64]))
+        );
     }
 
     /// A new conformance meets the recorded ones of its interface that overlap it: the same exact

@@ -219,10 +219,12 @@ impl Checker<'_> {
         };
         let blocks = self.extension_methods.get(&(holder, name));
         (blocks.into_iter().flatten())
-            .filter_map(|&(at, func)| {
+            .flat_map(|&(at, func)| {
                 let ext = &self.extensions[at];
-                let (bound, _) = ext.interface?;
-                (ext.target == ty && !ext.duplicate).then_some((func, bound.interface))
+                // A plain block has no interface, and so no conformance.
+                (ext.interface.into_iter())
+                    .filter(move |_| ext.target == ty && !ext.duplicate)
+                    .map(move |(bound, _)| (func, bound.interface))
             })
             .collect()
     }
