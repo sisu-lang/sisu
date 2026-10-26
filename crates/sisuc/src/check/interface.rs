@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{Checker, Declared, Definition};
+use super::{BindingKind, Body, Checker, Declared, Definition};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, NotInterface};
 use crate::graph::components;
@@ -45,10 +45,19 @@ impl Checker<'_> {
             })
             .collect();
         for (i, interface) in interfaces.iter().enumerate() {
-            self.interface_signature(interface, InterfaceId(i));
+            // A fresh body: the parameters of a requirement are bound in it, and so are dropped.
+            self.with_body(Body::default(), |checker| {
+                checker.interface_signature(interface, InterfaceId(i));
+            });
         }
-        self.inheritance_cycles(&interfaces);
-        self.inherited_requirements(&interfaces);
+        let edges: Vec<Vec<usize>> = self
+            .interfaces
+            .iter()
+            .map(|info| info.inherits.iter().map(|b| b.interface.0).collect())
+            .collect();
+        let component = components(&edges);
+        self.inheritance_cycles(&interfaces, &edges, &component);
+        self.inherited_requirements(&interfaces, &edges, &component);
     }
 
     /// Resolves the bounds, inheritance and requirements of `interface`, whose id is `id`.
@@ -68,6 +77,15 @@ impl Checker<'_> {
             self.unsupported_at(assoc.name.span);
         }
         let mut first = FxHashMap::default();
+        // The names of the interface's parameters, and then the requirement's own: the scope of
+        // the interface is set up once, and a requirement adds and removes only its own.
+        let mut taken = FxHashMap::default();
+        for param in &interface.type_params {
+            taken
+                .entry(param.name.name)
+                .or_insert((param.name.span, Definition::Type));
+        }
+        let scope = self.body.type_params.len();
         for requirement in &interface.methods {
             let owner = interface.name.name.as_str();
             if self.first_definition(
@@ -80,19 +98,32 @@ impl Checker<'_> {
                     .requirements
                     .push(requirement.name.clone());
             }
-            let mut names = self.type_params(&interface.type_params, &requirement.type_params);
-            names.insert(0, params[0]);
-            self.body.set_type_params(&names);
+            self.own_type_params(&mut taken, &requirement.type_params);
+            let own: Vec<Symbol> = (requirement.type_params.iter())
+                .map(|param| param.name.name)
+                .collect();
+            self.body.push_type_params(&own);
+            // A requirement has no body: its parameters are checked as a function's are.
+            self.body.scopes.push(FxHashMap::default());
             for param in &requirement.params {
-                self.resolve(&param.ty);
+                let ty = self.resolve(&param.ty);
+                self.declare(&param.name, ty, BindingKind::Param, None);
             }
+            self.pop_scope();
             if let Some(ret) = &requirement.ret {
                 self.resolve(ret);
             }
             self.bounds_of(&requirement.type_params);
+            self.body.truncate_type_params(scope);
+            for param in &requirement.type_params {
+                if taken
+                    .get(&param.name.name)
+                    .is_some_and(|&(span, _)| span == param.name.span)
+                {
+                    taken.remove(&param.name.name);
+                }
+            }
         }
-        self.body.set_type_params(&[]);
-        self.body.self_type = None;
     }
 
     /// Resolves the bounds of `params`, which are in scope, and reports each that names no
@@ -131,6 +162,19 @@ impl Checker<'_> {
                 args,
             });
         }
+        // An optional or an array of an interface is a type that is no interface. `resolve` would
+        // say that the interface is no type, and advise a bound, which this already is.
+        let shape = match &ty.kind {
+            _ if ty.optional > 0 => Some(NotInterface::Optional),
+            ast::TypeKind::Array(_) => Some(NotInterface::Array),
+            _ => None,
+        };
+        if let Some(kind) = shape
+            && self.names_interface(ty)
+        {
+            self.not_an_interface(ty, kind);
+            return None;
+        }
         // Not an interface: `resolve` reports a name that is unknown or misused, and the rest is
         // a type that is no interface.
         let resolved = self.resolve(ty)?;
@@ -138,14 +182,33 @@ impl Checker<'_> {
             TypeKind::Class(..) => NotInterface::Class,
             TypeKind::Enum(..) => NotInterface::Enum,
             TypeKind::Param(..) => NotInterface::TypeParam,
+            TypeKind::Optional(..) => NotInterface::Optional,
+            TypeKind::Array(..) => NotInterface::Array,
             _ => NotInterface::BuiltIn,
         };
+        self.not_an_interface(ty, kind);
+        None
+    }
+
+    /// Reports the written type `ty`, which is a `kind` and no interface, at its name.
+    fn not_an_interface(&mut self, ty: &ast::TypeExpr, kind: NotInterface) {
         self.report(DiagnosticKind::NotAnInterface {
             written: ty.to_string(),
-            at: ty.span,
+            at: ty.bare,
             kind,
         });
-        None
+    }
+
+    /// Whether the element of `ty`, past its arrays and its `?`, names a declared interface.
+    fn names_interface(&self, ty: &ast::TypeExpr) -> bool {
+        let name = match &ty.kind {
+            ast::TypeKind::Array(element) => return self.names_interface(element),
+            ast::TypeKind::Name(name) => *name,
+            ast::TypeKind::Applied(applied) => applied.name,
+            _ => return false,
+        };
+        self.body.type_param(name).is_none()
+            && matches!(self.interface_ids.get(&name), Some(Declared::Known(_)))
     }
 
     /// The interface that `ty`, in the inheritance list of `interface`, names. An argument that is
@@ -172,15 +235,14 @@ impl Checker<'_> {
 
     /// Reports each cycle of inheritance once, on the first interface of its component in source
     /// order, at that interface's inheritance list.
-    fn inheritance_cycles(&mut self, interfaces: &[&ast::Interface]) {
-        let edges: Vec<Vec<usize>> = self
-            .interfaces
-            .iter()
-            .map(|info| info.inherits.iter().map(|b| b.interface.0).collect())
-            .collect();
-        let component = components(&edges);
+    fn inheritance_cycles(
+        &mut self,
+        interfaces: &[&ast::Interface],
+        edges: &[Vec<usize>],
+        component: &[usize],
+    ) {
         let mut size = vec![0; edges.len()];
-        for &k in &component {
+        for &k in component {
             size[k] += 1;
         }
         let mut reported = vec![false; edges.len()];
@@ -194,7 +256,7 @@ impl Checker<'_> {
                 &interface.inherits[0],
                 &interface.inherits[interface.inherits.len() - 1],
             );
-            let through = cycle_through(&edges, &component, i)
+            let through = cycle_through(edges, component, i)
                 .into_iter()
                 .map(|at| self.interfaces[at].name.name.to_string())
                 .collect();
@@ -207,21 +269,47 @@ impl Checker<'_> {
     }
 
     /// Reports each requirement that an interface declares and an interface it inherits has too.
-    fn inherited_requirements(&mut self, interfaces: &[&ast::Interface]) {
-        let mut closure = Vec::new();
+    /// An interface on a cycle does not count the others on it: E0150 has reported them.
+    ///
+    /// Part of the third recorded exception to "A pass is linear in the program" (user,
+    /// 2026-10-25; ruling F9 (a)): each interface reads the requirements of every interface it
+    /// inherits, N interfaces by n inherited, which is the size of the report it may give. The
+    /// walk follows `InterfaceId`s only, because a requirement's name does not depend on the
+    /// arguments of the inheritance. To cap it would redesign the lookup, and cost a later change.
+    fn inherited_requirements(
+        &mut self,
+        interfaces: &[&ast::Interface],
+        edges: &[Vec<usize>],
+        component: &[usize],
+    ) {
+        let mut seen = FxHashSet::default();
+        let mut queue = Vec::new();
         let mut owners: FxHashMap<Symbol, (InterfaceId, Span)> = FxHashMap::default();
         for (i, interface) in interfaces.iter().enumerate() {
-            let id = InterfaceId(i);
-            let info = &self.interfaces[i];
-            closure.clear();
-            let receiver = Type::intern(TypeKind::Param(info.type_params[0], 0));
-            self.interfaces_of(receiver, &info.inherits, &mut closure);
+            seen.clear();
+            seen.insert(i);
+            queue.clear();
+            queue.push(i);
             owners.clear();
-            for &(inherited, _) in closure.iter().filter(|(inherited, _)| *inherited != id) {
-                for requirement in &self.interfaces[inherited.0].requirements {
-                    owners
-                        .entry(requirement.name)
-                        .or_insert((inherited, requirement.span));
+            // Nearest first, so that the owner named is the nearest that has the requirement.
+            let mut at = 0;
+            while let Some(&n) = queue.get(at) {
+                at += 1;
+                for &inherited in &edges[n] {
+                    if !seen.insert(inherited) {
+                        continue;
+                    }
+                    #[cfg(test)]
+                    super::INHERIT_VISITS.set(super::INHERIT_VISITS.get() + 1);
+                    queue.push(inherited);
+                    if component[inherited] == component[i] {
+                        continue;
+                    }
+                    for requirement in &self.interfaces[inherited].requirements {
+                        owners
+                            .entry(requirement.name)
+                            .or_insert((InterfaceId(inherited), requirement.span));
+                    }
                 }
             }
             let mut reports = Vec::new();
@@ -248,7 +336,12 @@ impl Checker<'_> {
     /// `Self`, or written without a parameter, so the closure never grows an argument.
     ///
     /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25): a
-    /// bound's closure is computed per use, so a use costs the closure's size.
+    /// bound's closure is computed per use, so a use costs the closure's size. The closure of
+    /// arguments may double at each level of inheritance, as the spec says ("Inheritance"): an
+    /// interface that inherits one twice, once with a parameter and once with a type, has the
+    /// two as two entries. Task 4 reads the closure; the check for E0034 does not, as it needs
+    /// no arguments.
+    #[cfg_attr(not(test), expect(dead_code, reason = "Task 4 calls it for a bound"))]
     pub(super) fn interfaces_of(
         &self,
         receiver: Type,

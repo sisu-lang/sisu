@@ -1121,7 +1121,7 @@ fn main() {
             (
                 "fn f<T: [i64] ?>(x: T) {}\nfn main() {}\n",
                 Code::NotAnInterface,
-                "[i64] ?",
+                "[i64]",
             ),
         ] {
             let diagnostics = front_end(src).1;

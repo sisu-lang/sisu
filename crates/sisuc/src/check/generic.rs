@@ -1196,16 +1196,26 @@ impl Checker<'_> {
                 .entry(param.name.name)
                 .or_insert((param.name.span, Definition::Type));
         }
-        for param in own {
-            if !self.built_in(&param.name) {
-                self.first_definition(&mut first, Definition::Type, None, &param.name);
-            }
-        }
+        self.own_type_params(&mut first, own);
         owner
             .iter()
             .chain(own)
             .map(|param| param.name.name)
             .collect()
+    }
+
+    /// Reports each of `own` that takes a built-in type's name, or a name in `first`, where
+    /// `first` holds the type parameters before them; `own` join `first`.
+    pub(super) fn own_type_params(
+        &mut self,
+        first: &mut FxHashMap<Symbol, (Span, Definition)>,
+        own: &[ast::TypeParam],
+    ) {
+        for param in own {
+            if !self.built_in(&param.name) {
+                self.first_definition(first, Definition::Type, None, &param.name);
+            }
+        }
     }
 
     /// Reports the written type `ty`, which the checker cannot take yet (a bound, a conformance

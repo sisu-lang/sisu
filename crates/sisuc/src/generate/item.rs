@@ -484,9 +484,9 @@ impl Gen<'_> {
         self.w.line();
     }
 
-    /// `enum E { V ... }`: variants with no payload, with fields, or with labeled fields. The
-    /// first holds only types declared before; a later one may hold the enum itself, which a
-    /// value built finite ends in the first.
+    /// `enum E { V ... fn m(self, _other: Self) -> bool { true } }`: variants with no payload,
+    /// with fields, or with labeled fields. The first holds only types declared before; a later
+    /// one may hold the enum itself, which a value built finite ends in the first.
     pub(crate) fn enumeration(&mut self) {
         let id = self.scope.enums.len();
         self.w.text(&format!("enum E{id} "));
@@ -532,6 +532,19 @@ impl Gen<'_> {
                 inferable: false,
             });
         }
+        // A method that takes the enum itself, written as `Self` in every other enum. It makes no
+        // pick, so that it moves no choice of the items after it, and nothing calls it.
+        let own = Ty::enumeration(id, least);
+        let other = if id.is_multiple_of(2) {
+            "Self".to_string()
+        } else {
+            self.spell(&own)
+        };
+        let name = self.scope.fresh("m");
+        self.w.line();
+        self.w.text(&format!(
+            "fn {name}(self, _other: {other}) -> bool {{ true }}"
+        ));
         self.scope.enums.push(Enum {
             variants,
             least,

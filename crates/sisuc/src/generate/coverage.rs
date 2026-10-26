@@ -105,7 +105,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 64] = [
+const REACH: [&str; 66] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -170,6 +170,8 @@ const REACH: [&str; 64] = [
     "reach: an `Option`-shaped enum holds itself",
     "reach: an interface inherits another",
     "reach: an interface requirement names `Self`",
+    "reach: a class method names `Self`",
+    "reach: an enum method names `Self`",
 ];
 
 /// Whether a program's text holds a form.
@@ -560,6 +562,9 @@ impl Walk {
                         self.type_expr(&field.ty);
                     }
                     for f in &e.methods {
+                        if names_self_in(f) {
+                            self.mark("reach: an enum method names `Self`");
+                        }
                         self.ast_function(f);
                     }
                 }
@@ -620,6 +625,9 @@ impl Walk {
                 }
                 ast::Member::Method(f) => {
                     self.mark("ast::Member::Method");
+                    if names_self_in(f) {
+                        self.mark("reach: a class method names `Self`");
+                    }
                     self.ast_function(f);
                 }
             }
@@ -2161,7 +2169,13 @@ fn tail(block: &ast::Block) -> Option<&ast::Expr> {
     }
 }
 
-/// The names of the items `pick` selects, with their type parameters, that have any.
+/// Whether the parameters or the return type of `f` is `Self` or holds it.
+fn names_self_in(f: &ast::Function) -> bool {
+    (f.params.iter().map(|p| &p.ty))
+        .chain(&f.ret)
+        .any(names_self)
+}
+
 /// Whether `ty` is `Self` or holds it.
 fn names_self(ty: &ast::TypeExpr) -> bool {
     match &ty.kind {
@@ -2173,6 +2187,7 @@ fn names_self(ty: &ast::TypeExpr) -> bool {
     }
 }
 
+/// The names of the items `pick` selects, with their type parameters, that have any.
 fn generic_names<'a>(
     program: &'a ast::Program,
     pick: impl Fn(&'a ast::Item) -> Option<(&'a ast::Ident, &'a Vec<ast::TypeParam>)>,
@@ -2415,6 +2430,29 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
         "reach: an interface requirement names `Self`",
     ] {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
+    }
+    // `Self` in a method is a key of its own for a class and for an enum.
+    for (src, key) in [
+        (
+            "class C {\n    fn f(self, x: Self) {}\n}\n",
+            "reach: a class method names `Self`",
+        ),
+        (
+            "class C {\n    fn f(self) -> [Self] {}\n}\n",
+            "reach: a class method names `Self`",
+        ),
+        (
+            "enum E {\n    A\n    fn f(self, x: Self) {}\n}\n",
+            "reach: an enum method names `Self`",
+        ),
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert!(
+            walk.seen.contains(key),
+            "the walk should mark {key} in {src}"
+        );
     }
     // `Self` inside another type in a requirement is `Self` too.
     for src in [
@@ -4282,10 +4320,11 @@ fn each_count_reaches_its_most_and_stays_within_it() {
             .collect();
         let mut g = Gen::new(&data);
         g.class();
+        // The class alone: an enum has one method of its own.
+        let class = g.w.out.program.clone();
         g.enumeration();
-        let program = &g.w.out.program;
         fields = fields.max(g.scope.classes[0].fields.len());
-        methods = methods.max(program.lines().filter(|l| l.starts_with("    fn ")).count());
+        methods = methods.max(class.lines().filter(|l| l.starts_with("    fn ")).count());
         let count = g.scope.enums[0].variants.len();
         variants = (variants.0.min(count), variants.1.max(count));
         let most = g.scope.enums[0]

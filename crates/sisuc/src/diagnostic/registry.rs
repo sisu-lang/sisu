@@ -1161,6 +1161,7 @@ pub(crate) enum ClashKind {
     Constant,
     Class,
     Enum,
+    Interface,
     BuiltInType,
 }
 
@@ -1172,6 +1173,7 @@ impl ClashKind {
             ClashKind::Constant => "constant",
             ClashKind::Class => "class",
             ClashKind::Enum => "enum",
+            ClashKind::Interface => "interface",
             ClashKind::BuiltInType => "built-in type",
         }
     }
@@ -1355,6 +1357,8 @@ pub(crate) enum NotInterface {
     Enum,
     BuiltIn,
     TypeParam,
+    Optional,
+    Array,
 }
 
 impl NotInterface {
@@ -1365,6 +1369,8 @@ impl NotInterface {
             NotInterface::Enum => "an enum",
             NotInterface::BuiltIn => "a built-in type",
             NotInterface::TypeParam => "a type parameter",
+            NotInterface::Optional => "an optional type",
+            NotInterface::Array => "an array type",
         }
     }
 }

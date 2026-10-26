@@ -167,7 +167,8 @@ impl Checker<'_> {
         let written = base.span.to(member.span);
         let declared = self.constants.contains_key(&name)
             || self.function_ids.contains_key(&name)
-            || self.class_ids.contains_key(&name);
+            || self.class_ids.contains_key(&name)
+            || self.interface_ids.contains_key(&name);
         if matches!(name.as_str(), "math" | "Math") && !declared {
             if let Some((args, _)) = call {
                 return self.math_call(written, member, args);

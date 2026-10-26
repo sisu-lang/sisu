@@ -897,8 +897,8 @@ impl Checker<'_> {
     }
 
     /// What `name` is when a value or a type of that spelling is in scope: a binding, a
-    /// function (the prelude's included), a constant, a class, an enum or a built-in type, and
-    /// where it is declared, when that is in the source.
+    /// function (the prelude's included), a constant, a class, an enum, an interface or a
+    /// built-in type, and where it is declared, when that is in the source.
     fn in_scope(&self, name: Symbol) -> Option<(ClashKind, Option<Span>)> {
         // A broken item's declaration is not known.
         fn at<T>(declared: &Declared<T>, span: impl FnOnce(&T) -> Span) -> Option<Span> {
@@ -927,6 +927,10 @@ impl Checker<'_> {
         if let Some(id) = self.enum_ids.get(&name) {
             let span = at(id, |id| self.enums[id.0].name.span);
             return Some((ClashKind::Enum, span));
+        }
+        if let Some(id) = self.interface_ids.get(&name) {
+            let span = at(id, |id| self.interfaces[id.0].name.span);
+            return Some((ClashKind::Interface, span));
         }
         built_in_type(name.as_str()).map(|_| (ClashKind::BuiltInType, None))
     }

@@ -55,8 +55,7 @@ fn interface_declarations_should_check_clean() {
     }
 }
 
-/// `Self` in a class or an enum is the declared type with its own parameters, and a requirement
-/// is no function.
+/// `Self` in a class or an enum is the declared type with its own parameters.
 #[test]
 fn self_should_lower_to_the_declared_type() {
     contains(
@@ -128,6 +127,11 @@ fn interface_names_should_be_reported_as_types_and_values() {
             with_decls("fn g() {\n    let s = Shape\n}"),
             vec![(Code::TypeAsValue, (2, 13))],
         ),
+        // A variant of an enum with the name of an interface does not take the interface's place.
+        (
+            with_decls("enum E {\n    Shape\n    Other\n}\nfn g() {\n    let s = Shape\n}"),
+            vec![(Code::TypeAsValue, (6, 13))],
+        ),
     ] {
         codes(&src, &expected);
     }
@@ -165,13 +169,30 @@ fn a_bound_should_name_an_interface() {
             with_decls("fn f<T, U: T>() {}"),
             vec![(Code::NotAnInterface, (1, 12))],
         ),
+        // An optional or an array of a class or of an interface is a type, and no interface.
         (
-            with_decls("fn f<T: Shape?>() {}"),
-            vec![(Code::InterfaceAsType, (1, 9))],
+            with_decls("fn f<T: Circle?>() {}"),
+            vec![(Code::NotAnInterface, (1, 9))],
+        ),
+        (
+            with_decls("fn f<T: [Circle]>() {}"),
+            vec![(Code::NotAnInterface, (1, 9))],
+        ),
+        (
+            with_decls("fn f<U: Shape?>() {}"),
+            vec![(Code::NotAnInterface, (1, 9))],
+        ),
+        (
+            with_decls("fn f<U: [Shape]>() {}"),
+            vec![(Code::NotAnInterface, (1, 9))],
+        ),
+        (
+            with_decls("fn f<T: [Shape?]>() {}"),
+            vec![(Code::NotAnInterface, (1, 9))],
         ),
         (
             with_decls("fn f<T: Convert<i64>?>() {}"),
-            vec![(Code::InterfaceAsType, (1, 9))],
+            vec![(Code::NotAnInterface, (1, 9))],
         ),
         (
             with_decls("fn f<T: Box<i64>>() {}"),
@@ -198,10 +219,6 @@ fn a_bound_should_name_an_interface() {
             vec![(Code::NotAnInterface, (2, 13))],
         ),
         // An interface's arguments fit its parameters, as a class's do.
-        (
-            with_decls("fn f<T: Convert>() {}"),
-            vec![(Code::TypeArguments, (1, 9))],
-        ),
         (
             with_decls("fn f<T: Convert<i64, i64>>() {}"),
             vec![(Code::TypeArguments, (1, 16))],
@@ -232,6 +249,19 @@ fn self_outside_and_inheritance_errors_should_be_reported() {
         (
             with_decls("fn f(x: [Self?]) {}"),
             vec![(Code::SelfOutside, (1, 10))],
+        ),
+        // `Self` does not outlast the class, the enum or the interface that has it.
+        (
+            with_decls("class K {}\nfn f() -> Self {}"),
+            vec![(Code::SelfOutside, (2, 11))],
+        ),
+        (
+            with_decls("enum Color {\n    Red\n}\nfn f() -> Self {}"),
+            vec![(Code::SelfOutside, (4, 11))],
+        ),
+        (
+            with_decls("interface I {\n    fn f(self) -> Self\n}\nfn f() -> Self {}"),
+            vec![(Code::SelfOutside, (4, 11))],
         ),
         // A cycle is reported once, on its first interface.
         (
@@ -334,6 +364,12 @@ fn an_interface_name_and_its_requirements_should_be_defined_once() {
             with_decls("interface Solid: Named {\n    fn area(self) -> f64\n    fn name(self) -> string\n}"),
             vec![(Code::DefinedTwice, (3, 8))],
         ),
+        // A cycle is E0150 alone, whatever its members declare.
+        (
+            "interface A: B {\n    fn x(self)\n}\ninterface B: A {\n    fn x(self)\n}\nfn main() {}"
+                .to_string(),
+            vec![(Code::InheritanceCycle, (1, 14))],
+        ),
         // Once for a diamond: the closure holds `C` once.
         (
             "interface C {\n    fn x(self)\n}\ninterface A: C {}\ninterface B: C {}\ninterface D: A, B {\n    fn x(self)\n}\nfn main() {}"
@@ -342,6 +378,28 @@ fn an_interface_name_and_its_requirements_should_be_defined_once() {
         ),
     ] {
         codes(&src, &expected);
+    }
+}
+
+/// The parameters of a requirement meet the rules of the parameters of a function, and a
+/// requirement has no body to leave them unused in.
+#[test]
+fn the_parameters_of_a_requirement_should_be_named_as_a_function_names_them() {
+    for (src, expected) in [
+        (
+            "interface I {\n    fn f(self, x: i64, x: string)\n}\nfn main() {}",
+            vec![(Code::AlreadyDeclared, (2, 24))],
+        ),
+        (
+            "interface I {\n    fn f(self, Some: i64)\n}\nfn main() {}",
+            vec![(Code::BuiltInName, (2, 16))],
+        ),
+        (
+            "enum E {\n    A\n}\ninterface I {\n    fn f(self, E: i64)\n}\nfn main() {}",
+            vec![(Code::EnumNamedLocal, (5, 16))],
+        ),
+    ] {
+        codes(src, &expected);
     }
 }
 
@@ -382,12 +440,52 @@ fn a_name_taken_twice_should_point_at_the_first() {
     );
 }
 
-/// Without a `T: Shape`, an interface is no value and its methods are not reachable; a program
-/// with an interface that nothing conforms to checks clean, and so does one that uses it as a
-/// bound.
+/// An interface that inherits one twice, with a parameter and with a type, doubles the closure of
+/// its arguments at each level. The check for a requirement declared again reads the interfaces
+/// alone: it visits each inherited interface once per interface, `n (n - 1) / 2` in all.
 #[test]
-fn an_interface_with_no_conformance_should_be_legal() {
-    clean("interface Shape {\n    fn area(self) -> f64\n}\nfn _f<T: Shape>(x: T) {}\nfn main() {}");
+fn inherited_requirements_should_be_found_without_arguments() {
+    let visits = |levels: usize| {
+        let chain = (1..levels)
+            .map(|k| {
+                format!(
+                    "interface L{k}<P0, P1>: L{p}<P0, P1>, L{p}<i64, P1> {{}}\n",
+                    p = k - 1
+                )
+            })
+            .collect::<Vec<String>>()
+            .concat();
+        let src = format!("interface L0<P0, P1> {{\n    fn r(self)\n}}\n{chain}fn main() {{}}");
+        INHERIT_VISITS.set(0);
+        clean(&src);
+        INHERIT_VISITS.get()
+    };
+    assert_eq!(visits(12), 66);
+    assert_eq!(visits(24), 276);
+}
+
+/// A requirement adds its own type parameters to the scope of its interface and drops them, so
+/// the work grows with the parameters and the requirements, not with their product: one step to
+/// index each parameter, and one for each type name that is looked up.
+#[test]
+fn the_scope_of_an_interface_should_be_set_up_once() {
+    let steps = |n: usize| {
+        let params: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let requirements = (0..n)
+            .map(|i| format!("    fn r{i}<U{i}>(self, u: U{i}) -> T{i}\n"))
+            .collect::<Vec<String>>()
+            .concat();
+        let src = format!(
+            "interface Wide<{}> {{\n{requirements}}}\nfn main() {{}}",
+            params.join(", ")
+        );
+        PARAM_STEPS.set(0);
+        clean(&src);
+        PARAM_STEPS.get()
+    };
+    // 1 + n to index `Self` and the parameters, then 3 for each requirement.
+    assert_eq!(steps(32), 129);
+    assert_eq!(steps(64), 257);
 }
 
 /// The interfaces a bound gives: itself, then what it inherits, each once, with the arguments

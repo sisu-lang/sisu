@@ -291,6 +291,9 @@ thread_local! {
     /// How many types the walks for comparisons and for held type parameters have taken from
     /// their stacks on this thread.
     pub(super) static HELD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many inherited interfaces the check for a requirement that an interface declares
+    /// again has visited on this thread.
+    pub(super) static INHERIT_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -479,6 +482,28 @@ impl Body {
             PARAM_STEPS.set(PARAM_STEPS.get() + 1);
             self.type_param_at.insert(name, i);
         }
+    }
+
+    /// Puts `params` after the type parameters in scope; a name in scope keeps its place.
+    fn push_type_params(&mut self, params: &[Symbol]) {
+        for &name in params {
+            #[cfg(test)]
+            PARAM_STEPS.set(PARAM_STEPS.get() + 1);
+            self.type_param_at
+                .entry(name)
+                .or_insert(self.type_params.len());
+            self.type_params.push(name);
+        }
+    }
+
+    /// Drops the type parameters after the first `len`, which `push_type_params` added.
+    fn truncate_type_params(&mut self, len: usize) {
+        for at in (len..self.type_params.len()).rev() {
+            if self.type_param_at.get(&self.type_params[at]) == Some(&at) {
+                self.type_param_at.remove(&self.type_params[at]);
+            }
+        }
+        self.type_params.truncate(len);
     }
 
     /// Where the type parameter `name` is in `type_params`, if it is one.
@@ -1359,6 +1384,7 @@ impl Checker<'_> {
             || self.class_ids.contains_key(&name)
             || self.function_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
+            || self.interface_ids.contains_key(&name)
             || self.constants.contains_key(&name);
         let enums = self.variant_of(name);
         let at_start = self.starts_break_value(span);
