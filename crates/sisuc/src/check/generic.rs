@@ -312,7 +312,8 @@ thread_local! {
     /// How many bindings inference has checked or undone on this thread.
     pub(super) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `Bindings::known` and `partial` have looked at on this thread, which
-    /// checking a call uses. A `printed` walk, which only a diagnostic uses, is not counted.
+    /// checking a call uses. A `printed` walk is not counted: it runs once for each context a
+    /// call gives (see `infer_waiting`), and for a diagnostic.
     pub(super) static WALKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names the search for reported ones has looked at on this
     /// thread.
@@ -605,10 +606,10 @@ impl Checker<'_> {
         Some((checked, list, sig.ret.map(|ret| ret.subst(list.get()))))
     }
 
-    /// Whether the call at `span`, whose result did not meet `want` (`met` is false) or may not,
-    /// is a misfit: `want`, its context, holds a hole, and the result cannot meet it. The result
-    /// of a safe call is optional, so a context that holds a hole and is not optional cannot
-    /// meet it, whatever the return type meets.
+    /// Whether the call at `span` is a misfit: `want`, its context, holds a hole, and the result
+    /// cannot meet it. `met` says if the return type met `want`. The result of a safe call is
+    /// optional, so a context that is not optional cannot meet it, whatever the return type
+    /// meets.
     fn misfit(&self, span: Span, want: Type, met: bool) -> bool {
         let safe = self
             .body
@@ -744,6 +745,9 @@ impl Checker<'_> {
     // d: Result<T, string>)` reports E0050 at `mk2`. `g(mk(), mk2())` with the parameters in
     // the other order checks. To remove this, check a call again after a later call binds its
     // parameter (#217).
+    // A waiting call inside a waiting call gets no context: a context that holds a hole binds
+    // nothing, so the inner call has nothing to bind from. For `f<T>(r: Result<Result<T, bool>,
+    // string>)`, `f(Ok(Ok(1)))` reports E0050 for `T` at the inner `Ok`.
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
         // A waiting call is a generic one, so its shape needs no `generic` check.
         let (shape, _) = self.call_shape(e)?;

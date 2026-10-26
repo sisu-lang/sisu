@@ -1477,6 +1477,32 @@ fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
     assert_eq!(walked(&format!("{}x", "b, ".repeat(100))), (bad, 100));
 }
 
+/// Each waiting argument is a generic call for a parameter of its own, which its context binds:
+/// the sweeps look at each parameter type a fixed number of times, so the work grows with the
+/// arguments, not with their square.
+#[test]
+fn waiting_arguments_should_cost_the_same_walk_each() {
+    with_prelude();
+    let walked = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let params: Vec<_> = (0..n)
+            .map(|i| format!("x{i}: Result<T{i}, string>"))
+            .collect();
+        let src = format!(
+            "fn f<{}>({}) {{}}\nfn main() {{ f({}) }}",
+            types.join(", "),
+            params.join(", "),
+            vec!["Ok(1)"; n].join(", ")
+        );
+        generic::WALKED.set(0);
+        clean(&src);
+        generic::WALKED.get()
+    };
+    let fifty = walked(50);
+    assert!(fifty > 0, "the counter should count the walks");
+    assert_eq!(walked(100), 2 * fifty);
+}
+
 /// A call that leaves type parameters unbound looks at each declared name once to find the
 /// reported ones, so its work grows with them, not with their square; a call that binds them
 /// all looks at none.
