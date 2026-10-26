@@ -1360,6 +1360,20 @@ fn main() {
         assert_eq!(names(&program), [vec![], vec![], vec!["main"]]);
     }
 
+    /// A type argument that a type alone writes, with no call of a generic item, is enough to make
+    /// the enum of the prelude an enum of the program.
+    #[test]
+    fn mono_should_instantiate_a_prelude_enum_that_only_a_type_argument_names() {
+        let src = "fn main() {\n    let _: [Result<i64, string>] = []\n}";
+        let (program, diagnostics) = front_end(src);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let program = program.expect("the program should check");
+        assert_eq!(
+            names(&program),
+            [vec![], vec!["Result<i64, string>"], vec!["main"]]
+        );
+    }
+
     /// A written type argument is what makes `Result<i64, string>` an enum of the program.
     #[test]
     fn mono_should_instantiate_a_prelude_enum_that_a_type_names() {

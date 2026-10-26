@@ -5742,3 +5742,24 @@ fn the_walk_should_mark_what_generic_interfaces_hold() {
         [true, false, false]
     );
 }
+
+/// An interface lists each interface it inherits once.
+#[test]
+fn generated_interfaces_should_inherit_each_interface_once() {
+    let mut lists = 0;
+    for data in seeds() {
+        let source = generate(&data).plain;
+        let lexed = lexer::lex(&source).expect("a generated program should lex");
+        let program = parser::parse(lexed, false).program;
+        for item in &program.items {
+            let ast::Item::Interface(interface) = item else {
+                continue;
+            };
+            let names: FxHashSet<String> =
+                interface.inherits.iter().map(ToString::to_string).collect();
+            assert_eq!(names.len(), interface.inherits.len(), "{source}");
+            lists += usize::from(interface.inherits.len() > 1);
+        }
+    }
+    assert!(lists > 0, "no seed writes an interface that inherits two");
+}

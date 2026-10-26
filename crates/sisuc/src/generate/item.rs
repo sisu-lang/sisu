@@ -633,7 +633,7 @@ impl Gen<'_> {
                 } else {
                     single.to_vec()
                 };
-                let listed = !shape.inherits.is_empty() || self.pick(2) == 0;
+                let listed = self.pick(2) == 0;
                 let entries = self.conforming_type(class, &ty, &roots, declared, listed);
                 calls.push(format!("let {var} = {value}"));
                 // The requirements of the interface, and of those it inherits.
