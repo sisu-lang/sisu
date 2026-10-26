@@ -2587,3 +2587,83 @@ fn generic_array_literals_should_report_each_mistake_once() {
         codes(&with_optional_elements(body), &expected);
     }
 }
+
+/// `f` takes a parameter that its argument only partly fixes: `string` is fixed, `T` is not.
+const PARTLY_BOUND: &str = "fn f<T>(r: Result<T, string>) -> T { panic(\"e\") }\n";
+
+/// An argument that waits for context, and is itself a generic call, binds the rest of a
+/// partly bound parameter: `Ok(1)` takes `string` from `f`'s parameter, and `f` takes `T` from
+/// `Ok(1)`.
+#[test]
+fn waiting_generic_call_should_bind_the_rest_of_a_partly_bound_parameter() {
+    with_prelude();
+    let src = format!("{PARTLY_BOUND}fn main() {{\n    let x = f(Ok(1))\n    print(x)\n}}");
+    assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
+}
+
+/// A call of `f` with a method call as the waiting argument, for a callee that is not a
+/// variant: the argument is a generic call of any kind.
+#[test]
+fn waiting_generic_method_call_should_bind_the_rest_of_a_partly_bound_parameter() {
+    with_prelude();
+    let src = "fn f<T>(r: Result<T, string>) -> T { panic(\"e\") }\n\
+               class Maker {\n    fn make<U, E>(self, u: U) -> Result<U, E> { Ok(u) }\n}\n\
+               fn main() {\n    let m = Maker()\n    let x = f(m.make(1))\n    print(x)\n}";
+    assert_eq!(call_types(src, "f"), ["i64", "i64"]);
+}
+
+/// The inner call `Err("e")` still cannot bind its `T`: the one error is at `Err`, and `f`
+/// adds none.
+#[test]
+fn waiting_generic_call_that_cannot_bind_should_report_at_itself() {
+    with_prelude();
+    let src = format!("{PARTLY_BOUND}fn main() {{\n    let x = f(Err(\"e\"))\n    print(x)\n}}");
+    codes(&src, &[(Code::CannotInfer, (3, 15))]);
+}
+
+/// `T` sits below the top of the parameter type, so the context for `Ok` is `Result<[_], string>`
+/// and its `T` meets `[_]`, a type with a hole: the hole binds nothing.
+#[test]
+fn hole_below_the_top_of_a_parameter_should_bind_nothing() {
+    with_prelude();
+    let src = "fn f<T>(r: Result<[T], string>) -> [T] { panic(\"e\") }\n\
+               fn main() {\n    let x = f(Ok([1]))\n    print(x.len())\n}";
+    assert_eq!(call_types(src, "f"), ["i64", "[i64]"]);
+}
+
+/// A waiting `if` keeps the rule it had: it waits, and `f` cannot infer `T`.
+#[test]
+fn waiting_branch_should_keep_waiting_when_a_parameter_is_partly_bound() {
+    with_prelude();
+    let src = format!(
+        "{PARTLY_BOUND}fn main() {{\n    let c = true\n    let x = f(if c {{ Ok(1) }} else {{ Ok(2) }})\n    print(x)\n}}"
+    );
+    codes(&src, &[(Code::CannotInfer, (4, 13))]);
+}
+
+/// The context for an inner call has a hole where the outer call binds nothing yet. A part of
+/// the inner call's return type that names no parameter (`i64`), or is a type of its own
+/// (`[U]`), meets that hole and binds nothing from it; a call whose type is no `Result` at all
+/// is reported where it is, by the types of the outer call and not by the context.
+#[test]
+fn context_hole_should_meet_any_part_of_the_return_type_and_stay_out_of_reports() {
+    with_prelude();
+    let decls = format!(
+        "{PARTLY_BOUND}fn mk<E>() -> Result<i64, E> {{ panic(\"e\") }}\nfn mk_all<U, E>() -> Result<[U], E> {{ panic(\"e\") }}\n"
+    );
+    let src = format!("{decls}fn main() {{\n    let x = f(mk())\n    print(x)\n}}");
+    assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
+    assert_eq!(call_types(&src, "mk"), ["string", "Result<i64, string>"]);
+    for (line, expected) in [
+        // `U` sits below the hole: nothing binds it.
+        ("f(mk_all())", vec![(Code::CannotInfer, (6, 15))]),
+        ("f(Some(1))", vec![(Code::Mismatch, (6, 15))]),
+        // A parameter type of `[T]` gives `Ok` an array context that it cannot meet.
+        ("take(Ok(1))", vec![(Code::CannotInfer, (6, 18))]),
+    ] {
+        let src = format!(
+            "{decls}fn take<T>(xs: [T]) -> T {{ panic(\"e\") }}\nfn main() {{\n    let x = {line}\n    print(x)\n}}"
+        );
+        codes(&src, &expected);
+    }
+}
