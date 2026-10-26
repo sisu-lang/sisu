@@ -1817,9 +1817,10 @@ fn tbaa_name<'a>(ir: &'a str, line: &str) -> &'a str {
             .find_map(|l| l.strip_prefix(&head))
             .unwrap_or_else(|| panic!("no {id} in\n{ir}"))
     };
-    let (_, tag) = line
+    let (_, rest) = line
         .split_once("!tbaa ")
         .unwrap_or_else(|| panic!("no tag on {line}"));
+    let tag = rest.split(',').next().unwrap_or(rest);
     let (ty, _) = node(tag)
         .split_once(", ")
         .unwrap_or_else(|| panic!("no type in tag {tag}"));
@@ -2504,6 +2505,24 @@ fn partition_makes_its_array_unique_once() {
     );
     let bounds = partition.matches("call void @sisu_panic_bounds(").count();
     assert!(bounds <= 2, "{bounds} bounds checks in\n{partition}");
+}
+
+/// `ys[i % ys.len()]` with a non-negative `i` is in range only because a length is never
+/// negative: the `!range` on the length load lets `-O2` drop its bounds check.
+#[test]
+fn an_index_modulo_the_length_should_have_no_bounds_check_at_o2() {
+    let context = Context::create();
+    let module = compiled(
+        &context,
+        "fn wrap(ys: [i64], n: i64) -> i64 {\n    let mut s = 0\n    for i in 0..n {\n        s += ys[i % ys.len()]\n    }\n    s\n}\n\nfn main(args: [string]) {\n    print(wrap([1, 2, 3], args.len()))\n}",
+    );
+    keep_functions(&module, "wrap");
+    let machine = target_machine(OptLevel::O2).expect("the host is a target");
+    optimize(&module, &machine, OptLevel::O2).expect("the module should optimize");
+    let ir = module.print_to_string().to_string();
+    let wrap = function_body(&ir, "@sisu.wrap(");
+    assert!(wrap.contains("rem i64"), "{wrap}");
+    assert!(!wrap.contains("@sisu_panic_bounds("), "{wrap}");
 }
 
 /// `binary_trees`' `Node.check` borrows `self.left` and `self.right` and passes each payload in
