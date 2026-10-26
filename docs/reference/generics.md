@@ -154,7 +154,9 @@ The rules:
 - A type argument can be written in a call: `first<string>([])`, `Stack<i64>(items: [])`. A method call can write them too.
 - Only the arguments and the expected type give a type. A later use of the result does not.
 - An argument such as `Ok(1)`, whose own arguments give only some of its types, takes the others from the outer call. In `let r: Result<i64, string> = id(Ok(1))`, the type of `r` gives `T` for `id`, and `T` gives `E` for `Ok`.
+- Such an argument also takes the parts of the parameter type that do not wait for a type argument. For `unwrap<T>(r: Result<T, string>)`, `unwrap(Ok(1))` gives `string` for `E` from the parameter, and `Ok(1)` then gives `i64` for `T`. The arguments are checked in order, so a part that only a later argument fixes does not help an earlier one.
 - When an argument does not agree with the expected type, the error is at the argument. `let r: Result<i64, string> = Ok("x")` reports `"x"`: expected `i64`, found `string` ([E0032](../diagnostics/E0032.md)). With written type arguments, as in `id<i64>(n)`, the error stays at the call.
+- In such an error, a type parameter that the call has not fixed yet keeps its name. For `f<A, B>(a: A, p: Two<A, B>)`, `f("s", Two(a: 1, b: true))` reports expected `Two<string, B>`, found `Two<i64, bool>`. For `take<T>(xs: [T])`, `take(Ok(1))` reports `Ok(1)`: expected `[T]`, found `Result<i64, E>`, because no `E` makes a `Result` an array.
 - A `None` or a `[]` alone has no type. When nothing else fixes a type parameter, the call is an error ([E0050](../diagnostics/E0050.md)). Annotate the result, or write the type arguments.
 
 ```sisu
