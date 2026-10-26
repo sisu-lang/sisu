@@ -1478,6 +1478,9 @@ pub(crate) enum UnknownForm {
     /// The choice of an associated type needs the associated type itself, which the diagnostic's
     /// name gives with its base, as `W<Leaf>.A`: the types the choice names lead back to it.
     ChoiceLoops,
+    /// The associated type of the type parameter `base` is written in a bound that the bounds of
+    /// `base` wait for, so the bounds of `base` are not known yet.
+    BoundsLoop { base: String },
 }
 
 /// Where the earlier definition of a name is.
@@ -2484,6 +2487,12 @@ impl From<DiagnosticKind> for Diagnostic {
                     format!("the associated type `{name}` needs itself to find its type"),
                 )
                 .with_help("write a choice that does not lead back to the same associated type"),
+                UnknownForm::BoundsLoop { base } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{base}.{name}` is not known here: a bound of `{base}` waits for this bound"),
+                )
+                .with_help("write one of the bounds that wait for each other without an associated type"),
             },
             DiagnosticKind::BodyHasNoValue { function, want, at } => Diagnostic::coded(
                 code,

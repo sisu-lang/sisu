@@ -27,6 +27,8 @@ mod stmt;
 mod string;
 mod unused_names;
 
+use std::rc::Rc;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
@@ -144,7 +146,7 @@ struct ClassInfo {
     /// The first method of each name, and every broken one.
     methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// The associated types the declaration's body chooses.
-    assoc: Choices,
+    assoc: Rc<Choices>,
 }
 
 struct FieldInfo {
@@ -517,7 +519,7 @@ struct Body {
     required: FxHashMap<Type, FxHashMap<Symbol, Vec<Required>>>,
     /// The associated types that a bare name stands for: the interface's own in an interface,
     /// the conformance's choices in a class, an enum or an `extend` block. `None` is `Error`.
-    assoc: Vec<(Symbol, Option<Type>)>,
+    assoc: Rc<Choices>,
     /// The names of the associated types whose choices are being resolved: a choice cannot name
     /// one of them.
     choosing: Vec<Symbol>,
@@ -937,7 +939,7 @@ impl Checker<'_> {
                         bounds: Vec::new(),
                         fields: Vec::new(),
                         methods: FxHashMap::default(),
-                        assoc: Choices::default(),
+                        assoc: Rc::default(),
                     });
                     let name = &class.name;
                     if !self.built_in(name)
@@ -971,7 +973,7 @@ impl Checker<'_> {
                         variants: Vec::new(),
                         index: FxHashMap::default(),
                         methods: FxHashMap::default(),
-                        assoc: Choices::default(),
+                        assoc: Rc::default(),
                     });
                     if !self.built_in(&e.name)
                         && self.first_callable(&mut first, Definition::Enum, &e.name)
@@ -1235,7 +1237,7 @@ impl Checker<'_> {
                     .insert(method.name, Declared::Broken);
             }
             self.body.self_type = None;
-            self.body.assoc.clear();
+            self.body.assoc = Rc::default();
         }
         declared
     }

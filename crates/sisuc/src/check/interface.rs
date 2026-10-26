@@ -6,11 +6,12 @@ use std::collections::VecDeque;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::extend::holder_of;
-use super::{BindingKind, Body, Checker, Declared, Definition};
+use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition};
 use crate::ast;
 use crate::conformance::find;
 use crate::diagnostic::{
-    AddBound, Definition as Kind, DiagnosticKind, NotConformForm, NotInterface, WideKind,
+    AddBound, Definition as Kind, DiagnosticKind, NotConformForm, NotInterface, UnknownForm,
+    WideKind,
 };
 use crate::graph::components;
 use crate::source::Span;
@@ -180,13 +181,20 @@ impl Checker<'_> {
                 declared.push(assoc);
             }
         }
-        self.body.assoc = (declared.iter().enumerate())
-            .map(|(k, assoc)| {
-                let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
-                let ty = Type::intern(TypeKind::Assoc(this_type, id, own, k));
-                (assoc.name.name, Some(ty))
-            })
-            .collect();
+        self.body.assoc = std::rc::Rc::new(Choices::new(
+            (declared.iter().enumerate())
+                .map(|(k, assoc)| {
+                    let k =
+                        u32::try_from(k).expect("an interface should have fewer than 2^32 types");
+                    let ty = Type::intern(TypeKind::Assoc(this_type, id, own, k));
+                    Choice {
+                        name: assoc.name.clone(),
+                        ty: Some(ty),
+                        at: assoc.name.span,
+                    }
+                })
+                .collect(),
+        ));
         self.interfaces[id.0].assoc = (declared.iter())
             .map(|assoc| AssocInfo {
                 name: assoc.name.clone(),
@@ -223,7 +231,7 @@ impl Checker<'_> {
         self.interfaces[id.0].inherits = inherits;
         self.interfaces[id.0].inherits_at = inherits_at;
         for (k, assoc) in declared.iter().enumerate() {
-            let (_, ty) = self.body.assoc[k];
+            let ty = self.body.assoc.at(k).ty;
             let bounds = (assoc.bounds.iter())
                 .filter_map(|bound| self.bound(bound, ty))
                 .collect();
@@ -325,18 +333,18 @@ impl Checker<'_> {
         let mut found: Vec<Vec<Option<Bound>>> = (params.iter())
             .map(|param| vec![None; param.bounds.len()])
             .collect();
-        self.resolve_bounds(at, params, &mut found, false);
-        if params
-            .iter()
-            .any(|param| param.bounds.iter().any(ast::TypeExpr::names_member))
-        {
-            let so_far = head.iter().cloned().chain(
-                found
-                    .iter()
-                    .map(|bounds| bounds.iter().flatten().copied().collect()),
-            );
-            self.body.set_bounds(first, so_far.collect());
-            self.resolve_bounds(at, params, &mut found, true);
+        let mut members = Vec::new();
+        for (i, param) in params.iter().enumerate() {
+            for (j, ty) in param.bounds.iter().enumerate() {
+                if ty.names_member() {
+                    members.push((i, j));
+                } else {
+                    found[i][j] = self.resolve_bound(at, params, i, j);
+                }
+            }
+        }
+        if !members.is_empty() {
+            self.resolve_member_bounds(first, &head, params, &mut found, &members);
         }
         let mut bounds = head;
         bounds.extend(
@@ -354,23 +362,94 @@ impl Checker<'_> {
         bounds
     }
 
-    /// Resolves into `found` the bounds of `params`, which start at the place `at`, that name an
-    /// associated type of another type in their arguments when `members` is true, and the others
-    /// when it is false.
-    fn resolve_bounds(
+    /// The bound `j` of the parameter `i` of `params`, which start at the place `at`.
+    fn resolve_bound(
         &mut self,
         at: usize,
         params: &[ast::TypeParam],
+        i: usize,
+        j: usize,
+    ) -> Option<Bound> {
+        let place =
+            u32::try_from(at + i).expect("a declaration should have fewer than 2^32 parameters");
+        let this = Some(Type::intern(TypeKind::Param(params[i].name.name, place)));
+        self.bound(&params[i].bounds[j], this)
+    }
+
+    /// Resolves into `found` the bounds `members` of `params`, as (parameter, place) pairs, that
+    /// name an associated type of a parameter in their arguments. `found` holds the others. A
+    /// bound waits for every bound of the parameters it writes an associated type through, so a
+    /// round resolves the bounds whose parameters are all resolved, puts them in scope, and the
+    /// next round resolves the bounds that were waiting for them.
+    ///
+    /// The bounds left when a round resolves none wait for each other. Each that is on such a loop
+    /// is reported at the associated type it writes (E0030), and the others that wait for it
+    /// stay unknown, with no report of their own.
+    ///
+    /// shortcut: a round puts every bound in scope again, so a chain of `n` bounds costs `n`
+    /// rounds of `n` bounds. Order the bounds once, and add each to the scope as it resolves,
+    /// when a program writes long chains.
+    fn resolve_member_bounds(
+        &mut self,
+        first: usize,
+        head: &[Vec<Bound>],
+        params: &[ast::TypeParam],
         found: &mut [Vec<Option<Bound>>],
-        members: bool,
+        members: &[(usize, usize)],
     ) {
-        for (i, param) in params.iter().enumerate() {
-            let place = u32::try_from(at + i)
-                .expect("a declaration should have fewer than 2^32 parameters");
-            let this = Some(Type::intern(TypeKind::Param(param.name.name, place)));
-            for (j, ty) in param.bounds.iter().enumerate() {
-                if ty.names_member() == members {
-                    found[i][j] = self.bound(ty, this);
+        let at = first + head.len();
+        // For each bound, the written associated types, as the parameter they go through and
+        // their name, and the bounds of the list that it waits for.
+        let written: Vec<Vec<(Symbol, &ast::Ident)>> = members
+            .iter()
+            .map(|&(i, j)| {
+                let mut roots = Vec::new();
+                params[i].bounds[j].member_roots(&mut roots);
+                roots
+            })
+            .collect();
+        let waits: Vec<Vec<usize>> = written
+            .iter()
+            .map(|roots| {
+                (roots.iter())
+                    .filter_map(|(root, _)| params.iter().position(|p| p.name.name == *root))
+                    .flat_map(|p| (0..members.len()).filter(move |&m| members[m].0 == p))
+                    .collect()
+            })
+            .collect();
+        let mut done = vec![false; members.len()];
+        loop {
+            let ready: Vec<usize> = (0..members.len())
+                .filter(|&m| !done[m] && waits[m].iter().all(|&w| done[w]))
+                .collect();
+            if ready.is_empty() {
+                break;
+            }
+            let so_far = head.iter().cloned().chain(
+                found
+                    .iter()
+                    .map(|bounds| bounds.iter().flatten().copied().collect()),
+            );
+            self.body.set_bounds(first, so_far.collect());
+            for m in ready {
+                let (i, j) = members[m];
+                found[i][j] = self.resolve_bound(at, params, i, j);
+                done[m] = true;
+            }
+        }
+        for m in (0..members.len()).filter(|&m| !done[m]) {
+            if !reaches(&waits, m, m) {
+                continue;
+            }
+            for &(root, name) in &written[m] {
+                if params.iter().any(|p| p.name.name == root) {
+                    self.report(DiagnosticKind::UnknownType {
+                        name: name.name.to_string(),
+                        at: name.span,
+                        form: UnknownForm::BoundsLoop {
+                            base: root.to_string(),
+                        },
+                    });
                 }
             }
         }
@@ -1271,4 +1350,19 @@ fn cycle_through(edges: &[Vec<usize>], component: &[usize], start: usize) -> Vec
     }
     path.reverse();
     path
+}
+
+/// Whether `to` is reached from `from` by one or more steps of `waits`.
+fn reaches(waits: &[Vec<usize>], from: usize, to: usize) -> bool {
+    let mut seen = vec![false; waits.len()];
+    let mut stack = waits[from].clone();
+    while let Some(n) = stack.pop() {
+        if n == to {
+            return true;
+        }
+        if !std::mem::replace(&mut seen[n], true) {
+            stack.extend(&waits[n]);
+        }
+    }
+    false
 }

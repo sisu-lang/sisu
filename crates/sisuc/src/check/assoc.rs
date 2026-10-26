@@ -2,6 +2,8 @@
 //! through a type parameter, and the substitution that replaces an associated type of a known
 //! type by the type its conformance chose.
 
+use std::rc::Rc;
+
 use rustc_hash::FxHashMap;
 
 use super::interface::Bound;
@@ -43,6 +45,11 @@ impl Choices {
     /// The choice of the associated type `name`.
     pub(super) fn get(&self, name: Symbol) -> Option<&Choice> {
         self.by_name.get(&name).map(|&i| &self.list[i])
+    }
+
+    /// The `k`th choice written.
+    pub(super) fn at(&self, k: usize) -> &Choice {
+        &self.list[k]
     }
 
     pub(super) fn iter(&self) -> std::slice::Iter<'_, Choice> {
@@ -152,20 +159,17 @@ impl Checker<'_> {
 
     /// The associated types that a bare name stands for in the method `func` of `owner`: the
     /// choices of its `extend` block, or of its class or enum.
-    pub(super) fn assoc_scope(
-        &self,
-        func: FuncId,
-        owner: Option<Type>,
-    ) -> Vec<(Symbol, Option<Type>)> {
-        let choices = match self.signatures[func.0].extension {
-            Some(at) => &self.extensions[at].assoc,
+    pub(super) fn assoc_scope(&self, func: FuncId, owner: Option<Type>) -> Rc<Choices> {
+        #[cfg(test)]
+        super::CHOICE_STEPS.set(super::CHOICE_STEPS.get() + 1);
+        match self.signatures[func.0].extension {
+            Some(at) => Rc::clone(&self.extensions[at].assoc),
             None => match owner.and_then(super::extend::holder_of) {
-                Some(Holder::Class(c)) => &self.classes[c.0].assoc,
-                Some(Holder::Enum(e)) => &self.enums[e.0].assoc,
-                None => return Vec::new(),
+                Some(Holder::Class(c)) => Rc::clone(&self.classes[c.0].assoc),
+                Some(Holder::Enum(e)) => Rc::clone(&self.enums[e.0].assoc),
+                None => Rc::default(),
             },
-        };
-        choices.iter().map(|c| (c.name.name, c.ty)).collect()
+        }
     }
 
     /// What the bare `name`, written at `at`, stands for. A name whose choice is being resolved
@@ -179,18 +183,24 @@ impl Checker<'_> {
             });
             return Named::Failed;
         }
-        match self.body.assoc.iter().find(|(n, _)| *n == name) {
-            Some((_, Some(ty))) => Named::Type(*ty),
-            Some((_, None)) => Named::Failed,
+        #[cfg(test)]
+        super::CHOICE_STEPS.set(super::CHOICE_STEPS.get() + 1);
+        match self.body.assoc.get(name) {
+            Some(Choice { ty: Some(ty), .. }) => Named::Type(*ty),
+            Some(_) => Named::Failed,
             None => Named::Unknown,
         }
     }
 
     /// Resolves the choices of a class or an enum `owner`, as `resolve_choices` does, and puts
     /// them in scope as the bare names its signatures and bodies may use.
-    pub(super) fn declare_choices(&mut self, choices: &[ast::AssocChoice], owner: &str) -> Choices {
-        let resolved = Choices::new(self.resolve_choices(choices, owner));
-        self.body.assoc = resolved.iter().map(|c| (c.name.name, c.ty)).collect();
+    pub(super) fn declare_choices(
+        &mut self,
+        choices: &[ast::AssocChoice],
+        owner: &str,
+    ) -> Rc<Choices> {
+        let resolved = Rc::new(Choices::new(self.resolve_choices(choices, owner)));
+        self.body.assoc = Rc::clone(&resolved);
         resolved
     }
 
@@ -217,7 +227,7 @@ impl Checker<'_> {
         let base_ty = self.resolve(base)?;
         if !matches!(base_ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) {
             let own = matches!(base.kind, ast::TypeKind::SelfType)
-                && self.body.assoc.iter().any(|(n, _)| *n == name.name);
+                && self.body.assoc.get(name.name).is_some();
             self.report(DiagnosticKind::UnknownType {
                 name: name.name.to_string(),
                 at: ty.bare,

@@ -30,7 +30,7 @@ pub(super) struct EnumInfo {
     /// The first method of each name that no variant takes, and every broken one.
     pub(super) methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// The associated types the declaration's body chooses.
-    pub(super) assoc: super::Choices,
+    pub(super) assoc: std::rc::Rc<super::Choices>,
 }
 
 pub(super) struct VariantInfo {
@@ -213,7 +213,7 @@ impl Checker<'_> {
                 .insert(method.name, Declared::Broken);
         }
         self.body.self_type = None;
-        self.body.assoc.clear();
+        self.body.assoc = std::rc::Rc::default();
     }
 
     /// `Enum.member`, or `Enum.member(args)` when `call` gives the arguments and the span of their

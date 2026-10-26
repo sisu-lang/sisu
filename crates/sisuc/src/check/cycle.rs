@@ -805,8 +805,12 @@ struct Rule {
 fn relax(growth: &mut [Option<i64>], rules: &[Rule], fixed: &[bool]) -> Vec<usize> {
     let mut raised = Vec::new();
     for rule in rules.iter().filter(|rule| !fixed[rule.at]) {
-        let named: Option<i64> = rule.names.iter().map(|&n| growth[n]).sum();
-        let Some(through) = named.map(|named| named + rule.weight) else {
+        // A sum that passes `UNBOUNDED` is `UNBOUNDED`: the growth does not end, and the number
+        // stays one that the weights of the graph can add to.
+        let named = (rule.names.iter()).try_fold(0_i64, |sum, &n| {
+            Some(sum.saturating_add(growth[n]?).min(UNBOUNDED))
+        });
+        let Some(through) = named.map(|named| (named + rule.weight).min(UNBOUNDED)) else {
             continue;
         };
         if growth[rule.at].is_none_or(|g| through > g) {
@@ -832,18 +836,20 @@ fn cyclic(growth: &[Option<i64>], rules: &[Rule]) -> Vec<bool> {
     let count = growth.len();
     let mut ghost: Vec<Option<i64>> = growth.iter().map(|g| Some(g.unwrap_or(0))).collect();
     let none = vec![false; count];
-    for _ in 0..=count {
-        if relax(&mut ghost, rules, &none).is_empty() {
-            return none;
+    let mut unbounded = vec![false; count];
+    let settled = (0..=count).any(|_| relax(&mut ghost, rules, &none).is_empty());
+    if !settled {
+        // Still growing. A cycle makes some type on it grow in every turn around, and a turn
+        // takes at most as many passes as there are associated types.
+        for _ in 0..=count {
+            for raised in relax(&mut ghost, rules, &none) {
+                unbounded[raised] = true;
+            }
         }
     }
-    // Still growing. A cycle makes some type on it grow in every turn around, and a turn takes at
-    // most as many passes as there are associated types.
-    let mut unbounded = vec![false; count];
-    for _ in 0..=count {
-        for raised in relax(&mut ghost, rules, &none) {
-            unbounded[raised] = true;
-        }
+    // A growth that reached `UNBOUNDED` has no more room to grow, and did not end.
+    for (unbounded, growth) in unbounded.iter_mut().zip(&ghost) {
+        *unbounded |= growth.is_some_and(|growth| growth >= UNBOUNDED);
     }
     unbounded
 }
@@ -1066,6 +1072,22 @@ mod tests {
             .expect("the thread should start")
             .join()
             .expect("the walk should not overflow the stack");
+    }
+
+    /// A growth that doubles in each pass, with as many passes as 100 associated types need, passes
+    /// `UNBOUNDED` long before they end: it is unbounded, and no sum overflows.
+    #[test]
+    fn a_growth_that_doubles_should_be_unbounded_without_overflow() {
+        let mut growth = vec![None; 100];
+        growth[0] = Some(1);
+        let rules = [Rule {
+            at: 0,
+            names: vec![0, 0],
+            weight: 0,
+        }];
+        let unbounded = cyclic(&growth, &rules);
+        assert!(unbounded[0]);
+        assert!(!unbounded[1..].contains(&true));
     }
 
     /// A parameter has no parts: its node is its own, never one made of parts.

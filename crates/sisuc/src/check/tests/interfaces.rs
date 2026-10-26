@@ -1511,6 +1511,32 @@ fn the_checks_of_choices_should_read_each_conformance_and_choice_a_fixed_number_
     }
 }
 
+/// A method sees the choices of its class by name, without a copy of them: a class with `n`
+/// choices and `n` methods that each write one reads `n` choices to find the others, not `n` for
+/// each method. The reads of 64 are at most twice those of 32.
+#[test]
+fn a_method_should_find_the_choices_of_its_class_without_copying_them() {
+    let steps = |n: usize| {
+        let declared: Vec<String> = (0..n).map(|i| format!("    type A{i}\n")).collect();
+        let chosen: Vec<String> = (0..n).map(|i| format!("    type A{i} = i64\n")).collect();
+        let methods: Vec<String> = (0..n)
+            .map(|i| format!("    fn m{i}(self) -> A{i} {{ 1 }}\n"))
+            .collect();
+        let src = format!(
+            "interface Source {{\n{}}}\nclass C: Source {{\n    n: i64\n{}{}}}\nfn main() {{}}",
+            declared.concat(),
+            chosen.concat(),
+            methods.concat()
+        );
+        CHOICE_STEPS.set(0);
+        clean(&src);
+        CHOICE_STEPS.get()
+    };
+    let (small, large) = (steps(32), steps(64));
+    assert!(small >= 32, "{small} reads for 32");
+    assert!(large <= 2 * small, "{large} reads for 64, {small} for 32");
+}
+
 /// A block that lacks every interface its own inherits reports each one by the place the closure
 /// recorded for it, so no report reads an inheritance list again.
 #[test]
@@ -3178,6 +3204,8 @@ fn associated_types_should_normalize_through_generic_code() {
         // A bound whose argument is an associated type of a sibling parameter, before and after
         // the bound that gives the parameter its type, and a call of each.
         "extend Tag: Convert<Tag> {\n    fn convert(self) -> Tag { self }\n}\nfn conv<S: Source, T: Convert<S.Item>>(s: S, t: T) -> S.Item { t.convert() }\nfn conv2<T: Convert<S.Item>, S: Source>(t: T, s: S) -> S.Item? { s.next() }\nfn t() {\n    let a: Tag = conv(Countdown(n: 1), Tag(id: 2))\n    let b: Tag? = conv2(Tag(id: 2), Countdown(n: 1))\n}\nfn arr<T: Convert<[S.Item]>, S: Source>(_t: T, _s: S) {}\nfn nest<T: Convert<Wrap<S.Item>>, S: Source>(_t: T, _s: S) {}",
+        // A chain: the bound of `U` needs the bound of `S`, which needs the bound of `T`.
+        "interface Holds<Y> {\n    type Item\n}\nfn chain<S: Holds<T.Item>, U: Convert<S.Item>, T: Source>(_s: S, _t: T, u: U) -> S.Item { u.convert() }",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3382,6 +3410,12 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
         (
             "fn f<S, T: Convert<S.Item>>(s: S, t: T) {}".to_string(),
             vec![(Code::UnknownType, (1, 22))],
+        ),
+        // Two bounds that wait for each other: each is reported where it writes the type, and not
+        // as a type the base lacks. A bound that waits for them has no report of its own.
+        (
+            "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\nfn f<T: A<S.Q>, S: B<T.P>, U: Convert<S.Q>>(t: T, s: S, u: U) {}".to_string(),
+            vec![(Code::UnknownType, (7, 13)), (Code::UnknownType, (7, 24))],
         ),
         (
             "interface GSource<T> {\n    type Item\n}\nextend<U: Marker> Wrap<U>: GSource<i64> {\n    type Item = i64\n}\nfn gpass<S: GSource<T>, T>(s: S, x: S.Item, y: T) {}\nfn t() {\n    let node = Node(id: 1)\n    gpass(Wrap(value: node), \"x\", 5)\n}".to_string(),

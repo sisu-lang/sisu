@@ -1,0 +1,15 @@
+interface Reader<X> {
+    type Item
+}
+
+interface Writer<X> {
+    type Sink
+}
+
+fn copy<R: Reader<W.Sink>, W: Writer<R.Item>>(from: R, to: W) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

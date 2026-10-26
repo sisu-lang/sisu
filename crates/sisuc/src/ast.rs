@@ -235,6 +235,24 @@ pub(crate) struct TypeExpr {
 }
 
 impl TypeExpr {
+    /// Adds to `out` each associated type of another type that the type writes, as the name of
+    /// the type it goes through and the first name after it: `S.Item.Key` adds `S` and `Item`.
+    pub(crate) fn member_roots<'a>(&'a self, out: &mut Vec<(Symbol, &'a Ident)>) {
+        match &self.kind {
+            TypeKind::Member { base, name } => match &base.kind {
+                TypeKind::Name(root) => out.push((*root, name)),
+                _ => base.member_roots(out),
+            },
+            TypeKind::Applied(applied) => {
+                for arg in &applied.args {
+                    arg.member_roots(out);
+                }
+            }
+            TypeKind::Array(element) => element.member_roots(out),
+            TypeKind::Name(_) | TypeKind::SelfType => {}
+        }
+    }
+
     /// Whether the type, or an argument or element of it, is an associated type of another
     /// type, as `S.Item`.
     pub(crate) fn names_member(&self) -> bool {

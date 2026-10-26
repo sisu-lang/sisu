@@ -28,7 +28,7 @@ pub(super) struct Extension {
     /// The interface of an `extend T: I` block, and where it is written.
     pub(super) interface: Option<(Bound, Span)>,
     /// The associated types the block chooses.
-    pub(super) assoc: Choices,
+    pub(super) assoc: std::rc::Rc<Choices>,
     /// The first method of each name.
     pub(super) methods: FxHashMap<Symbol, tir::FuncId>,
     /// Whether the type already conforms to the interface, so that the block's methods answer no
@@ -61,18 +61,18 @@ impl<'a> Checker<'_> {
             }
             Some((bound, ty.bare))
         });
-        let assoc = Choices::new(if extend.interface.is_some() {
+        let assoc = std::rc::Rc::new(Choices::new(if extend.interface.is_some() {
             self.resolve_choices(&extend.assoc, &extend.target.to_string())
         } else {
             Vec::new()
-        });
+        }));
         let unused = target.is_some_and(|target| self.unused_params(extend, target));
         let failed = unused || matches!(interface, Some(None));
         let usable = target.filter(|_| !failed);
         let receiver = usable.unwrap_or(UNKNOWN);
         let holder = usable.and_then(holder_of);
         self.body.self_type = Some(receiver);
-        self.body.assoc = assoc.iter().map(|c| (c.name.name, c.ty)).collect();
+        self.body.assoc = std::rc::Rc::clone(&assoc);
         let name = self.type_name(receiver);
         let at = self.extensions.len();
         let mut methods = FxHashMap::default();
@@ -112,7 +112,7 @@ impl<'a> Checker<'_> {
         }
         self.body.set_type_params(&[]);
         self.body.self_type = None;
-        self.body.assoc.clear();
+        self.body.assoc = std::rc::Rc::default();
         if let (Some(target), Some(holder)) = (usable, holder) {
             for method in &extend.broken_methods {
                 self.broken_extension_methods.insert((holder, method.name));

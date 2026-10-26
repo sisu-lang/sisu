@@ -73,11 +73,15 @@ the code of a copy written by hand.
   `S: Source`, and `S.Item.Key` for an associated type of an associated
   type. Inside the interface it is `Item`, and inside a conformance `Item`
   is the type it chose. A choice never names an associated type of its own
-  conformance, and an `extend` block never names one in its target, so
-  replacing the associated types of a known type ends: every choice
-  substitutes a type smaller than the conformance's target. `mono` does the
-  same replacement for each instantiation, so a call that compiles always
-  finds the conformance of each base.
+  conformance, and an `extend` block never names one in its target. A choice
+  can still name an associated type of one of its parameters, as `T.Item.Item`,
+  so the replacement of the associated types of a known type can lead back
+  to the associated type it started with. The replacement keeps the types it
+  is working on and stops at such a loop. The checker reports the choice that
+  closes the loop once, and the call that needs the type fails. `mono` does
+  the same replacement for each instantiation. A loop that no signature
+  writes can reach `mono`, which stops with an internal error. A call that
+  compiles finds the conformance of each base.
 - **An instantiation cycle through an interface is a cycle of weights.** The
   rule for `fn f<T>(x: T) { f([x]) }` becomes a graph where each edge has a
   weight, the depth at which an argument nests a type parameter. A call
