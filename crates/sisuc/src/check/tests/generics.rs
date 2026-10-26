@@ -2634,7 +2634,7 @@ fn waiting_branch_should_keep_waiting_when_a_parameter_is_partly_bound() {
 
 /// The context for an inner call has a hole where the outer call binds nothing yet. A part of
 /// the inner call's return type that names no parameter (`i64`) meets that hole and binds
-/// nothing from it, and so does a hole inside an optional.
+/// nothing from it.
 #[test]
 fn context_hole_should_meet_a_return_type_part_that_names_no_parameter() {
     with_prelude();
@@ -2644,7 +2644,13 @@ fn context_hole_should_meet_a_return_type_part_that_names_no_parameter() {
     );
     assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
     assert_eq!(call_types(&src, "mk"), ["string", "Result<i64, string>"]);
-    // `Result<T?, string>` gives `Ok` the context `Result<_?, string>`.
+}
+
+/// `Result<T?, string>` gives `Ok` the context `Result<_?, string>`: its `T` meets `_?`, a part
+/// that holds a hole, and binds nothing.
+#[test]
+fn parameter_of_a_return_type_should_meet_a_part_that_holds_a_hole() {
+    with_prelude();
     let src = "fn g<T>(r: Result<T?, string>) -> T { panic(\"e\") }\n\
                fn main() {\n    let x = g(Ok(Some(1)))\n    print(x)\n}";
     assert_eq!(call_types(src, "g"), ["i64", "i64"]);
@@ -2675,13 +2681,31 @@ fn context_that_no_variant_meets_should_be_reported_as_a_mismatch_at_the_argumen
 /// A call whose return type conflicts with a bound part of the context (`string` against
 /// `bool`) is reported at the call as a mismatch, and `mk` reports no `E`.
 #[test]
-fn waiting_call_that_conflicts_in_a_bound_part_should_be_reported_as_a_mismatch_at_the_call() {
+fn waiting_call_that_conflicts_in_a_bound_part_should_mismatch_at_the_call() {
     with_prelude();
     let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
                fn f<T>(p: Two<T, bool>) {}\n\
                fn mk<E>() -> Two<E, string> { panic(\"e\") }\n\
                fn main() {\n    f(mk())\n}";
     codes(src, &[(Code::Mismatch, (8, 7))]);
+}
+
+/// A part of the return type that names no parameter, but meets a part of the context that
+/// holds a hole, must still meet its structure: `Result<i64, i64>` against `Result<T, string>`
+/// and `Result<i64, bool>` against `Result<_, string>` clash, so each call is a mismatch and
+/// `mk` reports no `E`.
+#[test]
+fn no_parameter_part_should_not_meet_a_value_that_holds_a_hole() {
+    with_prelude();
+    let src = "class Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn f<T, U>(p: Two<Result<T, string>, U>) -> T { panic(\"e\") }\n\
+               fn mk<E>() -> Two<Result<i64, i64>, [E]> { panic(\"e\") }\n\
+               fn main() {\n    let x = f(mk())\n    print(x)\n}";
+    codes(src, &[(Code::Mismatch, (8, 15))]);
+    let src = "fn f<T>(r: Result<T, string>) -> T { panic(\"e\") }\n\
+               fn mk<E>(x: E?) -> Result<i64, bool> { panic(\"e\") }\n\
+               fn main() {\n    let x = f(mk(None))\n    print(x)\n}";
+    codes(src, &[(Code::Mismatch, (4, 15))]);
 }
 
 /// `mk` has a mistake of its own, an argument of the wrong type, and a result that cannot meet
@@ -2700,7 +2724,7 @@ fn waiting_call_with_its_own_mistake_should_report_only_that_mistake() {
 /// `Ok(Ok(1))` for `[T]`: the outer `Ok` waits for its argument, which gets no context, so the
 /// outer `Ok` reports the mismatch at itself, and the inner `Ok` reports nothing.
 #[test]
-fn nested_waiting_call_that_cannot_fit_should_report_one_mismatch_at_the_outer_call() {
+fn nested_waiting_call_that_cannot_fit_should_mismatch_once_at_the_outer_call() {
     with_prelude();
     let src = "fn take<T>(xs: [T]) -> T { panic(\"e\") }\n\
                fn main() {\n    let x = take(Ok(Ok(1)))\n    print(x)\n}";

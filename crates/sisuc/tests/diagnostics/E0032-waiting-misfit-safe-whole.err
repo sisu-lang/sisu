@@ -1,0 +1,8 @@
+error[E0032]: expected `Two<T, string>`, found `Two<E, string>?`
+  --> E0032-waiting-misfit-safe-whole.sisu:18:7
+   |
+18 |     f(m?.make())
+   |       ^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

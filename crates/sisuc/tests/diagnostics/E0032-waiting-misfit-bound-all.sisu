@@ -1,0 +1,15 @@
+class Three<A, B, C> {
+    a: A
+    b: B
+    c: C
+}
+
+fn f<T>(p: Three<i64, T, bool>) {}
+
+fn mk<E>() -> Three<E, E, string> {
+    panic("e")
+}
+
+fn main() {
+    f(mk())
+}

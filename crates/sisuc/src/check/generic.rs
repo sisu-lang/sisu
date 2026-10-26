@@ -13,7 +13,7 @@ use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, UNKNOWN,
-    built_in_type, optional_of, payload, type_of,
+    as_optional, built_in_type, optional_of, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, MainForm, Unwrap};
@@ -196,11 +196,13 @@ impl Bindings {
     }
 
     /// Binds each unbound parameter `pattern` names where it meets `value`, recording it in
-    /// `fresh`; whether all of `pattern` meets it. A part of `value` that is a hole, or holds
-    /// one, meets any part of `pattern` and binds nothing: the context has not fixed it.
+    /// `fresh`; whether all of `pattern` meets it. Only the hole itself meets any part of
+    /// `pattern`, and binds nothing: the context has not fixed it. A parameter of `pattern` also
+    /// meets a part that holds a hole, and binds nothing. The rest of `pattern` must meet the
+    /// structure of `value`, as it does when `value` has no hole.
     fn bind(&mut self, pattern: Type, value: Type) -> bool {
-        if !pattern.has_param() {
-            return pattern == value || value.holds_hole();
+        if !pattern.has_param() && !value.holds_hole() {
+            return pattern == value;
         }
         match (pattern.kind(), value.kind()) {
             _ if value == *HOLE => true,
@@ -346,6 +348,18 @@ pub(super) struct Site<'a> {
     pub(super) written: &'a [ast::TypeExpr],
     pub(super) angles: Span,
     pub(super) expected: Option<Type>,
+}
+
+/// A waiting generic call that an outer call checks as an argument (see `Checker::infer_waiting`).
+/// The call reports a result that cannot meet the context as a mismatch with `want`.
+#[derive(Clone, Copy)]
+pub(super) struct ContextHint {
+    /// The call's span.
+    at: Span,
+    /// The parameter type of the outer call, as that call prints it (`Bindings::printed`).
+    want: Type,
+    /// Whether the call is `receiver?.method(...)`, whose result is optional.
+    safe: bool,
 }
 
 /// A generic call while its arguments bind its callee's parameters.
@@ -518,7 +532,7 @@ impl Checker<'_> {
             // writes are its own.
             let met = (ranks.contains(&2) && call.bindings.unify(ret, want))
                 || call.bindings.constrain(ret, payload(want));
-            misfit = (!met && want.holds_hole()).then_some(ret);
+            misfit = self.misfit(span, want, met).then_some(ret);
             if !met && written.is_empty() {
                 self.blame_arguments(&mut call, sig, args, ret, want);
             }
@@ -589,6 +603,19 @@ impl Checker<'_> {
             })
             .collect();
         Some((checked, list, sig.ret.map(|ret| ret.subst(list.get()))))
+    }
+
+    /// Whether the call at `span`, whose result did not meet `want` (`met` is false) or may not,
+    /// is a misfit: `want`, its context, holds a hole, and the result cannot meet it. The result
+    /// of a safe call is optional, so a context that holds a hole and is not optional cannot
+    /// meet it, whatever the return type meets.
+    fn misfit(&self, span: Span, want: Type, met: bool) -> bool {
+        let safe = self
+            .body
+            .context_hint
+            .is_some_and(|hint| hint.at == span && hint.safe);
+        let optional = matches!(want.kind(), TypeKind::Optional(_));
+        want.holds_hole() && (!met || (safe && !optional))
     }
 
     /// Reports each argument already checked whose type is not what `want`, the call's context,
@@ -692,7 +719,11 @@ impl Checker<'_> {
             && let Some(context) = self.call_context(call, e, param)
         {
             // The call reports a context it cannot meet as a mismatch with this type.
-            let hint = (e.span, call.bindings.printed(param));
+            let hint = ContextHint {
+                at: e.span,
+                want: call.bindings.printed(param),
+                safe: matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. }),
+            };
             let outer = self.body.context_hint.replace(hint);
             self.infer_arg(call, i, e, Some(param), Some(context));
             self.body.context_hint = outer;
@@ -898,9 +929,11 @@ impl Checker<'_> {
         param: usize,
         found: Option<Type>,
     ) {
-        let hint = self.body.context_hint.filter(|&(at, _)| at == span);
-        if let Some((found, (_, want))) = found.zip(hint) {
-            let d = self.mismatch(span, None, want, found);
+        let hint = self.body.context_hint.filter(|hint| hint.at == span);
+        if let Some((found, hint)) = found.zip(hint) {
+            // The result of a safe call is optional (see `Checker::member`).
+            let found = if hint.safe { as_optional(found) } else { found };
+            let d = self.mismatch(span, None, hint.want, found);
             self.diagnostics.push(d);
         } else {
             self.cannot_infer(sig, param);

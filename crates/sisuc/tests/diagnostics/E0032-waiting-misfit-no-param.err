@@ -1,0 +1,8 @@
+error[E0032]: expected `Two<Result<T, string>, U>`, found `Two<Result<i64, i64>, [E]>`
+  --> E0032-waiting-misfit-no-param.sisu:15:15
+   |
+15 |     let x = f(mk())
+   |               ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032
