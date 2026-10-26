@@ -1477,8 +1477,8 @@ fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
     assert_eq!(walked(&format!("{}x", "b, ".repeat(100))), (bad, 100));
 }
 
-/// Each waiting argument is a generic call for a parameter of its own, which its context binds:
-/// the sweeps look at each parameter type a fixed number of times, so the work grows with the
+/// Each waiting argument is a generic call for a parameter of its own, which its context binds.
+/// The sweeps look at each parameter type a fixed number of times. So the work grows with the
 /// arguments, not with their square.
 #[test]
 fn waiting_arguments_should_cost_the_same_walk_each() {
