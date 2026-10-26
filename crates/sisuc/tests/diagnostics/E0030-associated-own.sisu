@@ -1,0 +1,11 @@
+interface Holds<Y> {
+    type Item
+}
+
+fn keep<S: Holds<S.Item>>(s: S) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

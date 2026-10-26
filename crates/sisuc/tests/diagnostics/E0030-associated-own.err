@@ -1,0 +1,8 @@
+error[E0030]: `S` has no associated type `Item`
+ --> E0030-associated-own.sisu:5:20
+  |
+5 | fn keep<S: Holds<S.Item>>(s: S) {
+  |                    ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

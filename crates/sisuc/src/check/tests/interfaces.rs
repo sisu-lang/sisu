@@ -1537,6 +1537,44 @@ fn a_method_should_find_the_choices_of_its_class_without_copying_them() {
     assert!(large <= 2 * small, "{large} reads for 64, {small} for 32");
 }
 
+/// Bounds that write an associated type of another parameter are tried a fixed number of times
+/// each, and put in scope in place: a chain of `n` bounds written in reverse is tried at most
+/// twice per bound, and keeps as many scopes whatever `n` is.
+#[test]
+fn bounds_that_write_associated_types_should_be_tried_a_fixed_number_of_times() {
+    let steps = |n: usize| {
+        let params: Vec<String> = (0..n)
+            .rev()
+            .map(|i| {
+                if i == 0 {
+                    "T0: Source".to_string()
+                } else {
+                    format!("T{i}: Holds<T{}.Item>", i - 1)
+                }
+            })
+            .collect();
+        let src = format!(
+            "interface Source {{\n    type Item\n}}\ninterface Holds<Y> {{\n    type Item\n}}\nfn f<{}>() {{}}\nfn main() {{}}",
+            params.join(", ")
+        );
+        BOUND_STEPS.set(0);
+        SCOPES_KEPT.set(0);
+        let ds = diags(&src);
+        assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
+        (BOUND_STEPS.get(), SCOPES_KEPT.get())
+    };
+    let ((small, kept_small), (large, kept_large)) = (steps(32), steps(64));
+    assert!(small >= 31, "{small} tries for 32");
+    assert!(
+        small <= 2 * 32 && large <= 2 * 64,
+        "{large} tries for 64, {small} for 32"
+    );
+    assert_eq!(
+        kept_large, kept_small,
+        "{kept_large} scopes for 64, {kept_small} for 32"
+    );
+}
+
 /// A block that lacks every interface its own inherits reports each one by the place the closure
 /// recorded for it, so no report reads an inheritance list again.
 #[test]
@@ -3208,6 +3246,9 @@ fn associated_types_should_normalize_through_generic_code() {
         "interface Keyed {\n    type Key: Same\n    fn key(self) -> Key\n}\ninterface Bag {\n    type Elem: Keyed\n    fn pick(self) -> Elem\n}\ninterface Two<A, B> {}\nfn deep<T: Convert<B.Elem.Key>, B: Bag>(_t: T, _b: B) {}\nfn mixed<T: Two<i64, S.Item>, S: Source>(_t: T, _s: S) {}",
         // A chain: the bound of `U` needs the bound of `S`, which needs the bound of `T`.
         "interface Holds<Y> {\n    type Item\n}\nfn chain<S: Holds<T.Item>, U: Convert<S.Item>, T: Source>(_s: S, _t: T, u: U) -> S.Item { u.convert() }",
+        // A bound that writes an associated type that another bound of its own parameter declares,
+        // and two such bounds on one parameter.
+        "interface Has {\n    type Out\n}\nfn own<S: Source & Convert<S.Item>>(s: S) -> S.Item { s.convert() }\nfn has<T: Has & Convert<T.Out>>(_t: T) {}\nfn both<S: Source & Convert<S.Item> & Wrap2<S.Item>>(_s: S) {}\ninterface Wrap2<X> {}\nfn later<S: Holds2<T.Item> & Convert<S.Item>, T: Source>(_s: S, _t: T) {}\ninterface Holds2<Y> {\n    type Item\n}",
         // An associated type with two bounds, and an interface that inherits one that has them.
         "interface Rich {\n    type Item: Same & Named\n    fn get(self) -> Item\n}\ninterface Richer: Rich {}\nfn show<R: Richer>(r: R) -> string { r.get().name() }",
     ] {
@@ -3412,6 +3453,12 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
         (
             "fn f<S, T: Convert<S.Item>>(s: S, t: T) {}".to_string(),
             vec![(Code::UnknownType, (1, 22))],
+        ),
+        // A bound that writes an associated type that only itself declares: not found, as for any
+        // parameter without a bound that declares it.
+        (
+            "interface Holds<Y> {\n    type Item\n}\nfn f<S: Holds<S.Item>>(_s: S) {}".to_string(),
+            vec![(Code::UnknownType, (4, 17))],
         ),
         // Two bounds that wait for each other: each is reported where it writes the type, and not
         // as a type the base lacks. A bound that waits for them has no report of its own.

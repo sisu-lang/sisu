@@ -76,8 +76,8 @@ the code of a copy written by hand.
   conformance, and an `extend` block never names one in its target. A choice
   can still name an associated type of one of its parameters, as `T.Item.Item`,
   so the replacement of the associated types of a known type can lead back
-  to the associated type it started with. The replacement keeps the types it
-  is working on and stops at such a loop. The checker reports the choice that
+  to the associated type it started with. The replacement keeps a list of the
+  types it replaces and stops at such a loop. The checker reports the choice that
   closes the loop once, and the call that needs the type fails. `mono` does
   the same replacement for each instantiation. A loop that no signature
   writes can reach `mono`, which stops with an internal error. A call that

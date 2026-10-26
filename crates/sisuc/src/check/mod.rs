@@ -342,6 +342,10 @@ thread_local! {
     /// How many conformances and choices the checks of the choices have read, or looked up by
     /// the name of an associated type, on this thread.
     pub(super) static CHOICE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times a bound that writes an associated type of a parameter has been tried.
+    pub(super) static BOUND_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many scopes (type parameters with their bounds) have been kept on this thread.
+    pub(super) static SCOPES_KEPT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -641,6 +645,17 @@ impl Body {
         self.required.clear();
         self.conformed.clear();
         self.scope = None;
+    }
+
+    /// Adds `bound` to the type parameter at `place`, whose bounds are in scope already, and
+    /// forgets what was found from the bounds before. The scope that was made stays: whoever
+    /// adds bounds in place makes it again when they are all in.
+    fn add_bound(&mut self, place: usize, bound: Bound) {
+        self.bounds[place].push(bound);
+        self.conforming.clear();
+        self.wide.clear();
+        self.required.clear();
+        self.conformed.clear();
     }
 
     /// Gives the type parameters from the place `first` on their `bounds`.

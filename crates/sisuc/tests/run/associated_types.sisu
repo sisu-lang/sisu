@@ -2,7 +2,7 @@
 // it in its declaration list; `Words` that chooses the counted `string` in an `extend` block;
 // `Relay<S>` that chooses the `Item` of the `Source` it wraps; and generic functions, a class and
 // an enum that write `S.Item` as a result, a parameter, a field and a payload; and functions
-// whose bound `T: Convert<S.Item>` names the `Item` of the parameter before or after it, or of a chain of such parameters
+// whose bound `T: Convert<S.Item>` names the `Item` of the parameter before or after it, or of a chain of such parameters, or of its own parameter
 // WHEN they run over a `Countdown`, over a `Words` of strings built at run time and over a
 // `Relay` of each, with `pass2` waiting for the `S` of its second argument
 // THEN every `S.Item` is the type that the conformance chose, the bounds with `S.Item` hold, and
@@ -68,6 +68,19 @@ class Pair2: Holds<i64> {
 
     fn held(self) -> Item {
         self.k
+    }
+}
+
+class Both: Source, Convert<i64> {
+    type Item = i64
+    n: i64
+
+    fn next(self) -> Item? {
+        None
+    }
+
+    fn convert(self) -> i64 {
+        self.n
     }
 }
 
@@ -151,6 +164,10 @@ fn chain<S: Holds<T.Item>, U: Convert<S.Item>, T: Source>(s: S, t: T, u: U) -> [
     }
 }
 
+fn own<S: Source & Convert<S.Item>>(s: S) -> S.Item {
+    s.convert()
+}
+
 fn words() -> Words {
     Words(words: ["a" + "b", "c" + "d", "e" + "f"], at: 0)
 }
@@ -175,6 +192,8 @@ fn main() {
     print(before(Twice(k: 1), Countdown(n: 8)))
     // A chain of bounds that name the `Item` of a parameter that comes later.
     print(chain(Pair2(k: 5), Countdown(n: 1), Twice(k: 3))[1])
+    // A bound that writes the `Item` of its own parameter, which another bound of it declares.
+    print(own(Both(n: 11)))
     // Words: the items are counted `string`s, and each is released once.
     let w: string? = first_of(words())
     print(w ?? "none")

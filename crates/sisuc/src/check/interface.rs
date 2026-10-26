@@ -344,7 +344,14 @@ impl Checker<'_> {
             }
         }
         if !members.is_empty() {
-            self.resolve_member_bounds(first, &head, params, &mut found, &members);
+            // The bounds so far are in scope, for the bounds that write an associated type.
+            let so_far = head.iter().cloned().chain(
+                found
+                    .iter()
+                    .map(|bounds| bounds.iter().flatten().copied().collect()),
+            );
+            self.body.set_bounds(first, so_far.collect());
+            self.resolve_member_bounds(at, params, &mut found, &members);
         }
         let mut bounds = head;
         bounds.extend(
@@ -377,82 +384,121 @@ impl Checker<'_> {
     }
 
     /// Resolves into `found` the bounds `members` of `params`, as (parameter, place) pairs, that
-    /// name an associated type of a parameter in their arguments. `found` holds the others. A
-    /// bound waits for every bound of the parameters it writes an associated type through, so a
-    /// round resolves the bounds whose parameters are all resolved, puts them in scope, and the
-    /// next round resolves the bounds that were waiting for them.
+    /// name an associated type of a parameter in their arguments. `found` holds the others, and
+    /// `at` is the place of the first parameter. The bounds that `found` holds are in scope.
     ///
-    /// The bounds left when a round resolves none wait for each other. Each that is on such a loop
-    /// is reported at the associated type it writes (E0030), and the others that wait for it
-    /// stay unknown, with no report of their own.
+    /// A bound that writes `S.Item` waits while `S` has no resolved bound that declares `Item` and
+    /// has another bound of this kind that is not resolved: that bound may declare it. A bound
+    /// never waits for itself. When a parameter has no such bound left, or only one, the bounds
+    /// that waited for it are tried again, so each bound is tried at most twice for each
+    /// parameter it writes an associated type of. Each bound that resolves is added to the scope
+    /// in place.
     ///
-    /// shortcut: a round puts every bound in scope again, so a chain of `n` bounds costs `n`
-    /// rounds of `n` bounds. Order the bounds once, and add each to the scope as it resolves,
-    /// when a program writes long chains.
+    /// The bounds left wait for each other. Each that is on a loop of parameters is reported at
+    /// the associated type it writes (E0030), and the others that wait for it stay unknown, with
+    /// no report of their own.
     fn resolve_member_bounds(
         &mut self,
-        first: usize,
-        head: &[Vec<Bound>],
+        at: usize,
         params: &[ast::TypeParam],
         found: &mut [Vec<Option<Bound>>],
         members: &[(usize, usize)],
     ) {
-        let at = first + head.len();
-        // For each bound, the written associated types, as the parameter they go through and
-        // their name, and the bounds of the list that it waits for.
-        let written: Vec<Vec<(Symbol, &ast::Ident)>> = members
+        // For each bound, the written associated types, as the place of the parameter they go
+        // through in the list and their name.
+        let written: Vec<Vec<(usize, &ast::Ident)>> = members
             .iter()
             .map(|&(i, j)| {
                 let mut roots = Vec::new();
                 params[i].bounds[j].member_roots(&mut roots);
-                roots
-            })
-            .collect();
-        let waits: Vec<Vec<usize>> = written
-            .iter()
-            .map(|roots| {
-                (roots.iter())
-                    .filter_map(|(root, _)| params.iter().position(|p| p.name.name == *root))
-                    .flat_map(|p| (0..members.len()).filter(move |&m| members[m].0 == p))
+                (roots.into_iter())
+                    .filter_map(|(root, name)| {
+                        Some((params.iter().position(|p| p.name.name == root)?, name))
+                    })
                     .collect()
             })
             .collect();
-        let mut done = vec![false; members.len()];
-        loop {
-            let ready: Vec<usize> = (0..members.len())
-                .filter(|&m| !done[m] && waits[m].iter().all(|&w| done[w]))
-                .collect();
-            if ready.is_empty() {
-                break;
+        // How many bounds of each parameter are not resolved, and the bounds that wait for the
+        // parameter.
+        let mut pending = vec![0_usize; params.len()];
+        for &(i, _) in members {
+            pending[i] += 1;
+        }
+        let mut waiting: Vec<Vec<usize>> = vec![Vec::new(); params.len()];
+        let mut stack: Vec<usize> = (0..members.len()).rev().collect();
+        while let Some(m) = stack.pop() {
+            #[cfg(test)]
+            super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
+            let (i, j) = members[m];
+            if let Some(blocker) = self.blocking(at, &written[m], &pending, i) {
+                waiting[blocker].push(m);
+                continue;
             }
-            let so_far = head.iter().cloned().chain(
-                found
-                    .iter()
-                    .map(|bounds| bounds.iter().flatten().copied().collect()),
-            );
-            self.body.set_bounds(first, so_far.collect());
-            for m in ready {
-                let (i, j) = members[m];
-                found[i][j] = self.resolve_bound(at, params, i, j);
-                done[m] = true;
+            found[i][j] = self.resolve_bound(at, params, i, j);
+            if let Some(bound) = found[i][j] {
+                self.body.add_bound(at + i, bound);
+            }
+            pending[i] -= 1;
+            // From the last bound but one on, a bound of `i` that waits for `i` can go on.
+            if pending[i] <= 1 {
+                stack.extend(std::mem::take(&mut waiting[i]));
             }
         }
-        for m in (0..members.len()).filter(|&m| !done[m]) {
-            if !reaches(&waits, m, m) {
+        // What is still waiting waits for a parameter with bounds left.
+        let left: Vec<usize> = waiting.iter().flatten().copied().collect();
+        for &m in &left {
+            let (i, _) = members[m];
+            if !loops(&written, members, &left, i) {
                 continue;
             }
             for &(root, name) in &written[m] {
-                if params.iter().any(|p| p.name.name == root) {
+                if pending[root] > 0 {
                     self.report(DiagnosticKind::UnknownType {
                         name: name.name.to_string(),
                         at: name.span,
                         form: UnknownForm::BoundsLoop {
-                            base: root.to_string(),
+                            base: params[root].name.name.to_string(),
                         },
                     });
                 }
             }
         }
+    }
+
+    /// The parameter, among those of the list, that the bound `written` of the parameter `own`
+    /// waits for, if any (see `resolve_member_bounds`).
+    fn blocking(
+        &mut self,
+        at: usize,
+        written: &[(usize, &ast::Ident)],
+        pending: &[usize],
+        own: usize,
+    ) -> Option<usize> {
+        for &(root, name) in written {
+            // The bound itself is not another one.
+            let others = pending[root] - usize::from(root == own);
+            if others > 0 && !self.declares(at + root, name.name) {
+                return Some(root);
+            }
+        }
+        None
+    }
+
+    /// Whether the bounds now in scope of the parameter at `place` include an interface that
+    /// declares the associated type `name`.
+    fn declares(&mut self, place: usize, name: Symbol) -> bool {
+        let Some(&param) = self.body.type_params.get(place) else {
+            return false;
+        };
+        let place =
+            u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters");
+        let ty = Type::intern(TypeKind::Param(param, place));
+        (self.interfaces_for(ty).iter()).any(|&(interface, _)| {
+            self.interfaces[interface.0]
+                .assoc
+                .iter()
+                .any(|a| a.name.name == name)
+        })
     }
 
     /// The interface `ty` names with its arguments, for the type `this` that has it, if that is
@@ -1068,6 +1114,8 @@ impl Checker<'_> {
             return at;
         }
         let at = self.scopes.len();
+        #[cfg(test)]
+        super::SCOPES_KEPT.set(super::SCOPES_KEPT.get() + 1);
         self.scopes.push(Scope {
             params: self.body.type_params.clone(),
             bounds: self.body.bounds.clone(),
@@ -1352,16 +1400,27 @@ fn cycle_through(edges: &[Vec<usize>], component: &[usize], start: usize) -> Vec
     path
 }
 
-/// Whether `to` is reached from `from` by one or more steps of `waits`.
-fn reaches(waits: &[Vec<usize>], from: usize, to: usize) -> bool {
-    let mut seen = vec![false; waits.len()];
-    let mut stack = waits[from].clone();
-    while let Some(n) = stack.pop() {
-        if n == to {
-            return true;
-        }
-        if !std::mem::replace(&mut seen[n], true) {
-            stack.extend(&waits[n]);
+/// Whether the parameter `start` is on a loop of parameters: the bounds `left` of the list
+/// write an associated type of a parameter, and the bounds of that parameter write one of
+/// another, and so on, back to `start`.
+fn loops(
+    written: &[Vec<(usize, &ast::Ident)>],
+    members: &[(usize, usize)],
+    left: &[usize],
+    start: usize,
+) -> bool {
+    let mut seen = vec![false; members.iter().map(|m| m.0).max().map_or(0, |m| m + 1)];
+    let mut stack = vec![start];
+    while let Some(param) = stack.pop() {
+        for &m in left.iter().filter(|&&m| members[m].0 == param) {
+            for &(root, _) in &written[m] {
+                if root == start {
+                    return true;
+                }
+                if !std::mem::replace(&mut seen[root], true) {
+                    stack.push(root);
+                }
+            }
         }
     }
     false
