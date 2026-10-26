@@ -1471,6 +1471,7 @@ fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
         (generic::WALKED.get(), mismatches)
     };
     let (one, _) = walked("x");
+    assert!(one > 0, "the counter should count the walk of `known`");
     assert_eq!(walked(&vec!["x"; 100].join(", ")), (one, 0));
     let (bad, _) = walked("b, x");
     assert_eq!(walked(&format!("{}x", "b, ".repeat(100))), (bad, 100));
