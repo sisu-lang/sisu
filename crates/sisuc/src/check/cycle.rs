@@ -330,72 +330,74 @@ impl Checker<'_> {
             .copied()
             .collect();
         let label = label.unwrap_or_else(|| {
-            // The weight of each step: the parts that lead to the edge, then the edge itself.
+            // The weight of each step: the parts that lead to the edge, then the edge itself. The
+            // first of the steps of positive weight in source order, the earlier on the cycle
+            // when two start at one place.
             let mut weight = 0;
-            let mut best: Option<usize> = None;
+            let mut positive = Vec::new();
             for &i in &cycle {
                 weight += edges[i].weight;
                 if edges[i].instance.is_none() && !edges[i].out {
                     continue;
                 }
-                if weight > 0 && best.is_none_or(|b| edges[i].site.start() < edges[b].site.start())
-                {
-                    best = Some(i);
+                if weight > 0 {
+                    positive.push(i);
                 }
                 weight = 0;
             }
-            best.expect("a cycle of positive weight should hold a step of positive weight")
+            (positive.into_iter())
+                .min_by_key(|&i| edges[i].site.start())
+                .expect("a cycle of positive weight should hold a step of positive weight")
         });
         let edge = &edges[label];
         if !reported.insert(edge.site) {
             return;
         }
+        // What follows the label around the cycle.
         let at = cycle
             .iter()
             .position(|&i| i == label)
             .expect("the label should be an edge of the cycle");
-        // What follows the label around the cycle.
-        let after: Vec<usize> = cycle[at + 1..]
-            .iter()
-            .chain(&cycle[..at])
-            .copied()
-            .collect();
+        let mut cycle = cycle;
+        cycle.rotate_left(at);
         let (mut through, mut reach) = (Vec::new(), None);
         // A call that gives two parameters their arguments is one site, shown once.
         let mut shown = FxHashSet::from_iter([edge.site]);
-        let mut k = 0;
-        // A label at a call through a hub is followed by the edge out of the hub.
-        if matches!(edge.instance, Some(Instance::Required(..)))
-            && after.first().is_some_and(|&i| edges[i].out)
-        {
-            k = 1;
-        }
         if let Some(Instance::Required(interface, ..)) = edge.instance {
             reach = Some(interface);
         }
-        while let Some(&i) = after.get(k) {
-            k += 1;
+        // A call through a hub, until the edge out of the hub says which method it may run.
+        let mut calling: Option<(Span, tir::InterfaceId)> = None;
+        for &i in &cycle[1..] {
             let e = &edges[i];
+            if e.out {
+                if let Some((mark, interface)) = calling.take() {
+                    through.push((
+                        mark,
+                        Hop::Calls {
+                            // The method that the cycle takes, of all the hub reaches.
+                            method: self.method_text(functions, e.holder),
+                            interface: self.interfaces[interface.0].name.name.to_string(),
+                        },
+                    ));
+                }
+                continue;
+            }
             let Some(instance) = e.instance else {
                 continue;
             };
             if !shown.insert(e.site) {
                 continue;
             }
-            let hop = match (instance, after.get(k).map(|&j| &edges[j])) {
-                // A call through a hub may run any method that the hub reaches: the one the
-                // cycle takes.
-                (Instance::Required(interface, ..), Some(out)) if out.out => {
-                    k += 1;
-                    reach.get_or_insert(interface);
-                    Hop::Calls {
-                        method: self.method_text(functions, out.holder),
-                        interface: self.interfaces[interface.0].name.name.to_string(),
-                    }
-                }
-                _ => Hop::Instantiates(self.instance_name(functions, instance)),
-            };
-            through.push((e.mark, hop));
+            if let Instance::Required(interface, ..) = instance {
+                reach.get_or_insert(interface);
+                calling = Some((e.mark, interface));
+            } else {
+                through.push((
+                    e.mark,
+                    Hop::Instantiates(self.instance_name(functions, instance)),
+                ));
+            }
         }
         let declared = graph.functions;
         let name = match edge.holder.checked_sub(declared) {
@@ -432,15 +434,12 @@ impl Checker<'_> {
                 }
             }
         }
+        // The hubs of the interfaces follow, one each.
         let interface_hubs = declarations;
-        declarations += self.interfaces.len();
         let counts = self.signatures.iter().map(|s| s.type_params.len());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
-        let counts = counts.chain(std::iter::repeat_n(
-            1,
-            declarations - interface_hubs + hubs.len(),
-        ));
+        let counts = counts.chain(std::iter::repeat_n(1, hubs.len() + self.interfaces.len()));
         let mut first = vec![0];
         for n in counts {
             first.push(first[first.len() - 1] + n);
@@ -626,7 +625,7 @@ fn param_depths(ty: Type, count: usize) -> Vec<i64> {
                         .map(|&a| (a, depth + 1)),
                 );
             }
-            _ => {}
+            _ => unreachable!("only a part that names a parameter is walked"),
         }
     }
     depths

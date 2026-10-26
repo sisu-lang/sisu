@@ -454,15 +454,15 @@ impl Checker<'_> {
         let (params, bounds) = (self.conformance_bounds.get(&(interface, index)))
             .expect("a conformance that a type does not meet should have bounds")
             .clone();
-        for (i, bounds) in bounds.iter().enumerate() {
-            for b in bounds {
-                if !self.conforms(bound.get()[i], b.interface, b.args.subst(bound.get())) {
-                    let text = format!("{}: {}", params[i], self.bound_text(b.interface, b.args));
-                    return (text, b.at);
-                }
-            }
-        }
-        unreachable!("a conformance that a type does not meet should have a bound that fails")
+        let failing = (bounds.iter().enumerate())
+            .flat_map(|(i, bounds)| bounds.iter().map(move |b| (i, b)))
+            .find(|&(i, b)| !self.conforms(bound.get()[i], b.interface, b.args.subst(bound.get())))
+            .expect("a conformance that a type does not meet should have a bound that fails");
+        let (i, b) = failing;
+        (
+            format!("{}: {}", params[i], self.bound_text(b.interface, b.args)),
+            b.at,
+        )
     }
 
     /// The block that would give the target of the block `block` the conformance to `inherited`,

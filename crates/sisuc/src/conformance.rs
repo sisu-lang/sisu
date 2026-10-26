@@ -316,7 +316,7 @@ mod tests {
         let (t, u) = (param(0), param(0));
         let pair = |a, b| class(PAIR, &[a, b]);
         let circle = class(CIRCLE, &[]);
-        let rows: [Row; 23] = [
+        let rows: [Row; 24] = [
             // `extend<T> Box<T>: Convert<T>` and `extend<U> Box<U>: Convert<i64>`.
             (
                 &[boxed(t), t],
@@ -399,12 +399,41 @@ mod tests {
                 1,
                 None,
             ),
-            // Two parameters meet at the first side's, so a report names it.
+            // Two parameters meet at the first side's, so a report names it, whichever of them
+            // the walk meets first.
             (&[boxed(t)], 1, &[boxed(u)], 1, Some(vec![boxed(t)])),
+            (
+                &[pair(t, param(1))],
+                2,
+                &[pair(u, u)],
+                1,
+                Some(vec![pair(t, t)]),
+            ),
         ];
         for (i, (a, a_params, b, b_params, expected)) in rows.into_iter().enumerate() {
             assert_eq!(overlap(a, a_params, b, b_params), expected, "row {i}");
         }
+    }
+
+    /// A chain of parameters that stand for each other is no longer than the parameters, and a
+    /// replacement of a parameter by a type that holds it is no deeper: the occurs check keeps
+    /// both from happening, and the walk fails with its name when it is gone.
+    #[test]
+    #[should_panic(expected = "occurs check")]
+    fn walk_should_fail_on_a_chain_that_loops() {
+        let unifier = Unifier {
+            stood: vec![Some(param(1)), Some(param(0))],
+        };
+        unifier.walk(param(0));
+    }
+
+    #[test]
+    #[should_panic(expected = "occurs check")]
+    fn resolve_should_fail_on_a_parameter_that_holds_itself() {
+        let unifier = Unifier {
+            stood: vec![Some(Type::array(param(1))), Some(Type::array(param(0)))],
+        };
+        unifier.resolve(param(0), 0);
     }
 
     /// The target of a conformance with parameters binds them from the structure of a type; a

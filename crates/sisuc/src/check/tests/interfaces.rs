@@ -2444,10 +2444,10 @@ fn an_inherited_conformance_should_hold_under_the_conditions_of_the_block() {
 }
 
 /// The classes and functions the cycle rows share, after the row's line 1.
-const CYCLE_DECLS: &str = "interface Run {\n    fn run(self)\n}\nclass Box<T> {\n    value: T\n}\nclass Done<T> {\n    value: T\n}\nextend<T> Done<T>: Run {\n    fn run(self) {}\n}\nfn dispatch<T: Run>(x: T) {\n    x.run()\n}\n";
+const CYCLE_DECLS: &str = "interface First {\n    fn first(self)\n}\ninterface Run {\n    fn run(self)\n}\nclass Box<T> {\n    value: T\n}\nclass Done<T> {\n    value: T\n}\nextend<T> Done<T>: Run {\n    fn run(self) {}\n}\nfn dispatch<T: Run>(x: T) {\n    x.run()\n}\n";
 
 /// The lines of `CYCLE_DECLS`.
-const CYCLE_LINES: usize = 15;
+const CYCLE_LINES: usize = 18;
 
 /// A cycle through a conformance: the argument of a call grows, and the receiver of a call through
 /// a bound is the conformance's type, which takes one level off; the hub counts both.
@@ -2707,5 +2707,38 @@ fn conditional_bound_violations_should_be_reported_once_at_the_use() {
     ] {
         let src = with_generic(&format!("{block}{row}"));
         assert_eq!(found(&src), expected, "{row}");
+    }
+}
+
+/// An inherited interface that takes arguments has no block to write yet, so the report has no
+/// help; one that takes none has. The text of the help is pinned by the fixtures.
+#[test]
+fn an_inherited_interface_with_arguments_should_have_no_help() {
+    let has_help = |row: &str| {
+        let (_, ds) = checked(&with_shapes(&with_main(row)));
+        assert_eq!(ds.len(), 1, "{ds:?}");
+        ds[0].help().is_some()
+    };
+    assert!(!has_help(
+        "interface G<T> {}\ninterface I: G<i64> {}\nclass C {}\nextend C: I {}"
+    ));
+    assert!(has_help(
+        "interface J: Named {}\nclass C {}\nextend C: J {}"
+    ));
+}
+
+/// A component with no weight below zero is not searched: the first growing edge is the label,
+/// and the cost stays that of the walk that builds the graph.
+#[test]
+fn a_component_without_a_negative_weight_should_not_be_searched() {
+    for src in [
+        "fn nest<T>(x: T, n: i64) {\n    if n > 0 {\n        nest([x], n - 1)\n    }\n}\nfn main() {\n    nest(1, 3)\n}",
+        "fn f<T>(x: T) {\n    g([x])\n}\nfn g<T>(x: T) {\n    f(x)\n}\nfn main() {}",
+        "class Cell<T> {\n    next: Cell<[T]>?\n}\nfn main() {}",
+    ] {
+        cycle::BELLMAN_FORD_STEPS.set(0);
+        let found: Vec<_> = checked(src).1.iter().map(Diagnostic::code).collect();
+        assert_eq!(found, [Code::InstantiationCycle], "{src}");
+        assert_eq!(cycle::BELLMAN_FORD_STEPS.get(), 0, "{src}");
     }
 }
