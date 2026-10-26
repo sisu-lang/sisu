@@ -1,6 +1,8 @@
 //! Interface declarations: their requirements and inheritance, `Self`, the names that may stand
 //! where an interface or a type belongs, and the closure of a bound's inherited interfaces.
 
+use std::fmt::Write as _;
+
 use super::*;
 use crate::check::interface::Bound;
 
@@ -595,7 +597,9 @@ fn closure(
         })
         .collect();
     let mut out = Vec::new();
-    checker.interfaces_of(receiver, &bounds, &mut out, &mut FxHashSet::default());
+    checker
+        .interfaces_of(receiver, &bounds, &mut out, &mut FxHashSet::default())
+        .expect("the closure rows should fit the limit");
     out.into_iter()
         .map(|(id, args)| {
             (
@@ -1574,6 +1578,9 @@ fn bounds_should_check_clean() {
         "class Holder<T: Shape> {\n    v: T\n    fn area(self) -> f64 {\n        self.v.area()\n    }\n}\nenum Wrap<T: Shape> {\n    W(T)\n    fn name(self) -> string {\n        match self {\n            Wrap.W(x) => x.name()\n        }\n    }\n}\nextend Circle {\n    fn fit<T: Shape>(self, x: T) -> f64 {\n        x.area() + self.r\n    }\n}\nfn h(c: Circle) -> f64 {\n    Holder(v: c).area() + c.fit(c)\n}",
         // A requirement with a type parameter of its own, called at two types.
         "fn k<T: Keep>(x: T) -> string {\n    let a: i64 = x.keep(1)\n    x.keep(\"a\")\n}",
+        // A call through a bound that is an argument of a generic call: it waits only when its
+        // result is a parameter that its arguments do not give.
+        "interface Me {\n    fn me(self) -> Self\n}\nfn id<T>(a: T) -> T {\n    a\n}\nfn f<T: Me & Keep>(x: T) {\n    let n = id(x.me())\n    let m = id(x.keep(1))\n}",
         // The argument that waits for the other: `make` is generic in its own parameter.
         "fn take<T>(x: T, y: T) -> T {\n    x\n}\nfn use_make<S: Make>(s: S) -> i64 {\n    take(s.make(), [1]).len()\n}",
         // The call on a type parameter that has one bound of two that require a name.
@@ -1648,6 +1655,17 @@ fn bound_violations_should_be_reported_once_at_the_call() {
             "fn f<T: Same>(x: T) {}\nfn g(n: Node) {\n    f<Node>(n)\n}",
             vec![(Code::NotConform, (3, 7))],
         ),
+        // The second of two written type arguments binds the parameter with the bound.
+        (
+            "fn f<A, B: Same>(a: A, b: B) {}\nfn g(n: Node) {\n    f<i64, Node>(1, n)\n}",
+            vec![(Code::NotConform, (3, 12))],
+        ),
+        // The method of a generic class has an owner argument before its own parameters, and a
+        // bound that fails poisons the call: its tail adds no mismatch.
+        (
+            "class Hold<T> {\n    v: T\n    fn put<U: Same>(self, u: U) -> i64 { 0 }\n}\nfn go(h: Hold<Circle>, n: Node) -> string {\n    h.put(n)\n}",
+            vec![(Code::NotConform, (6, 11))],
+        ),
         // A built-in type conforms to nothing yet.
         (
             "fn f<T: Same>(x: T) {}\nfn g() {\n    f(1)\n}",
@@ -1704,6 +1722,15 @@ fn a_method_that_no_bound_gives_should_be_reported() {
     }
 }
 
+/// A variant that no argument can give its enum's parameter waits for the context of the call it
+/// is an argument of, which here is the other argument.
+#[test]
+fn a_variant_that_leaves_a_parameter_open_should_wait_for_context() {
+    clean(
+        "enum Tagged<T> {\n    Tag(i64)\n}\nfn take<T>(a: T, b: T) {}\nfn f(t: Tagged<string>) {\n    take(Tagged.Tag(1), t)\n}\nfn main() {}",
+    );
+}
+
 /// A call through a bound has the arguments of its requirement: a wrong count is reported at the
 /// call, unless a comparison misread as a call took the commas of the list.
 #[test]
@@ -1717,6 +1744,11 @@ fn a_call_through_a_bound_should_check_the_count_of_its_arguments() {
             "interface Two {\n    fn two(self, a: bool, b: bool)\n}\nfn f<T: Two>(x: T, a: i64, b: i64, c: i64, d: i64) {\n    x.two(a < b, c > (d))\n}",
             vec![(Code::TypeArguments, (5, 11))],
         ),
+        // The arguments do not fit the requirement: the call does not wait for the one around it.
+        (
+            "fn id<T>(a: T) -> T {\n    a\n}\nfn f<S: Make>(s: S) {\n    let n = id(s.make(1))\n}",
+            vec![(Code::ArgumentCount, (5, 16))],
+        ),
         // An argument of the wrong type, and a label.
         (
             "fn f<T: Same>(x: T) -> bool {\n    x.same(1)\n}",
@@ -1729,6 +1761,11 @@ fn a_call_through_a_bound_should_check_the_count_of_its_arguments() {
         ),
         (
             "fn f<T: Keep>(x: T) -> i64 {\n    x.keep(v: 1)\n}",
+            vec![(Code::LabeledArgument, (2, 12))],
+        ),
+        // A call whose argument has a label is `Error`: its tail adds no mismatch.
+        (
+            "fn f<T: Same>(x: T) -> string {\n    x.same(v: x)\n}",
             vec![(Code::LabeledArgument, (2, 12))],
         ),
     ] {
@@ -1745,6 +1782,12 @@ fn a_cycle_through_a_requirements_own_parameter_should_be_reported() {
     // The call through the requirement grows its argument: the cycle shows the class.
     let grows = "interface Wrap {\n    fn wrap<U>(self, x: U)\n}\nclass Ring {\n    r: f64\n}\nclass Box<T> {\n    v: T\n}\nextend Ring: Wrap {\n    fn wrap<U>(self, x: U) {\n        go(self, x)\n    }\n}\nfn go<T: Wrap, U>(t: T, x: U) {\n    t.wrap(Box(v: x))\n}\nfn main() {}";
     codes(grows, &[(Code::InstantiationCycle, (16, 5))]);
+    // The second own parameter closes the cycle; an earlier requirement has its own hubs.
+    let second = "interface Wrap {\n    fn first<W>(self, w: W)\n    fn wrap<U, V>(self, x: U, y: V)\n}\nclass Ring {\n    r: f64\n}\nextend Ring: Wrap {\n    fn first<W>(self, w: W) {}\n    fn wrap<U, V>(self, x: U, y: V) {\n        go(self, x, y)\n    }\n}\nfn go<T: Wrap, U, V>(t: T, x: U, y: V) {\n    t.wrap(x, [y])\n}\nfn main() {}";
+    codes(second, &[(Code::InstantiationCycle, (15, 5))]);
+    // The parameters of one requirement are not one hub: `x` grows and flows nowhere back.
+    let apart = "interface Wrap {\n    fn wrap<U, V>(self, x: U, y: V)\n}\nclass Ring {\n    r: f64\n}\nextend Ring: Wrap {\n    fn wrap<U, V>(self, x: U, y: V) {\n        go(self, y, 1)\n    }\n}\nfn go<T: Wrap, U, V>(t: T, x: U, y: V) {\n    t.wrap([x], y)\n}\nfn main() {}";
+    clean(apart);
     // The argument shrinks back: not a cycle.
     let steady = "interface Wrap {\n    fn wrap<U>(self, x: U)\n}\nclass Ring {\n    r: f64\n}\nextend Ring: Wrap {\n    fn wrap<U>(self, x: U) {\n        go(self, x)\n    }\n}\nfn go<T: Wrap, U>(t: T, x: U) {\n    t.wrap(x)\n}\nfn main() {}";
     clean(steady);
@@ -1870,4 +1913,120 @@ fn a_body_should_close_and_index_the_bounds_of_a_parameter_once() {
         CLOSURE_STEPS.get()
     };
     assert_eq!(checks(32), checks(1));
+}
+
+/// A chain of `n` interfaces, each inheriting the one before it, and a function whose bound is the
+/// last: the bound gives `n` interfaces. The function comes first, so that its bound is on line 1.
+fn chain(n: usize, call: &str) -> String {
+    let mut src = format!("fn _use<T: C{n}>(x: T) {{\n{call}}}\n");
+    src += "fn need<T: C1>(_y: T) {}\n";
+    src += "interface C1 {\n    fn deep(self) -> i64\n}\n";
+    for k in 2..=n {
+        writeln!(src, "interface C{k}: C{} {{}}", k - 1)
+            .expect("writing to a `String` should succeed");
+    }
+    src + "fn main() {}"
+}
+
+/// The most interfaces that a bound gives is 256, with those it inherits: 256 is fine, and one
+/// more is E0157 at the bound, once. The parameter is then unknown in the body, so a method that
+/// the walk did not reach draws no report, and the bound of a call that the parameter meets holds.
+#[test]
+fn a_bound_should_give_at_most_the_limit_of_interfaces() {
+    // The call reads the closure of the bound, which is the whole chain.
+    clean(&chain(256, "    need(x)\n"));
+    codes(
+        &chain(257, "    need(x)\n"),
+        &[(Code::BoundTooWide, (1, 12))],
+    );
+    // `deep` is declared by the last interface of a chain that the walk does not finish: it is
+    // not found, and that is no report. Nor is a call of a function with a bound that the
+    // parameter does not give.
+    let src = chain(300, "    print(x.deep())\n    need(x)\n");
+    codes(&src, &[(Code::BoundTooWide, (1, 12))]);
+    // The same bound read by two bodies is reported once.
+    let mut src = String::from(
+        "class K<T: C300> {\n    v: T\n    fn a(self) {\n        need(self.v)\n    }\n    fn b(self) {\n        need(self.v)\n    }\n}\nfn need<T: C1>(_y: T) {}\ninterface C1 {}\n",
+    );
+    for k in 2..=300 {
+        writeln!(src, "interface C{k}: C{} {{}}", k - 1)
+            .expect("writing to a `String` should succeed");
+    }
+    codes(&(src + "fn main() {}"), &[(Code::BoundTooWide, (1, 12))]);
+    // Bounds that are many, with no inheritance, pass the limit too.
+    let names: Vec<String> = (1..=257).map(|k| format!("C{k}")).collect();
+    let mut src = format!(
+        "fn _use<T: {}>(x: T) {{\n    need(x)\n}}\nfn need<T: C1>(_y: T) {{}}\n",
+        names.join(" & ")
+    );
+    for name in &names {
+        writeln!(src, "interface {name} {{}}").expect("writing to a `String` should succeed");
+    }
+    // The 257th bound is the one that passes the limit.
+    let col = 1 + "fn _use<T: ".len() + names[..256].join(" & ").len() + " & ".len();
+    codes(&(src + "fn main() {}"), &[(Code::BoundTooWide, (1, col))]);
+}
+
+/// A method that more than one interface of a closure that passed the limit gives is no error
+/// either: the parameter is unknown, so the call adds nothing to the report of the bound.
+#[test]
+fn a_method_of_a_bound_that_is_too_wide_should_add_no_report() {
+    let mut src = String::from("fn _use<T: Last>(x: T) {\n    print(x.same())\n}\n");
+    src += "interface Base<A> {\n    fn same(self) -> i64\n}\n";
+    // A chain of 300 interfaces; `Last` and the chain give `same` twice, with two arguments.
+    src += "interface I0 : Base<i64> {}\n";
+    for k in 1..300 {
+        writeln!(src, "interface I{k}: I{}, Base<[i64]> {{}}", k - 1)
+            .expect("writing to a `String` should succeed");
+    }
+    src += "interface Last: I299, Base<i64> {}\nfn main() {}";
+    let ds = diags(&src);
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
+    assert_eq!(found, [(Code::BoundTooWide, (1, 12))]);
+}
+
+/// The text of the program with `levels` interfaces that each inherit the one before with each
+/// of five arguments replaced by `i64` or `f64`, one at a time, besides the unchanged one: the
+/// closure of a bound at the last doubles at each level, until it passes the limit.
+fn doubling(levels: usize) -> String {
+    let params = ["A", "B", "C", "D", "E"];
+    let mut src = String::from("interface L0<A, B, C, D, E> {}\n");
+    for k in 1..=levels {
+        let mut list = vec![format!("L{}<A, B, C, D, E>", k - 1)];
+        for at in 0..5 {
+            for ty in ["i64", "f64"] {
+                let mut args = params.map(String::from);
+                args[at] = ty.to_string();
+                list.push(format!("L{}<{}>", k - 1, args.join(", ")));
+            }
+        }
+        writeln!(
+            src,
+            "interface L{k}<A, B, C, D, E>: {} {{}}",
+            list.join(", ")
+        )
+        .expect("writing to a `String` should succeed");
+    }
+    src + &format!(
+        "fn _use<T: L{levels}<string, string, string, string, string>>(x: T) {{\n    need(x)\n}}\nfn need<T: L0<string, string, string, string, string>>(_y: T) {{}}\nfn main() {{}}"
+    )
+}
+
+/// A closure that would grow without end stops at the limit: the steps that walk it stay a small
+/// multiple of 256 however many levels the program has, and one report is made.
+#[test]
+fn a_closure_that_doubles_should_stop_at_the_limit() {
+    let steps = |levels: usize| {
+        CLOSURE_STEPS.set(0);
+        let src = doubling(levels);
+        let ds = diags(&src);
+        let found: Vec<_> = ds.iter().map(Diagnostic::code).collect();
+        assert_eq!(found, [Code::BoundTooWide], "{levels} levels");
+        CLOSURE_STEPS.get()
+    };
+    // Each entry that the walk reads gives at most 11 inherited interfaces to read.
+    assert!(steps(20) <= 11 * 257 + 11, "{}", steps(20));
+    assert!(steps(40) <= 11 * 257 + 11, "{}", steps(40));
+    // Four levels give less than the limit.
+    clean(&doubling(2));
 }

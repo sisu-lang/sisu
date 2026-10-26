@@ -7,7 +7,7 @@ use super::{Checked, Checker, Poisoned};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
 use crate::source::Span;
-use crate::tir::{self, Type, TypeArgs};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
     /// `receiver.method(args)` on a value of type `ty`, a type parameter, which `site` writes:
@@ -22,7 +22,7 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
-        let tir::TypeKind::Param(_, place) = ty.kind() else {
+        let TypeKind::Param(_, place) = ty.kind() else {
             unreachable!("a bound method should be called on a type parameter");
         };
         let found = self.required(place as usize, site.name.name);
@@ -104,7 +104,12 @@ impl Checker<'_> {
         span: Span,
         found: &[Required],
     ) -> Option<Required> {
+        let wide =
+            matches!(ty.kind(), TypeKind::Param(_, p) if self.body.wide.contains(&(p as usize)));
         match found {
+            // A parameter whose closure is too wide is reported already, and unknown: a method
+            // that its walk did not reach is no error, and nor is one that it reached twice.
+            [] | [_, _, ..] if wide => None,
             [] => {
                 self.no_bound_method(ty, site.name);
                 None

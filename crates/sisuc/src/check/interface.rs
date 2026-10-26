@@ -15,6 +15,11 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{FuncId, InterfaceId, Type, TypeArgs, TypeKind};
 
+/// The most interfaces that one bound, or one list of interfaces a type conforms to, may give
+/// with the interfaces they inherit. An interface that inherits another twice, with different
+/// arguments, doubles the number at each level of inheritance, so the walk stops here (E0157).
+pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
+
 pub(super) struct InterfaceInfo {
     pub(super) name: ast::Ident,
     /// `Self`, then the interface's own: `Self` is `Param(Self, 0)`.
@@ -457,22 +462,24 @@ impl Checker<'_> {
     ///
     /// The third recorded exception to "A pass is linear in the program" (user, 2026-10-25): a
     /// bound's closure is computed per body that has it, so a body costs the closure's size. The
-    /// closure of arguments may double at each level of inheritance, as the spec says
-    /// ("Inheritance"): an interface that inherits one twice, once with a parameter and once with
-    /// a type, has the two as two entries. The check for E0034 does not read the closure, as it
-    /// needs no arguments.
+    /// closure of arguments may double at each level of inheritance: an interface that inherits
+    /// one twice, once with a parameter and once with a type, has the two as two entries. So the
+    /// walk stops at `BOUND_CLOSURE_LIMIT` entries, and the caller reports E0157 at the bound.
+    /// The check for E0034 does not read the closure, as it needs no arguments.
+    ///
+    /// `Err` holds the place in `bounds` of the bound whose interfaces went past the limit.
     pub(super) fn interfaces_of(
         &self,
         receiver: Type,
         bounds: &[Bound],
         out: &mut Vec<(InterfaceId, TypeArgs)>,
         seen: &mut FxHashSet<(InterfaceId, TypeArgs)>,
-    ) {
+    ) -> Result<(), usize> {
         seen.clear();
         seen.extend(out.iter().copied());
         #[cfg(test)]
         super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + seen.len());
-        self.extend_closure(receiver, bounds, out, seen, |_, _| {});
+        self.extend_closure(receiver, bounds, out, seen, |_, _| {})
     }
 
     /// The interfaces that the type parameter at `place` in scope conforms to through its bounds,
@@ -495,13 +502,43 @@ impl Checker<'_> {
             ));
             let bounds = self.body.bounds.get(place).map_or(&[][..], Vec::as_slice);
             let mut seen = std::mem::take(&mut self.closure_seen);
-            self.interfaces_of(receiver, bounds, &mut out, &mut seen);
+            let wide = self.interfaces_of(receiver, bounds, &mut out, &mut seen);
             self.closure_seen = seen;
+            if let Err(k) = wide {
+                self.too_wide(place, k);
+            }
             self.body.conforming[place] = Some(out);
         }
         self.body.conforming[place]
             .as_deref()
             .expect("the closure of a type parameter should be found by now")
+    }
+
+    /// Reports the bound at place `k` among those of the type parameter at `place`, whose closure
+    /// went past the limit: once for the bound, whatever bodies read it. The parameter is then
+    /// unknown in this body: it conforms to every interface, and a method that its walk did not
+    /// find draws no report.
+    fn too_wide(&mut self, place: usize, k: usize) {
+        self.body.wide.push(place);
+        let bound = self.body.bounds[place][k];
+        if self.wide_reported.insert(bound.at) {
+            let text = self.source.file.text(bound.at);
+            self.report(DiagnosticKind::BoundTooWide {
+                bound: format!("{}: {text}", self.body.type_params[place]),
+                limit: BOUND_CLOSURE_LIMIT,
+                at: bound.at,
+            });
+        }
+    }
+
+    /// Reports that the interface written at `at` in the list of a type, or in an `extend` block,
+    /// gives more than `BOUND_CLOSURE_LIMIT` interfaces with those it inherits.
+    pub(super) fn too_wide_at(&mut self, at: Span) {
+        self.report(DiagnosticKind::BoundTooWide {
+            bound: self.source.file.text(at).to_string(),
+            limit: BOUND_CLOSURE_LIMIT,
+            at,
+        });
     }
 
     /// The requirements named `name` that the bounds of the type parameter at `place` give,
@@ -540,9 +577,11 @@ impl Checker<'_> {
     /// broken `extend` block may have given its target the conformance, so that holds.
     pub(super) fn conforms(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
         match ty.kind() {
-            TypeKind::Param(_, place) => self
-                .param_interfaces(place as usize)
-                .contains(&(interface, args)),
+            TypeKind::Param(_, place) => {
+                let place = place as usize;
+                self.param_interfaces(place).contains(&(interface, args))
+                    || self.body.wide.contains(&place)
+            }
             TypeKind::Class(..) | TypeKind::Enum(..) => {
                 let broken = holder_of(ty).is_some_and(|holder| {
                     self.broken_extensions.contains(&self.holder_name(holder))
@@ -688,13 +727,20 @@ impl Checker<'_> {
         out: &mut Vec<(InterfaceId, TypeArgs)>,
         seen: &mut FxHashSet<(InterfaceId, TypeArgs)>,
         mut reached: impl FnMut(usize, Span),
-    ) {
-        let mut at = out.len();
-        for bound in bounds {
+    ) -> Result<(), usize> {
+        let first = out.len();
+        let mut at = first;
+        // The place in `bounds` of the bound that each entry from `first` on comes from.
+        let mut roots = Vec::new();
+        for (k, bound) in bounds.iter().enumerate() {
             #[cfg(test)]
             super::CLOSURE_STEPS.set(super::CLOSURE_STEPS.get() + 1);
             if seen.insert((bound.interface, bound.args)) {
                 out.push((bound.interface, bound.args));
+                roots.push(k);
+                if out.len() > BOUND_CLOSURE_LIMIT {
+                    return Err(k);
+                }
             }
         }
         // The arguments of the interface being read, led by `Self`.
@@ -709,10 +755,16 @@ impl Checker<'_> {
                 let args = inherited.args.subst(&with);
                 if seen.insert((inherited.interface, args)) {
                     out.push((inherited.interface, args));
+                    let root = roots[parent - first];
+                    roots.push(root);
                     reached(parent, written);
+                    if out.len() > BOUND_CLOSURE_LIMIT {
+                        return Err(root);
+                    }
                 }
             }
         }
+        Ok(())
     }
 }
 

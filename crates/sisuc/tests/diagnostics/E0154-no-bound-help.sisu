@@ -1,0 +1,15 @@
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+fn show<T: Convert<i64>>(item: T) -> i64 {
+    0
+}
+
+fn pass<U>(item: U) -> i64 {
+    show(item)
+}
+
+fn main() {
+    print(1)
+}

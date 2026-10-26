@@ -73,17 +73,23 @@ impl Checker<'_> {
         //
         // The third recorded exception to "A pass is linear in the program" (user, 2026-10-25;
         // ruling F9): a list's closure has an entry for each conformance that the list gives, and
-        // the closure of arguments may double at each level of inheritance (spec, "Inheritance").
-        // The roots of one list share one visited set, so the work follows the closure and not
-        // the number of roots.
+        // the closure of arguments may double at each level of inheritance, so the walk stops at
+        // `BOUND_CLOSURE_LIMIT` entries and E0157 is reported at the listed interface. The roots
+        // of one list share one visited set, so the work follows the closure and not the number
+        // of roots.
         for (holder, receiver, roots) in &lists {
             let mut closure = Vec::new();
             // The listed interface through which each entry of `closure` is reached.
             let mut via = Vec::new();
             let mut seen = FxHashSet::default();
             for &(bound, at) in roots {
-                self.extend_closure(*receiver, &[bound], &mut closure, &mut seen, |_, _| {});
+                let walked =
+                    self.extend_closure(*receiver, &[bound], &mut closure, &mut seen, |_, _| {});
                 via.resize(closure.len(), at);
+                if walked.is_err() {
+                    self.too_wide_at(at);
+                    break;
+                }
             }
             // The listed interface at which the stopgap is reported, once.
             let mut stopped = FxHashSet::default();
@@ -324,7 +330,7 @@ impl Checker<'_> {
         let mut reached = Vec::new();
         let mut seen = FxHashSet::default();
         let bounds = [p.interface];
-        self.extend_closure(
+        let walked = self.extend_closure(
             p.target,
             &bounds,
             &mut closure,
@@ -333,6 +339,9 @@ impl Checker<'_> {
                 reached.push((from, written));
             },
         );
+        if walked.is_err() {
+            self.too_wide_at(p.at);
+        }
         for (k, &(interface, args)) in closure.iter().enumerate().skip(1) {
             if find(&self.conformances, interface, p.target, args).is_some() {
                 continue;

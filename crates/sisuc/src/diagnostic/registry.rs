@@ -210,6 +210,7 @@ codes! {
     NotConform = "E0154",
     CannotExtend = "E0155",
     Ambiguous = "E0156",
+    BoundTooWide = "E0157",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -403,6 +404,13 @@ pub(crate) enum DiagnosticKind {
         written: String,
         at: Span,
         form: CannotExtendForm,
+    },
+    /// The bound `bound`, written at `at`, with the interfaces it inherits gives more than `limit`
+    /// interfaces.
+    BoundTooWide {
+        bound: String,
+        limit: usize,
+        at: Span,
     },
     /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
     /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
@@ -2174,6 +2182,15 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
+            DiagnosticKind::BoundTooWide { bound, limit, at } => Diagnostic::coded(
+                code,
+                at,
+                format!("the bound `{bound}` gives more than {limit} inherited interfaces"),
+            )
+            .with_help(
+                "an interface that inherits one interface twice, with different arguments, \
+                 doubles this number at each level",
+            ),
             DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
                 code,
                 at,

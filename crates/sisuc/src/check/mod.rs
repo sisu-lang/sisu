@@ -352,6 +352,8 @@ struct Checker<'src> {
     pending_bounds: Option<Vec<PendingBound>>,
     /// The type parameters in scope where a pending check was queued.
     scopes: Vec<Scope>,
+    /// Where each bound is written whose closure went past the limit and was reported.
+    wide_reported: FxHashSet<Span>,
     /// A buffer for the walk of an interface closure, kept from one closure to the next.
     closure_seen: FxHashSet<(tir::InterfaceId, TypeArgs)>,
     /// The first interface of each name, and every broken one.
@@ -464,6 +466,9 @@ struct Body {
     type_param_at: FxHashMap<Symbol, usize>,
     /// The bounds of the type parameters in scope, by place; a place past the end has none.
     bounds: Vec<Vec<Bound>>,
+    /// The places of the type parameters whose closure went past `BOUND_CLOSURE_LIMIT`: they stay
+    /// unknown in this body.
+    wide: Vec<usize>,
     /// The interfaces each type parameter conforms to, by place, once found (`param_interfaces`).
     conforming: Vec<Option<Vec<(tir::InterfaceId, TypeArgs)>>>,
     /// The requirements of the bounds of each type parameter by place and name, once indexed
@@ -578,6 +583,7 @@ impl Body {
     fn forget_bounds(&mut self, first: usize) {
         self.bounds.truncate(first);
         self.conforming.clear();
+        self.wide.clear();
         self.required.clear();
         self.scope = None;
     }
@@ -800,6 +806,7 @@ impl<'src> Checker<'src> {
             declaring: FxHashMap::default(),
             pending_bounds: Some(Vec::new()),
             scopes: Vec::new(),
+            wide_reported: FxHashSet::default(),
             closure_seen: FxHashSet::default(),
             interface_ids: FxHashMap::default(),
             extensions: Vec::new(),

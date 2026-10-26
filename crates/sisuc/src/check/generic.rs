@@ -134,10 +134,6 @@ fn leaves_open_in(
 
 /// A call of a generic callee as ranking sees it (see `Checker::waits`).
 #[derive(Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each flag is a separate fact about the call, set by a different check"
-)]
 struct CallShape {
     /// Whether the callee has type parameters of its own to infer.
     generic: bool,
@@ -146,8 +142,6 @@ struct CallShape {
     /// Whether no argument can bind one of its type parameters, and the type of the call names
     /// it, so only the call's context can bind it.
     open: bool,
-    /// Whether several methods answer the call, which its context picks among.
-    several: bool,
 }
 
 /// A callee's type parameters as a call binds them: `found[i]` is parameter `i`'s type once
@@ -841,6 +835,10 @@ impl Checker<'_> {
 
     /// `needs_context`, where `fit` is cleared when a call that waits does not fit its
     /// declaration: count, labels, and every parameter's and the return type resolved.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of expression that can wait, so the rules read in one place"
+    )]
     fn waits(&mut self, e: &ast::Expr, fit: &mut bool) -> bool {
         use ast::ExprKind as K;
         let (
@@ -870,10 +868,49 @@ impl Checker<'_> {
                 args,
                 safe,
                 ..
-            } => match self.method_shape(receiver, method, !types.is_empty(), args, *safe) {
-                Some(shape) => (shape, args),
-                None => return false,
-            },
+            } if !types.is_empty() => {
+                // Type arguments written for a method fix its own parameters, so the call waits
+                // only when several methods answer it, and its context picks one.
+                if !self.answered_by_several(receiver, method, *safe) {
+                    return false;
+                }
+                (self.generic_method(receiver, method, args, *safe), args)
+            }
+            K::MethodCall {
+                receiver,
+                method,
+                types,
+                args,
+                safe,
+                ..
+            } if types.is_empty() => {
+                let variant = self.generic_variant(receiver, method).filter(|_| !safe);
+                let shape = if let Some((names, v)) = variant {
+                    // Mixed labels are reported at the declaration.
+                    let shaped = !v.fields.is_empty()
+                        && (v.labels.iter().all(Option::is_some)
+                            || v.labels.iter().all(Option::is_none))
+                        && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
+                    CallShape {
+                        generic: true,
+                        shaped,
+                        open: shaped && leaves_open(v.fields.iter().copied(), names, 0),
+                    }
+                } else if !safe
+                    && method.name.as_str() == "Some"
+                    && option_written(receiver) == Some(false)
+                {
+                    // `Option.Some` is `Some`, as `generic_callee` takes it.
+                    CallShape {
+                        generic: true,
+                        shaped: matches!(&args[..], [arg] if arg.label.is_none()),
+                        open: false,
+                    }
+                } else {
+                    self.generic_method(receiver, method, args, *safe)
+                };
+                (shape, args)
+            }
             K::Call {
                 callee,
                 types,
@@ -915,47 +952,6 @@ impl Checker<'_> {
         let waits = generic && (open || args.iter().all(|arg| self.waits(&arg.value, fit)));
         *fit &= !waits || shaped;
         waits
-    }
-
-    /// The shape of `receiver.method(args)`, or of `receiver?.method(args)` with `safe`, which a
-    /// call of a variant, of `Option.Some` or of a method has. `None` when it never waits: a call
-    /// that writes type arguments fixes its own parameters, so it waits only when several methods
-    /// answer it, and its context picks one.
-    fn method_shape(
-        &mut self,
-        receiver: &ast::Expr,
-        method: &ast::Ident,
-        written: bool,
-        args: &[ast::Arg],
-        safe: bool,
-    ) -> Option<CallShape> {
-        if written {
-            return Some(self.generic_method(receiver, method, args, safe)).filter(|s| s.several);
-        }
-        let variant = self.generic_variant(receiver, method).filter(|_| !safe);
-        Some(if let Some((names, v)) = variant {
-            // Mixed labels are reported at the declaration.
-            let shaped = !v.fields.is_empty()
-                && (v.labels.iter().all(Option::is_some) || v.labels.iter().all(Option::is_none))
-                && fits(v.fields.iter().copied().zip(v.labels.iter().copied()), args);
-            CallShape {
-                generic: true,
-                shaped,
-                open: shaped && leaves_open(v.fields.iter().copied(), names, 0),
-                ..CallShape::default()
-            }
-        } else if !safe && method.name.as_str() == "Some" && option_written(receiver) == Some(false)
-        {
-            // `Option.Some` is `Some`, as `generic_callee` takes it.
-            CallShape {
-                generic: true,
-                shaped: matches!(args, [arg] if arg.label.is_none()),
-                open: false,
-                ..CallShape::default()
-            }
-        } else {
-            self.generic_method(receiver, method, args, safe)
-        })
     }
 
     /// Whether the `if let pattern = value { then_block } else { else_block }` waits, as
@@ -1147,7 +1143,6 @@ impl Checker<'_> {
                             generic: true,
                             shaped,
                             open: shaped,
-                            several: true,
                         };
                     }
                 }
@@ -1163,7 +1158,34 @@ impl Checker<'_> {
                 && sig.ret.is_some_and(|ret| {
                     leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, owner)
                 }),
-            ..CallShape::default()
+        }
+    }
+
+    /// Whether several methods answer `receiver.method(...)`, or `receiver?.method(...)` with
+    /// `safe`: the requirements of a type parameter's bounds, or the methods of the conformance
+    /// blocks of a class or an enum.
+    fn answered_by_several(
+        &mut self,
+        receiver: &ast::Expr,
+        method: &ast::Ident,
+        safe: bool,
+    ) -> bool {
+        let Some(mut ty) = self.receiver_ahead(receiver) else {
+            return false;
+        };
+        if let (true, TypeKind::Optional(payload)) = (safe, ty.kind()) {
+            ty = payload;
+        }
+        match ty.kind() {
+            TypeKind::Param(_, place) => self.required(place as usize, method.name).len() > 1,
+            TypeKind::Class(..) | TypeKind::Enum(..) => {
+                if self.own_method(ty, method.name).is_some() {
+                    return false;
+                }
+                self.conforming_methods(ty, method.name);
+                self.candidates.len() > 1
+            }
+            _ => false,
         }
     }
 
@@ -1196,7 +1218,6 @@ impl Checker<'_> {
                             let params = requirement.params.iter().copied();
                             leaves_open_in(params, ret, &names, interface.type_params.len())
                         }),
-                    several: false,
                 }
             }
             _ => {
@@ -1211,7 +1232,6 @@ impl Checker<'_> {
                     generic: true,
                     shaped,
                     open: shaped,
-                    several: true,
                 }
             }
         }
@@ -1268,7 +1288,6 @@ impl Checker<'_> {
                     shaped,
                     open: shaped
                         && leaves_open(info.fields.iter().map(|f| f.ty), &info.type_params, 0),
-                    ..CallShape::default()
                 }
             }
             (None, Some(&Declared::Known(func))) => {
@@ -1282,7 +1301,6 @@ impl Checker<'_> {
                         && sig.ret.is_some_and(|ret| {
                             leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, 0)
                         }),
-                    ..CallShape::default()
                 }
             }
             // `Some<T>(x: T) -> T?`, and the prelude's `Ok` and `Err`, which no user item can
@@ -1291,7 +1309,6 @@ impl Checker<'_> {
                 generic: true,
                 shaped: matches!(args, [arg] if arg.label.is_none()),
                 open: false,
-                ..CallShape::default()
             },
             (None, None) => self
                 .result_variant(name)
@@ -1307,7 +1324,6 @@ impl Checker<'_> {
                                 &info.type_params,
                                 0,
                             ),
-                        ..CallShape::default()
                     }
                 }),
             _ => CallShape::default(),

@@ -1,0 +1,19 @@
+interface L0<A, B, C, D, E> {}
+
+interface L1<A, B, C, D, E>: L0<A, B, C, D, E>, L0<i64, B, C, D, E>, L0<f64, B, C, D, E>, L0<A, i64, C, D, E>, L0<A, f64, C, D, E>, L0<A, B, i64, D, E>, L0<A, B, f64, D, E>, L0<A, B, C, i64, E>, L0<A, B, C, f64, E>, L0<A, B, C, D, i64>, L0<A, B, C, D, f64> {}
+
+interface L2<A, B, C, D, E>: L1<A, B, C, D, E>, L1<i64, B, C, D, E>, L1<f64, B, C, D, E>, L1<A, i64, C, D, E>, L1<A, f64, C, D, E>, L1<A, B, i64, D, E>, L1<A, B, f64, D, E>, L1<A, B, C, i64, E>, L1<A, B, C, f64, E>, L1<A, B, C, D, i64>, L1<A, B, C, D, f64> {}
+
+interface L3<A, B, C, D, E>: L2<A, B, C, D, E>, L2<i64, B, C, D, E>, L2<f64, B, C, D, E>, L2<A, i64, C, D, E>, L2<A, f64, C, D, E>, L2<A, B, i64, D, E>, L2<A, B, f64, D, E>, L2<A, B, C, i64, E>, L2<A, B, C, f64, E>, L2<A, B, C, D, i64>, L2<A, B, C, D, f64> {}
+
+interface L4<A, B, C, D, E>: L3<A, B, C, D, E>, L3<i64, B, C, D, E>, L3<f64, B, C, D, E>, L3<A, i64, C, D, E>, L3<A, f64, C, D, E>, L3<A, B, i64, D, E>, L3<A, B, f64, D, E>, L3<A, B, C, i64, E>, L3<A, B, C, f64, E>, L3<A, B, C, D, i64>, L3<A, B, C, D, f64> {}
+
+fn _need<T: L0<string, string, string, string, string>>(_item: T) {}
+
+fn _use<T: L4<string, string, string, string, string>>(x: T) {
+    _need(x)
+}
+
+fn main() {
+    print(1)
+}
