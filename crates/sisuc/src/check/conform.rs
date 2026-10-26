@@ -53,9 +53,7 @@ type Listed = (Holder, Type, Vec<(Bound, Span)>);
 impl Checker<'_> {
     /// Pass 2b, after every signature: reports the methods of one name that a type holds twice,
     /// records each conformance and reports the second of any two that overlap, then checks that
-    /// each meets its requirements and, for an `extend` block, the conformances it needs. An
-    /// interface that takes type parameters waits for Task 6: it reports the E0030 stopgap at the
-    /// interface.
+    /// each meets its requirements and, for an `extend` block, the conformances it needs.
     pub(super) fn conformances(&mut self, items: &[&ast::Item]) {
         self.extension_clashes();
         // Where each conformance is written, by interface and index.
@@ -124,8 +122,6 @@ impl Checker<'_> {
             if wide {
                 continue;
             }
-            // The listed interface at which the stopgap is reported, once.
-            let mut stopped = FxHashSet::default();
             for (k, (&(interface, args), &at)) in closure.iter().zip(&via).enumerate() {
                 if find(&self.conformances, interface, *receiver, args).is_some() {
                     // A block gave it: it holds under the conditions of the block, which the
@@ -138,13 +134,6 @@ impl Checker<'_> {
                             at,
                             via: (closure[parent].0, requires),
                         });
-                    }
-                    continue;
-                }
-                // An inherited interface that takes arguments waits for Task 6, as a listed one.
-                if !args.get().is_empty() {
-                    if stopped.insert(at) {
-                        self.unsupported_at(at);
                     }
                     continue;
                 }
@@ -217,11 +206,6 @@ impl Checker<'_> {
                 let Some(bound) = self.bound(ty) else {
                     continue;
                 };
-                // An interface that takes type parameters waits for Task 6.
-                if !bound.args.get().is_empty() {
-                    self.unsupported(ty);
-                    continue;
-                }
                 roots.push((bound, ty.bare));
             }
             for choice in assoc {
@@ -282,9 +266,10 @@ impl Checker<'_> {
             };
             self.report(DiagnosticKind::ConformsTwice {
                 ty: self.type_name(common[0]),
-                interface: self.interfaces[bound.interface.0].name.name.to_string(),
+                interface: self.bound_text(bound.interface, tir::TypeArgs::intern(&common[1..])),
                 at: second,
                 first,
+                generic: !bound.args.get().is_empty(),
             });
             return None;
         }
@@ -480,21 +465,13 @@ impl Checker<'_> {
         (interface, args): (InterfaceId, tir::TypeArgs),
         (via, requires): (InterfaceId, Span),
     ) {
-        let (ty, inherited) = (
-            self.type_name(target),
-            self.interfaces[interface.0].name.name.to_string(),
-        );
+        let (ty, inherited) = (self.type_name(target), self.bound_text(interface, args));
         let (mut extend, mut needs) = (None, None);
         match find(&self.conformances, interface, target, args) {
             // Following the advice would give `ConformsTwice`, so the report points at the bound
             // that the other conformance needs instead.
             Some((k, bound)) => needs = Some(self.failed_bound(interface, k, bound)),
-            // shortcut: an inherited interface that takes arguments gets no help, as a block
-            // cannot write a generic interface yet; Task 6 writes it with the arguments.
-            None if args.get().is_empty() => {
-                extend = block.map(|b| self.extend_help(b, &ty, &inherited));
-            }
-            None => {}
+            None => extend = block.map(|b| self.extend_help(b, &ty, &inherited)),
         }
         self.report(DiagnosticKind::NotConform {
             ty,

@@ -351,7 +351,7 @@ The rules:
 
 `extend` adds methods to a type that is declared elsewhere. `extend Type: Interface` makes the type conform to the interface, with the methods of that interface in its body. One block names one interface.
 
-```sisu pending
+```sisu
 class Celsius {
     degrees: f64
 }

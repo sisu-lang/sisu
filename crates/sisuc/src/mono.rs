@@ -18,6 +18,12 @@ use crate::tir::{
 };
 use crate::types::{Head, write_args, write_method};
 
+#[cfg(test)]
+thread_local! {
+    /// How many programs on this thread have taken the path that instantiates nothing.
+    static FAST_PATHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// `program` with each generic function, class and enum replaced by the instantiations it
 /// reaches, and its enums laid out again.
 /// The non-generic declarations come first, in their order; the instantiations follow, in the
@@ -33,6 +39,8 @@ pub(crate) fn instantiate(mut program: Program) -> Program {
         || (program.classes[..prelude.classes].iter()).any(|c| !c.type_params.is_empty())
         || (program.enums[..prelude.enums].iter()).any(|e| !e.type_params.is_empty());
     if !generic && !program.instantiates {
+        #[cfg(test)]
+        FAST_PATHS.set(FAST_PATHS.get() + 1);
         // Reaching a generic item records a type argument, so nothing of the prelude's that a
         // program does not name is used: they are all templates or unused.
         program.functions.truncate(prelude.funcs);
@@ -1106,22 +1114,13 @@ mod tests {
         assert_eq!(program.functions.len(), count);
     }
 
-    /// The arguments of a conformance's interface name output classes. The checker makes none yet,
-    /// since a generic interface waits for Task 6, so the row sets one on the checked program.
+    /// The arguments of a conformance's interface name output classes: `G<i64>` in the symbol is
+    /// the output's class.
     #[test]
     fn a_conformance_method_should_name_its_interface_arguments_by_output_ids() {
-        let src = "interface Label {\n    fn name(self) -> string\n}\nclass G<T> {\n    value: T\n}\nclass C {}\nextend C: Label {\n    fn name(self) -> string { \"c\" }\n}\nfn main() {\n    print(C().name())\n}";
-        let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
-        let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
-        let g = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[Type::I64])));
-        let method = (program.functions.iter_mut())
-            .find(|f| f.name == "C.name")
-            .expect("the method should be declared");
-        let (interface, _) = method
-            .conformance
-            .expect("the method should be a conformance's");
-        method.conformance = Some((interface, TypeArgs::intern(&[g])));
-        let program = instantiate(program);
+        let program = instantiated(
+            "interface Label<T> {\n    fn name(self) -> T\n}\nclass G<T> {\n    value: T\n}\nclass C {}\nextend C: Label<G<i64>> {\n    fn name(self) -> G<i64> { G(value: 1) }\n}\nfn main() {\n    print(C().name().value)\n}",
+        );
         let method = (program.functions.iter())
             .find(|f| f.name == "C.Label<G<i64>>.name")
             .expect("the method should be kept");
@@ -1131,6 +1130,67 @@ mod tests {
             panic!("the argument should be a class: {args:?}");
         };
         assert_eq!(program.classes[id.0].name, "G<i64>");
+    }
+
+    /// Two conformances of one generic interface give two symbols, with the interface's arguments
+    /// in them, on the path that instantiates nothing and on the one that does.
+    #[test]
+    fn two_conformances_of_a_generic_interface_should_get_two_symbols() {
+        let blocks = "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Fahrenheit {\n    d: f64\n}\nclass Kelvin {\n    d: f64\n}\nclass Celsius {\n    d: f64\n}\nextend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nextend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\n";
+        let main = "fn main() {\n    let c = Celsius(d: 1.0)\n    let f: Fahrenheit = c.convert()\n    let k: Kelvin = c.convert()\n    print(f.d + k.d)\n}";
+        // Nothing generic: the fast path, which writes the symbols from the checker's fields.
+        let before = FAST_PATHS.get();
+        let program = instantiated(&format!("{blocks}{main}"));
+        assert_eq!(FAST_PATHS.get(), before + 1);
+        // A generic function that nothing calls changes nothing but the path.
+        let generic = format!("{blocks}fn id<T>(x: T) -> T {{ x }}\n{main}");
+        for program in [program, instantiated(&generic)] {
+            let names = function_names(&program);
+            for want in [
+                "Celsius.Convert<Fahrenheit>.convert",
+                "Celsius.Convert<Kelvin>.convert",
+            ] {
+                assert!(names.contains(&want), "{want} in {names:?}");
+            }
+        }
+    }
+
+    /// Two conformances whose symbols are alike up to the cut take `#id`, each its own, on the
+    /// path that instantiates nothing: the program has no generic class, enum or function, and
+    /// an interface is none of those.
+    #[test]
+    fn conformances_with_long_interface_arguments_should_get_distinct_symbols() {
+        let long = "L".repeat(100);
+        let src = format!(
+            "interface Conv4<A, B, C, D> {{\n    fn convert(self) -> D\n}}\nclass {long} {{}}\nclass C {{}}\nextend C: Conv4<{long}, {long}, {long}, i64> {{\n    fn convert(self) -> i64 {{ 1 }}\n}}\nextend C: Conv4<{long}, {long}, {long}, bool> {{\n    fn convert(self) -> bool {{ true }}\n}}\nfn main() {{\n    let c = C()\n    let a: i64 = c.convert()\n    let b: bool = c.convert()\n    print(a)\n    print(b)\n}}"
+        );
+        let before = FAST_PATHS.get();
+        let program = instantiated(&src);
+        assert_eq!(FAST_PATHS.get(), before + 1, "the fast path should run");
+        let cut: Vec<&str> = (function_names(&program).into_iter())
+            .filter(|name| name.starts_with("C.Conv4<"))
+            .collect();
+        assert_eq!(cut.len(), 2, "{cut:?}");
+        assert_ne!(cut[0], cut[1]);
+        for name in cut {
+            assert!(name.contains("...") && name.contains('#'), "{name}");
+        }
+    }
+
+    /// Two conformances of one generic interface to one instantiation of a generic class, whose
+    /// arguments the occurs check keeps apart, name the interface's arguments in the symbols.
+    #[test]
+    fn conformances_of_one_instantiation_should_name_the_interface_arguments() {
+        let program = instantiated(
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Box<T> {\n    value: T\n}\nextend<T> Box<T>: Convert<T> {\n    fn convert(self) -> T { self.value }\n}\nextend<T> Box<[T]>: Convert<T> {\n    fn convert(self) -> T { self.value[0] }\n}\nfn main() {\n    let b = Box(value: [1])\n    let a: [i64] = b.convert()\n    let n: i64 = b.convert()\n    print(a.len() + n)\n}",
+        );
+        let names = function_names(&program);
+        for want in [
+            "Box<[i64]>.Convert<[i64]>.convert",
+            "Box<[i64]>.Convert<i64>.convert",
+        ] {
+            assert!(names.contains(&want), "{want} in {names:?}");
+        }
     }
 
     /// A method is named from the type it is declared on, as the block writes it, whichever
@@ -1225,6 +1285,30 @@ mod tests {
             assert!(printed.contains(part), "{part} in {printed}");
         }
         assert!(!printed.contains("(call Shape.area"), "{printed}");
+    }
+
+    /// A call through a bound of a generic interface finds the conformance whose interface
+    /// arguments are the bound's: the same type conforms twice, and each bound reaches its own.
+    #[test]
+    fn an_interface_call_should_find_the_conformance_by_the_arguments_of_its_bound() {
+        let program = instantiated(
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\n\
+             class Fahrenheit {\n    d: f64\n}\n\
+             class Kelvin {\n    d: f64\n}\n\
+             class Celsius {\n    d: f64\n}\n\
+             extend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\n\
+             extend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\n\
+             fn to_f<T: Convert<Fahrenheit>>(x: T) -> Fahrenheit {\n    x.convert()\n}\n\
+             fn to_k<T: Convert<Kelvin>>(x: T) -> Kelvin {\n    x.convert()\n}\n\
+             fn main() {\n    let c = Celsius(d: 1.0)\n    print(to_f(c).d + to_k(c).d)\n}",
+        );
+        let printed = program.to_string();
+        for part in [
+            "(fn to_f<Celsius> ((x#0 Celsius)) Fahrenheit (block (call Celsius.Convert<Fahrenheit>.convert x#0)))",
+            "(fn to_k<Celsius> ((x#0 Celsius)) Kelvin (block (call Celsius.Convert<Kelvin>.convert x#0)))",
+        ] {
+            assert!(printed.contains(part), "{part} in {printed}");
+        }
     }
 
     /// The conformance's parameters come before the method's own type arguments in the

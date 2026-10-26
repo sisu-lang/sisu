@@ -378,8 +378,9 @@ struct Checker<'src> {
     /// The methods that a block of an intact target lost to a syntax error.
     broken_extension_methods: FxHashSet<(Holder, Symbol)>,
     /// The methods of the conformance blocks that cover the receiver of the call being found, with
-    /// the block's interface: a buffer that `find_method` fills and clears per call.
-    candidates: Vec<(tir::FuncId, tir::InterfaceId)>,
+    /// the block's interface and its arguments for the receiver: a buffer that `find_method` fills
+    /// and clears per call.
+    candidates: Vec<(tir::FuncId, tir::InterfaceId, TypeArgs)>,
     /// Every conformance of a class or an enum to an interface.
     conformances: tir::Conformances,
     /// The type parameters of each conformance that has bounded ones, with their bounds, by

@@ -998,8 +998,8 @@ fn an_extend_target_that_is_no_class_or_enum_should_be_reported() {
             "interface Plain {}\nclass Circle {\n    r: f64\n}\nextend Circle: Plain {\n    type Item = i64\n}",
             vec![(Code::UnknownType, (6, 10))],
         ),
-        // The methods of a block that failed for its interface, its unused parameter or its
-        // generic interface are not checked.
+        // The methods of a block that failed for its interface or its unused parameter are not
+        // checked.
         (
             "class Circle {\n    r: f64\n}\nextend Circle: Missing {\n    fn grow(self) {\n        let b: bool = 1\n    }\n}",
             vec![(Code::UnknownType, (4, 16))],
@@ -1007,10 +1007,6 @@ fn an_extend_target_that_is_no_class_or_enum_should_be_reported() {
         (
             "class Pile<T> {\n    items: [T]\n}\nextend<U> Pile<i64> {\n    fn f(self) {\n        let b: bool = 1\n    }\n}",
             vec![(Code::CannotExtend, (4, 8))],
-        ),
-        (
-            "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Convert<i64> {\n    fn convert(self) -> i64 {\n        let b: bool = 1\n        1\n    }\n}",
-            vec![(Code::UnknownType, (7, 16))],
         ),
     ] {
         codes(&with_shapes(&with_main(row)), &expected);
@@ -1087,24 +1083,6 @@ fn mut_self_in_an_extend_block_should_be_reported_as_in_a_declaration() {
         "extend Missing {\n    fn flip(mut self) {}\n}\nfn main() {}",
         &[(Code::UnknownType, (1, 8))],
     );
-}
-
-/// An interface that takes type parameters waits for a later task, and reports the name it cannot
-/// handle yet.
-#[test]
-fn generic_interfaces_should_report_the_name_they_cannot_take_yet() {
-    for (row, expected) in [
-        (
-            "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Circle {\n    r: f64\n}\nextend Circle: Convert<i64> {\n    fn convert(self) -> i64 { 1 }\n}",
-            vec![(Code::UnknownType, (7, 16))],
-        ),
-        (
-            "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Circle: Convert<i64> {\n    fn convert(self) -> i64 { 1 }\n}",
-            vec![(Code::UnknownType, (4, 15))],
-        ),
-    ] {
-        codes(&with_shapes(&with_main(row)), &expected);
-    }
 }
 
 /// The conformances a program records: one for each type and interface, an inherited interface
@@ -1411,31 +1389,36 @@ fn the_fix_of_an_unused_extend_parameter_should_take_out_the_list_when_it_is_cer
     }
 }
 
-/// An interface inherited with arguments waits for Task 6 as a listed one does, at the listed
-/// interface, once.
+/// An interface inherited with arguments is one the type conforms to, as one without: the list of
+/// a class gives it through the body, and a block of another interface needs a block of its own.
 #[test]
-fn an_inherited_generic_interface_should_report_the_stopgap_at_the_listed_interface() {
+fn an_inherited_generic_interface_should_be_conformed_to_as_a_plain_one() {
     for (row, expected) in [
         (
             "interface G<T> {}\ninterface I: G<i64> {}\nclass C: I {}",
-            vec![(Code::UnknownType, (3, 10))],
+            vec![],
         ),
-        // Two entries of one interface, one report.
+        // Two entries of one interface.
         (
             "interface G<T> {}\ninterface I: G<i64>, G<f64> {}\nclass C: I {}",
-            vec![(Code::UnknownType, (3, 10))],
-        ),
-        // Two listed interfaces that inherit it: the first listed one has it, in the one walk.
-        (
-            "interface G<T> {}\ninterface I: G<i64> {}\ninterface J: G<i64> {}\nclass C: I, J {}",
-            vec![(Code::UnknownType, (4, 10))],
+            vec![],
         ),
         // Another argument is another entry, reached through another listed interface.
         (
             "interface G<T> {}\ninterface I: G<i64> {}\ninterface J: G<f64> {}\nclass C: I, J {}",
-            vec![(Code::UnknownType, (4, 10)), (Code::UnknownType, (4, 13))],
+            vec![],
         ),
-        // The block path reports the missing conformance, as it does.
+        // A block of the inherited interface, with its argument, gives the conformance.
+        (
+            "interface G<T> {}\ninterface I: G<i64> {}\nclass C {}\nextend C: G<i64> {}\nextend C: I {}",
+            vec![],
+        ),
+        // A block of the same interface with another argument does not.
+        (
+            "interface G<T> {}\ninterface I: G<i64> {}\nclass C {}\nextend C: G<f64> {}\nextend C: I {}",
+            vec![(Code::NotConform, (5, 11))],
+        ),
+        // No block at all.
         (
             "interface G<T> {}\ninterface I: G<i64> {}\nclass C {}\nextend C: I {}",
             vec![(Code::NotConform, (4, 11))],
@@ -2798,21 +2781,15 @@ fn conditional_bound_violations_should_be_reported_once_at_the_use() {
     }
 }
 
-/// An inherited interface that takes arguments has no block to write yet, so the report has no
-/// help; one that takes none has. The text of the help is pinned by the fixtures.
+/// A missing inherited interface has help that writes the block to add, with the interface's
+/// arguments; the text is pinned by `E0154-inherited-arguments`.
 #[test]
-fn an_inherited_interface_with_arguments_should_have_no_help() {
-    let has_help = |row: &str| {
-        let (_, ds) = checked(&with_shapes(&with_main(row)));
-        assert_eq!(ds.len(), 1, "{ds:?}");
-        ds[0].help().is_some()
-    };
-    assert!(!has_help(
-        "interface G<T> {}\ninterface I: G<i64> {}\nclass C {}\nextend C: I {}"
-    ));
-    assert!(has_help(
-        "interface J: Named {}\nclass C {}\nextend C: J {}"
-    ));
+fn an_inherited_interface_with_arguments_should_have_help() {
+    let (_, ds) = checked(&with_shapes(&with_main(
+        "interface G<T> {}\ninterface I: G<i64> {}\nclass C {}\nextend C: I {}",
+    )));
+    assert_eq!(ds.len(), 1, "{ds:?}");
+    assert!(ds[0].help().is_some(), "{ds:?}");
 }
 
 /// A component with no weight below zero is not searched: the first growing edge is the label,
@@ -2829,4 +2806,220 @@ fn a_component_without_a_negative_weight_should_not_be_searched() {
         assert_eq!(found, [Code::InstantiationCycle], "{src}");
         assert_eq!(cycle::BELLMAN_FORD_STEPS.get(), 0, "{src}");
     }
+}
+
+/// The generic interface `Convert`, three classes of degrees, two conformances of `Celsius` to it
+/// and the items the generic-interface rows use. A row is a whole program, and these follow it, so
+/// that a position in the row is its own line and column.
+const CONVERT: &str = "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Fahrenheit {\n    d: f64\n}\nclass Kelvin {\n    d: f64\n}\nclass Celsius {\n    d: f64\n}\nextend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nextend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\nclass Holder {\n    k: Kelvin\n}\nclass Box<T> {\n    value: T\n}\nfn take_kelvin(k: Kelvin) -> f64 { k.d }\nfn take<T>(a: T, b: T) -> T { a }\nfn unbox<T>(b: Box<T>, x: T) -> T { x }\n";
+
+/// `row`, a program, then `CONVERT`.
+fn with_convert(row: &str) -> String {
+    format!("{row}\n{CONVERT}")
+}
+
+/// A `main` that holds `statements` after a `Celsius` and a `Kelvin`.
+fn convert_main(statements: &str) -> String {
+    format!(
+        "fn main() {{\n    let c = Celsius(d: 1.0)\n    let k = Kelvin(d: 1.0)\n    {statements}\n}}"
+    )
+}
+
+/// A type that conforms to a generic interface more than once picks the conformance from what the
+/// call's context expects: a `let`'s type, a parameter, a result, a field, a bound, the payload of
+/// an optional, a sibling argument that fixes the type, an ordinary argument and written type
+/// arguments that leave the wait alone. The inherited interface keeps its argument, and a block
+/// over a generic target gives the interface its arguments.
+#[test]
+fn generic_interfaces_should_check_clean() {
+    let two = |decls: &str, statements: &str| format!("{decls}{}", convert_main(statements));
+    for src in [
+        two("", "let f: Fahrenheit = c.convert()"),
+        two("", "let _ = take_kelvin(c.convert())"),
+        two(
+            "fn kelvin_of(c: Celsius) -> Kelvin {\n    c.convert()\n}\n",
+            "let _ = kelvin_of(c)",
+        ),
+        two("", "let _ = Holder(k: c.convert())"),
+        two(
+            "fn to<T: Convert<Kelvin>>(x: T) -> Kelvin {\n    x.convert()\n}\n",
+            "let _ = to(c)",
+        ),
+        // Two bounds of one interface: the annotation picks the bound.
+        two(
+            "fn both<T: Convert<Fahrenheit> & Convert<Kelvin>>(x: T) -> f64 {\n    let f: Fahrenheit = x.convert()\n    let k: Kelvin = x.convert()\n    f.d + k.d\n}\n",
+            "let _ = both(c)",
+        ),
+        // The payload of the expected optional picks one.
+        two("", "let f: Fahrenheit? = c.convert()"),
+        // The call waits for `k`, whose type picks `Convert<Kelvin>`.
+        two("", "let _ = take(c.convert(), k)"),
+        // A waiting call inside a construction that waits for the type its sibling fixes.
+        two("", "let _ = unbox(Box(value: c.convert()), k)"),
+        // An ordinary argument does not stop the wait.
+        two(
+            "interface Convert1<T> {\n    fn convert(self, by: i64) -> T\n}\nclass Meter {\n    d: f64\n}\nextend Meter: Convert1<Fahrenheit> {\n    fn convert(self, by: i64) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nextend Meter: Convert1<Kelvin> {\n    fn convert(self, by: i64) -> Kelvin { Kelvin(d: self.d) }\n}\n",
+            "let _ = take(Meter(d: 1.0).convert(1), k)",
+        ),
+        // Type arguments written for the method's own parameter do not stop it either.
+        two(
+            "interface Pick<T> {\n    fn pick<U>(self, x: U) -> T\n}\nclass Meter {\n    d: f64\n}\nextend Meter: Pick<Fahrenheit> {\n    fn pick<U>(self, x: U) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nextend Meter: Pick<Kelvin> {\n    fn pick<U>(self, x: U) -> Kelvin { Kelvin(d: self.d) }\n}\n",
+            "let _ = take(Meter(d: 1.0).pick<i64>(1), k)",
+        ),
+        // `Feed<Kelvin>` inherits `Convert<Kelvin>` with its argument.
+        two(
+            "interface Feed<T>: Convert<T> {}\nclass Probe: Feed<Kelvin> {\n    d: f64\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\nfn fed<T: Feed<Kelvin>>(x: T) -> Kelvin {\n    x.convert()\n}\n",
+            "let _ = fed(Probe(d: 1.0))",
+        ),
+        // A block over a generic target gives the argument of the interface.
+        two(
+            "extend<T> Box<T>: Convert<T> {\n    fn convert(self) -> T { self.value }\n}\n",
+            "let n: i64 = Box(value: 1).convert()",
+        ),
+        // Another block for one instantiation, and one over the array of the parameter.
+        two(
+            "extend<T> Box<T>: Convert<T> {\n    fn convert(self) -> T { self.value }\n}\nextend Box<i64>: Convert<string> {\n    fn convert(self) -> string { \"i\" }\n}\n",
+            "let s: string = Box(value: 1).convert()\n    let n: i64 = Box(value: 1).convert()",
+        ),
+        two(
+            "extend<T> Box<T>: Convert<T> {\n    fn convert(self) -> T { self.value }\n}\nextend<U> Box<U>: Convert<[U]> {\n    fn convert(self) -> [U] { [self.value] }\n}\n",
+            "let a: [i64] = Box(value: 1).convert()\n    let n: i64 = Box(value: 1).convert()",
+        ),
+    ] {
+        clean(&with_convert(&src));
+    }
+}
+
+/// A call that two conformances of a generic interface answer, and the context does not pick, is
+/// ambiguous; so is a conformance that comes twice, a bound that the type meets with other
+/// arguments, and a block that overlaps another by its interface arguments.
+#[test]
+fn generic_interfaces_should_report_what_the_context_cannot_pick() {
+    let m = convert_main;
+    for (src, expected) in [
+        // No expected type, and an expected type that no candidate returns.
+        (m("let x = c.convert()"), vec![(Code::Ambiguous, (4, 15))]),
+        (
+            m("let x: f64 = c.convert()"),
+            vec![(Code::Ambiguous, (4, 20))],
+        ),
+        // A third conformance.
+        (
+            format!(
+                "class Rankine {{\n    d: f64\n}}\nextend Celsius: Convert<Rankine> {{\n    fn convert(self) -> Rankine {{ Rankine(d: self.d) }}\n}}\n{}",
+                m("let x = c.convert()")
+            ),
+            vec![(Code::Ambiguous, (10, 15))],
+        ),
+        // The same conformance twice, and a block over every `T` beside one for `i64`.
+        (
+            format!(
+                "class Dup {{}}\nextend Dup: Convert<Kelvin> {{\n    fn convert(self) -> Kelvin {{ Kelvin(d: 0.0) }}\n}}\nextend Dup: Convert<Kelvin> {{\n    fn convert(self) -> Kelvin {{ Kelvin(d: 1.0) }}\n}}\n{}",
+                m("")
+            ),
+            vec![(Code::ConformsTwice, (5, 13))],
+        ),
+        (
+            format!(
+                "extend<T> Box<T>: Convert<T> {{\n    fn convert(self) -> T {{ self.value }}\n}}\nextend<U> Box<U>: Convert<i64> {{\n    fn convert(self) -> i64 {{ 1 }}\n}}\n{}",
+                m("")
+            ),
+            vec![(Code::ConformsTwice, (4, 19))],
+        ),
+        // The occurs check keeps `Convert<[U]>` and `Convert<T>` apart, and so do other targets.
+        (
+            format!(
+                "extend<T> Box<T>: Convert<T> {{\n    fn convert(self) -> T {{ self.value }}\n}}\nextend<U> Box<U>: Convert<[U]> {{\n    fn convert(self) -> [U] {{ [self.value] }}\n}}\nextend<V> Box<[V]>: Convert<V> {{\n    fn convert(self) -> V {{ self.value[0] }}\n}}\n{}",
+                m("")
+            ),
+            vec![],
+        ),
+        // A bound that the type meets with other arguments.
+        (
+            "class Plain {\n    d: f64\n}\nextend Plain: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nfn to<T: Convert<Kelvin>>(x: T) -> Kelvin {\n    x.convert()\n}\nfn main() {\n    to(Plain(d: 1.0))\n}".to_string(),
+            vec![(Code::NotConform, (11, 8))],
+        ),
+    ] {
+        codes(&with_convert(&src), &expected);
+    }
+    // Two arguments, and a result that appears in two candidates: the help is the first result
+    // that exactly one candidate has; its text is pinned by `E0156-pairs`.
+    let pairs = "interface I<T, U> {\n    fn m(self) -> T\n}\nclass C {}\nextend C: I<i64, bool> {\n    fn m(self) -> i64 { 1 }\n}\nextend C: I<i64, char> {\n    fn m(self) -> i64 { 2 }\n}\nextend C: I<string, bool> {\n    fn m(self) -> string { \"s\" }\n}\nfn main() {\n    let c = C()\n    let x = c.m()\n}";
+    let (_, ds) = checked(pairs);
+    assert_eq!(
+        ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+        [Code::Ambiguous]
+    );
+    assert!(ds[0].help().is_some(), "{ds:?}");
+}
+
+/// The interface of the first method that `main` calls in a `let`, and its arguments.
+fn called_conformance(src: &str) -> Option<String> {
+    let (program, ds) = checked(src);
+    assert!(ds.is_empty(), "{ds:?}");
+    let program = program.expect("the program should check");
+    let main = (program.functions.iter().find(|f| f.name == "main")).expect("a main");
+    for stmt in &main.body.stmts {
+        let tir::Stmt::Let { init, .. } = stmt else {
+            continue;
+        };
+        let mut init = init;
+        while let tir::ExprKind::Wrap(inner) = &init.kind {
+            init = inner;
+        }
+        if let tir::ExprKind::Call { func, .. } = init.kind {
+            return program.functions[func.0].conformance.map(|(_, args)| {
+                let names: Vec<_> = (args.get().iter())
+                    .map(|ty| match ty.kind() {
+                        TypeKind::Class(id, _) => program.classes[id.0].name.clone(),
+                        _ => ty.to_string(),
+                    })
+                    .collect();
+                names.join(", ")
+            });
+        }
+    }
+    panic!("main should call a method in a `let`");
+}
+
+/// The expected type picks the conformance by the arguments of its interface: a `let`'s type, and
+/// the payload of an optional.
+#[test]
+fn expected_types_should_pick_one_conformance_of_a_generic_interface() {
+    for (statement, expected) in [
+        ("let f: Fahrenheit = c.convert()", "Fahrenheit"),
+        ("let k: Kelvin = c.convert()", "Kelvin"),
+        ("let k: Kelvin? = c.convert()", "Kelvin"),
+    ] {
+        let src = with_convert(&convert_main(statement));
+        assert_eq!(
+            called_conformance(&src).as_deref(),
+            Some(expected),
+            "{statement}"
+        );
+    }
+}
+
+/// A call of a method of a generic conformance is a call of `Type.Interface<Arguments>.method`,
+/// and the interface of a block over a generic target is written with the block's arguments for
+/// the receiver, not with its parameters.
+#[test]
+fn generic_conformance_methods_should_lower_with_their_interface_arguments() {
+    contains(
+        &with_convert(&convert_main(
+            "let f: Fahrenheit = c.convert()\n    let o: Kelvin = c.convert()",
+        )),
+        &[
+            "(fn Celsius.Convert<Fahrenheit>.convert ((self#0 Celsius)) Fahrenheit ",
+            "(fn Celsius.Convert<Kelvin>.convert ((self#0 Celsius)) Kelvin ",
+            "(call Celsius.Convert<Fahrenheit>.convert c#",
+            "(call Celsius.Convert<Kelvin>.convert c#",
+        ],
+    );
+    contains(
+        &with_convert(
+            "extend<T> Box<T>: Convert<T> {\n    fn convert(self) -> T { self.value }\n}\nfn main() {\n    let n: i64 = Box(value: 1).convert()\n}",
+        ),
+        &["(fn Box<T>.Convert<T>.convert ((self#0 Box<T>)) T "],
+    );
 }

@@ -1,0 +1,24 @@
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+class Box<T> {
+    value: T
+}
+
+extend<T> Box<T>: Convert<T> {
+    fn convert(self) -> T {
+        self.value
+    }
+}
+
+extend<U> Box<U>: Convert<i64> {
+    fn convert(self) -> i64 {
+        0
+    }
+}
+
+fn main() {
+    let n: i64 = Box(value: 1).convert()
+    print(n)
+}

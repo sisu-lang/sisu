@@ -1,0 +1,10 @@
+error[E0156]: `convert` on `Celsius` could come from `Convert<Fahrenheit>` or `Convert<Kelvin>`
+  --> E0156-convert.sisu:31:15
+   |
+31 |     let x = c.convert()
+   |               ^^^^^^^
+   |
+   = help: annotate the result: `let x: Fahrenheit = c.convert()`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0156

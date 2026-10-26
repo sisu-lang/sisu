@@ -104,7 +104,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 74] = [
+const REACH: [&str; 77] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -179,6 +179,9 @@ const REACH: [&str; 74] = [
     "reach: a generic `extend` block is called",
     "reach: a conditional conformance holds through a bound",
     "reach: an `extend` block extends one instantiation",
+    "reach: a generic interface has two conformances on one type",
+    "reach: an expected type picks a conformance",
+    "reach: a bound has interface arguments",
 ];
 
 /// Whether a program's text holds a form.
@@ -468,6 +471,9 @@ struct Walk {
     /// The conformances that hold when a bound of the block does: the class or enum that the block
     /// extends and the interface it conforms to.
     conditional: FxHashSet<(String, String)>,
+    /// The methods, by `FuncId`, of the conformances of a type that conforms to one interface
+    /// more than once: a call of one is picked by its expected type.
+    picked: FxHashSet<usize>,
     /// The functions, classes and enums of the typed tree, by id.
     function_names: Vec<String>,
     class_names: Vec<String>,
@@ -560,6 +566,7 @@ impl Walk {
                 | ast::Item::Extend(_) => None,
             })
             .collect();
+        self.generic_conformances(program);
         for broken in &program.broken {
             self.mark(match broken.kind {
                 ast::BrokenKind::Function => "ast::BrokenKind::Function",
@@ -624,6 +631,30 @@ impl Walk {
             } else {
                 "reach: a generic class is built with written type arguments"
             });
+        }
+    }
+
+    /// Marks a type that conforms to one generic interface more than once, in its declaration
+    /// list or in `extend` blocks.
+    fn generic_conformances(&mut self, program: &ast::Program) {
+        let mut counts: FxHashMap<(String, String), usize> = FxHashMap::default();
+        for item in &program.items {
+            let (target, interfaces) = match item {
+                ast::Item::Class(c) => (c.name.name.to_string(), c.conforms.iter().collect()),
+                ast::Item::Enum(e) => (e.name.name.to_string(), e.conforms.iter().collect()),
+                ast::Item::Extend(x) => (x.target.to_string(), x.interface.iter().collect()),
+                _ => continue,
+            };
+            let interfaces: Vec<&ast::TypeExpr> = interfaces;
+            for interface in interfaces {
+                if let ast::TypeKind::Applied(applied) = &interface.kind {
+                    let key = (target.clone(), applied.name.as_str().to_string());
+                    *counts.entry(key).or_default() += 1;
+                }
+            }
+        }
+        if counts.values().any(|&n| n > 1) {
+            self.mark("reach: a generic interface has two conformances on one type");
         }
     }
 
@@ -736,6 +767,9 @@ impl Walk {
             self.mark("reach: a bound lists two interfaces with `&`");
         }
         for bound in params.iter().flat_map(|p| &p.bounds) {
+            if matches!(bound.kind, ast::TypeKind::Applied(_)) {
+                self.mark("reach: a bound has interface arguments");
+            }
             self.type_expr(bound);
         }
     }
@@ -1657,6 +1691,19 @@ impl Walk {
         self.enum_names = program.enums.iter().map(|e| e.name.clone()).collect();
         // A method of an `extend` block over a generic type is named for the type it extends,
         // `G0<T>.top`, and a method of a class for its class alone.
+        self.picked.clear();
+        let mut seen: FxHashSet<(tir::InterfaceId, Type)> = FxHashSet::default();
+        let mut again: FxHashSet<(tir::InterfaceId, Type)> = FxHashSet::default();
+        for (interface, conformance) in program.conformances.iter() {
+            if !seen.insert((interface, conformance.target)) {
+                again.insert((interface, conformance.target));
+            }
+        }
+        for (interface, conformance) in program.conformances.iter() {
+            if again.contains(&(interface, conformance.target)) {
+                self.picked.extend(conformance.methods.iter().map(|f| f.0));
+            }
+        }
         self.generic_blocks = (program.functions.iter().enumerate())
             .filter(|(_, f)| f.owner_params > 0 && f.name.contains('<'))
             .map(|(i, _)| i)
@@ -1932,6 +1979,9 @@ impl Walk {
                 }
                 if self.meets_conditional_bound(func.0, types.get()) {
                     self.mark("reach: a conditional conformance holds through a bound");
+                }
+                if self.picked.contains(&func.0) {
+                    self.mark("reach: an expected type picks a conformance");
                 }
                 if types
                     .get()
@@ -5600,7 +5650,8 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
     let mut calls = 0;
     for data in seeds() {
         let source = generate(&data).plain;
-        let (program, _) = checked(&source);
+        let lexed = lexer::lex(&source).expect("a generated program should lex");
+        let program = parser::parse(lexed, false).program;
         let shapes = (program.items.iter()).find_map(|item| match item {
             ast::Item::Function(f) if f.name.name.as_str() == "shapes" => {
                 Some(&source[f.span.range()])
@@ -5615,10 +5666,11 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
             _ => Vec::new(),
         });
         for interface in conformed {
+            // The interface without its arguments.
+            let written = interface.to_string();
+            let name = written.split('<').next().unwrap_or_default();
             let requirements = program.items.iter().find_map(|item| match item {
-                ast::Item::Interface(i) if i.name.name.as_str() == interface.to_string() => {
-                    Some(&i.methods)
-                }
+                ast::Item::Interface(i) if i.name.name.as_str() == name => Some(&i.methods),
                 _ => None,
             });
             for requirement in requirements.expect("a conformed interface should be declared") {
@@ -5631,5 +5683,62 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
     assert!(
         calls > 0,
         "some seed's types should conform to an interface"
+    );
+}
+
+/// The walk marks a generic interface that a type conforms to more than once, a call that its
+/// expected type picks and a bound with interface arguments, and only those.
+#[test]
+fn the_walk_should_mark_what_generic_interfaces_hold() {
+    let decls = "interface Conv<T> {\n    fn convert(self) -> T\n}\ninterface Other<T> {\n    fn other(self) -> T\n}\nclass A {}\nclass B: Conv<i64> {\n    fn convert(self) -> i64 { 1 }\n}\n";
+    let keys = [
+        "reach: a generic interface has two conformances on one type",
+        "reach: an expected type picks a conformance",
+        "reach: a bound has interface arguments",
+    ];
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{decls}{rest}"));
+        keys.map(|key| walk.seen.contains(key))
+    };
+    let int = "extend A: Conv<i64> {\n    fn convert(self) -> i64 { 1 }\n}\n";
+    let string = "extend A: Conv<string> {\n    fn convert(self) -> string { \"s\" }\n}\n";
+    let other = "extend A: Other<i64> {\n    fn other(self) -> i64 { 1 }\n}\n";
+    // One conformance per interface, called, and a bound with an argument.
+    assert_eq!(
+        marked(&format!(
+            "{int}{other}fn main() {{\n    let n: i64 = A().convert()\n}}\n"
+        )),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{int}fn f<T: Conv<i64>>(x: T) {{}}\nfn main() {{}}\n"
+        )),
+        [false, false, true]
+    );
+    // Two conformances of one interface in blocks, and in a list and a block, and called.
+    assert_eq!(
+        marked(&format!("{int}{string}fn main() {{}}\n")),
+        [true, false, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{string}extend B: Conv<string> {{\n    fn convert(self) -> string {{ \"s\" }}\n}}\nfn main() {{}}\n"
+        )),
+        [true, false, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{int}{string}fn main() {{\n    let n: string = A().convert()\n}}\n"
+        )),
+        [true, true, false]
+    );
+    // A call of the one conformance that the type has is picked by nothing.
+    assert_eq!(
+        marked(&format!(
+            "{int}{string}fn main() {{\n    let n: i64 = B().convert()\n}}\n"
+        )),
+        [true, false, false]
     );
 }

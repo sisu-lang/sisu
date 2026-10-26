@@ -385,12 +385,13 @@ pub(crate) enum DiagnosticKind {
         form: ConformanceForm,
     },
     /// A second conformance of `ty` to `interface`, whose name is at `at`; the first is at
-    /// `first`.
+    /// `first`. `generic` when the interface takes type parameters.
     ConformsTwice {
         ty: String,
         interface: String,
         at: Span,
         first: Span,
+        generic: bool,
     },
     /// `ty` does not conform to `interface`, which `form` says why that is needed, at `at`.
     NotConform {
@@ -2127,8 +2128,18 @@ impl From<DiagnosticKind> for Diagnostic {
                 interface,
                 at,
                 first,
-            } => Diagnostic::coded(code, at, format!("`{ty}` conforms to `{interface}` twice"))
-                .with_secondary(first, "first conformance here"),
+                generic,
+            } => {
+                let d = Diagnostic::coded(code, at, format!("`{ty}` conforms to `{interface}` twice"))
+                    .with_secondary(first, "first conformance here");
+                if generic {
+                    d.with_help(
+                        "a type conforms to an interface once for each list of the interface's type arguments",
+                    )
+                } else {
+                    d
+                }
+            }
             DiagnosticKind::NotConform {
                 ty,
                 interface,

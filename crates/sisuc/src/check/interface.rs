@@ -291,7 +291,8 @@ impl Checker<'_> {
                 span: Span::new(ty.span.start(), ty.span.start() + name.as_str().len()),
             };
             let declared = self.interfaces[id.0].type_params[1..].to_vec();
-            let args = self.type_args(&ident, &declared, args, angles)?;
+            // An interface is copied by no one, so its arguments record no instantiation.
+            let args = self.type_args_of(&ident, &declared, args, angles, false)?;
             return Some(Bound {
                 interface: id,
                 args,

@@ -1353,7 +1353,7 @@ impl Checker<'_> {
                 self.conforming_methods(ty, method.name);
                 match self.candidates[..] {
                     [] => return CallShape::default(),
-                    [(func, _)] => func,
+                    [(func, ..)] => func,
                     // The call's context picks among several (`pick_conforming`): it waits for
                     // it, as a call whose arguments cannot bind its parameters does.
                     _ => {
@@ -1362,11 +1362,11 @@ impl Checker<'_> {
                         let first = self.signatures[self.candidates[0].0.0].ret;
                         let alike = first.is_some_and(|ret| !ret.has_param())
                             && (self.candidates.iter())
-                                .all(|&(func, _)| self.signatures[func.0].ret == first);
+                                .all(|&(func, ..)| self.signatures[func.0].ret == first);
                         if alike {
                             return CallShape::default();
                         }
-                        let shaped = self.candidates.iter().all(|&(func, _)| {
+                        let shaped = self.candidates.iter().all(|&(func, ..)| {
                             let sig = &self.signatures[func.0];
                             sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args)
                         });
@@ -1661,6 +1661,21 @@ impl Checker<'_> {
         written: &[ast::TypeExpr],
         angles: Span,
     ) -> Option<TypeArgs> {
+        self.type_args_of(name, declared, written, angles, true)
+    }
+
+    /// `type_args`, where `instantiates` says whether a list that fits records a type argument
+    /// (see `tir::Program::instantiates`). An interface's list records none: `mono` copies no
+    /// interface, so a program with generic interfaces and no generic item takes its fast path.
+    /// A type argument that is itself an applied type records its own.
+    pub(super) fn type_args_of(
+        &mut self,
+        name: &ast::Ident,
+        declared: &[Symbol],
+        written: &[ast::TypeExpr],
+        angles: Span,
+        instantiates: bool,
+    ) -> Option<TypeArgs> {
         let form = match (declared.len(), written.len()) {
             (0, 0) => return Some(TypeArgs::NONE),
             (0, _) => {
@@ -1674,7 +1689,7 @@ impl Checker<'_> {
             _ => {
                 // Each argument is checked, so this collects into a `Vec` before it gives up.
                 let args: Vec<_> = written.iter().map(|arg| self.type_argument(arg)).collect();
-                self.instantiates = true;
+                self.instantiates |= instantiates;
                 return args
                     .into_iter()
                     .collect::<Option<Vec<_>>>()

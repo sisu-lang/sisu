@@ -1,0 +1,10 @@
+error[E0156]: `first` on `Tag` could come from `Pair2<i64, bool>`, `Pair2<i64, char>` or `Pair2<string, bool>`
+  --> E0156-pairs.sisu:29:15
+   |
+29 |     let x = t.first()
+   |               ^^^^^
+   |
+   = help: annotate the result: `let x: string = t.first()`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0156

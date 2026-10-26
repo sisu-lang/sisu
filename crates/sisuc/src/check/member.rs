@@ -11,7 +11,7 @@ use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel};
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::{self, InterfaceId, Type, TypeKind};
+use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
     /// `receiver.member`, which `member` checks on the checked receiver. With `safe`, it is
@@ -233,7 +233,8 @@ impl Checker<'_> {
                 continue;
             };
             if self.block_holds(at, stands) {
-                self.candidates.push((func, bound.interface));
+                self.candidates
+                    .push((func, bound.interface, bound.args.subst(stands.get())));
             } else {
                 self.failed_block.get_or_insert(at);
             }
@@ -270,7 +271,7 @@ impl Checker<'_> {
                     return None;
                 }
             }
-            [(func, _)] => return Some(func),
+            [(func, ..)] => return Some(func),
             _ => {
                 // Taken while the call picks, so that the buffer is free to the calls it reads.
                 let candidates = std::mem::take(&mut self.candidates);
@@ -377,22 +378,22 @@ impl Checker<'_> {
         ty: Type,
         site: Site<'_>,
         span: Span,
-        candidates: &[(tir::FuncId, InterfaceId)],
+        candidates: &[(tir::FuncId, InterfaceId, TypeArgs)],
     ) -> Option<tir::FuncId> {
         if self.context_failed(site, span) {
             return None;
         }
         // A result that is `Error` has its own error.
         let results: Option<Vec<Type>> = (candidates.iter())
-            .map(|&(func, _)| self.signatures[func.0].ret)
+            .map(|&(func, ..)| self.signatures[func.0].ret)
             .collect();
         let results = results?;
         let written = self.written_list(site)?;
         let rets: Vec<Option<Type>> = (candidates.iter().zip(results))
-            .map(|(&(func, _), ret)| self.candidate_result(func, ty, ret, &written))
+            .map(|(&(func, ..), ret)| self.candidate_result(func, ty, ret, &written))
             .collect();
         let interfaces = (candidates.iter())
-            .map(|&(_, interface)| self.interfaces[interface.0].name.name.to_string())
+            .map(|&(_, interface, args)| self.bound_text(interface, args))
             .collect();
         let picked = self.pick_among(ty, site, span, &rets, interfaces)?;
         Some(candidates[picked].0)

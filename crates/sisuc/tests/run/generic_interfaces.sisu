@@ -1,0 +1,156 @@
+// GIVEN `Celsius` that conforms to the generic interface `Convert` twice, once with `Fahrenheit`
+// and once with `Kelvin`, and to `Convert1` and `Pick`, which also have a method with an
+// argument and a method with a type parameter of its own; `Box<T>` that conforms to `Convert<T>`
+// for every `T`, to `Convert<string>` for `Box<i64>` and to `Convert<[U]>` for every `Box<U>`;
+// and a `Probe` that lists `Feed<Kelvin>`, which inherits `Convert<Kelvin>`
+// WHEN calls that annotate their result, pass it to a parameter, return it, initialize a field
+// with it, wait for the type of a sibling argument, or go through a bound or through two bounds
+// pick one conformance each
+// THEN every call runs the conversion that its context names, and the degrees print
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+interface Convert1<T> {
+    fn convert_by(self, by: f64) -> T
+}
+
+interface Pick<T> {
+    fn pick<U>(self, x: U) -> T
+}
+
+interface Feed<T>: Convert<T> {}
+
+class Fahrenheit {
+    degrees: f64
+}
+
+class Kelvin {
+    degrees: f64
+}
+
+class Celsius {
+    degrees: f64
+}
+
+extend Celsius: Convert<Fahrenheit> {
+    fn convert(self) -> Fahrenheit {
+        Fahrenheit(degrees: self.degrees * 1.8 + 32.0)
+    }
+}
+
+extend Celsius: Convert<Kelvin> {
+    fn convert(self) -> Kelvin {
+        Kelvin(degrees: self.degrees + 273.0)
+    }
+}
+
+extend Celsius: Convert1<Fahrenheit> {
+    fn convert_by(self, by: f64) -> Fahrenheit {
+        Fahrenheit(degrees: self.degrees * 1.8 + 32.0 + by)
+    }
+}
+
+extend Celsius: Convert1<Kelvin> {
+    fn convert_by(self, by: f64) -> Kelvin {
+        Kelvin(degrees: self.degrees + 273.0 + by)
+    }
+}
+
+extend Celsius: Pick<Fahrenheit> {
+    fn pick<U>(self, x: U) -> Fahrenheit {
+        let held = [x].len()
+        Fahrenheit(degrees: self.degrees * 1.8 + 32.0 + f64(held))
+    }
+}
+
+extend Celsius: Pick<Kelvin> {
+    fn pick<U>(self, x: U) -> Kelvin {
+        Kelvin(degrees: self.degrees + 273.0 + f64([x].len()))
+    }
+}
+
+class Holder {
+    k: Kelvin
+}
+
+class Box<T> {
+    value: T
+}
+
+extend<T> Box<T>: Convert<T> {
+    fn convert(self) -> T {
+        self.value
+    }
+}
+
+extend Box<i64>: Convert<string> {
+    fn convert(self) -> string {
+        "box {self.value}"
+    }
+}
+
+extend<U> Box<U>: Convert<[U]> {
+    fn convert(self) -> [U] {
+        [self.value]
+    }
+}
+
+class Probe: Feed<Kelvin> {
+    degrees: f64
+
+    fn convert(self) -> Kelvin {
+        Kelvin(degrees: self.degrees)
+    }
+}
+
+fn take_kelvin(k: Kelvin) -> f64 {
+    k.degrees
+}
+
+fn kelvin_of(c: Celsius) -> Kelvin {
+    c.convert()
+}
+
+fn to<T: Convert<Kelvin>>(x: T) -> Kelvin {
+    x.convert()
+}
+
+fn both<T: Convert<Fahrenheit> & Convert<Kelvin>>(x: T) -> f64 {
+    let f: Fahrenheit = x.convert()
+    let k: Kelvin = x.convert()
+    f.degrees + k.degrees
+}
+
+fn fed<T: Feed<Kelvin>>(x: T) -> Kelvin {
+    x.convert()
+}
+
+fn take<T>(a: T, b: T) -> [T] {
+    [a, b]
+}
+
+fn main() {
+    let c = Celsius(degrees: 100.0)
+    let f: Fahrenheit = c.convert()
+    print(f.degrees)
+    print(take_kelvin(c.convert()))
+    print(kelvin_of(c).degrees)
+    print(Holder(k: c.convert()).k.degrees)
+    print(to(c).degrees)
+    print(both(c))
+    let o: Fahrenheit? = c.convert()
+    print(o?.degrees ?? 0.0)
+    let k = Kelvin(degrees: 1.0)
+    print(take(c.convert(), k)[0].degrees)
+    print(take(c.convert_by(2.0), k)[0].degrees)
+    print(take(c.pick<i64>(1), k)[0].degrees)
+    print(fed(Probe(degrees: 5.0)).degrees)
+    let b = Box(value: 7)
+    let n: i64 = b.convert()
+    let s: string = b.convert()
+    let a: [i64] = b.convert()
+    print(n)
+    print(s)
+    print(a.len())
+}

@@ -1165,8 +1165,8 @@ fn main() {
         }
     }
 
-    /// The checker takes no generic interface, associated type or member type yet: each is
-    /// E0030 at the name it cannot take.
+    /// The checker takes no associated type or member type yet: each is E0030 at the name it
+    /// cannot take.
     #[test]
     fn what_the_checker_cannot_take_yet_should_be_an_unknown_type() {
         for (src, at) in [
@@ -1174,10 +1174,6 @@ fn main() {
             (
                 "interface Source {}\nclass C: Source {\n    type Item = i64\n}\nfn main() {}\n",
                 (3, 10),
-            ),
-            (
-                "interface Convert<T> {}\nclass C: Convert<i64> {}\nfn main() {}\n",
-                (2, 10),
             ),
             ("extend C {}\nfn main() {}\n", (1, 8)),
             ("fn f<S>(x: S.Item) {}\nfn main() {}\n", (1, 12)),

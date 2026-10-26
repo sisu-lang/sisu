@@ -938,6 +938,30 @@ fn interface_should_not_warn_when_live_code_uses_it() {
     }
 }
 
+/// A generic interface is used by a call that selects a method of its conformance.
+#[test]
+fn generic_interface_should_not_warn_when_a_call_selects_its_conformance() {
+    judge_unused();
+    for src in [
+        // The program of the language specification.
+        "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Fahrenheit {\n    d: f64\n}\nclass Celsius {\n    d: f64\n}\nextend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nfn main() {\n    let f: Fahrenheit = Celsius(d: 1.0).convert()\n    print(f.d)\n}",
+        // The `Transform` example of the generics reference.
+        "class Celsius {\n    degrees: f64\n}\nclass Fahrenheit {\n    degrees: f64\n}\ninterface Transform<T> {\n    fn transform(self) -> T\n}\nextend Celsius: Transform<Fahrenheit> {\n    fn transform(self) -> Fahrenheit {\n        Fahrenheit(degrees: self.degrees * 1.8 + 32.0)\n    }\n}\nfn main() {\n    let f: Fahrenheit = Celsius(degrees: 100.0).transform()\n    print(f.degrees)\n}",
+    ] {
+        clean(src);
+    }
+}
+
+/// An interface that only the bound of a used interface's own type parameter names is used: the
+/// conformance that meets the bound names it too, and a conformance is no use.
+#[test]
+fn interface_should_not_warn_when_the_bound_of_a_used_interfaces_parameter_names_it() {
+    judge_unused();
+    clean(
+        "interface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Feed<T: Same> {\n    fn feed(self, x: T) -> i64\n}\nclass A {\n    n: i64\n}\nextend A: Same {\n    fn same(self, other: A) -> bool { self.n == other.n }\n}\nclass B {\n    m: i64\n}\nextend B: Feed<A> {\n    fn feed(self, x: A) -> i64 { self.m + x.n }\n}\nfn run<T: Feed<A>>(x: T, a: A) -> i64 {\n    x.feed(a)\n}\nfn main() {\n    print(run(B(m: 1), A(n: 2)))\n}",
+    );
+}
+
 /// An interface of the prelude is out of the user's sight: nothing in it is unused, as nothing
 /// else in the prelude is.
 #[test]

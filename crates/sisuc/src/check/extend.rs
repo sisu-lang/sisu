@@ -56,13 +56,8 @@ impl<'a> Checker<'_> {
             // Task 7 takes an associated type.
             self.unsupported_at(choice.name.span);
         }
-        // An interface that takes type arguments waits for Task 6.
-        let generic_interface = matches!(interface, Some(Some((b, _))) if !b.args.get().is_empty());
-        if generic_interface && let Some(ty) = &extend.interface {
-            self.unsupported(ty);
-        }
         let unused = target.is_some_and(|target| self.unused_params(extend, target));
-        let failed = generic_interface || unused || matches!(interface, Some(None));
+        let failed = unused || matches!(interface, Some(None));
         let usable = target.filter(|_| !failed);
         let receiver = usable.unwrap_or(UNKNOWN);
         let holder = usable.and_then(holder_of);

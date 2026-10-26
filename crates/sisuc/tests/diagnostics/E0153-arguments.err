@@ -1,0 +1,13 @@
+error[E0153]: `Celsius` conforms to `Convert<Kelvin>` twice
+  --> E0153-arguments.sisu:29:17
+   |
+23 | extend Celsius: Convert<Kelvin> {
+   |                 --------------- first conformance here
+...
+29 | extend Celsius: Convert<Kelvin> {
+   |                 ^^^^^^^^^^^^^^^
+   |
+   = help: a type conforms to an interface once for each list of the interface's type arguments
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153
