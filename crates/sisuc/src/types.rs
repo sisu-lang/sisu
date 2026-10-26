@@ -143,10 +143,6 @@ impl TypeArgs {
         args().lists[self.0 as usize].1
     }
 
-    fn has_param(self) -> bool {
-        self.names().param
-    }
-
     /// The list with `Type::subst` applied to each element. A list without a parameter comes
     /// back as it is.
     pub(crate) fn subst(self, with: &[Type]) -> TypeArgs {
@@ -155,7 +151,7 @@ impl TypeArgs {
 
     /// `subst`, sharing `memo` with the walk that called it.
     fn subst_in(self, with: &[Type], memo: &mut FxHashMap<Type, Type>) -> TypeArgs {
-        if !self.has_param() {
+        if !self.names().param {
             return self;
         }
         let list: Vec<Type> = self
