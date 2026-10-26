@@ -814,6 +814,8 @@ impl Checker<'_> {
         self.check_now(&check)
     }
 
+    /// Runs `check`. Whether it holds: a failed check of arguments is reported and keeps no type
+    /// to make unknown, so it counts as held.
     fn check_now(&mut self, check: &Check) -> bool {
         match check {
             Check::Applied { ty, ats } => self.check_applied_now(*ty, ats),
@@ -822,13 +824,12 @@ impl Checker<'_> {
                 let bounds = self.interfaces[bound.interface.0].bounds.clone();
                 let mut with = vec![*this];
                 with.extend_from_slice(bound.args.get());
-                let mut holds = true;
                 for (k, bounds) in bounds.iter().enumerate().skip(1) {
                     for &b in bounds {
-                        holds &= self.check_bound(ats[k - 1], with[k], b, &with);
+                        self.check_bound(ats[k - 1], with[k], b, &with);
                     }
                 }
-                holds
+                true
             }
         }
     }

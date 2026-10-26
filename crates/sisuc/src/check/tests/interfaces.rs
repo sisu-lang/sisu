@@ -3000,6 +3000,23 @@ fn interface_arguments_that_meet_the_bounds_should_check_clean() {
     }
 }
 
+/// A bound on the parameter of an interface may name `Self`: it stands for the type that has the
+/// interface. With `Link<T: Back<Self>>`, the bound `B: Link<Wrap<B>>` holds when `Wrap<B>`
+/// conforms to `Back<B>`, whatever place `B` has among the parameters in scope.
+#[test]
+fn an_interface_argument_should_meet_a_bound_that_names_self() {
+    let decls = "interface Back<S> {\n    fn back(self) -> S\n}\ninterface Link<T: Back<Self>> {\n    fn link(self) -> T\n}\nclass Wrap<S> {\n    value: S\n}\nextend<S> Wrap<S>: Back<S> {\n    fn back(self) -> S { self.value }\n}\n";
+    for row in [
+        // The place of `B` among a function's parameters, and among a method's.
+        "fn f<A, B: Link<Wrap<B>>>(x: B) {}",
+        "class K<Q> {\n    n: Q\n    fn m<B: Link<Wrap<B>>>(self, x: B) {}\n}",
+        // The place of `T` among an interface's parameters.
+        "interface Outer<T: Link<Wrap<T>>> {}",
+    ] {
+        clean(&format!("{decls}{row}\nfn main() {{}}"));
+    }
+}
+
 /// The interface of the first method that `main` calls in a `let`, and its arguments.
 fn called_conformance(src: &str) -> Option<String> {
     let (program, ds) = checked(src);
