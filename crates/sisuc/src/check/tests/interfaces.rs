@@ -2479,6 +2479,16 @@ fn a_listed_conformance_should_hold_the_bounds_of_a_block_that_gives_an_inherite
         &format!("class Stack<T: Ord2>: Ord2 {body}"),
         &block("Ord2"),
     ));
+    // A listed interface that an earlier one inherits adds nothing, and a later one still finds
+    // the block that gives its inherited interface: `Same` is listed after `Ord2` inherits it.
+    let src = with_shapes(&with_main(&format!(
+        "{ORD2}class Stack<T>: Ord2, Same, Solid {{\n    items: [T]\n    fn less(self, other: Self) -> bool {{ true }}\n    fn same(self, other: Self) -> bool {{ true }}\n    fn volume(self) -> f64 {{ 1.0 }}\n    fn name(self) -> string {{ \"s\" }}\n}}\nextend<T: Same> Stack<T>: Named {{\n    fn name(self) -> string {{ \"s\" }}\n}}"
+    )));
+    assert_eq!(
+        found(&src),
+        [(Code::NotConform, (7, 29), vec![(27, 18), (14, 11)])],
+        "{src}"
+    );
 }
 
 /// The classes and functions the cycle rows share, after the row's line 1.

@@ -636,16 +636,14 @@ impl Walk {
             self.mark("reach: an `extend` block extends one instantiation");
         }
         if let Some(interface) = &extend.interface {
-            // Marked where a call meets a bound with it (`tir_call`), not here.
-            let head = match &extend.target.kind {
-                ast::TypeKind::Name(name) => Some(name.as_str().to_string()),
-                ast::TypeKind::Applied(applied) => Some(applied.name.as_str().to_string()),
-                _ => None,
-            };
-            if extend.type_params.iter().any(|p| !p.bounds.is_empty())
-                && let Some(head) = head
-            {
-                self.conditional.insert((head, interface.to_string()));
+            // Marked where a call meets a bound with it (`meets_conditional_bound`), not here.
+            if extend.type_params.iter().any(|p| !p.bounds.is_empty()) {
+                let target = extend.target.to_string();
+                let head = target
+                    .split_once('<')
+                    .map_or(target.as_str(), |(head, _)| head);
+                self.conditional
+                    .insert((head.to_string(), interface.to_string()));
             }
             self.mark("reach: a conformance is an `extend` block");
             self.type_expr(interface);
