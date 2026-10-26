@@ -105,7 +105,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 63] = [
+const REACH: [&str; 64] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -169,6 +169,7 @@ const REACH: [&str; 63] = [
     "reach: an `Option`-shaped enum has a niche",
     "reach: an `Option`-shaped enum holds itself",
     "reach: an interface inherits another",
+    "reach: an interface requirement names `Self`",
 ];
 
 /// Whether a program's text holds a form.
@@ -639,6 +640,12 @@ impl Walk {
             self.type_expr(bound);
         }
         for requirement in &interface.methods {
+            if (requirement.params.iter().map(|p| &p.ty))
+                .chain(&requirement.ret)
+                .any(names_self)
+            {
+                self.mark("reach: an interface requirement names `Self`");
+            }
             self.bounds(&requirement.type_params);
             for param in &requirement.params {
                 self.type_expr(&param.ty);
@@ -2155,6 +2162,17 @@ fn tail(block: &ast::Block) -> Option<&ast::Expr> {
 }
 
 /// The names of the items `pick` selects, with their type parameters, that have any.
+/// Whether `ty` is `Self` or holds it.
+fn names_self(ty: &ast::TypeExpr) -> bool {
+    match &ty.kind {
+        ast::TypeKind::SelfType => true,
+        ast::TypeKind::Array(element) => names_self(element),
+        ast::TypeKind::Applied(applied) => applied.args.iter().any(names_self),
+        ast::TypeKind::Member { base, .. } => names_self(base),
+        ast::TypeKind::Name(_) => false,
+    }
+}
+
 fn generic_names<'a>(
     program: &'a ast::Program,
     pick: impl Fn(&'a ast::Item) -> Option<(&'a ast::Ident, &'a Vec<ast::TypeParam>)>,
@@ -2394,6 +2412,7 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
         "ast::BrokenKind::Interface",
         "ast::BrokenKind::Extend",
         "reach: an interface inherits another",
+        "reach: an interface requirement names `Self`",
     ] {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
     }

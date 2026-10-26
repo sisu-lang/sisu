@@ -133,6 +133,17 @@ fn interface_names_should_be_reported_as_types_and_values() {
     }
 }
 
+/// The error for the arguments of a bound covers its name.
+#[test]
+fn a_bound_with_missing_arguments_should_be_reported_at_its_name() {
+    diagnostic(
+        &with_decls("fn f<T: Convert>() {}"),
+        Code::TypeArguments,
+        (1, 9, "Convert"),
+        &[],
+    );
+}
+
 /// A bound, a conformance or an inherited interface names an interface with fitting arguments.
 #[test]
 fn a_bound_should_name_an_interface() {
@@ -156,6 +167,10 @@ fn a_bound_should_name_an_interface() {
         ),
         (
             with_decls("fn f<T: Shape?>() {}"),
+            vec![(Code::InterfaceAsType, (1, 9))],
+        ),
+        (
+            with_decls("fn f<T: Convert<i64>?>() {}"),
             vec![(Code::InterfaceAsType, (1, 9))],
         ),
         (
@@ -385,7 +400,7 @@ fn a_bound_should_give_each_inherited_interface_once() {
     let receiver = t("R");
     // `D<string>` gives `D`, `A` and `B`, and `C<string>` once.
     assert_eq!(
-        closure(src, "D", &[strs], receiver),
+        closure(src, &[("D", &[strs])], receiver),
         [
             ("D", vec![strs]),
             ("A", vec![strs]),
@@ -395,27 +410,35 @@ fn a_bound_should_give_each_inherited_interface_once() {
     );
     // An argument is copied by place, and one without a parameter stays.
     assert_eq!(
-        closure(src, "E", &[strs, i64s], receiver),
+        closure(src, &[("E", &[strs, i64s])], receiver),
         [("E", vec![strs, i64s]), ("C", vec![i64s])]
     );
     // `Self` is the receiver.
     assert_eq!(
-        closure(src, "F", &[], receiver),
+        closure(src, &[("F", &[])], receiver),
         [("F", vec![]), ("C", vec![receiver])]
+    );
+    // Several bounds give the interfaces they share once.
+    assert_eq!(
+        closure(
+            src,
+            &[("A", &[strs]), ("B", &[strs]), ("A", &[strs])],
+            receiver
+        ),
+        [("A", vec![strs]), ("B", vec![strs]), ("C", vec![strs])]
     );
     // A cycle ends.
     assert_eq!(
-        closure(src, "Loop", &[i64s], receiver),
+        closure(src, &[("Loop", &[i64s])], receiver),
         [("Loop", vec![i64s]), ("Loop2", vec![i64s])]
     );
 }
 
-/// The interfaces of `bound`, given `args`, as `interfaces_of` finds them for `receiver`: each
-/// with its name and arguments.
+/// The interfaces of `bounds`, each an interface and its arguments, as `interfaces_of` finds them
+/// for `receiver`: each with its name and arguments.
 fn closure(
     src: &str,
-    bound: &str,
-    args: &[Type],
+    bounds: &[(&str, &[Type])],
     receiver: Type,
 ) -> Vec<(&'static str, Vec<Type>)> {
     let program = parse_ok(src);
@@ -423,16 +446,22 @@ fn closure(
     let items: Vec<&ast::Item> = program.items.iter().collect();
     checker.collect_names(&items, items.len(), &program.broken);
     checker.interface_signatures(&items);
-    let Some(&Declared::Known(interface)) = checker.interface_ids.get(&Symbol::intern(bound))
-    else {
-        panic!("{bound} should be an interface");
-    };
+    let bounds: Vec<Bound> = bounds
+        .iter()
+        .map(|&(name, args)| {
+            let Some(&Declared::Known(interface)) =
+                checker.interface_ids.get(&Symbol::intern(name))
+            else {
+                panic!("{name} should be an interface");
+            };
+            Bound {
+                interface,
+                args: TypeArgs::intern(args),
+            }
+        })
+        .collect();
     let mut out = Vec::new();
-    let bound = Bound {
-        interface,
-        args: TypeArgs::intern(args),
-    };
-    checker.interfaces_of(receiver, &[bound], &mut out);
+    checker.interfaces_of(receiver, &bounds, &mut out);
     out.into_iter()
         .map(|(id, args)| {
             (

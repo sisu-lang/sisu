@@ -189,10 +189,11 @@ impl Checker<'_> {
             if !cyclic || std::mem::replace(&mut reported[component[i]], true) {
                 continue;
             }
-            let (Some(first), Some(last)) = (interface.inherits.first(), interface.inherits.last())
-            else {
-                continue;
-            };
+            // An interface on a cycle inherits at least the next one on it.
+            let (first, last) = (
+                &interface.inherits[0],
+                &interface.inherits[interface.inherits.len() - 1],
+            );
             let through = cycle_through(&edges, &component, i)
                 .into_iter()
                 .map(|at| self.interfaces[at].name.name.to_string())
@@ -212,9 +213,6 @@ impl Checker<'_> {
         for (i, interface) in interfaces.iter().enumerate() {
             let id = InterfaceId(i);
             let info = &self.interfaces[i];
-            if info.requirements.is_empty() || info.inherits.is_empty() {
-                continue;
-            }
             closure.clear();
             let receiver = Type::intern(TypeKind::Param(info.type_params[0], 0));
             self.interfaces_of(receiver, &info.inherits, &mut closure);
