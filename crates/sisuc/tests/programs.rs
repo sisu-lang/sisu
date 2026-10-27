@@ -2167,52 +2167,57 @@ fn run_case_should_check_and_bless_its_err_file() {
     assert!(message.contains("has no `.err` file"), "{message}");
 }
 
-/// GIVEN a directory with `ghost.out` and no `ghost.sisu`
-/// WHEN `orphan_check` runs on `ghost.out`
-/// THEN it panics and names `ghost.out`
+/// GIVEN a directory with the case `a` and `ghost.out`, which has no `ghost.sisu`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `ghost.out`
 #[test]
-#[should_panic(expected = "ghost.out")]
-fn orphan_check_should_fail_for_an_out_file_without_a_source() {
-    let dir = fixture("orphan_out_fails", &[("ghost.out", "1\n")]);
-    support::orphan_check(&dir.join("ghost.out"), &["out"]);
+fn orphans_should_list_an_out_file_without_a_source() {
+    let dir = fixture(
+        "orphan_out_fails",
+        &[("a.sisu", PRINTS_1), ("a.out", "1\n"), ("ghost.out", "1\n")],
+    );
+    let messages = support::orphans(&dir, &["out"]);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("ghost.out"), "{messages:?}");
 }
 
 /// GIVEN a `run` case with a file `notes.txt` beside it
-/// WHEN `orphan_check` runs on `notes.txt`
-/// THEN it panics and names `notes.txt`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `notes.txt`
 #[test]
-#[should_panic(expected = "notes.txt")]
-fn orphan_check_should_fail_for_a_file_of_an_unknown_type() {
+fn orphans_should_list_a_file_of_an_unknown_type() {
     let dir = fixture(
         "stray_file_type_fails",
         &[("notes.sisu", PRINTS_1), ("notes.txt", "")],
     );
-    support::orphan_check(&dir.join("notes.txt"), &support::RUN_EXPECTATIONS);
+    let messages = support::orphans(&dir, &support::RUN_EXPECTATIONS);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("notes.txt"), "{messages:?}");
 }
 
 /// GIVEN a `run` case with a `.json` file beside it
-/// WHEN `orphan_check` runs on the `.json` file
-/// THEN it panics and names `a.json`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `a.json`
 ///
-/// A `.json` beside a `run` case is never read, so it fails like an orphan.
+/// A `.json` beside a `run` case is never read, so it is listed like an orphan.
 #[test]
-#[should_panic(expected = "a.json")]
-fn orphan_check_should_fail_for_a_json_file_beside_a_run_case() {
+fn orphans_should_list_a_json_file_beside_a_run_case() {
     let dir = fixture(
         "expectation_of_another_mode_fails",
         &[("a.sisu", PRINTS_1), ("a.out", "1\n"), ("a.json", "")],
     );
-    support::orphan_check(&dir.join("a.json"), &support::RUN_EXPECTATIONS);
+    let messages = support::orphans(&dir, &support::RUN_EXPECTATIONS);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("a.json"), "{messages:?}");
 }
 
 /// GIVEN a `run` case with a hidden file `.ghost.out` beside it
-/// WHEN `orphan_check` runs on the case
-/// THEN it panics and names `.ghost.out`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `.ghost.out`
 ///
-/// The harness never lists a hidden file, so the check of a listed file beside it fails.
+/// The harness never lists a hidden file, so only the listing of the directory finds it.
 #[test]
-#[should_panic(expected = ".ghost.out")]
-fn orphan_check_should_fail_for_a_hidden_file_beside_a_case() {
+fn orphans_should_list_a_hidden_file_beside_a_case() {
     let dir = fixture(
         "hidden_file_fails",
         &[
@@ -2221,7 +2226,41 @@ fn orphan_check_should_fail_for_a_hidden_file_beside_a_case() {
             (".ghost.out", "1\n"),
         ],
     );
-    support::orphan_check(&dir.join("a.sisu"), &["out"]);
+    let messages = support::orphans(&dir, &["out"]);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains(".ghost.out"), "{messages:?}");
+}
+
+/// GIVEN a directory with the case `a`, a file `notes.txt` and a hidden file `.ghost.out`
+/// WHEN `orphans` lists the directory
+/// THEN it returns two messages, and they name `.ghost.out` and `notes.txt`
+#[test]
+fn orphans_should_list_every_bad_entry_of_a_directory() {
+    let dir = fixture(
+        "every_bad_entry_listed",
+        &[
+            ("a.sisu", PRINTS_1),
+            ("a.out", "1\n"),
+            ("notes.txt", ""),
+            (".ghost.out", "1\n"),
+        ],
+    );
+    let messages = support::orphans(&dir, &["out"]);
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(messages[0].contains(".ghost.out"), "{messages:?}");
+    assert!(messages[1].contains("notes.txt"), "{messages:?}");
+}
+
+/// GIVEN a directory with `a.out` and no `.sisu` file
+/// WHEN `orphans` lists the directory
+/// THEN it panics and says that the directory holds no case
+///
+/// A wrong path would otherwise list no entry and pass.
+#[test]
+#[should_panic(expected = "holds no `.sisu` case")]
+fn orphans_should_fail_for_a_directory_with_no_case() {
+    let dir = fixture("directory_with_no_case", &[("a.out", "1\n")]);
+    support::orphans(&dir, &["out"]);
 }
 
 /// GIVEN cases named `dup` in `run`, in `run-fail`, in `run/a_b` and in `run/a/b`

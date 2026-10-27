@@ -1,5 +1,6 @@
-//! Checks only the `cases` binary makes: the site's pending program, and the output of each
-//! explanation's Broken program, which the site's diagnostic pages show.
+//! Checks only the `cases` and `orphans` binaries make: the site's pending program, the output of
+//! each explanation's Broken program, which the site's diagnostic pages show, and the files of
+//! those explanations.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -96,21 +97,38 @@ pub(crate) fn pending(path: &Path) {
     );
 }
 
-/// Passes for `<code>.err` or `<code>.json` when `docs/diagnostics/<code>.md` exists; panics on
-/// any other file, naming it, and on any hidden file beside it.
-pub(crate) fn explanation_orphan_check(path: &Path) {
-    let code = code_of(path);
-    let belongs = matches!(
-        path.extension().and_then(OsStr::to_str),
-        Some("err" | "json")
-    ) && support::is_code(code)
-        && Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("../../docs/diagnostics/{code}.md"))
-            .exists();
+/// Lists `dir` once and returns one message for each entry that is not the `<code>.err` or
+/// `<code>.json` of an explanation `docs/diagnostics/<code>.md`, and for each hidden entry. The
+/// messages come in name order. Panics when `dir` holds no `.err`, as a wrong `dir` would
+/// otherwise pass with no entry checked.
+pub(crate) fn explanation_orphans(dir: &Path) -> Vec<String> {
+    let paths = support::sorted_entries(dir);
     assert!(
-        belongs,
-        "{} is not the `.err` or `.json` file of an explanation in docs/diagnostics",
-        path.display()
+        paths
+            .iter()
+            .any(|path| path.extension().is_some_and(|ext| ext == "err")),
+        "{} holds no `.err` file",
+        dir.display()
     );
-    support::no_hidden_sibling(path);
+    paths
+        .iter()
+        .filter_map(|path| {
+            support::hidden_message(path).or_else(|| {
+                let code = code_of(path);
+                let belongs = matches!(
+                    path.extension().and_then(OsStr::to_str),
+                    Some("err" | "json")
+                ) && support::is_code(code)
+                    && Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join(format!("../../docs/diagnostics/{code}.md"))
+                        .exists();
+                (!belongs).then(|| {
+                    format!(
+                        "{} is not the `.err` or `.json` file of an explanation in docs/diagnostics",
+                        path.display()
+                    )
+                })
+            })
+        })
+        .collect()
 }

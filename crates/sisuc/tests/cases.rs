@@ -3,8 +3,9 @@
 //! 0 and prints its `.out`, and its `.err` on stderr when it has one, else nothing there; a
 //! `run_fail` case panics with its `.out` on stdout and its `.err` on stderr. Both read their
 //! `.in`, when they have one, on stdin. A `diagnostics` case makes `sisu check` report its
-//! `.err` on stderr, and `sisu check --format json` its `.json`. Every file in these
-//! directories must belong to a case, as a file its mode reads, and none may be hidden.
+//! `.err` on stderr, and `sisu check --format json` its `.json`. The `orphans` binary checks that
+//! every file in these directories belongs to a case, as a file its mode reads, and that none is
+//! hidden.
 //!
 //! A `site_pending` case is a program the site shows before it compiles: `sisu check` reports
 //! an error, until the day it compiles. An `explanation` case is the Broken program of a
@@ -18,7 +19,9 @@
 use std::path::Path;
 use std::process::Command;
 
+#[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod site;
+#[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;
 
 /// Whether `SISU_BLESS=1` is set.
@@ -51,35 +54,8 @@ fn run_fail(path: &Path) -> datatest_stable::Result<()> {
     clippy::unnecessary_wraps,
     reason = "datatest-stable accepts only test functions that return a `Result`"
 )]
-fn run_orphans(path: &Path) -> datatest_stable::Result<()> {
-    support::orphan_check(path, &support::RUN_EXPECTATIONS);
-    Ok(())
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "datatest-stable accepts only test functions that return a `Result`"
-)]
-fn run_fail_orphans(path: &Path) -> datatest_stable::Result<()> {
-    support::orphan_check(path, &support::RUN_EXPECTATIONS);
-    Ok(())
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "datatest-stable accepts only test functions that return a `Result`"
-)]
 fn diagnostics(path: &Path) -> datatest_stable::Result<()> {
     support::diagnostics(path, bless());
-    Ok(())
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "datatest-stable accepts only test functions that return a `Result`"
-)]
-fn diagnostics_orphans(path: &Path) -> datatest_stable::Result<()> {
-    support::orphan_check(path, &["err", "json"]);
     Ok(())
 }
 
@@ -125,51 +101,6 @@ fn site_pending(path: &Path) -> datatest_stable::Result<()> {
 )]
 fn explanation(path: &Path) -> datatest_stable::Result<()> {
     site::explanation(path, bless());
-    Ok(())
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "datatest-stable accepts only test functions that return a `Result`"
-)]
-fn site_run_orphans(path: &Path) -> datatest_stable::Result<()> {
-    support::orphan_check(path, &support::RUN_EXPECTATIONS);
-    Ok(())
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "datatest-stable accepts only test functions that return a `Result`"
-)]
-fn site_run_fail_orphans(path: &Path) -> datatest_stable::Result<()> {
-    support::orphan_check(path, &support::RUN_EXPECTATIONS);
-    Ok(())
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "datatest-stable accepts only test functions that return a `Result`"
-)]
-fn site_diagnostics_orphans(path: &Path) -> datatest_stable::Result<()> {
-    support::orphan_check(path, &["err", "json"]);
-    Ok(())
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "datatest-stable accepts only test functions that return a `Result`"
-)]
-fn site_pending_orphans(path: &Path) -> datatest_stable::Result<()> {
-    support::orphan_check(path, &[]);
-    Ok(())
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "datatest-stable accepts only test functions that return a `Result`"
-)]
-fn explanation_orphans(path: &Path) -> datatest_stable::Result<()> {
-    site::explanation_orphan_check(path);
     Ok(())
 }
 
@@ -241,20 +172,12 @@ fn certifies(path: &Path) {
 datatest_stable::harness! {
     { test = run, root = "tests/run", pattern = r"\.sisu$" },
     { test = run_fail, root = "tests/run-fail", pattern = r"\.sisu$" },
-    { test = run_orphans, root = "tests/run" },
-    { test = run_fail_orphans, root = "tests/run-fail" },
     { test = diagnostics, root = "tests/diagnostics", pattern = r"\.sisu$" },
-    { test = diagnostics_orphans, root = "tests/diagnostics" },
     { test = site_run, root = "../../site/programs/run", pattern = r"\.sisu$" },
     { test = site_run_fail, root = "../../site/programs/run-fail", pattern = r"\.sisu$" },
     { test = site_diagnostics, root = "../../site/programs/diagnostics", pattern = r"\.sisu$" },
     { test = site_pending, root = "../../site/programs/pending", pattern = r"\.sisu$" },
     { test = explanation, root = "../../docs/diagnostics", pattern = r"[EW]\d{4}\.md$" },
-    { test = site_run_orphans, root = "../../site/programs/run" },
-    { test = site_run_fail_orphans, root = "../../site/programs/run-fail" },
-    { test = site_diagnostics_orphans, root = "../../site/programs/diagnostics" },
-    { test = site_pending_orphans, root = "../../site/programs/pending" },
-    { test = explanation_orphans, root = "../../site/programs/explanations" },
     { test = every_program_certifies, root = "tests", pattern = r"^(run|run-fail|programs)/[^/]+\.sisu$" },
     { test = every_program_certifies, root = "../../bench", pattern = r"main\.sisu$" },
 }
