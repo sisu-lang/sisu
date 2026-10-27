@@ -39,9 +39,12 @@ const MAX_STEPS: usize = 3;
 
 #[cfg(test)]
 thread_local! {
-    /// How many requirement types were asked for and how many were built, on this thread.
-    pub(super) static REQUIREMENT_TYPES: std::cell::Cell<(usize, usize)> =
-        const { std::cell::Cell::new((0, 0)) };
+    /// On this thread: how many requirement types were asked for, how many were built, how many
+    /// of those were a declared type, and for how many asks `default` was called.
+    pub(super) static REQUIREMENT_TYPES: std::cell::Cell<[usize; 4]> =
+        const { std::cell::Cell::new([0; 4]) };
+    /// How many times `default` has run on this thread, with its recursion.
+    pub(super) static DEFAULT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A known site (decision 3): a function `k<n>` of straight-line `i64` or `u8` arithmetic
@@ -69,6 +72,12 @@ struct Shape {
 /// Whether a requirement has a result, for the pick `pick` below 3: two in three do.
 fn has_result(pick: usize) -> bool {
     pick != 0
+}
+
+/// Whether a draw below 2 comes up heads: the draw 0, which an input that ran out gives. The
+/// first choice of a coin is what the program writes when the input is empty.
+fn heads(draw: usize) -> bool {
+    draw == 0
 }
 
 /// An associated type `A<n>` of an interface. A conformance chooses `plain` for it, or, when the
@@ -331,7 +340,7 @@ impl Gen<'_> {
         self.main_stmts();
         // Whether `main` calls the function of the conformances that follows it. The choice is
         // made after the statements, so it moves none of theirs.
-        let called = self.pick(2) == 0;
+        let called = heads(self.pick(2));
         if called {
             self.w.line();
             self.cost.statement();
@@ -548,7 +557,7 @@ impl Gen<'_> {
     /// `spell`, except that the class `owner` of the method being written is now and then
     /// `Self`.
     fn spelled_in(&mut self, ty: &Ty, owner: Option<&Ty>) -> String {
-        if owner == Some(ty) && self.pick(2) == 0 {
+        if owner == Some(ty) && heads(self.pick(2)) {
             return "Self".to_string();
         }
         self.spell(ty)
@@ -646,10 +655,13 @@ impl Gen<'_> {
     /// none.
     fn requirement_type(&mut self, takes: bool, assoc: Option<&Assoc>) -> RequirementType {
         #[cfg(test)]
-        REQUIREMENT_TYPES.with(|c| c.set((c.get().0 + 1, c.get().1)));
+        let defaults_before = {
+            REQUIREMENT_TYPES.with(|c| c.set([c.get()[0] + 1, c.get()[1], c.get()[2], c.get()[3]]));
+            DEFAULT_CALLS.get()
+        };
         let plain = |written: &str, value: &str| {
             #[cfg(test)]
-            REQUIREMENT_TYPES.with(|c| c.set((c.get().0, c.get().1 + 1)));
+            REQUIREMENT_TYPES.with(|c| c.set([c.get()[0], c.get()[1] + 1, c.get()[2], c.get()[3]]));
             RequirementType {
                 written: written.to_string(),
                 value: value.to_string(),
@@ -667,17 +679,25 @@ impl Gen<'_> {
         ];
         let declared = (!self.scope.types.is_empty()).then(|| self.pick(self.scope.types.len()));
         let choice = self.pick(5 + usize::from(takes) + usize::from(declared.is_some()));
-        match (choice, assoc, declared) {
+        let ty = match (choice, assoc, declared) {
             (0..=3, ..) => plain(fixed[choice].0, fixed[choice].1),
             (4, Some(assoc), _) => plain(&assoc.name, &assoc.value("$")),
             (4, None, _) => plain("Self?", "None"),
             (5, ..) if takes => plain("T", "@"),
             (_, _, Some(at)) => {
+                #[cfg(test)]
+                REQUIREMENT_TYPES
+                    .with(|c| c.set([c.get()[0], c.get()[1], c.get()[2] + 1, c.get()[3]]));
                 let declared = self.scope.types[at].clone();
                 plain(&declared.to_string(), &self.default(&declared))
             }
             _ => unreachable!("a pick should be one of the choices"),
+        };
+        #[cfg(test)]
+        if DEFAULT_CALLS.get() > defaults_before {
+            REQUIREMENT_TYPES.with(|c| c.set([c.get()[0], c.get()[1], c.get()[2], c.get()[3] + 1]));
         }
+        ty
     }
 
     /// For each interface, a class and an enum that conform to it, each in its declaration list or
@@ -718,7 +738,7 @@ impl Gen<'_> {
                 } else {
                     single.to_vec()
                 };
-                let listed = self.pick(2) == 0;
+                let listed = heads(self.pick(2));
                 let entries = self.conforming_type(class, &ty, &roots, declared, listed);
                 calls.push(format!("let {var} = {value}"));
                 // The requirements of the interface, and of those it inherits.
@@ -967,6 +987,8 @@ impl Gen<'_> {
     /// The smallest value of `ty`, a value type, as a constant expression writes it: what a
     /// function returns at depth 0. Its size is `ty.floor()`.
     pub(crate) fn default(&self, ty: &Ty) -> String {
+        #[cfg(test)]
+        DEFAULT_CALLS.set(DEFAULT_CALLS.get() + 1);
         match ty {
             Ty::I64 | Ty::U8 => "0".to_string(),
             Ty::F64 => "0.0".to_string(),
@@ -1414,5 +1436,19 @@ mod tests {
     #[test]
     fn a_pick_of_zero_should_leave_a_requirement_without_a_result() {
         assert_eq!([0, 1, 2].map(has_result), [false, true, true],);
+    }
+
+    #[test]
+    fn a_draw_of_zero_should_come_up_heads() {
+        assert_eq!([0, 1].map(heads), [true, false]);
+    }
+
+    /// An empty input draws zero everywhere, so `main` calls the function of the conformances,
+    /// and the program writes that function.
+    #[test]
+    fn an_empty_input_should_call_the_function_of_the_conformances() {
+        let source = crate::generate::generate(&[]).plain;
+        assert!(source.contains("    shapes()\n"), "{source}");
+        assert!(source.contains("fn shapes() {"), "{source}");
     }
 }

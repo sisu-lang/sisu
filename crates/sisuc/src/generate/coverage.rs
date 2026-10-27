@@ -469,9 +469,17 @@ struct Walk {
     /// The interfaces that the bounds of each type parameter of a function name, by the
     /// function's name.
     bounded: FxHashMap<String, Vec<Vec<String>>>,
-    /// The interfaces of the typed tree, by `InterfaceId`, and the function being walked in it.
+    /// The interfaces of the typed tree, by `InterfaceId`.
     interface_names: Vec<String>,
-    tir_func: String,
+    /// The bare name of each function and method in source order, with the bounds of each type
+    /// parameter in scope: its owner's, then its own.
+    signatures: Vec<(String, Vec<Vec<String>>)>,
+    /// The bounds of the type parameters of the class, enum or block whose methods are walked.
+    owner_bounds: Vec<Vec<String>>,
+    /// The bounds of the type parameters of each function of the typed tree, and of the one being
+    /// walked in it.
+    bounds_of: Vec<Vec<Vec<String>>>,
+    tir_bounds: Vec<Vec<String>>,
     /// The methods of the `extend` blocks over a generic type, by `FuncId`.
     generic_blocks: FxHashSet<usize>,
     /// The conformances that hold when a bound of the block does: the class or enum that the block
@@ -484,6 +492,13 @@ struct Walk {
     function_names: Vec<String>,
     class_names: Vec<String>,
     enum_names: Vec<String>,
+}
+
+/// The text of the bounds of each of `params`.
+fn written_bounds(params: &[ast::TypeParam]) -> Vec<Vec<String>> {
+    (params.iter())
+        .map(|p| p.bounds.iter().map(ToString::to_string).collect())
+        .collect()
 }
 
 impl Walk {
@@ -507,6 +522,8 @@ impl Walk {
         self.compounds.clear();
         self.counted.clear();
         self.bounded.clear();
+        self.signatures.clear();
+        self.owner_bounds.clear();
         self.conditional.clear();
         self.ast(&ast);
         self.tir(&tir);
@@ -592,20 +609,7 @@ impl Walk {
                 ast::Item::Class(c) => self.ast_class(c),
                 ast::Item::Interface(interface) => self.ast_interface(interface),
                 ast::Item::Extend(extend) => self.ast_extend(extend),
-                ast::Item::Enum(e) => {
-                    self.mark("ast::Item::Enum");
-                    self.bounds(&e.type_params);
-                    self.listed(&e.conforms, &e.assoc);
-                    for field in e.variants.iter().flat_map(|v| v.payload.iter().flatten()) {
-                        self.type_expr(&field.ty);
-                    }
-                    for f in &e.methods {
-                        if names_self_in(f) {
-                            self.mark("reach: an enum method names `Self`");
-                        }
-                        self.ast_function(f);
-                    }
-                }
+                ast::Item::Enum(e) => self.ast_enum(e),
                 ast::Item::Const(c) => {
                     self.mark("ast::Item::Const");
                     if let Some(ty) = &c.ty {
@@ -663,9 +667,29 @@ impl Walk {
             self.type_expr(interface);
         }
         self.choices(&extend.assoc);
+        self.owner_bounds = written_bounds(&extend.type_params);
         for f in &extend.methods {
             self.ast_function(f);
         }
+        self.owner_bounds.clear();
+    }
+
+    /// Walks the bounds, payloads and methods of the enum `e`.
+    fn ast_enum(&mut self, e: &ast::Enum) {
+        self.mark("ast::Item::Enum");
+        self.bounds(&e.type_params);
+        self.listed(&e.conforms, &e.assoc);
+        for field in e.variants.iter().flat_map(|v| v.payload.iter().flatten()) {
+            self.type_expr(&field.ty);
+        }
+        self.owner_bounds = written_bounds(&e.type_params);
+        for f in &e.methods {
+            if names_self_in(f) {
+                self.mark("reach: an enum method names `Self`");
+            }
+            self.ast_function(f);
+        }
+        self.owner_bounds.clear();
     }
 
     /// Walks the bounds and members of `c`.
@@ -676,6 +700,7 @@ impl Walk {
         }
         self.bounds(&c.type_params);
         self.listed(&c.conforms, &c.assoc);
+        self.owner_bounds = written_bounds(&c.type_params);
         for member in &c.members {
             match member {
                 ast::Member::Field(field) => {
@@ -692,6 +717,7 @@ impl Walk {
                 }
             }
         }
+        self.owner_bounds.clear();
     }
 
     /// Walks the bounds, inherited interfaces, requirements and associated types of `interface`.
@@ -767,6 +793,11 @@ impl Walk {
     }
 
     fn ast_function(&mut self, f: &ast::Function) {
+        let own = written_bounds(&f.type_params);
+        self.signatures.push((
+            f.name.name.as_str().to_string(),
+            self.owner_bounds.iter().cloned().chain(own).collect(),
+        ));
         self.func = f.name.name.as_str().to_string();
         self.in_generic = !f.type_params.is_empty();
         self.bounds(&f.type_params);
@@ -1690,8 +1721,18 @@ impl Walk {
         }
         // A call of the method of a block picks it by its expected type when the type has no
         // method of its own by the name: the type's own, in its body, are not the block's.
+        // shortcut: only a type that two conformances without type parameters name is counted.
+        // Each of them covers the type, so a call must pick one by its expected type; a conformance
+        // with parameters may hold or not under bounds that the tree does not carry, and a call
+        // of one may have no other that holds. Upgrade when the tree carries the bounds.
+        let mut concrete: FxHashMap<(tir::InterfaceId, Type), usize> = FxHashMap::default();
         for (interface, conformance) in program.conformances.iter() {
-            if again.contains(&(interface, conformance.target)) {
+            if conformance.type_params == 0 {
+                *concrete.entry((interface, conformance.target)).or_default() += 1;
+            }
+        }
+        for (interface, conformance) in program.conformances.iter() {
+            if conformance.type_params == 0 && concrete[&(interface, conformance.target)] > 1 {
                 let blocks = (conformance.methods.iter().map(|f| f.0))
                     .filter(|&f| program.functions[f].conformance.is_some());
                 self.picked.extend(blocks);
@@ -1714,8 +1755,18 @@ impl Walk {
             .filter(|(_, f)| f.owner_params > 0 && f.name.contains('<'))
             .map(|(i, _)| i)
             .collect();
-        for function in &program.functions {
-            self.tir_func.clone_from(&function.name);
+        // The functions of the typed tree are the source's in order, after any the prelude adds.
+        let skip = (program.functions.len())
+            .checked_sub(self.signatures.len())
+            .expect("the typed tree should hold every function the source writes");
+        self.bounds_of = vec![Vec::new(); program.functions.len()];
+        for (at, (name, bounds)) in self.signatures.iter().enumerate() {
+            let function = &program.functions[skip + at];
+            assert_eq!(function.name.rsplit('.').next(), Some(name.as_str()));
+            self.bounds_of[skip + at].clone_from(bounds);
+        }
+        for (at, function) in program.functions.iter().enumerate() {
+            self.tir_bounds.clone_from(&self.bounds_of[at]);
             self.ty(function.ret);
             for local in &function.locals {
                 self.ty(local.ty);
@@ -2001,14 +2052,20 @@ impl Walk {
                 self.tir_exprs(args);
             }
             tir::ExprKind::InterfaceCall {
-                interface, args, ..
+                interface,
+                iargs,
+                args,
+                ..
             } => {
                 self.mark("tir::ExprKind::InterfaceCall");
-                // The bounds of the function name the interface, or one that inherits it.
+                // The bounds of the receiver's type parameter name the interface, or one that
+                // inherits it. A receiver that is no type parameter has no bounds here.
                 let name = &self.interface_names[interface.0];
                 let direct = |bound: &String| bound.split('<').next() == Some(name.as_str());
-                if (self.bounded.get(&self.tir_func))
-                    .is_some_and(|named| !named.iter().flatten().any(direct))
+                if let Some(&TypeKind::Param(_, at)) =
+                    iargs.get().first().map(|t| t.kind()).as_ref()
+                    && let Some(bounds) = self.tir_bounds.get(at as usize)
+                    && !bounds.iter().any(direct)
                 {
                     self.mark("reach: a call goes through an inherited bound");
                 }
@@ -2541,15 +2598,31 @@ fn checked_should_reject_a_loop_whose_condition_never_changes() {
     checked("fn f(n: i64) {\n    while n > 0 { print(n) }\n}\nfn main() {}\n");
 }
 
+/// A requirement type builds only the type it picks: one `RequirementType` for each ask, and the
+/// value of a declared type, which `default` walks, only for an ask that picks a declared type.
+/// The asks, the types built and the values built are those of `SEEDS` seeds and of twice as
+/// many: the work grows with the asks, and no value is built for a type that is not picked.
 #[test]
 fn a_requirement_type_should_build_only_the_type_it_picks() {
-    super::item::REQUIREMENT_TYPES.set((0, 0));
-    for data in seeds() {
-        generate(&data);
+    let work = |seeds_taken: u64| {
+        super::item::REQUIREMENT_TYPES.set([0; 4]);
+        for data in (0..seeds_taken).map(seed) {
+            generate(&data);
+        }
+        super::item::REQUIREMENT_TYPES.get()
+    };
+    let (small, large) = (work(SEEDS), work(2 * SEEDS));
+    for [asked, built, declared, defaulted] in [small, large] {
+        assert!(asked > 0, "no seed asks for a requirement type");
+        // Some ask picks a declared type, and some picks another.
+        assert!(0 < declared && declared < asked, "{declared} of {asked}");
+        assert_eq!(built, asked);
+        assert_eq!(defaulted, declared);
     }
-    let (asked, built) = super::item::REQUIREMENT_TYPES.get();
-    assert!(asked > 0, "no seed asks for a requirement type");
-    assert_eq!(built, asked);
+    assert!(
+        large[0] > small[0] && large[2] > small[2],
+        "{small:?} {large:?}"
+    );
 }
 
 #[test]
@@ -5593,6 +5666,33 @@ fn the_walk_should_mark_an_inherited_bound_by_the_interface_it_names() {
         "fn f<T: Conv<i64>>(x: T) -> i64 {\n    x.convert()\n}\n"
     ));
     assert!(marked("fn f<T: Sub>(x: T) -> i64 {\n    x.convert()\n}\n"));
+    // The bound of the receiver's parameter counts, not the bounds of the others.
+    assert!(marked(
+        "fn f<T: Sub, U: Conv<i64>>(x: T, y: U) -> i64 {\n    x.convert()\n}\n"
+    ));
+    assert!(!marked(
+        "fn f<T: Sub, U: Conv<i64>>(x: T, y: U) -> i64 {\n    y.convert()\n}\n"
+    ));
+    // A generic method, a method of a generic class and a block, each with its own bounds.
+    assert!(marked(
+        "class H {\n    fn m<T: Sub>(self, x: T) -> i64 { x.convert() }\n}\n"
+    ));
+    assert!(!marked(
+        "class H {\n    fn m<T: Conv<i64>>(self, x: T) -> i64 { x.convert() }\n}\n"
+    ));
+    assert!(marked(
+        "class H<T: Sub> {\n    v: T\n    fn m(self) -> i64 { self.v.convert() }\n}\n"
+    ));
+    assert!(marked(
+        "class R<T> {\n    v: T\n}\nextend<T: Sub> R<T> {\n    fn m(self) -> i64 { self.v.convert() }\n}\n"
+    ));
+    let pair = "class P<T, U> {\n    v: T\n    w: U\n}\nextend<T: Sub, U: Conv<i64>> P<T, U> {\n";
+    assert!(!marked(&format!(
+        "{pair}    fn m(self) -> i64 {{ self.w.convert() }}\n}}\n"
+    )));
+    assert!(marked(&format!(
+        "{pair}    fn m(self) -> i64 {{ self.v.convert() }}\n}}\n"
+    )));
 }
 
 /// The walk marks an `extend` block over a generic type that a call reaches, a conditional
@@ -5806,6 +5906,15 @@ fn the_walk_should_mark_what_generic_interfaces_hold() {
     assert_eq!(
         marked(&format!(
             "{int}{string}fn main() {{\n    let n: i64 = B().convert()\n}}\n"
+        )),
+        [true, false, false]
+    );
+    // Two conformances with bounds, of which only one holds for the receiver: the expected type
+    // picks nothing, however the conformances are counted.
+    let conditional = "interface Flag {}\ninterface Rare {}\nclass Box<T> {\n    value: T\n}\nclass Node: Flag {}\nextend<T: Flag> Box<T>: Conv<i64> {\n    fn convert(self) -> i64 { 1 }\n}\nextend<T: Rare> Box<T>: Conv<string> {\n    fn convert(self) -> string { \"s\" }\n}\n";
+    assert_eq!(
+        marked(&format!(
+            "{conditional}fn main() {{\n    let n = Box(value: Node()).convert()\n}}\n"
         )),
         [true, false, false]
     );
