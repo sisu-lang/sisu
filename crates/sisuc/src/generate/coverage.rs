@@ -2557,6 +2557,17 @@ fn checked_should_reject_a_loop_whose_condition_never_changes() {
 }
 
 #[test]
+fn a_requirement_type_should_build_only_the_type_it_picks() {
+    super::item::REQUIREMENT_TYPES.set((0, 0));
+    for data in seeds() {
+        generate(&data);
+    }
+    let (asked, built) = super::item::REQUIREMENT_TYPES.get();
+    assert!(asked > 0, "no seed asks for a requirement type");
+    assert_eq!(built, asked);
+}
+
+#[test]
 fn every_short_input_checks_clean() {
     checked(&generate(&[]).program);
     for b in 0..=u8::MAX {

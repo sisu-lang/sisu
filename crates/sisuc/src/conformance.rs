@@ -17,6 +17,8 @@ thread_local! {
     static RESOLVE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `Unifier::unify` has read on this thread.
     static UNIFY_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many parameters `Unifier::walk` has stepped over on this thread.
+    static WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `normalize` has walked on this thread.
     static NORMALIZED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -331,7 +333,7 @@ impl Unifier {
         while self.parents[root] != root {
             root = self.parents[root];
         }
-        // Path halving: every type on the way points at the root.
+        // Path compression: every type on the way points at the root.
         let mut at = at;
         while self.parents[at] != root {
             at = std::mem::replace(&mut self.parents[at], root);
@@ -346,19 +348,29 @@ impl Unifier {
         x == y
     }
 
-    /// `ty`, with the parameter at its root replaced while one stands for something, and how
-    /// many were replaced. A chain of parameters that stand for each other is no longer than the
-    /// parameters, so a longer one is a parameter that stands for a type that holds it.
-    fn walk(&self, mut ty: Type) -> (Type, usize) {
-        let mut steps = 0;
+    /// `ty`, with the parameter at its root replaced while one stands for something. A chain of
+    /// parameters that stand for each other is no longer than the parameters, so a longer one is
+    /// a parameter that stands for a type that holds it. Each parameter on the way then stands for
+    /// the end, so that a later walk over the chain takes one step.
+    fn walk(&mut self, start: Type) -> Type {
+        let (mut ty, mut steps) = (start, 0);
         while let TypeKind::Param(_, i) = ty.kind()
             && let Some(Some(next)) = self.stood.get(i as usize)
         {
+            #[cfg(test)]
+            WALK_STEPS.set(WALK_STEPS.get() + 1);
             ty = *next;
             steps += 1;
             assert!(steps <= self.stood.len(), "{CHAIN}");
         }
-        (ty, steps)
+        let mut at = start;
+        while at != ty
+            && let TypeKind::Param(_, i) = at.kind()
+            && let Some(next) = self.stood[i as usize].replace(ty)
+        {
+            at = next;
+        }
+        ty
     }
 
     /// `ty` with every parameter replaced that stands for something, or `None` when a parameter
@@ -404,7 +416,7 @@ impl Unifier {
     fn unify(&mut self, left: Type, right: Type) -> bool {
         #[cfg(test)]
         UNIFY_STEPS.set(UNIFY_STEPS.get() + 1);
-        let (left, right) = (self.walk(left).0, self.walk(right).0);
+        let (left, right) = (self.walk(left), self.walk(right));
         if left == right {
             return true;
         }
@@ -678,6 +690,25 @@ mod tests {
         let mut unifier = Unifier::new(2);
         unifier.stood = vec![Some(param(1)), Some(param(0))];
         unifier.walk(param(0));
+    }
+
+    /// A target whose first `n` arguments make a chain of parameters, `T(n-1)` stands for `U`,
+    /// `T(n-2)` for `T(n-1)` and so on, and whose other `n` arguments are the first end of the
+    /// chain again, unifies with a few steps over the chain for each argument, and not `n` steps
+    /// for each of the `n` arguments after it.
+    #[test]
+    fn unify_should_step_over_a_chain_of_parameters_once() {
+        for n in [128_usize, 256] {
+            let p = |i: usize| param(u32::try_from(i).expect("n should be small"));
+            let mut left: Vec<Type> = (0..n).rev().map(p).collect();
+            left.extend(std::iter::repeat_n(p(n - 1), n));
+            let right = vec![p(0); 2 * n];
+            WALK_STEPS.set(0);
+            let common = overlap(&[class(PAIR, &left)], n, &[class(PAIR, &right)], 1);
+            assert!(common.is_some(), "n = {n}");
+            let walked = WALK_STEPS.get();
+            assert!(walked <= 8 * n, "n = {n}: {walked} steps");
+        }
     }
 
     #[test]

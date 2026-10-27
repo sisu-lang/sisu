@@ -346,6 +346,9 @@ thread_local! {
     pub(super) static BOUND_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many scopes (type parameters with their bounds) have been kept on this thread.
     pub(super) static SCOPES_KEPT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many closure entries have been indexed, and how many entries of an interface have been
+    /// read for the name of an associated type, on this thread.
+    pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -369,8 +372,9 @@ struct Checker<'src> {
     meets: FxHashMap<tir::FuncId, Vec<tir::InterfaceId>>,
     /// For each method name, the interfaces that declare a requirement of it.
     declaring: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
-    /// For each name of an associated type, the interfaces that declare one of it.
-    declaring_assoc: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
+    /// For each name of an associated type, the interfaces that declare one of it, with its place
+    /// among theirs.
+    declaring_assoc: FxHashMap<Symbol, Vec<(tir::InterfaceId, usize)>>,
     /// The bound checks of types resolved before every conformance is known; `None` once they
     /// run, and later types are checked as they are resolved.
     pending_bounds: Option<Vec<PendingBound>>,
@@ -497,6 +501,15 @@ impl std::ops::DerefMut for Diagnostics {
     }
 }
 
+/// The entries of the closure of a type parameter or an associated type, by interface.
+#[derive(Default)]
+struct ClosureIndex {
+    /// How many entries of the closure are indexed.
+    done: usize,
+    /// For each interface, its entries with their places in the closure.
+    by_interface: FxHashMap<tir::InterfaceId, Vec<(usize, TypeArgs)>>,
+}
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -524,6 +537,9 @@ struct Body {
     /// indexed (`required`). All these caches change with the bounds, and a body's are cleared
     /// with it.
     required: FxHashMap<Type, FxHashMap<Symbol, Vec<Required>>>,
+    /// For each type parameter or associated type, how many entries of its closure are indexed,
+    /// and the entries by interface, each with its place in the closure (`index_closure`).
+    named: FxHashMap<Type, ClosureIndex>,
     /// The associated types that a bare name stands for: the interface's own in an interface,
     /// the conformance's choices in a class, an enum or an `extend` block. `None` is `Error`.
     assoc: Rc<Choices>,
@@ -646,6 +662,7 @@ impl Body {
         self.conforming.clear();
         self.wide.clear();
         self.required.clear();
+        self.named.clear();
         self.conformed.clear();
         self.scope = None;
     }

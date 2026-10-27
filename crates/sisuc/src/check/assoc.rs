@@ -238,20 +238,33 @@ impl Checker<'_> {
             });
             return None;
         }
-        let entries = self.interfaces_for(base_ty);
+        self.index_closure(base_ty);
         // A base whose bounds went past the limit is reported already, and unknown.
         if self.is_wide(base_ty) {
             return None;
         }
+        // The declarations in the order of the closure.
         let mut found = Vec::new();
-        for (interface, args) in entries {
-            let assoc = &self.interfaces[interface.0].assoc;
-            for (k, declared) in assoc.iter().enumerate() {
-                if declared.name.name == name.name {
-                    found.push((interface, args, k));
-                }
+        let by_interface = self
+            .body
+            .named
+            .get(&base_ty)
+            .map(|index| &index.by_interface);
+        for &(interface, k) in self.declaring_assoc.get(&name.name).into_iter().flatten() {
+            for &(at, args) in by_interface
+                .and_then(|m| m.get(&interface))
+                .into_iter()
+                .flatten()
+            {
+                #[cfg(test)]
+                super::LOOKUP_STEPS.set(super::LOOKUP_STEPS.get() + 1);
+                found.push((at, interface, args, k));
             }
         }
+        found.sort_by_key(|&(at, ..)| at);
+        let found: Vec<(InterfaceId, TypeArgs, usize)> = (found.into_iter())
+            .map(|(_, interface, args, k)| (interface, args, k))
+            .collect();
         match found[..] {
             [(interface, args, k)] => {
                 let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
@@ -259,7 +272,7 @@ impl Checker<'_> {
             }
             [] => {
                 let add = match self.declaring_assoc.get(&name.name).map(Vec::as_slice) {
-                    Some(&[only]) => self.add_bound(base_ty, only),
+                    Some(&[(only, _)]) => self.add_bound(base_ty, only),
                     _ => None,
                 };
                 self.report(DiagnosticKind::UnknownType {
@@ -284,6 +297,30 @@ impl Checker<'_> {
                 });
                 None
             }
+        }
+    }
+
+    /// Indexes by interface the entries of the closure of the type parameter or associated type
+    /// `ty` that are not indexed yet, after it has grown: the work follows the entries, not the
+    /// lookups.
+    fn index_closure(&mut self, ty: Type) {
+        let done = self.body.named.get(&ty).map_or(0, |index| index.done);
+        let entries = match ty.kind() {
+            TypeKind::Param(_, place) => self.param_interfaces(place as usize),
+            TypeKind::Assoc(..) => self.assoc_interfaces(ty),
+            _ => unreachable!("only a type parameter or an associated type has bounds"),
+        };
+        let new = entries[done..].to_vec();
+        let index = self.body.named.entry(ty).or_default();
+        for (at, (interface, args)) in (done..).zip(new) {
+            #[cfg(test)]
+            super::LOOKUP_STEPS.set(super::LOOKUP_STEPS.get() + 1);
+            index
+                .by_interface
+                .entry(interface)
+                .or_default()
+                .push((at, args));
+            index.done = at + 1;
         }
     }
 

@@ -37,6 +37,13 @@ pub(crate) const MOST: u64 = 100;
 pub(crate) const MAX_KNOWN: usize = 3;
 const MAX_STEPS: usize = 3;
 
+#[cfg(test)]
+thread_local! {
+    /// How many requirement types were asked for and how many were built, on this thread.
+    pub(super) static REQUIREMENT_TYPES: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
 /// A known site (decision 3): a function `k<n>` of straight-line `i64` or `u8` arithmetic
 /// over its two parameters, a call of it on literals, and what the call gives, worked out
 /// here.
@@ -625,31 +632,39 @@ impl Gen<'_> {
     /// associated type `assoc` (as a result only: a caller has no value of it), or one that names
     /// none.
     fn requirement_type(&mut self, takes: bool, assoc: Option<&Assoc>) -> RequirementType {
-        let plain = |written: &str, value: &str| RequirementType {
-            written: written.to_string(),
-            value: value.to_string(),
+        #[cfg(test)]
+        REQUIREMENT_TYPES.with(|c| c.set((c.get().0 + 1, c.get().1)));
+        let plain = |written: &str, value: &str| {
+            #[cfg(test)]
+            REQUIREMENT_TYPES.with(|c| c.set((c.get().0, c.get().1 + 1)));
+            RequirementType {
+                written: written.to_string(),
+                value: value.to_string(),
+            }
         };
-        let mut choices = vec![
-            plain("i64", "0"),
-            plain("string", "\"s\""),
-            plain("Self", "$"),
-            plain("[Self]", "[$]"),
-            plain("Self?", "None"),
+        // The choices, in order: the fixed ones, `T` when the interface has a parameter, and a
+        // declared type when there is one. Only the pick is built. The fifth is the associated
+        // type, when there is one, in place of `Self?`, so that the picks of an interface without
+        // one stay as they were.
+        let fixed = [
+            ("i64", "0"),
+            ("string", "\"s\""),
+            ("Self", "$"),
+            ("[Self]", "[$]"),
         ];
-        if takes {
-            choices.push(plain("T", "@"));
+        let declared = (!self.scope.types.is_empty()).then(|| self.pick(self.scope.types.len()));
+        let choice = self.pick(5 + usize::from(takes) + usize::from(declared.is_some()));
+        match (choice, assoc, declared) {
+            (0..=3, ..) => plain(fixed[choice].0, fixed[choice].1),
+            (4, Some(assoc), _) => plain(&assoc.name, &assoc.value("$")),
+            (4, None, _) => plain("Self?", "None"),
+            (5, ..) if takes => plain("T", "@"),
+            (_, _, Some(at)) => {
+                let declared = self.scope.types[at].clone();
+                plain(&declared.to_string(), &self.default(&declared))
+            }
+            _ => unreachable!("a pick should be one of the choices"),
         }
-        // In place of `Self?`, so that the picks of an interface without one stay as they were.
-        if let Some(assoc) = assoc {
-            choices[4] = plain(&assoc.name, &assoc.value("$"));
-        }
-        if !self.scope.types.is_empty() {
-            let at = self.pick(self.scope.types.len());
-            let declared = self.scope.types[at].clone();
-            choices.push(plain(&declared.to_string(), &self.default(&declared)));
-        }
-        let choice = self.pick(choices.len());
-        choices.swap_remove(choice)
     }
 
     /// For each interface, a class and an enum that conform to it, each in its declaration list or

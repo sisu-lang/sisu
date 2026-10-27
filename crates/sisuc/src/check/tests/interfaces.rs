@@ -1687,6 +1687,56 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
     }
 }
 
+/// A type written through a parameter, as `S.Name`, is found by its name in an index of the
+/// parameter's closure, which grows with the closure: a lookup reads the entries of the
+/// interfaces that declare the name, and no others. The steps are the entries indexed and the
+/// entries read. Those of 64 are at most twice those of 32 (and a few more), for one interface
+/// that declares `n` types, which `n` parameters of a function name; and for one parameter whose
+/// `n` bounds each write the type that the one before declares.
+#[test]
+fn an_associated_type_should_be_found_by_its_name_without_reading_the_others() {
+    let names = |n: usize| {
+        let declared: Vec<String> = (0..n).map(|i| format!("    type A{i}\n")).collect();
+        let params: Vec<String> = (0..n).map(|i| format!("x{i}: S.A{i}")).collect();
+        format!(
+            "interface Big {{\n{}}}\nfn f<S: Big>({}) {{}}\nfn main() {{}}",
+            declared.concat(),
+            params.join(", ")
+        )
+    };
+    let within = |n: usize| {
+        let declared: Vec<String> = (0..n)
+            .map(|i| format!("interface I{i}<X> {{\n    type N{i}\n}}\n"))
+            .collect();
+        let bounds: Vec<String> = (1..n)
+            .rev()
+            .map(|i| format!("I{i}<S.N{}>", i - 1))
+            .collect();
+        format!(
+            "{}fn f<S: I0<i64> & {}>(_s: S) {{}}\nfn main() {{}}",
+            declared.concat(),
+            bounds.join(" & ")
+        )
+    };
+    let steps = |src: String| {
+        LOOKUP_STEPS.set(0);
+        let ds = diags(&src);
+        assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
+        LOOKUP_STEPS.get()
+    };
+    for (name, shape) in [
+        ("names", &names as &dyn Fn(usize) -> String),
+        ("within", &within),
+    ] {
+        let (small, large) = (steps(shape(32)), steps(shape(64)));
+        assert!(small >= 32, "{name}: {small} steps for 32");
+        assert!(
+            large <= 2 * small + 8,
+            "{name}: {large} steps for 64, {small} for 32"
+        );
+    }
+}
+
 /// A block that lacks every interface its own inherits reports each one by the place the closure
 /// recorded for it, so no report reads an inheritance list again.
 #[test]
@@ -2487,6 +2537,28 @@ fn bound_checks_that_wait_should_set_up_their_scope_once() {
         assert_eq!(steps(16, class), 7 * 16 + 6);
         assert_eq!(steps(32, class), 7 * 32 + 6);
     }
+}
+
+/// The payloads of an enum's variants are resolved with the enum's scope set up once: `n`
+/// bounded parameters and `n` variants, each with an applied type in its payload, cost the
+/// parameters and the variants, and not their product.
+#[test]
+fn the_variants_of_an_enum_should_share_the_scope_of_its_parameters() {
+    let steps = |n: usize| {
+        let params: Vec<String> = (0..n).map(|i| format!("T{i}: I")).collect();
+        let variants: Vec<String> = (0..n).map(|i| format!("    V{i}(C<T{i}>)\n")).collect();
+        let src = format!(
+            "enum E<{}> {{\n{}}}\ninterface I {{}}\nclass C<T: I> {{\n    v: T\n}}\nfn main() {{}}",
+            params.join(", "),
+            variants.concat()
+        );
+        PARAM_STEPS.set(0);
+        clean(&src);
+        PARAM_STEPS.get()
+    };
+    let (small, large) = (steps(16), steps(32));
+    assert!(small >= 16, "{small} steps for 16");
+    assert!(large <= 2 * small, "{large} steps for 32, {small} for 16");
 }
 
 /// The classes the generic extension rows share, and an empty `main` for a row that has none.

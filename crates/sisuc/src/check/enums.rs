@@ -126,9 +126,9 @@ impl Checker<'_> {
         if self.enums[id.0].bounded {
             self.enums[id.0].bounds = bounds;
         }
-        // The choices come before the payloads and the signatures, which may name them.
+        // The choices come before the payloads and the signatures, which may name them. The
+        // scope stays for the payloads of all variants.
         self.enums[id.0].assoc = self.declare_choices(&e.assoc, owner);
-        self.body.set_type_params(&[]);
         let mut first = FxHashMap::default();
         for variant in &e.variants {
             let name = &variant.name;
@@ -158,8 +158,6 @@ impl Checker<'_> {
             for label in payload.iter().filter_map(|field| field.label.as_ref()) {
                 self.first_definition(&mut labels, Definition::Field, Some(owner), label);
             }
-            self.body.set_type_params(&self.enums[id.0].type_params);
-            self.body.set_bounds(0, self.enums[id.0].bounds.clone());
             // The checks that each field's type queues.
             let mut queued = Vec::new();
             let (fields, inner): (Vec<_>, Vec<_>) = payload
@@ -171,7 +169,6 @@ impl Checker<'_> {
                     resolved
                 })
                 .unzip();
-            self.body.set_type_params(&[]);
             if self.first_definition(&mut first, Definition::Variant, Some(owner), name) {
                 let variant = self.enums[id.0].variants.len();
                 for (i, queued) in queued.into_iter().enumerate() {
@@ -191,6 +188,7 @@ impl Checker<'_> {
                 });
             }
         }
+        self.body.set_type_params(&[]);
         for method in &e.methods {
             let func = tir::FuncId(self.signatures.len());
             if self.first_definition(&mut first, Definition::Method, Some(owner), &method.name) {

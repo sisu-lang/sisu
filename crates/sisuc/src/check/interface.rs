@@ -158,9 +158,6 @@ impl Checker<'_> {
             for requirement in &info.requirements {
                 (self.declaring.entry(requirement.name.name).or_default()).push(InterfaceId(i));
             }
-            for assoc in &info.assoc {
-                (self.declaring_assoc.entry(assoc.name.name).or_default()).push(InterfaceId(i));
-            }
         }
     }
 
@@ -202,6 +199,9 @@ impl Checker<'_> {
                 bounds: Vec::new(),
             })
             .collect();
+        for (k, assoc) in declared.iter().enumerate() {
+            (self.declaring_assoc.entry(assoc.name.name).or_default()).push((id, k));
+        }
         declared
     }
 
