@@ -787,14 +787,14 @@ fn or_fields_should_check_in_linear_time() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// The kill override for this test is in `.config/nextest.toml`: one row of 90,000 `true | false`
+/// The kill override for this test is in `.config/nextest.toml`: one row of 60,000 `true | false`
 /// fields, given to `exhaust::check`. A `push` that walks the whole rest of the row, to rehash it
 /// or to read its flags, is quadratic in the fields and hangs. A counter cannot see this,
-/// because the walk builds no stack node. On a developer machine at load 2 the current code
-/// takes 0.4 s and the walk 43 s; the kill is 4 s.
+/// because the walk builds no stack node. On a developer machine the current code takes 0.25 s
+/// and the walk 19 s of CPU time, measured at load 26 to 44; the kill is 4 s.
 #[test]
 fn long_or_row_should_check_in_linear_time() {
-    const FIELDS: usize = 90_000;
+    const FIELDS: usize = 60_000;
     let enums = [enum_of(vec![vec![Type::BOOL; FIELDS]])];
     let either = || {
         field_pattern(tir::PatternKind::Or(vec![
