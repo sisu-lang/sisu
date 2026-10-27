@@ -48,7 +48,7 @@ between two statements on one line becomes a `Newline` too, and an
 unnecessary one, such as a `;` at the end of a line, is dropped with W0007
 ([ADR 0028](adr/0028-a-semicolon-stands-in-for-a-line-break.md)). A `>` at
 a line's end ends the statement when it closes a type annotation, as in
-`b: Box<i64>`. Any other `>` there lets the line go on: a comparison, a
+`b: Box<i64>`, or the type that `type Item = Box<T>` chooses. Any other `>` there lets the line go on: a comparison, a
 header's type parameters, or a call's type arguments. A `??` at a line's end
 follows the same rule: it ends the statement in `b: i64??`, and otherwise the
 line goes on to the operand of `??`. The lexer

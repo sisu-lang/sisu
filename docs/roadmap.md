@@ -59,10 +59,11 @@ enums with `match`.
   type arguments inferred from the arguments and the expected type, or
   written out (`first<i64>([])`, `Stack<string>(top: None)`); a generic body
   is checked once, at its definition, and compiled once for each list of type
-  arguments the program reaches. A type parameter takes no bound yet, so a
-  value of one has no operators (`E0139`), and `unit` and `never` are not
-  type arguments (`E0138`); a use that would need copies without end is an
-  error (`E0140`)
+  arguments the program reaches. A type parameter takes bounds that name
+  interfaces (`T: Shape & Named`), and a value of one calls the methods of
+  its bounds, but no interface gives an operator yet, so it has none
+  (`E0139`); `unit` and `never` are not type arguments (`E0138`); a use that
+  would need copies without end is an error (`E0140`)
 - `match` on an enum, `i64`, `u8`, `bool`, `char` or `string`, as an
   expression or a statement, with one arm per line or a `;` between arms; a
   pattern is a variant, bare or through its enum (`Num(n)`, `Expr.Num(n)`),

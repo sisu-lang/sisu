@@ -33,15 +33,17 @@ newlines".
   Already decided: from milestone 2, a line starting with `.` continues the
   previous one, so method chains can put each call on its own line (as in
   Swift and Kotlin).
-- A line break inside the type-parameter list of a `fn`, `class` or `enum`
-  header ends nothing, as inside `(`, when the header starts its statement.
-  The list's `<` comes right after the declared name and holds only the
-  declaration's type parameters. A `<` in an expression is still an operator.
+- A line break inside the type-parameter list of a `fn`, `class`, `enum` or
+  `interface` header, or of an `extend<T>` block, ends nothing, as inside `(`,
+  when the header starts its statement. The list's `<` comes right after the
+  declared name (or `extend`) and holds only the declaration's type
+  parameters and their bounds. A `<` in an expression is still an operator.
   The list of a header after a `}` on the same line (`fn a() {} fn b<`)
   does not span lines.
 - From milestone 8, a `>` can end a statement too, when it closes a type
   annotation: after a `:` or `->` with no `=` after it, with every `<` closed
-  (`b: Box<i64>`). The lexer decides, so every reader sees the same line
+  (`b: Box<i64>`), or the type that `type Item = Box<T>` chooses for an
+  associated type. The lexer decides, so every reader sees the same line
   break. Any other `>` at a line's end goes on, as before: a comparison
   (`a >`), a header's type parameters (`fn f<T>` then its parameters), or a
   call's type arguments (`f<i64>` then `(x)` is one call). A `??` at a line's
