@@ -441,7 +441,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
             first_on_line = separator;
         }
         match track_closer(&mut brackets, &kind, span, &diagnostics, &mut tokens) {
-            Err(d) => return Err(first_or(diagnostics, d)),
+            Err(d) => return Err(brackets.stopped(&tokens, diagnostics, d)),
             Ok(false) => continue,
             Ok(true) => {}
         }
@@ -451,7 +451,7 @@ pub(crate) fn lex(source: &str) -> Result<Lexed<'_>, Diagnostic> {
     brackets.end_line(source.len(), true, &mut tokens, &mut diagnostics);
     if let Some((bracket, at)) = unclosed_at_end(&brackets.open, &diagnostics) {
         let unclosed = DiagnosticKind::UnclosedBracket { bracket, at };
-        return Err(first_or(diagnostics, unclosed.into()));
+        return Err(brackets.stopped(&tokens, diagnostics, unclosed.into()));
     }
     if ends_statement(&tokens, &mut brackets) {
         tokens.push(newline(Span::new(source.len(), source.len())));
@@ -670,6 +670,9 @@ struct Statements {
     read: usize,
     enclosing: Vec<Statement>,
     current: Statement,
+    /// Where the first `&` stands, among the tokens read, that no header's list holds: no bound
+    /// reads it, so it is an unexpected character.
+    stray: Option<usize>,
 }
 
 /// What a statement's tokens so far, outside its closed brackets, show.
@@ -717,18 +720,26 @@ impl Statements {
                     | TokenKind::Extend
             )));
             s.tokens += 1;
+            if t.kind == TokenKind::Amp && !s.params && self.stray.is_none() {
+                self.stray = Some(i);
+            }
             s.params = s.params
                 && match t.kind {
-                    Ident(_) | Comma | Colon | TokenKind::Amp | Lt => true,
-                    // Inside a bound's arguments, which are types: also arrays, optionals, `Self`
-                    // and member types.
-                    Gt
+                    // A bound is a type, and the checker reports a bound that is no interface, so
+                    // the list also stays open through arrays, optionals, `Self` and member types.
+                    Ident(_)
+                    | Comma
+                    | Colon
+                    | TokenKind::Amp
+                    | Lt
                     | LBracket
                     | RBracket
                     | Dot
                     | TokenKind::Question
                     | QuestionQuestion
-                    | TokenKind::SelfType => s.nested > 0,
+                    | TokenKind::SelfType => true,
+                    // The `>` that closes the list is not one of a bound's arguments.
+                    Gt => s.nested > 0,
                     _ => false,
                 };
             match t.kind {
@@ -831,6 +842,24 @@ fn statement_end(tokens: &[Token]) -> usize {
 }
 
 impl Brackets {
+    /// `first_or`, where a `&` that no bound list holds counts as a skipped character: the parser
+    /// reads it as one, but a bracket error stops the lexer before the parser runs.
+    fn stopped(
+        &mut self,
+        tokens: &[Token],
+        mut diagnostics: Vec<Diagnostic>,
+        bracket: Diagnostic,
+    ) -> Diagnostic {
+        self.statements.read(tokens, tokens.len());
+        if let Some(i) = self.statements.stray {
+            let at = tokens[i].span.start();
+            if diagnostics.first().is_none_or(|d| at < d.span().start()) {
+                diagnostics.insert(0, unexpected('&', at));
+            }
+        }
+        first_or(diagnostics, bracket)
+    }
+
     /// Whether the innermost open bracket is a block's `{`, or there is none: a `;` here
     /// separates statements. An interpolation's `{` is not a block.
     fn in_block(&self) -> bool {
@@ -4034,6 +4063,24 @@ mod tests {
         assert_eq!(fatal("f(]").code(), Code::UnexpectedClosingBracket);
     }
 
+    /// A lone `&` outside a bound list is an unexpected character, also when a bracket error
+    /// stops the lexer before the parser reads it; a `&` in a bound list is no error.
+    #[test]
+    fn a_bracket_error_should_not_hide_an_earlier_lone_ampersand() {
+        let src = "&]";
+        assert_eq!(at(src, &fatal(src)), (Code::UnexpectedCharacter, 1, 1));
+        let src = "fn f() {\n    let a = 1 & 2\n    print(a]\n}";
+        assert_eq!(at(src, &fatal(src)), (Code::UnexpectedCharacter, 2, 15));
+        let src = "fn f<T: A & B>(x: T) ]";
+        assert_eq!(
+            at(src, &fatal(src)),
+            (Code::UnexpectedClosingBracket, 1, 22)
+        );
+        // A skipped character comes first.
+        let src = "$ &]";
+        assert_eq!(at(src, &fatal(src)), (Code::UnexpectedCharacter, 1, 1));
+    }
+
     #[test]
     fn bracket_error_alone_is_reported() {
         let d = fatal("(}");
@@ -4407,6 +4454,26 @@ mod tests {
                 .count();
             assert_eq!(breaks, 1, "{src}");
             crate::parser::parse_ok(src);
+        }
+    }
+
+    /// A bound that is no interface keeps the list open too, so a line break before the `>` leaves
+    /// no `Newline` and the checker reports the bound, as on one line.
+    #[test]
+    fn a_line_break_after_a_bound_that_is_no_interface_should_leave_no_newline() {
+        for src in [
+            "fn f<T: Self\n>(x: T) {}",
+            "fn f<T: I?\n>(x: T) {}",
+            "fn f<T: I??\n>(x: T) {}",
+            "fn f<T: [I]\n>(x: T) {}",
+            "fn f<T: S.Item\n>(x: T) {}",
+            "fn f<T: A & Self\n>(x: T) {}",
+        ] {
+            let breaks = all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count();
+            assert_eq!(breaks, 1, "{src}");
         }
     }
 

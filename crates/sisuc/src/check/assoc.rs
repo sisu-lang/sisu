@@ -7,7 +7,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 
 use super::interface::Bound;
-use super::{Checker, Definition, DiagnosticKind, Holder, Symbol};
+use super::{Checker, Definition, DiagnosticKind, Holder, Symbol, built_in_type};
 use crate::ast;
 use crate::conformance::normalize_noting;
 use crate::diagnostic::{CannotExtendForm, UnknownForm, WideKind};
@@ -176,10 +176,13 @@ impl Checker<'_> {
     /// is reported (E0030).
     pub(super) fn assoc_named(&mut self, name: Symbol, at: Span) -> Named {
         if self.body.choosing.contains(&name) {
+            let shadows = self.class_ids.contains_key(&name)
+                || self.enum_ids.contains_key(&name)
+                || built_in_type(name.as_str()).is_some();
             self.report(DiagnosticKind::UnknownType {
                 name: name.to_string(),
                 at,
-                form: UnknownForm::ChoiceNamesItself,
+                form: UnknownForm::ChoiceNamesItself { shadows },
             });
             return Named::Failed;
         }

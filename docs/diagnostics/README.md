@@ -162,7 +162,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [E0153](E0153.md) | error | second conformance to an interface |
 | [E0154](E0154.md) | error | type that does not conform to an interface that is needed |
 | [E0155](E0155.md) | error | `extend` of a type that is not a class or an enum |
-| [E0156](E0156.md) | error | call that more than one conformance answers |
+| [E0156](E0156.md) | error | call or type that more than one conformance answers |
 | [E0157](E0157.md) | error | bound that gives too many interfaces |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |

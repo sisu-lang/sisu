@@ -1763,6 +1763,7 @@ impl<'a> Parser<'a> {
         })?;
         let close = self.bump().span;
         Ok(Extend {
+            keyword,
             type_params,
             angles,
             target,

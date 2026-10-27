@@ -1473,8 +1473,9 @@ pub(crate) enum UnknownForm {
     /// The associated type is written through a class, an enum or another type that is no type
     /// parameter. `own` when the base is `Self` in a conformance, which writes the name alone.
     ConcreteBase { own: bool },
-    /// The choice of an associated type names one of its own conformance.
-    ChoiceNamesItself,
+    /// The choice of an associated type names one of its own conformance. `shadows` when a class,
+    /// an enum or a built-in type has the name too, and the associated type hides it.
+    ChoiceNamesItself { shadows: bool },
     /// The choice of an associated type needs the associated type itself, which the diagnostic's
     /// name gives with its base, as `W<Leaf>.A`: the types the choice names lead back to it.
     ChoiceLoops,
@@ -2475,12 +2476,16 @@ impl From<DiagnosticKind> for Diagnostic {
                         d
                     }
                 }
-                UnknownForm::ChoiceNamesItself => Diagnostic::coded(
+                UnknownForm::ChoiceNamesItself { shadows } => Diagnostic::coded(
                     code,
                     at,
                     format!("an associated type's choice cannot name `{name}`"),
                 )
-                .with_help("write the type itself"),
+                .with_help(if shadows {
+                    format!("`{name}` also names a type, which this associated type hides: rename one of them")
+                } else {
+                    "write the type itself".to_string()
+                }),
                 UnknownForm::ChoiceLoops => Diagnostic::coded(
                     code,
                     at,

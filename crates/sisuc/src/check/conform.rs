@@ -675,8 +675,8 @@ impl Checker<'_> {
     }
 
     /// The text of `requirement` as a block writes it for the conformance to `bound`: the
-    /// interface's arguments stand where its parameters do, and `Self` stays. Shortcut: a bound of
-    /// the requirement's own type parameters is written as the interface declares it.
+    /// interface's arguments stand where its parameters do, in the types of the signature and in
+    /// the bounds of the requirement's own type parameters, and `Self` stays.
     fn required_text(&self, bound: Bound, requirement: &RequirementInfo) -> String {
         let params = &self.interfaces[bound.interface.0].type_params;
         let mut with = vec![Type::intern(TypeKind::Param(params[0], 0))];
@@ -688,14 +688,29 @@ impl Checker<'_> {
         let written = (requirement.params_at.iter().copied())
             .zip(requirement.params.iter().copied())
             .chain(requirement.ret_at.into_iter().zip([requirement.ret]));
-        let mut out = String::new();
-        let mut from = requirement.span.start();
+        // The places that change, in the order of the text: the bounds, then the signature.
+        let mut changed: Vec<(Span, String)> = Vec::new();
+        for b in requirement.bounds.iter().flatten() {
+            let args = b.args.subst(&with);
+            if args != b.args {
+                changed.push((b.at, self.bound_text(b.interface, args)));
+            }
+        }
         for (at, ty) in written {
-            let Some(ty) = ty.filter(|ty| ty.subst(&with) != *ty) else {
+            let Some(ty) = ty else {
                 continue;
             };
+            let substituted = ty.subst(&with);
+            if substituted != ty {
+                changed.push((at, self.type_name(substituted)));
+            }
+        }
+        changed.sort_by_key(|(at, _)| at.start());
+        let mut out = String::new();
+        let mut from = requirement.span.start();
+        for (at, text) in changed {
             out.push_str(self.source.file.slice(from..at.start()));
-            out.push_str(&self.type_name(ty.subst(&with)));
+            out.push_str(&text);
             from = at.end();
         }
         out.push_str(self.source.file.slice(from..requirement.span.end()));

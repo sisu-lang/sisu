@@ -60,6 +60,23 @@ fn mark_params(ty: Type, named: &mut [bool]) {
     }
 }
 
+/// Whether `ty` names the type parameter at place `param` other than under an associated type:
+/// only such a name lets the type that a result is annotated with bind the parameter.
+fn names_outside_assoc(ty: Type, param: usize) -> bool {
+    if !ty.has_param() {
+        return false;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, j) => j as usize == param,
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => names_outside_assoc(inner, param),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            (args.get().iter()).any(|&arg| names_outside_assoc(arg, param))
+        }
+        TypeKind::Assoc(..) => false,
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
 /// Which of the first `len` type parameters `types` name. A type that did not resolve names
 /// nothing.
 pub(super) fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
@@ -1236,7 +1253,7 @@ impl Checker<'_> {
             callee,
             example,
             at,
-            in_result: named_params(iter::once(sig.ret), sig.declared.len())[param],
+            in_result: sig.ret.is_some_and(|ret| names_outside_assoc(ret, param)),
         });
     }
 

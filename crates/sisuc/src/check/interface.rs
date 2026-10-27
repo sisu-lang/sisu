@@ -725,7 +725,7 @@ impl Checker<'_> {
     fn not_an_interface(&mut self, ty: &ast::TypeExpr, kind: NotInterface) {
         self.report(DiagnosticKind::NotAnInterface {
             written: ty.to_string(),
-            at: ty.bare,
+            at: ty.span,
             kind,
         });
     }

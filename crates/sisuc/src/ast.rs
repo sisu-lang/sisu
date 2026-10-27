@@ -89,6 +89,8 @@ pub(crate) struct Interface {
 /// `extend<T> Target: Interface { type Item = i64; fn name(self) {} }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Extend {
+    /// The `extend` keyword.
+    pub(crate) keyword: Span,
     /// `<T, U>` after `extend`; empty when there are none.
     pub(crate) type_params: Vec<TypeParam>,
     /// `<` through `>` of `type_params`; empty, after `extend`, when there are none.

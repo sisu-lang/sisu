@@ -207,10 +207,7 @@ impl<'a> Checker<'_> {
         let named = named_params(std::iter::once(Some(target)), params.len());
         let written = extend.target.to_string();
         // The text from `extend` to the target, which the fix writes as one space.
-        let header = Span::new(
-            extend.span.start() + "extend".len(),
-            extend.target.span.start(),
-        );
+        let header = Span::new(extend.keyword.end(), extend.target.span.start());
         let mut unused = false;
         for (param, _) in params.iter().zip(&named).filter(|(_, named)| !**named) {
             let remove = (params.len() == 1 && !self.names_in_block(extend, param.name.name))

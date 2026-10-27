@@ -1185,10 +1185,16 @@ fn main() {
                 Code::UnknownType,
                 "Ord",
             ),
+            // An optional bound is reported through its `?`, which is the error.
             (
                 "fn f<T: [i64] ?>(x: T) {}\nfn main() {}\n",
                 Code::NotAnInterface,
-                "[i64]",
+                "[i64] ?",
+            ),
+            (
+                "fn f<T: [i64]\n?>(x: T) {}\nfn main() {}\n",
+                Code::NotAnInterface,
+                "[i64]\n?",
             ),
         ] {
             let diagnostics = front_end(src).1;
