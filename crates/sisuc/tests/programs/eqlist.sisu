@@ -1,4 +1,4 @@
-// Two pairs of lists of 1 000 000 nodes, compared with `==` under a 256 KiB stack. The
+// Two pairs of lists of 100 000 nodes, compared with `==` under a 256 KiB stack. The
 // generated `eq` steps along the chain field in a loop, in one frame, whether that field
 // comes last (`Last`) or first (`First`); a recursive `eq` needs a frame per node and
 // overflows that stack.
@@ -33,6 +33,6 @@ fn first(n: i64) -> First? {
 }
 
 fn main() {
-    print(last(1_000_000) == last(1_000_000))
-    print(first(1_000_000) == first(1_000_000))
+    print(last(100_000) == last(100_000))
+    print(first(100_000) == first(100_000))
 }

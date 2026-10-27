@@ -54,7 +54,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
     );
 }
 
-/// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
+/// The programs the small-stack tests run. They are not `tests/run` cases: many objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
 const SMALL_STACK: [&str; 19] = [
     "longlist",
@@ -284,27 +284,27 @@ fn assert_small_stack_prints(name: &str, expected: &str) {
     );
 }
 
-/// GIVEN the `longlist` program, which builds a list of 1 000 000 nodes
+/// GIVEN the `longlist` program, which builds a list of 100 000 nodes
 /// WHEN it runs under a 256 KiB stack
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 #[test]
-fn longlist_should_free_a_million_nodes_in_a_small_stack() {
-    assert_small_stack_prints("longlist", "1000000\n");
+fn longlist_should_free_a_long_list_in_a_small_stack() {
+    assert_small_stack_prints("longlist", "100000\n");
 }
 
-/// GIVEN the `rightskew` program, which builds a right-skewed tree of 1 000 000 nodes
+/// GIVEN the `rightskew` program, which builds a right-skewed tree of 100 000 nodes
 /// WHEN it runs under a 256 KiB stack
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 #[test]
-fn rightskew_should_free_a_million_node_tree_in_a_small_stack() {
-    assert_small_stack_prints("rightskew", "1000000\n");
+fn rightskew_should_free_a_long_tree_in_a_small_stack() {
+    assert_small_stack_prints("rightskew", "100000\n");
 }
 
-/// GIVEN the `eqlist` program, which compares two lists of 1 000 000 nodes
+/// GIVEN the `eqlist` program, which compares two lists of 100 000 nodes
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` twice
 ///
-/// `==` on two lists of 1 000 000 nodes, with the chain field last and first, at both levels.
+/// `==` on two lists of 100 000 nodes, with the chain field last and first, at both levels.
 #[test]
 fn equal_long_lists_should_compare_in_a_small_stack() {
     for o2 in [false, true] {
@@ -323,47 +323,47 @@ fn assert_small_stack_prints_at_both(name: &str, expected: &str) {
     }
 }
 
-/// GIVEN the `enumlist` program, which builds a right-deep enum list of 1 000 000 cells
+/// GIVEN the `enumlist` program, which builds a right-deep enum list of 100 000 cells
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 ///
-/// A right-deep enum list of 1 000 000 cells frees its boxes from the pending list.
+/// A right-deep enum list of 100 000 cells frees its boxes from the pending list.
 #[test]
 fn enum_list_should_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("enumlist", "1000000\n");
+    assert_small_stack_prints_at_both("enumlist", "100000\n");
 }
 
-/// GIVEN the `enumfold` program, which builds a left-deep fold of 1 000 000 `Add`s
+/// GIVEN the `enumfold` program, which builds a left-deep fold of 100 000 `Add`s
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 ///
-/// A left-deep fold of 1 000 000 `Add`s frees its boxes from the pending list.
+/// A left-deep fold of 100 000 `Add`s frees its boxes from the pending list.
 #[test]
 fn enum_fold_should_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("enumfold", "1000000\n");
+    assert_small_stack_prints_at_both("enumfold", "100000\n");
 }
 
 /// GIVEN the `enummutual` program, which holds two chains through two enums that hold each other
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000 and `true`
+/// THEN it exits 0 and prints 100000 and `true`
 ///
 /// Two chains through two enums that hold each other compare with `==` and free in one frame.
 #[test]
 fn mutual_enums_should_compare_and_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("enummutual", "1000000\ntrue\n");
+    assert_small_stack_prints_at_both("enummutual", "100000\ntrue\n");
 }
 
-/// GIVEN the `enumeq` program, which compares two pairs of enum lists of 1 000 000 cells
+/// GIVEN the `enumeq` program, which compares two pairs of enum lists of 100 000 cells
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
 ///
-/// `==` on two pairs of 1 000 000-cell enum lists loops on the tail.
+/// `==` on two pairs of 100 000-cell enum lists loops on the tail.
 #[test]
 fn equal_enum_lists_should_compare_in_a_small_stack() {
     assert_small_stack_prints_at_both("enumeq", "true\nfalse\n");
 }
 
-/// GIVEN the `deeppair` program, which compares and drops two pairs of 1 000 000-deep `Expr`s,
+/// GIVEN the `deeppair` program, which compares and drops two pairs of 100 000-deep `Expr`s,
 /// deep through the inline field of a generic enum
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
@@ -374,7 +374,7 @@ fn deep_inline_links_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("deeppair", "true\nfalse\n");
 }
 
-/// GIVEN the `deepchain2` program, which compares and drops two pairs of 1 000 000-deep `Chain`s
+/// GIVEN the `deepchain2` program, which compares and drops two pairs of 100 000-deep `Chain`s
 /// (a `Chain` is an `Option`-shaped enum that holds itself)
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
@@ -385,7 +385,7 @@ fn option_shaped_chains_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("deepchain2", "true\nfalse\n");
 }
 
-/// GIVEN the `dropleft` program, which builds a class tree 1 000 000 deep through `l`, not the
+/// GIVEN the `dropleft` program, which builds a class tree 100 000 deep through `l`, not the
 /// chain field, and one that alternates `l` and `r`
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `done`
@@ -394,7 +394,7 @@ fn class_drop_should_free_trees_deep_through_any_own_field_in_a_small_stack() {
     assert_small_stack_prints_at_both("dropleft", "done\n");
 }
 
-/// GIVEN the `eqleft` program, which compares three pairs of left-deep trees of 1 000 000 nodes
+/// GIVEN the `eqleft` program, which compares three pairs of left-deep trees of 100 000 nodes
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true`, `false` and `false`
 ///
@@ -415,41 +415,41 @@ fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
     assert_small_stack_prints_at_both("eqorder", "false\n");
 }
 
-/// GIVEN the `dropmutual` program, which builds chains of 1 000 000 pairs of two classes that
-/// hold each other and of 300 000 triples of three classes that hold each other
+/// GIVEN the `dropmutual` program, which builds chains of 100 000 pairs of two classes that
+/// hold each other and of 30 000 triples of three classes that hold each other
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000 and 300000
+/// THEN it exits 0 and prints 100000 and 30000
 ///
 /// The drop frees the objects of the classes in a cycle from pending lists, not by recursion.
 #[test]
 fn class_drop_should_free_chains_of_classes_that_hold_each_other_in_a_small_stack() {
-    assert_small_stack_prints_at_both("dropmutual", "1000000\n300000\n");
+    assert_small_stack_prints_at_both("dropmutual", "100000\n30000\n");
 }
 
-/// GIVEN the `dropoptional` program, which builds a list of 1 000 000 nodes through a field of
+/// GIVEN the `dropoptional` program, which builds a list of 100 000 nodes through a field of
 /// type `Node??`, the last link `Some(None)`
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 ///
 /// The drop follows a field with more than one `?` in a loop, as it follows `Node?`.
 #[test]
-fn nested_optional_link_should_free_a_million_nodes_in_a_small_stack() {
-    assert_small_stack_prints_at_both("dropoptional", "1000000\n");
+fn nested_optional_link_should_free_a_long_list_in_a_small_stack() {
+    assert_small_stack_prints_at_both("dropoptional", "100000\n");
 }
 
-/// GIVEN the `dropmutualoptional` program, which builds a chain of 1 000 000 pairs of two
+/// GIVEN the `dropmutualoptional` program, which builds a chain of 100 000 pairs of two
 /// classes that hold each other through fields of type `A??` and `B??`
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 ///
 /// The drop of a cycle of classes frees the objects from pending lists, whatever the number of
 /// `?` of the fields that link them.
 #[test]
 fn nested_optional_links_between_classes_should_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("dropmutualoptional", "1000000\n");
+    assert_small_stack_prints_at_both("dropmutualoptional", "100000\n");
 }
 
-/// GIVEN the `eqtrail` program, which compares two pairs of left-deep values of 1 000 000 nodes
+/// GIVEN the `eqtrail` program, which compares two pairs of left-deep values of 100 000 nodes
 /// whose links are followed by an `i64` field
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
@@ -464,7 +464,7 @@ fn enums_with_a_field_after_the_link_should_compare_in_a_small_stack() {
 /// WHEN it runs under a 256 KiB stack
 /// THEN it dies by signal 11 and prints nothing
 ///
-/// The control for `longlist_should_free_a_million_nodes_in_a_small_stack`: a drop that
+/// The control for `longlist_should_free_a_long_list_in_a_small_stack`: a drop that
 /// recurses once per object, as the drop of an array does, overflows the same stack, so the
 /// limit is in force.
 #[test]

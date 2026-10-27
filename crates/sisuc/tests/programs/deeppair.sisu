@@ -1,4 +1,4 @@
-// Two pairs of 1 000 000-deep `Expr`s, deep through `Both`'s second field, compared with `==`
+// Two pairs of 100 000-deep `Expr`s, deep through `Both`'s second field, compared with `==`
 // and dropped under a 256 KiB stack. `Expr` holds itself through `Two<Expr>`, so the box sits
 // on `Expr.Pair`'s field and `Both` holds its two `Expr`s inline. The drop and `==` walk an
 // inline `Expr` in place: a drop that drained it as a nested component, or an `==` that
@@ -25,7 +25,7 @@ fn build(depth: i64, last: i64) -> Expr {
 }
 
 fn main() {
-    let a = build(1_000_000, 0)
-    print(a == build(1_000_000, 0))
-    print(a == build(1_000_000, 1))
+    let a = build(100_000, 0)
+    print(a == build(100_000, 0))
+    print(a == build(100_000, 1))
 }

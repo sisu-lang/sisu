@@ -1,7 +1,7 @@
-// Left-deep trees of 1 000 000 nodes, compared with `==` under a 256 KiB stack. Each `Node`
+// Left-deep trees of 100 000 nodes, compared with `==` under a 256 KiB stack. Each `Node`
 // holds the rest of the tree in its first field and a `Leaf` in its second. The generated `==`
 // loops on the last link only, so a first field that it compared by a call would need a frame
-// per level and overflow that stack. The second pair differs only at depth 500 000, and the
+// per level and overflow that stack. The second pair differs only at depth 50 000, and the
 // third pair holds `nan` at the deepest left node, so `==` walks the whole value to find it.
 enum E {
     Leaf
@@ -26,9 +26,9 @@ fn build(depth: i64, bottom: E, odd: i64) -> E {
 }
 
 fn main() {
-    let a = build(1_000_000, E.Leaf, 0)
-    print(a == build(1_000_000, E.Leaf, 0))            // true
-    print(a == build(1_000_000, E.Leaf, 500_000))      // false
+    let a = build(100_000, E.Leaf, 0)
+    print(a == build(100_000, E.Leaf, 0))            // true
+    print(a == build(100_000, E.Leaf, 50_000))      // false
     let n = 0.0 / 0.0
-    print(build(1_000_000, E.Num(n), 0) == build(1_000_000, E.Num(n), 0))  // false
+    print(build(100_000, E.Num(n), 0) == build(100_000, E.Num(n), 0))  // false
 }

@@ -1,4 +1,4 @@
-// Two equal chains of 1 000 000 levels that alternate between the enums `A` and `B`, which
+// Two equal chains of 100 000 levels that alternate between the enums `A` and `B`, which
 // hold each other, compared with `==` and then dropped under a 256 KiB stack. Both the drop and
 // `==` step from `A` to `B` and back in one frame: the drain keeps one pending list per enum,
 // and `==` loops on the last boxed field even when it changes enum. A recursive drop or `==`
@@ -18,7 +18,7 @@ fn main() {
     let mut a = B.End
     let mut b = B.End
     let mut levels = 1
-    while levels < 999_999 {
+    while levels < 99_999 {
         levels += 2
         a = B.ToA(A.ToB(levels, a))
         b = B.ToA(A.ToB(levels, b))

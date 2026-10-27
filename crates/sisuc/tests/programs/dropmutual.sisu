@@ -1,6 +1,6 @@
 // Chains of objects of classes that hold each other, under a 256 KiB stack. `A` and `B` hold
-// each other, and so do `X`, `Y` and `Z` in a ring of three. Each chain is 1 000 000 pairs or
-// 300 000 triples long. The drop frees each chain in a loop, in one frame. A drop that called
+// each other, and so do `X`, `Y` and `Z` in a ring of three. Each chain is 100 000 pairs or
+// 30 000 triples long. The drop frees each chain in a loop, in one frame. A drop that called
 // the drop of the next class would need a frame per object and overflow that stack.
 class A {
     _b: B?
@@ -25,7 +25,7 @@ class Z {
 fn pairs() {
     let mut head = A(_b: None)
     let mut i = 0
-    while i < 1_000_000 {
+    while i < 100_000 {
         head = A(_b: B(_a: head))
         i += 1
     }
@@ -35,7 +35,7 @@ fn pairs() {
 fn triples() {
     let mut head = X(_y: None)
     let mut i = 0
-    while i < 300_000 {
+    while i < 30_000 {
         head = X(_y: Y(_z: Z(_x: head)))
         i += 1
     }

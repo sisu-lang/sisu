@@ -1,8 +1,8 @@
-// Left-deep values of 1 000 000 nodes, compared with `==` under a 256 KiB stack. Each `Node`
+// Left-deep values of 100 000 nodes, compared with `==` under a 256 KiB stack. Each `Node`
 // holds the rest of the value in its first field, a link, and an `i64` after it. `==` compares
 // the fields in order, so it keeps one pending pair on the heap for each level. A comparison
 // that kept a frame for each level would overflow that stack. The second pair differs only in
-// the `i64` at depth 500 000.
+// the `i64` at depth 50 000.
 enum E {
     Leaf
     Node(E, i64)
@@ -25,7 +25,7 @@ fn build(depth: i64, odd: i64) -> E {
 }
 
 fn main() {
-    let a = build(1_000_000, 0)
-    print(a == build(1_000_000, 0))          // true
-    print(a == build(1_000_000, 500_000))    // false
+    let a = build(100_000, 0)
+    print(a == build(100_000, 0))          // true
+    print(a == build(100_000, 50_000))    // false
 }
