@@ -1,0 +1,8 @@
+error[E0010]: unexpected character `&`
+ --> E0010-amp-operand.sisu:3:11
+  |
+3 |     print(&ok)
+  |           ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0010

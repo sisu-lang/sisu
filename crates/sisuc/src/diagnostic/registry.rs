@@ -65,7 +65,7 @@ codes! {
     UnexpectedClosingBracket = "E0007",
     DigitSeparator = "E0008",
     IntegerTooLarge = "E0009",
-    UnexpectedCharacter = "E0010",
+    UnexpectedCharacter | LogicalOperatorWritten = "E0010",
     Expected = "E0011",
     Var = "E0013",
     FieldComma = "E0015",
@@ -308,6 +308,9 @@ pub(crate) enum DiagnosticKind {
     DigitOutsideBase { digit: char, radix: u32, at: Span },
     /// The character `c` at `at`, which Sisu does not use.
     UnexpectedCharacter { c: char, at: Span },
+    /// The `&` or `|` `c` at `at`, between two operands: logical and and logical or are `&&` and
+    /// `||`.
+    LogicalOperatorWritten { c: char, at: Span },
     /// The token `found` at `at`, where `what` should stand.
     Expected {
         what: String,
@@ -1978,8 +1981,6 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnexpectedCharacter { c, at } => {
                 let d = Diagnostic::coded(code, at, format!("unexpected character {}", shown(c)));
                 match c {
-                    '&' => d.with_fix(unsafe_fix("if you meant logical and, use `&&`", at, "&&")),
-                    '|' => d.with_fix(unsafe_fix("if you meant logical or, use `||`", at, "||")),
                     '\u{FEFF}' if at.start() == 0 => d.with_fix(Fix {
                         message: "remove the byte order mark at the start of the file".to_string(),
                         safe: true,
@@ -1990,6 +1991,19 @@ impl From<DiagnosticKind> for Diagnostic {
                     }),
                     _ => d,
                 }
+            }
+            DiagnosticKind::LogicalOperatorWritten { c, at } => {
+                let d = Diagnostic::coded(code, at, format!("unexpected character {}", shown(c)));
+                let (word, operator) = if c == '&' {
+                    ("and", "&&")
+                } else {
+                    ("or", "||")
+                };
+                d.with_fix(unsafe_fix(
+                    &format!("if you meant logical {word}, use `{operator}`"),
+                    at,
+                    operator,
+                ))
             }
             DiagnosticKind::Expected { what, found, at } => {
                 Diagnostic::coded(code, at, format!("expected {what}, found {found}"))

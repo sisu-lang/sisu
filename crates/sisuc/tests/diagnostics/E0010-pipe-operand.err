@@ -3,11 +3,6 @@ error[E0010]: unexpected character `|`
   |
 2 |     let _ = |true
   |             ^
-  |
-help: if you meant logical or, use `||`
-  |
-2 |     let _ = ||true
-  |              +
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0010
