@@ -4,11 +4,12 @@ budget (--fail-changed): wall-clock time depends on the machine and its load.
 
 Usage: python3 slow_tests.py JUNIT.xml [--diff REF | --fail-changed REF]
 Prints nothing when the report is missing or every test is within budget, and one line when the
-report cannot be read. With --fail-changed, a report with no test also prints one line. Under GitHub Actions, each slow test is also a workflow warning. It exits 0,
-except with --fail-changed. With --diff, it lists only the slow tests whose name `git diff -U0 REF`
-mentions, the tests a change added or edited, and counts the rest: on a loaded machine the rest
-are noise. With --fail-changed, it exits 1 when a test that the diff to REF adds or edits takes more
-than FAIL_FACTOR times its budget. It then lists every slow test, as a warning.
+report cannot be read. With --fail-changed, a report with no test also prints one line. Under
+GitHub Actions, each slow test is also a workflow warning. It exits 0, except with --fail-changed.
+With --diff, it lists only the slow tests whose name `git diff -U0 REF` mentions, the tests a
+change added or edited, and counts the rest: on a loaded machine the rest are noise. With
+--fail-changed, it exits 1 when a test that the diff to REF adds or edits takes more than
+FAIL_FACTOR times its budget. It then lists every slow test, as a warning.
 """
 import argparse
 import os

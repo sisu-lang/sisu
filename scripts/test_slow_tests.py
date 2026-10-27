@@ -108,6 +108,7 @@ class FailChanged(unittest.TestCase):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         with open(os.path.join(root, st.CASES), encoding='utf-8') as file:
             harness = file.read().split('datatest_stable::harness!', 1)[-1]
+        self.assertGreater(harness.count('{ test ='), 0)
         self.assertEqual(len(st.CASE_ENTRY.findall(harness)), harness.count('{ test ='))
 
     def test_a_changed_test_over_twice_its_budget_should_fail(self):
