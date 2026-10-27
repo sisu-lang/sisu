@@ -1,0 +1,17 @@
+interface Convert<Y> {
+    fn convert(self) -> Y
+}
+
+interface Mix<T> {
+    fn mix<U: Convert<T>>(self, other: U) -> T
+}
+
+class Box<U> {
+    value: U
+}
+
+extend<U> Box<U>: Mix<U> {}
+
+fn main() {
+    print(1)
+}

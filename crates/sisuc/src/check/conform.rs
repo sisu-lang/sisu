@@ -328,7 +328,7 @@ impl Checker<'_> {
                 }
             };
             match found {
-                None => missing.push(self.required_text(p.interface, requirement)),
+                None => missing.push(self.required_text(p.source, p.interface, requirement)),
                 // Its own error is reported.
                 Some(Declared::Broken) => {}
                 Some(Declared::Known(f)) if self.meets(requirement, f, &base) => methods.push(f),
@@ -341,7 +341,7 @@ impl Checker<'_> {
                         form: ConformanceForm::Wrong {
                             method: name.to_string(),
                             found: self.source_text(sig.header).trim_end().to_string(),
-                            want: self.required_text(p.interface, requirement),
+                            want: self.required_text(p.source, p.interface, requirement),
                         },
                     });
                 }
@@ -676,20 +676,51 @@ impl Checker<'_> {
 
     /// The text of `requirement` as a block writes it for the conformance to `bound`: the
     /// interface's arguments stand where its parameters do, in the types of the signature and in
-    /// the bounds of the requirement's own type parameters, and `Self` stays.
-    fn required_text(&self, bound: Bound, requirement: &RequirementInfo) -> String {
+    /// the bounds of the requirement's own type parameters, and `Self` stays. A type parameter of
+    /// the requirement that has the name of a parameter of `source` or of a type that an argument
+    /// writes is renamed, as the argument would take its place.
+    fn required_text(&self, source: Source, bound: Bound, requirement: &RequirementInfo) -> String {
         let params = &self.interfaces[bound.interface.0].type_params;
         let mut with = vec![Type::intern(TypeKind::Param(params[0], 0))];
         with.extend_from_slice(bound.args.get());
-        for (i, &name) in (params.len()..).zip(&requirement.own) {
+        let words = |text: &str| -> Vec<String> {
+            let name = |c: char| c.is_alphanumeric() || c == '_';
+            text.split(|c| !name(c))
+                .filter(|word| !word.is_empty())
+                .map(str::to_string)
+                .collect()
+        };
+        let mut captured: FxHashSet<String> = (self.source_params(source).0.iter())
+            .map(ToString::to_string)
+            .collect();
+        for &arg in bound.args.get() {
+            captured.extend(words(&self.type_name(arg)));
+        }
+        // The names the help writes: a new name is none of them.
+        let mut taken = captured.clone();
+        taken.extend(words(self.source_text(requirement.span)));
+        let mut renamed: Vec<(Span, String)> = Vec::new();
+        for (i, (&name, &at)) in
+            (params.len()..).zip(requirement.own.iter().zip(&requirement.own_at))
+        {
             let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
-            with.push(Type::intern(TypeKind::Param(name, i)));
+            let mut new = name;
+            if captured.contains(name.as_str()) {
+                let fresh = (2..u32::MAX)
+                    .map(|k| format!("{name}{k}"))
+                    .find(|fresh| !taken.contains(fresh))
+                    .expect("a name should be free");
+                taken.insert(fresh.clone());
+                new = Symbol::intern(&fresh);
+                renamed.push((at, fresh));
+            }
+            with.push(Type::intern(TypeKind::Param(new, i)));
         }
         let written = (requirement.params_at.iter().copied())
             .zip(requirement.params.iter().copied())
             .chain(requirement.ret_at.into_iter().zip([requirement.ret]));
         // The places that change, in the order of the text: the bounds, then the signature.
-        let mut changed: Vec<(Span, String)> = Vec::new();
+        let mut changed = renamed;
         for b in requirement.bounds.iter().flatten() {
             let args = b.args.subst(&with);
             if args != b.args {

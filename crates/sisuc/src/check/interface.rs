@@ -58,6 +58,8 @@ pub(super) struct RequirementInfo {
     pub(super) span: Span,
     /// Its own type parameters.
     pub(super) own: Vec<Symbol>,
+    /// Where each of `own` is written.
+    pub(super) own_at: Vec<Span>,
     /// The bounds of each of `own`.
     pub(super) bounds: Vec<Vec<Bound>>,
     /// Without `self`; `None` is `Error`.
@@ -298,6 +300,11 @@ impl Checker<'_> {
                     name: requirement.name.clone(),
                     span: requirement.span,
                     own,
+                    own_at: requirement
+                        .type_params
+                        .iter()
+                        .map(|p| p.name.span)
+                        .collect(),
                     bounds,
                     params,
                     params_at: requirement.params.iter().map(|p| p.ty.span).collect(),

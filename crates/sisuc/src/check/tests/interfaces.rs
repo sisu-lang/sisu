@@ -655,6 +655,9 @@ fn conformances_should_check_clean() {
         "interface Back<T> {\n    fn back(self) -> T\n}\nclass Loop {\n    x: i64\n}\nextend Loop: Back<Self> {\n    fn back(self) -> Self { self }\n}\nfn main() {\n    print(Loop(x: 1).back().x)\n}",
         // An argument of a generic call waits for the other, with the method in a block.
         "class C {\n    x: i64\n}\nextend C {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { x }\nfn main() {\n    let c = C(x: 1)\n    print(take(c.make(), [1]).len())\n}",
+        // The method as the help for a missing one writes it: its own parameter has a new name,
+        // as the block's parameter `U` stands in the argument of `Mix`.
+        "interface Convert<Y> {\n    fn convert(self) -> Y\n}\nclass Box<U> {\n    value: U\n}\ninterface Mix<T> {\n    fn mix<U: Convert<T>>(self, other: U) -> T\n}\nextend<U> Box<U>: Mix<U> {\n    fn mix<U2: Convert<U>>(self, other: U2) -> U { other.convert() }\n}\nfn main() {}",
         // `Self` in the bound of a block's parameter is the block's target.
         "interface Pairs<X> {\n    fn pair(self) -> i64\n}\nclass Leaf {\n    n: i64\n}\nclass Crate<T> {\n    inner: T\n}\nextend Leaf: Pairs<Crate<Leaf>> {\n    fn pair(self) -> i64 { self.n }\n}\nextend<T: Pairs<Self>> Crate<T> {\n    fn with_self(self) -> i64 { self.inner.pair() }\n}\nfn main() {\n    print(Crate(inner: Leaf(n: 1)).with_self())\n}",
     ] {
