@@ -48,16 +48,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The pull request checks below diff against `git merge-base origin/main HEAD`.
+          fetch-depth: 0
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-nextest
       - uses: ./.github/actions/install-llvm
       - run: sudo apt-get update && sudo apt-get install --yes valgrind
-      - run: cargo nextest run --workspace --locked --profile ci
-      # Warns about tests over their time budget (CODING_STANDARDS.md, Tests); never fails.
-      - if: always()
+      - id: nextest
+        run: cargo nextest run --workspace --locked --profile ci
+      # The next two steps run when the test step ran, whatever its result. `always()` would also
+      # run them after a cancel and after a step before the tests failed.
+      # On a push, warns about tests over their time budget (CODING_STANDARDS.md, Tests).
+      - if: (success() || failure()) && steps.nextest.outcome != 'skipped' && github.event_name != 'pull_request'
         run: python3 scripts/slow_tests.py target/nextest/ci/junit.xml
+      # On a pull request, fails for a changed test that takes more than twice its budget.
+      # It also fails for a test name that the pre-commit hook would reject.
+      - if: (success() || failure()) && steps.nextest.outcome != 'skipped' && github.event_name == 'pull_request'
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          status=0
+          git diff --name-only --diff-filter=d "$base" -- '*.rs' | xargs --no-run-if-empty python3 scripts/test_names.py --diff "$base" || status=1
+          python3 scripts/slow_tests.py target/nextest/ci/junit.xml --fail-changed "$base" || status=1
+          exit "$status"
 
   # The same tests on an aarch64 host. It runs on main and by hand, not on every
   # pull request: a pull request can start it with workflow_dispatch on its branch.
