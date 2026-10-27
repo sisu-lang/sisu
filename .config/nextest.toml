@@ -70,10 +70,16 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 # rescan of every row or of the column, a `push` that walks a whole row, or a list of every row
 # that took a row's values is quadratic and hangs instead of failing: no step counter sees such a
 # new loop. Each runs in about 1 to 2 s on a developer machine, and its regression takes 26 s or
-# more, so the kill is at 12 s: more than 5 times the run and less than half of the regression.
+# more, so the kill is at 12 s: more than 5 times the run alone and less than half of the regression.
 [[profile.default.overrides]]
 filter = 'test(/^check::tests::patterns::(variants|literal_arms|long_or_row|takers)_should_check_in_linear_time$/)'
 slow-timeout = { period = "4s", terminate-after = 3 }
+
+# A CI runner is about twice as slow, and coverage makes a test slower, so the kill of the same four
+# tests is at 24 s: the same ratios as above.
+[[profile.ci.overrides]]
+filter = 'test(/^check::tests::patterns::(variants|literal_arms|long_or_row|takers)_should_check_in_linear_time$/)'
+slow-timeout = { period = "8s", terminate-after = 3 }
 
 # Without the all-wildcard row cut, coverage meets 2^40 distinct matrices, so this test hangs
 # instead of failing.
