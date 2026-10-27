@@ -70,6 +70,8 @@ Give every finding one ruling:
 - **Reject:** with a reason that cites the target, the code, or `CODING_STANDARDS.md`.
 - **Defer:** with where it goes: a later task, a roadmap entry, or a GitHub issue per `docs/agents/issue-tracker.md`.
 
+A diagnostic improvement (`CODING_STANDARDS.md`, Reviewing) is deferred without a fix round: add one line with its repro to the plan workspace's `diagnostic-issues.md`, or to `RUN/diagnostic-issues.md` outside a plan. After the pull request merges, run each repro again on `main` and file one issue per diagnostic code.
+
 Rules for ruling:
 
 1. Check a finding before you rule. Run its repro or read the source it cites. When the claim does not hold, reject it and say what you saw.
@@ -80,7 +82,7 @@ Rules for ruling:
 
 ### 5. Fix and review again
 
-Fix the accepted findings in the target. A fix to code keeps `make test`
+Fix the accepted findings in the target. Fix the class, not only the repro: for each finding, list the neighbouring cases (the same rule in each position the language allows it), try each one, and fix the cause so that all of them are right. A brief for a fix round asks for that list and its results. A fix to code keeps `make test`
 passing, and a fix that changes behavior adds a test that fails without
 it.
 
