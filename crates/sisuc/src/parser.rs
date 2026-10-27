@@ -246,36 +246,6 @@ fn starts_postfix(kind: &TokenKind) -> bool {
     )
 }
 
-/// Whether `kind` begins an operand that `unary` and `primary` take. A `_`, a leading `.` and
-/// the magnitude of `i64::MIN` start no operand: they are errors there, so a fix that writes an
-/// operator before them would swap one error for another.
-fn starts_operand(kind: &TokenKind) -> bool {
-    match kind {
-        TokenKind::Int(magnitude) => i64::try_from(*magnitude).is_ok(),
-        _ => matches!(
-            kind,
-            TokenKind::Float(_)
-                | TokenKind::Char(_)
-                | TokenKind::Str(_)
-                | TokenKind::StrHead(_)
-                | TokenKind::Ident(_)
-                | TokenKind::True
-                | TokenKind::False
-                | TokenKind::SelfKw
-                | TokenKind::NoneKw
-                | TokenKind::Todo
-                | TokenKind::LParen
-                | TokenKind::LBracket
-                | TokenKind::LBrace
-                | TokenKind::If
-                | TokenKind::Loop
-                | TokenKind::Match
-                | TokenKind::Minus
-                | TokenKind::Bang
-        ),
-    }
-}
-
 fn compare_op(kind: &TokenKind) -> Option<CompareOp> {
     Some(match kind {
         TokenKind::Lt => CompareOp::Lt,
@@ -2525,7 +2495,8 @@ impl<'a> Parser<'a> {
     }
 
     /// A lone `&` or `|` after a complete operand. Logical and and logical or are `&&` and
-    /// `||`, so the report offers them, but only when an operand follows: `a & )` is no `a && )`.
+    /// `||`, so the report offers them, but only when an operand follows: `a & )` is no `a && )`,
+    /// and `if a & {` is no `if a && {`, because that `{` opens the body.
     fn lone_infix(&self) -> Diagnostic {
         let at = self.peek().span;
         let c = if self.peek().kind == TokenKind::Amp {
@@ -2534,7 +2505,7 @@ impl<'a> Parser<'a> {
             '|'
         };
         // The `&` or `|` is not `Eof`, so the token after it exists.
-        if starts_operand(&self.tokens[self.pos + 1].kind) {
+        if self.tokens[self.pos + 1].kind.starts_operand() {
             DiagnosticKind::LogicalOperatorWritten { c, at }.into()
         } else {
             DiagnosticKind::UnexpectedCharacter { c, at }.into()
@@ -3380,7 +3351,13 @@ impl<'a> Parser<'a> {
                 .into());
             }
             TokenKind::Pipe => return Err(self.prefix_pipe()),
-            _ => return Err(self.expected("an expression")),
+            _ => {
+                debug_assert!(
+                    !token.kind.starts_operand(),
+                    "`starts_operand` should list only tokens that `primary` takes"
+                );
+                return Err(self.expected("an expression"));
+            }
         };
         Ok(Expr {
             kind,
@@ -5084,6 +5061,31 @@ mod tests {
             ("fn main() {\n    let a = 1\n    a &= 2\n}", (3, 7)),
             // A line start is no operator position: the line break ends the statement.
             ("fn main() {\n    let a = 1\n    & 2\n}", (3, 5)),
+            // The `{` after the `&` opens the body, so no operand follows the `&`.
+            (
+                "fn main() {\n    if a & {\n        print(1)\n    }\n}",
+                (2, 10),
+            ),
+            (
+                "fn main() {\n    while a & {\n        print(1)\n    }\n}",
+                (2, 13),
+            ),
+            (
+                "fn main() {\n    for x in [1] & {\n        print(x)\n    }\n}",
+                (2, 18),
+            ),
+            (
+                "fn main() {\n    match a & {\n        _ => 1\n    }\n}",
+                (2, 13),
+            ),
+            (
+                "fn main() {\n    if let x = a & {\n        print(x)\n    }\n}",
+                (2, 18),
+            ),
+            (
+                "fn main() {\n    if a {\n    } else if b & {\n    }\n}",
+                (3, 17),
+            ),
             // No operand follows the `&`.
             ("fn main() {\n    print(1 & )\n}", (2, 13)),
             ("fn main() {\n    let a = 1 &\n}", (2, 15)),

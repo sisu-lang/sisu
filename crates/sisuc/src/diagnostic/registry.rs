@@ -1994,16 +1994,11 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::LogicalOperatorWritten { c, at } => {
                 let d = Diagnostic::coded(code, at, format!("unexpected character {}", shown(c)));
-                let (word, operator) = if c == '&' {
-                    ("and", "&&")
-                } else {
-                    ("or", "||")
-                };
-                d.with_fix(unsafe_fix(
-                    &format!("if you meant logical {word}, use `{operator}`"),
-                    at,
-                    operator,
-                ))
+                d.with_fix(match c {
+                    '&' => unsafe_fix("if you meant logical and, use `&&`", at, "&&"),
+                    '|' => unsafe_fix("if you meant logical or, use `||`", at, "||"),
+                    _ => unreachable!("a logical operator should be `&` or `|`"),
+                })
             }
             DiagnosticKind::Expected { what, found, at } => {
                 Diagnostic::coded(code, at, format!("expected {what}, found {found}"))
