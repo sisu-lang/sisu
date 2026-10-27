@@ -686,26 +686,76 @@ struct Statement {
     annotation: Option<isize>,
     /// How many tokens it has read so far, so the reader can tell the third.
     tokens: usize,
-    /// Whether a header's type-parameter list is open. A `<` that is the third token, after
-    /// `fn`, `class`, `enum` or `interface` and a name, opens it, and so does the second token of
-    /// `extend<T>`. Its names, `,`s, and a bound's `:` and `&` keep it open, and so do a bound's
-    /// arguments: their `<` and `>`, `[ ]`, `?`, `Self` and `.`. Its own `>` or any other token
-    /// closes it. A bracket closes it before it is saved, so a statement given back at a `}`
-    /// never has it.
+    /// Whether a bound list is open: a header's type-parameter list, or the bounds of a
+    /// `type Item:`. A `<` that is the third token, after `fn`, `class`, `enum` or `interface` and
+    /// a name, opens the first, and so does the second token of `extend<T>`; the `:` that is the
+    /// third token of a statement that starts with `type` opens the second. Its names, `,`s, and
+    /// a bound's `:` and `&` keep it open, and so do a bound's arguments: their `<` and `>`,
+    /// `[ ]`, `?`, `Self` and `.`. A list's own `>` or any other token closes it. A bracket
+    /// closes it before it is saved, so a statement given back at a `}` never has it.
     params: bool,
     /// How many `<` of a bound's arguments are open inside the list.
     nested: usize,
+    /// Whether the parameter that the open list is at has its `:`, so a `&` is a bound's
+    /// separator. A `,` outside a bound's arguments starts the next parameter. A `type Item:`
+    /// has a list that its `:` opens.
+    bounded: bool,
     /// Where its first token stands among the tokens. A bracket other than `{` keeps the
     /// statement around it going, so it shares that statement's start.
     start: usize,
+    /// Whether it is inside a `( )`, `[ ]` or an interpolation of a statement, so a `}` in it is
+    /// no end of an item.
+    grouped: bool,
+}
+
+impl Statement {
+    /// Counts a token of `kind` into the bound list that is open, and whether the list was open
+    /// before it. A bound is a type, and the checker reports a bound that is no interface, so the
+    /// list also stays open through arrays, optionals, `Self` and member types.
+    fn keep_list_open(&mut self, kind: &TokenKind) -> bool {
+        use TokenKind::{Colon, Comma, Dot, Gt, Ident, LBracket, Lt, QuestionQuestion, RBracket};
+        let opened = self.params;
+        self.params = opened
+            && match kind {
+                Ident(_)
+                | Comma
+                | Colon
+                | TokenKind::Amp
+                | Lt
+                | LBracket
+                | RBracket
+                | Dot
+                | TokenKind::Question
+                | QuestionQuestion
+                | TokenKind::SelfType => true,
+                // The `>` that closes the list is not one of a bound's arguments.
+                Gt => self.nested > 0,
+                _ => false,
+            };
+        opened
+    }
+
+    /// Reads the `:` at `tokens[i]`: it starts the bounds of the parameter of an open list, or the
+    /// bounds of a `type Item:`, whose list it opens.
+    fn open_bounds(&mut self, tokens: &[Token], i: usize, in_list: bool) {
+        if in_list && self.nested == 0 {
+            self.bounded = true;
+        } else if self.tokens == 3
+            && matches!(tokens[i - 1].kind, TokenKind::Ident(_))
+            && tokens[self.start].kind == TokenKind::Reserved("type")
+        {
+            self.params = true;
+            self.bounded = true;
+        }
+    }
 }
 
 impl Statements {
     /// The innermost statement after reading the tokens before `end`.
     fn read(&mut self, tokens: &[Token], end: usize) -> Statement {
         use TokenKind::{
-            Arrow, Colon, Comma, Dot, Eq, Ge, Gt, Ident, LBrace, LBracket, LParen, Loop, Lt,
-            Newline, QuestionQuestion, RBrace, RBracket, RParen, Semicolon, StrHead, StrTail,
+            Arrow, Colon, Comma, Eq, Ge, Gt, Ident, LBrace, LBracket, LParen, Loop, Lt, Newline,
+            RBrace, RBracket, RParen, Semicolon, StrHead, StrTail,
         };
         for (i, t) in tokens.iter().enumerate().take(end).skip(self.read) {
             #[cfg(test)]
@@ -720,25 +770,7 @@ impl Statements {
                     | TokenKind::Extend
             )));
             s.tokens += 1;
-            s.params = s.params
-                && match t.kind {
-                    // A bound is a type, and the checker reports a bound that is no interface, so
-                    // the list also stays open through arrays, optionals, `Self` and member types.
-                    Ident(_)
-                    | Comma
-                    | Colon
-                    | TokenKind::Amp
-                    | Lt
-                    | LBracket
-                    | RBracket
-                    | Dot
-                    | TokenKind::Question
-                    | QuestionQuestion
-                    | TokenKind::SelfType => true,
-                    // The `>` that closes the list is not one of a bound's arguments.
-                    Gt => s.nested > 0,
-                    _ => false,
-                };
+            let opened_list = s.keep_list_open(&t.kind);
             match t.kind {
                 // A block's statements start at its `{`. Inside `( )`, `[ ]` or an interpolation
                 // the statement around it goes on, though no type annotation does.
@@ -749,11 +781,23 @@ impl Statements {
                     self.current = Statement {
                         header,
                         start,
+                        grouped: t.kind != LBrace,
                         ..Statement::default()
                     };
                 }
                 RBrace | RParen | RBracket | StrTail(_) => {
-                    self.current = self.enclosing.pop().unwrap_or_default();
+                    let around = self.enclosing.pop().unwrap_or_default();
+                    // The `}` that ends the body of a `fn`, `class`, `enum`, `interface` or
+                    // `extend` ends the item: the next item may start on the same line.
+                    self.current =
+                        if t.kind == RBrace && around.header == Some(true) && !around.grouped {
+                            Statement {
+                                start: i + 1,
+                                ..Statement::default()
+                            }
+                        } else {
+                            around
+                        };
                 }
                 Newline | Semicolon => {
                     *s = Statement {
@@ -761,9 +805,16 @@ impl Statements {
                         ..Statement::default()
                     };
                 }
-                Colon | Arrow => s.annotation = Some(0),
-                // A bound list keeps the list open through a `&`, so a `&` here is in no list.
-                TokenKind::Amp if !s.params => {
+                Colon | Arrow => {
+                    s.annotation = Some(0);
+                    if t.kind == Colon {
+                        s.open_bounds(tokens, i, opened_list);
+                    }
+                }
+                Comma if opened_list && s.nested == 0 => s.bounded = false,
+                // A `&` is a bound's separator after the `:` of its parameter, so a `&` anywhere
+                // else is in no list.
+                TokenKind::Amp if !(s.params && s.bounded) => {
                     self.stray.get_or_insert(i);
                 }
                 // A `>=` after a type annotation closes it and starts its value. So does a loop
@@ -793,6 +844,7 @@ impl Statements {
                                 TokenKind::Extend => s.tokens == 2,
                                 _ => false,
                             };
+                        s.bounded = false;
                     }
                 }
                 _ => {}
@@ -4082,6 +4134,41 @@ mod tests {
         assert_eq!(at(src, &fatal(src)), (Code::UnexpectedCharacter, 1, 1));
         let src = "& $]";
         assert_eq!(at(src, &fatal(src)), (Code::UnexpectedCharacter, 1, 1));
+    }
+
+    /// A `&` after the `:` of a bound is a separator wherever the list is: in the bounds of an
+    /// associated type, in a header that follows a `}` on the same line, and after a `,` that
+    /// starts the next parameter. A `&` in a list with no `:` before it, since the list opened or
+    /// the last `,`, is no separator.
+    #[test]
+    fn a_bracket_error_should_not_take_a_bound_separator_for_a_lone_ampersand() {
+        for (src, expected) in [
+            // The bounds of an associated type.
+            (
+                "interface A {}\ninterface B {}\ninterface I { type Item: A & B }\nfn main() { ] }",
+                (Code::UnexpectedClosingBracket, 4, 13),
+            ),
+            // A header that follows the `}` of an item.
+            (
+                "fn a() {} fn f<T: A & B>() ]",
+                (Code::UnexpectedClosingBracket, 1, 28),
+            ),
+            // The `&` of a second parameter, whose `:` comes after the first one's `,`.
+            (
+                "fn f<T: A & B, U: C & D>() ]",
+                (Code::UnexpectedClosingBracket, 1, 28),
+            ),
+            // No `:` before the `&`, in the first parameter and in a later one.
+            ("fn f<T & U>() ]", (Code::UnexpectedCharacter, 1, 8)),
+            ("fn f<T: A, U & B>() ]", (Code::UnexpectedCharacter, 1, 14)),
+            // A `:` of an earlier parameter does not reach the next.
+            (
+                "fn f<T: A & B, U & C>() ]",
+                (Code::UnexpectedCharacter, 1, 18),
+            ),
+        ] {
+            assert_eq!(at(src, &fatal(src)), expected, "{src}");
+        }
     }
 
     #[test]
