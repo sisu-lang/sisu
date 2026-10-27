@@ -1197,8 +1197,10 @@ impl Printer<'_> {
             ExprKind::Local(id) => self.local(f, *id),
             ExprKind::Call { func, types, args } => {
                 let callee = &self.program.functions[func.0];
-                let name = (callee.conformance.and(self.program.method_name(callee)))
-                    .map_or_else(|| callee.name.clone(), |(name, _)| name);
+                let name = (callee
+                    .conformance
+                    .and_then(|_| self.program.method_name(callee)))
+                .map_or_else(|| callee.name.clone(), |(name, _)| name);
                 let types = self.program.args_name(types.get());
                 self.list(f, format_args!("call {name}{types}"), args)
             }

@@ -1561,7 +1561,8 @@ fn the_checks_of_choices_should_read_each_conformance_and_choice_a_fixed_number_
             chosen.concat()
         )
     };
-    for shape in [&classes as &dyn Fn(usize) -> String, &blocks, &many] {
+    let classes: &dyn Fn(usize) -> String = &classes;
+    for shape in [classes, &blocks, &many] {
         let (small, large) = (steps(shape(32)), steps(shape(64)));
         assert!(small >= 32, "{small} reads for 32");
         assert!(large <= 2 * small, "{large} reads for 64, {small} for 32");
@@ -1698,8 +1699,9 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
             writers.join(", ")
         )
     };
+    let chain: &dyn Fn(usize) -> String = &chain;
     for (name, shape) in [
-        ("chain", &chain as &dyn Fn(usize) -> String),
+        ("chain", chain),
         ("repeated", &repeated),
         ("beside", &beside),
         ("within", &within),
@@ -1783,12 +1785,9 @@ fn a_bound_should_build_what_its_interface_declares_once_and_probe_a_type_once()
     };
     // The counters each shape is measured by: the declarations built, the types walked, and the
     // declarations the probes read.
+    let functions: &dyn Fn(usize) -> String = &functions;
     for (name, shape, counters) in [
-        (
-            "functions",
-            &functions as &dyn Fn(usize) -> String,
-            &[0][..],
-        ),
+        ("functions", functions, &[0][..]),
         ("calls", &calls, &[1, 2]),
         ("chain", &chain, &[1]),
     ] {
@@ -1858,11 +1857,8 @@ fn an_associated_type_should_be_found_by_its_name_without_reading_the_others() {
         assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
         LOOKUP_STEPS.get()
     };
-    for (name, shape) in [
-        ("names", &names as &dyn Fn(usize) -> String),
-        ("shared", &shared),
-        ("within", &within),
-    ] {
+    let names: &dyn Fn(usize) -> String = &names;
+    for (name, shape) in [("names", names), ("shared", &shared), ("within", &within)] {
         let (small, large) = (steps(shape(32)), steps(shape(64)));
         assert!(small >= 32, "{name}: {small} steps for 32");
         assert!(

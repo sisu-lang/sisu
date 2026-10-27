@@ -515,7 +515,7 @@ mod tests {
         let (t, u) = (param(0), param(0));
         let pair = |a, b| class(PAIR, &[a, b]);
         let circle = class(CIRCLE, &[]);
-        let rows: [Row; 25] = [
+        let rows: [Row<'_>; 25] = [
             // `extend<T> Box<T>: Convert<T>` and `extend<U> Box<U>: Convert<i64>`.
             (
                 &[boxed(t), t],
