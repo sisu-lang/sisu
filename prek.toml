@@ -78,7 +78,7 @@ types = ["rust"]
 id = "test-names"
 name = "test names say what should hold"
 language = "system"
-entry = "python3 scripts/test_names.py"
+entry = "python3 scripts/test_names.py --diff HEAD"
 types = ["rust"]
 
 # Runs on the message, not the files: `make setup` installs this stage's Git shim.
@@ -88,6 +88,15 @@ name = "commit message holds no session line"
 language = "system"
 entry = "python3 scripts/session_url.py"
 stages = ["commit-msg"]
+
+# A baseline line that names no test is a stale line, such as one left after a rename.
+[[repos.hooks]]
+id = "test-names-baseline"
+name = "the test-name baseline names only tests"
+language = "system"
+entry = "python3 scripts/test_names.py --baseline"
+files = '(^scripts/test_names_baseline\.txt|\.rs)$'
+pass_filenames = false
 
 [[repos.hooks]]
 id = "registry-no-debug-format"

@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 
+import git_fixture
 import slow_tests as st
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slow_tests.py')
@@ -41,25 +42,14 @@ class SlowTests(unittest.TestCase):
             self.assertEqual(st.in_diff(name, diff), mentioned, name)
 
     def test_with_diff_only_mentioned_tests_are_listed_and_the_rest_counted(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point git at this
-            # repository, and under CI GITHUB_ACTIONS adds a workflow warning line per slow test.
-            env = {key: value for key, value in os.environ.items()
-                   if not key.startswith('GIT_') and key != 'GITHUB_ACTIONS'}
-            git = lambda *args: subprocess.run(['git', '-C', tmp, *args], check=True, capture_output=True, env=env)
-            git('init', '-q')
-            source = os.path.join(tmp, 'a.rs')
-            with open(source, 'w', encoding='utf-8') as file:
-                file.write('fn slow() {}\n')
-            git('add', '.')
-            git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'a')
-            with open(source, 'w', encoding='utf-8') as file:
+        with git_fixture.repo({'a.rs': 'fn slow() {}\n'}) as tmp:
+            with open(os.path.join(tmp, 'a.rs'), 'w', encoding='utf-8') as file:
                 file.write('fn big() {}\nfn slow() {}\n')
             report = os.path.join(tmp, 'junit.xml')
             with open(report, 'w', encoding='utf-8') as file:
                 file.write(REPORT.replace('run::big.sisu', 'run::big'))
             run = subprocess.run([sys.executable, SCRIPT, report, '--diff', 'HEAD'],
-                                 capture_output=True, text=True, cwd=tmp, env=env)
+                                 capture_output=True, text=True, cwd=tmp, env=git_fixture.env())
         lines = run.stdout.splitlines()
         self.assertEqual(lines[0], "slow_tests: 1 other tests over budget are outside `git diff HEAD`")
         self.assertEqual([line.split()[-1] for line in lines[2:]], ["run::big"])
