@@ -15,7 +15,7 @@ pub(crate) struct Linking<'a> {
 }
 
 /// Links with `cc`'s default linker, or with `ld.<linker>` through `cc -fuse-ld=<linker>`.
-pub(crate) fn link(object: &Path, linking: &Linking) -> Result<(), String> {
+pub(crate) fn link(object: &Path, linking: &Linking<'_>) -> Result<(), String> {
     let Linking {
         runtime,
         output,

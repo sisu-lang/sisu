@@ -3162,11 +3162,13 @@ fn a_fill_counts_each_copy() {
 fn a_split_counts_what_its_parts_can_take() {
     // Of `n` chars, `chars` gives `n` chars, `bytes` up to `4 * n` bytes, `words` up to `n`
     // chars in `n + 1` words at most.
-    for (element, method, size_of) in [
-        (Ty::Char, "chars", (|n| n) as fn(u64) -> u64),
+    type Size = fn(u64) -> u64;
+    let splits: [(Ty, &str, Size); 3] = [
+        (Ty::Char, "chars", |n| n),
         (Ty::U8, "bytes", |n| 4 * n),
         (Ty::String, "words", |n| n + 1),
-    ] {
+    ];
+    for (element, method, size_of) in splits {
         let mut seen = 0;
         for (text, size, _) in written(&Ty::Array(Box::new(element.clone())), 100, 0) {
             let suffix = format!(").{method}())");
@@ -3623,7 +3625,7 @@ const E0: Ty = Ty::enumeration(0, 1);
 
 /// `K0`, a class of 9, and `E0`, which holds it, in each variant but the first two, and in
 /// `V1` itself.
-fn declare(g: &mut Gen) {
+fn declare(g: &mut Gen<'_>) {
     let class = Ty::class(0, 9);
     let field = |name: &str, ty, mutable, cap| Field {
         name: name.to_string(),
@@ -3897,7 +3899,7 @@ fn every_match_checks_without_an_unreachable_arm() {
 /// `main` of 4096 matches after `header`, whose types `declare` gives the generator, asserted
 /// to check clean: no arm overlaps one above it, and `_` or a name comes only where the arms
 /// leave a value unmatched (W0006 otherwise, and E0130 where it does not come but should).
-fn matches_check_clean(header: &str, declare: fn(&mut Gen)) -> String {
+fn matches_check_clean(header: &str, declare: fn(&mut Gen<'_>)) -> String {
     let mut program = format!("{header}\nfn main() {{\n");
     for mut state in 0..4_096 {
         let data: Vec<u8> = (0..8)

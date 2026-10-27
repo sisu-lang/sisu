@@ -101,7 +101,7 @@ impl Checker<'_> {
         let place = self.place(span, target, false);
         let Some(ty) = place.ty else {
             // Only its own mistakes are left to report.
-            let _ = self.expr(value, Some(UNKNOWN));
+            drop(self.expr(value, Some(UNKNOWN)));
             return Err(unit());
         };
         if ty == Type::CHAR {
@@ -248,7 +248,7 @@ impl Checker<'_> {
     fn char_compound(&mut self, op_span: Span, value: &ast::Expr) {
         self.report(DiagnosticKind::ArithmeticOnChar { at: op_span });
         // Only its diagnostics matter.
-        let _ = self.expr(value, Some(UNKNOWN));
+        drop(self.expr(value, Some(UNKNOWN)));
     }
 
     /// The constant `name` as the root of a place that `span` assigns, reported, if `name` names

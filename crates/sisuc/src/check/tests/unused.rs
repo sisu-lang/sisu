@@ -146,7 +146,7 @@ fn unused_value_fix() {
 #[test]
 fn unused_value_fix_should_drop_every_branch_of_the_statement() {
     type Warned<'a> = (usize, usize, &'a str);
-    let rows: &[(&str, &[Warned])] = &[
+    let rows: &[(&str, &[Warned<'_>])] = &[
         ("if c { 1 } else { 2 }", &[(10, 12, "1"), (10, 23, "2")]),
         // A loop body's tail is a root of its own, `discard_tail`.
         (

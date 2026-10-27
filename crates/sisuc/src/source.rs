@@ -17,13 +17,19 @@
 /// `MAX_SOURCE`, so the prelude adds nothing to these bounds.
 pub(crate) const MAX_SOURCE: usize = 1 << 30;
 
-const _: () = assert!(2 * MAX_SOURCE + 3 <= u32::MAX as usize);
+const _: () = assert!(
+    2 * MAX_SOURCE + 3 <= u32::MAX as usize,
+    "every offset of a source and its prelude should fit in a u32"
+);
 
 /// Where the prelude's offsets start: above every offset of a user's text (at most
 /// `2 * MAX_SOURCE + 3`), so that a span says by its offsets which text it indexes.
 pub(crate) const PRELUDE_BASE: u32 = 3 << 30;
 
-const _: () = assert!(PRELUDE_BASE as usize > 2 * MAX_SOURCE + 3);
+const _: () = assert!(
+    PRELUDE_BASE as usize > 2 * MAX_SOURCE + 3,
+    "the prelude offsets should start above every offset of a user source"
+);
 
 /// A byte range of the source. The offsets are stored as `u32`s, which `MAX_SOURCE` keeps
 /// them within; `new` is the one place that converts them.
@@ -33,7 +39,7 @@ pub(crate) struct Span {
     end: u32,
 }
 
-const _: () = assert!(size_of::<Span>() == 8);
+const _: () = assert!(size_of::<Span>() == 8, "a span should be 8 bytes");
 
 impl Span {
     pub(crate) fn new(start: usize, end: usize) -> Span {

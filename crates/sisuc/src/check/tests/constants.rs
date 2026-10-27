@@ -87,7 +87,7 @@ fn local_shadows_const() {
 type Row<'a> = (&'a str, &'a [(Code, (usize, usize))]);
 
 /// Asserts each row.
-fn rows(rows: &[Row]) {
+fn rows(rows: &[Row<'_>]) {
     for (src, expected) in rows {
         codes(&with_main(src), expected);
     }

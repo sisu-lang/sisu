@@ -216,7 +216,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             Storage::Tag(id) => {
                 let layout = self.enum_layout(id);
                 let ty = layout.ty.into_struct_type();
-                let fields: Vec<BasicValueEnum> =
+                let fields: Vec<BasicValueEnum<'_>> =
                     std::iter::once(layout.tag.const_int(empty, false).into())
                         .chain(
                             ty.get_field_types()
@@ -399,7 +399,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn lay_out_types(&mut self) {
         self.lay_out_enums();
         // Every class type exists before any body is set, so a field can name any class.
-        let types: Vec<StructType> = self
+        let types: Vec<StructType<'_>> = self
             .program
             .classes
             .iter()
@@ -437,7 +437,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The body of `class`, the count and then its fields, and the struct element of each
     /// declared field. Fields go largest alignment first, so that less padding sits between them.
     fn class_body(&self, class: &Class) -> (Vec<BasicTypeEnum<'ctx>>, Box<[u32]>) {
-        let fields: Vec<BasicTypeEnum> = class
+        let fields: Vec<BasicTypeEnum<'_>> = class
             .fields
             .iter()
             .map(|field| {

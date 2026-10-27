@@ -154,13 +154,18 @@ pub unsafe extern "C" fn sisu_pad(text: *mut u8, len: usize, width: usize, align
         1 => pad,
         _ => pad / 2,
     };
-    // SAFETY: the caller promises `len + width` writable bytes, and `len + pad` is no more. The
-    // text moves right by `left` within them, so the ranges overlap and `copy` handles that.
-    unsafe {
-        std::ptr::copy(text, text.add(left), len);
-        std::ptr::write_bytes(text, b' ', left);
-        std::ptr::write_bytes(text.add(left + len), b' ', pad - left);
-    }
+    // SAFETY: the caller promises `len + width` writable bytes, and `left + len` is at most
+    // `len + pad`, which is no more, so the offset stays inside them.
+    let moved = unsafe { text.add(left) };
+    // SAFETY: the text moves right by `left` within the writable bytes, so the ranges overlap
+    // and `copy` handles that.
+    unsafe { std::ptr::copy(text, moved, len) };
+    // SAFETY: `left` is at most `pad`, so the bytes before the moved text are writable.
+    unsafe { std::ptr::write_bytes(text, b' ', left) };
+    // SAFETY: the offset `left + len` is inside the writable bytes, as above.
+    let tail = unsafe { text.add(left + len) };
+    // SAFETY: `pad - left` bytes from `tail` end at `len + pad`, which is writable.
+    unsafe { std::ptr::write_bytes(tail, b' ', pad - left) };
     len + pad
 }
 
@@ -238,8 +243,10 @@ pub unsafe extern "C" fn sisu_utf8_decode(bytes: *const u8, len: usize, out: *mu
     let text = unsafe { utf8(bytes, len) };
     for (i, c) in text.chars().enumerate() {
         // SAFETY: the caller promises room for one `u32` per code point, and `i` is below
-        // their count.
-        unsafe { out.add(i).write(u32::from(c)) };
+        // their count, so the offset stays inside that room.
+        let slot = unsafe { out.add(i) };
+        // SAFETY: `slot` is one of those `u32`s, which are writable.
+        unsafe { slot.write(u32::from(c)) };
     }
 }
 
@@ -277,9 +284,12 @@ pub unsafe extern "C" fn sisu_utf8_encode(chars: *const u32, n: usize, out: *mut
     let mut written = 0;
     // SAFETY: the caller promises `n` readable `u32`s at `chars`.
     for c in unsafe { scalars(chars, n) } {
-        // SAFETY: the caller promises room for every encoded byte, and `written` plus this
-        // `char`'s bytes does not pass their total.
-        written += unsafe { write(c.encode_utf8(&mut [0; 4]).as_bytes(), out.add(written)) };
+        // SAFETY: the caller promises room for every encoded byte, and `written` does not
+        // pass their total, so the offset stays inside that room.
+        let at = unsafe { out.add(written) };
+        // SAFETY: `written` plus this `char`'s bytes does not pass the total, so the room at
+        // `at` holds them.
+        written += unsafe { write(c.encode_utf8(&mut [0; 4]).as_bytes(), at) };
     }
 }
 
@@ -363,8 +373,10 @@ pub unsafe extern "C" fn sisu_word_next(
     from: usize,
     start: *mut usize,
 ) -> usize {
-    // SAFETY: the caller promises `len` readable bytes of valid UTF-8 at `bytes`.
-    let text = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(bytes, len)) };
+    // SAFETY: the caller promises `len` readable bytes at `bytes`.
+    let raw = unsafe { std::slice::from_raw_parts(bytes, len) };
+    // SAFETY: the caller promises that those bytes are valid UTF-8.
+    let text = unsafe { std::str::from_utf8_unchecked(raw) };
     let first = run_end(text, from, true);
     // SAFETY: the caller promises `start` is writable.
     unsafe { start.write(first) };
@@ -423,13 +435,10 @@ pub unsafe extern "C" fn sisu_str_compare(
     b: *const u8,
     b_len: usize,
 ) -> i64 {
-    // SAFETY: the caller promises that both ranges are readable; neither pointer is null.
-    let (a, b) = unsafe {
-        (
-            std::slice::from_raw_parts(a, a_len),
-            std::slice::from_raw_parts(b, b_len),
-        )
-    };
+    // SAFETY: the caller promises that the range of `a` is readable; the pointer is not null.
+    let a = unsafe { std::slice::from_raw_parts(a, a_len) };
+    // SAFETY: the caller promises that the range of `b` is readable; the pointer is not null.
+    let b = unsafe { std::slice::from_raw_parts(b, b_len) };
     a.cmp(b) as i64
 }
 
@@ -570,12 +579,10 @@ mod tests {
     fn utf8_count_of_empty() {
         // SAFETY: no bytes are read, and a dangling pointer is the empty slice's.
         #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
-        let (count, len) = unsafe {
-            (
-                sisu_utf8_count(b"".as_ptr(), 0),
-                sisu_utf8_len([].as_ptr(), 0),
-            )
-        };
+        let count = unsafe { sisu_utf8_count(b"".as_ptr(), 0) };
+        // SAFETY: no scalar values are read, and a dangling pointer is the empty slice's.
+        #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
+        let len = unsafe { sisu_utf8_len([].as_ptr(), 0) };
         assert_eq!((count, len), (0, 0));
     }
 

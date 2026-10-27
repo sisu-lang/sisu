@@ -472,7 +472,7 @@ impl Checker<'_> {
     ) -> Option<(Vec<Checked>, TypeArgs, Option<Type>)> {
         let mark = self.body.ahead.len();
         // The context of the quiet value failed, as an `UNKNOWN` one did.
-        let expected = expected.or(self.quiet(span, expected).then_some(UNKNOWN));
+        let expected = expected.or_else(|| self.quiet(span, expected).then_some(UNKNOWN));
         let call = self.infer_call(span, sig, written, args, expected);
         // A key is kept again only once its last entry is used, so an earlier entry of a key
         // truncated here, if any, is used, and dropping the key loses nothing. A placeholder
@@ -590,7 +590,7 @@ impl Checker<'_> {
             // reports only its own mistakes, and uses what ranking kept for it.
             for (arg, slot) in iter::zip(args, &call.slots) {
                 if slot.is_none() {
-                    let _ = self.expr(&arg.value, Some(UNKNOWN));
+                    drop(self.expr(&arg.value, Some(UNKNOWN)));
                 }
             }
             return None;
@@ -869,7 +869,7 @@ impl Checker<'_> {
                 } else {
                     quiet = quiet || slots.iter().flatten().any(|c| type_of(c).is_none());
                     // Only its own diagnostics matter.
-                    let _ = self.value(e, quiet.then_some(UNKNOWN));
+                    drop(self.value(e, quiet.then_some(UNKNOWN)));
                     quiet = true;
                     Err(Poisoned::error())
                 };

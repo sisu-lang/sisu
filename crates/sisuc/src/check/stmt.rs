@@ -1147,7 +1147,7 @@ impl Checker<'_> {
         let hint = frame
             .expected
             .map(|ty| (ty, None))
-            .or(frame.first.map(|(ty, at)| (ty, Some(at))));
+            .or_else(|| frame.first.map(|(ty, at)| (ty, Some(at))));
         let from = hint
             .and_then(|(_, first)| first)
             .map(|first| (v.span, first));

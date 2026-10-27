@@ -23,6 +23,9 @@ unsafe_code = "deny" # the runtime opts out per item with a reason
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"
 unused_qualifications = "warn"
+elided_lifetimes_in_paths = "warn" # write `Checker<'_>`, so a signature shows each borrow
+let_underscore_drop = "warn" # `let _ = x` drops a value with a destructor at once
+trivial_casts = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -42,6 +45,13 @@ unimplemented = "warn"
 unwrap_used = "warn" # use `expect("why this cannot fail")`
 undocumented_unsafe_blocks = "warn"
 semicolon_if_nothing_returned = "warn"
+missing_assert_message = "warn"
+# Only the runtime has `unsafe`: one SAFETY comment for each unsafe operation.
+multiple_unsafe_ops_per_block = "warn"
+# Picks from the nursery group.
+needless_pass_by_ref_mut = "warn"
+or_fun_call = "warn"
+redundant_clone = "warn"
 
 [profile.dev]
 # The runtime is an rlib that the two staticlib crates link, and generated

@@ -146,7 +146,7 @@ impl Drop for Clear {
         CURRENT.set(None);
         // The panic hook may have removed it already, and a leftover temporary directory must
         // not turn a pass into a panic, or a panic into an abort.
-        let _ = fs::remove_dir_all(&self.0);
+        drop(fs::remove_dir_all(&self.0));
     }
 }
 
@@ -195,7 +195,7 @@ fn leave_record(current: &Current, info: &PanicHookInfo<'_>) {
     section(&mut record, "stdin", stdin.as_bytes());
     record.push_str(builds);
     // A hook must not panic, so a failed write is only reported.
-    let _ = io::stderr().write_all(record.as_bytes());
+    drop(io::stderr().write_all(record.as_bytes()));
     if let Some(dump) = std::env::var_os("SISU_FUZZ_DUMP") {
         let dump = Path::new(&dump);
         let failure = format!("{first}\n{builds}");
@@ -210,10 +210,14 @@ fn leave_record(current: &Current, info: &PanicHookInfo<'_>) {
             .try_for_each(|(name, text)| fs::write(dump.join(name), text))
         });
         if let Err(e) = written {
-            let _ = writeln!(io::stderr(), "cannot write {}: {e}", dump.display());
+            drop(writeln!(
+                io::stderr(),
+                "cannot write {}: {e}",
+                dump.display()
+            ));
         }
     }
-    let _ = fs::remove_dir_all(&current.dir);
+    drop(fs::remove_dir_all(&current.dir));
 }
 
 /// Appends `text` to `out` under the line `==> <name>`, ending in a line break.
@@ -556,7 +560,7 @@ mod tests {
 
     impl Drop for Scratch {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            drop(fs::remove_dir_all(&self.0));
         }
     }
 

@@ -1056,7 +1056,10 @@ impl ReceiverArgument {
                 replacement: open.to_string(),
             },
             Edit {
-                span: Span::new(self.at.end(), self.next.map_or(self.at.end(), Span::start)),
+                span: Span::new(
+                    self.at.end(),
+                    self.next.map_or_else(|| self.at.end(), Span::start),
+                ),
                 replacement: format!("{close}{access}"),
             },
         ]
@@ -1954,7 +1957,7 @@ impl From<DiagnosticKind> for Diagnostic {
                         edits: vec![
                             Edit {
                                 span: Span::new(operand.start(), operand.start()),
-                                replacement: through.map_or(format!("{to}("), |through| {
+                                replacement: through.map_or_else(|| format!("{to}("), |through| {
                                     format!("{to}({through}(")
                                 }),
                             },
@@ -2876,7 +2879,7 @@ impl From<DiagnosticKind> for Diagnostic {
                             Edit {
                                 span: Span::new(
                                     receiver.end(),
-                                    next.map_or(receiver.end(), Span::start),
+                                    next.map_or_else(|| receiver.end(), Span::start),
                                 ),
                                 replacement: format!("{close}.{name}("),
                             },

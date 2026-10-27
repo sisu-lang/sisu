@@ -173,6 +173,10 @@ impl Writer {
         expect(
             clippy::unused_self,
             reason = "only the tests record the rewrites made, in `self.made`"
+        ),
+        expect(
+            clippy::needless_pass_by_ref_mut,
+            reason = "only the tests push to `self.made`, which needs `&mut self`"
         )
     )]
     fn made(&mut self, rewrite: Rewrite) {

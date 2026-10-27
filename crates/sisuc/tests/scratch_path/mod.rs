@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 pub(crate) fn empty_dir(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     // It is absent on the first run, so a failure here is expected and harmless.
-    let _ = fs::remove_dir_all(&dir);
+    drop(fs::remove_dir_all(&dir));
     fs::create_dir(&dir).expect("creates the directory");
     dir
 }

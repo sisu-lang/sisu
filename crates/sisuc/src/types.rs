@@ -14,7 +14,7 @@ use crate::tir::{ClassId, EnumId};
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Type(u32);
 
-const _: () = assert!(size_of::<Type>() == 4);
+const _: () = assert!(size_of::<Type>() == 4, "a type should be 4 bytes");
 
 /// A type's structure, one level deep: a nested type is a `Type`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -333,7 +333,10 @@ const FIRST: usize = 64;
 /// Segments for every `u32` handle: together they hold `FIRST * (2^SEGMENTS - 1)` kinds.
 const SEGMENTS: usize = 27;
 
-const _: () = assert!(FIRST * ((1 << SEGMENTS) - 1) > u32::MAX as usize);
+const _: () = assert!(
+    FIRST * ((1 << SEGMENTS) - 1) > u32::MAX as usize,
+    "the segments should hold a kind for every u32 handle"
+);
 
 /// A type's kind, and what it names.
 type Entry = (TypeKind, Names);

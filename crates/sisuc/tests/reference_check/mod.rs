@@ -85,7 +85,7 @@ pub(crate) fn read_page(text: &str) -> Page {
         open: Open::Nothing,
     };
     // The code block being read: its start offset, its kind and its text so far.
-    let mut block: Option<(usize, CodeBlockKind, String)> = None;
+    let mut block: Option<(usize, CodeBlockKind<'_>, String)> = None;
     let mut events = Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter();
     for (event, range) in events.by_ref() {
         match event {
@@ -161,7 +161,7 @@ impl Reader {
         line: usize,
         at_column_0: bool,
         fence_line: &str,
-        kind: &CodeBlockKind,
+        kind: &CodeBlockKind<'_>,
         body: String,
     ) {
         let fault = match kind {

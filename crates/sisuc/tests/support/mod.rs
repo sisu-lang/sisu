@@ -188,7 +188,7 @@ fn output_with_stdin(command: &mut Command, stdin: &[u8]) -> Output {
     thread::scope(|scope| {
         // The pipe drops when the write ends, so the program sees the end of its input.
         let writer = scope.spawn(move || {
-            let _ = pipe.write_all(stdin);
+            drop(pipe.write_all(stdin));
         });
         let output = child.wait_with_output().expect("the program should run");
         writer.join().expect("the stdin writer should not panic");
@@ -493,7 +493,7 @@ pub(crate) fn case_dir(source: &Path) -> PathBuf {
         .join("cases")
         .join(inside);
     // It is absent on the first run, so a failure here is expected and harmless.
-    let _ = fs::remove_dir_all(&dir);
+    drop(fs::remove_dir_all(&dir));
     fs::create_dir_all(&dir).expect("creates the case directory");
     dir
 }

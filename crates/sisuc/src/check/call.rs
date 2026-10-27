@@ -111,10 +111,8 @@ impl Checker<'_> {
                     let next = rest.first().map(|arg| arg.value.span);
                     // The rewrite deletes the text before the receiver and between it and
                     // `next`, so a comment there makes it unsafe.
-                    let deleted = [
-                        callee.span.start()..first.value.span.start(),
-                        first.value.span.end()..next.map_or(first.value.span.end(), Span::start),
-                    ];
+                    let (lo, hi) = (first.value.span.start(), first.value.span.end());
+                    let deleted = [callee.span.start()..lo, hi..next.map_or(hi, Span::start)];
                     let takes = match idiom {
                         Idiom::Built => self.idiom_arguments(name, ty, rest),
                         Idiom::Method(func, owner) => {

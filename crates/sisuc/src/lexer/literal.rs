@@ -13,7 +13,7 @@ use crate::source::Span;
 pub(super) fn token(
     source: &str,
     start: usize,
-    chars: &mut Chars,
+    chars: &mut Chars<'_>,
     diagnostics: &mut Vec<Diagnostic>,
     tokens: &[Token],
 ) -> TokenKind {
@@ -61,7 +61,7 @@ impl fmt::Display for Float {
 fn number(
     source: &str,
     start: usize,
-    chars: &mut Chars,
+    chars: &mut Chars<'_>,
     after_dot: bool,
 ) -> Result<TokenKind, Diagnostic> {
     let prefix = if source[start..].starts_with('0') {
@@ -165,7 +165,7 @@ fn float_rest(
     source: &str,
     start: usize,
     end: usize,
-    chars: &mut Chars,
+    chars: &mut Chars<'_>,
 ) -> Result<Option<TokenKind>, Diagnostic> {
     let mut float_end = end;
     let mut fraction = None;
@@ -226,7 +226,11 @@ fn float_rest(
 /// The `char` literal that starts at the `'` at `source[start..]`, which `chars` has consumed.
 /// It reads on to the closing `'`, so that an error leaves the rest of the literal behind it, or
 /// to the line end when there is none. The first error is the one reported.
-fn char_literal(source: &str, start: usize, chars: &mut Chars) -> Result<TokenKind, Diagnostic> {
+fn char_literal(
+    source: &str,
+    start: usize,
+    chars: &mut Chars<'_>,
+) -> Result<TokenKind, Diagnostic> {
     let mut error = None;
     let mut points = String::new();
     let end = loop {
@@ -283,7 +287,7 @@ pub(super) enum End {
 /// up to the line end, which the caller reports. The first error is the one reported.
 pub(super) fn string_text(
     source: &str,
-    chars: &mut Chars,
+    chars: &mut Chars<'_>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> (String, End) {
     let mut error = None;
@@ -350,7 +354,7 @@ pub(super) fn not_closed(quote: usize, interpolation: bool, end_of_file: bool) -
 }
 
 /// Whether the line or the file ends at the next char of `chars`, where `\r\n` ends a line too.
-fn line_ends(source: &str, chars: &mut Chars) -> bool {
+fn line_ends(source: &str, chars: &mut Chars<'_>) -> bool {
     chars
         .peek()
         .is_none_or(|&(i, _)| source[i..].starts_with('\n') || source[i..].starts_with("\r\n"))
@@ -363,7 +367,7 @@ fn line_ends(source: &str, chars: &mut Chars) -> bool {
 pub(super) fn escape(
     source: &str,
     backslash: usize,
-    chars: &mut Chars,
+    chars: &mut Chars<'_>,
     literal: LiteralKind,
 ) -> Result<char, Diagnostic> {
     let Some((at, c)) = chars.next() else {
@@ -386,7 +390,11 @@ pub(super) fn escape(
 }
 
 /// The value of `\u{...}`, whose `\` stands at `backslash` and whose `u` `chars` has consumed.
-fn unicode_escape(source: &str, backslash: usize, chars: &mut Chars) -> Result<char, Diagnostic> {
+fn unicode_escape(
+    source: &str,
+    backslash: usize,
+    chars: &mut Chars<'_>,
+) -> Result<char, Diagnostic> {
     let malformed = |end| -> Diagnostic {
         DiagnosticKind::MalformedUnicodeEscape {
             at: Span::new(backslash, end),
