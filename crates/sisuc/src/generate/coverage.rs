@@ -281,6 +281,13 @@ fn checked(source: &str) -> (ast::Program, tir::Program) {
     (parser::parse(lexed, false).program, program)
 }
 
+/// The syntax tree of a program, which the other tests have checked: a test that reads only
+/// the tree does not check the program again.
+fn parsed(source: &str) -> ast::Program {
+    let lexed = lexer::lex(source).expect("a generated program should lex");
+    parser::parse(lexed, false).program
+}
+
 /// Everything the generated programs should hold between them.
 fn universe() -> FxHashSet<String> {
     let mut universe = FxHashSet::default();
@@ -2789,7 +2796,7 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
 fn generated_interfaces_should_reach_their_maxima() {
     let (mut most, mut requirements) = (0, 0);
     for data in seeds() {
-        let (program, _) = checked(&generate(&data).plain);
+        let program = parsed(&generate(&data).plain);
         let interfaces: Vec<&ast::Interface> = program
             .items
             .iter()
@@ -5583,7 +5590,7 @@ fn known_answers_are_integer() {
 fn generated_conformances_should_reach_every_form() {
     let mut forms = FxHashSet::default();
     for data in seeds() {
-        let (program, _) = checked(&generate(&data).plain);
+        let program = parsed(&generate(&data).plain);
         let classes: FxHashSet<String> = (program.items.iter())
             .filter_map(|item| match item {
                 ast::Item::Class(c) => Some(c.name.name.to_string()),
@@ -5862,7 +5869,8 @@ fn without_unused(source: &str) -> (String, usize) {
 }
 
 /// Deleting what W0012 names, all at once, from the programs of `seeds` leaves programs with no
-/// error: the warning never names code that another part still needs.
+/// error. This holds for what the generator writes. It does not hold for every program: a plain
+/// `extend` block with a bound, whose methods are all dead, still names the deleted interface.
 fn deleting_unused_should_leave_programs_that_check(seeds: impl Iterator<Item = Vec<u8>>) {
     let mut cut = 0;
     for data in seeds {
