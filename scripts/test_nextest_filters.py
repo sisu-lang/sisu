@@ -104,11 +104,31 @@ class NextestFilters(unittest.TestCase):
              "[[profile.default.overrides]]\nfilter = 'test(gone) | test(gone)'\n", [2]),
             ('a basic string and a script filter',
              '[[profile.default.overrides]]\nfilter = "test(gone)"\n[[profile.default.scripts]]\n' + gone, [2, 4]),
-            ('a key that ends in filter is no filter',
-             "[profile.default]\ndefault-filter = 'test(gone)'\n[[profile.default.overrides]]\n" + gone, [4])]
+            ('a default-filter that holds the leaf is reported where it stands',
+             "[profile.default]\ndefault-filter = 'test(gone)'\n[[profile.default.overrides]]\n" + gone, [2, 4]),
+            ('a quoted key',
+             '[[profile.default.overrides]]\n"filter" = \'test(gone)\'\n', [2]),
+            ('a literal string that ends in a quote',
+             "[[profile.default.overrides]]\nfilter = '''test(gone)''''\n", [2]),
+            ('a multi-line string with a line continuation',
+             '[[profile.default.overrides]]\nfilter = \"\"\"\\\n  binary(a) & \\\n  test(gone)\"\"\"\n', [4]),
+            ('an escape inside the leaf is not found in the text: line 1',
+             '[[profile.default.overrides]]\nfilter = "te\\u0073t(gone)"\n', [1]),
+            ('a leaf split by a continuation is not found in the text: line 1',
+             '[[profile.default.overrides]]\nfilter = \"\"\"te\\\n  st(gone)\"\"\"\n', [1]),
+            ('a thousand repeated leaves, one line each',
+             "[[profile.default.overrides]]\nfilter = '''\n" + 'test(gone) |\n' * 999 + "test(gone)'''\n",
+             list(range(3, 1003)))]
         for row, config, lines in rows:
             with self.subTest(row=row):
                 self.assertEqual(problems(config), [no_match(line, 'gone') for line in lines], row)
+
+    def test_a_leaf_should_mean_what_nextest_reads_in_the_parsed_value(self):
+        only_a = {'sisuc': {'testcases': {'a': {}}}}
+        escaped = '[[profile.default.overrides]]\nfilter = "test(\\u0061)"\n'
+        self.assertEqual(problems(escaped, only_a), [], 'an escape that spells a name that exists')
+        self.assertEqual(problems(escaped.replace('0061', '0062'), only_a), [no_match(1, 'b')],
+                         'an escape that spells a name that does not: line 1')
 
     def test_an_override_for_a_platform_should_not_be_checked(self):
         platform = "[[profile.default.overrides]]\nplatform = 'cfg(target_os = \"macos\")'\nfilter = 'test(gone)'\n"
