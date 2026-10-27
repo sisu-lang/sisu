@@ -1,10 +1,10 @@
 """Warns about the tests in a nextest JUnit report that ran over their time budget
-(CODING_STANDARDS.md, Tests). A warning, never a failure: wall-clock time depends on the machine
-and its load.
+(CODING_STANDARDS.md, Tests). A warning, not a failure, except for a changed test far over its
+budget (--fail-changed): wall-clock time depends on the machine and its load.
 
 Usage: python3 slow_tests.py JUNIT.xml [--diff REF | --fail-changed REF]
 Prints nothing when the report is missing or every test is within budget, and one line when the
-report cannot be read. Under GitHub Actions, each slow test is also a workflow warning. It exits 0,
+report cannot be read. With --fail-changed, a report with no test also prints one line. Under GitHub Actions, each slow test is also a workflow warning. It exits 0,
 except with --fail-changed. With --diff, it lists only the slow tests whose name `git diff -U0 REF`
 mentions, the tests a change added or edited, and counts the rest: on a loaded machine the rest
 are noise. With --fail-changed, it exits 1 when a test that the diff to REF adds or edits takes more
@@ -71,6 +71,10 @@ def locate(path: str, repo: str) -> tuple[str, str, str] | None:
     when the file is not in a target. A test in the file is named `<prefix><inline modules>::<fn>`
     in that binary.
 
+    shortcut: the pair holds only the function name, so two tests of one name in different inline
+    modules of one file both map to a change of either. No file has such a pair. Carry the inline
+    module path in `changed()` if one is added.
+
     shortcut: only `src/lib.rs`, `src/main.rs`, its modules and `tests/` files are known; a file
     under `src/bin/` gives None, so a slow test there only warns. Upgrade if such a target is added."""
     m = re.fullmatch(r'(.*?)/(src|tests)/(.*)\.rs', path)
@@ -82,7 +86,9 @@ def locate(path: str, repo: str) -> tuple[str, str, str] | None:
             manifest = tomllib.load(file)
     except FileNotFoundError:
         return None
-    package = manifest['package']['name']
+    package = manifest.get('package', {}).get('name')
+    if package is None:  # a workspace manifest
+        return None
     parts = rest.split('/')
     if kind == 'src':
         binary, root, modules = package, f'{crate}/src', parts

@@ -104,6 +104,12 @@ def fail_changed(files: dict[str, str], edits: dict[str, str], *tests: tuple[str
 
 
 class FailChanged(unittest.TestCase):
+    def test_the_case_entry_pattern_should_find_every_entry_of_the_real_harness(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, st.CASES), encoding='utf-8') as file:
+            harness = file.read().split('datatest_stable::harness!', 1)[-1]
+        self.assertEqual(len(st.CASE_ENTRY.findall(harness)), harness.count('{ test ='))
+
     def test_a_changed_test_over_twice_its_budget_should_fail(self):
         lib = 'crates/sisuc/src/parser.rs'
         run, failed = fail_changed({lib: rust('1;')}, {lib: rust('2;')}, ('sisuc', 'parser::tests::pattern_spans', 2.5))
@@ -113,13 +119,15 @@ class FailChanged(unittest.TestCase):
                       run.stdout)
 
     def test_the_slow_check_should_fail_only_for_a_changed_test(self):
+        """S5. Its fourth row, a report with no test, is test_a_report_with_no_test_should_print_one_note_and_pass."""
         lib = 'crates/sisuc/src/parser.rs'
         other = 'crates/sisuc/src/check.rs'
         files = {lib: rust('1;'), other: rust('1;')}
         for row, edits, seconds, expected in [
                 ('changed and over twice its budget', {lib: rust('2;')}, 2.5, 1),
                 ('changed and over its budget only', {lib: rust('2;')}, 1.5, 0),
-                ('unchanged and over twice its budget', {other: rust('2;')}, 2.5, 0)]:
+                ('unchanged, over twice its budget, and its name only in a comment of the diff',
+                 {other: rust('1;') + '// pattern_spans\n'}, 9, 0)]:
             run, failed = fail_changed(files, edits, ('sisuc', 'parser::tests::pattern_spans', seconds))
             self.assertEqual(run.returncode, expected, f'{row}: {run.stdout}')
             self.assertIn('parser::tests::pattern_spans', run.stdout, f'{row}: it is listed as slow')

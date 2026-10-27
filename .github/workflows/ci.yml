@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The pull request checks below diff against `git merge-base origin/main HEAD`.
+          # The pull request step below diffs against the merge base with the base branch.
           fetch-depth: 0
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
@@ -66,10 +66,14 @@ jobs:
       # On a pull request, fails for a changed test that takes more than twice its budget.
       # It also fails for a test name that the pre-commit hook would reject.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped' && github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          base=$(git merge-base origin/main HEAD)
+          set -o pipefail
+          # The base of the pull request, so a pull request on a stage branch skips the stage below.
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
           status=0
-          git diff --name-only --diff-filter=d "$base" -- '*.rs' | xargs --no-run-if-empty python3 scripts/test_names.py --diff "$base" || status=1
+          git -c core.quotepath=off diff -z --name-only --diff-filter=d "$base" -- '*.rs' | xargs -0 --no-run-if-empty python3 scripts/test_names.py --diff "$base" || status=1
           python3 scripts/slow_tests.py target/nextest/ci/junit.xml --fail-changed "$base" || status=1
           exit "$status"
 
