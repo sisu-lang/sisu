@@ -720,9 +720,6 @@ impl Statements {
                     | TokenKind::Extend
             )));
             s.tokens += 1;
-            if t.kind == TokenKind::Amp && !s.params && self.stray.is_none() {
-                self.stray = Some(i);
-            }
             s.params = s.params
                 && match t.kind {
                     // A bound is a type, and the checker reports a bound that is no interface, so
@@ -765,6 +762,10 @@ impl Statements {
                     };
                 }
                 Colon | Arrow => s.annotation = Some(0),
+                // A bound list keeps the list open through a `&`, so a `&` here is in no list.
+                TokenKind::Amp if !s.params => {
+                    self.stray.get_or_insert(i);
+                }
                 // A `>=` after a type annotation closes it and starts its value. So does a loop
                 // keyword: it follows a loop label's `:`, which is no annotation.
                 Eq | Ge | TokenKind::While | TokenKind::For | Loop => {

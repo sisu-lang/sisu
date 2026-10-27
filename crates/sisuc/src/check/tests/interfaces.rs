@@ -1691,8 +1691,9 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
 /// parameter's closure, which grows with the closure: a lookup reads the entries of the
 /// interfaces that declare the name, and no others. The steps are the entries indexed and the
 /// entries read. Those of 64 are at most twice those of 32 (and a few more), for one interface
-/// that declares `n` types, which `n` parameters of a function name; and for one parameter whose
-/// `n` bounds each write the type that the one before declares.
+/// that declares `n` types, which a function names through one parameter; for `n` interfaces that
+/// declare a type of one name, which a function names through a parameter of one of them; and for
+/// one parameter whose `n` bounds each write the type that the one before declares.
 #[test]
 fn an_associated_type_should_be_found_by_its_name_without_reading_the_others() {
     let names = |n: usize| {
@@ -1700,6 +1701,17 @@ fn an_associated_type_should_be_found_by_its_name_without_reading_the_others() {
         let params: Vec<String> = (0..n).map(|i| format!("x{i}: S.A{i}")).collect();
         format!(
             "interface Big {{\n{}}}\nfn f<S: Big>({}) {{}}\nfn main() {{}}",
+            declared.concat(),
+            params.join(", ")
+        )
+    };
+    let shared = |n: usize| {
+        let declared: Vec<String> = (0..n)
+            .map(|i| format!("interface G{i} {{\n    type Unit\n}}\n"))
+            .collect();
+        let params: Vec<String> = (0..n).map(|i| format!("x{i}: T.Unit")).collect();
+        format!(
+            "{}fn f<T: G0>({}) {{}}\nfn main() {{}}",
             declared.concat(),
             params.join(", ")
         )
@@ -1726,6 +1738,7 @@ fn an_associated_type_should_be_found_by_its_name_without_reading_the_others() {
     };
     for (name, shape) in [
         ("names", &names as &dyn Fn(usize) -> String),
+        ("shared", &shared),
         ("within", &within),
     ] {
         let (small, large) = (steps(shape(32)), steps(shape(64)));

@@ -238,30 +238,46 @@ impl Checker<'_> {
             });
             return None;
         }
-        self.index_closure(base_ty);
+        let closure = self.closure_len(base_ty);
         // A base whose bounds went past the limit is reported already, and unknown.
         if self.is_wide(base_ty) {
             return None;
         }
-        // The declarations in the order of the closure.
+        // The declarations in the order of the closure. The lookup reads the shorter of the closure
+        // and the interfaces that declare the name: the closure, entry by entry, or the entries of
+        // each such interface in an index that grows with the closure.
+        let declared = self.declaring_assoc.get(&name.name).map_or(0, Vec::len);
         let mut found = Vec::new();
-        let by_interface = self
-            .body
-            .named
-            .get(&base_ty)
-            .map(|index| &index.by_interface);
-        for &(interface, k) in self.declaring_assoc.get(&name.name).into_iter().flatten() {
-            for &(at, args) in by_interface
-                .and_then(|m| m.get(&interface))
-                .into_iter()
-                .flatten()
-            {
+        if closure <= declared {
+            for (at, &(interface, args)) in self.closure_entries(base_ty).iter().enumerate() {
                 #[cfg(test)]
                 super::LOOKUP_STEPS.set(super::LOOKUP_STEPS.get() + 1);
-                found.push((at, interface, args, k));
+                if let Some(&k) = self.assoc_at.get(&(interface, name.name)) {
+                    found.push((at, interface, args, k));
+                }
             }
+        } else {
+            self.index_closure(base_ty);
+            let by_interface = self
+                .body
+                .named
+                .get(&base_ty)
+                .map(|index| &index.by_interface);
+            for &(interface, k) in self.declaring_assoc.get(&name.name).into_iter().flatten() {
+                #[cfg(test)]
+                super::LOOKUP_STEPS.set(super::LOOKUP_STEPS.get() + 1);
+                for &(at, args) in by_interface
+                    .and_then(|m| m.get(&interface))
+                    .into_iter()
+                    .flatten()
+                {
+                    #[cfg(test)]
+                    super::LOOKUP_STEPS.set(super::LOOKUP_STEPS.get() + 1);
+                    found.push((at, interface, args, k));
+                }
+            }
+            found.sort_by_key(|&(at, ..)| at);
         }
-        found.sort_by_key(|&(at, ..)| at);
         let found: Vec<(InterfaceId, TypeArgs, usize)> = (found.into_iter())
             .map(|(_, interface, args, k)| (interface, args, k))
             .collect();
@@ -300,17 +316,30 @@ impl Checker<'_> {
         }
     }
 
-    /// Indexes by interface the entries of the closure of the type parameter or associated type
-    /// `ty` that are not indexed yet, after it has grown: the work follows the entries, not the
-    /// lookups.
+    /// How many interfaces the type parameter or associated type `ty` conforms to through its
+    /// bounds, which it finds first if the body has not asked yet.
+    fn closure_len(&mut self, ty: Type) -> usize {
+        match ty.kind() {
+            TypeKind::Param(_, place) => self.param_interfaces(place as usize).len(),
+            TypeKind::Assoc(..) => self.assoc_interfaces(ty).len(),
+            _ => unreachable!("only a type parameter or an associated type has bounds"),
+        }
+    }
+
+    /// The closure of `ty` that `closure_len` found.
+    fn closure_entries(&self, ty: Type) -> &[(InterfaceId, TypeArgs)] {
+        match ty.kind() {
+            TypeKind::Param(_, place) => (self.body.conforming[place as usize].as_deref())
+                .expect("the closure of a type parameter should be found by now"),
+            _ => &self.body.assoc_conforming[&ty],
+        }
+    }
+
+    /// Indexes by interface the entries of the closure of `ty` that are not indexed yet, after it
+    /// has grown: the work follows the entries, not the lookups.
     fn index_closure(&mut self, ty: Type) {
         let done = self.body.named.get(&ty).map_or(0, |index| index.done);
-        let entries = match ty.kind() {
-            TypeKind::Param(_, place) => self.param_interfaces(place as usize),
-            TypeKind::Assoc(..) => self.assoc_interfaces(ty),
-            _ => unreachable!("only a type parameter or an associated type has bounds"),
-        };
-        let new = entries[done..].to_vec();
+        let new = self.closure_entries(ty)[done..].to_vec();
         let index = self.body.named.entry(ty).or_default();
         for (at, (interface, args)) in (done..).zip(new) {
             #[cfg(test)]

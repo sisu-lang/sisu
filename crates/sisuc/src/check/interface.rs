@@ -201,6 +201,7 @@ impl Checker<'_> {
             .collect();
         for (k, assoc) in declared.iter().enumerate() {
             (self.declaring_assoc.entry(assoc.name.name).or_default()).push((id, k));
+            self.assoc_at.insert((id, assoc.name.name), k);
         }
         declared
     }

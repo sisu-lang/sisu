@@ -375,6 +375,8 @@ struct Checker<'src> {
     /// For each name of an associated type, the interfaces that declare one of it, with its place
     /// among theirs.
     declaring_assoc: FxHashMap<Symbol, Vec<(tir::InterfaceId, usize)>>,
+    /// The place of the associated type of a name among those of an interface, if it declares one.
+    assoc_at: FxHashMap<(tir::InterfaceId, Symbol), usize>,
     /// The bound checks of types resolved before every conformance is known; `None` once they
     /// run, and later types are checked as they are resolved.
     pending_bounds: Option<Vec<PendingBound>>,
@@ -878,6 +880,7 @@ impl<'src> Checker<'src> {
             meets: FxHashMap::default(),
             declaring: FxHashMap::default(),
             declaring_assoc: FxHashMap::default(),
+            assoc_at: FxHashMap::default(),
             pending_bounds: Some(Vec::new()),
             scopes: Vec::new(),
             wide_reported: FxHashSet::default(),
