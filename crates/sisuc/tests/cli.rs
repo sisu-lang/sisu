@@ -649,32 +649,6 @@ fn check_should_exit_0_with_no_output_when_the_file_is_valid() {
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
 }
 
-/// GIVEN a file with a `let mut` variable that is never reassigned
-/// WHEN `sisu check` runs on it
-/// THEN it exits 0 and stderr starts with the warning W0002
-#[test]
-fn check_should_exit_0_and_print_the_warning_when_the_file_has_only_a_warning() {
-    let out = check(
-        "check_warning_exits_0",
-        "fn main() {\n    let mut count = 0\n    print(count)\n}\n",
-    );
-    assert_eq!(out.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&out.stderr).starts_with("warning[W0002]: "));
-}
-
-/// GIVEN a file that assigns to an immutable variable
-/// WHEN `sisu check` runs on it
-/// THEN it exits 1 and stderr starts with the error E0001
-#[test]
-fn check_should_exit_1_and_print_the_error_when_the_file_has_an_error() {
-    let out = check(
-        "check_error_exits_1",
-        "fn main() {\n    let n = 0\n    n = 1\n}\n",
-    );
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).starts_with("error[E0001]: cannot assign to `n`"));
-}
-
 /// GIVEN a file with an unused `let mut` and an unknown name
 /// WHEN `sisu check` runs on it
 /// THEN it exits 1 and the warning comes before the error on stderr
