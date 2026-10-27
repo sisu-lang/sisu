@@ -20,10 +20,10 @@ CLOSE = re.compile(r"\}\s*(?://.*|/\*.*)?$")
 
 def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
     """(name, first line, last line), counted from 1, of each test that `test_names.tests()` finds.
-    The body starts at the `fn` line. A `fn` line that ends with `}`, a comment after it allowed,
-    is the whole body. Otherwise the body ends at the first later line that is `}` at the indent of
-    the `fn` line, a comment after it allowed, and before the next `fn`. So the bodies are in order
-    and do not overlap.
+    The body starts at the `fn` line. A `fn` line that ends with `}` is the whole body. Otherwise
+    the body ends at the first later `}` line at the indent of the `fn` line. A comment can follow
+    each `}`. The body ends before the next test's `fn` line. So the bodies are in order and do not
+    overlap.
 
     shortcut: a raw string that holds a `}` at the indent of its `fn` ends the body early, so a
     later change in that body is missed. Upgrade to a lexer if such a miss is ever seen. The miss
@@ -35,6 +35,7 @@ def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
         closing = re.compile(re.escape(text[: len(text) - len(text.lstrip())]) + CLOSE.pattern)
         stop = tests[i + 1][0] - 1 if i + 1 < len(tests) else len(lines)  # the line before the next `fn`
         last = first
+        # shortcut: a `fn` line that holds a closed inner block is a one-line body; rustfmt never writes that.
         if not CLOSE.search(text.rstrip()):
             last = next((n for n in range(first + 1, stop + 1) if closing.fullmatch(lines[n - 1].rstrip())),
                         max(stop, first))
@@ -75,8 +76,8 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
     """The (new path, test name) pairs whose body `git diff -U0 -M -l10000 REF` changes, for `.rs`
     files only. A deleted test is left out.
 
-    shortcut: a test that a macro writes (`fn $name`) or that libtest-mimic makes (`reference`) is
-    not found by `test_names.tests()`, so it is never a changed test and its slow check only warns.
+    shortcut: `test_names.tests()` does not find a test that a macro writes (`fn $name`) or that
+    libtest-mimic makes (`reference`). So it is never a changed test, and its slow check only warns.
     Map a changed macro row to its test if one of them is ever slow.
 
     shortcut: a path that git quotes (it holds a quote, a backslash or a control character) keeps

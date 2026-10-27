@@ -137,9 +137,9 @@ def case_files(test: str, repo: str) -> list[str]:
 
 
 def is_changed(test: str, files: set[str], pairs: set[tuple[str, str]], repo: str) -> tuple[str, int] | None:
-    """The (path, line) of the report entry `test`, if the diff changes it: its case file, which
-    starts at line 1, when that file or a file next to it with the same stem changed; or the `fn`
-    line of the test it maps to by its full name, when its body changed."""
+    """The (path, line) of the report entry `test`, or None when the diff does not change it.
+    A case changes when its file, or a file with the same stem, changes. It gives its path and line 1.
+    A test function changes when its body changes. It gives its `fn` line."""
     for case in case_files(test, repo):
         stem = os.path.splitext(case)[0]
         if any(os.path.splitext(f)[0] == stem for f in files):
@@ -159,8 +159,8 @@ def too_slow(tests: list[tuple[float, float, str]], ref: str, repo: str = '.'
     """Each test over FAIL_FACTOR times its budget that the diff to REF adds or edits, with its
     (path, line).
 
-    shortcut: a test that a macro writes or that libtest-mimic makes is never a changed test (see
-    `changed_tests.changed`), so it only warns."""
+    shortcut: a test that a macro writes or that libtest-mimic makes is never a changed test. It
+    only warns (see `changed_tests.changed`)."""
     limit = [test for test in tests if test[0] > FAIL_FACTOR * test[1]]
     if not limit:
         return []
