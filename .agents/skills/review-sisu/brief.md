@@ -58,7 +58,10 @@ languages do, not by what Sisu did before.
 6. **Tests.** Judge them with `test-audit`. Unit tests and end-to-end
    cases (`crates/sisuc/tests/run`, and the fixture of each diagnostic
    code) both prove the change. Each test fails when the contract its
-   name states breaks.
+   name states breaks. Check these too: a guard at the layer of its
+   regression; an input sized to its property; a keeper, or a reason,
+   for each deleted test; un-ticked mutations for counter proofs; one
+   rule for each table.
 7. **Diagnostics.** See the next section.
 8. **Claims.** Check every claim about LLVM, inkwell, a crate, a tool or
    the existing compiler against its source: the version in `Cargo.lock`,
