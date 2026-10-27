@@ -71,7 +71,13 @@ warns about each test over its time budget: 1 s for a unit test and 4 s for an
 end-to-end test, on a GitHub-hosted runner. CI runs it after the tests. The
 pre-commit hook runs it on the report of your last `make test` with
 `--diff HEAD`, so it lists only the slow tests your change names and counts the
-rest. It only warns.
+rest. The hook only warns. In CI on a pull request, `--fail-changed` fails when
+a test that the pull request adds or edits takes more than twice its budget.
+
+`make test-health` prints the counts and times of your last `make test`: the
+test count, the time of each test binary, the ten slowest tests and the number
+of tests over budget. CI shows it in the job summary. A milestone pull request
+quotes it before and after.
 
 Each target is one line in the `Makefile`, a script in `scripts/` or a cargo
 command. Run a script directly for the flags no target passes, such as
