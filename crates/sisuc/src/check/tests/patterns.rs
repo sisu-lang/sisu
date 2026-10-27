@@ -711,7 +711,7 @@ fn unreachable_rows(enums: &[tir::Enum], ty: Type, patterns: &[tir::Pattern]) ->
             guarded: false,
         })
         .collect();
-    let report = exhaust::check(enums, ty, &rows);
+    let report = exhaust::check(enums, &tir::Conformances::default(), ty, &rows);
     assert!(
         report.missing.is_none(),
         "the rows should cover every value"
