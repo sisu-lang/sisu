@@ -68,9 +68,14 @@ state = "works"
 notes = [["ADR 0024", "docs/adr/0024-optionals-nest.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
 
 [[area.feature]]
-text = "Interfaces"
+text = "Interfaces, bounds and conformance"
+state = "works"
+notes = [["ADR 0023", "docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md"], ["Roadmap: what works today", "docs/roadmap.md#what-works-today"]]
+
+[[area.feature]]
+text = "Interface values, <code>Display</code>, <code>Eq</code> and <code>Ord</code>"
 state = "planned"
-notes = [["ADR 0023", "docs/adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md"], ["Roadmap: proposed next steps", "docs/roadmap.md"]]
+notes = [["Roadmap: open decisions", "docs/roadmap.md#open-decisions"]]
 
 [[area.feature]]
 text = "Errors with <code>Result</code> and <code>?</code>"

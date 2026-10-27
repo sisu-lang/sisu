@@ -64,6 +64,22 @@ enums with `match`.
   its bounds, but no interface gives an operator yet, so it has none
   (`E0139`); `unit` and `never` are not type arguments (`E0138`); a use that
   would need copies without end is an error (`E0140`)
+- interfaces: `interface Shape { fn area(self) -> f64 }` lists method
+  signatures with no body, associated types (`type Item`), type parameters
+  and inherited interfaces (`interface Solid: Named`), and `Self` is the
+  conforming type. A class or an enum conforms in its declaration
+  (`class Circle: Shape`, with the methods in its body) or in an `extend`
+  block (`extend Celsius: Convert<Fahrenheit> { ... }`, one interface for each
+  block); `extend<T> Stack<T>` and `extend Stack<i64>` add methods to some
+  instantiations, and a plain `extend T { ... }` adds methods that follow no
+  interface. Generic code calls the methods of its bounds, and `S.Item` names
+  an associated type through a bound. A call through a bound is static: `mono`
+  replaces it with a call of the conformance's method. A type that does not
+  meet its conformance, a conformance twice, an interface used as a type and a
+  call that more than one conformance answers are errors (`E0146` to
+  `E0157`). There are no interface values (`any`), and no `Display`, `Eq` or
+  `Ord` yet
+  ([ADR 0023](adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md))
 - `match` on an enum, `i64`, `u8`, `bool`, `char` or `string`, as an
   expression or a statement, with one arm per line or a `;` between arms; a
   pattern is a variant, bare or through its enum (`Num(n)`, `Expr.Num(n)`),
@@ -615,7 +631,9 @@ The first candidates:
 - Done: `interp`, a small interpreter that parses program text into an enum
   tree, simplifies it and runs it, so string scanning, box reuse and `match`
   dispatch are measured together, as a real tool uses them.
-- 8: a generic container used at two types, and a call through an interface.
+- Done: `interfaces`, a generic function called through a bound at two
+  conforming classes, and an associated type read through a bound.
+- 8: a generic container used at two types.
 - 9: an iterator chain next to the same loop written by hand, with both
   printing the same result, so the cost of the chain shows.
 - 10: comparing and printing records. Two programs shape them: a request
