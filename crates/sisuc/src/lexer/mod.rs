@@ -658,7 +658,8 @@ struct Separator {
 
 /// The statements that the tokens read so far end in: one for each open bracket, innermost
 /// last, so a block that closes gives back the statement around it as it was. A `>` at a line's
-/// end, a `{` that starts a line, and a line break before a name, `,` or `>` ask about theirs.
+/// end, a `{` that starts a line, and a line break before a name, `,`, `:`, `&` or `>` ask about
+/// theirs.
 /// Only the tokens since the last question are read, so none scans back to its statement's
 /// start.
 ///
@@ -1186,7 +1187,7 @@ fn next_code(rest: &str) -> usize {
 
 /// The offset in `rest` of the code that continues the line break at the start of `rest`, past
 /// the gap `next_code` finds. `ends_statement` judged that line break. The code is a `.` or
-/// `?.`, or a name, `,` or `>` that goes on with a header's type-parameter list
+/// `?.`, or a name, `,`, `:`, `&` or `>` that goes on with a header's type-parameter list
 /// (`continues_params`). `None` if code of another kind follows.
 fn continues_line(rest: &str, tokens: &[Token], brackets: &mut Brackets) -> Option<usize> {
     let gap = next_code(rest);
@@ -1234,9 +1235,9 @@ fn ends_statement(tokens: &[Token], brackets: &mut Brackets) -> bool {
 }
 
 /// Whether `code`, after a line break, goes on with the header's type-parameter list open before
-/// it: `code` starts with a name, `,`, `>`, `]` or `?`. An open list ends in a name, or in the
-/// `>`, `]`, `?` or `Self` of a bound's arguments, so a line that ends in anything else, a `;`
-/// too, stops the check before it reads the word or the statement.
+/// it: `code` starts with a name, `,`, `:`, `&` (not `&&`), `>`, `]` or `?`. An open list ends in
+/// a name, or in the `>`, `]`, `?` or `Self` of a bound's arguments, so a line that ends in
+/// anything else, a `;` too, stops the check before it reads the word or the statement.
 fn continues_params(code: &str, tokens: &[Token], brackets: &mut Brackets) -> bool {
     if !matches!(
         tokens.last(),
@@ -1255,8 +1256,8 @@ fn continues_params(code: &str, tokens: &[Token], brackets: &mut Brackets) -> bo
     let word = &code[..code
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(code.len())];
-    let listed = code.starts_with(',')
-        || code.starts_with([']', '?'])
+    let listed = code.starts_with([',', ':', ']', '?'])
+        || code.starts_with('&') && !code.starts_with("&&")
         || code.starts_with('>') && !code.starts_with(">=")
         || word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
             && keyword(word).is_none();
@@ -4562,6 +4563,67 @@ mod tests {
         }
     }
 
+    /// A line that starts with `&` or `:` goes on with an open bound list, as a line that ends
+    /// with one does: the break leaves no more `Newline` than the same source on one line. The
+    /// breaks come after a name, after the `>` of a bound's arguments, after a `//` comment and a
+    /// blank line, and in every header and in a `type Item:` bound.
+    #[test]
+    fn a_line_start_ampersand_or_colon_should_go_on_with_a_bound_list() {
+        let newlines = |src: &str| {
+            all_kinds(src)
+                .iter()
+                .filter(|k| **k == TokenKind::Newline)
+                .count()
+        };
+        for (split, joined) in [
+            ("fn f<T: A\n    & B>(x: T) {}", "fn f<T: A & B>(x: T) {}"),
+            ("fn f<T\n    : A>(x: T) {}", "fn f<T: A>(x: T) {}"),
+            (
+                "fn f<T: A // c\n    & B>(x: T) {}",
+                "fn f<T: A & B>(x: T) {}",
+            ),
+            ("fn f<T: A\n\n    & B>(x: T) {}", "fn f<T: A & B>(x: T) {}"),
+            (
+                "fn f<T: G<A>\n    & B>(x: T) {}",
+                "fn f<T: G<A> & B>(x: T) {}",
+            ),
+            (
+                "fn f<T: A\n    & B\n    & C>(x: T) {}",
+                "fn f<T: A & B & C>(x: T) {}",
+            ),
+            ("class C<T: A\n    & B> {}", "class C<T: A & B> {}"),
+            ("interface I<T: A\n    & B> {}", "interface I<T: A & B> {}"),
+            ("extend<T: A\n    & B> K<T> {}", "extend<T: A & B> K<T> {}"),
+            (
+                "interface I {\n    type Item: A\n        & B\n}",
+                "interface I {\n    type Item: A & B\n}",
+            ),
+        ] {
+            assert_eq!(newlines(split), newlines(joined), "{split}");
+        }
+    }
+
+    /// A line that starts with `&&` is no bound separator, and `&` or `:` ends the statement
+    /// where no bound list is open: a line break before it keeps its `Newline`. The last case has
+    /// a `:` at the start of a line after the `type Item` that opens no list.
+    #[test]
+    fn a_line_start_ampersand_or_colon_should_end_the_statement_without_a_bound_list() {
+        for (src, start) in [
+            ("fn f<T: A\n    && B>(x: T) {}", TokenKind::AndAnd),
+            ("fn g() {\n    let a = 1\n    & 2\n}", TokenKind::Amp),
+            ("fn g() {\n    let a: i64\n    : 3\n}", TokenKind::Colon),
+            (
+                "interface I {\n    type Item\n        : A\n}",
+                TokenKind::Colon,
+            ),
+        ] {
+            let kinds = all_kinds(src);
+            let at = kinds.iter().rposition(|k| *k == start);
+            let before = at.and_then(|at| kinds.get(at.checked_sub(1)?));
+            assert_eq!(before, Some(&TokenKind::Newline), "{src}");
+        }
+    }
+
     /// A bound that is no interface keeps the list open too, so a line break before the `>` leaves
     /// no `Newline` and the checker reports the bound, as on one line.
     #[test]
@@ -4622,6 +4684,23 @@ mod tests {
     fn a_long_header_list_over_many_lines_should_be_judged_once_per_token() {
         let params: Vec<String> = (0..1000).map(|i| format!("T{i}")).collect();
         let src = format!("fn f<\n    {}\n>(x: T0) {{}}", params.join("\n    , "));
+        JUDGED.set(0);
+        let tokens = tokens(&src);
+        assert!(
+            tokens[..tokens.len() - 2]
+                .iter()
+                .all(|t| t.kind != TokenKind::Newline),
+            "the header should hold no `Newline`"
+        );
+        assert!(JUDGED.get() <= tokens.len(), "{} judged", JUDGED.get());
+    }
+
+    /// A bound list that goes on at the start of each line with `&`, so that each line break asks
+    /// about it. The 1000 lines are about 10x the size at which a scan back for each line shows.
+    #[test]
+    fn a_long_bound_list_over_many_lines_should_be_judged_once_per_token() {
+        let bounds: Vec<String> = (0..1000).map(|i| format!("I{i}")).collect();
+        let src = format!("fn f<T: {}>(x: T) {{}}", bounds.join("\n    & "));
         JUDGED.set(0);
         let tokens = tokens(&src);
         assert!(
