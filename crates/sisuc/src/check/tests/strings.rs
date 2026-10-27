@@ -185,7 +185,7 @@ type ConcatRow<'a> = (
     Option<&'a str>,
 );
 
-fn concat_rows(rows: &[ConcatRow]) {
+fn concat_rows(rows: &[ConcatRow<'_>]) {
     let params = "s: string, o: string?, c: char, n: i64, xs: [i64], p: P";
     for &(statement, pos, other, fixed) in rows {
         let src = with_items(&body(params, statement));
@@ -497,7 +497,7 @@ fn string_methods() {
     ] {
         let src = format!("fn main() {{\n    \"a\".{method}()\n}}");
         let d = diagnostic(&src, Code::NoMember, (2, 9, method), &[]);
-        let expected: Vec<FixAt> = fix
+        let expected: Vec<FixAt<'_>> = fix
             .map(|fix| (false, vec![(2, 9, method, fix.to_owned())]))
             .into_iter()
             .collect();

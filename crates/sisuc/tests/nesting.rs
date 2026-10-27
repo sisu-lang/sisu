@@ -218,12 +218,13 @@ fn compiles_at_the_limit(name: &str, program: fn(usize) -> Generated, limit: usi
     let build = sisu(dir, &["build", &format!("{name}.sisu"), "-o", &exe]);
     assert_eq!(
         (build.status.code(), String::from_utf8_lossy(&build.stderr)),
-        (Some(0), "".into())
+        (Some(0), "".into()),
+        "the build should succeed without output"
     );
     let run = Command::new(dir.join(&exe))
         .output()
         .expect("program starts");
-    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(run.status.code(), Some(0), "the program should exit 0");
 }
 
 /// One level past the limit: `check` exits 1 with the one message, at the failing token.
@@ -232,7 +233,7 @@ fn errors_past_the_limit(name: &str, program: fn(usize) -> Generated, limit: usi
     let Generated { source, fail } = program(limit + 1);
     fs::write(dir.join(format!("{name}.sisu")), &source).expect("writes");
     let out = sisu(dir, &["check", &format!("{name}.sisu")]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(1), "check should exit 1");
     let stderr = String::from_utf8_lossy(&out.stderr);
     let (line, col) = line_col(&source, fail);
     let mut lines = stderr.lines();

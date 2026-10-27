@@ -319,7 +319,7 @@ impl Gen<'_> {
         }
     }
 
-    fn compound_rules(&mut self, ty: &Ty, max: u64, synth: bool, rules: &mut Vec<Rule>) {
+    fn compound_rules(&self, ty: &Ty, max: u64, synth: bool, rules: &mut Vec<Rule>) {
         let own: &[Rule] = match ty {
             Ty::I64 => &[
                 Rule::Negate,

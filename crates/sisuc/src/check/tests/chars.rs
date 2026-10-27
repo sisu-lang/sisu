@@ -226,7 +226,7 @@ fn char_arithmetic_reports_once() {
 fn char_conversions() {
     let edit = |col, replaced, replacement: &str| (2, col, replaced, replacement.to_owned());
     // Where the conversion is reported, and its fix.
-    let rows: [(_, _, _, Vec<FixAt>); 6] = [
+    let rows: [(_, _, _, Vec<FixAt<'_>>); 6] = [
         (
             "print(char(c))",
             (Code::AlreadyConverted, (2, 16, "c")),

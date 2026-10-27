@@ -40,9 +40,17 @@ fn compile_to_tmp(dir: &Path, name: &str, o2: bool, flags: &[&str]) -> PathBuf {
 
 /// Checks that `out` is a panic: exit 101, `stdout`, and exactly the panic line on stderr.
 fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
-    assert_eq!(out.status.code(), Some(101));
-    assert_eq!(String::from_utf8_lossy(&out.stdout), stdout);
-    assert_eq!(String::from_utf8_lossy(&out.stderr), stderr);
+    assert_eq!(out.status.code(), Some(101), "the program should panic");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        stdout,
+        "stdout should match"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        stderr,
+        "stderr should match"
+    );
 }
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
@@ -268,7 +276,11 @@ fn assert_small_stack_prints(name: &str, expected: &str) {
         out.status,
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        expected,
+        "stdout should match"
+    );
 }
 
 /// GIVEN the `longlist` program, which builds a list of 1 000 000 nodes
@@ -469,7 +481,11 @@ fn deepchain_should_overflow_the_small_stack() {
 fn assert_small_stack_prints_at_o2(name: &str, expected: &str) {
     let out = run_in_small_stack_at(name, true);
     assert_eq!(out.status.code(), Some(0), "{:?}", out.status);
-    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        expected,
+        "stdout should match"
+    );
 }
 
 /// GIVEN the `tailfresh` program, with 100 000 tail calls that each pass a fresh string
@@ -1544,7 +1560,8 @@ fn build_loops(exe: &str, flags: &[&str], path: &OsStr) -> Vec<u8> {
     );
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
-        fs::read_to_string(Path::new(RUN).join("loops.out")).expect("reads the expected output")
+        fs::read_to_string(Path::new(RUN).join("loops.out")).expect("reads the expected output"),
+        "stdout should match loops.out"
     );
     fs::read(&exe).expect("reads the executable")
 }
@@ -1712,7 +1729,7 @@ fn build_tmp(name: &str, source: &str) -> (Output, PathBuf) {
     fs::write(dir.join(format!("{name}.sisu")), source).expect("writes");
     let exe = dir.join(name);
     // It is absent on the first run, so a failure here is expected and harmless.
-    let _ = fs::remove_file(&exe);
+    drop(fs::remove_file(&exe));
     let out = support::sisu(dir, &format!("{name}.sisu"), &exe, &[])
         .output()
         .expect("sisu starts");
@@ -1767,7 +1784,7 @@ fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
         .join("fixtures")
         .join(test);
     // It is absent on the first run, so a failure here is expected and harmless.
-    let _ = fs::remove_dir_all(&dir);
+    drop(fs::remove_dir_all(&dir));
     for (path, contents) in files {
         let path = dir.join(path);
         fs::create_dir_all(path.parent().expect("a fixture file should have a parent"))

@@ -993,7 +993,7 @@ fn takes(function: &Function, tree: &Tree) -> Result<(), Violation> {
         terminator(&block.term, false, &mut |local, _, at| {
             check(&taken, local, at, false, false);
         });
-        if let Some(local) = found.or(taken.first().map(|t| t.local)) {
+        if let Some(local) = found.or_else(|| taken.first().map(|t| t.local)) {
             return Err(Violation {
                 block: BlockId(b),
                 local,

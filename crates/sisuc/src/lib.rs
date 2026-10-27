@@ -661,7 +661,7 @@ mod tests {
 
         let dir = std::env::temp_dir().join(format!("sisu-create-object-{}", std::process::id()));
         // It is absent unless an earlier run failed, so a failure here is expected and harmless.
-        let _ = fs::remove_dir_all(&dir);
+        drop(fs::remove_dir_all(&dir));
         fs::create_dir(&dir).expect("creates the directory");
         let target = dir.join("target");
         fs::write(&target, "not sisu's").expect("writes");
@@ -687,7 +687,7 @@ mod tests {
 
         let dir = std::env::temp_dir().join(format!("sisu-object-mode-{}", std::process::id()));
         // It is absent unless an earlier run failed, so a failure here is expected and harmless.
-        let _ = fs::remove_dir_all(&dir);
+        drop(fs::remove_dir_all(&dir));
         fs::create_dir(&dir).expect("creates the directory");
         let object = create_object(&dir, b"object", ["private.o".to_string()]).expect("creates");
         let mode = fs::metadata(&object)

@@ -1746,7 +1746,7 @@ fn emit_ir_should_size_each_enum_by_its_variant_count_and_largest_payload() {
 #[test]
 fn build_and_run_should_report_a_missing_runtime_library_before_they_compile() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("missing_runtime");
-    let _ = fs::remove_dir_all(&dir);
+    drop(fs::remove_dir_all(&dir));
     fs::create_dir_all(&dir).expect("creates");
     let sisu = dir.join("sisu");
     fs::hard_link(env!("CARGO_BIN_EXE_sisu"), &sisu).expect("links");
@@ -1788,7 +1788,7 @@ fn build_and_run_should_report_a_missing_runtime_library_before_they_compile() {
 #[test]
 fn build_should_report_a_bad_output_path_before_it_compiles() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bad_output_path");
-    let _ = fs::remove_dir_all(&dir);
+    drop(fs::remove_dir_all(&dir));
     fs::create_dir_all(dir.join("outdir")).expect("creates");
     fs::write(dir.join("regular"), "").expect("writes");
     fs::write(dir.join("one.sisu"), "fn main() {\n    print(1)\n}\n").expect("writes");
@@ -1879,7 +1879,7 @@ fn build_should_accept_its_flags_in_any_order_before_or_after_the_file() {
     .filter(|args| cfg!(target_os = "linux") || !args.contains(&"--linker"))
     {
         // It is absent before the first build, so a failure here is expected and harmless.
-        let _ = fs::remove_file(dir.join("e"));
+        drop(fs::remove_file(dir.join("e")));
         sisu(args);
         let run = Command::new(dir.join("e"))
             .output()

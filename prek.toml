@@ -47,6 +47,16 @@ entry = "cargo clippy -p sisuc --features fuzz --lib --locked -- -D warnings"
 files = '(\.rs|Cargo\.toml|Cargo\.lock|clippy\.toml)$'
 pass_filenames = false
 
+# A dependency that no code uses, or one in the wrong table, such as a test-only crate in
+# [dependencies]. A removed `use` can leave one, so Rust changes re-run it too.
+[[repos.hooks]]
+id = "cargo-shear"
+name = "cargo shear (unused dependencies)"
+language = "system"
+entry = "cargo shear --deny-warnings"
+files = '(\.rs|Cargo\.toml)$'
+pass_filenames = false
+
 [[repos.hooks]]
 id = "expect-messages"
 name = "expect messages say should"

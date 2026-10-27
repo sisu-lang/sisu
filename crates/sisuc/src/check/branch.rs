@@ -157,7 +157,7 @@ impl Checker<'_> {
         let mut checked: Vec<Option<CheckedBlock>> = sources.iter().map(|_| None).collect();
         let mut anchor = None;
         for i in order {
-            let expected = expected.or(anchor.and_then(after_branch));
+            let expected = expected.or_else(|| anchor.and_then(after_branch));
             let outer = self.pass_quiet(span, sources[i].tail.map(|v| v.span), expected);
             let block = check(self, i, expected);
             self.body.quiet_at = outer;
@@ -237,7 +237,7 @@ impl Checker<'_> {
     /// is nor as its payload is the mistake; without one, `other` is, against `first_ty`. A
     /// branch with no value is that mistake, not a type mismatch.
     fn join_mismatch(
-        &mut self,
+        &self,
         sources: &[Branch<'_>],
         expected: Option<Type>,
         (first, first_ty): (usize, Type),

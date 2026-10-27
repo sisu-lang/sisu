@@ -450,7 +450,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             })
         };
         let function = self.runtime(name);
-        let values: Vec<BasicMetadataValueEnum> = args.iter().map(|&arg| arg.into()).collect();
+        let values: Vec<BasicMetadataValueEnum<'_>> = args.iter().map(|&arg| arg.into()).collect();
         let call = self
             .builder
             .build_call(function, &values, "written")

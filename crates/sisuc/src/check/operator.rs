@@ -646,7 +646,7 @@ impl Checker<'_> {
                     .push(DiagnosticKind::CoalesceNotOptional { at: lhs.span }.into());
             }
             // Only its own diagnostics matter.
-            let _ = self.fallback(rhs, UNKNOWN);
+            drop(self.fallback(rhs, UNKNOWN));
             return Err(Poisoned::error());
         };
         // `??` groups to the right, so a `None` that starts a right `??` has no type to take:
@@ -677,7 +677,7 @@ impl Checker<'_> {
                 tail = after;
             }
             // Only its own diagnostics matter.
-            let _ = self.fallback(tail, UNKNOWN);
+            drop(self.fallback(tail, UNKNOWN));
             return Err(Poisoned::error());
         }
         // The right side expects `P` for an optional `P`, else `P?`: a value converts through

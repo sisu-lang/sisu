@@ -117,7 +117,7 @@ impl Checker<'_> {
             for (i, e) in elements.iter().filter(|e| rank(e) == 2).enumerate() {
                 let expected = (i > 0 || failed || quiet).then_some(UNKNOWN);
                 // Only its own diagnostics matter.
-                let _ = self.value(e, expected);
+                drop(self.value(e, expected));
             }
             return Err(Poisoned::error());
         };
@@ -178,7 +178,7 @@ impl Checker<'_> {
         let element = expected_element(expected);
         // Without an element type, a `None` or `[]` cannot be inferred, unless `expected` is
         // `UNKNOWN` or the literal is the quiet value, which makes `value` quiet too.
-        let hint = element.or(expected.filter(|&ty| ty == UNKNOWN));
+        let hint = element.or_else(|| expected.filter(|&ty| ty == UNKNOWN));
         let outer = self.pass_quiet(span, Some(value.span), expected);
         // `operand`, split so the class rule runs between the check and the wrap.
         let checked = self.value(value, hint);

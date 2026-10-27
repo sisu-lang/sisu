@@ -362,7 +362,7 @@ pub(super) fn row(name: &str) -> &'static RuntimeFn {
 /// Declares `row`'s function in `module`, with its types and attributes.
 pub(super) fn declare<'ctx>(module: &Module<'ctx>, row: &RuntimeFn) -> FunctionValue<'ctx> {
     let context = module.get_context();
-    let params: Vec<BasicMetadataTypeEnum> = row
+    let params: Vec<BasicMetadataTypeEnum<'_>> = row
         .params
         .iter()
         .map(|abi| abi.llvm_type(context).into())
