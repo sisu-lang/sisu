@@ -710,7 +710,6 @@ crates/sisuc/src/codegen/tests.rs::len_reads_a_string_by_its_field_and_an_array_
 crates/sisuc/src/codegen/tests.rs::literal_allocates_header_and_elements
 crates/sisuc/src/codegen/tests.rs::main_flushes_stdout_before_the_exit_check_and_the_return
 crates/sisuc/src/codegen/tests.rs::make_unique_of_a_moved_array_faults
-crates/sisuc/src/codegen/tests.rs::many_panic_sites_compile_in_linear_time
 crates/sisuc/src/codegen/tests.rs::method_symbols
 crates/sisuc/src/codegen/tests.rs::methods_lower_to_intrinsics_and_libm
 crates/sisuc/src/codegen/tests.rs::move_stores_null_only_for_a_flag
@@ -720,7 +719,6 @@ crates/sisuc/src/codegen/tests.rs::only_a_compared_class_gets_an_eq_helper
 crates/sisuc/src/codegen/tests.rs::only_main_is_external
 crates/sisuc/src/codegen/tests.rs::optional_field_method_counts_nothing
 crates/sisuc/src/codegen/tests.rs::partition_makes_its_array_unique_once
-crates/sisuc/src/codegen/tests.rs::plain_build_has_no_rc_checks
 crates/sisuc/src/codegen/tests.rs::print_bool_passes_a_zero_extended_i1
 crates/sisuc/src/codegen/tests.rs::print_declarations_carry_attributes
 crates/sisuc/src/codegen/tests.rs::read_after_move_faults
@@ -741,14 +739,7 @@ crates/sisuc/src/codegen/tests.rs::take_apart_probes_linearly
 crates/sisuc/src/codegen/tests.rs::u8_add_uses_unsigned_overflow
 crates/sisuc/src/codegen/tests.rs::u8_compare_is_unsigned
 crates/sisuc/src/codegen/tests.rs::user_function_names_are_prefixed
-crates/sisuc/src/codegen/tests.rs::verifies_all_paths_return
-crates/sisuc/src/codegen/tests.rs::verifies_chain_and_short_circuit
-crates/sisuc/src/codegen/tests.rs::verifies_discarded_body_value
-crates/sisuc/src/codegen/tests.rs::verifies_early_return_in_main
-crates/sisuc/src/codegen/tests.rs::verifies_else_if_with_short_circuit_in_branch
-crates/sisuc/src/codegen/tests.rs::verifies_fib
 crates/sisuc/src/codegen/tests.rs::verifies_field_assignment_through_a_call
-crates/sisuc/src/codegen/tests.rs::verifies_loop_body_ending_in_return
 crates/sisuc/src/codegen/tests.rs::verifies_one_returning_branch
 crates/sisuc/src/codegen/tests.rs::words_declarations_carry_memory_effects
 crates/sisuc/src/codegen/tests.rs::words_releases_a_base_that_is_not_a_local

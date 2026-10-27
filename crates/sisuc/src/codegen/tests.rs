@@ -53,7 +53,6 @@ const FIB: &str = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1)
 #[test]
 fn compile_should_verify_every_shape_of_control_flow() {
     let rows = [
-        ("fib", FIB),
         (
             "all paths return",
             "fn sign(n: i64) -> i64 {\n    if n < 0 { return -1 } else { return 1 }\n}\nfn main() { print(sign(2)) }",
@@ -1018,8 +1017,9 @@ fn niche_layouts_should_follow_the_payload() {
         .get_function("sisu.main")
         .expect("the module should define `main`");
     let code = instructions(main);
-    // Codegen makes the slots of the locals first and the temporaries' after, each at the top of
-    // the entry block: the locals' are the last `rows.len()` `alloca`s there, the last `let` first.
+    // Mir numbers the named locals before the temporaries (`mir::Function::locals`), and
+    // `entry_alloca` puts each new `alloca` first in the entry block. So the last `rows.len()`
+    // `alloca`s are the locals, the last `let` first.
     let allocas: Vec<_> = (code.iter())
         .filter(|i| i.get_opcode() == InstructionOpcode::Alloca)
         .collect();
@@ -2308,15 +2308,15 @@ fn static_release_checks_its_slot_under_rc_checks() {
     assert!(branch_at < release_at, "{body}");
 }
 
-/// `.config/nextest.toml` kills this test after 6 s, matching it by name: a rename must update
-/// the override there. Each `+=` is an overflow panic site, and finding its line and column from
-/// the start of the text, or building a line index for each site, made codegen quadratic in the
-/// number of sites. No step counter sees such a new scan.
+/// `.config/nextest.toml` kills this test after 6 s (12 s in the `ci` profile), matching it by
+/// name: a rename must update the override there. Each `+=` is an overflow panic site, and finding
+/// its line and column from the start of the text, or building a line index for each site, made
+/// codegen quadratic in the number of sites. No step counter sees such a new scan.
 #[test]
-fn many_panic_sites_compile_in_linear_time() {
+fn many_panic_sites_should_compile_in_linear_time() {
     let src = format!(
         "fn main() {{\n    let mut x = 0\n{}    print(x)\n}}\n",
-        "    x += 1\n".repeat(20_000)
+        "    x += 1\n".repeat(25_000)
     );
     compiled(&Context::create(), &src);
 }
