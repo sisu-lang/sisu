@@ -963,10 +963,33 @@ fn a_plain_method_whose_bounds_fail_should_not_hide_an_applicable_conformance() 
     // The receiver meets the bound: the plain method is the type's own.
     assert_eq!(called_interface(&program("Flag", "Mark()")), None);
     // No conformance covers the receiver: the bound is reported at the call.
+    // The same call as the argument of a generic call: the plain method has no type parameter of
+    // its own, so only the conformance's makes the call wait for the other argument.
+    clean(
+        "interface Flag {}\ninterface Get2 {\n    fn get<U>(self) -> [U]\n}\nclass Box<T> {\n    value: T\n}\nclass Node {}\nextend<T: Flag> Box<T> {\n    fn get(self) -> i64 { 1 }\n}\nextend Box<Node>: Get2 {\n    fn get<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T {\n    x\n}\nfn main() {\n    let n = take(Box(value: Node()).get(), [1]).len()\n}",
+    );
     let src = program("Flag", "Mark()").replace("Box<Node>: Get", "Box<Mark>: Get");
     assert_eq!(called_interface(&src), None);
     let src = src.replace("Mark()).get()", "Node()).get()");
     codes(&src, &[(Code::NotConform, (17, 13))]);
+}
+
+/// A call of a method through a bound waits for the other arguments of the call it is an argument
+/// of, to find the type its own parameters stand for, as a call of a function does: when it takes
+/// no argument (`make()`), when it takes one that binds nothing (`make(1)`), and when two bounds
+/// have a method of the name and the others decide.
+#[test]
+fn a_call_through_a_bound_should_wait_for_the_arguments_that_bind_its_type() {
+    let decls = "interface Make {\n    fn make<U>(self) -> [U]\n}\ninterface MakeArg {\n    fn make_arg<U>(self, n: i64) -> [U]\n}\ninterface Text {\n    fn make(self) -> string\n}\ninterface List {\n    fn make(self) -> [i64]\n}\nenum Res<T, E> {\n    Good(T)\n    Bad(E)\n}\ninterface Mk {\n    fn mk<E>(self) -> Res<i64, E>\n}\nfn g<T>(r: Res<T, string>) -> i64 {\n    0\n}\nfn take<T>(x: T, y: T) -> T {\n    x\n}\n";
+    for body in [
+        "fn f<B: Make>(b: B) -> i64 {\n    take(b.make(), [1]).len()\n}",
+        "fn f<B: MakeArg>(b: B) -> i64 {\n    take(b.make_arg(1), [1]).len()\n}",
+        "fn f<B: List & Text>(b: B) -> i64 {\n    take(b.make(), \"s\").len()\n}",
+        // The parameter's type fixes the call's own `E`, while `T` is unbound.
+        "fn f<B: Mk>(b: B) -> i64 {\n    g(b.mk())\n}",
+    ] {
+        clean(&format!("{decls}{body}\nfn main() {{}}"));
+    }
 }
 
 /// `row`, and an empty `main` unless it has one.
@@ -3462,6 +3485,9 @@ fn associated_types_should_normalize_through_generic_code() {
         // Two bounds that inherit the one `Item` that `Source` declares, beside the bound of
         // `Source` itself: they are no declarations to wait for.
         "interface First<X>: Source {}\ninterface Second<X>: Source {}\nfn same<S: Source & First<S.Item> & Second<S.Item>>(_s: S) {}",
+        // Two types of one name through a parameter with two bounds, which a closure indexed once
+        // gives again at the second.
+        "interface A0 {\n    type N0\n}\ninterface A1 {\n    type N1\n}\nfn two<S: A0 & A1>(_x: S.N1, _y: S.N1, _z: S.N0) {}",
         // Three bounds of one parameter that give the one `Item` that `Base3<R.Item>` declares,
         // two of them by the interfaces that inherit it with the same argument.
         "interface Base3<Y> {\n    type Item\n}\ninterface First3<X, Y>: Base3<Y> {}\ninterface Second3<X, Y>: Base3<Y> {}\nfn diamond3<S: Base3<R.Item> & First3<S.Item, R.Item> & Second3<S.Item, R.Item>, R: Source>(_s: S, _r: R) {}",
@@ -3609,6 +3635,19 @@ fn associated_types_should_report_what_they_cannot_take() {
     }
 }
 
+/// A conformance that lacks a requirement whose signature holds a type that does not exist is
+/// reported once for the type and once for the conformance, which lists the requirement.
+#[test]
+fn a_requirement_with_an_unknown_type_should_be_listed_for_a_conformance_that_lacks_it() {
+    codes(
+        "interface Q {\n    fn f(self, x: Missing)\n}\nclass C: Q {}\nfn main() {}",
+        &[
+            (Code::UnknownType, (2, 19)),
+            (Code::ConformanceBody, (4, 10)),
+        ],
+    );
+}
+
 /// A conformance that lacks its choice, or whose choice failed, is reported once. A call or a
 /// constructor that takes the associated type of such a conformance fails after that report: no
 /// mismatch, no crash. The argument that names the associated type comes after, before and apart
@@ -3735,6 +3774,11 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
         (
             "interface Holds2<Y> {\n    type Item\n}\nfn f<S: Holds2<T.Item> & Holds2<S.Item> & Holds2<i64>, T: Source>(_s: S, _t: T) {}".to_string(),
             vec![(Code::Ambiguous, (4, 35))],
+        ),
+        // A bound that writes the wrong number of arguments is reported once, at its name.
+        (
+            "interface Holds2<Y> {\n    type Item\n}\nfn f<S: Holds2<S.Item, i64>>(_s: S) {}".to_string(),
+            vec![(Code::TypeArguments, (4, 15))],
         ),
         // Two bounds that write the type, and so wait for each other.
         (
@@ -3873,6 +3917,21 @@ fn an_associated_type_should_grow_a_cycle_by_what_its_choices_add() {
             "Chain<Chain<Chain<T>>>",
             vec![(Code::InstantiationCycle, (10, 9))],
         ),
+    ] {
+        let row = format!(
+            "{deep}extend<T: Deep> Chain<T>: Deep {{\n    type Item = {choice}\n    fn next(self) -> Item? {{ None }}\n}}"
+        );
+        codes(&with_sources(&row), &expected);
+    }
+}
+
+/// A block over a generic enum counts the nesting of its choices as a block over a class does.
+#[test]
+fn an_enum_target_should_grow_a_cycle_by_what_its_choices_add() {
+    let deep = "interface Deep {\n    type Item: Deep\n    fn next(self) -> Item?\n}\nenum Chain<T> {\n    One(T)\n}\nfn drain_all<S: Deep>(s: S) {\n    if let x = s.next() {\n        drain_all(x)\n    }\n}\n";
+    for (choice, expected) in [
+        ("Chain<Chain<T>>", vec![(Code::InstantiationCycle, (10, 9))]),
+        ("Chain<T>", vec![]),
     ] {
         let row = format!(
             "{deep}extend<T: Deep> Chain<T>: Deep {{\n    type Item = {choice}\n    fn next(self) -> Item? {{ None }}\n}}"

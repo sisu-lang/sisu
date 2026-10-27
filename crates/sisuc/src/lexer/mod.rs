@@ -4077,8 +4077,10 @@ mod tests {
             at(src, &fatal(src)),
             (Code::UnexpectedClosingBracket, 1, 22)
         );
-        // A skipped character comes first.
+        // A skipped character comes first, and the `&` when it comes first.
         let src = "$ &]";
+        assert_eq!(at(src, &fatal(src)), (Code::UnexpectedCharacter, 1, 1));
+        let src = "& $]";
         assert_eq!(at(src, &fatal(src)), (Code::UnexpectedCharacter, 1, 1));
     }
 
@@ -4087,6 +4089,11 @@ mod tests {
         let d = fatal("(}");
         assert_eq!(d.code(), Code::UnexpectedClosingBracket);
         assert_eq!(d.span(), Span::new(1, 2));
+    }
+
+    #[test]
+    fn a_lone_ampersand_should_describe_itself() {
+        assert_eq!(TokenKind::Amp.describe(), "`&`");
     }
 
     /// A bracket in a string is text.

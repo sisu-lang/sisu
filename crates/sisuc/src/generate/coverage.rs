@@ -5889,3 +5889,47 @@ fn the_walk_should_mark_what_associated_types_hold() {
     ));
     assert_eq!(kind_name(item), "Assoc");
 }
+
+/// The seeds between them write each type a requirement may name: the fixed ones, the interface's
+/// parameter, its associated type, and a class or an enum of the program.
+#[test]
+fn generated_requirements_should_name_every_kind_of_type() {
+    let mut kinds = FxHashSet::default();
+    for data in seeds() {
+        for line in generate(&data).plain.lines().map(str::trim) {
+            let Some(signature) = line.strip_prefix("fn r").filter(|_| !line.contains('{')) else {
+                continue;
+            };
+            let (params, ret) = signature.split_once("-> ").unwrap_or((signature, ""));
+            let params = params
+                .split(", ")
+                .skip(1)
+                .filter_map(|p| p.split(": ").nth(1));
+            for ty in params.chain([ret]).map(|ty| ty.trim_end_matches(')')) {
+                let kind = match ty {
+                    "" => continue,
+                    "i64" | "string" | "Self" | "[Self]" | "Self?" | "T" => ty,
+                    _ if ty.starts_with('A') => "an associated type",
+                    _ => "a class or an enum",
+                };
+                kinds.insert(kind.to_string());
+            }
+        }
+    }
+    let wanted = [
+        "i64",
+        "string",
+        "Self",
+        "[Self]",
+        "Self?",
+        "T",
+        "an associated type",
+        "a class or an enum",
+    ];
+    for kind in wanted {
+        assert!(
+            kinds.contains(kind),
+            "no requirement names {kind}: {kinds:?}"
+        );
+    }
+}

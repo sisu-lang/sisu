@@ -273,8 +273,12 @@ impl Checker<'_> {
         self.conforming_methods(ty, name.name);
         match self.candidates[..] {
             [] => {
+                // No conformance answers, and the bounds of the plain block fail for the receiver.
                 if let Some(func) = masked {
-                    return self.block_holds_at_call(func, ty, span);
+                    let at = (self.signatures[func.0].extension)
+                        .expect("a method whose block bounds fail should have a block");
+                    self.report_block_bound(at, ty, span);
+                    return None;
                 }
                 // A block covered the receiver, and its bounds fail: the type argument is wrong.
                 if let Some(at) = self.failed_block {
@@ -356,27 +360,6 @@ impl Checker<'_> {
         let stands = (self.covers(at, ty))
             .expect("the block of a method that a call found should cover the receiver");
         self.block_holds(at, stands)
-    }
-
-    /// The method `func`, which a plain block gives or the body, found for a receiver of type
-    /// `ty`: it, unless the bounds of its block fail for `ty`. They are reported at the call that
-    /// starts at `span`.
-    fn block_holds_at_call(
-        &mut self,
-        func: tir::FuncId,
-        ty: Type,
-        span: Span,
-    ) -> Option<tir::FuncId> {
-        let Some(at) = self.signatures[func.0].extension else {
-            return Some(func);
-        };
-        let stands = (self.covers(at, ty))
-            .expect("the block of a method that a call found should cover the receiver");
-        if self.block_holds(at, stands) {
-            return Some(func);
-        }
-        self.report_block_bound(at, ty, span);
-        None
     }
 
     /// The type `ret` that a candidate method returns on a receiver of type `ty`, in a call that

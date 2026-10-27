@@ -1,0 +1,12 @@
+interface Source {
+    type string
+}
+
+class Names: Source {
+    type string = string
+    mut n: i64
+}
+
+fn main() {
+    print(Names(n: 0).n)
+}
