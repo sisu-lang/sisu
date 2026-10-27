@@ -652,116 +652,113 @@ fn unreachable_arms() {
     );
 }
 
-/// The solver's steps to check `src`, whose diagnostics are exactly `expected`, and the intervals
-/// it puts range rows in.
-fn coverage_steps(src: &str, expected: &[(Code, (usize, usize))]) -> (usize, usize) {
+/// The solver's steps to check `src`, whose diagnostics are exactly `expected`.
+fn coverage_steps(src: &str, expected: &[(Code, (usize, usize))]) -> usize {
     exhaust::STEPS.set(0);
-    exhaust::INTERVAL_STEPS.set(0);
     codes(src, expected);
-    (exhaust::STEPS.get(), exhaust::INTERVAL_STEPS.get())
+    exhaust::STEPS.get()
 }
 
-/// A `match` on an enum of `n` variants has an arm for each. Specializing the column once per
-/// variant over every row, or checking each arm against the arms before it, reads `n` rows `n`
-/// times.
+/// The kill override for this test is in `.config/nextest.toml`: a `match` on an enum of 100,000
+/// variants, with an arm for each. Finding a variant's bucket by a search of the buckets, or
+/// specializing the column once per variant over every row, is quadratic and hangs. A counter
+/// cannot see these: the search is a new loop, not a step the solver counts. The current code
+/// takes 0.7 s. The search of the buckets takes 12 s, and the scan of every row for each bucket
+/// more than 100 s.
 #[test]
 fn variants_should_check_in_linear_time() {
-    let steps = |n: usize| {
-        let variants = (0..n)
-            .map(|i| format!("    V{i}\n"))
-            .collect::<Vec<_>>()
-            .concat();
-        let arms = (0..n)
-            .map(|i| format!("        V{i} => {i}\n"))
-            .collect::<Vec<_>>()
-            .concat();
-        coverage_steps(&format!(
-            "enum E {{\n{variants}}}\nfn f(e: E) -> i64 {{\n    match e {{\n{arms}    }}\n}}\nfn main() {{}}"
-        ), &[])
-        .0
-    };
-    assert_near_linear(steps(100), steps(200), steps(300));
+    const VARIANTS: usize = 100_000;
+    let variants = (0..VARIANTS)
+        .map(|i| format!("    V{i}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let arms = (0..VARIANTS)
+        .map(|i| format!("        V{i} => {i}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    clean(&format!(
+        "enum E {{\n{variants}}}\nfn f(e: E) -> i64 {{\n    match e {{\n{arms}    }}\n}}\nfn main() {{}}"
+    ));
 }
 
-/// A column of `n` literals has `2n + 1` intervals. A split that rescans the column per interval,
-/// or per row, reads `n` rows `2n` intervals each.
+/// The kill override for this test is in `.config/nextest.toml`: a `match` on 90,000 literals. A
+/// split that rescans the column for each row, or finds a row's first interval by a search from
+/// the start, is quadratic in the literals and hangs. A counter cannot see these, as for
+/// `variants_should_check_in_linear_time`. The current code takes 0.5 s. The search from the
+/// start takes 8.6 s, and the rescan of the whole column 36 s.
 #[test]
 fn literal_arms_should_check_in_linear_time() {
-    let steps = |n: usize| {
-        let arms = (0..n)
-            .map(|i| format!("        {i} => {i}\n"))
-            .collect::<Vec<_>>()
-            .concat();
-        let (rows, intervals) = coverage_steps(
-            &format!(
-                "fn f(n: i64) -> i64 {{\n    match n {{\n{arms}        _ => 0\n    }}\n}}\nfn main() {{}}"
-            ),
-            &[],
-        );
-        rows + intervals
-    };
-    assert_near_linear(steps(100), steps(200), steps(300));
+    const LITERALS: usize = 90_000;
+    let arms = (0..LITERALS)
+        .map(|i| format!("        {i} => {i}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    clean(&format!(
+        "fn f(n: i64) -> i64 {{\n    match n {{\n{arms}        _ => 0\n    }}\n}}\nfn main() {{}}"
+    ));
 }
 
-/// `V(true | false, ...)` of `n` fields. Specializing a field copies or rehashes the rest of its
-/// row, so a row of `n` fields costs `n` times `n`. Every field is an `|`, so no row is all
-/// wildcards and the cut cannot skip a column.
+/// `V(true | false, ...)` of `n` fields. Specializing a field copies the rest of its row, so a
+/// row of `n` fields costs `n` times `n`. `push` counts each stack node that such a copy builds.
+/// A walk of the rest of the row builds no node: `long_or_row_should_check_in_linear_time` guards
+/// that. Every field is an `|`, so no row is all wildcards and the cut cannot skip a column.
 #[test]
 fn or_fields_should_check_in_linear_time() {
     let steps = |n: usize| {
         let fields = vec!["bool"; n].join(", ");
         let pattern = vec!["true | false"; n].join(", ");
-        coverage_steps(&format!(
-            "enum F {{ V({fields}) }}\nfn f(x: F) -> i64 {{\n    match x {{\n        V({pattern}) => 1\n    }}\n}}\nfn main() {{}}"
-        ), &[])
-        .0
+        coverage_steps(
+            &format!(
+                "enum F {{ V({fields}) }}\nfn f(x: F) -> i64 {{\n    match x {{\n        V({pattern}) => 1\n    }}\n}}\nfn main() {{}}"
+            ),
+            &[],
+        )
     };
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// A `match` on `Q(E, i64)`: the first arm has `alternatives` alternatives of `E`, then come
-/// `takers` literal arms and `takers` range arms of the `i64`, and each range arm is unreachable.
-/// The arms below the first are in the bucket of each alternative, and the range arms are taken by
-/// the literal arms. It returns the solver's steps, and the intervals it puts range rows in.
-fn alternatives_steps(alternatives: usize, takers: usize) -> (usize, usize) {
-    let variants = (0..alternatives)
+/// The kill override for this test is in `.config/nextest.toml`: one row of 60,000 `true | false`
+/// fields. A `push` that walks the whole rest of the row, to rehash it or to read its flags, is
+/// quadratic in the fields and hangs. A counter cannot see this, because the walk builds no
+/// stack node. The current code takes 0.45 s. The walk takes 7.6 s.
+#[test]
+fn long_or_row_should_check_in_linear_time() {
+    const FIELDS: usize = 60_000;
+    let fields = vec!["bool"; FIELDS].join(", ");
+    let pattern = vec!["true | false"; FIELDS].join(", ");
+    clean(&format!(
+        "enum F {{ V({fields}) }}\nfn f(x: F) -> i64 {{\n    match x {{\n        V({pattern}) => 1\n    }}\n}}\nfn main() {{}}"
+    ));
+}
+
+/// The kill override for this test is in `.config/nextest.toml`: a `match` on `Q(E, i64)`. The
+/// first arm has 2,000 alternatives of `E`. Then come 1,000 literal arms and 1,000 range arms of
+/// the `i64`, and each range arm is unreachable. The arms below the first are in the bucket of
+/// each alternative, and the literal arms take the range arms. A list of every row that took a
+/// row's values costs alternatives times literals times ranges and hangs. A counter cannot see
+/// this, because the list is a new loop. The current code takes 0.6 s. The list takes 11 s.
+#[test]
+fn takers_should_check_in_linear_time() {
+    const ALTERNATIVES: usize = 2_000;
+    const TAKERS: usize = 1_000;
+    let variants = (0..ALTERNATIVES)
         .map(|i| format!("    V{i}\n"))
         .collect::<Vec<_>>()
         .concat();
-    let names = (0..alternatives)
+    let names = (0..ALTERNATIVES)
         .map(|i| format!("V{i}"))
         .collect::<Vec<_>>()
         .join(" | ");
-    let literals = (0..takers)
+    let literals = (0..TAKERS)
         .map(|j| format!("        Q(_, {j}) => 1\n"))
         .collect::<Vec<_>>()
         .concat();
-    let ranges = format!("        Q(_, 0..={}) => 2\n", takers - 1).repeat(takers);
+    let ranges = format!("        Q(_, 0..={}) => 2\n", TAKERS - 1).repeat(TAKERS);
     let src = format!(
         "enum E {{\n{variants}}}\nenum P {{ Q(E, i64) }}\nfn f(p: P) -> i64 {{\n    match p {{\n        Q({names}, -1) => 0\n{literals}{ranges}        Q(_, _) => 3\n    }}\n}}\nfn main() {{}}"
     );
-    exhaust::STEPS.set(0);
-    exhaust::INTERVAL_STEPS.set(0);
     let codes: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
-    assert_eq!(codes, vec![Code::UnreachableArm; takers]);
-    (exhaust::STEPS.get(), exhaust::INTERVAL_STEPS.get())
-}
-
-/// With the takers fixed, the cost grows with the alternatives: each alternative's bucket holds
-/// every arm below the first, which the solver reads once.
-#[test]
-fn alternatives_should_check_in_linear_time() {
-    let steps = |n: usize| alternatives_steps(n, 20).0;
-    assert_near_linear(steps(100), steps(200), steps(300));
-}
-
-/// With the alternatives fixed, the takers grow. A list of every row that took a row's values
-/// costs alternatives times literals times ranges. The range rows' `takers` intervals each are
-/// `INTERVAL_STEPS`, and grow with the takers squared.
-#[test]
-fn takers_should_check_in_linear_time() {
-    let steps = |n: usize| alternatives_steps(1000, n).0;
-    assert_near_linear(steps(10), steps(20), steps(30));
+    assert_eq!(codes, vec![Code::UnreachableArm; TAKERS]);
 }
 
 /// The keep-alive override for this test is in `.config/nextest.toml`: finding the arm that
@@ -866,7 +863,6 @@ fn wide_witness_should_build_in_linear_time() {
             ),
             &[(Code::NonExhaustive, (7, 5))],
         )
-        .0
     };
     assert_near_linear(steps(100), steps(200), steps(300));
 }
@@ -885,7 +881,6 @@ fn default_witness_head_should_build_in_linear_time() {
             ),
             &[(Code::NonExhaustive, (11, 5))],
         )
-        .0
     };
     assert_near_linear(steps(100), steps(200), steps(300));
 }

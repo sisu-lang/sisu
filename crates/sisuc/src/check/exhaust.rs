@@ -39,11 +39,8 @@ use crate::tir::{self, Type, TypeArgs, TypeKind};
 #[cfg(test)]
 thread_local! {
     /// How many rows, stack nodes and fields the solver has read or built on this thread, counted
-    /// where it does so, but not the intervals a range row is put in: that is `INTERVAL_STEPS`.
+    /// where it does so.
     pub(super) static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many intervals the solver has put a range row in on this thread, which costs the rows
-    /// times the intervals they cover, as `frame` says.
-    pub(super) static INTERVAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Adds `work` to `STEPS`.
@@ -433,6 +430,8 @@ impl Frame {
             self.reach[e].add(found, |by| expanded[child.members[by]].origin);
         }
         if let Some(taken) = solved.taken {
+            #[cfg(test)]
+            step(child.members.len());
             let origins = child.members.iter().map(|&e| self.expanded[e].origin);
             self.below.push((taken, origins.collect()));
         }
@@ -485,6 +484,8 @@ fn join(
     e: usize,
 ) {
     let b = *bucket.entry(key).or_insert_with(|| {
+        #[cfg(test)]
+        step(wild.len());
         children.push(Child {
             order,
             bucket: true,
@@ -913,8 +914,6 @@ impl Solver<'_> {
                     // program needs it.
                     let first = intervals.partition_point(|&(start, _)| start < lo);
                     for k in (first..intervals.len()).take_while(|&k| intervals[k].0 <= hi) {
-                        #[cfg(test)]
-                        INTERVAL_STEPS.set(INTERVAL_STEPS.get() + 1);
                         join(&mut bucket, &mut children, &wild, (k, k), e);
                     }
                 }

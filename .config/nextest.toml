@@ -66,6 +66,14 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'test(malformed_patterns_of_a_wide_variant_check_in_linear_time)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
+# These four tests check coverage of a huge `match`. A search for a bucket or a row's interval, a
+# rescan of every row or of the column, a `push` that walks a whole row, or a list of every row
+# that took a row's values is quadratic and hangs instead of failing: no step counter sees such a
+# new loop. Each runs under 1 s now, and its regression takes 7 to 100 s, so the kill is at 6 s.
+[[profile.default.overrides]]
+filter = 'test(/^check::tests::patterns::(variants|literal_arms|long_or_row|takers)_should_check_in_linear_time$/)'
+slow-timeout = { period = "2s", terminate-after = 3 }
+
 # Without the all-wildcard row cut, coverage meets 2^40 distinct matrices, so this test hangs
 # instead of failing.
 [[profile.default.overrides]]
