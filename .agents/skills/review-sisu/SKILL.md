@@ -46,7 +46,8 @@ For a diff, including one task's diff in a plan run, write the Focus to
 Repeat `--doc` for each document; leave it out when there is none. Pass
 the `LOG=` file of the last `make verify` run on the diff as
 `--verify-log`, so the reviewer can check its verdict line; leave it out
-only when no verify ran.
+only when no verify ran. The script stops when the log measured another commit than
+the range's head: run `make verify` again on that head.
 
 ### 3. Launch the reviewers
 
