@@ -167,7 +167,7 @@ fn main() {
 2
 ```
 
-A line break inside the type-parameter list of a `fn`, `class` or `enum` header does not end a statement either. This applies when the header starts its statement. A header that comes after a `}` on the same line must keep its list on one line.
+A line break inside a bound list does not end a statement either. A bound list is the type-parameter list of a `fn`, `class`, `enum`, `interface` or `extend` header, or the bounds of a `type Item:`. The next line can start with a name, or with `,`, `:`, `&`, `>`, `]` or `?`.
 
 ```sisu
 class Pair<
