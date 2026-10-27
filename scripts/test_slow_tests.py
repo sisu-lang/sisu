@@ -1,10 +1,12 @@
 """Unit tests for slow_tests.py: python3 -m unittest discover -s scripts -p 'test_*.py'."""
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
 
+import git_fixture
 import slow_tests as st
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'slow_tests.py')
@@ -41,25 +43,14 @@ class SlowTests(unittest.TestCase):
             self.assertEqual(st.in_diff(name, diff), mentioned, name)
 
     def test_with_diff_only_mentioned_tests_are_listed_and_the_rest_counted(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which would point git at this
-            # repository, and under CI GITHUB_ACTIONS adds a workflow warning line per slow test.
-            env = {key: value for key, value in os.environ.items()
-                   if not key.startswith('GIT_') and key != 'GITHUB_ACTIONS'}
-            git = lambda *args: subprocess.run(['git', '-C', tmp, *args], check=True, capture_output=True, env=env)
-            git('init', '-q')
-            source = os.path.join(tmp, 'a.rs')
-            with open(source, 'w', encoding='utf-8') as file:
-                file.write('fn slow() {}\n')
-            git('add', '.')
-            git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'a')
-            with open(source, 'w', encoding='utf-8') as file:
+        with git_fixture.repo({'a.rs': 'fn slow() {}\n'}) as tmp:
+            with open(os.path.join(tmp, 'a.rs'), 'w', encoding='utf-8') as file:
                 file.write('fn big() {}\nfn slow() {}\n')
             report = os.path.join(tmp, 'junit.xml')
             with open(report, 'w', encoding='utf-8') as file:
                 file.write(REPORT.replace('run::big.sisu', 'run::big'))
             run = subprocess.run([sys.executable, SCRIPT, report, '--diff', 'HEAD'],
-                                 capture_output=True, text=True, cwd=tmp, env=env)
+                                 capture_output=True, text=True, cwd=tmp, env=git_fixture.env())
         lines = run.stdout.splitlines()
         self.assertEqual(lines[0], "slow_tests: 1 other tests over budget are outside `git diff HEAD`")
         self.assertEqual([line.split()[-1] for line in lines[2:]], ["run::big"])
@@ -75,6 +66,181 @@ class SlowTests(unittest.TestCase):
                 run = subprocess.run([sys.executable, SCRIPT, path], capture_output=True, text=True)
                 self.assertEqual((run.returncode, run.stderr), (0, ''), name)
                 self.assertEqual(run.stdout.startswith('slow_tests: cannot read'), text is not None, name)
+
+
+HARNESS = r"""datatest_stable::harness! {
+    { test = run, root = "tests/run", pattern = r"\.sisu$" },
+    { test = run_fail, root = "tests/run-fail", pattern = r"\.sisu$" },
+    { test = site_run, root = "../../site/programs/run", pattern = r"\.sisu$" },
+    { test = every_program_certifies, root = "tests", pattern = r"^(run|run-fail|programs)/[^/]+\.sisu$" },
+    { test = every_program_certifies, root = "../../bench", pattern = r"main\.sisu$" },
+}
+"""
+MANIFEST = '[package]\nname = "sisuc"\n\n[[bin]]\nname = "sisu"\npath = "src/main.rs"\n'
+
+
+def rust(body: str, *, module: str = 'tests', name: str = 'pattern_spans') -> str:
+    """A Rust file with one test `name` in the inline module `module`; `body` is its only line."""
+    return f"mod {module} {{\n    #[test]\n    fn {name}() {{\n        {body}\n    }}\n}}\n"
+
+
+def report(*tests: tuple[str, str, float]) -> str:
+    """A JUnit report of (binary, name, seconds)."""
+    cases = ''.join(f'<testcase name="{name}" classname="{binary}" time="{seconds}"/>'
+                    for binary, name, seconds in tests)
+    return f'<testsuites><testsuite name="x">{cases}</testsuite></testsuites>'
+
+
+def fail_changed(files: dict[str, str], edits: dict[str, str], *tests: tuple[str, str, float], extra_env=None):
+    """Runs `--fail-changed HEAD` on a repository of `files` whose working tree holds `edits`.
+    Returns the run and the "binary name" of each failure line, without its `path:line: `."""
+    with git_fixture.repo({'crates/sisuc/Cargo.toml': MANIFEST, **files}) as tmp:
+        for name, text in edits.items():
+            git_fixture.write(tmp, name, text)
+        git_fixture.write(tmp, 'junit.xml', report(*tests))
+        run = subprocess.run([sys.executable, SCRIPT, os.path.join(tmp, 'junit.xml'), '--fail-changed', 'HEAD'],
+                             capture_output=True, text=True, cwd=tmp, env={**git_fixture.env(), **(extra_env or {})})
+    failed = [re.sub(r'^\S+:\d+: ', '', line.split(' took ')[0])
+              for line in run.stdout.splitlines() if ' limit for a changed test ' in line]
+    return run, failed
+
+
+class FailChanged(unittest.TestCase):
+    def test_the_case_entry_pattern_should_find_every_entry_of_the_real_harness(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, st.CASES), encoding='utf-8') as file:
+            harness = file.read().split('datatest_stable::harness!', 1)[-1]
+        self.assertGreater(harness.count('{ test ='), 0)
+        self.assertEqual(len(st.CASE_ENTRY.findall(harness)), harness.count('{ test ='))
+
+    def test_a_changed_test_over_twice_its_budget_should_fail(self):
+        lib = 'crates/sisuc/src/parser.rs'
+        run, failed = fail_changed({lib: rust('1;')}, {lib: rust('2;')}, ('sisuc', 'parser::tests::pattern_spans', 2.5))
+        self.assertEqual((run.returncode, failed), (1, ['sisuc parser::tests::pattern_spans']))
+        self.assertIn("crates/sisuc/src/parser.rs:3: sisuc parser::tests::pattern_spans took 2.50 s; its budget is 1 s and the limit for a "
+                      "changed test is 2 s: shrink its input or split it (CODING_STANDARDS.md, Tests)",
+                      run.stdout)
+
+    def test_a_failure_should_start_with_the_path_and_line_of_its_test(self):
+        lib = 'crates/sisuc/src/parser.rs'
+        second = 'mod tests {\n    #[test]\n    fn first_should_x() {}\n\n    #[test]\n    #[ignore = "a"]\n' \
+                 '    fn pattern_spans() {\n        1;\n    }\n}\n'
+        cases = {'crates/sisuc/tests/cases.rs': HARNESS, 'crates/sisuc/tests/run/a.sisu': 'x\n',
+                 'crates/sisuc/tests/run/a.out': '1\n'}
+        for row, files, edits, test, where in [
+                ('a test of a src file: its fn line', {lib: rust('1;')}, {lib: rust('2;')},
+                 ('sisuc', 'parser::tests::pattern_spans', 3), f'{lib}:3'),
+                ('the fn line, not the attribute line, of the second test', {lib: second},
+                 {lib: second.replace('1;', '2;')}, ('sisuc', 'parser::tests::pattern_spans', 3), f'{lib}:7'),
+                ('a test of a tests/ file', {'crates/sisuc/tests/cli.rs': rust('1;')},
+                 {'crates/sisuc/tests/cli.rs': rust('2;')}, ('sisuc::cli', 'tests::pattern_spans', 9),
+                 'crates/sisuc/tests/cli.rs:3'),
+                ('a case whose file changed: line 1', cases, {'crates/sisuc/tests/run/a.sisu': 'y\n'},
+                 ('sisuc::cases', 'run::a.sisu', 9), 'crates/sisuc/tests/run/a.sisu:1'),
+                ('a case whose .out file changed: its case file', cases, {'crates/sisuc/tests/run/a.out': '2\n'},
+                 ('sisuc::cases', 'run::a.sisu', 9), 'crates/sisuc/tests/run/a.sisu:1')]:
+            run, _ = fail_changed(files, edits, test)
+            [line] = [l for l in run.stdout.splitlines() if ' limit for a changed test ' in l]
+            self.assertTrue(line.startswith(f'{where}: {test[0]} {test[1]} took '), f'{row}: {line}')
+            run, _ = fail_changed(files, edits, test, extra_env={'GITHUB_ACTIONS': 'true'})
+            file, _, number = where.partition(':')
+            [annotation] = [l for l in run.stdout.splitlines() if l.startswith('::error')]
+            self.assertTrue(annotation.startswith(
+                f'::error title=Slow changed test,file={file},line={number}::{test[0]} {test[1]} took '),
+                f'{row}: {annotation}')
+
+    def test_the_slow_check_should_fail_only_for_a_changed_test(self):
+        """S5. Its fourth row, a report with no test, is test_a_report_with_no_test_should_print_one_note_and_pass."""
+        lib = 'crates/sisuc/src/parser.rs'
+        other = 'crates/sisuc/src/check.rs'
+        files = {lib: rust('1;'), other: rust('1;')}
+        for row, edits, seconds, expected in [
+                ('changed and over twice its budget', {lib: rust('2;')}, 2.5, 1),
+                ('changed and over its budget only', {lib: rust('2;')}, 1.5, 0),
+                ('unchanged, over twice its budget, and its name only in a comment of the diff',
+                 {other: rust('1;') + '// pattern_spans\n'}, 9, 0)]:
+            run, failed = fail_changed(files, edits, ('sisuc', 'parser::tests::pattern_spans', seconds))
+            self.assertEqual(run.returncode, expected, f'{row}: {run.stdout}')
+            self.assertIn('parser::tests::pattern_spans', run.stdout, f'{row}: it is listed as slow')
+
+    def test_a_junit_name_should_map_to_its_own_file(self):
+        cases_rs = 'crates/sisuc/tests/cases.rs'
+        cli = 'crates/sisuc/tests/cli.rs'
+        for row, files, edits, tests, expected in [
+                ('two same-named tests in different files: only the changed one',
+                 {'crates/sisuc/src/parser.rs': rust('1;'), 'crates/sisuc/src/check.rs': rust('1;')},
+                 {'crates/sisuc/src/parser.rs': rust('2;')},
+                 [('sisuc', 'parser::tests::pattern_spans', 9), ('sisuc', 'check::tests::pattern_spans', 9)],
+                 ['sisuc parser::tests::pattern_spans']),
+                ('a file module below the changed file is another file',
+                 {'crates/sisuc/src/check.rs': rust('1;'), 'crates/sisuc/src/check/patterns.rs': rust('1;')},
+                 {'crates/sisuc/src/check.rs': rust('2;')},
+                 [('sisuc', 'check::tests::pattern_spans', 9), ('sisuc', 'check::patterns::tests::pattern_spans', 9)],
+                 ['sisuc check::tests::pattern_spans']),
+                ('a src/check/mod.rs test is the module check',
+                 {'crates/sisuc/src/check/mod.rs': rust('1;'), 'crates/sisuc/src/other.rs': rust('1;')},
+                 {'crates/sisuc/src/check/mod.rs': rust('2;')},
+                 [('sisuc', 'check::tests::pattern_spans', 9), ('sisuc', 'other::tests::pattern_spans', 9)],
+                 ['sisuc check::tests::pattern_spans']),
+                ('a module named tests below src/ is not a tests/ target',
+                 {'crates/sisuc/src/check/tests/mod.rs': rust('1;'), 'crates/sisuc/src/other.rs': rust('1;')},
+                 {'crates/sisuc/src/check/tests/mod.rs': rust('2;')},
+                 [('sisuc', 'check::tests::tests::pattern_spans', 9), ('sisuc', 'other::tests::pattern_spans', 9)],
+                 ['sisuc check::tests::tests::pattern_spans']),
+                ('a src/lib.rs test has no module prefix',
+                 {'crates/sisuc/src/lib.rs': rust('1;'), 'crates/sisuc/src/other.rs': rust('1;')},
+                 {'crates/sisuc/src/lib.rs': rust('2;')},
+                 [('sisuc', 'tests::pattern_spans', 9), ('sisuc', 'other::tests::pattern_spans', 9)],
+                 ['sisuc tests::pattern_spans']),
+                ('a src/main.rs test is in the bin binary',
+                 {'crates/sisuc/src/main.rs': rust('1;'), 'crates/sisuc/src/lib.rs': rust('1;')},
+                 {'crates/sisuc/src/main.rs': rust('2;')},
+                 [('sisuc::bin/sisu', 'tests::pattern_spans', 9), ('sisuc', 'tests::pattern_spans', 9)],
+                 ['sisuc::bin/sisu tests::pattern_spans']),
+                ('a tests/<bin>.rs test is in its own binary',
+                 {cli: rust('1;'), 'crates/sisuc/src/lib.rs': rust('1;')},
+                 {cli: rust('2;')},
+                 [('sisuc::cli', 'tests::pattern_spans', 9), ('sisuc', 'tests::pattern_spans', 9)],
+                 ['sisuc::cli tests::pattern_spans']),
+                ('a tests/<bin>/main.rs test has no prefix',
+                 {'crates/sisuc/tests/cli/main.rs': rust('1;'), 'crates/sisuc/tests/cli/x.rs': rust('1;')},
+                 {'crates/sisuc/tests/cli/main.rs': rust('2;')},
+                 [('sisuc::cli', 'tests::pattern_spans', 9), ('sisuc::cli', 'x::tests::pattern_spans', 9)],
+                 ['sisuc::cli tests::pattern_spans']),
+                ('a tests/<bin>/x.rs test has the prefix x::',
+                 {'crates/sisuc/tests/cli/x.rs': rust('1;'), 'crates/sisuc/tests/cli.rs': rust('1;')},
+                 {'crates/sisuc/tests/cli/x.rs': rust('2;')},
+                 [('sisuc::cli', 'x::tests::pattern_spans', 9), ('sisuc::cli', 'tests::pattern_spans', 9)],
+                 ['sisuc::cli x::tests::pattern_spans']),
+                ('a changed run_fail case at 9 s fails',
+                 {cases_rs: HARNESS, 'crates/sisuc/tests/run-fail/a.sisu': 'x\n'},
+                 {'crates/sisuc/tests/run-fail/a.sisu': 'y\n'},
+                 [('sisuc::cases', 'run_fail::a.sisu', 9)], ['sisuc::cases run_fail::a.sisu']),
+                ('a changed site_run case',
+                 {cases_rs: HARNESS, 'site/programs/run/a.sisu': 'x\n'},
+                 {'site/programs/run/a.sisu': 'y\n'},
+                 [('sisuc::cases', 'site_run::a.sisu', 9)], ['sisuc::cases site_run::a.sisu']),
+                ('an every_program_certifies case under bench/',
+                 {cases_rs: HARNESS, 'bench/fib/main.sisu': 'x\n'},
+                 {'bench/fib/main.sisu': 'y\n'},
+                 [('sisuc::cases', 'every_program_certifies::fib/main.sisu', 9)],
+                 ['sisuc::cases every_program_certifies::fib/main.sisu']),
+                ('a case whose .out file changed',
+                 {cases_rs: HARNESS, 'crates/sisuc/tests/run/a.sisu': 'x\n', 'crates/sisuc/tests/run/a.out': '1\n'},
+                 {'crates/sisuc/tests/run/a.out': '2\n'},
+                 [('sisuc::cases', 'run::a.sisu', 9)], ['sisuc::cases run::a.sisu']),
+                ('an unchanged case only warns',
+                 {cases_rs: HARNESS, 'crates/sisuc/tests/run/a.sisu': 'x\n', 'crates/sisuc/tests/run/b.sisu': 'x\n'},
+                 {'crates/sisuc/tests/run/b.sisu': 'y\n'},
+                 [('sisuc::cases', 'run::a.sisu', 9)], [])]:
+            run, failed = fail_changed(files, edits, *tests)
+            self.assertEqual(failed, expected, f'{row}: {run.stdout}{run.stderr}')
+            self.assertEqual(run.returncode, int(bool(expected)), row)
+
+    def test_a_report_with_no_test_should_print_one_note_and_pass(self):
+        run, failed = fail_changed({}, {}, ('@setup-script:build-runtime', 'build-runtime', 9))
+        self.assertEqual((run.returncode, run.stdout, failed), (
+            0, "slow_tests: the report holds no test, so no changed test was checked\n", []))
 
 
 if __name__ == '__main__':

@@ -7,7 +7,7 @@ SECS =
 BENCH =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup audit-setup build test bless lint deny miri check coverage mutants verify fuzz fuzz-coverage bench callgrind site
+.PHONY: help setup audit-setup build test test-health bless lint deny miri check coverage mutants verify fuzz fuzz-coverage bench callgrind site
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-12s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -31,6 +31,10 @@ build: ## Build sisu and the two runtime archives
 
 test: ## Run every test with nextest, whose setup script builds the runtime
 	cargo nextest run --workspace --locked
+	list=$$(mktemp) && cargo nextest list --workspace --locked --message-format json > $$list && python3 scripts/nextest_filters.py .config/nextest.toml $$list; status=$$?; rm -f $$list; exit $$status
+
+test-health: ## Show the counts, times and slowest tests of the last make test
+	python3 scripts/test_health.py target/nextest/default/junit.xml
 
 bless: ## Fill the expected .out/.err/.json files of the end-to-end cases and the site's programs
 	SISU_BLESS=1 cargo nextest run -E 'binary(cases)'
