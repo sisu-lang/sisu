@@ -54,12 +54,6 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'test(nested_switch_calls_parse_in_linear_time)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
-# Specializing a column once per variant over every row, or checking each arm against the arms
-# before it, makes coverage quadratic in the arms, so this test hangs instead of failing.
-[[profile.default.overrides]]
-filter = 'test(many_arms_check_in_linear_time)'
-slow-timeout = { period = "10s", terminate-after = 3 }
-
 # Each unreachable alternative once solved the arms above it again to find its covering arm, so
 # many of them were quadratic and this test hangs instead of failing.
 [[profile.default.overrides]]
@@ -82,12 +76,6 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 # this test hangs instead of failing.
 [[profile.default.overrides]]
 filter = 'test(repeated_matrices_check_in_linear_time)'
-slow-timeout = { period = "10s", terminate-after = 3 }
-
-# A witness copied at each of its columns is quadratic in them, so this test hangs instead of
-# failing.
-[[profile.default.overrides]]
-filter = 'test(/^check::tests::patterns::(wide_witness|default_witness_head)_builds_in_linear_time$/)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # Alternatives once expanded eagerly, or without memoization, meet 2^40 rows, so this test hangs

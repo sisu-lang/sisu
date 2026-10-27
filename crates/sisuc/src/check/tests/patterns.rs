@@ -652,64 +652,116 @@ fn unreachable_arms() {
     );
 }
 
-/// The keep-alive override for this test is in `.config/nextest.toml`: specializing a column
-/// once per constructor over every row, or checking each arm against the arms before it, is
-/// quadratic and hangs instead of failing. At 50,000 variants a quadratic bucketing still ends
-/// inside the override's 30 seconds, so the test takes 200,000. A column of 50,000 literals is
-/// quadratic when its split rescans the column per interval, and a `V(true | false, ...)` of
-/// 20,000 fields when specializing copies or rehashes the rest of a row. In the last `match`,
-/// each of the 16,000 alternatives' buckets holds every arm below the first, and each range arm
-/// is taken by the 500 literal arms: a list of every row that took a row's values costs
-/// alternatives × literals × ranges, which hangs.
+/// The solver's steps to check `src`, whose diagnostics are exactly `expected`, and the intervals
+/// it puts range rows in.
+fn coverage_steps(src: &str, expected: &[(Code, (usize, usize))]) -> (usize, usize) {
+    exhaust::STEPS.set(0);
+    exhaust::INTERVAL_STEPS.set(0);
+    codes(src, expected);
+    (exhaust::STEPS.get(), exhaust::INTERVAL_STEPS.get())
+}
+
+/// A `match` on an enum of `n` variants has an arm for each. Specializing the column once per
+/// variant over every row, or checking each arm against the arms before it, reads `n` rows `n`
+/// times.
 #[test]
-fn many_arms_check_in_linear_time() {
-    const VARIANTS: usize = 200_000;
-    const LITERALS: usize = 50_000;
-    const FIELDS: usize = 20_000;
-    const ALTERNATIVES: usize = 16_000;
-    const TAKERS: usize = 500;
-    let variants = (0..VARIANTS)
+fn variants_should_check_in_linear_time() {
+    let steps = |n: usize| {
+        let variants = (0..n)
+            .map(|i| format!("    V{i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let arms = (0..n)
+            .map(|i| format!("        V{i} => {i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        coverage_steps(&format!(
+            "enum E {{\n{variants}}}\nfn f(e: E) -> i64 {{\n    match e {{\n{arms}    }}\n}}\nfn main() {{}}"
+        ), &[])
+        .0
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
+}
+
+/// A column of `n` literals has `2n + 1` intervals. A split that rescans the column per interval,
+/// or per row, reads `n` rows `2n` intervals each.
+#[test]
+fn literal_arms_should_check_in_linear_time() {
+    let steps = |n: usize| {
+        let arms = (0..n)
+            .map(|i| format!("        {i} => {i}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let (rows, intervals) = coverage_steps(
+            &format!(
+                "fn f(n: i64) -> i64 {{\n    match n {{\n{arms}        _ => 0\n    }}\n}}\nfn main() {{}}"
+            ),
+            &[],
+        );
+        rows + intervals
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
+}
+
+/// `V(true | false, ...)` of `n` fields. Specializing a field copies or rehashes the rest of its
+/// row, so a row of `n` fields costs `n` times `n`. Every field is an `|`, so no row is all
+/// wildcards and the cut cannot skip a column.
+#[test]
+fn or_fields_should_check_in_linear_time() {
+    let steps = |n: usize| {
+        let fields = vec!["bool"; n].join(", ");
+        let pattern = vec!["true | false"; n].join(", ");
+        coverage_steps(&format!(
+            "enum F {{ V({fields}) }}\nfn f(x: F) -> i64 {{\n    match x {{\n        V({pattern}) => 1\n    }}\n}}\nfn main() {{}}"
+        ), &[])
+        .0
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
+}
+
+/// A `match` on `Q(E, i64)`: the first arm has `alternatives` alternatives of `E`, then come
+/// `takers` literal arms and `takers` range arms of the `i64`, and each range arm is unreachable.
+/// The arms below the first are in the bucket of each alternative, and the range arms are taken by
+/// the literal arms. It returns the solver's steps, and the intervals it puts range rows in.
+fn alternatives_steps(alternatives: usize, takers: usize) -> (usize, usize) {
+    let variants = (0..alternatives)
         .map(|i| format!("    V{i}\n"))
         .collect::<Vec<_>>()
         .concat();
-    let arms = (0..VARIANTS)
-        .map(|i| format!("        V{i} => {i}\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    clean(&format!(
-        "enum E {{\n{variants}}}\nfn f(e: E) -> i64 {{\n    match e {{\n{arms}    }}\n}}\nfn main() {{}}"
-    ));
-    let arms = (0..LITERALS)
-        .map(|i| format!("        {i} => {i}\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    clean(&format!(
-        "fn f(n: i64) -> i64 {{\n    match n {{\n{arms}        _ => 0\n    }}\n}}\nfn main() {{}}"
-    ));
-    // Every field an `|`, so no row is all wildcards and the cut cannot skip a column.
-    let fields = vec!["bool"; FIELDS].join(", ");
-    let pattern = vec!["true | false"; FIELDS].join(", ");
-    clean(&format!(
-        "enum F {{ V({fields}) }}\nfn f(x: F) -> i64 {{\n    match x {{\n        V({pattern}) => 1\n    }}\n}}\nfn main() {{}}"
-    ));
-    let variants = (0..ALTERNATIVES)
-        .map(|i| format!("    V{i}\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    let alternatives = (0..ALTERNATIVES)
+    let names = (0..alternatives)
         .map(|i| format!("V{i}"))
         .collect::<Vec<_>>()
         .join(" | ");
-    let literals = (0..TAKERS)
+    let literals = (0..takers)
         .map(|j| format!("        Q(_, {j}) => 1\n"))
         .collect::<Vec<_>>()
         .concat();
-    let ranges = format!("        Q(_, 0..={}) => 2\n", TAKERS - 1).repeat(TAKERS);
+    let ranges = format!("        Q(_, 0..={}) => 2\n", takers - 1).repeat(takers);
     let src = format!(
-        "enum E {{\n{variants}}}\nenum P {{ Q(E, i64) }}\nfn f(p: P) -> i64 {{\n    match p {{\n        Q({alternatives}, -1) => 0\n{literals}{ranges}        Q(_, _) => 3\n    }}\n}}\nfn main() {{}}"
+        "enum E {{\n{variants}}}\nenum P {{ Q(E, i64) }}\nfn f(p: P) -> i64 {{\n    match p {{\n        Q({names}, -1) => 0\n{literals}{ranges}        Q(_, _) => 3\n    }}\n}}\nfn main() {{}}"
     );
+    exhaust::STEPS.set(0);
+    exhaust::INTERVAL_STEPS.set(0);
     let codes: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
-    assert_eq!(codes, vec![Code::UnreachableArm; TAKERS]);
+    assert_eq!(codes, vec![Code::UnreachableArm; takers]);
+    (exhaust::STEPS.get(), exhaust::INTERVAL_STEPS.get())
+}
+
+/// With the takers fixed, the cost grows with the alternatives: each alternative's bucket holds
+/// every arm below the first, which the solver reads once.
+#[test]
+fn alternatives_should_check_in_linear_time() {
+    let steps = |n: usize| alternatives_steps(n, 20).0;
+    assert_near_linear(steps(100), steps(200), steps(300));
+}
+
+/// With the alternatives fixed, the takers grow. A list of every row that took a row's values
+/// costs alternatives times literals times ranges. The range rows' `takers` intervals each are
+/// `INTERVAL_STEPS`, and grow with the takers squared.
+#[test]
+fn takers_should_check_in_linear_time() {
+    let steps = |n: usize| alternatives_steps(1000, n).0;
+    assert_near_linear(steps(10), steps(20), steps(30));
 }
 
 /// The keep-alive override for this test is in `.config/nextest.toml`: finding the arm that
@@ -802,38 +854,40 @@ fn wide_payload_checks_without_deep_recursion() {
     clean(&wide(FIELDS, &[arm]));
 }
 
-/// The keep-alive override for this test is in `.config/nextest.toml`: a witness copied at each
-/// of its 200,000 columns is quadratic and hangs instead of failing.
+/// A witness copied at each of its columns costs the columns times their number.
 #[test]
-fn wide_witness_builds_in_linear_time() {
-    const FIELDS: usize = 200_000;
-    let fields = vec!["Bit"; FIELDS].join(", ");
-    let arm = wide_arm(FIELDS, |_| "X");
-    codes(
-        &format!(
-            "enum Bit {{\n    X\n    Y\n}}\nenum Wide {{ V({fields}) }}\nfn t(w: Wide) -> i64 {{\n    match w {{\n        {arm}\n    }}\n}}\nfn main() {{}}"
-        ),
-        &[(Code::NonExhaustive, (7, 5))],
-    );
+fn wide_witness_should_build_in_linear_time() {
+    let steps = |n: usize| {
+        let fields = vec!["Bit"; n].join(", ");
+        let arm = wide_arm(n, |_| "X");
+        coverage_steps(
+            &format!(
+                "enum Bit {{\n    X\n    Y\n}}\nenum Wide {{ V({fields}) }}\nfn t(w: Wide) -> i64 {{\n    match w {{\n        {arm}\n    }}\n}}\nfn main() {{}}"
+            ),
+            &[(Code::NonExhaustive, (7, 5))],
+        )
+        .0
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
 }
 
 /// Each `Wide` column below the root has a bucket for `W` and a default that stands for `V`, so a
-/// default's head built anew at each of them costs `FIELDS` columns times `FIELDS` fields.
-///
-/// The keep-alive override for this test is in `.config/nextest.toml`: that quadratic build hangs
-/// instead of failing.
+/// default's head built anew at each of them costs `n` columns times `n` fields.
 #[test]
-fn default_witness_head_builds_in_linear_time() {
-    const FIELDS: usize = 100_000;
-    let bits = vec!["Bit"; FIELDS].join(", ");
-    let wides = vec!["Wide"; FIELDS].join(", ");
-    let ws = vec!["W"; FIELDS].join(", ");
-    codes(
-        &format!(
-            "enum Bit {{\n    X\n    Y\n}}\nenum Wide {{\n    V({bits})\n    W\n}}\nenum Row {{ P({wides}) }}\nfn t(r: Row) -> i64 {{\n    match r {{\n        P({ws}) => 1\n    }}\n}}\nfn main() {{}}"
-        ),
-        &[(Code::NonExhaustive, (11, 5))],
-    );
+fn default_witness_head_should_build_in_linear_time() {
+    let steps = |n: usize| {
+        let bits = vec!["Bit"; n].join(", ");
+        let wides = vec!["Wide"; n].join(", ");
+        let ws = vec!["W"; n].join(", ");
+        coverage_steps(
+            &format!(
+                "enum Bit {{\n    X\n    Y\n}}\nenum Wide {{\n    V({bits})\n    W\n}}\nenum Row {{ P({wides}) }}\nfn t(r: Row) -> i64 {{\n    match r {{\n        P({ws}) => 1\n    }}\n}}\nfn main() {{}}"
+            ),
+            &[(Code::NonExhaustive, (11, 5))],
+        )
+        .0
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
 }
 
 /// `enum Wide { V(Bit, ...) }` with `fields` fields, and a `match` on `w` whose `arms` start on

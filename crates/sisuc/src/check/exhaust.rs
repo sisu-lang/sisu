@@ -36,6 +36,22 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
+#[cfg(test)]
+thread_local! {
+    /// How many rows, stack nodes and fields the solver has read or built on this thread, counted
+    /// where it does so, but not the intervals a range row is put in: that is `INTERVAL_STEPS`.
+    pub(super) static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many intervals the solver has put a range row in on this thread, which costs the rows
+    /// times the intervals they cover, as `frame` says.
+    pub(super) static INTERVAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds `work` to `STEPS`.
+#[cfg(test)]
+fn step(work: usize) {
+    STEPS.set(STEPS.get() + work);
+}
+
 /// One arm's pattern: a row of the matrix.
 pub(super) struct Row<'a> {
     pub(super) pattern: &'a tir::Pattern,
@@ -309,6 +325,8 @@ struct Takers(Option<Reach>);
 impl Takers {
     /// Adds what `found` says, its takers renamed by `rename`, which keeps their order.
     fn add(&mut self, found: Reach, rename: impl Fn(usize) -> usize) {
+        #[cfg(test)]
+        step(1);
         let found = match found {
             Reach::Reached => Reach::Reached,
             Reach::Taken(first, last) => Reach::Taken(rename(first), rename(last)),
@@ -409,6 +427,8 @@ impl Frame {
         // A row another takes is named by its matrix row, so two alternatives of one row that
         // take a row's values are one row.
         for (&e, &found) in child.members.iter().zip(&solved.reach) {
+            #[cfg(test)]
+            step(1);
             let expanded = &self.expanded;
             self.reach[e].add(found, |by| expanded[child.members[by]].origin);
         }
@@ -484,6 +504,13 @@ impl Solver<'_> {
     }
 
     fn pat(&mut self, pat: Pat) -> PatId {
+        // Interning hashes the whole pattern.
+        #[cfg(test)]
+        step(match &pat {
+            Pat::Variant { fields, .. } => fields.len(),
+            Pat::Or { alts, .. } => alts.len(),
+            _ => 1,
+        });
         let (pats, ors) = (&mut self.pats, &mut self.ors);
         *self.pat_ids.entry(pat).or_insert_with_key(|pat| {
             ors.push(match pat {
@@ -545,6 +572,8 @@ impl Solver<'_> {
 
     /// The stack of `pat`, of type `col`, on `tail`.
     fn push(&mut self, pat: PatId, col: Col, tail: StackId) -> StackId {
+        #[cfg(test)]
+        step(1);
         let wild = pat == WILD && self.nodes[tail].wild;
         let ors = self.ors[pat] || self.nodes[tail].ors;
         let nodes = &mut self.nodes;
@@ -766,6 +795,9 @@ impl Solver<'_> {
     /// The matrix of `rows` solved, when the cut, a leaf or the memo solves it at once;
     /// otherwise `None`, with a frame for it pushed onto `frames`.
     fn start(&mut self, rows: Box<[StackId]>, frames: &mut Vec<Frame>) -> Option<Rc<Solved>> {
+        // The cut, the memo's hash and the leaf's `reach` each read every row.
+        #[cfg(test)]
+        step(rows.len());
         // The all-wildcard row cut: the first row takes every value the matrix stands for.
         if self.nodes[rows[0]].wild {
             let mut reach = vec![Reach::Taken(0, 0); rows.len()];
@@ -863,6 +895,8 @@ impl Solver<'_> {
         let mut children: Vec<Child> = Vec::new();
         let mut wild = Vec::new();
         for (e, row) in expanded.iter().enumerate() {
+            #[cfg(test)]
+            step(1);
             match self.pats[row.head] {
                 Pat::Variant { variant, .. } => {
                     join(&mut bucket, &mut children, &wild, (variant, variant), e);
@@ -879,6 +913,8 @@ impl Solver<'_> {
                     // program needs it.
                     let first = intervals.partition_point(|&(start, _)| start < lo);
                     for k in (first..intervals.len()).take_while(|&k| intervals[k].0 <= hi) {
+                        #[cfg(test)]
+                        INTERVAL_STEPS.set(INTERVAL_STEPS.get() + 1);
                         join(&mut bucket, &mut children, &wild, (k, k), e);
                     }
                 }
@@ -887,6 +923,8 @@ impl Solver<'_> {
                     // n wildcard rows cost n²; share the wildcard rows between buckets if a real
                     // program hits it.
                     for child in &mut children {
+                        #[cfg(test)]
+                        step(1);
                         child.members.push(e);
                     }
                     wild.push(e);
@@ -896,6 +934,8 @@ impl Solver<'_> {
                 Pat::Or { .. } => panic!("an alternative should not be an `|`"),
             }
         }
+        #[cfg(test)]
+        step(intervals.len());
         let unnamed: Vec<_> = (0..intervals.len())
             .filter(|k| !bucket.contains_key(k))
             .collect();
@@ -952,6 +992,8 @@ impl Solver<'_> {
             .flat_map(|&(lo, hi)| [i128::from(lo), i128::from(hi) + 1])
             .collect();
         for row in rows {
+            #[cfg(test)]
+            step(1);
             if let Pat::Range { lo, hi, .. } = self.pats[row.head] {
                 points.extend([i128::from(lo), i128::from(hi) + 1]);
             }
@@ -975,7 +1017,15 @@ impl Solver<'_> {
     /// in place of their first column, `Some`'s with the payload, any other child's without it.
     fn child_rows(&mut self, frame: &Frame) -> Box<[StackId]> {
         let child = &frame.children[frame.next];
-        let heads: Vec<_> = child.members.iter().map(|&e| frame.expanded[e]).collect();
+        let heads: Vec<_> = child
+            .members
+            .iter()
+            .map(|&e| {
+                #[cfg(test)]
+                step(1);
+                frame.expanded[e]
+            })
+            .collect();
         // `Some`'s bucket: the payload in place of the optional.
         if let Col::Optional(payload) = frame.col
             && child.bucket

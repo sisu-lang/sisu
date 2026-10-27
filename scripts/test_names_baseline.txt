@@ -528,7 +528,6 @@ crates/sisuc/src/check/tests/patterns.rs::already_converted_match_stays_grouped
 crates/sisuc/src/check/tests/patterns.rs::alternatives_bind
 crates/sisuc/src/check/tests/patterns.rs::broken_pattern_skips_coverage
 crates/sisuc/src/check/tests/patterns.rs::coverage_finite
-crates/sisuc/src/check/tests/patterns.rs::default_witness_head_builds_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::failed_scrutinee_keeps_never
 crates/sisuc/src/check/tests/patterns.rs::forty_alternatives
 crates/sisuc/src/check/tests/patterns.rs::gap_help
@@ -543,7 +542,6 @@ crates/sisuc/src/check/tests/patterns.rs::let_underscore_drops_at_once
 crates/sisuc/src/check/tests/patterns.rs::let_underscore_ends_a_block_without_a_value
 crates/sisuc/src/check/tests/patterns.rs::literal_patterns
 crates/sisuc/src/check/tests/patterns.rs::malformed_patterns_of_a_wide_variant_check_in_linear_time
-crates/sisuc/src/check/tests/patterns.rs::many_arms_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::many_unreachable_rows_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::match_coverage
 crates/sisuc/src/check/tests/patterns.rs::match_join
@@ -560,7 +558,6 @@ crates/sisuc/src/check/tests/patterns.rs::repeated_matrices_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::unreachable_arms
 crates/sisuc/src/check/tests/patterns.rs::variant_form_fix_is_safe_only_when_empty
 crates/sisuc/src/check/tests/patterns.rs::wide_payload_checks_without_deep_recursion
-crates/sisuc/src/check/tests/patterns.rs::wide_witness_builds_in_linear_time
 crates/sisuc/src/check/tests/places.rs::an_exiting_index_spills_the_enclosing_call
 crates/sisuc/src/check/tests/places.rs::binds_indexes_in_source_order
 crates/sisuc/src/check/tests/places.rs::compound_assignment_reports_as_a_local_would
