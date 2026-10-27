@@ -55,6 +55,8 @@ class NextestFilters(unittest.TestCase):
         for leaf in ['/^check::/', '/^(a|b)$/', '/^a{2}/', '~check', '#check{a,b}', '#check*', r'check\.']:
             with self.subTest(leaf=leaf):
                 self.assertEqual(problems(overrides(f'test({leaf})')), [other_kind(2, leaf)])
+        spaced = overrides('test( /a)b/)')
+        self.assertEqual(problems(spaced), [other_kind(2, '/a)b/')])
 
     def test_each_leaf_should_match_as_nextest_does(self):
         # (row, filter, the leaf that matches no test, if any)
@@ -65,6 +67,7 @@ class NextestFilters(unittest.TestCase):
             ('a bare leaf is a prefix', 'test(check::tests::a)', None),
             ('a bare leaf is a part of a name', 'test(_should_y)', None),
             ('space before a leaf argument is trimmed', 'test( _should_y)', None),
+            ('space before a missing leaf is trimmed', 'test( _should_z)', '_should_z'),
             ('space after a leaf argument is kept', 'test(_should_y )', '_should_y '),
             ('a bare leaf that is no part fails', 'test(_should_z)', '_should_z'),
             ('a leaf in a group matches', 'binary(sisuc) & (test(=check::tests::b_should_y) | kind(test))', None),

@@ -14,7 +14,7 @@ import tomllib
 
 # nextest allows whitespace, a newline too, before `(`. A leaf runs to the first `)`; a regex leaf
 # runs to its closing `/`, so that the message shows all of it.
-LEAF = re.compile(r'\btest\s*\((/.*?/|[^)]*)\)')
+LEAF = re.compile(r'\btest\s*\(\s*(/.*?/|[^)]*)\)')
 
 
 def leaves(config: dict) -> list[str]:
