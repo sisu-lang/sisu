@@ -5,7 +5,8 @@ Usage: python3 nextest_filters.py CONFIG LIST_JSON
 CONFIG is .config/nextest.toml. LIST_JSON is the output of
 `cargo nextest list --workspace --message-format json`. It prints one line for each leaf that
 matches no test, or that is not `=name` or a substring (nextest also has /regex/, ~x and #glob,
-which this check does not read), and exits 1. It prints nothing and exits 0 when every leaf is fine.
+which this check does not read), and exits 1. It prints each line where a stale leaf is. It skips
+an override with a `platform` key. It prints nothing and exits 0 when every leaf is fine.
 """
 import json
 import re
@@ -15,25 +16,39 @@ import tomllib
 # nextest allows whitespace, a newline too, before `(`. A leaf runs to the first `)`; a regex leaf
 # runs to its closing `/`, so that the message shows all of it.
 LEAF = re.compile(r'\btest\s*\(\s*(/.*?/|[^)]*)\)')
+# A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no token.
+TOKEN = re.compile(r"""'''.*?'''|\"\"\".*?\"\"\"|'[^'\n]*'|"(?:[^"\\\n]|\\.)*"|#[^\n]*""", re.S)
+ASSIGN = re.compile(r'(?<![\w-])filter\s*=\s*$')
 
 
-def leaves(config: dict) -> list[str]:
-    """The argument of each `test(...)` leaf of each override and script filter, once each. nextest
-    trims the space before an argument, not the space after it."""
-    found = []
-    for profile in config.get('profile', {}).values():
-        for table in ('overrides', 'scripts'):
-            for entry in profile.get(table, []):
-                found += [leaf.lstrip() for leaf in LEAF.findall(entry.get('filter', ''))]
-    return list(dict.fromkeys(found))
+def checked_filters(config: dict) -> set[str]:
+    """The filter of each override and script that has no `platform` key.
+
+    shortcut: the check runs on the Linux list only, so an override for a platform is not checked.
+    It is found by its filter text: the same text in an override with no platform is checked, on
+    both lines. Upgrade when a platform override is added, to one list for each platform."""
+    return {entry['filter'] for profile in config.get('profile', {}).values()
+            for table in ('overrides', 'scripts') for entry in profile.get(table, [])
+            if 'filter' in entry and 'platform' not in entry}
 
 
-def line_of(text: str, leaf: str) -> int:
-    """The line of the first leaf with this argument, in the text without its comments."""
-    code = re.sub(r'(?m)^[ \t]*#.*', '', text)
-    # shortcut: a leaf inside an escaped basic string may not be found, so it reports line 1.
-    found = re.search(r'\btest\s*\(\s*' + re.escape(leaf) + r'\)', code)
-    return code.count('\n', 0, found.start()) + 1 if found else 1
+def leaves(text: str, filters: set[str]) -> set[tuple[int, str]]:
+    """(line, argument) of each `test(...)` leaf in each `filter = ...` value of the config text
+    that is one of `filters`. A TOML comment holds no leaf. nextest trims the space before an
+    argument, not the space after it."""
+    found = set()
+    for token in TOKEN.finditer(text):
+        before = text[text.rfind('\n', 0, token.start()) + 1:token.start()]
+        if not ASSIGN.search(before):
+            continue
+        try:
+            value = tomllib.loads('v = ' + token.group())['v']
+        except tomllib.TOMLDecodeError:  # a comment
+            continue
+        if value in filters:
+            found |= {(text.count('\n', 0, token.start() + leaf.start()) + 1, leaf.group(1))
+                      for leaf in LEAF.finditer(token.group())}
+    return found
 
 
 def problem(leaf: str, names: list[str]) -> str | None:
@@ -55,11 +70,11 @@ def check(config_path: str, list_path: str) -> list[str]:
     names = [name for suite in suites.values() for name in suite.get('testcases', {})]
     text = raw.decode('utf-8')
     found = []
-    for leaf in leaves(tomllib.loads(text)):
+    for line, leaf in sorted(leaves(text, checked_filters(tomllib.loads(text)))):
         wrong = problem(leaf, names)
         if wrong:
-            found.append((line_of(text, leaf), leaf, wrong))
-    return [f"{config_path}:{line}: filter leaf `test({leaf})` {wrong}" for line, leaf, wrong in sorted(found)]
+            found.append(f"{config_path}:{line}: filter leaf `test({leaf})` {wrong}")
+    return found
 
 
 def main(argv: list[str]) -> int:

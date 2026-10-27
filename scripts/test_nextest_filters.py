@@ -85,6 +85,53 @@ class NextestFilters(unittest.TestCase):
         across = "[[profile.default.overrides]]\nfilter = '''\nbinary(a) &\n  test\n(missing)'''\n"
         self.assertEqual(problems(across), [no_match(4, 'missing')])
 
+    def test_a_stale_leaf_should_be_reported_at_each_line_where_a_filter_holds_it(self):
+        gone = "filter = 'test(gone)'\n"
+        rows = [  # row, config, the lines that report `gone`
+            ('an inline comment before the filter holds the leaf',
+             "[[profile.default.overrides]]\npriority = 1 # test(gone) was renamed\n" + gone, [3]),
+            ('a comment line above the filter holds the leaf',
+             "[[profile.default.overrides]]\n# test(gone) was renamed\n" + gone, [3]),
+            ('a comment with an apostrophe and a quote above the filter',
+             "[[profile.default.overrides]]\n# it's \"test(gone)\"\n" + gone, [3]),
+            ('a comment that holds a filter assignment',
+             "[[profile.default.overrides]]\n# filter = 'test(gone)'\n" + gone, [3]),
+            ('the leaf in the default and the ci profile',
+             overrides('test(gone)') + overrides('test(gone)', profile='ci'), [2, 6]),
+            ('the leaf twice in one filter, on two lines',
+             "[[profile.default.overrides]]\nfilter = \'\'\'\ntest(gone) |\ntest(gone)\'\'\'\n", [3, 4]),
+            ('the leaf twice on one line is one report',
+             "[[profile.default.overrides]]\nfilter = 'test(gone) | test(gone)'\n", [2]),
+            ('a basic string and a script filter',
+             '[[profile.default.overrides]]\nfilter = "test(gone)"\n[[profile.default.scripts]]\n' + gone, [2, 4]),
+            ('a key that ends in filter is no filter',
+             "[profile.default]\ndefault-filter = 'test(gone)'\n[[profile.default.overrides]]\n" + gone, [4])]
+        for row, config, lines in rows:
+            with self.subTest(row=row):
+                self.assertEqual(problems(config), [no_match(line, 'gone') for line in lines], row)
+
+    def test_an_override_for_a_platform_should_not_be_checked(self):
+        platform = "[[profile.default.overrides]]\nplatform = 'cfg(target_os = \"macos\")'\nfilter = 'test(gone)'\n"
+        table = "[[profile.default.overrides]]\nplatform = { host = 'cfg(unix)' }\nfilter = 'test(gone)'\n"
+        for row, config, lines in [('a platform string', platform, []), ('a platform table', table, []),
+                                   ('a platform override and one without', platform + overrides('test(gone_)'), [5])]:
+            with self.subTest(row=row):
+                self.assertEqual(problems(config), [no_match(line, 'gone_') for line in lines], row)
+
+    def test_a_bad_leaf_should_fail_the_run_and_print_its_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = os.path.join(tmp, 'nextest.toml')
+            tests = os.path.join(tmp, 'list.json')
+            with open(config, 'w', encoding='utf-8') as file:
+                file.write(overrides('test(=check::tests::a_should_x)', 'test(=gone)'))
+            with open(tests, 'w', encoding='utf-8') as file:
+                json.dump({'rust-suites': TESTS}, file)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                status = nf.main([config, tests])
+        self.assertEqual((status, out.getvalue()),
+                         (1, f"{config}:6: filter leaf `test(=gone)` matches no test; the test was renamed or deleted\n"))
+
     def test_a_config_with_nothing_to_check_should_print_nothing_and_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = os.path.join(tmp, 'nextest.toml')
