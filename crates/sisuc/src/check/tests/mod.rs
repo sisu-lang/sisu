@@ -1354,6 +1354,16 @@ fn unknown_type_in_signature() {
     );
 }
 
+#[test]
+fn comparison_should_be_an_error_when_its_sides_have_different_types() {
+    diagnostic(
+        "fn main() { print(1 == true) }",
+        Code::CannotCompare,
+        (1, 19, "1 == true"),
+        &[],
+    );
+}
+
 /// Each wrong type is reported once, at the value: a condition, an operand or an argument.
 #[test]
 fn wrong_type_should_be_reported_at_the_value_that_has_it() {
@@ -1377,11 +1387,6 @@ fn wrong_type_should_be_reported_at_the_value_that_has_it() {
             "not operand",
             "fn main() { print(!1) }",
             (Code::Mismatch, (1, 20)),
-        ),
-        (
-            "equality operands",
-            "fn main() { print(1 == true) }",
-            (Code::CannotCompare, (1, 19)),
         ),
         (
             "argument",

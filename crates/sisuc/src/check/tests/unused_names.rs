@@ -280,8 +280,8 @@ fn field_should_warn_when_code_only_compound_assigns_it() {
     );
 }
 
-/// A comparison or a search reads every field of each class that its type holds, and a safe
-/// field read reads its field, so no field of these programs is unread.
+/// A comparison or a search reads every field of each class that its type holds, so no field of
+/// these programs is unread.
 #[test]
 fn field_should_count_as_read_when_a_comparison_or_a_search_reads_its_class() {
     judge_unused();
@@ -347,15 +347,17 @@ fn field_should_count_as_read_when_a_comparison_or_a_search_reads_its_class() {
                 "{P_X}fn main() {{\n    let a = P(x: 1)\n    let xs = [a]\n    print(xs.contains(a))\n}}"
             ),
         ),
-        (
-            "safe field read",
-            format!(
-                "{P_X}fn get(o: P?) -> i64 {{\n    o?.x ?? 0\n}}\nfn main() {{\n    print(get(P(x: 1)))\n}}"
-            ),
-        ),
     ] {
         clean_row(row, &src);
     }
+}
+
+#[test]
+fn safe_field_read_should_read_the_field() {
+    judge_unused();
+    clean(&format!(
+        "{P_X}fn get(o: P?) -> i64 {{\n    o?.x ?? 0\n}}\nfn main() {{\n    print(get(P(x: 1)))\n}}"
+    ));
 }
 
 #[test]
