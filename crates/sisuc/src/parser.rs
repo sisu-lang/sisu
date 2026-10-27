@@ -246,6 +246,37 @@ fn starts_postfix(kind: &TokenKind) -> bool {
     )
 }
 
+/// Whether `kind` begins an operand that `unary` and `primary` take. A `_`, a leading `.` and
+/// the magnitude of `i64::MIN` start no operand: they are errors there. A `{` does not count:
+/// after an operator it opens the body of an `if`, `while`, `for` or `match` more often than a
+/// block operand. A fix that writes an operator before such a token would swap one error for
+/// another.
+fn starts_operand(kind: &TokenKind) -> bool {
+    match kind {
+        TokenKind::Int(magnitude) => i64::try_from(*magnitude).is_ok(),
+        _ => matches!(
+            kind,
+            TokenKind::Float(_)
+                | TokenKind::Char(_)
+                | TokenKind::Str(_)
+                | TokenKind::StrHead(_)
+                | TokenKind::Ident(_)
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::SelfKw
+                | TokenKind::NoneKw
+                | TokenKind::Todo
+                | TokenKind::LParen
+                | TokenKind::LBracket
+                | TokenKind::If
+                | TokenKind::Loop
+                | TokenKind::Match
+                | TokenKind::Minus
+                | TokenKind::Bang
+        ),
+    }
+}
+
 fn compare_op(kind: &TokenKind) -> Option<CompareOp> {
     Some(match kind {
         TokenKind::Lt => CompareOp::Lt,
@@ -2505,7 +2536,7 @@ impl<'a> Parser<'a> {
             '|'
         };
         // The `&` or `|` is not `Eof`, so the token after it exists.
-        if self.tokens[self.pos + 1].kind.starts_operand() {
+        if starts_operand(&self.tokens[self.pos + 1].kind) {
             DiagnosticKind::LogicalOperatorWritten { c, at }.into()
         } else {
             DiagnosticKind::UnexpectedCharacter { c, at }.into()
@@ -3353,7 +3384,7 @@ impl<'a> Parser<'a> {
             TokenKind::Pipe => return Err(self.prefix_pipe()),
             _ => {
                 debug_assert!(
-                    !token.kind.starts_operand(),
+                    !starts_operand(&token.kind),
                     "`starts_operand` should list only tokens that `primary` takes"
                 );
                 return Err(self.expected("an expression"));

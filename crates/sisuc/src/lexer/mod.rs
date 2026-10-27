@@ -209,59 +209,6 @@ impl TokenKind {
 }
 
 impl TokenKind {
-    /// Whether the token begins an operand that the parser's `unary` and `primary` take. A `_`,
-    /// a leading `.` and the magnitude of `i64::MIN` start no operand: they are errors there. A
-    /// `{` does not count: after an operator it opens the body of an `if`, `while`, `for` or
-    /// `match` more often than a block operand. A fix that writes an operator before such a token
-    /// would swap one error for another.
-    pub(crate) fn starts_operand(&self) -> bool {
-        match self {
-            TokenKind::Int(magnitude) => i64::try_from(*magnitude).is_ok(),
-            _ => matches!(
-                self,
-                TokenKind::Float(_)
-                    | TokenKind::Char(_)
-                    | TokenKind::Str(_)
-                    | TokenKind::StrHead(_)
-                    | TokenKind::Ident(_)
-                    | TokenKind::True
-                    | TokenKind::False
-                    | TokenKind::SelfKw
-                    | TokenKind::NoneKw
-                    | TokenKind::Todo
-                    | TokenKind::LParen
-                    | TokenKind::LBracket
-                    | TokenKind::If
-                    | TokenKind::Loop
-                    | TokenKind::Match
-                    | TokenKind::Minus
-                    | TokenKind::Bang
-            ),
-        }
-    }
-
-    /// Whether the token can be the last of a complete operand: an operator after it is infix.
-    /// A `}`, a `?` and `Self` are left out, as a block, an optional type and a type end too.
-    fn ends_operand(&self) -> bool {
-        matches!(
-            self,
-            TokenKind::Ident(_)
-                | TokenKind::Int(_)
-                | TokenKind::Float(_)
-                | TokenKind::Char(_)
-                | TokenKind::Str(_)
-                | TokenKind::StrTail(_)
-                | TokenKind::True
-                | TokenKind::False
-                | TokenKind::NoneKw
-                | TokenKind::SelfKw
-                | TokenKind::RParen
-                | TokenKind::RBracket
-        )
-    }
-}
-
-impl TokenKind {
     /// How a diagnostic names the token: "`)`", "`x`", "end of line".
     pub(crate) fn describe(&self) -> String {
         let text = match self {
@@ -725,9 +672,8 @@ struct Statements {
     enclosing: Vec<Statement>,
     current: Statement,
     /// Where the first `&` stands, among the tokens read, that no header's list holds: no bound
-    /// reads it, so it is an unexpected character. Also whether a type annotation is not open
-    /// there, which a `&` joins interfaces in.
-    stray: Option<(usize, bool)>,
+    /// reads it, so it is an unexpected character.
+    stray: Option<usize>,
 }
 
 /// What a statement's tokens so far, outside its closed brackets, show.
@@ -870,8 +816,7 @@ impl Statements {
                 // A `&` is a bound's separator after the `:` of its parameter, so a `&` anywhere
                 // else is in no list.
                 TokenKind::Amp if !(s.params && s.bounded) => {
-                    self.stray
-                        .get_or_insert_with(|| (i, s.annotation.is_none()));
+                    self.stray.get_or_insert(i);
                 }
                 // A `>=` after a type annotation closes it and starts its value. So does a loop
                 // keyword: it follows a loop label's `:`, which is no annotation.
@@ -960,23 +905,12 @@ impl Brackets {
         bracket: Diagnostic,
     ) -> Diagnostic {
         self.statements.read(tokens, tokens.len());
-        if let Some((i, outside_annotation)) = self.statements.stray {
+        if let Some(i) = self.statements.stray {
             let at = tokens[i].span.start();
+            // No lexer diagnostic starts at a `&`, so `<` and `<=` are the same here. The parser
+            // never runs, so the position of the `&` is unknown and the report has no fix.
             if diagnostics.first().is_none_or(|d| at < d.span().start()) {
-                // The parser never runs, so the position is judged by the tokens around the `&`:
-                // it is an operator when an operand ends before it and another starts after it.
-                let infix = outside_annotation
-                    && tokens[..i].last().is_some_and(|t| t.kind.ends_operand())
-                    && tokens.get(i + 1).is_some_and(|t| t.kind.starts_operand());
-                diagnostics.insert(
-                    0,
-                    if infix {
-                        let at = Span::new(at, at + '&'.len_utf8());
-                        DiagnosticKind::LogicalOperatorWritten { c: '&', at }.into()
-                    } else {
-                        unexpected('&', at)
-                    },
-                );
+                diagnostics.insert(0, unexpected('&', at));
             }
         }
         first_or(diagnostics, bracket)
@@ -4206,32 +4140,20 @@ mod tests {
         assert_eq!(at(src, &fatal(src)), (Code::UnexpectedCharacter, 1, 1));
     }
 
-    /// A lone `&` that a bracket error leaves unparsed gets the `&&` fix only where the parser
-    /// would give it: an operand ends before the `&` and another starts after it, outside a type
-    /// annotation. The unclosed `(` or the stray `]` stops the lexer in every row.
+    /// A lone `&` that a bracket error leaves unparsed has no fix: the parser never runs, so the
+    /// lexer cannot tell an operator from a binding, a parameter or a pattern. The unclosed `(`
+    /// or the stray `]` stops the lexer in every row.
     #[test]
-    fn a_bracket_error_should_offer_the_logical_and_only_between_operands() {
-        for (src, fix) in [
-            ("fn f() {\n    let a = 1 & 2\n    print(a]\n}", true),
-            ("fn main() {\n    let a = (1 & 2\n}", true),
-            ("fn main() {\n    let a = x & -y\n    print(a]\n}", true),
-            // No operand follows, or the next token is no operand.
-            ("fn main() {\n    let a = (1 & )\n    print(a]\n}", false),
-            ("fn main() {\n    let a = (1 &", false),
-            ("fn main() {\n    let a = (1 & _\n}", false),
-            // No operand ends before the `&`: it is a prefix, a line start or a binding.
-            ("fn main() {\n    print(&a]\n}", false),
-            ("fn main() {\n    let a = 1\n    & 2]\n}", false),
-            ("fn main() {\n    let & = (1\n}", false),
-            // A `&` in a type annotation joins interfaces.
-            ("fn f(x: A & B) ]", false),
-            ("fn main() {\n    let x: A & B = (1\n}", false),
+    fn a_bracket_error_should_leave_a_lone_ampersand_with_no_fix() {
+        for src in [
+            "fn f() {\n    let a = 1 & 2\n    print(a]\n}",
+            "fn main() {\n    let a = (1 & 2\n}",
+            "fn main() {\n    let a & b = (1\n}",
+            "fn f(a & b) ]",
         ] {
             let d = fatal(src);
             assert_eq!(d.code(), Code::UnexpectedCharacter, "{src}");
-            let start = src.find('&').expect("every row has a `&`");
-            let want = fix.then(|| (false, vec![(start, start + 1, "&&".to_string())]));
-            assert_eq!(fix_edits(&d), want, "{src}");
+            assert_eq!(fix_edits(&d), None, "{src}");
         }
     }
 
