@@ -1,3 +1,4 @@
+nextest-version = { recommended = "0.9.91" }
 experimental = ["setup-scripts"]
 
 [scripts.setup.build-runtime]
@@ -131,18 +132,18 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = "package(sisuc) & (kind(test) | test(/^fuzz_program::/))"
 setup = "build-runtime"
 
-# The Valgrind tests are the longest, so they start first. A Valgrind run of a case peaks at
-# about 55 MB, so no cap on how many run at once is needed.
+# The Valgrind tests are the longest, so they start first. A Valgrind run of a case uses
+# at most about 80 MB, so no cap on how many run at once is needed.
 # The `bless_` tests, `same_named_cases_should_not_share_an_executable_when_run_at_once` and
 # `run_case_should_check_and_bless_its_err_file` call `support::run`, which runs Valgrind. So do
-# the two tests on invalid UTF-8 and on print buffers.
+# the two tests on invalid UTF-8 and on print buffers, and the seven `o2_calls_marker_` tests.
 [[profile.default.overrides]]
-filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(/^bless_/) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(run_case_should_check_and_bless_its_err_file) | test(invalid_utf8_should_become_the_replacement_character_in_input_and_arguments) | test(print_should_allocate_one_buffer_however_much_it_prints))"
+filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(/^bless_/) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(run_case_should_check_and_bless_its_err_file) | test(invalid_utf8_should_become_the_replacement_character_in_input_and_arguments) | test(print_should_allocate_one_buffer_however_much_it_prints) | test(/^o2_calls_marker_/))"
 priority = 100
 
 # Each case compiles twice and runs under Valgrind, so these are the longest tests and start
-# first; a Valgrind run of a case peaks at about 55 MB. A hang is killed after three minutes. The
-# orphan checks only read the directory, so they keep the default priority.
+# first; a Valgrind run of a case uses at most about 80 MB. A hang is killed after three
+# minutes. The orphan checks only read the directory, so they keep the default priority.
 [[profile.default.overrides]]
 filter = "binary(cases) & test(/^(run|run_fail|site_run|site_run_fail)::/)"
 priority = 100
