@@ -261,8 +261,11 @@ impl Checker<'_> {
     ) -> Option<tir::FuncId> {
         let ty = ty?;
         let name = site.name;
+        let mut masked = None;
         match self.own_method(ty, name.name) {
-            Some(Declared::Known(func)) => return self.block_holds_at_call(func, ty, span),
+            Some(Declared::Known(func)) if self.plain_block_holds(func, ty) => return Some(func),
+            // A conformance that applies answers the call instead.
+            Some(Declared::Known(func)) => masked = Some(func),
             // Its own error is reported; the caller checks the arguments.
             Some(Declared::Broken) => return None,
             None => {}
@@ -270,6 +273,9 @@ impl Checker<'_> {
         self.conforming_methods(ty, name.name);
         match self.candidates[..] {
             [] => {
+                if let Some(func) = masked {
+                    return self.block_holds_at_call(func, ty, span);
+                }
                 // A block covered the receiver, and its bounds fail: the type argument is wrong.
                 if let Some(at) = self.failed_block {
                     self.report_block_bound(at, ty, span);
@@ -326,6 +332,30 @@ impl Checker<'_> {
         };
         self.diagnostics.push(d);
         None
+    }
+
+    /// `own_method`, unless the method is a plain block's and the bounds of its block fail for
+    /// `ty`: then a conformance may answer a call (see `find_method`).
+    pub(super) fn applicable_method(
+        &mut self,
+        ty: Type,
+        name: Symbol,
+    ) -> Option<Declared<tir::FuncId>> {
+        match self.own_method(ty, name) {
+            Some(Declared::Known(func)) if !self.plain_block_holds(func, ty) => None,
+            found => found,
+        }
+    }
+
+    /// Whether the bounds of the block of the method `func`, which a plain block gives or the
+    /// body, hold for a receiver of type `ty`.
+    fn plain_block_holds(&mut self, func: tir::FuncId, ty: Type) -> bool {
+        let Some(at) = self.signatures[func.0].extension else {
+            return true;
+        };
+        let stands = (self.covers(at, ty))
+            .expect("the block of a method that a call found should cover the receiver");
+        self.block_holds(at, stands)
     }
 
     /// The method `func`, which a plain block gives or the body, found for a receiver of type

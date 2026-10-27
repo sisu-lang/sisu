@@ -651,6 +651,8 @@ fn conformances_should_check_clean() {
         "class Circle {\n    r: f64\n    fn name(self) -> string { \"body\" }\n}\nextend Circle: Label {\n    fn name(self) -> string { \"label\" }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    let s = c.name()\n    print(s)\n    print(c.r)\n}",
         // The same, with the method in a block of a conformance.
         "interface Maker {\n    fn make<U>(self) -> [U]\n}\nclass C {\n    x: i64\n}\nextend C: Maker {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { x }\nfn main() {\n    let c = C(x: 1)\n    print(take(c.make(), [1]).len())\n}",
+        // `Self` in the interface of a block is the block's target.
+        "interface Back<T> {\n    fn back(self) -> T\n}\nclass Loop {\n    x: i64\n}\nextend Loop: Back<Self> {\n    fn back(self) -> Self { self }\n}\nfn main() {\n    print(Loop(x: 1).back().x)\n}",
         // An argument of a generic call waits for the other, with the method in a block.
         "class C {\n    x: i64\n}\nextend C {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { x }\nfn main() {\n    let c = C(x: 1)\n    print(take(c.make(), [1]).len())\n}",
     ] {
@@ -944,6 +946,27 @@ fn a_types_own_method_should_take_the_call_before_a_conformance_block() {
     ] {
         clean(&with_shapes(src));
     }
+}
+
+/// A plain block's method whose bounds fail for the receiver is no candidate: the conformance
+/// block that applies answers the call. Without one, the bound is reported; with one that the
+/// bounds allow, the plain method still wins.
+#[test]
+fn a_plain_method_whose_bounds_fail_should_not_hide_an_applicable_conformance() {
+    let program = |bound: &str, receiver: &str| {
+        format!(
+            "interface Flag {{}}\ninterface Get {{\n    fn get(self) -> i64\n}}\nclass Box<T> {{\n    value: T\n}}\nclass Node {{}}\nclass Mark: Flag {{}}\nextend<T: {bound}> Box<T> {{\n    fn get(self) -> i64 {{ 1 }}\n}}\nextend Box<Node>: Get {{\n    fn get(self) -> i64 {{ 2 }}\n}}\nfn main() {{\n    let n = Box(value: {receiver}).get()\n}}"
+        )
+    };
+    let src = program("Flag", "Node()");
+    assert_eq!(called_interface(&src).as_deref(), Some("Get"));
+    // The receiver meets the bound: the plain method is the type's own.
+    assert_eq!(called_interface(&program("Flag", "Mark()")), None);
+    // No conformance covers the receiver: the bound is reported at the call.
+    let src = program("Flag", "Mark()").replace("Box<Node>: Get", "Box<Mark>: Get");
+    assert_eq!(called_interface(&src), None);
+    let src = src.replace("Mark()).get()", "Node()).get()");
+    codes(&src, &[(Code::NotConform, (17, 13))]);
 }
 
 /// `row`, and an empty `main` unless it has one.
@@ -1537,6 +1560,20 @@ fn a_method_should_find_the_choices_of_its_class_without_copying_them() {
     assert!(large <= 2 * small, "{large} reads for 64, {small} for 32");
 }
 
+/// The bound and closure steps and the scopes kept for `list`, a list of type parameters
+/// that is checked clean beside the interfaces it names.
+fn bound_steps(list: &str) -> (usize, usize) {
+    let src = format!(
+        "interface Source {{\n    type Item\n}}\ninterface Holds<Y> {{\n    type Item\n}}\ninterface Convert<Y> {{}}\n{list}\nfn main() {{}}"
+    );
+    BOUND_STEPS.set(0);
+    SCOPES_KEPT.set(0);
+    CLOSURE_STEPS.set(0);
+    let ds = diags(&src);
+    assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
+    (BOUND_STEPS.get() + CLOSURE_STEPS.get(), SCOPES_KEPT.get())
+}
+
 /// The bounds that write an associated type of another parameter are read a fixed number of
 /// times each, and put in scope in place. The steps are the bounds resolved and the
 /// entries of closures built. Those of 64 are at most twice those of 32
@@ -1547,7 +1584,9 @@ fn a_method_should_find_the_choices_of_its_class_without_copying_them() {
 /// whose `n` bounds each write the type that the one before declares (a closure that grows by the
 /// closure of each bound); and one interface that declares `n` types, named by `n` bounds of
 /// one parameter, which `n` other bounds write (the declarations are read once, not for each
-/// bound). The scopes kept are as many for 64 as for 32.
+/// bound); and one interface that declares `n` types, named by the bound of each of `n`
+/// parameters that one bound writes a type of (a parameter reads the types that its bounds write,
+/// not all that the interface declares). The scopes kept are as many for 64 as for 32.
 #[test]
 fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
     let chain = |n: usize| {
@@ -1612,16 +1651,18 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
             writers.join(", ")
         )
     };
-    let steps = |list: String| {
-        let src = format!(
-            "interface Source {{\n    type Item\n}}\ninterface Holds<Y> {{\n    type Item\n}}\ninterface Convert<Y> {{}}\n{list}\nfn main() {{}}"
-        );
-        BOUND_STEPS.set(0);
-        SCOPES_KEPT.set(0);
-        CLOSURE_STEPS.set(0);
-        let ds = diags(&src);
-        assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
-        (BOUND_STEPS.get() + CLOSURE_STEPS.get(), SCOPES_KEPT.get())
+    let roots = |n: usize| {
+        let declared: Vec<String> = (0..n).map(|i| format!("    type A{i}\n")).collect();
+        let owners: Vec<String> = (0..n).map(|i| format!("S{i}: Big<R.Item>")).collect();
+        let writers: Vec<String> = (0..n)
+            .map(|i| format!("U{i}: Convert<S{i}.A{i}>"))
+            .collect();
+        format!(
+            "interface Big<X> {{\n{}}}\nfn f<R: Source, {}, {}>() {{}}",
+            declared.concat(),
+            owners.join(", "),
+            writers.join(", ")
+        )
     };
     for (name, shape) in [
         ("chain", &chain as &dyn Fn(usize) -> String),
@@ -1629,8 +1670,10 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
         ("beside", &beside),
         ("within", &within),
         ("many", &many),
+        ("roots", &roots),
     ] {
-        let ((small, kept_small), (large, kept_large)) = (steps(shape(32)), steps(shape(64)));
+        let ((small, kept_small), (large, kept_large)) =
+            (bound_steps(&shape(32)), bound_steps(&shape(64)));
         assert!(small >= 32, "{name}: {small} steps for 32");
         // Twice the steps, and a few more for the work that no bound adds.
         assert!(
@@ -3334,6 +3377,9 @@ fn associated_types_should_normalize_through_generic_code() {
         // Two bounds that inherit the one `Item` that `Source` declares, beside the bound of
         // `Source` itself: they are no declarations to wait for.
         "interface First<X>: Source {}\ninterface Second<X>: Source {}\nfn same<S: Source & First<S.Item> & Second<S.Item>>(_s: S) {}",
+        // Three bounds of one parameter that give the one `Item` that `Base3<R.Item>` declares,
+        // two of them by the interfaces that inherit it with the same argument.
+        "interface Base3<Y> {\n    type Item\n}\ninterface First3<X, Y>: Base3<Y> {}\ninterface Second3<X, Y>: Base3<Y> {}\nfn diamond3<S: Base3<R.Item> & First3<S.Item, R.Item> & Second3<S.Item, R.Item>, R: Source>(_s: S, _r: R) {}",
         // A bound of the parameter is in scope and gives a declaration of its own, and a bound of
         // another parameter writes the type; so does a group of two bounds that give a shared one.
         "interface Holds2<Y> {\n    type Item\n}\nfn scoped<S: Holds2<i64>, U: Convert<S.Item>>(u: U) -> S.Item { u.convert() }",
@@ -3529,6 +3575,10 @@ fn an_associated_type_that_needs_itself_should_be_reported_once() {
     // `Leaf.A` ends the chain.
     codes(&program("Leaf", uses), &[]);
     codes(&program("Leaf", "    bare(W(value: Leaf()))\n"), &[]);
+    // The bound that the type meets inherits the interface that declares the associated type,
+    // and no signature writes it: `mono` would meet the loop in the body of `get`.
+    let inherited = "interface Base {\n    type B: Holder\n}\ninterface Holder: Base {}\nclass Leaf {\n    n: i64\n}\nextend Leaf: Base {\n    type B = W<Leaf>\n}\nextend Leaf: Holder {}\nclass W<T> {\n    value: T\n}\nextend<T: Holder> W<T>: Base {\n    type B = T.B.B\n}\nextend<T: Holder> W<T>: Holder {}\nfn get<S: Holder>(_s: S) {\n    let _x: [S.B] = []\n}\nfn main() {\n    get(W(value: Leaf(n: 1)))\n}";
+    codes(inherited, &[(Code::UnknownType, (16, 14))]);
 }
 
 /// A bound whose argument names an associated type of a sibling parameter finds that parameter's
@@ -3590,6 +3640,21 @@ fn a_bound_should_see_the_bounds_of_its_siblings_and_the_arguments_it_waits_for(
         (
             "interface Add2<X> {\n    type Item\n}\ninterface Src2<X> {\n    type Item\n}\nfn f<T: Add2<T.Item> & Src2<R.Item>, U: Convert<T.Item>, R: Source>(_t: T, _u: U, _r: R) {}".to_string(),
             vec![(Code::Ambiguous, (7, 51))],
+        ),
+        // The other bounds of the parameter that name the interface are other instantiations of
+        // it: the type is ambiguous when one is not the bound that writes it, whatever the order.
+        (
+            "interface Holds2<Y> {\n    type Item\n}\nfn f<S: Holds2<i64> & Holds2<S.Item> & Holds2<T.Item>, T: Source>(_s: S, _t: T) {}".to_string(),
+            vec![(Code::Ambiguous, (4, 32))],
+        ),
+        (
+            "interface Holds2<Y> {\n    type Item\n}\nfn f<S: Holds2<T.Item> & Holds2<S.Item> & Holds2<i64>, T: Source>(_s: S, _t: T) {}".to_string(),
+            vec![(Code::Ambiguous, (4, 35))],
+        ),
+        // Two bounds that write the type, and so wait for each other.
+        (
+            "interface Holds2<Y> {\n    type Item\n}\nfn f<S: Holds2<S.Item> & Holds2<S.Item> & Holds2<i64>>(_s: S) {}".to_string(),
+            vec![(Code::UnknownType, (4, 18)), (Code::UnknownType, (4, 35))],
         ),
         // A bound that names no interface declares nothing: a class, a type parameter and an
         // optional. The parameter it bounds has no associated type, and that is all.
@@ -3683,11 +3748,11 @@ fn a_bound_that_writes_an_associated_type_should_give_at_most_the_limit_of_inter
 /// A parameter whose closure went past the limit when a bound was added is unknown for the bounds
 /// that resolve after it: a bound of a later wave that writes a type of it is not reported again.
 /// The type `Key` is declared at the end of the chain that the limit cuts. A chain of 256 holds
-/// `Key` at its 256th interface, which the bound of `W` waits for; one entry more is past the
-/// limit, so `W` does not wait, reads the closure before `Big` is added, and is reported.
+/// `Key` at its 256th interface; one entry more is past the limit. The bound of `W` waits for
+/// `Big` in both, so it meets a parameter that is unknown, and is not reported.
 #[test]
 fn a_parameter_that_went_past_the_limit_should_stay_unknown_for_later_bounds() {
-    for (key_at, extra) in [(3, vec![]), (2, vec![(Code::UnknownType, (261, 64))])] {
+    for key_at in [3, 2] {
         let mut chain = String::new();
         for k in 1..=257 {
             let body = if k == key_at { "\n    type Key\n" } else { "" };
@@ -3702,9 +3767,7 @@ fn a_parameter_that_went_past_the_limit_should_stay_unknown_for_later_bounds() {
         let row = format!(
             "interface Big<X>: C257 {{}}\n{chain}fn f<V: Convert<S.Item>, S: Source & Big<R.Item>, W: Convert<S.Key>, R: Source>(_v: V, _s: S, _w: W, _r: R) {{}}"
         );
-        let mut expected = vec![(Code::BoundTooWide, (261, 38))];
-        expected.extend(extra);
-        codes(&with_sources(&row), &expected);
+        codes(&with_sources(&row), &[(Code::BoundTooWide, (261, 38))]);
     }
 }
 

@@ -407,6 +407,9 @@ struct Checker<'src> {
     /// The choices that `normalize` found to need their own associated type, each with the first
     /// type found for it; reported once all bodies are checked (see `report_loops`).
     loops: std::cell::RefCell<FxHashMap<(tir::InterfaceId, usize, usize), Type>>,
+    /// The associated types that a bound of each interface gives its type, with the ones that the
+    /// interfaces it inherits declare, found when first asked for (see `probe_associated`).
+    probed: FxHashMap<tir::InterfaceId, Rc<[interface::Declaration]>>,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// The place among `extensions` of the first block that covers the receiver of the call being
@@ -872,6 +875,7 @@ impl<'src> Checker<'src> {
             conformance_bounds: FxHashMap::default(),
             choice_ats: FxHashMap::default(),
             loops: std::cell::RefCell::default(),
+            probed: FxHashMap::default(),
             conformed: FxHashMap::default(),
             failed_block: None,
             lowered_enums: Vec::new(),

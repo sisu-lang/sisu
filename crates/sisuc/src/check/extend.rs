@@ -52,6 +52,8 @@ impl<'a> Checker<'_> {
         self.body.set_type_params(&params);
         let bounds = self.declare_bounds(0, Vec::new(), &extend.type_params);
         let target = self.extend_target(&extend.target);
+        // `Self` is the target in the interface the block names, as in its methods.
+        self.body.self_type = Some(target.unwrap_or(UNKNOWN));
         let interface = (extend.interface.as_ref()).map(|ty| {
             let bound = self.bound(ty, target)?;
             // The block's parameters could not be found from the receiver (see `extend_target`).

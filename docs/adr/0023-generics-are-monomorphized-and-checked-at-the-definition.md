@@ -80,8 +80,10 @@ the code of a copy written by hand.
   types it replaces and stops at such a loop. The checker reports the choice that
   closes the loop once, and the call that needs the type fails. `mono` does
   the same replacement for each instantiation. A loop that no signature
-  writes can reach `mono`, which stops with an internal error. A call that
-  compiles finds the conformance of each base.
+  writes is found where a type meets a bound: the checker replaces the
+  associated types that the bound's interface and the interfaces it inherits
+  declare. So `mono` meets no loop. A call that compiles finds the
+  conformance of each base.
 - **An instantiation cycle through an interface is a cycle of weights.** The
   rule for `fn f<T>(x: T) { f([x]) }` becomes a graph where each edge has a
   weight, the depth at which an argument nests a type parameter. A call

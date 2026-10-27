@@ -2,6 +2,7 @@
 //! them, and the closure of the interfaces a bound inherits.
 
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -181,7 +182,7 @@ impl Checker<'_> {
                 declared.push(assoc);
             }
         }
-        self.body.assoc = std::rc::Rc::new(Choices::new(
+        self.body.assoc = Rc::new(Choices::new(
             (declared.iter().enumerate())
                 .map(|(k, assoc)| {
                     let k =
@@ -389,11 +390,13 @@ impl Checker<'_> {
     /// `at` is the place of the first parameter. The bounds that `found` holds are in scope.
     ///
     /// An associated type `S.Item` holds the arguments of the bound of `S` that declares `Item`,
-    /// so that bound is resolved first. Which bounds declare `Item` depends on the names of their
-    /// interfaces and not on their arguments, so the order is known before any bound resolves, and
-    /// it does not depend on the order of the parameters. A bound waits for each bound of the
-    /// parameter that declares the name it writes, except when it is the only one: then no bound
-    /// gives the type, and the resolution reports it. The bounds resolve in waves: each wave
+    /// so that bound is resolved first. Which bounds declare `Item`, and which declare the same
+    /// one, depends on the names of their interfaces and the text of their arguments and not on
+    /// their types, so the order is known before any bound resolves, and it does not depend on
+    /// the order of the parameters. A bound waits for each declaration of the name it writes that
+    /// another bound gives, so the resolution finds the type ambiguous if two differ (E0156). A
+    /// declaration that only the bound gives is no wait: then no other bound gives the type, and
+    /// the resolution reports it. The bounds resolve in waves: each wave
     /// holds the bounds that wait for no one now, and its bounds go into scope together at its
     /// end. Each bound and each name is read a fixed number of times.
     ///
@@ -455,10 +458,10 @@ impl Checker<'_> {
         }
     }
 
-    /// Fills `waits` with the groups of bounds of each parameter that some bound writes an
-    /// associated type of: the bounds of one parameter that name one interface are one group.
-    /// `found` holds the bounds in scope. The names that an interface declares are read once for
-    /// each interface, whatever the number of its bounds.
+    /// Fills `waits` with the declarations that the bounds of each parameter give to the keys
+    /// that some bound writes through the parameter. `found` holds the bounds in scope. The
+    /// names that an interface declares are read once for each interface, and each bound reads
+    /// the shorter of that list and the keys of its parameter.
     fn find_declarers(
         &self,
         params: &[ast::TypeParam],
@@ -470,27 +473,70 @@ impl Checker<'_> {
         for (m, &(i, _)) in members.iter().enumerate() {
             by_param[i].push(m);
         }
-        let mut memo: FxHashMap<InterfaceId, Vec<Declaration>> = FxHashMap::default();
+        let mut memo: FxHashMap<InterfaceId, Names> = FxHashMap::default();
         for (root, bounds) in by_param.iter().enumerate() {
             if !waits.is_root[root] {
                 continue;
             }
-            let scoped = found[root]
-                .iter()
-                .flatten()
-                .map(|bound| (bound.interface, None));
+            let scoped = (found[root].iter().enumerate()).filter_map(|(j, bound)| {
+                Some((&params[root].bounds[j], bound.as_ref()?.interface, None))
+            });
             let listed = bounds.iter().filter_map(|&m| {
                 let (i, j) = members[m];
-                Some((self.written_interface(&params[i].bounds[j])?, Some(m)))
+                let ty = &params[i].bounds[j];
+                Some((ty, self.written_interface(ty)?, Some(m)))
             });
-            for (interface, member) in scoped.chain(listed) {
-                let (group, new) = waits.group(root, interface, member);
-                if new {
-                    let declarations = memo
-                        .entry(interface)
-                        .or_insert_with(|| self.declarations(interface));
-                    waits.attach(root, group, declarations);
+            for (ty, interface, giver) in scoped.chain(listed) {
+                let Some(with) = self.written_arguments(ty, interface) else {
+                    continue;
+                };
+                let (class, new) = waits.class(root, interface, with.clone(), giver);
+                if !new {
+                    continue;
                 }
+                let declared = memo.entry(interface).or_insert_with(|| {
+                    let (list, wide) = self.declarations(interface);
+                    let mut by_name: FxHashMap<Symbol, Vec<Declaration>> = FxHashMap::default();
+                    for declaration in list {
+                        by_name
+                            .entry(declaration.name)
+                            .or_default()
+                            .push(declaration);
+                    }
+                    Names { by_name, wide }
+                });
+                let keys = std::mem::take(&mut waits.keys_of[root]);
+                let give = |waits: &mut Waits, key, name| {
+                    for declaration in declared.by_name.get(&name).into_iter().flatten() {
+                        let args = declaration.args.subst(&with);
+                        waits.give(class, key, declaration.declarer, args);
+                    }
+                };
+                if declared.wide {
+                    // A name past the limit may be declared: the key waits for the bound, which
+                    // is then reported, and the parameter is unknown for the bounds after it.
+                    for &(name, key) in &keys {
+                        #[cfg(test)]
+                        super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
+                        give(waits, key, name);
+                        waits.give(class, key, interface, TypeArgs::intern(&with[1..]));
+                    }
+                } else if keys.len() <= declared.by_name.len() {
+                    for &(name, key) in &keys {
+                        #[cfg(test)]
+                        super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
+                        give(waits, key, name);
+                    }
+                } else {
+                    for &name in declared.by_name.keys() {
+                        #[cfg(test)]
+                        super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
+                        if let Some(&key) = waits.key_of.get(&(root, name)) {
+                            give(waits, key, name);
+                        }
+                    }
+                }
+                waits.keys_of[root] = keys;
             }
         }
     }
@@ -544,13 +590,31 @@ impl Checker<'_> {
         }
     }
 
+    /// The arguments that the bound `ty` of `interface` writes, led by the unit type for `Self`,
+    /// each as a type parameter that its text names: two bounds that write the same text write
+    /// the same type. `None` when their number is not the interface's.
+    fn written_arguments(&self, ty: &ast::TypeExpr, interface: InterfaceId) -> Option<Vec<Type>> {
+        let args = match &ty.kind {
+            ast::TypeKind::Applied(applied) => &applied.args[..],
+            _ => &[],
+        };
+        if args.len() + 1 != self.interfaces[interface.0].type_params.len() {
+            return None;
+        }
+        let mut with = vec![Type::UNIT];
+        with.extend(
+            args.iter()
+                .map(|arg| Type::intern(TypeKind::Param(Symbol::intern(&arg.to_string()), 0))),
+        );
+        Some(with)
+    }
+
     /// The associated types that a bound of `interface` declares, with the ones that the interfaces
     /// it inherits declare. The arguments of a declaration are those of the interface that
-    /// declares it, over the parameters of `interface`, with `Self` replaced by the unit type:
-    /// the declaration is *shared* when they name no parameter, so every bound of the interface
-    /// gives the same declaration whatever its own arguments. The walk stops at the closure
-    /// limit, as the closure of a bound does (E0157).
-    fn declarations(&self, interface: InterfaceId) -> Vec<Declaration> {
+    /// declares it, over the parameters of `interface`, with `Self` replaced by the unit type.
+    /// The walk stops at the closure limit, as the closure of a bound does (E0157): then the second
+    /// answer is `true`, and the interfaces past the limit may declare any name.
+    fn declarations(&self, interface: InterfaceId) -> (Vec<Declaration>, bool) {
         let params = &self.interfaces[interface.0].type_params;
         let own: Vec<Type> = (1..)
             .zip(&params[1..])
@@ -562,18 +626,18 @@ impl Checker<'_> {
         let mut walk = vec![start];
         let mut out = Vec::new();
         let mut with = Vec::new();
+        let mut wide = false;
         let mut at = 0;
         while let Some(&(declarer, args)) = walk.get(at) {
             at += 1;
             #[cfg(test)]
             super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
-            let shared = !args.get().iter().any(|ty| ty.has_param());
-            for declared in &self.interfaces[declarer.0].assoc {
+            for (k, declared) in (0..).zip(&self.interfaces[declarer.0].assoc) {
                 out.push(Declaration {
                     name: declared.name.name,
                     declarer,
                     args,
-                    shared,
+                    k,
                 });
             }
             with.clear();
@@ -581,12 +645,14 @@ impl Checker<'_> {
             with.extend_from_slice(args.get());
             for (inherited, _) in self.inheritances(declarer) {
                 let next = (inherited.interface, inherited.args.subst(&with));
-                if walk.len() < BOUND_CLOSURE_LIMIT && seen.insert(next) {
+                if walk.len() >= BOUND_CLOSURE_LIMIT {
+                    wide |= !seen.contains(&next);
+                } else if seen.insert(next) {
                     walk.push(next);
                 }
             }
         }
-        out
+        (out, wide)
     }
 
     /// The interface `ty` names with its arguments, for the type `this` that has it, if that is
@@ -1091,21 +1157,36 @@ impl Checker<'_> {
         false
     }
 
-    /// Normalizes each associated type that `interface` declares for `ty`, a class or an enum
-    /// that conforms to it, so that a choice that needs itself is found where the type meets the
-    /// bound, though no signature writes the associated type. Only the checker can report it.
+    /// Normalizes each associated type that a bound of `interface` gives `ty`, a class or an
+    /// enum that conforms to it, so that a choice that needs itself is found where the type meets
+    /// the bound, though no signature writes the associated type. The types are the ones that
+    /// `interface` declares and the ones that the interfaces it inherits declare: a body that
+    /// writes any of them is instantiated with `ty`. Only the checker can report a loop.
     ///
-    /// shortcut: this normalizes the associated types of `interface`, not those of the types they
-    /// choose; a loop there is found where a signature writes it, and `mono` stops at one that
-    /// none writes. Upgrade when a program needs `mono` to meet no loop that the checker did not.
-    fn probe_associated(&self, ty: Type, interface: InterfaceId, args: TypeArgs) {
-        let count = self.interfaces[interface.0].assoc.len();
+    /// A type that the choices lead to is probed too: it meets the bound of the associated type
+    /// that it is chosen for, or its own conformance, where it is chosen.
+    fn probe_associated(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) {
         if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
             return;
         }
-        for k in 0..count {
-            let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
-            let assoc = Type::intern(TypeKind::Assoc(ty, interface, args, k));
+        let declared = if let Some(declared) = self.probed.get(&interface) {
+            Rc::clone(declared)
+        } else {
+            let declared: Rc<[Declaration]> = self.declarations(interface).0.into();
+            self.probed.insert(interface, Rc::clone(&declared));
+            declared
+        };
+        // The arguments of a declaration name no `Self`, only the parameters of `interface`.
+        let mut with = vec![ty];
+        with.extend_from_slice(args.get());
+        for declaration in declared.iter() {
+            let args = declaration.args.subst(&with);
+            let assoc = Type::intern(TypeKind::Assoc(
+                ty,
+                declaration.declarer,
+                args,
+                declaration.k,
+            ));
             let _ = self.normalize(assoc);
         }
     }
@@ -1461,29 +1542,40 @@ impl Checker<'_> {
     }
 }
 
+/// The associated types that a bound of an interface declares, by name, and whether the walk
+/// stopped at the closure limit.
+struct Names {
+    by_name: FxHashMap<Symbol, Vec<Declaration>>,
+    wide: bool,
+}
+
 /// An associated type that an interface declares, or that one it inherits declares.
-struct Declaration {
+pub(super) struct Declaration {
     name: Symbol,
     /// The interface that declares it, and its arguments over the parameters of the interface
     /// that a bound names.
     declarer: InterfaceId,
     args: TypeArgs,
-    /// Whether the arguments name no parameter of that interface (see `declarations`).
-    shared: bool,
+    /// Its place among the types that the declarer declares.
+    k: u32,
 }
 
 /// What the bounds that write associated types wait for, as `resolve_member_bounds` reads it.
 /// A key is an associated type written through a parameter of the list, as `S.Item`.
 ///
-/// The bounds of a parameter that name one interface are a group. A group gives a key the
-/// declarations that its interface has, and a declaration is one of two kinds. A shared one is
-/// the same for every bound, and for every interface that inherits it, so it is *available* once
-/// any bound of any group that has it is in scope. The other kind is its own for each bound, so
-/// a key waits for all of them: for the whole group. A bound does not wait for the declarations
-/// of its own group, and the only bound that gives a shared declaration cannot wait for it.
+/// A bound of the parameter gives the key a *declaration*: the associated type of that name that
+/// its interface, or one the interface inherits, declares, with the arguments that the bound
+/// writes. Two bounds that give the same declaration give one, whatever interface inherits it:
+/// the declaration is *available* once any of them is in scope. A bound that writes a key waits
+/// for every declaration of the key that is not available, except the ones that no other bound
+/// gives: its own cannot be the one that it names. The bounds of a parameter that name an
+/// interface with the same arguments, in the same text, are a *class*: they give the same
+/// declarations, which are read once.
 struct Waits {
     /// The key of each such type, by the place of the parameter and the name.
     key_of: FxHashMap<(usize, Symbol), usize>,
+    /// The keys of each parameter, by name.
+    keys_of: Vec<Vec<(Symbol, usize)>>,
     keys: Vec<WaitKey>,
     /// The keys each bound writes.
     writes: Vec<Vec<usize>>,
@@ -1491,47 +1583,41 @@ struct Waits {
     is_root: Vec<bool>,
     /// For each bound, how many keys it waits for.
     blocked: Vec<usize>,
-    groups: Vec<Group>,
-    /// The group of each bound, if its interface is read.
-    group_of: Vec<Option<usize>>,
-    group_at: FxHashMap<(usize, InterfaceId), usize>,
-    /// The shared declarations: the key and the declarer with its arguments.
-    shared_at: FxHashMap<(usize, InterfaceId, TypeArgs), usize>,
-    shared: Vec<Shared>,
-    /// For a group and a key, how many of the declarations that the group gives are ones its own
-    /// bounds do not wait for.
-    own: FxHashMap<(usize, usize), usize>,
+    /// The declaration of a key, by the interface that declares it and its arguments, where an
+    /// argument is the text a bound writes.
+    declaration_at: FxHashMap<(usize, InterfaceId, TypeArgs), usize>,
+    declarations: Vec<Given>,
+    /// The class of each bound, if its interface is read.
+    class_of: Vec<Option<usize>>,
+    class_at: FxHashMap<(usize, InterfaceId, Vec<Type>), usize>,
+    classes: Vec<Class>,
 }
 
 #[derive(Default)]
 struct WaitKey {
-    /// How many declarations are not available yet: the groups with bounds left that give an
-    /// own declaration, and the shared declarations no bound gives yet.
+    /// How many declarations are not available yet.
     pending: usize,
     /// The bounds that wait, and the number of pending declarations they can do without, by
     /// that number.
     waiting: Vec<(usize, usize)>,
-    groups: Vec<usize>,
+    declarations: Vec<usize>,
 }
 
-struct Group {
-    /// How many bounds of the group are not resolved, and the bounds.
-    left: usize,
-    members: Vec<usize>,
-    /// Whether a bound of the group is in scope already.
-    scoped: bool,
-    /// Whether a bound of the group has resolved.
-    fired: bool,
-    /// What the group gives: a key, and the shared declaration if that is one.
-    gives: Vec<(usize, Option<usize>)>,
-}
-
-struct Shared {
+struct Given {
     key: usize,
     available: bool,
-    /// How many groups give it, and the first.
-    groups: usize,
-    first: usize,
+    /// The classes that give it.
+    givers: Vec<usize>,
+}
+
+struct Class {
+    /// The bounds of the class that are not in scope, or `scoped` when the bounds are in scope.
+    members: Vec<usize>,
+    scoped: bool,
+    /// Whether a bound of the class has resolved.
+    fired: bool,
+    /// The declarations it gives.
+    gives: Vec<usize>,
 }
 
 impl Waits {
@@ -1539,16 +1625,16 @@ impl Waits {
     fn new(written: &[Vec<(usize, &ast::Ident)>], params: usize) -> Self {
         let mut waits = Waits {
             key_of: FxHashMap::default(),
+            keys_of: vec![Vec::new(); params],
             keys: Vec::new(),
             writes: Vec::with_capacity(written.len()),
             is_root: vec![false; params],
             blocked: vec![0; written.len()],
-            groups: Vec::new(),
-            group_of: vec![None; written.len()],
-            group_at: FxHashMap::default(),
-            shared_at: FxHashMap::default(),
-            shared: Vec::new(),
-            own: FxHashMap::default(),
+            declaration_at: FxHashMap::default(),
+            declarations: Vec::new(),
+            class_of: vec![None; written.len()],
+            class_at: FxHashMap::default(),
+            classes: Vec::new(),
         };
         for pairs in written {
             let mut keys = Vec::with_capacity(pairs.len());
@@ -1558,6 +1644,7 @@ impl Waits {
                 let key = *waits.key_of.entry((root, name.name)).or_insert(next);
                 if key == next {
                     waits.keys.push(WaitKey::default());
+                    waits.keys_of[root].push((name.name, key));
                 }
                 keys.push(key);
             }
@@ -1566,20 +1653,21 @@ impl Waits {
         waits
     }
 
-    /// The group of the bounds of `root` that name `interface`, and whether it is new. `member` is
-    /// the bound to add to it, or `None` for a bound that is in scope.
-    fn group(
+    /// The class of the bounds of `root` that name `interface` with the arguments `with`, and
+    /// whether it is new. `member` is the bound to add to it, or `None` for a bound that is in
+    /// scope.
+    fn class(
         &mut self,
         root: usize,
         interface: InterfaceId,
+        with: Vec<Type>,
         member: Option<usize>,
     ) -> (usize, bool) {
-        let next = self.groups.len();
-        let group = *self.group_at.entry((root, interface)).or_insert(next);
-        let new = group == next;
+        let next = self.classes.len();
+        let class = *self.class_at.entry((root, interface, with)).or_insert(next);
+        let new = class == next;
         if new {
-            self.groups.push(Group {
-                left: 0,
+            self.classes.push(Class {
                 members: Vec::new(),
                 scoped: false,
                 fired: false,
@@ -1588,75 +1676,54 @@ impl Waits {
         }
         match member {
             Some(m) => {
-                self.groups[group].left += 1;
-                self.groups[group].members.push(m);
-                self.group_of[m] = Some(group);
+                self.classes[class].members.push(m);
+                self.class_of[m] = Some(class);
             }
-            None => self.groups[group].scoped = true,
+            None => self.classes[class].scoped = true,
         }
-        (group, new)
+        (class, new)
     }
 
-    /// Records the declarations of a new group of the bounds of `root` that key writes.
-    fn attach(&mut self, root: usize, group: usize, declarations: &[Declaration]) {
-        for declaration in declarations {
-            let Some(&key) = self.key_of.get(&(root, declaration.name)) else {
-                continue;
-            };
-            let shared = declaration.shared.then(|| {
-                let next = self.shared.len();
-                let at = *self
-                    .shared_at
-                    .entry((key, declaration.declarer, declaration.args))
-                    .or_insert(next);
-                if at == next {
-                    self.shared.push(Shared {
-                        key,
-                        available: false,
-                        groups: 0,
-                        first: group,
-                    });
-                }
-                self.shared[at].groups += 1;
-                at
+    /// Records that `class` gives the declaration of `key` that `declarer` makes with `args`.
+    fn give(&mut self, class: usize, key: usize, declarer: InterfaceId, args: TypeArgs) {
+        let next = self.declarations.len();
+        let at = *self
+            .declaration_at
+            .entry((key, declarer, args))
+            .or_insert(next);
+        if at == next {
+            self.declarations.push(Given {
+                key,
+                available: false,
+                givers: Vec::new(),
             });
-            self.groups[group].gives.push((key, shared));
-            self.keys[key].groups.push(group);
+            self.keys[key].declarations.push(at);
         }
+        self.declarations[at].givers.push(class);
+        self.classes[class].gives.push(at);
     }
 
-    /// Once every group is known: counts what each key waits for, and makes each bound wait. Gives
-    /// the bounds that wait for no one.
+    /// Once every declaration is known: counts what each key waits for, and makes each bound
+    /// wait. Gives the bounds that wait for no one.
     fn start(&mut self) -> Vec<usize> {
-        for group in &self.groups {
-            if group.scoped {
-                for &(_, shared) in &group.gives {
-                    if let Some(at) = shared {
-                        self.shared[at].available = true;
-                    }
-                }
+        for class in self.classes.iter().filter(|class| class.scoped) {
+            for &at in &class.gives {
+                self.declarations[at].available = true;
             }
         }
-        for (g, group) in self.groups.iter().enumerate() {
-            for &(key, shared) in &group.gives {
-                if shared.is_none() && group.left > 0 {
-                    self.keys[key].pending += 1;
-                    *self.own.entry((g, key)).or_insert(0) += 1;
-                }
-            }
-        }
-        for shared in &self.shared {
-            if !shared.available {
-                self.keys[shared.key].pending += 1;
-                if shared.groups == 1 {
-                    *self.own.entry((shared.first, shared.key)).or_insert(0) += 1;
-                }
+        // For a bound and a key, how many pending declarations only the bound gives.
+        let mut own: FxHashMap<(usize, usize), usize> = FxHashMap::default();
+        for given in self.declarations.iter().filter(|given| !given.available) {
+            self.keys[given.key].pending += 1;
+            if let [only] = given.givers[..]
+                && let [m] = self.classes[only].members[..]
+            {
+                *own.entry((m, given.key)).or_insert(0) += 1;
             }
         }
         for (m, keys) in self.writes.iter().enumerate() {
             for &key in keys {
-                let own = self.group_of[m].and_then(|g| self.own.get(&(g, key)).copied());
-                let can_do_without = own.unwrap_or(0);
+                let can_do_without = own.get(&(m, key)).copied().unwrap_or(0);
                 if self.keys[key].pending > can_do_without {
                     self.blocked[m] += 1;
                     self.keys[key].waiting.push((m, can_do_without));
@@ -1689,31 +1756,22 @@ impl Waits {
     }
 
     /// Records that the bounds `wave` are resolved, and gives the bounds that wait for no one
-    /// now. The first bound of a group makes the shared declarations of the group available, and
-    /// the last makes the others.
+    /// now. The first bound of a class makes available the declarations that the class gives.
     fn resolved(&mut self, wave: &[usize]) -> Vec<usize> {
         let mut ready = Vec::new();
         for &m in wave {
-            let Some(g) = self.group_of[m] else {
+            let Some(c) = self.class_of[m] else {
                 continue;
             };
-            let first = !std::mem::replace(&mut self.groups[g].fired, true);
-            self.groups[g].left -= 1;
-            let last = self.groups[g].left == 0;
-            if !first && !last {
+            if std::mem::replace(&mut self.classes[c].fired, true) {
                 continue;
             }
-            for k in 0..self.groups[g].gives.len() {
+            for k in 0..self.classes[c].gives.len() {
                 #[cfg(test)]
                 super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
-                let (key, shared) = self.groups[g].gives[k];
-                match shared {
-                    Some(at) if first && !self.shared[at].available => {
-                        self.shared[at].available = true;
-                        self.lower(key, &mut ready);
-                    }
-                    None if last => self.lower(key, &mut ready),
-                    _ => {}
+                let at = self.classes[c].gives[k];
+                if !std::mem::replace(&mut self.declarations[at].available, true) {
+                    self.lower(self.declarations[at].key, &mut ready);
                 }
             }
         }
@@ -1727,20 +1785,29 @@ impl Waits {
         &self,
         written: &[Vec<(usize, &'a ast::Ident)>],
     ) -> Vec<(usize, &'a ast::Ident)> {
-        // The bounds, then the keys, then the groups: a bound waits for its keys, a key for the
-        // groups that give it declarations, and a group for its bounds.
+        // The bounds, then the keys, then the declarations, then the classes: a bound waits for
+        // its keys, a key for the declarations that are not available, a declaration for the
+        // classes that give it, and a class for its bounds.
         let (bounds, keys) = (self.writes.len(), self.keys.len());
-        let mut edges = vec![Vec::new(); bounds + keys + self.groups.len()];
+        let classes = bounds + keys + self.declarations.len();
+        let mut edges = vec![Vec::new(); classes + self.classes.len()];
         let mut waits = FxHashSet::default();
         for (k, key) in self.keys.iter().enumerate() {
             for &(m, _) in &key.waiting {
                 edges[m].push(bounds + k);
                 waits.insert((m, k));
             }
-            edges[bounds + k].extend(key.groups.iter().map(|g| bounds + keys + g));
+            let pending = key
+                .declarations
+                .iter()
+                .filter(|&&d| !self.declarations[d].available);
+            edges[bounds + k].extend(pending.map(|&d| bounds + keys + d));
         }
-        for (g, group) in self.groups.iter().enumerate() {
-            edges[bounds + keys + g].clone_from(&group.members);
+        for (d, given) in self.declarations.iter().enumerate() {
+            edges[bounds + keys + d].extend(given.givers.iter().map(|c| classes + c));
+        }
+        for (c, class) in self.classes.iter().enumerate() {
+            edges[classes + c].clone_from(&class.members);
         }
         let component = components(&edges);
         let mut size = vec![0_usize; component.iter().max().map_or(0, |c| c + 1)];

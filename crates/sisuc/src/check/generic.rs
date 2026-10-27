@@ -1548,7 +1548,7 @@ impl Checker<'_> {
             _ => return CallShape::default(),
         }
         // The method the call will find, as `find_method` finds it, without its reports.
-        let func = match self.own_method(ty, method.name) {
+        let func = match self.applicable_method(ty, method.name) {
             Some(Declared::Known(func)) => func,
             Some(Declared::Broken) => return CallShape::default(),
             None => {
@@ -1616,7 +1616,7 @@ impl Checker<'_> {
         match ty.kind() {
             TypeKind::Param(..) | TypeKind::Assoc(..) => self.required(ty, method.name).len() > 1,
             TypeKind::Class(..) | TypeKind::Enum(..) => {
-                if self.own_method(ty, method.name).is_some() {
+                if self.applicable_method(ty, method.name).is_some() {
                     return false;
                 }
                 self.conforming_methods(ty, method.name);
