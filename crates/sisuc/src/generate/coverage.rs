@@ -108,7 +108,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 80] = [
+const REACH: [&str; 79] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -181,7 +181,6 @@ const REACH: [&str; 80] = [
     "reach: a call goes through an inherited bound",
     "reach: a generic class has a bound",
     "reach: a generic `extend` block is called",
-    "reach: an `extend` block with no conformance bounds a parameter",
     "reach: a conditional conformance holds through a bound",
     "reach: an `extend` block extends one instantiation",
     "reach: a generic interface has two conformances on one type",
@@ -649,9 +648,6 @@ impl Walk {
     fn ast_extend(&mut self, extend: &ast::Extend) {
         self.mark("ast::Item::Extend");
         self.bounds(&extend.type_params);
-        if extend.interface.is_none() && extend.type_params.iter().any(|p| !p.bounds.is_empty()) {
-            self.mark("reach: an `extend` block with no conformance bounds a parameter");
-        }
         self.type_expr(&extend.target);
         if extend.type_params.is_empty() && matches!(extend.target.kind, ast::TypeKind::Applied(_))
         {
@@ -2696,7 +2692,6 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
         "ast::BrokenKind::Extend",
         "reach: an interface inherits another",
         "reach: an interface requirement names `Self`",
-        "reach: an `extend` block with no conformance bounds a parameter",
     ] {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
     }
@@ -2799,10 +2794,7 @@ fn generated_interfaces_should_reach_their_maxima() {
             .items
             .iter()
             .filter_map(|item| match item {
-                // `Spell` is the one that only an `extend` bound names, written in every program.
-                ast::Item::Interface(interface) if interface.name.name.as_str() != "Spell" => {
-                    Some(interface)
-                }
+                ast::Item::Interface(interface) => Some(interface),
                 _ => None,
             })
             .collect();
@@ -5802,16 +5794,18 @@ fn generated_interfaces_should_be_used() {
 /// type that names it is not a use, so deleting it can break correct code. Gives the new text and
 /// how many items it cut.
 fn without_unused(source: &str) -> (String, usize) {
-    let (_, diagnostics) = crate::front_end::checked(source);
+    let parsed = parser::parse(
+        lexer::lex(source).expect("a generated program should lex"),
+        false,
+    );
+    let prelude = crate::front_end::prelude_program(crate::front_end::PRELUDE_SOURCE);
+    let (_, diagnostics) =
+        crate::check::check(&parsed.program, &prelude, source, &parsed.diagnostics);
     let unused: FxHashSet<usize> = (diagnostics.iter())
         .filter(|d| d.code().as_str() == "W0012")
         .map(|d| d.span().start())
         .collect();
-    let program = parser::parse(
-        lexer::lex(source).expect("a generated program should lex"),
-        false,
-    )
-    .program;
+    let program = parsed.program;
     let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
     let mut interfaces = FxHashSet::default();
     let mut methods: Vec<&ast::Function> = Vec::new();
@@ -5828,6 +5822,8 @@ fn without_unused(source: &str) -> (String, usize) {
                 let keyword = source[..c.name.span.start()].rfind("const");
                 cuts.push(keyword.expect("a constant should follow `const`")..c.value.span.end());
             }
+            // `generated_interfaces_should_be_used` fails first when W0012 names an interface, so
+            // this arm runs only on a tree that already fails.
             ast::Item::Interface(i) if unused.contains(&i.name.span.start()) => {
                 cuts.push(i.span.range());
                 interfaces.insert(i.name.name.as_str().to_string());
@@ -5865,12 +5861,11 @@ fn without_unused(source: &str) -> (String, usize) {
     (text, kept.len())
 }
 
-/// Deleting what W0012 names, all at once, leaves a program with no error: the warning never
-/// names code that another part still needs.
-#[test]
-fn deleting_what_w0012_names_should_leave_a_program_that_checks() {
+/// Deleting what W0012 names, all at once, from the programs of `seeds` leaves programs with no
+/// error: the warning never names code that another part still needs.
+fn deleting_unused_should_leave_programs_that_check(seeds: impl Iterator<Item = Vec<u8>>) {
     let mut cut = 0;
-    for data in seeds() {
+    for data in seeds {
         let source = generate(&data).program;
         let (text, count) = without_unused(&source);
         cut += count;
@@ -5885,6 +5880,27 @@ fn deleting_what_w0012_names_should_leave_a_program_that_checks() {
         );
     }
     assert!(cut > 0, "no seed has anything for W0012 to name");
+}
+
+/// The seeds are split in four tests, so that nextest runs them in parallel.
+#[test]
+fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_first_seeds() {
+    deleting_unused_should_leave_programs_that_check(seeds().take(16));
+}
+
+#[test]
+fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_second_seeds() {
+    deleting_unused_should_leave_programs_that_check(seeds().skip(16).take(16));
+}
+
+#[test]
+fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_third_seeds() {
+    deleting_unused_should_leave_programs_that_check(seeds().skip(32).take(16));
+}
+
+#[test]
+fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_fourth_seeds() {
+    deleting_unused_should_leave_programs_that_check(seeds().skip(48));
 }
 
 /// `shapes` calls every requirement of each interface that a generated type conforms to.
@@ -5916,10 +5932,6 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
                 ast::Item::Interface(i) if i.name.name.as_str() == name => Some(&i.methods),
                 _ => None,
             });
-            // `Spell` is called in a block's method, not in `shapes`.
-            if name == "Spell" {
-                continue;
-            }
             for requirement in requirements.expect("a conformed interface should be declared") {
                 let call = format!(".{}(", requirement.name.name);
                 assert!(shapes.contains(&call), "{call} in {shapes}");

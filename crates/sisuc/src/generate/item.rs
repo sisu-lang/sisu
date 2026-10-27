@@ -710,8 +710,7 @@ impl Gen<'_> {
     /// with `string` as well. And `fn shapes()`, which calls each method on a value of each type
     /// and the generic functions with both types, and builds the class. A call on a type with two
     /// conformances to one interface is picked by the type of its result. The methods hold the
-    /// smallest value of their result. And the call of `bounded_extension`. Each interface is used,
-    /// so none is reported.
+    /// smallest value of their result. Each interface is used, so none is reported.
     fn shapes(&mut self, declared: &[Shape]) {
         let mut calls = Vec::new();
         let once = |k: usize| Conformed {
@@ -791,7 +790,6 @@ impl Gen<'_> {
             calls.push("let qboth = QBoth(v: 1)".to_string());
             calls.push("both(qboth)".to_string());
         }
-        calls.push(self.bounded_extension());
         self.w.text("fn shapes() ");
         self.w.open();
         for call in &calls {
@@ -800,25 +798,6 @@ impl Gen<'_> {
         }
         self.w.close();
         self.w.line();
-    }
-
-    /// An interface `Spell` that only the bound of an `extend` block names: `ZCrate<T>` holds a `T`
-    /// and its block `extend<T: Spell>` has a method that calls `spell` on it. A class `ZLeaf`
-    /// conforms to `Spell`. Gives the statement of `shapes` that calls the method. It draws
-    /// nothing, so it moves no choice of a program.
-    fn bounded_extension(&mut self) -> String {
-        let lines = [
-            "interface Spell {\n    fn spell(self) -> i64\n}",
-            "class ZLeaf {}",
-            "extend ZLeaf: Spell {\n    fn spell(self) -> i64 { 1 }\n}",
-            "class ZCrate<T> {\n    v: T\n}",
-            "extend<T: Spell> ZCrate<T> {\n    fn spelled(self) -> i64 { self.v.spell() }\n}",
-        ];
-        for text in lines {
-            self.w.text(text);
-            self.w.line();
-        }
-        "let _ = ZCrate(v: ZLeaf()).spelled()".to_string()
     }
 
     /// A generic class `R<k><T>` that conforms to the interface `k`, and to those it inherits,
