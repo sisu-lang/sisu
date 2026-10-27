@@ -18,12 +18,13 @@ LEAF = re.compile(r'\btest\s*\((/.*?/|[^)]*)\)')
 
 
 def leaves(config: dict) -> list[str]:
-    """The argument of each `test(...)` leaf of each override and script filter, once each."""
+    """The argument of each `test(...)` leaf of each override and script filter, once each. nextest
+    trims the space before an argument, not the space after it."""
     found = []
     for profile in config.get('profile', {}).values():
         for table in ('overrides', 'scripts'):
             for entry in profile.get(table, []):
-                found += LEAF.findall(entry.get('filter', ''))
+                found += [leaf.lstrip() for leaf in LEAF.findall(entry.get('filter', ''))]
     return list(dict.fromkeys(found))
 
 
@@ -31,12 +32,14 @@ def line_of(text: str, leaf: str) -> int:
     """The line of the first leaf with this argument, in the text without its comments."""
     code = re.sub(r'(?m)^[ \t]*#.*', '', text)
     # shortcut: a leaf inside an escaped basic string may not be found, so it reports line 1.
-    found = re.search(r'\btest\s*\(' + re.escape(leaf) + r'\)', code)
+    found = re.search(r'\btest\s*\(\s*' + re.escape(leaf) + r'\)', code)
     return code.count('\n', 0, found.start()) + 1 if found else 1
 
 
 def problem(leaf: str, names: list[str]) -> str | None:
     """What is wrong with a leaf, or None."""
+    # shortcut: a leaf is matched against every binary, not the one its filter names, so a rename
+    # in another binary can hide behind a leaf of the same text; scope by `binary(...)` then.
     if leaf.startswith(('/', '~', '#')) or '\\' in leaf:
         return 'is not a name leaf; use test(=name) or test(substring)'
     found = leaf[1:] in names if leaf.startswith('=') else any(leaf in name for name in names)
@@ -55,8 +58,8 @@ def check(config_path: str, list_path: str) -> list[str]:
     for leaf in leaves(tomllib.loads(text)):
         wrong = problem(leaf, names)
         if wrong:
-            found.append((line_of(text, leaf), f"{config_path}:{{}}: filter leaf `test({leaf})` {wrong}"))
-    return [message.format(line) for line, message in sorted(found)]
+            found.append((line_of(text, leaf), leaf, wrong))
+    return [f"{config_path}:{line}: filter leaf `test({leaf})` {wrong}" for line, leaf, wrong in sorted(found)]
 
 
 def main(argv: list[str]) -> int:

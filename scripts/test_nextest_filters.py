@@ -16,9 +16,9 @@ TESTS = {
 }
 
 
-def overrides(*filters, table='overrides'):
-    """A config with one `[[profile.default.<table>]]` per filter, each filter on its own line."""
-    return ''.join(f"[[profile.default.{table}]]\nfilter = '{each}'\npriority = 1\n\n" for each in filters)
+def overrides(*filters, table='overrides', profile='default'):
+    """A config with one `[[profile.<profile>.<table>]]` per filter, each filter on its own line."""
+    return ''.join(f"[[profile.{profile}.{table}]]\nfilter = '{each}'\npriority = 1\n\n" for each in filters)
 
 
 def problems(config, tests=TESTS):
@@ -48,9 +48,11 @@ class NextestFilters(unittest.TestCase):
         self.assertEqual(problems(config), [no_match(6, '=check::tests::gone')])
         scripts = overrides('test(gone_)', table='scripts')
         self.assertEqual(problems(scripts), [no_match(2, 'gone_')])
+        ci = overrides('test(gone_)', profile='ci')
+        self.assertEqual(problems(ci), [no_match(2, 'gone_')])
 
     def test_a_leaf_of_another_kind_should_fail(self):
-        for leaf in ['/^check::/', '/^(a|b)$/', '~check', '#check*', r'check\.']:
+        for leaf in ['/^check::/', '/^(a|b)$/', '/^a{2}/', '~check', '#check{a,b}', '#check*', r'check\.']:
             with self.subTest(leaf=leaf):
                 self.assertEqual(problems(overrides(f'test({leaf})')), [other_kind(2, leaf)])
 
@@ -62,6 +64,8 @@ class NextestFilters(unittest.TestCase):
             ('an = leaf is not a part of a name', 'test(=_should_x)', '=_should_x'),
             ('a bare leaf is a prefix', 'test(check::tests::a)', None),
             ('a bare leaf is a part of a name', 'test(_should_y)', None),
+            ('space before a leaf argument is trimmed', 'test( _should_y)', None),
+            ('space after a leaf argument is kept', 'test(_should_y )', '_should_y '),
             ('a bare leaf that is no part fails', 'test(_should_z)', '_should_z'),
             ('a leaf in a group matches', 'binary(sisuc) & (test(=check::tests::b_should_y) | kind(test))', None),
             ('the missing leaf of a group fails', 'binary(sisuc) & (test(_should_x) | test(=no::test))', '=no::test'),
