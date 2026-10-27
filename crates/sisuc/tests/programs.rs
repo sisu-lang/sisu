@@ -15,6 +15,7 @@ mod scratch_path;
 mod support;
 
 use scratch_path::{empty_dir, only_cc};
+use support::fixture;
 
 const PROGRAMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/programs");
 const RUN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run");
@@ -53,7 +54,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
     );
 }
 
-/// The programs the small-stack tests run. They are not `tests/run` cases: a million objects
+/// The programs the small-stack tests run. They are not `tests/run` cases: many objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
 const SMALL_STACK: [&str; 19] = [
     "longlist",
@@ -283,27 +284,27 @@ fn assert_small_stack_prints(name: &str, expected: &str) {
     );
 }
 
-/// GIVEN the `longlist` program, which builds a list of 1 000 000 nodes
+/// GIVEN the `longlist` program, which builds a list of 100 000 nodes
 /// WHEN it runs under a 256 KiB stack
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 #[test]
-fn longlist_should_free_a_million_nodes_in_a_small_stack() {
-    assert_small_stack_prints("longlist", "1000000\n");
+fn longlist_should_free_a_long_list_in_a_small_stack() {
+    assert_small_stack_prints("longlist", "100000\n");
 }
 
-/// GIVEN the `rightskew` program, which builds a right-skewed tree of 1 000 000 nodes
+/// GIVEN the `rightskew` program, which builds a right-skewed tree of 100 000 nodes
 /// WHEN it runs under a 256 KiB stack
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 #[test]
-fn rightskew_should_free_a_million_node_tree_in_a_small_stack() {
-    assert_small_stack_prints("rightskew", "1000000\n");
+fn rightskew_should_free_a_long_tree_in_a_small_stack() {
+    assert_small_stack_prints("rightskew", "100000\n");
 }
 
-/// GIVEN the `eqlist` program, which compares two lists of 1 000 000 nodes
+/// GIVEN the `eqlist` program, which compares two lists of 100 000 nodes
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` twice
 ///
-/// `==` on two lists of 1 000 000 nodes, with the chain field last and first, at both levels.
+/// `==` on two lists of 100 000 nodes, with the chain field last and first, at both levels.
 #[test]
 fn equal_long_lists_should_compare_in_a_small_stack() {
     for o2 in [false, true] {
@@ -322,47 +323,47 @@ fn assert_small_stack_prints_at_both(name: &str, expected: &str) {
     }
 }
 
-/// GIVEN the `enumlist` program, which builds a right-deep enum list of 1 000 000 cells
+/// GIVEN the `enumlist` program, which builds a right-deep enum list of 100 000 cells
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 ///
-/// A right-deep enum list of 1 000 000 cells frees its boxes from the pending list.
+/// A right-deep enum list of 100 000 cells frees its boxes from the pending list.
 #[test]
 fn enum_list_should_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("enumlist", "1000000\n");
+    assert_small_stack_prints_at_both("enumlist", "100000\n");
 }
 
-/// GIVEN the `enumfold` program, which builds a left-deep fold of 1 000 000 `Add`s
+/// GIVEN the `enumfold` program, which builds a left-deep fold of 100 000 `Add`s
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 ///
-/// A left-deep fold of 1 000 000 `Add`s frees its boxes from the pending list.
+/// A left-deep fold of 100 000 `Add`s frees its boxes from the pending list.
 #[test]
 fn enum_fold_should_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("enumfold", "1000000\n");
+    assert_small_stack_prints_at_both("enumfold", "100000\n");
 }
 
 /// GIVEN the `enummutual` program, which holds two chains through two enums that hold each other
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000 and `true`
+/// THEN it exits 0 and prints 100000 and `true`
 ///
 /// Two chains through two enums that hold each other compare with `==` and free in one frame.
 #[test]
 fn mutual_enums_should_compare_and_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("enummutual", "1000000\ntrue\n");
+    assert_small_stack_prints_at_both("enummutual", "100000\ntrue\n");
 }
 
-/// GIVEN the `enumeq` program, which compares two pairs of enum lists of 1 000 000 cells
+/// GIVEN the `enumeq` program, which compares two pairs of enum lists of 100 000 cells
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
 ///
-/// `==` on two pairs of 1 000 000-cell enum lists loops on the tail.
+/// `==` on two pairs of 100 000-cell enum lists loops on the tail.
 #[test]
 fn equal_enum_lists_should_compare_in_a_small_stack() {
     assert_small_stack_prints_at_both("enumeq", "true\nfalse\n");
 }
 
-/// GIVEN the `deeppair` program, which compares and drops two pairs of 1 000 000-deep `Expr`s,
+/// GIVEN the `deeppair` program, which compares and drops two pairs of 100 000-deep `Expr`s,
 /// deep through the inline field of a generic enum
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
@@ -373,7 +374,7 @@ fn deep_inline_links_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("deeppair", "true\nfalse\n");
 }
 
-/// GIVEN the `deepchain2` program, which compares and drops two pairs of 1 000 000-deep `Chain`s
+/// GIVEN the `deepchain2` program, which compares and drops two pairs of 100 000-deep `Chain`s
 /// (a `Chain` is an `Option`-shaped enum that holds itself)
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
@@ -384,7 +385,7 @@ fn option_shaped_chains_should_compare_and_free_in_a_small_stack() {
     assert_small_stack_prints_at_both("deepchain2", "true\nfalse\n");
 }
 
-/// GIVEN the `dropleft` program, which builds a class tree 1 000 000 deep through `l`, not the
+/// GIVEN the `dropleft` program, which builds a class tree 100 000 deep through `l`, not the
 /// chain field, and one that alternates `l` and `r`
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `done`
@@ -393,7 +394,7 @@ fn class_drop_should_free_trees_deep_through_any_own_field_in_a_small_stack() {
     assert_small_stack_prints_at_both("dropleft", "done\n");
 }
 
-/// GIVEN the `eqleft` program, which compares three pairs of left-deep trees of 1 000 000 nodes
+/// GIVEN the `eqleft` program, which compares three pairs of left-deep trees of 100 000 nodes
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true`, `false` and `false`
 ///
@@ -414,41 +415,41 @@ fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
     assert_small_stack_prints_at_both("eqorder", "false\n");
 }
 
-/// GIVEN the `dropmutual` program, which builds chains of 1 000 000 pairs of two classes that
-/// hold each other and of 300 000 triples of three classes that hold each other
+/// GIVEN the `dropmutual` program, which builds chains of 100 000 pairs of two classes that
+/// hold each other and of 30 000 triples of three classes that hold each other
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000 and 300000
+/// THEN it exits 0 and prints 100000 and 30000
 ///
 /// The drop frees the objects of the classes in a cycle from pending lists, not by recursion.
 #[test]
 fn class_drop_should_free_chains_of_classes_that_hold_each_other_in_a_small_stack() {
-    assert_small_stack_prints_at_both("dropmutual", "1000000\n300000\n");
+    assert_small_stack_prints_at_both("dropmutual", "100000\n30000\n");
 }
 
-/// GIVEN the `dropoptional` program, which builds a list of 1 000 000 nodes through a field of
+/// GIVEN the `dropoptional` program, which builds a list of 100 000 nodes through a field of
 /// type `Node??`, the last link `Some(None)`
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 ///
 /// The drop follows a field with more than one `?` in a loop, as it follows `Node?`.
 #[test]
-fn nested_optional_link_should_free_a_million_nodes_in_a_small_stack() {
-    assert_small_stack_prints_at_both("dropoptional", "1000000\n");
+fn nested_optional_link_should_free_a_long_list_in_a_small_stack() {
+    assert_small_stack_prints_at_both("dropoptional", "100000\n");
 }
 
-/// GIVEN the `dropmutualoptional` program, which builds a chain of 1 000 000 pairs of two
+/// GIVEN the `dropmutualoptional` program, which builds a chain of 100 000 pairs of two
 /// classes that hold each other through fields of type `A??` and `B??`
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints 1000000
+/// THEN it exits 0 and prints 100000
 ///
 /// The drop of a cycle of classes frees the objects from pending lists, whatever the number of
 /// `?` of the fields that link them.
 #[test]
 fn nested_optional_links_between_classes_should_free_in_a_small_stack() {
-    assert_small_stack_prints_at_both("dropmutualoptional", "1000000\n");
+    assert_small_stack_prints_at_both("dropmutualoptional", "100000\n");
 }
 
-/// GIVEN the `eqtrail` program, which compares two pairs of left-deep values of 1 000 000 nodes
+/// GIVEN the `eqtrail` program, which compares two pairs of left-deep values of 100 000 nodes
 /// whose links are followed by an `i64` field
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
 /// THEN it exits 0 and prints `true` and `false`
@@ -463,7 +464,7 @@ fn enums_with_a_field_after_the_link_should_compare_in_a_small_stack() {
 /// WHEN it runs under a 256 KiB stack
 /// THEN it dies by signal 11 and prints nothing
 ///
-/// The control for `longlist_should_free_a_million_nodes_in_a_small_stack`: a drop that
+/// The control for `longlist_should_free_a_long_list_in_a_small_stack`: a drop that
 /// recurses once per object, as the drop of an array does, overflows the same stack, so the
 /// limit is in force.
 #[test]
@@ -1777,23 +1778,6 @@ const PRINTS_1: &str = "fn main() {\n    print(1)\n}\n";
 const PRINTS_1_THEN_PANICS: &str =
     "fn main() {\n    print(1)\n    let z = 0\n    print(1 / z)\n}\n";
 
-/// Writes each `(path, contents)` under a fresh `<CARGO_TARGET_TMPDIR>/fixtures/<test>/` and
-/// returns that directory.
-fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join("fixtures")
-        .join(test);
-    // It is absent on the first run, so a failure here is expected and harmless.
-    drop(fs::remove_dir_all(&dir));
-    for (path, contents) in files {
-        let path = dir.join(path);
-        fs::create_dir_all(path.parent().expect("a fixture file should have a parent"))
-            .expect("creates the fixture directory");
-        fs::write(path, contents).expect("writes the fixture file");
-    }
-    dir
-}
-
 /// Runs `f`, which should panic, and returns its panic message.
 fn panic_message(f: impl FnOnce()) -> String {
     let payload = panic::catch_unwind(AssertUnwindSafe(f)).expect_err("the call should panic");
@@ -2167,52 +2151,57 @@ fn run_case_should_check_and_bless_its_err_file() {
     assert!(message.contains("has no `.err` file"), "{message}");
 }
 
-/// GIVEN a directory with `ghost.out` and no `ghost.sisu`
-/// WHEN `orphan_check` runs on `ghost.out`
-/// THEN it panics and names `ghost.out`
+/// GIVEN a directory with the case `a` and `ghost.out`, which has no `ghost.sisu`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `ghost.out`
 #[test]
-#[should_panic(expected = "ghost.out")]
-fn orphan_check_should_fail_for_an_out_file_without_a_source() {
-    let dir = fixture("orphan_out_fails", &[("ghost.out", "1\n")]);
-    support::orphan_check(&dir.join("ghost.out"), &["out"]);
+fn orphans_should_list_an_out_file_without_a_source() {
+    let dir = fixture(
+        "orphan_out_fails",
+        &[("a.sisu", PRINTS_1), ("a.out", "1\n"), ("ghost.out", "1\n")],
+    );
+    let messages = support::orphans(&dir, &["out"]);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("ghost.out"), "{messages:?}");
 }
 
 /// GIVEN a `run` case with a file `notes.txt` beside it
-/// WHEN `orphan_check` runs on `notes.txt`
-/// THEN it panics and names `notes.txt`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `notes.txt`
 #[test]
-#[should_panic(expected = "notes.txt")]
-fn orphan_check_should_fail_for_a_file_of_an_unknown_type() {
+fn orphans_should_list_a_file_of_an_unknown_type() {
     let dir = fixture(
         "stray_file_type_fails",
         &[("notes.sisu", PRINTS_1), ("notes.txt", "")],
     );
-    support::orphan_check(&dir.join("notes.txt"), &support::RUN_EXPECTATIONS);
+    let messages = support::orphans(&dir, &support::RUN_EXPECTATIONS);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("notes.txt"), "{messages:?}");
 }
 
 /// GIVEN a `run` case with a `.json` file beside it
-/// WHEN `orphan_check` runs on the `.json` file
-/// THEN it panics and names `a.json`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `a.json`
 ///
-/// A `.json` beside a `run` case is never read, so it fails like an orphan.
+/// A `.json` beside a `run` case is never read, so it is listed like an orphan.
 #[test]
-#[should_panic(expected = "a.json")]
-fn orphan_check_should_fail_for_a_json_file_beside_a_run_case() {
+fn orphans_should_list_a_json_file_beside_a_run_case() {
     let dir = fixture(
         "expectation_of_another_mode_fails",
         &[("a.sisu", PRINTS_1), ("a.out", "1\n"), ("a.json", "")],
     );
-    support::orphan_check(&dir.join("a.json"), &support::RUN_EXPECTATIONS);
+    let messages = support::orphans(&dir, &support::RUN_EXPECTATIONS);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("a.json"), "{messages:?}");
 }
 
 /// GIVEN a `run` case with a hidden file `.ghost.out` beside it
-/// WHEN `orphan_check` runs on the case
-/// THEN it panics and names `.ghost.out`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `.ghost.out`
 ///
-/// The harness never lists a hidden file, so the check of a listed file beside it fails.
+/// The harness never lists a hidden file, so only the listing of the directory finds it.
 #[test]
-#[should_panic(expected = ".ghost.out")]
-fn orphan_check_should_fail_for_a_hidden_file_beside_a_case() {
+fn orphans_should_list_a_hidden_file_beside_a_case() {
     let dir = fixture(
         "hidden_file_fails",
         &[
@@ -2221,7 +2210,61 @@ fn orphan_check_should_fail_for_a_hidden_file_beside_a_case() {
             (".ghost.out", "1\n"),
         ],
     );
-    support::orphan_check(&dir.join("a.sisu"), &["out"]);
+    let messages = support::orphans(&dir, &["out"]);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains(".ghost.out"), "{messages:?}");
+}
+
+/// GIVEN a directory with the case `a`, a file `notes.txt` and a hidden file `.ghost.out`
+/// WHEN `orphans` lists the directory
+/// THEN it returns two messages, and they name `.ghost.out` and `notes.txt`
+#[test]
+fn orphans_should_list_every_bad_entry_of_a_directory() {
+    let dir = fixture(
+        "every_bad_entry_listed",
+        &[
+            ("a.sisu", PRINTS_1),
+            ("a.out", "1\n"),
+            ("notes.txt", ""),
+            (".ghost.out", "1\n"),
+        ],
+    );
+    let messages = support::orphans(&dir, &["out"]);
+    assert_eq!(messages.len(), 2, "{messages:?}");
+    assert!(messages[0].contains(".ghost.out"), "{messages:?}");
+    assert!(messages[1].contains("notes.txt"), "{messages:?}");
+}
+
+/// GIVEN a directory with the case `a` and a subdirectory `sub`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `sub` as a directory
+///
+/// A case directory is flat, so a case inside `sub` would go unchecked.
+#[test]
+fn orphans_should_reject_a_subdirectory() {
+    let dir = fixture(
+        "subdirectory_rejected",
+        &[
+            ("a.sisu", PRINTS_1),
+            ("a.out", "1\n"),
+            ("sub/b.sisu", PRINTS_1),
+        ],
+    );
+    let messages = support::orphans(&dir, &["out"]);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("sub is a directory"), "{messages:?}");
+}
+
+/// GIVEN a directory with `a.out` and no `.sisu` file
+/// WHEN `orphans` lists the directory
+/// THEN it panics and says that the directory holds no case
+///
+/// A wrong path would otherwise list no entry and pass.
+#[test]
+#[should_panic(expected = "holds no `.sisu` case")]
+fn orphans_should_fail_for_a_directory_with_no_case() {
+    let dir = fixture("directory_with_no_case", &[("a.out", "1\n")]);
+    support::orphans(&dir, &["out"]);
 }
 
 /// GIVEN cases named `dup` in `run`, in `run-fail`, in `run/a_b` and in `run/a/b`

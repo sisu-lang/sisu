@@ -36,6 +36,19 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
+#[cfg(test)]
+thread_local! {
+    /// How many stack nodes the solver has built on this thread (`push`), plus the width of each
+    /// pattern it interns (`pat`).
+    pub(super) static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds `work` to `STEPS`.
+#[cfg(test)]
+fn step(work: usize) {
+    STEPS.set(STEPS.get() + work);
+}
+
 /// One arm's pattern: a row of the matrix.
 pub(super) struct Row<'a> {
     pub(super) pattern: &'a tir::Pattern,
@@ -484,6 +497,13 @@ impl Solver<'_> {
     }
 
     fn pat(&mut self, pat: Pat) -> PatId {
+        // Interning hashes the whole pattern.
+        #[cfg(test)]
+        step(match &pat {
+            Pat::Variant { fields, .. } => fields.len(),
+            Pat::Or { alts, .. } => alts.len(),
+            _ => 1,
+        });
         let (pats, ors) = (&mut self.pats, &mut self.ors);
         *self.pat_ids.entry(pat).or_insert_with_key(|pat| {
             ors.push(match pat {
@@ -545,6 +565,8 @@ impl Solver<'_> {
 
     /// The stack of `pat`, of type `col`, on `tail`.
     fn push(&mut self, pat: PatId, col: Col, tail: StackId) -> StackId {
+        #[cfg(test)]
+        step(1);
         let wild = pat == WILD && self.nodes[tail].wild;
         let ors = self.ors[pat] || self.nodes[tail].ors;
         let nodes = &mut self.nodes;

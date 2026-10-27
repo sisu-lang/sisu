@@ -652,22 +652,230 @@ fn unreachable_arms() {
     );
 }
 
-/// The keep-alive override for this test is in `.config/nextest.toml`: specializing a column
-/// once per constructor over every row, or checking each arm against the arms before it, is
-/// quadratic and hangs instead of failing. At 50,000 variants a quadratic bucketing still ends
-/// inside the override's 30 seconds, so the test takes 200,000. A column of 50,000 literals is
-/// quadratic when its split rescans the column per interval, and a `V(true | false, ...)` of
-/// 20,000 fields when specializing copies or rehashes the rest of a row. In the last `match`,
-/// each of the 16,000 alternatives' buckets holds every arm below the first, and each range arm
-/// is taken by the 500 literal arms: a list of every row that took a row's values costs
-/// alternatives × literals × ranges, which hangs.
+/// The solver's steps to check `src`, whose diagnostics are exactly `expected`.
+fn coverage_steps(src: &str, expected: &[(Code, (usize, usize))]) -> usize {
+    exhaust::STEPS.set(0);
+    codes(src, expected);
+    exhaust::STEPS.get()
+}
+
+/// A pattern of the typed tree. The span is where the row sits: `at` through `at + 1`.
+fn row_pattern(at: usize, kind: tir::PatternKind) -> tir::Pattern {
+    tir::Pattern {
+        kind,
+        span: Span::new(at, at + 1),
+    }
+}
+
+/// A pattern inside a row.
+fn field_pattern(kind: tir::PatternKind) -> tir::Pattern {
+    row_pattern(0, kind)
+}
+
+/// The enum with one variant for each entry of `variants`, the types of that variant's fields.
+fn enum_of(variants: Vec<Vec<Type>>) -> tir::Enum {
+    let variants = (variants.into_iter().enumerate())
+        .map(|(i, fields)| tir::Variant {
+            name: format!("V{i}"),
+            fields: (fields.into_iter())
+                .map(|ty| tir::Payload {
+                    ty,
+                    boxed: false,
+                    rank: tir::Rank::Plain,
+                })
+                .collect(),
+        })
+        .collect();
+    tir::Enum {
+        name: String::from("E"),
+        type_params: Vec::new(),
+        variants,
+        counted: false,
+        cycle: None,
+    }
+}
+
+/// The type of the enum at index `id` of the program's enums.
+fn enum_type(id: usize) -> Type {
+    Type::intern(TypeKind::Enum(tir::EnumId(id), TypeArgs::NONE))
+}
+
+/// `exhaust::check` on `patterns`, one unguarded row each: the rows no value reaches, as the
+/// spans of their patterns; `enums` are the program's and `ty` is the type of the `match`.
+/// The report has no missing value.
+fn unreachable_rows(enums: &[tir::Enum], ty: Type, patterns: &[tir::Pattern]) -> Vec<Span> {
+    let rows: Vec<_> = patterns
+        .iter()
+        .map(|pattern| exhaust::Row {
+            pattern,
+            guarded: false,
+        })
+        .collect();
+    let report = exhaust::check(enums, &tir::Conformances::default(), ty, &rows);
+    assert!(
+        report.missing.is_none(),
+        "the rows should cover every value"
+    );
+    assert!(
+        report.unreachable.iter().all(|u| u.alternative.is_none()),
+        "every alternative should be reached"
+    );
+    report.unreachable.iter().map(|u| u.at).collect()
+}
+
+/// The kill override for this test is in `.config/nextest.toml`: the rows of a `match` on an enum
+/// of 145,000 variants, with an arm for each, given to `exhaust::check`. Finding a variant's
+/// bucket by a search of the buckets, or specializing the column once per variant over every
+/// row, is quadratic and hangs. A counter cannot see these: the search is a new loop, not a step
+/// the solver counts. On a developer machine at load 1 the current code takes 0.2 s, the search
+/// of the buckets 24 s, and the scan of every row for each bucket more than 300 s; the kill is
+/// 4 s.
 #[test]
-fn many_arms_check_in_linear_time() {
-    const VARIANTS: usize = 200_000;
-    const LITERALS: usize = 50_000;
-    const FIELDS: usize = 20_000;
-    const ALTERNATIVES: usize = 16_000;
-    const TAKERS: usize = 500;
+fn variants_should_check_in_linear_time() {
+    const VARIANTS: usize = 145_000;
+    let enums = [enum_of(vec![Vec::new(); VARIANTS])];
+    let rows: Vec<_> = (0..VARIANTS)
+        .map(|i| {
+            row_pattern(
+                i,
+                tir::PatternKind::Variant {
+                    variant: i,
+                    fields: Vec::new(),
+                },
+            )
+        })
+        .collect();
+    assert_eq!(unreachable_rows(&enums, enum_type(0), &rows), []);
+}
+
+/// The kill override for this test is in `.config/nextest.toml`: the rows of a `match` on 140,000
+/// literals, given to `exhaust::check`. A split that rescans the column for each row, or finds a
+/// row's first interval by a search from the start, is quadratic in the literals and hangs. A
+/// counter cannot see these, as for `variants_should_check_in_linear_time`. On a developer
+/// machine at load 1 the current code takes 0.3 s, the search from the start 20 s, the search of
+/// the buckets 26 s and the rescan of the whole column 80 s; the kill is 4 s.
+#[test]
+fn literal_arms_should_check_in_linear_time() {
+    const LITERALS: usize = 140_000;
+    let literal = |i: usize| tir::PatternKind::Range {
+        lo: i64::try_from(i).expect("a literal should fit an `i64`"),
+        hi: i64::try_from(i).expect("a literal should fit an `i64`"),
+    };
+    let rows: Vec<_> = (0..LITERALS)
+        .map(|i| row_pattern(i, literal(i)))
+        .chain([row_pattern(LITERALS, tir::PatternKind::Wild)])
+        .collect();
+    assert_eq!(unreachable_rows(&[], Type::I64, &rows), []);
+}
+
+/// `V(true | false, ...)` of `n` fields. Specializing a field copies the rest of its row, so a
+/// row of `n` fields costs `n` times `n`. `push` counts each stack node that such a copy builds.
+/// A walk of the rest of the row builds no node: `long_or_row_should_check_in_linear_time` guards
+/// that. Every field is an `|`, so no row is all wildcards and the cut cannot skip a column.
+#[test]
+fn or_fields_should_check_in_linear_time() {
+    let steps = |n: usize| {
+        let fields = vec!["bool"; n].join(", ");
+        let pattern = vec!["true | false"; n].join(", ");
+        coverage_steps(
+            &format!(
+                "enum F {{ V({fields}) }}\nfn f(x: F) -> i64 {{\n    match x {{\n        V({pattern}) => 1\n    }}\n}}\nfn main() {{}}"
+            ),
+            &[],
+        )
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
+}
+
+/// The kill override for this test is in `.config/nextest.toml`: one row of 60,000 `true | false`
+/// fields, given to `exhaust::check`. A `push` that walks the whole rest of the row, to rehash it
+/// or to read its flags, is quadratic in the fields and hangs. A counter cannot see this,
+/// because the walk builds no stack node. Each `|` has a span of its own, as in a source. On a
+/// developer machine at load 1 the current code takes 0.3 s and the walk 17 s; the kill is 4 s.
+#[test]
+fn long_or_row_should_check_in_linear_time() {
+    const FIELDS: usize = 60_000;
+    let enums = [enum_of(vec![vec![Type::BOOL; FIELDS]])];
+    // As in a source, each `|` and each alternative has a span of its own, so none is the same
+    // pattern as another.
+    let either = |k: usize| {
+        row_pattern(
+            3 * k,
+            tir::PatternKind::Or(vec![
+                row_pattern(3 * k + 1, tir::PatternKind::Bool(true)),
+                row_pattern(3 * k + 2, tir::PatternKind::Bool(false)),
+            ]),
+        )
+    };
+    let row = row_pattern(
+        0,
+        tir::PatternKind::Variant {
+            variant: 0,
+            fields: (0..FIELDS).map(either).collect(),
+        },
+    );
+    assert_eq!(unreachable_rows(&enums, enum_type(0), &[row]), []);
+}
+
+/// The kill override for this test is in `.config/nextest.toml`: the rows of a `match` on
+/// `Q(E, i64)`, given to `exhaust::check`. The first arm has 2,400 alternatives of `E`. Then come
+/// 1,000 literal arms and 1,000 range arms of the `i64`, and each range arm is unreachable. The
+/// arms below the first are in the bucket of each alternative, and the literal arms take the
+/// range arms. A list of every row that took a row's values costs alternatives times literals
+/// times ranges and hangs. A counter cannot see this, because the list is a new loop. On a
+/// developer machine at load 2 the current code takes 0.5 s and the list 12.5 s; the kill is
+/// 4 s.
+#[test]
+fn takers_should_check_in_linear_time() {
+    const ALTERNATIVES: usize = 2_400;
+    const TAKERS: usize = 1_000;
+    let enums = [
+        enum_of(vec![Vec::new(); ALTERNATIVES]),
+        enum_of(vec![vec![enum_type(0), Type::I64]]),
+    ];
+    let range = |lo: i64, hi: i64| field_pattern(tir::PatternKind::Range { lo, hi });
+    let wild = || field_pattern(tir::PatternKind::Wild);
+    let alternatives = (0..ALTERNATIVES)
+        .map(|variant| {
+            field_pattern(tir::PatternKind::Variant {
+                variant,
+                fields: Vec::new(),
+            })
+        })
+        .collect();
+    let q = |at: usize, fields: Vec<tir::Pattern>| {
+        row_pattern(at, tir::PatternKind::Variant { variant: 0, fields })
+    };
+    let last_literal = i64::try_from(TAKERS).expect("the takers should fit an `i64`") - 1;
+    let mut rows = vec![q(
+        0,
+        vec![
+            field_pattern(tir::PatternKind::Or(alternatives)),
+            range(-1, -1),
+        ],
+    )];
+    for j in 0..=last_literal {
+        rows.push(q(rows.len(), vec![wild(), range(j, j)]));
+    }
+    let ranges = rows.len()..rows.len() + TAKERS;
+    for _ in 0..TAKERS {
+        rows.push(q(rows.len(), vec![wild(), range(0, last_literal)]));
+    }
+    rows.push(q(rows.len(), vec![wild(), wild()]));
+    let expected: Vec<_> = ranges.map(|at| Span::new(at, at + 1)).collect();
+    assert_eq!(unreachable_rows(&enums, enum_type(1), &rows), expected);
+}
+
+/// The kill override for this test is in `.config/nextest.toml`: a source with an enum of 44,000
+/// variants, a `match` with an arm for each, and a `match` whose first arm is one `|` of 4,400 of
+/// them. The solver tests above build their rows by hand, so this one gives the parser and the
+/// lowering of names and patterns (`check/pattern.rs`) a large well-formed `match`. A search of
+/// the variants for a name, in place of the index, is quadratic and hangs. On a developer machine
+/// the current code takes 0.35 s, and the search 9.9 s at load 13; the kill is 4 s.
+#[test]
+fn match_on_many_variants_should_check_in_linear_time() {
+    const VARIANTS: usize = 44_000;
+    const ALTERNATIVES: usize = 4_400;
     let variants = (0..VARIANTS)
         .map(|i| format!("    V{i}\n"))
         .collect::<Vec<_>>()
@@ -676,40 +884,13 @@ fn many_arms_check_in_linear_time() {
         .map(|i| format!("        V{i} => {i}\n"))
         .collect::<Vec<_>>()
         .concat();
-    clean(&format!(
-        "enum E {{\n{variants}}}\nfn f(e: E) -> i64 {{\n    match e {{\n{arms}    }}\n}}\nfn main() {{}}"
-    ));
-    let arms = (0..LITERALS)
-        .map(|i| format!("        {i} => {i}\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    clean(&format!(
-        "fn f(n: i64) -> i64 {{\n    match n {{\n{arms}        _ => 0\n    }}\n}}\nfn main() {{}}"
-    ));
-    // Every field an `|`, so no row is all wildcards and the cut cannot skip a column.
-    let fields = vec!["bool"; FIELDS].join(", ");
-    let pattern = vec!["true | false"; FIELDS].join(", ");
-    clean(&format!(
-        "enum F {{ V({fields}) }}\nfn f(x: F) -> i64 {{\n    match x {{\n        V({pattern}) => 1\n    }}\n}}\nfn main() {{}}"
-    ));
-    let variants = (0..ALTERNATIVES)
-        .map(|i| format!("    V{i}\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    let alternatives = (0..ALTERNATIVES)
+    let names = (0..ALTERNATIVES)
         .map(|i| format!("V{i}"))
         .collect::<Vec<_>>()
         .join(" | ");
-    let literals = (0..TAKERS)
-        .map(|j| format!("        Q(_, {j}) => 1\n"))
-        .collect::<Vec<_>>()
-        .concat();
-    let ranges = format!("        Q(_, 0..={}) => 2\n", TAKERS - 1).repeat(TAKERS);
-    let src = format!(
-        "enum E {{\n{variants}}}\nenum P {{ Q(E, i64) }}\nfn f(p: P) -> i64 {{\n    match p {{\n        Q({alternatives}, -1) => 0\n{literals}{ranges}        Q(_, _) => 3\n    }}\n}}\nfn main() {{}}"
-    );
-    let codes: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
-    assert_eq!(codes, vec![Code::UnreachableArm; TAKERS]);
+    clean(&format!(
+        "enum E {{\n{variants}}}\nfn f(e: E) -> i64 {{\n    match e {{\n{arms}    }}\n}}\nfn g(e: E) -> i64 {{\n    match e {{\n        {names} => 1\n        _ => 0\n    }}\n}}\nfn main() {{}}"
+    ));
 }
 
 /// The keep-alive override for this test is in `.config/nextest.toml`: finding the arm that
@@ -802,38 +983,38 @@ fn wide_payload_checks_without_deep_recursion() {
     clean(&wide(FIELDS, &[arm]));
 }
 
-/// The keep-alive override for this test is in `.config/nextest.toml`: a witness copied at each
-/// of its 200,000 columns is quadratic and hangs instead of failing.
+/// A witness copied at each of its columns costs the columns times their number.
 #[test]
-fn wide_witness_builds_in_linear_time() {
-    const FIELDS: usize = 200_000;
-    let fields = vec!["Bit"; FIELDS].join(", ");
-    let arm = wide_arm(FIELDS, |_| "X");
-    codes(
-        &format!(
-            "enum Bit {{\n    X\n    Y\n}}\nenum Wide {{ V({fields}) }}\nfn t(w: Wide) -> i64 {{\n    match w {{\n        {arm}\n    }}\n}}\nfn main() {{}}"
-        ),
-        &[(Code::NonExhaustive, (7, 5))],
-    );
+fn wide_witness_should_build_in_linear_time() {
+    let steps = |n: usize| {
+        let fields = vec!["Bit"; n].join(", ");
+        let arm = wide_arm(n, |_| "X");
+        coverage_steps(
+            &format!(
+                "enum Bit {{\n    X\n    Y\n}}\nenum Wide {{ V({fields}) }}\nfn t(w: Wide) -> i64 {{\n    match w {{\n        {arm}\n    }}\n}}\nfn main() {{}}"
+            ),
+            &[(Code::NonExhaustive, (7, 5))],
+        )
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
 }
 
 /// Each `Wide` column below the root has a bucket for `W` and a default that stands for `V`, so a
-/// default's head built anew at each of them costs `FIELDS` columns times `FIELDS` fields.
-///
-/// The keep-alive override for this test is in `.config/nextest.toml`: that quadratic build hangs
-/// instead of failing.
+/// default's head built anew at each of them costs `n` columns times `n` fields.
 #[test]
-fn default_witness_head_builds_in_linear_time() {
-    const FIELDS: usize = 100_000;
-    let bits = vec!["Bit"; FIELDS].join(", ");
-    let wides = vec!["Wide"; FIELDS].join(", ");
-    let ws = vec!["W"; FIELDS].join(", ");
-    codes(
-        &format!(
-            "enum Bit {{\n    X\n    Y\n}}\nenum Wide {{\n    V({bits})\n    W\n}}\nenum Row {{ P({wides}) }}\nfn t(r: Row) -> i64 {{\n    match r {{\n        P({ws}) => 1\n    }}\n}}\nfn main() {{}}"
-        ),
-        &[(Code::NonExhaustive, (11, 5))],
-    );
+fn default_witness_head_should_build_in_linear_time() {
+    let steps = |n: usize| {
+        let bits = vec!["Bit"; n].join(", ");
+        let wides = vec!["Wide"; n].join(", ");
+        let ws = vec!["W"; n].join(", ");
+        coverage_steps(
+            &format!(
+                "enum Bit {{\n    X\n    Y\n}}\nenum Wide {{\n    V({bits})\n    W\n}}\nenum Row {{ P({wides}) }}\nfn t(r: Row) -> i64 {{\n    match r {{\n        P({ws}) => 1\n    }}\n}}\nfn main() {{}}"
+            ),
+            &[(Code::NonExhaustive, (11, 5))],
+        )
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
 }
 
 /// `enum Wide { V(Bit, ...) }` with `fields` fields, and a `match` on `w` whose `arms` start on

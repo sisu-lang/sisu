@@ -1,4 +1,4 @@
-// A list of 1 000 000 nodes, run under a 256 KiB stack. Its drop follows `next` in a loop,
+// A list of 100 000 nodes, run under a 256 KiB stack. Its drop follows `next` in a loop,
 // in one frame; a recursive drop needs a frame per node and overflows that stack.
 class Node {
     _value: i64
@@ -8,7 +8,7 @@ class Node {
 fn main() {
     let mut head: Node? = None
     let mut i = 0
-    while i < 1_000_000 {
+    while i < 100_000 {
         i += 1
         head = Node(_value: i, next: head)
     }

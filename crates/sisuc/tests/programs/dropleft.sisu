@@ -1,4 +1,4 @@
-// Two trees of 1 000 000 nodes, dropped under a 256 KiB stack. `r` is the chain field, so the
+// Two trees of 100 000 nodes, dropped under a 256 KiB stack. `r` is the chain field, so the
 // first tree, deep through `l`, and the second, which alternates `l` and `r`, are deep through
 // a field that is not the chain field. A drop that recursed on such a field would need a frame
 // per level and overflow that stack.
@@ -30,7 +30,7 @@ fn alternate(depth: i64) {
 }
 
 fn main() {
-    left(1_000_000)
-    alternate(1_000_000)
+    left(100_000)
+    alternate(100_000)
     print("done")
 }

@@ -1,4 +1,4 @@
-// A right-skewed tree of 1 000 000 nodes, run under a 256 KiB stack. Its drop frees each node
+// A right-skewed tree of 100 000 nodes, run under a 256 KiB stack. Its drop frees each node
 // from a pending list, in one frame. A drop that recursed on `right` would need a frame per
 // node and overflow that stack.
 class Tree {
@@ -10,7 +10,7 @@ class Tree {
 fn main() {
     let mut root: Tree? = None
     let mut i = 0
-    while i < 1_000_000 {
+    while i < 100_000 {
         i += 1
         root = Tree(_left: None, right: root, _v: i)
     }

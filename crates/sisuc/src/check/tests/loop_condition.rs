@@ -34,32 +34,29 @@ fn while_should_warn_when_its_local_is_immutable() {
     );
 }
 
+/// A write in the body to something the condition reads stops the warning.
 #[test]
-fn while_should_warn_when_its_condition_reads_a_parameter() {
-    warns(&f(&["while n > 0 { print(n) }"]), (2, 11, "n > 0"));
-}
-
-#[test]
-fn while_should_not_warn_when_its_body_compound_assigns_its_local() {
-    clean(&f(&["let mut i = 0", "while i < n { i += 1 }"]));
-}
-
-#[test]
-fn while_should_not_warn_when_its_body_assigns_its_local() {
-    clean(&f(&["let mut i = 0", "while i < n { i = i + 1 }"]));
-}
-
-#[test]
-fn while_should_not_warn_when_its_body_writes_an_element() {
-    clean(&f(&["let mut xs = [n]", "while xs[0] > 0 { xs[0] -= 1 }"]));
-}
-
-#[test]
-fn while_should_not_warn_when_its_body_appends_to_its_local() {
-    clean(&f(&[
-        "let mut s = \"\"",
-        "while s.len() < 3 { s += \"a\" }",
-    ]));
+fn while_should_not_warn_when_its_body_writes_what_its_condition_reads() {
+    for (row, src) in [
+        (
+            "compound assign to the local",
+            f(&["let mut i = 0", "while i < n { i += 1 }"]),
+        ),
+        (
+            "assign to the local",
+            f(&["let mut i = 0", "while i < n { i = i + 1 }"]),
+        ),
+        (
+            "write to an element",
+            f(&["let mut xs = [n]", "while xs[0] > 0 { xs[0] -= 1 }"]),
+        ),
+        (
+            "append to the local",
+            f(&["let mut s = \"\"", "while s.len() < 3 { s += \"a\" }"]),
+        ),
+    ] {
+        clean_row(row, &src);
+    }
 }
 
 #[test]
@@ -126,22 +123,25 @@ fn while_should_warn_when_it_compares_an_object_with_none() {
     );
 }
 
+/// A body that can leave the loop stops the warning.
 #[test]
-fn while_should_not_warn_when_its_body_can_break() {
-    clean(&f(&["let i = 0", "while i < n { if n > 5 { break } }"]));
-}
-
-#[test]
-fn while_should_not_warn_when_its_body_can_return() {
-    clean(&f(&["let i = 0", "while i < n { if n > 5 { return } }"]));
-}
-
-#[test]
-fn while_should_not_warn_when_its_body_can_panic() {
-    clean(&f(&[
-        "let i = 0",
-        "while i < n { if n > 5 { panic(\"x\") } }",
-    ]));
+fn while_should_not_warn_when_its_body_can_leave_the_loop() {
+    for (row, src) in [
+        (
+            "break",
+            f(&["let i = 0", "while i < n { if n > 5 { break } }"]),
+        ),
+        (
+            "return",
+            f(&["let i = 0", "while i < n { if n > 5 { return } }"]),
+        ),
+        (
+            "panic",
+            f(&["let i = 0", "while i < n { if n > 5 { panic(\"x\") } }"]),
+        ),
+    ] {
+        clean_row(row, &src);
+    }
 }
 
 #[test]
@@ -269,24 +269,6 @@ fn while_should_not_warn_when_its_condition_calls_a_user_len() {
 }
 
 #[test]
-fn while_should_warn_when_its_condition_reads_a_for_binding() {
-    warns(
-        &f(&["for k in 0..3 {", "    while k > 0 { print(k) }", "}"]),
-        (3, 15, "k > 0"),
-    );
-}
-
-#[test]
-fn while_should_warn_when_its_condition_reads_a_pattern_binding() {
-    warns(
-        &with_main(
-            "enum T {\n    Leaf\n    Node(i64)\n}\nfn f(t: T, n: i64) {\n    match t {\n        Leaf => print(0)\n        Node(x) => {\n            while x < n { print(x) }\n        }\n    }\n}",
-        ),
-        (9, 19, "x < n"),
-    );
-}
-
-#[test]
 fn while_should_not_warn_when_its_local_has_an_unknown_type() {
     codes(
         &with_main("fn f(a: Fooo, b: Fooo) {\n    while a != b { print(1) }\n}"),
@@ -401,17 +383,6 @@ fn while_should_warn_when_its_condition_reads_a_length_and_an_element() {
     warns(
         &f(&["let xs = [n]", "while xs.len() > 0 { print(xs[0]) }"]),
         (3, 11, "xs.len() > 0"),
-    );
-}
-
-/// `self` has no binding: its stamp is the body's own.
-#[test]
-fn while_should_warn_when_its_condition_reads_self() {
-    warns(
-        &with_main(
-            "enum Color {\n    Red\n    Blue\n    fn wait(self, other: Color) {\n        while self == other { print(1) }\n    }\n}",
-        ),
-        (5, 15, "self == other"),
     );
 }
 

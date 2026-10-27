@@ -1,3 +1,4 @@
+nextest-version = { recommended = "0.9.91" }
 experimental = ["setup-scripts"]
 
 [scripts.setup.build-runtime]
@@ -18,10 +19,19 @@ filter = 'test(long_gaps_lex_correctly)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # Panic-site locations once scanned the text from the start, so codegen was quadratic and this
-# test hangs instead of failing.
+# test hangs instead of failing: no step counter sees such a new scan. It runs in under 1 s on a
+# developer machine, and its regression takes 15 s or more (a scan from the start, or a line index
+# for each site), so the kill is at 6 s: more than 5 times the run alone and less than half of the
+# regression.
 [[profile.default.overrides]]
-filter = 'test(many_panic_sites_compile_in_linear_time)'
-slow-timeout = { period = "10s", terminate-after = 3 }
+filter = 'test(many_panic_sites_should_compile_in_linear_time)'
+slow-timeout = { period = "2s", terminate-after = 3 }
+
+# A CI runner is about twice as slow, and coverage makes a test slower, so the kill is at 12 s: the
+# same ratios as above.
+[[profile.ci.overrides]]
+filter = 'test(many_panic_sites_should_compile_in_linear_time)'
+slow-timeout = { period = "4s", terminate-after = 3 }
 
 # Each render once cost the whole file, so many diagnostics in a large file were quadratic and
 # this test hangs instead of failing.
@@ -53,12 +63,6 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'test(nested_switch_calls_parse_in_linear_time)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
-# Specializing a column once per variant over every row, or checking each arm against the arms
-# before it, makes coverage quadratic in the arms, so this test hangs instead of failing.
-[[profile.default.overrides]]
-filter = 'test(many_arms_check_in_linear_time)'
-slow-timeout = { period = "10s", terminate-after = 3 }
-
 # Each unreachable alternative once solved the arms above it again to find its covering arm, so
 # many of them were quadratic and this test hangs instead of failing.
 [[profile.default.overrides]]
@@ -71,6 +75,23 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = 'test(malformed_patterns_of_a_wide_variant_check_in_linear_time)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
+# Four of these five tests give `exhaust::check` the rows of a huge `match`. A search for a bucket
+# or a row's interval, a rescan of every row or of the column, a `push` that walks a whole row, or
+# a list of every row that took a row's values is quadratic and hangs instead of failing: no step
+# counter sees such a new loop. The fifth, `match_on_many_variants`, checks a source, so that the
+# parser and `check/pattern.rs` meet a huge `match`: a search of the variants for each name hangs.
+# Each runs in 0.2 to 0.5 s alone on a developer machine, and its regression takes 9 s or more, so
+# the kill is at 4 s: 8 times the run alone and less than half of the shortest regression.
+[[profile.default.overrides]]
+filter = 'test(/^check::tests::patterns::(variants|literal_arms|long_or_row|takers|match_on_many_variants)_should_check_in_linear_time$/)'
+slow-timeout = { period = "2s", terminate-after = 2 }
+
+# A CI runner is about twice as slow, and coverage makes a test slower, so the kill of the same five
+# tests is at 8 s: the same ratios as above.
+[[profile.ci.overrides]]
+filter = 'test(/^check::tests::patterns::(variants|literal_arms|long_or_row|takers|match_on_many_variants)_should_check_in_linear_time$/)'
+slow-timeout = { period = "4s", terminate-after = 2 }
+
 # Without the all-wildcard row cut, coverage meets 2^40 distinct matrices, so this test hangs
 # instead of failing.
 [[profile.default.overrides]]
@@ -81,12 +102,6 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 # this test hangs instead of failing.
 [[profile.default.overrides]]
 filter = 'test(repeated_matrices_check_in_linear_time)'
-slow-timeout = { period = "10s", terminate-after = 3 }
-
-# A witness copied at each of its columns is quadratic in them, so this test hangs instead of
-# failing.
-[[profile.default.overrides]]
-filter = 'test(/^check::tests::patterns::(wide_witness|default_witness_head)_builds_in_linear_time$/)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # Alternatives once expanded eagerly, or without memoization, meet 2^40 rows, so this test hangs
@@ -131,19 +146,19 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 filter = "package(sisuc) & (kind(test) | test(/^fuzz_program::/))"
 setup = "build-runtime"
 
-# Valgrind tests are slow and memory hungry, so cap how many run at once.
-[test-groups]
-valgrind = { max-threads = 4 }
-
+# The Valgrind tests are the longest, so they start first. A Valgrind run of a case uses
+# at most about 80 MB, so no cap on how many run at once is needed.
 # The `bless_` tests, `same_named_cases_should_not_share_an_executable_when_run_at_once` and
-# `run_case_should_check_and_bless_its_err_file` call `support::run`, which runs Valgrind.
+# `run_case_should_check_and_bless_its_err_file` call `support::run`, which runs Valgrind. So do
+# the two tests on invalid UTF-8 and on print buffers, and the seven `o2_calls_marker_` tests.
 [[profile.default.overrides]]
-filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(/^bless_/) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(run_case_should_check_and_bless_its_err_file))"
-test-group = "valgrind"
+filter = "binary(programs) & (test(allocation_counts) | test(valgrind_run_should_report_a_leaked_cycle) | test(valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build) | test(read_line_should_return_long_lines_whole_across_buffer_refills) | test(/^bless_/) | test(same_named_cases_should_not_share_an_executable_when_run_at_once) | test(run_case_should_check_and_bless_its_err_file) | test(invalid_utf8_should_become_the_replacement_character_in_input_and_arguments) | test(print_should_allocate_one_buffer_however_much_it_prints) | test(/^o2_calls_marker_/))"
+priority = 100
 
-# Each case compiles twice and runs under Valgrind; a hang is killed after three minutes. The
-# orphan checks only read the directory, so they stay out of the group.
+# Each case compiles twice and runs under Valgrind, so these are the longest tests and start
+# first; a Valgrind run of a case uses at most about 80 MB. A hang is killed after three
+# minutes.
 [[profile.default.overrides]]
 filter = "binary(cases) & test(/^(run|run_fail|site_run|site_run_fail)::/)"
-test-group = "valgrind"
+priority = 100
 slow-timeout = { period = "60s", terminate-after = 3 }

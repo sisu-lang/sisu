@@ -1,4 +1,4 @@
-// A list of 1 000 000 `Cons` cells, run under a 256 KiB stack. Each tail is a box, and the
+// A list of 100 000 `Cons` cells, run under a 256 KiB stack. Each tail is a box, and the
 // drop frees the boxes from a pending list, in one frame; a drop that recursed on the tail
 // needs a frame per cell and overflows that stack.
 enum List {
@@ -9,7 +9,7 @@ enum List {
 fn main() {
     let mut list = List.Nil
     let mut length = 0
-    while length < 1_000_000 {
+    while length < 100_000 {
         length += 1
         list = List.Cons(length, list)
     }

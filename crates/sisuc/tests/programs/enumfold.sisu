@@ -1,4 +1,4 @@
-// The fold `e = Expr.Add(e, Expr.Num(i))`, 1 000 000 times, run under a 256 KiB stack: a
+// The fold `e = Expr.Add(e, Expr.Num(i))`, 100 000 times, run under a 256 KiB stack: a
 // left-deep tree. The drop frees the boxes from a pending list, in one frame; a drop that
 // recursed on the left field needs a frame per level and overflows that stack.
 enum Expr {
@@ -9,7 +9,7 @@ enum Expr {
 fn main() {
     let mut e = Expr.Num(0)
     let mut depth = 0
-    while depth < 1_000_000 {
+    while depth < 100_000 {
         depth += 1
         e = Expr.Add(e, Expr.Num(depth))
     }

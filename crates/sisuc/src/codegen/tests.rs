@@ -3,7 +3,8 @@ use crate::check::check_alone;
 use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::tir::BinaryOp;
-use inkwell::values::{AnyValue, InstructionOpcode, InstructionValue, Operand};
+use inkwell::values::{AnyValue, CallSiteValue, InstructionOpcode, InstructionValue, Operand};
+use std::panic::{self, AssertUnwindSafe};
 
 /// Lexes, parses, checks (no errors allowed), builds the mir of and compiles `src`, then
 /// verifies the module.
@@ -47,25 +48,41 @@ fn compiled_from<'ctx>(
 
 const FIB: &str = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\n\nfn main() {\n    print(fib(30))\n}\n";
 
+/// `compiled` verifies each module, so a source that lowers to a broken one fails its row. The
+/// panic message names the row.
 #[test]
-fn verifies_fib() {
-    compiled(&Context::create(), FIB);
-}
-
-#[test]
-fn verifies_all_paths_return() {
-    compiled(
-        &Context::create(),
-        "fn sign(n: i64) -> i64 {\n    if n < 0 { return -1 } else { return 1 }\n}\nfn main() { print(sign(2)) }",
-    );
-}
-
-#[test]
-fn verifies_chain_and_short_circuit() {
-    compiled(
-        &Context::create(),
-        "fn main() {\n    print(1 < 2 <= 3)\n    print(true && false || true)\n}",
-    );
+fn compile_should_verify_every_shape_of_control_flow() {
+    let rows = [
+        (
+            "all paths return",
+            "fn sign(n: i64) -> i64 {\n    if n < 0 { return -1 } else { return 1 }\n}\nfn main() { print(sign(2)) }",
+        ),
+        (
+            "chain and short circuit",
+            "fn main() {\n    print(1 < 2 <= 3)\n    print(true && false || true)\n}",
+        ),
+        (
+            "loop body ending in return",
+            "fn f() -> i64 {\n    loop { return 1 }\n    2\n}\nfn main() { print(f()) }",
+        ),
+        (
+            "early return in main",
+            "fn main() {\n    if true { return }\n    print(1)\n}",
+        ),
+        (
+            "discarded body value",
+            "fn g() { 1 }\nfn main() {\n    g()\n    if true { 1 } else { 2 }\n}",
+        ),
+        (
+            "else if with short circuit in branch",
+            "fn f(a: i64) -> i64 {\n    if a < 0 { -1 } else if a == 0 && true { 0 } else { 1 }\n}\nfn main() { print(f(2)) }",
+        ),
+    ];
+    for (name, src) in rows {
+        let context = Context::create();
+        panic::catch_unwind(AssertUnwindSafe(|| compiled(&context, src)))
+            .unwrap_or_else(|_| panic!("row {name:?} should compile to a verified module"));
+    }
 }
 
 /// An `if` with one returning branch: that branch returns on its own, and the block after the
@@ -88,38 +105,6 @@ fn verifies_one_returning_branch() {
         assert!(!preds.is_empty(), "{body}");
         assert!(preds.iter().all(|p| !p.contains(',')), "{body}");
     }
-}
-
-#[test]
-fn verifies_loop_body_ending_in_return() {
-    compiled(
-        &Context::create(),
-        "fn f() -> i64 {\n    loop { return 1 }\n    2\n}\nfn main() { print(f()) }",
-    );
-}
-
-#[test]
-fn verifies_early_return_in_main() {
-    compiled(
-        &Context::create(),
-        "fn main() {\n    if true { return }\n    print(1)\n}",
-    );
-}
-
-#[test]
-fn verifies_discarded_body_value() {
-    compiled(
-        &Context::create(),
-        "fn g() { 1 }\nfn main() {\n    g()\n    if true { 1 } else { 2 }\n}",
-    );
-}
-
-#[test]
-fn verifies_else_if_with_short_circuit_in_branch() {
-    compiled(
-        &Context::create(),
-        "fn f(a: i64) -> i64 {\n    if a < 0 { -1 } else if a == 0 && true { 0 } else { 1 }\n}\nfn main() { print(f(2)) }",
-    );
 }
 
 #[test]
@@ -964,6 +949,8 @@ fn niche_should_run_out_past_its_storage() {
 }
 
 /// The LLVM type of each local, from its `alloca`, and the value that its first value stores.
+/// A call that takes the local leads back to its slot, so the test does not depend on the order
+/// of the `alloca`s.
 /// An optional is a spare value of the payload where it has one, and `null` for one layer around
 /// a pointer. Every other optional is a `{ i1, T }` pair. An `Option`-shaped enum has one variant
 /// with no payload and one with one field. It is that field's storage in either order of its
@@ -1013,8 +1000,12 @@ fn niche_layouts_should_follow_the_payload() {
     let context = Context::create();
     let lets = (rows.iter().enumerate())
         .map(|(i, (ty, init, ..))| {
-            format!("    let x{i}: {ty} = {init}\n    print(x{i} == {init})\n")
+            format!("    let x{i}: {ty} = {init}\n    print(x{i} == {init})\n    take{i}(x{i})\n")
         })
+        .collect::<Vec<_>>()
+        .concat();
+    let takers = (rows.iter().enumerate())
+        .map(|(i, (ty, ..))| format!("fn take{i}(x: {ty}) {{}}\n"))
         .collect::<Vec<_>>()
         .concat();
     let enums = "enum Maybe {\n    Nothing\n    Just(char)\n}\n\
@@ -1025,19 +1016,39 @@ fn niche_layouts_should_follow_the_payload() {
         enum Wide {\n    A\n    B(i64)\n}\n\
         enum Two {\n    A(char)\n    B(char)\n}\n";
     let src = format!(
-        "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\n{enums}fn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
+        "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\n{enums}{takers}fn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
     );
-    let ir = compiled(&context, &src).print_to_string().to_string();
-    let main = function_body(&ir, "define internal void @sisu.main()");
+    let module = compiled(&context, &src);
+    let main = module
+        .get_function("sisu.main")
+        .expect("the module should define `main`");
+    let code = instructions(main);
     for (i, (ty, _, llvm, first)) in rows.iter().enumerate() {
-        assert!(
-            main.contains(&format!("%x{i} = alloca {llvm}, align")),
-            "{ty} should be {llvm} in\n{main}"
-        );
+        // `take{i}` gets `x{i}` through its slot, maybe through a temporary: follow the copies
+        // back to the slot that holds the value of the `let`.
+        let call = (code.iter())
+            .find(|c| {
+                CallSiteValue::try_from(**c)
+                    .ok()
+                    .and_then(CallSiteValue::get_called_fn_value)
+                    .is_some_and(|f| f.get_name().to_str() == Ok(&format!("sisu.take{i}")))
+            })
+            .unwrap_or_else(|| panic!("no call of `take{i}` in\n{}", module.print_to_string()));
+        let (initial, slot) = stored_trail(&code, operand_of(*call, 0));
+        let slot = slot.unwrap_or_else(|| panic!("the argument of `take{i}` should be a load"));
+        let allocated = slot
+            .get_allocated_type()
+            .expect("an `alloca` should have a type")
+            .print_to_string()
+            .to_string();
+        // A named struct prints as its definition: `%sisu.E = type { .. }`.
+        let allocated = allocated.split(" = type ").next().unwrap_or(&allocated);
+        assert_eq!(allocated, *llvm, "{ty} should be {llvm}");
         if let Some(first) = first {
-            assert!(
-                main.contains(&format!("store {first}, ptr %x{i},")),
-                "the first value of {ty} should be {first} in\n{main}"
+            assert_eq!(
+                &initial.print_to_string().to_string(),
+                first,
+                "the first value of {ty}"
             );
         }
     }
@@ -1446,13 +1457,23 @@ fn main_flushes_stdout_before_the_exit_check_and_the_return() {
     }
 }
 
+/// A build with the RC checks calls `sisu_rc_fault` and `sisu_rc_check_exit`, and the same source
+/// without them calls neither.
 #[test]
-fn plain_build_has_no_rc_checks() {
+fn rc_check_symbols_should_appear_only_in_an_rc_checks_build() {
     let context = Context::create();
     let src = format!("class P {{}}\n{FIB}");
-    let ir = compiled(&context, &src).print_to_string().to_string();
-    for unwanted in ["sisu_rc_fault", "sisu_rc_check_exit"] {
-        assert!(!ir.contains(unwanted), "{unwanted:?} in\n{ir}");
+    for (rc_checks, present) in [(false, false), (true, true)] {
+        let ir = compiled_with(&context, &src, rc_checks)
+            .print_to_string()
+            .to_string();
+        for symbol in ["sisu_rc_fault", "sisu_rc_check_exit"] {
+            assert_eq!(
+                ir.contains(symbol),
+                present,
+                "{symbol:?} with rc_checks {rc_checks} in\n{ir}"
+            );
+        }
     }
 }
 
@@ -1901,8 +1922,18 @@ fn instructions(function: FunctionValue<'_>) -> Vec<InstructionValue<'_>> {
 /// the load.
 fn stored_origin<'ctx>(
     code: &[InstructionValue<'ctx>],
-    mut value: BasicValueEnum<'ctx>,
+    value: BasicValueEnum<'ctx>,
 ) -> BasicValueEnum<'ctx> {
+    stored_trail(code, value).0
+}
+
+/// `stored_origin`, with the last slot that it went through: the one whose store gave the
+/// origin.
+fn stored_trail<'ctx>(
+    code: &[InstructionValue<'ctx>],
+    mut value: BasicValueEnum<'ctx>,
+) -> (BasicValueEnum<'ctx>, Option<InstructionValue<'ctx>>) {
+    let mut last_slot = None;
     while let Some(load) = value.as_instruction_value().filter(|i| {
         i.get_opcode() == InstructionOpcode::Load
             && operand_of(*i, 0)
@@ -1911,6 +1942,7 @@ fn stored_origin<'ctx>(
                 .is_some_and(|slot| slot.get_opcode() == InstructionOpcode::Alloca)
     }) {
         let slot = operand_of(load, 0);
+        last_slot = slot.into_pointer_value().as_instruction();
         let before = code
             .iter()
             .position(|i| *i == load)
@@ -1922,7 +1954,7 @@ fn stored_origin<'ctx>(
             .expect("a slot should be stored before it is loaded");
         value = operand_of(*store, 0);
     }
-    value
+    (value, last_slot)
 }
 
 /// Operand `n` of `instruction`, which should be a value, not a block.
@@ -2293,14 +2325,15 @@ fn static_release_checks_its_slot_under_rc_checks() {
     assert!(branch_at < release_at, "{body}");
 }
 
-/// `.config/nextest.toml` kills this test after 30 s, matching it by name: a rename must
-/// update the override there. Each `+=` is an overflow panic site, and finding its line and
-/// column from the start of the text made codegen quadratic in the number of sites.
+/// `.config/nextest.toml` kills this test after 6 s (12 s in the `ci` profile), matching it by
+/// name: a rename must update the override there. Each `+=` is an overflow panic site, and finding
+/// its line and column from the start of the text, or building a line index for each site, made
+/// codegen quadratic in the number of sites. No step counter sees such a new scan.
 #[test]
-fn many_panic_sites_compile_in_linear_time() {
+fn many_panic_sites_should_compile_in_linear_time() {
     let src = format!(
         "fn main() {{\n    let mut x = 0\n{}    print(x)\n}}\n",
-        "    x += 1\n".repeat(100_000)
+        "    x += 1\n".repeat(25_000)
     );
     compiled(&Context::create(), &src);
 }

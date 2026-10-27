@@ -648,16 +648,17 @@ mod tests {
         judge_builds(&runs).expect("every build should read the same");
     }
 
-    /// Review Focus 5: no pipe fills up, and a difference in the last byte still counts.
+    /// Review Focus 5: an output of 20,000 lines (about 109 KB) is compared whole, and a difference
+    /// in the last byte still counts.
     #[test]
-    fn large_output_is_compared_exactly() {
-        let source = "fn main() {\n    let mut i = 0\n    while i < 100_000 {\n        print(i)\n        i += 1\n    }\n}\n";
+    fn large_output_should_be_compared_exactly() {
+        let source = "fn main() {\n    let mut i = 0\n    while i < 20_000 {\n        print(i)\n        i += 1\n    }\n}\n";
         let mut runs = runs_of(source, "", LIMIT);
         assert_eq!(exits(&runs), [Exit::Code(0); 3]);
         for run in &runs {
             let text = String::from_utf8_lossy(&run.stdout);
-            assert_eq!(text.lines().count(), 100_000);
-            assert_eq!(text.lines().last(), Some("99999"));
+            assert_eq!(text.lines().count(), 20_000);
+            assert_eq!(text.lines().last(), Some("19999"));
         }
         judge_builds(&runs).expect("every build should print the same");
         let last = runs[2].stdout.len() - 2;

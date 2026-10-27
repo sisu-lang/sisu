@@ -60,7 +60,6 @@ crates/sisuc/src/ast.rs::display_every_node
 crates/sisuc/src/ast.rs::display_float
 crates/sisuc/src/ast.rs::display_formats
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
-crates/sisuc/src/check/string.rs::literal_names_lex_back
 crates/sisuc/src/check/tests/arrays.rs::array_of_t_is_not_array_of_optional_t
 crates/sisuc/src/check/tests/arrays.rs::contains_argument_is_an_element
 crates/sisuc/src/check/tests/arrays.rs::contains_as_function_is_the_idiom
@@ -222,14 +221,11 @@ crates/sisuc/src/check/tests/mod.rs::all_paths_return_is_fine
 crates/sisuc/src/check/tests/mod.rs::and_needs_bool
 crates/sisuc/src/check/tests/mod.rs::annotated_let_matches
 crates/sisuc/src/check/tests/mod.rs::annotated_let_type
-crates/sisuc/src/check/tests/mod.rs::argument_type
-crates/sisuc/src/check/tests/mod.rs::arithmetic_needs_i64
 crates/sisuc/src/check/tests/mod.rs::arity
 crates/sisuc/src/check/tests/mod.rs::assign_bare_field
 crates/sisuc/src/check/tests/mod.rs::assign_field_type
 crates/sisuc/src/check/tests/mod.rs::assign_if_let_binding
 crates/sisuc/src/check/tests/mod.rs::assign_to_let
-crates/sisuc/src/check/tests/mod.rs::assign_to_param
 crates/sisuc/src/check/tests/mod.rs::assign_type
 crates/sisuc/src/check/tests/mod.rs::assign_while_let_binding
 crates/sisuc/src/check/tests/mod.rs::assigning_to_a_function_names_it
@@ -244,7 +240,6 @@ crates/sisuc/src/check/tests/mod.rs::block_scope_ends
 crates/sisuc/src/check/tests/mod.rs::block_value_and_type
 crates/sisuc/src/check/tests/mod.rs::body_value_type
 crates/sisuc/src/check/tests/mod.rs::body_without_value
-crates/sisuc/src/check/tests/mod.rs::break_after_while_let
 crates/sisuc/src/check/tests/mod.rs::break_in_a_value_makes_endless_loop_unit
 crates/sisuc/src/check/tests/mod.rs::break_in_header
 crates/sisuc/src/check/tests/mod.rs::break_in_inner_header_does_not_count
@@ -252,7 +247,6 @@ crates/sisuc/src/check/tests/mod.rs::break_in_loop_inside_header
 crates/sisuc/src/check/tests/mod.rs::break_makes_endless_loop_unit
 crates/sisuc/src/check/tests/mod.rs::break_name_is_a_label_only_near_one
 crates/sisuc/src/check/tests/mod.rs::break_never_value_is_allowed
-crates/sisuc/src/check/tests/mod.rs::break_outside_loop
 crates/sisuc/src/check/tests/mod.rs::builtin_type_as_class
 crates/sisuc/src/check/tests/mod.rs::class_after_function_of_same_name
 crates/sisuc/src/check/tests/mod.rs::class_and_function_share_names
@@ -268,11 +262,6 @@ crates/sisuc/src/check/tests/mod.rs::coalesce_with_none_in_an_if
 crates/sisuc/src/check/tests/mod.rs::coalesce_with_none_right
 crates/sisuc/src/check/tests/mod.rs::coalesce_with_optional_right
 crates/sisuc/src/check/tests/mod.rs::code_after_endless_loop_is_unreachable
-crates/sisuc/src/check/tests/mod.rs::compound_assign_to_let
-crates/sisuc/src/check/tests/mod.rs::compound_assign_to_param
-crates/sisuc/src/check/tests/mod.rs::compound_assign_unknown_target_and_bad_value
-crates/sisuc/src/check/tests/mod.rs::compound_assign_unknown_target_once
-crates/sisuc/src/check/tests/mod.rs::condition_must_be_bool
 crates/sisuc/src/check/tests/mod.rs::constructor_extra_argument
 crates/sisuc/src/check/tests/mod.rs::constructor_field_type
 crates/sisuc/src/check/tests/mod.rs::constructor_is_error_only_when_its_rule_fails
@@ -282,7 +271,6 @@ crates/sisuc/src/check/tests/mod.rs::constructor_out_of_order
 crates/sisuc/src/check/tests/mod.rs::constructor_reports_its_first_mistake_and_later_expression_errors
 crates/sisuc/src/check/tests/mod.rs::constructor_unknown_label
 crates/sisuc/src/check/tests/mod.rs::continue_in_endless_loop
-crates/sisuc/src/check/tests/mod.rs::continue_outside_loop
 crates/sisuc/src/check/tests/mod.rs::continue_to_missing_label_in_header_is_missing_label
 crates/sisuc/src/check/tests/mod.rs::dot_on_optional
 crates/sisuc/src/check/tests/mod.rs::duplicate_body_still_checked
@@ -294,12 +282,10 @@ crates/sisuc/src/check/tests/mod.rs::duplicate_function
 crates/sisuc/src/check/tests/mod.rs::duplicate_member
 crates/sisuc/src/check/tests/mod.rs::duplicate_member_of_the_same_kind
 crates/sisuc/src/check/tests/mod.rs::each_label_on_a_call_is_reported
-crates/sisuc/src/check/tests/mod.rs::empty_file_has_no_main
 crates/sisuc/src/check/tests/mod.rs::equal_none_on_non_optional
 crates/sisuc/src/check/tests/mod.rs::equal_two_classes
 crates/sisuc/src/check/tests/mod.rs::equal_unit
 crates/sisuc/src/check/tests/mod.rs::equal_wraps_the_plain_side
-crates/sisuc/src/check/tests/mod.rs::equality_needs_same_type
 crates/sisuc/src/check/tests/mod.rs::error_branches_without_mismatch_keep_the_rule_type
 crates/sisuc/src/check/tests/mod.rs::every_error_in_one_run
 crates/sisuc/src/check/tests/mod.rs::expected_type_checks_every_break
@@ -431,7 +417,6 @@ crates/sisuc/src/check/tests/mod.rs::none_for_non_optional
 crates/sisuc/src/check/tests/mod.rs::none_from_every_source
 crates/sisuc/src/check/tests/mod.rs::none_needs_a_type
 crates/sisuc/src/check/tests/mod.rs::none_on_the_left_takes_the_other_type
-crates/sisuc/src/check/tests/mod.rs::not_needs_bool
 crates/sisuc/src/check/tests/mod.rs::only_the_literal_is_endless
 crates/sisuc/src/check/tests/mod.rs::operator_after_a_failed_operand_reports_once
 crates/sisuc/src/check/tests/mod.rs::optional_breaks_the_cycle
@@ -444,11 +429,8 @@ crates/sisuc/src/check/tests/mod.rs::poisoned_operand_checks_siblings
 crates/sisuc/src/check/tests/mod.rs::poisoned_receiver_checks_args
 crates/sisuc/src/check/tests/mod.rs::print_argument_errors_sit_on_the_argument
 crates/sisuc/src/check/tests/mod.rs::print_class
-crates/sisuc/src/check/tests/mod.rs::print_no_argument
 crates/sisuc/src/check/tests/mod.rs::print_optional
 crates/sisuc/src/check/tests/mod.rs::print_reports_labels_and_still_checks_its_arguments
-crates/sisuc/src/check/tests/mod.rs::print_two_arguments
-crates/sisuc/src/check/tests/mod.rs::print_unit_argument
 crates/sisuc/src/check/tests/mod.rs::rejected_if_let_scrutinee_reports_once
 crates/sisuc/src/check/tests/mod.rs::rejected_none_reports_once
 crates/sisuc/src/check/tests/mod.rs::repeated_param
@@ -467,7 +449,6 @@ crates/sisuc/src/check/tests/mod.rs::safe_optional_field_not_wrapped
 crates/sisuc/src/check/tests/mod.rs::self_outside_method
 crates/sisuc/src/check/tests/mod.rs::separate_namespaces
 crates/sisuc/src/check/tests/mod.rs::shadow_in_block
-crates/sisuc/src/check/tests/mod.rs::shadowing_in_inner_block
 crates/sisuc/src/check/tests/mod.rs::shadowing_makes_two_locals
 crates/sisuc/src/check/tests/mod.rs::spills_call_argument
 crates/sisuc/src/check/tests/mod.rs::spills_class_optional_before_exit_in_if_let
@@ -507,14 +488,11 @@ crates/sisuc/src/check/tests/mod.rs::unknown_type
 crates/sisuc/src/check/tests/mod.rs::unknown_type_in_signature
 crates/sisuc/src/check/tests/mod.rs::unreachable_break_still_counts
 crates/sisuc/src/check/tests/mod.rs::unreachable_warned_once_per_block
-crates/sisuc/src/check/tests/mod.rs::unused_variable
-crates/sisuc/src/check/tests/mod.rs::unused_variables_in_source_order
 crates/sisuc/src/check/tests/mod.rs::value_branches_of_different_types_still_mismatch
 crates/sisuc/src/check/tests/mod.rs::variable_may_shadow_a_param
 crates/sisuc/src/check/tests/mod.rs::variable_reassigned_in_inner_block
 crates/sisuc/src/check/tests/mod.rs::warning_and_error_in_position_order
 crates/sisuc/src/check/tests/mod.rs::warning_only_program_lowers
-crates/sisuc/src/check/tests/mod.rs::while_condition_must_be_bool
 crates/sisuc/src/check/tests/mod.rs::while_let_needs_optional
 crates/sisuc/src/check/tests/mod.rs::while_true_without_break_is_never
 crates/sisuc/src/check/tests/mod.rs::widening_leaves_a_never_value_unwrapped
@@ -528,7 +506,6 @@ crates/sisuc/src/check/tests/patterns.rs::already_converted_match_stays_grouped
 crates/sisuc/src/check/tests/patterns.rs::alternatives_bind
 crates/sisuc/src/check/tests/patterns.rs::broken_pattern_skips_coverage
 crates/sisuc/src/check/tests/patterns.rs::coverage_finite
-crates/sisuc/src/check/tests/patterns.rs::default_witness_head_builds_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::failed_scrutinee_keeps_never
 crates/sisuc/src/check/tests/patterns.rs::forty_alternatives
 crates/sisuc/src/check/tests/patterns.rs::gap_help
@@ -543,7 +520,6 @@ crates/sisuc/src/check/tests/patterns.rs::let_underscore_drops_at_once
 crates/sisuc/src/check/tests/patterns.rs::let_underscore_ends_a_block_without_a_value
 crates/sisuc/src/check/tests/patterns.rs::literal_patterns
 crates/sisuc/src/check/tests/patterns.rs::malformed_patterns_of_a_wide_variant_check_in_linear_time
-crates/sisuc/src/check/tests/patterns.rs::many_arms_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::many_unreachable_rows_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::match_coverage
 crates/sisuc/src/check/tests/patterns.rs::match_join
@@ -560,7 +536,6 @@ crates/sisuc/src/check/tests/patterns.rs::repeated_matrices_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::unreachable_arms
 crates/sisuc/src/check/tests/patterns.rs::variant_form_fix_is_safe_only_when_empty
 crates/sisuc/src/check/tests/patterns.rs::wide_payload_checks_without_deep_recursion
-crates/sisuc/src/check/tests/patterns.rs::wide_witness_builds_in_linear_time
 crates/sisuc/src/check/tests/places.rs::an_exiting_index_spills_the_enclosing_call
 crates/sisuc/src/check/tests/places.rs::binds_indexes_in_source_order
 crates/sisuc/src/check/tests/places.rs::compound_assignment_reports_as_a_local_would
@@ -609,8 +584,6 @@ crates/sisuc/src/check/tests/prelude.rs::todo_message_rules
 crates/sisuc/src/check/tests/prelude.rs::todo_with_a_label_is_an_error
 crates/sisuc/src/check/tests/shadowing.rs::if_let_binding_shadowed
 crates/sisuc/src/check/tests/shadowing.rs::let_mut_shadows_let
-crates/sisuc/src/check/tests/shadowing.rs::redeclared_label_outer_scope
-crates/sisuc/src/check/tests/shadowing.rs::redeclared_label_same_scope
 crates/sisuc/src/check/tests/shadowing.rs::rhs_sees_old_binding
 crates/sisuc/src/check/tests/shadowing.rs::type_can_change
 crates/sisuc/src/check/tests/strings.rs::cannot_interpolate
@@ -713,7 +686,6 @@ crates/sisuc/src/codegen/tests.rs::len_reads_a_string_by_its_field_and_an_array_
 crates/sisuc/src/codegen/tests.rs::literal_allocates_header_and_elements
 crates/sisuc/src/codegen/tests.rs::main_flushes_stdout_before_the_exit_check_and_the_return
 crates/sisuc/src/codegen/tests.rs::make_unique_of_a_moved_array_faults
-crates/sisuc/src/codegen/tests.rs::many_panic_sites_compile_in_linear_time
 crates/sisuc/src/codegen/tests.rs::method_symbols
 crates/sisuc/src/codegen/tests.rs::methods_lower_to_intrinsics_and_libm
 crates/sisuc/src/codegen/tests.rs::move_stores_null_only_for_a_flag
@@ -723,7 +695,6 @@ crates/sisuc/src/codegen/tests.rs::only_a_compared_class_gets_an_eq_helper
 crates/sisuc/src/codegen/tests.rs::only_main_is_external
 crates/sisuc/src/codegen/tests.rs::optional_field_method_counts_nothing
 crates/sisuc/src/codegen/tests.rs::partition_makes_its_array_unique_once
-crates/sisuc/src/codegen/tests.rs::plain_build_has_no_rc_checks
 crates/sisuc/src/codegen/tests.rs::print_bool_passes_a_zero_extended_i1
 crates/sisuc/src/codegen/tests.rs::print_declarations_carry_attributes
 crates/sisuc/src/codegen/tests.rs::read_after_move_faults
@@ -744,14 +715,7 @@ crates/sisuc/src/codegen/tests.rs::take_apart_probes_linearly
 crates/sisuc/src/codegen/tests.rs::u8_add_uses_unsigned_overflow
 crates/sisuc/src/codegen/tests.rs::u8_compare_is_unsigned
 crates/sisuc/src/codegen/tests.rs::user_function_names_are_prefixed
-crates/sisuc/src/codegen/tests.rs::verifies_all_paths_return
-crates/sisuc/src/codegen/tests.rs::verifies_chain_and_short_circuit
-crates/sisuc/src/codegen/tests.rs::verifies_discarded_body_value
-crates/sisuc/src/codegen/tests.rs::verifies_early_return_in_main
-crates/sisuc/src/codegen/tests.rs::verifies_else_if_with_short_circuit_in_branch
-crates/sisuc/src/codegen/tests.rs::verifies_fib
 crates/sisuc/src/codegen/tests.rs::verifies_field_assignment_through_a_call
-crates/sisuc/src/codegen/tests.rs::verifies_loop_body_ending_in_return
 crates/sisuc/src/codegen/tests.rs::verifies_one_returning_branch
 crates/sisuc/src/codegen/tests.rs::words_declarations_carry_memory_effects
 crates/sisuc/src/codegen/tests.rs::words_releases_a_base_that_is_not_a_local
@@ -880,7 +844,6 @@ crates/sisuc/src/fuzz_program.rs::a_timed_out_child_is_reaped
 crates/sisuc/src/fuzz_program.rs::judge_builds_rejects_any_difference
 crates/sisuc/src/fuzz_program.rs::known_panic_is_the_last_line
 crates/sisuc/src/fuzz_program.rs::known_value_matches
-crates/sisuc/src/fuzz_program.rs::large_output_is_compared_exactly
 crates/sisuc/src/fuzz_program.rs::missing_known_value_fails
 crates/sisuc/src/fuzz_program.rs::other_at_lines_are_ignored
 crates/sisuc/src/fuzz_program.rs::pair_compares_ordinary_stderr_exactly
@@ -1096,7 +1059,6 @@ crates/sisuc/src/lexer/mod.rs::trailing_underscore
 crates/sisuc/src/lexer/mod.rs::unary_minus_line_is_fine
 crates/sisuc/src/lexer/mod.rs::unclosed_literal_is_one_str_token
 crates/sisuc/src/lexer/mod.rs::unclosed_paren
-crates/sisuc/src/lexer/mod.rs::unclosed_string_that_unbalances_reports_the_string
 crates/sisuc/src/lexer/mod.rs::underscore_token
 crates/sisuc/src/lexer/mod.rs::unexpected_character_fix
 crates/sisuc/src/lexer/mod.rs::unexpected_close

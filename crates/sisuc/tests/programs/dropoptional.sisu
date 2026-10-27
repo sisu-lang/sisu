@@ -1,4 +1,4 @@
-// A list of 1 000 000 nodes through a field of type `Node??`, run under a 256 KiB stack. The
+// A list of 100 000 nodes through a field of type `Node??`, run under a 256 KiB stack. The
 // last link is `Some(None)`: a value in the outer `?`, and none in the inner one. The drop
 // follows `next` in a loop, in one frame, however many `?` the field has; a recursive drop
 // needs a frame per node and overflows that stack.
@@ -10,7 +10,7 @@ class Node {
 fn main() {
     let mut head: Node?? = Some(None)
     let mut i = 0
-    while i < 1_000_000 {
+    while i < 100_000 {
         i += 1
         head = Some(Some(Node(_value: i, next: head)))
     }

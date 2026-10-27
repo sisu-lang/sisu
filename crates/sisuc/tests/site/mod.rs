@@ -95,22 +95,3 @@ pub(crate) fn pending(path: &Path) {
         out.status
     );
 }
-
-/// Passes for `<code>.err` or `<code>.json` when `docs/diagnostics/<code>.md` exists; panics on
-/// any other file, naming it, and on any hidden file beside it.
-pub(crate) fn explanation_orphan_check(path: &Path) {
-    let code = code_of(path);
-    let belongs = matches!(
-        path.extension().and_then(OsStr::to_str),
-        Some("err" | "json")
-    ) && support::is_code(code)
-        && Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("../../docs/diagnostics/{code}.md"))
-            .exists();
-    assert!(
-        belongs,
-        "{} is not the `.err` or `.json` file of an explanation in docs/diagnostics",
-        path.display()
-    );
-    support::no_hidden_sibling(path);
-}

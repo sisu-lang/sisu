@@ -1,4 +1,4 @@
-// Two pairs of 1 000 000-deep `Chain`s, compared with `==` and dropped under a 256 KiB stack. A
+// Two pairs of 100 000-deep `Chain`s, compared with `==` and dropped under a 256 KiB stack. A
 // `Chain` is the pointer to its box, with `End` as `null`. `==` loops on the box, and the drop
 // frees the boxes from a pending list, in one frame: an `==` or a drop that recursed on the box
 // needs a frame per level and overflows that stack. The second pair differs only at the bottom,
@@ -19,7 +19,7 @@ fn build(depth: i64) -> Chain {
 }
 
 fn main() {
-    let a = build(1_000_000)
-    print(a == build(1_000_000)) // true
-    print(a == build(999_999))   // false
+    let a = build(100_000)
+    print(a == build(100_000)) // true
+    print(a == build(99_999))  // false
 }

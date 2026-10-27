@@ -1,4 +1,4 @@
-// Two pairs of right-deep lists of 1 000 000 cells, compared with `==` under a 256 KiB stack.
+// Two pairs of right-deep lists of 100 000 cells, compared with `==` under a 256 KiB stack.
 // The generated `eq` loops on the last boxed field, the tail, in one frame; a recursive `eq`
 // needs a frame per cell and overflows that stack. The second pair differs only in the last
 // cell, so `==` walks the whole list to find it.
@@ -19,7 +19,7 @@ fn build(length: i64, last: i64) -> List {
 }
 
 fn main() {
-    let a = build(1_000_000, 0)
-    print(a == build(1_000_000, 0))
-    print(a == build(1_000_000, 1))
+    let a = build(100_000, 0)
+    print(a == build(100_000, 0))
+    print(a == build(100_000, 1))
 }

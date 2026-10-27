@@ -402,42 +402,88 @@ pub(crate) fn is_code(text: &str) -> bool {
 /// The extensions of the expectation files that a run-mode case directory may hold.
 pub(crate) const RUN_EXPECTATIONS: [&str; 3] = ["out", "err", "in"];
 
-/// Passes for a `.sisu` file, and for a file whose extension is one of `expectations` (the
-/// files the directory's mode reads) beside a `.sisu` of the same name; panics on any other
-/// file, naming it. It also panics, naming it, on any hidden entry beside `path`: the harness
-/// never lists one, so a stray `.ghost.out` would otherwise go unseen.
-pub(crate) fn orphan_check(path: &Path, expectations: &[&str]) {
-    let belongs = match path.extension().and_then(OsStr::to_str) {
-        Some("sisu") => true,
-        Some(ext) if expectations.contains(&ext) => path.with_extension("sisu").exists(),
-        _ => false,
-    };
+/// Lists `dir` once and returns one message for each entry that no case reads: a hidden entry
+/// (a stray `.ghost.out`), and any file that is neither a `.sisu` case nor a file whose
+/// extension is one of `expectations` (the files the directory's mode reads) beside a `.sisu`
+/// of the same name. A case directory is flat, so a subdirectory is one more bad entry. The
+/// messages come in name order. Panics when `dir` holds no `.sisu`, as a wrong `dir` would
+/// otherwise pass with no entry checked.
+pub(crate) fn orphans(dir: &Path, expectations: &[&str]) -> Vec<String> {
+    let paths = sorted_entries(dir);
     assert!(
-        belongs,
-        "{} is neither a `.sisu` case nor the {expectations:?} file of one",
-        path.display()
+        paths
+            .iter()
+            .any(|path| path.extension().is_some_and(|ext| ext == "sisu")),
+        "{} holds no `.sisu` case",
+        dir.display()
     );
-    no_hidden_sibling(path);
+    paths
+        .iter()
+        .filter_map(|path| {
+            stray_message(path).or_else(|| {
+                let belongs = match path.extension().and_then(OsStr::to_str) {
+                    Some("sisu") => true,
+                    Some(ext) if expectations.contains(&ext) => {
+                        path.with_extension("sisu").exists()
+                    }
+                    _ => false,
+                };
+                (!belongs).then(|| {
+                    format!(
+                        "{} is neither a `.sisu` case nor the {expectations:?} file of one",
+                        path.display()
+                    )
+                })
+            })
+        })
+        .collect()
 }
 
-/// Panics, naming it, on any hidden entry beside `path`: the harness never lists one, so a stray
-/// `.ghost.out` would otherwise go unseen.
-pub(crate) fn no_hidden_sibling(path: &Path) {
-    let dir = path
-        .parent()
-        .expect("a case file should sit in a directory");
-    // shortcut: looks only beside `path`, so a directory of nothing but hidden files is unseen;
-    // walk the whole root if case directories gain subdirectories.
-    for entry in fs::read_dir(dir).expect("the case directory should be readable") {
-        let sibling = entry.expect("a directory entry should be readable").path();
-        assert!(
-            !sibling
-                .file_name()
-                .is_some_and(|name| name.as_encoded_bytes().starts_with(b".")),
-            "{} is hidden, so no case reads it; remove it",
-            sibling.display()
-        );
+/// The paths in `dir`, sorted, so that a message list does not depend on the file system's order.
+pub(crate) fn sorted_entries(dir: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+        .expect("the case directory should be readable")
+        .map(|entry| entry.expect("a directory entry should be readable").path())
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// The message for a hidden or directory `path`, or `None` for any other. The harness never
+/// lists a hidden file, so a stray `.ghost.out` would otherwise go unseen.
+pub(crate) fn stray_message(path: &Path) -> Option<String> {
+    let display = path.display();
+    if path
+        .file_name()
+        .is_some_and(|name| name.as_encoded_bytes().starts_with(b"."))
+    {
+        Some(format!(
+            "{display} is hidden, so no case reads it; remove it"
+        ))
+    } else if path.is_dir() {
+        Some(format!(
+            "{display} is a directory; this directory holds only files"
+        ))
+    } else {
+        None
     }
+}
+
+/// Writes each `(path, contents)` under a fresh `<CARGO_TARGET_TMPDIR>/fixtures/<test>/` and
+/// returns that directory.
+pub(crate) fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("fixtures")
+        .join(test);
+    // It is absent on the first run, so a failure here is expected and harmless.
+    drop(fs::remove_dir_all(&dir));
+    for (path, contents) in files {
+        let path = dir.join(path);
+        fs::create_dir_all(path.parent().expect("a fixture file should have a parent"))
+            .expect("creates the fixture directory");
+        fs::write(path, contents).expect("writes the fixture file");
+    }
+    dir
 }
 
 /// The builds `build` makes: the executable's name in the case directory, and `sisu`'s flags.
