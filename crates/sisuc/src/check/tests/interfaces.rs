@@ -655,6 +655,8 @@ fn conformances_should_check_clean() {
         "interface Back<T> {\n    fn back(self) -> T\n}\nclass Loop {\n    x: i64\n}\nextend Loop: Back<Self> {\n    fn back(self) -> Self { self }\n}\nfn main() {\n    print(Loop(x: 1).back().x)\n}",
         // An argument of a generic call waits for the other, with the method in a block.
         "class C {\n    x: i64\n}\nextend C {\n    fn make<U>(self) -> [U] { [] }\n}\nfn take<T>(x: T, y: T) -> T { x }\nfn main() {\n    let c = C(x: 1)\n    print(take(c.make(), [1]).len())\n}",
+        // `Self` in the bound of a block's parameter is the block's target.
+        "interface Pairs<X> {\n    fn pair(self) -> i64\n}\nclass Leaf {\n    n: i64\n}\nclass Crate<T> {\n    inner: T\n}\nextend Leaf: Pairs<Crate<Leaf>> {\n    fn pair(self) -> i64 { self.n }\n}\nextend<T: Pairs<Self>> Crate<T> {\n    fn with_self(self) -> i64 { self.inner.pair() }\n}\nfn main() {\n    print(Crate(inner: Leaf(n: 1)).with_self())\n}",
     ] {
         clean(&with_shapes(src));
     }
@@ -3703,6 +3705,20 @@ fn an_associated_type_that_needs_itself_should_be_reported_once() {
     // and no signature writes it: `mono` would meet the loop in the body of `get`.
     let inherited = "interface Base {\n    type B: Holder\n}\ninterface Holder: Base {}\nclass Leaf {\n    n: i64\n}\nextend Leaf: Base {\n    type B = W<Leaf>\n}\nextend Leaf: Holder {}\nclass W<T> {\n    value: T\n}\nextend<T: Holder> W<T>: Base {\n    type B = T.B.B\n}\nextend<T: Holder> W<T>: Holder {}\nfn get<S: Holder>(_s: S) {\n    let _x: [S.B] = []\n}\nfn main() {\n    get(W(value: Leaf(n: 1)))\n}";
     codes(inherited, &[(Code::UnknownType, (16, 14))]);
+    // The inherited interface takes `Self` as an argument: the type that has the bound is that
+    // argument, not the unit type.
+    let with_self = "interface Base<X> {\n    type B: Holder\n}\ninterface Holder: Base<Self> {}\nclass Leaf {\n    n: i64\n}\nextend Leaf: Base<Leaf> {\n    type B = W<Leaf>\n}\nextend Leaf: Holder {}\nclass W<T> {\n    value: T\n}\nextend<T: Holder> W<T>: Base<W<T>> {\n    type B = T.B.B\n}\nextend<T: Holder> W<T>: Holder {}\nfn get<S: Holder>(_s: S) {\n    let _x: [S.B] = []\n}\nfn main() {\n    get(W(value: Leaf(n: 1)))\n}";
+    codes(with_self, &[(Code::UnknownType, (16, 14))]);
+    // The loop closes at a type that only a generic choice gives: `Outer<Leaf>.B` is `W<Leaf>`,
+    // and no block names `W<Leaf>`. The type that a choice gives is probed for the bound of its
+    // associated type, so the loop of `W<Leaf>.B` is found where `Leaf` meets `Holder`.
+    let nested = "interface Base {\n    type B: Holder\n}\ninterface Holder: Base {}\nclass Leaf {}\nextend Leaf: Base {\n    type B = Outer<Leaf>\n}\nextend Leaf: Holder {}\nclass Outer<T> {}\nextend<T: Holder> Outer<T>: Base {\n    type B = W<T>\n}\nextend<T: Holder> Outer<T>: Holder {}\nclass W<T> {}\nextend<T: Holder> W<T>: Base {\n    type B = T.B.B.B\n}\nextend<T: Holder> W<T>: Holder {}\nfn get<S: Holder>(_s: S) {\n    let _x: [S.B.B.B] = []\n}\nfn main() {\n    get(Leaf())\n}";
+    codes(nested, &[(Code::UnknownType, (17, 14))]);
+    // The same chain ends at `Leaf`: clean.
+    codes(&nested.replace("T.B.B.B", "T"), &[]);
+    // A choice that gives a larger type at each step has no loop and no end: the probe stops.
+    let growing = nested.replace("T.B.B.B", "W<W<T>>");
+    codes(&growing, &[]);
 }
 
 /// A bound whose argument names an associated type of a sibling parameter finds that parameter's

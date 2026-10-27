@@ -24,6 +24,9 @@ use crate::tir::{ClassId, EnumId, FuncId, InterfaceId, Type, TypeArgs, TypeKind}
 /// arguments, doubles the number at each level of inheritance, so the walk stops here (E0157).
 pub(super) const BOUND_CLOSURE_LIMIT: usize = 256;
 
+/// How deep a type that `probe_associated` follows may nest its arguments.
+const PROBE_NESTING: usize = 16;
+
 pub(super) struct InterfaceInfo {
     pub(super) name: ast::Ident,
     /// `Self`, then the interface's own: `Self` is `Param(Self, 0)`.
@@ -363,13 +366,19 @@ impl Checker<'_> {
                 .map(|bounds| bounds.into_iter().flatten().collect()),
         );
         self.body.set_bounds(first, bounds.clone());
+        self.rescope(queued);
+        bounds
+    }
+
+    /// Puts the checks queued after the first `queued` in the scope now in place, which has the
+    /// bounds that were not in scope when they were queued.
+    pub(super) fn rescope(&mut self, queued: usize) {
         if self.queued() > queued {
             let scope = self.scope();
             for check in self.pending_bounds.iter_mut().flatten().skip(queued) {
                 check.scope = scope;
             }
         }
-        bounds
     }
 
     /// The bound `j` of the parameter `i` of `params`, which start at the place `at`.
@@ -612,11 +621,13 @@ impl Checker<'_> {
 
     /// The associated types that a bound of `interface` declares, with the ones that the interfaces
     /// it inherits declare. The arguments of a declaration are those of the interface that
-    /// declares it, over the parameters of `interface`, with `Self` replaced by the unit type.
+    /// declares it, over the parameters of `interface`; `Self` stays the `Self` of `interface`,
+    /// for the caller to replace with the type that has the bound.
     /// The walk stops at the closure limit, as the closure of a bound does (E0157): then the second
     /// answer is `true`, and the interfaces past the limit may declare any name.
     fn declarations(&self, interface: InterfaceId) -> (Vec<Declaration>, bool) {
         let params = &self.interfaces[interface.0].type_params;
+        let this = Type::intern(TypeKind::Param(params[0], 0));
         let own: Vec<Type> = (1..)
             .zip(&params[1..])
             .map(|(i, &name)| Type::intern(TypeKind::Param(name, i)))
@@ -642,7 +653,7 @@ impl Checker<'_> {
                 });
             }
             with.clear();
-            with.push(Type::UNIT);
+            with.push(this);
             with.extend_from_slice(args.get());
             for (inherited, _) in self.inheritances(declarer) {
                 let next = (inherited.interface, inherited.args.subst(&with));
@@ -1164,10 +1175,18 @@ impl Checker<'_> {
     /// `interface` declares and the ones that the interfaces it inherits declare: a body that
     /// writes any of them is instantiated with `ty`. Only the checker can report a loop.
     ///
-    /// A type that the choices lead to is probed too: it meets the bound of the associated type
-    /// that it is chosen for, or its own conformance, where it is chosen.
+    /// A body may also write the associated type of an associated type, as `S.B.B`: the type that
+    /// a choice gives is probed for the bounds of the associated type that it is chosen for. A
+    /// choice of a generic block gives a type that no `extend` block names, so this is the only
+    /// place where that type is found. A type is probed once for a bound.
+    ///
+    /// shortcut: a chosen type that nests deeper than `PROBE_NESTING` is not followed, as a choice
+    /// such as `type B = W<W<T>>` gives a larger type at each step and has no end; a loop that
+    /// closes past it reaches `mono`. Upgrade when a program needs a chain of types that deep.
     fn probe_associated(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) {
-        if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
+        if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
+            || !self.probed_types.insert((ty, interface, args))
+        {
             return;
         }
         let declared = if let Some(declared) = self.probed.get(&interface) {
@@ -1177,7 +1196,6 @@ impl Checker<'_> {
             self.probed.insert(interface, Rc::clone(&declared));
             declared
         };
-        // The arguments of a declaration name no `Self`, only the parameters of `interface`.
         let mut with = vec![ty];
         with.extend_from_slice(args.get());
         for declaration in declared.iter() {
@@ -1188,7 +1206,20 @@ impl Checker<'_> {
                 args,
                 declaration.k,
             ));
-            let _ = self.normalize(assoc);
+            // A type with a parameter is no instance: `mono` never meets it.
+            let Some(chosen) = (self.normalize(assoc))
+                .filter(|chosen| !chosen.has_param() && nests_within(*chosen, PROBE_NESTING))
+            else {
+                continue;
+            };
+            let mut under = vec![ty];
+            under.extend_from_slice(args.get());
+            // The bounds are copied: the probe below borrows the checker.
+            let declared = &self.interfaces[declaration.declarer.0].assoc[declaration.k as usize];
+            for bound in declared.bounds.clone() {
+                let bound_args = self.subst_args(bound.args, &under);
+                self.probe_associated(chosen, bound.interface, bound_args);
+            }
         }
     }
 
@@ -1548,6 +1579,19 @@ impl Checker<'_> {
 struct Names {
     by_name: FxHashMap<Symbol, Vec<Declaration>>,
     wide: bool,
+}
+
+/// Whether `ty` nests its arguments, arrays and optionals no deeper than `limit` levels.
+fn nests_within(ty: Type, limit: usize) -> bool {
+    let inner = |list: &[Type]| {
+        list.is_empty() || (limit > 0 && list.iter().all(|&t| nests_within(t, limit - 1)))
+    };
+    match ty.kind() {
+        TypeKind::Array(t) | TypeKind::Optional(t) => inner(&[t]),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => inner(args.get()),
+        TypeKind::Assoc(base, _, args, _) => inner(&[base]) && inner(args.get()),
+        _ => true,
+    }
 }
 
 /// An associated type that an interface declares, or that one it inherits declares.

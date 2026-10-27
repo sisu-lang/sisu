@@ -1,0 +1,46 @@
+// GIVEN a generic class `Crate<T>`, a class `Leaf` that conforms to `Pairs<Crate<Leaf>>`, and
+// two `extend` blocks of `Crate<T>` whose bound on `T` names the target: one writes it `Self`
+// and one writes `Crate<T>`
+// WHEN each block's method is called on a `Crate<Leaf>`, and a function with the bound
+// `Pairs<Crate<T>>` on the same value
+// THEN all three run and print 42, and the bound with `Self` holds as the bound with the target does
+interface Pairs<X> {
+    fn pair(self) -> i64
+}
+
+class Leaf {
+    n: i64
+}
+
+class Crate<T> {
+    inner: T
+}
+
+extend Leaf: Pairs<Crate<Leaf>> {
+    fn pair(self) -> i64 {
+        self.n
+    }
+}
+
+extend<T: Pairs<Self>> Crate<T> {
+    fn with_self(self) -> i64 {
+        self.inner.pair()
+    }
+}
+
+extend<T: Pairs<Crate<T>>> Crate<T> {
+    fn spelled(self) -> i64 {
+        self.inner.pair()
+    }
+}
+
+fn plain<T: Pairs<Crate<T>>>(c: Crate<T>) -> i64 {
+    c.inner.pair()
+}
+
+fn main() {
+    let c = Crate(inner: Leaf(n: 42))
+    print(c.with_self())    // 42
+    print(c.spelled())      // 42
+    print(plain(c))         // 42
+}

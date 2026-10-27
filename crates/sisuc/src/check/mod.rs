@@ -416,6 +416,9 @@ struct Checker<'src> {
     /// The associated types that a bound of each interface gives its type, with the ones that the
     /// interfaces it inherits declare, found when first asked for (see `probe_associated`).
     probed: FxHashMap<tir::InterfaceId, Rc<[interface::Declaration]>>,
+    /// The types that `probe_associated` has probed for a bound, by interface and arguments: a
+    /// type is probed once for a bound, however many calls ask.
+    probed_types: FxHashSet<(Type, tir::InterfaceId, TypeArgs)>,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// The place among `extensions` of the first block that covers the receiver of the call being
@@ -896,6 +899,7 @@ impl<'src> Checker<'src> {
             choice_ats: FxHashMap::default(),
             loops: std::cell::RefCell::default(),
             probed: FxHashMap::default(),
+            probed_types: FxHashSet::default(),
             conformed: FxHashMap::default(),
             failed_block: None,
             lowered_enums: Vec::new(),

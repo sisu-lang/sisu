@@ -50,9 +50,25 @@ impl<'a> Checker<'_> {
     ) {
         let params = self.type_params(&[], &extend.type_params);
         self.body.set_type_params(&params);
+        // `Self` is the target in the bounds of the block's parameters, in the interface the block
+        // names, and in its methods. A target that writes an associated type of a parameter is
+        // reported, and needs the bounds of the parameters to find it, so it comes after them.
+        let reported_late = extend.target.names_member();
+        let queued = self.queued();
+        let early = if reported_late {
+            None
+        } else {
+            self.extend_target(&extend.target)
+        };
+        self.body.self_type = Some(early.unwrap_or(UNKNOWN));
         let bounds = self.declare_bounds(0, Vec::new(), &extend.type_params);
-        let target = self.extend_target(&extend.target);
-        // `Self` is the target in the interface the block names, as in its methods.
+        let target = if reported_late {
+            self.extend_target(&extend.target)
+        } else {
+            // The checks of the target's arguments waited with no bound of the block in scope.
+            self.rescope(queued);
+            early
+        };
         self.body.self_type = Some(target.unwrap_or(UNKNOWN));
         let interface = (extend.interface.as_ref()).map(|ty| {
             let bound = self.bound(ty, target)?;
