@@ -59,7 +59,7 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-shear, cargo-
 $ make help    # every target
 $ make build   # sisu and the two runtime archives
 $ make test    # unit tests and end-to-end cases
-$ make lint    # fmt, clippy (also with the fuzz feature), expect messages, typos, file hygiene, shell and workflow lint, as in CI
+$ make lint    # fmt, clippy (also with the fuzz feature), expect messages, unused dependencies, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
 $ make miri    # the runtime's unit tests under Miri, which stops at undefined behaviour
 $ make check   # lint, test and deny; CI also runs make miri
