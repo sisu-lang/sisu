@@ -659,15 +659,15 @@ fn coverage_steps(src: &str, expected: &[(Code, (usize, usize))]) -> usize {
     exhaust::STEPS.get()
 }
 
-/// The kill override for this test is in `.config/nextest.toml`: a `match` on an enum of 100,000
+/// The kill override for this test is in `.config/nextest.toml`: a `match` on an enum of 145,000
 /// variants, with an arm for each. Finding a variant's bucket by a search of the buckets, or
 /// specializing the column once per variant over every row, is quadratic and hangs. A counter
-/// cannot see these: the search is a new loop, not a step the solver counts. The current code
-/// takes 0.7 s. The search of the buckets takes 12 s, and the scan of every row for each bucket
-/// more than 100 s.
+/// cannot see these: the search is a new loop, not a step the solver counts. On a developer
+/// machine the current code takes about 1 s, and the search of the buckets takes 56 s, more than
+/// four times the kill. The scan of every row for each bucket takes longer still.
 #[test]
 fn variants_should_check_in_linear_time() {
-    const VARIANTS: usize = 100_000;
+    const VARIANTS: usize = 145_000;
     let variants = (0..VARIANTS)
         .map(|i| format!("    V{i}\n"))
         .collect::<Vec<_>>()
@@ -681,14 +681,15 @@ fn variants_should_check_in_linear_time() {
     ));
 }
 
-/// The kill override for this test is in `.config/nextest.toml`: a `match` on 90,000 literals. A
+/// The kill override for this test is in `.config/nextest.toml`: a `match` on 140,000 literals. A
 /// split that rescans the column for each row, or finds a row's first interval by a search from
 /// the start, is quadratic in the literals and hangs. A counter cannot see these, as for
-/// `variants_should_check_in_linear_time`. The current code takes 0.5 s. The search from the
-/// start takes 8.6 s, and the rescan of the whole column 36 s.
+/// `variants_should_check_in_linear_time`. On a developer machine the current code takes about
+/// 1 s, the search from the start takes 26 s, more than twice the kill, and the rescan of the
+/// whole column 100 s.
 #[test]
 fn literal_arms_should_check_in_linear_time() {
-    const LITERALS: usize = 90_000;
+    const LITERALS: usize = 140_000;
     let arms = (0..LITERALS)
         .map(|i| format!("        {i} => {i}\n"))
         .collect::<Vec<_>>()
@@ -717,13 +718,14 @@ fn or_fields_should_check_in_linear_time() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// The kill override for this test is in `.config/nextest.toml`: one row of 60,000 `true | false`
+/// The kill override for this test is in `.config/nextest.toml`: one row of 110,000 `true | false`
 /// fields. A `push` that walks the whole rest of the row, to rehash it or to read its flags, is
 /// quadratic in the fields and hangs. A counter cannot see this, because the walk builds no
-/// stack node. The current code takes 0.45 s. The walk takes 7.6 s.
+/// stack node. On a developer machine the current code takes about 1 s, and the walk takes 33 s,
+/// more than twice the kill.
 #[test]
 fn long_or_row_should_check_in_linear_time() {
-    const FIELDS: usize = 60_000;
+    const FIELDS: usize = 110_000;
     let fields = vec!["bool"; FIELDS].join(", ");
     let pattern = vec!["true | false"; FIELDS].join(", ");
     clean(&format!(
@@ -732,14 +734,15 @@ fn long_or_row_should_check_in_linear_time() {
 }
 
 /// The kill override for this test is in `.config/nextest.toml`: a `match` on `Q(E, i64)`. The
-/// first arm has 2,000 alternatives of `E`. Then come 1,000 literal arms and 1,000 range arms of
+/// first arm has 4,400 alternatives of `E`. Then come 1,000 literal arms and 1,000 range arms of
 /// the `i64`, and each range arm is unreachable. The arms below the first are in the bucket of
 /// each alternative, and the literal arms take the range arms. A list of every row that took a
 /// row's values costs alternatives times literals times ranges and hangs. A counter cannot see
-/// this, because the list is a new loop. The current code takes 0.6 s. The list takes 11 s.
+/// this, because the list is a new loop. On a developer machine the current code takes about 1 s,
+/// and the list takes 31 s, more than twice the kill.
 #[test]
 fn takers_should_check_in_linear_time() {
-    const ALTERNATIVES: usize = 2_000;
+    const ALTERNATIVES: usize = 4_400;
     const TAKERS: usize = 1_000;
     let variants = (0..ALTERNATIVES)
         .map(|i| format!("    V{i}\n"))
