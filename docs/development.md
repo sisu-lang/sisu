@@ -50,7 +50,7 @@ audit-sisu skill's probes; `.llvm/23` then takes about 1.2 GB.
 Run this once per clone:
 
 ```console
-$ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz
+$ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz
 ```
 
 ## Build and test
