@@ -910,6 +910,13 @@ fn interface_should_warn_when_no_live_code_names_or_calls_it() {
         )),
         [(W0012, (1, 11), vec![(4, 12)]), (W0012, (4, 4), vec![])]
     );
+    // Only the bound of a block whose methods are all dead names it: the warning cites the bound.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n    fn spelled(self) -> i64 {{ 1 }}\n}}\nfn main() {{\n    print(Crate(inner: 1).inner)\n}}"
+        )),
+        [(W0012, (1, 11), vec![(7, 11)]), (W0012, (8, 8), vec![])]
+    );
 }
 
 /// An interface that live code names in a bound, calls through a requirement or a method of a
@@ -923,6 +930,11 @@ fn interface_should_not_warn_when_live_code_uses_it() {
         circle("fn total<T: Shape>(_x: T) -> f64 {\n    1.0\n}\nfn main() {\n    print(total(Circle(r: 1.0)))\n}"),
         circle("extend Circle {\n    fn fit<T: Shape>(self, _x: T) -> f64 { 1.0 }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    print(c.fit(c))\n}"),
         circle("class Sorted<T: Shape> {\n    items: [T]\n}\nfn main() {\n    let s: Sorted<Circle> = Sorted(items: [Circle(r: 1.0)])\n    print(s.items.len())\n}"),
+        // (a) A live method's block names it in a bound of the block's parameter: for a plain
+        // block, for a conformance block, and beside the bound of a generic method.
+        circle("class Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T> {\n    fn spelled(self) -> f64 { self.inner.area() }\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).spelled())\n}"),
+        circle("interface Other {\n    fn other(self) -> f64\n}\nclass Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T>: Other {\n    fn other(self) -> f64 { self.inner.area() }\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).other())\n}"),
+        circle("class Crate<T> {\n    inner: T\n}\nextend<T> Crate<T> {\n    fn spelled<U: Shape>(self, _u: U) -> i64 { 3 }\n}\nfn main() {\n    let c = Crate(inner: 1)\n    print(c.inner)\n    print(c.spelled(Circle(r: 1.0)))\n}"),
         // (b) A method of a conformance, with no bound: the call selects it.
         circle("fn main() {\n    print(Circle(r: 1.0).area())\n}"),
         // A method of the body that meets a requirement of a listed interface.
