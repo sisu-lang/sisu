@@ -21,5 +21,5 @@ fn build(depth: i64) -> Chain {
 fn main() {
     let a = build(100_000)
     print(a == build(100_000)) // true
-    print(a == build(99_999))   // false
+    print(a == build(99_999))  // false
 }

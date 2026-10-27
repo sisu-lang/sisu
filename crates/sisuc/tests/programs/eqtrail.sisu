@@ -26,6 +26,6 @@ fn build(depth: i64, odd: i64) -> E {
 
 fn main() {
     let a = build(100_000, 0)
-    print(a == build(100_000, 0))          // true
+    print(a == build(100_000, 0))         // true
     print(a == build(100_000, 50_000))    // false
 }

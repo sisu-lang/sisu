@@ -27,7 +27,7 @@ fn build(depth: i64, bottom: E, odd: i64) -> E {
 
 fn main() {
     let a = build(100_000, E.Leaf, 0)
-    print(a == build(100_000, E.Leaf, 0))            // true
+    print(a == build(100_000, E.Leaf, 0))           // true
     print(a == build(100_000, E.Leaf, 50_000))      // false
     let n = 0.0 / 0.0
     print(build(100_000, E.Num(n), 0) == build(100_000, E.Num(n), 0))  // false
