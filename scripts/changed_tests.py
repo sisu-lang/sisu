@@ -33,24 +33,38 @@ def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
 
 
 def git(repo: str, *args: str) -> str:
-    return subprocess.run(["git", "-C", repo, *args], check=True, capture_output=True,
-                          text=True, encoding="utf-8").stdout
+    """The output of `git -C repo ARGS`. A byte that is not UTF-8 in some tracked text file must
+    not stop the check, so it is kept as a surrogate."""
+    return subprocess.run(["git", "-C", repo, *args], check=True, capture_output=True, text=True,
+                          encoding="utf-8", errors="surrogateescape").stdout
 
 
-def hit(lines: list[str], start: int, count: int) -> set[str]:
+def hit(found: list[tuple[str, int, int]], start: int, count: int) -> set[str]:
     """The tests whose body meets the range of `count` lines from `start`; a count of 0 is empty."""
-    return {name for name, first, last in bodies(lines)
+    return {name for name, first, last in found
             if count > 0 and start <= last and start + count - 1 >= first}
+
+
+# These flags make the output the same under any user config: no color, no external diff driver
+# or text conversion, the `a/` and `b/` prefixes, and no merge of
+# near hunks, which would add unchanged lines to a range.
+DIFF = ("-c", "core.quotepath=off", "diff", "-U0", "-M", "-l10000", "--no-color", "--no-ext-diff",
+        "--no-textconv", "--inter-hunk-context=0", "--src-prefix=a/",
+        "--dst-prefix=b/")
 
 
 def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
     """The (new path, test name) pairs whose body `git diff -U0 -M -l10000 REF` changes, for `.rs`
-    files only. A deleted test is left out."""
-    diff = git(repo, "-c", "core.quotepath=off", "diff", "-U0", "-M", "-l10000", ref).splitlines()
+    files only. A deleted test is left out.
+
+    shortcut: a path that git quotes (it holds a quote, a backslash or a control character) keeps
+    its quotes, so its file is not found. No such path is in the tree; read `-z` output if one is
+    ever added."""
+    diff = git(repo, *DIFF, ref).splitlines()
     found: set[tuple[str, str]] = set()
     old_path = new_path = ""
-    old_lines: list[str] | None = None
-    new_lines: list[str] = []
+    old: list[tuple[str, int, int]] | None = None  # the bodies of the file at REF
+    new: list[tuple[str, int, int]] = []  # the bodies of the file now
     left = [0, 0]  # lines of the current hunk not yet read, on the old and the new side
     for line in diff:
         if left[0] or left[1]:  # a hunk line; one that starts `---` or `+++` is not a header
@@ -60,17 +74,18 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
             old_path = line[4:].split("\t")[0].removeprefix("a/") if line != "--- /dev/null" else ""
         elif line.startswith("+++ "):
             new_path = line[4:].split("\t")[0].removeprefix("b/") if line != "+++ /dev/null" else ""
-            old_lines = new_lines = None
+            old = None
         elif (m := HUNK.match(line)) and new_path.endswith(".rs"):
             a, b, c, d = (int(x) if x is not None else 1 for x in m.groups())
             left = [b, d]
-            if old_lines is None:
-                old_lines = git(repo, "show", f"{ref}:{old_path}").splitlines() if old_path else []
-                with open(f"{repo}/{new_path}", encoding="utf-8") as f:
-                    new_lines = f.read().splitlines()
-            new_names = {name for name, _, _ in bodies(new_lines)}
-            found |= {(new_path, n) for n in hit(old_lines, a, b) & new_names}
-            found |= {(new_path, n) for n in hit(new_lines, c, d)}
+            if old is None:  # the first hunk of the file
+                text = git(repo, "show", f"{ref}:{old_path}") if old_path else ""
+                old = bodies(text.splitlines())
+                with open(f"{repo}/{new_path}", encoding="utf-8", errors="surrogateescape") as f:
+                    new = bodies(f.read().splitlines())
+            new_names = {name for name, _, _ in new}
+            found |= {(new_path, n) for n in hit(old, a, b) & new_names}
+            found |= {(new_path, n) for n in hit(new, c, d)}
     return found
 
 

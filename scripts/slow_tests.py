@@ -59,7 +59,8 @@ def main(path: str, ref: str | None = None) -> None:
         return
     others = 0
     if ref is not None and slow:
-        diff = subprocess.run(['git', 'diff', '-U0', ref], capture_output=True, text=True).stdout
+        diff = subprocess.run(['git', 'diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', ref],
+                              capture_output=True, text=True, errors='surrogateescape').stdout
         mentioned = [test for test in slow if in_diff(test[2], diff)]
         others = len(slow) - len(mentioned)
         slow = mentioned

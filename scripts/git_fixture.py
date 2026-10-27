@@ -17,7 +17,13 @@ def env() -> dict:
 def git(path: str, *args: str) -> str:
     """The output of `git -C path ARGS`; fails when git fails."""
     return subprocess.run(['git', '-C', path, *args], check=True, capture_output=True,
-                          text=True, env=env()).stdout
+                          text=True, errors='surrogateescape', env=env()).stdout
+
+
+def write(path: str, name: str, content: str | bytes) -> None:
+    """Writes `content` to the file `name` under `path`."""
+    with open(os.path.join(path, name), 'wb') as file:
+        file.write(content if isinstance(content, bytes) else content.encode('utf-8'))
 
 
 @contextlib.contextmanager

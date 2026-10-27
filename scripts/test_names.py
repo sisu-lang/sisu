@@ -13,6 +13,7 @@ import argparse
 import collections
 import os
 import re
+import subprocess
 import sys
 
 import changed_tests
@@ -129,7 +130,13 @@ def cli(argv: list[str], baseline: str = BASELINE) -> int:
     args = parser.parse_args(argv)
     if args.check:
         return check_baseline(baseline)
-    changed = frozenset(changed_tests.changed(args.diff)) if args.diff and args.files else frozenset()
+    changed = frozenset()
+    if args.diff and args.files:
+        try:
+            changed = frozenset(changed_tests.changed(args.diff))
+        except subprocess.CalledProcessError as error:
+            print(f"test_names: `git diff {args.diff}` failed: {error.stderr.strip()}")
+            return 1
     return main(args.files, baseline, changed)
 
 
