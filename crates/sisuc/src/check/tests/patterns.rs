@@ -790,23 +790,28 @@ fn or_fields_should_check_in_linear_time() {
 /// The kill override for this test is in `.config/nextest.toml`: one row of 60,000 `true | false`
 /// fields, given to `exhaust::check`. A `push` that walks the whole rest of the row, to rehash it
 /// or to read its flags, is quadratic in the fields and hangs. A counter cannot see this,
-/// because the walk builds no stack node. On a developer machine the current code takes 0.25 s
-/// and the walk 19 s of CPU time, measured at load 26 to 44; the kill is 4 s.
+/// because the walk builds no stack node. Each `|` has a span of its own, as in a source. On a
+/// developer machine at load 1 the current code takes 0.3 s and the walk 17 s; the kill is 4 s.
 #[test]
 fn long_or_row_should_check_in_linear_time() {
     const FIELDS: usize = 60_000;
     let enums = [enum_of(vec![vec![Type::BOOL; FIELDS]])];
-    let either = || {
-        field_pattern(tir::PatternKind::Or(vec![
-            field_pattern(tir::PatternKind::Bool(true)),
-            field_pattern(tir::PatternKind::Bool(false)),
-        ]))
+    // As in a source, each `|` and each alternative has a span of its own, so none is the same
+    // pattern as another.
+    let either = |k: usize| {
+        row_pattern(
+            3 * k,
+            tir::PatternKind::Or(vec![
+                row_pattern(3 * k + 1, tir::PatternKind::Bool(true)),
+                row_pattern(3 * k + 2, tir::PatternKind::Bool(false)),
+            ]),
+        )
     };
     let row = row_pattern(
         0,
         tir::PatternKind::Variant {
             variant: 0,
-            fields: (0..FIELDS).map(|_| either()).collect(),
+            fields: (0..FIELDS).map(either).collect(),
         },
     );
     assert_eq!(unreachable_rows(&enums, enum_type(0), &[row]), []);
@@ -859,6 +864,33 @@ fn takers_should_check_in_linear_time() {
     rows.push(q(rows.len(), vec![wild(), wild()]));
     let expected: Vec<_> = ranges.map(|at| Span::new(at, at + 1)).collect();
     assert_eq!(unreachable_rows(&enums, enum_type(1), &rows), expected);
+}
+
+/// The kill override for this test is in `.config/nextest.toml`: a source with an enum of 44,000
+/// variants, a `match` with an arm for each, and a `match` whose first arm is one `|` of 4,400 of
+/// them. The solver tests above build their rows by hand, so this one gives the parser and the
+/// lowering of names and patterns (`check/pattern.rs`) a large well-formed `match`. A search of
+/// the variants for a name, in place of the index, is quadratic and hangs. On a developer machine
+/// the current code takes 0.35 s, and the search 9.9 s at load 13; the kill is 4 s.
+#[test]
+fn match_on_many_variants_should_check_in_linear_time() {
+    const VARIANTS: usize = 44_000;
+    const ALTERNATIVES: usize = 4_400;
+    let variants = (0..VARIANTS)
+        .map(|i| format!("    V{i}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let arms = (0..VARIANTS)
+        .map(|i| format!("        V{i} => {i}\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let names = (0..ALTERNATIVES)
+        .map(|i| format!("V{i}"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    clean(&format!(
+        "enum E {{\n{variants}}}\nfn f(e: E) -> i64 {{\n    match e {{\n{arms}    }}\n}}\nfn g(e: E) -> i64 {{\n    match e {{\n        {names} => 1\n        _ => 0\n    }}\n}}\nfn main() {{}}"
+    ));
 }
 
 /// The keep-alive override for this test is in `.config/nextest.toml`: finding the arm that
