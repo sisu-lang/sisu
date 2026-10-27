@@ -651,7 +651,7 @@ mod tests {
     /// Review Focus 5: an output of 20,000 lines (about 109 KB) is compared whole, and a difference
     /// in the last byte still counts.
     #[test]
-    fn large_output_is_compared_exactly() {
+    fn large_output_should_be_compared_exactly() {
         let source = "fn main() {\n    let mut i = 0\n    while i < 20_000 {\n        print(i)\n        i += 1\n    }\n}\n";
         let mut runs = runs_of(source, "", LIMIT);
         assert_eq!(exits(&runs), [Exit::Code(0); 3]);

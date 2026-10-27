@@ -155,7 +155,7 @@ priority = 100
 
 # Each case compiles twice and runs under Valgrind, so these are the longest tests and start
 # first; a Valgrind run of a case uses at most about 80 MB. A hang is killed after three
-# minutes. The orphan checks only read the directory, so they keep the default priority.
+# minutes.
 [[profile.default.overrides]]
 filter = "binary(cases) & test(/^(run|run_fail|site_run|site_run_fail)::/)"
 priority = 100

@@ -60,7 +60,6 @@ crates/sisuc/src/ast.rs::display_every_node
 crates/sisuc/src/ast.rs::display_float
 crates/sisuc/src/ast.rs::display_formats
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
-crates/sisuc/src/check/string.rs::literal_names_lex_back
 crates/sisuc/src/check/tests/arrays.rs::array_of_t_is_not_array_of_optional_t
 crates/sisuc/src/check/tests/arrays.rs::contains_argument_is_an_element
 crates/sisuc/src/check/tests/arrays.rs::contains_as_function_is_the_idiom
@@ -845,7 +844,6 @@ crates/sisuc/src/fuzz_program.rs::a_timed_out_child_is_reaped
 crates/sisuc/src/fuzz_program.rs::judge_builds_rejects_any_difference
 crates/sisuc/src/fuzz_program.rs::known_panic_is_the_last_line
 crates/sisuc/src/fuzz_program.rs::known_value_matches
-crates/sisuc/src/fuzz_program.rs::large_output_is_compared_exactly
 crates/sisuc/src/fuzz_program.rs::missing_known_value_fails
 crates/sisuc/src/fuzz_program.rs::other_at_lines_are_ignored
 crates/sisuc/src/fuzz_program.rs::pair_compares_ordinary_stderr_exactly
@@ -1061,7 +1059,6 @@ crates/sisuc/src/lexer/mod.rs::trailing_underscore
 crates/sisuc/src/lexer/mod.rs::unary_minus_line_is_fine
 crates/sisuc/src/lexer/mod.rs::unclosed_literal_is_one_str_token
 crates/sisuc/src/lexer/mod.rs::unclosed_paren
-crates/sisuc/src/lexer/mod.rs::unclosed_string_that_unbalances_reports_the_string
 crates/sisuc/src/lexer/mod.rs::underscore_token
 crates/sisuc/src/lexer/mod.rs::unexpected_character_fix
 crates/sisuc/src/lexer/mod.rs::unexpected_close
