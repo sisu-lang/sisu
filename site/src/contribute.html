@@ -52,7 +52,7 @@ How to help with Sisu, a one-person learning project at an early stage.
         <li>GNU Make, which runs every command.</li>
         <li>A C compiler on <code>PATH</code> as <code>cc</code>. <code>sisu</code> uses it to link programs.</li>
         <li>On Ubuntu: <code>libzstd-dev</code>, <code>libxml2-dev</code> and <code>zlib1g-dev</code>, which LLVM links against. On macOS: Homebrew's <code>zstd</code>.</li>
-        <li><code>prek</code> for the Git hooks, with <code>typos</code> and <code>shellcheck</code>.</li>
+        <li><code>prek</code> for the Git hooks, with <code>typos</code>, <code>cargo-shear</code> and <code>shellcheck</code>, which the hooks run. <code>make setup</code> installs <code>cargo-shear</code>.</li>
         <li><code>cargo-nextest</code> and <code>cargo-deny</code>, and on Linux Valgrind for the end-to-end tests.</li>
         <li><code>uv</code>, to build the site.</li>
         <li>For <code>make miri</code>, a nightly toolchain with Miri: <code>rustup toolchain install nightly --component miri --component rust-src</code>.</li>

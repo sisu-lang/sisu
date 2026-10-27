@@ -354,7 +354,7 @@ impl Checker<'_> {
                 let deleted = if grouped {
                     name.start()..head.end
                 } else {
-                    head.clone()
+                    head
                 };
                 let commented = self
                     .source

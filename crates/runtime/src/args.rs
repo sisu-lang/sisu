@@ -42,9 +42,13 @@ pub unsafe extern "C" fn sisu_arg(
     len: *mut usize,
 ) -> *const u8 {
     let index = usize::try_from(index).expect("generated code should pass an index from 0 up");
-    // SAFETY: the caller promises that `argv` holds a readable C string after the program name
-    // at `index`.
-    let arg = unsafe { CStr::from_ptr(*argv.add(index + 1)) }.to_bytes();
+    // SAFETY: the caller promises that `argv` holds an entry after the program name at
+    // `index`, so the offset stays inside the array.
+    let slot = unsafe { argv.add(index + 1) };
+    // SAFETY: that entry is readable, as the caller promises.
+    let entry = unsafe { *slot };
+    // SAFETY: the caller promises that the entry is a readable C string.
+    let arg = unsafe { CStr::from_ptr(entry) }.to_bytes();
     let (bytes, n) = match repair(arg) {
         Cow::Borrowed(arg) => (arg.as_ptr(), arg.len()),
         Cow::Owned(repaired) => {

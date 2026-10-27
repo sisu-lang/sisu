@@ -389,7 +389,7 @@ fn bare_variant_should_yield_to_items() {
     }
     // A binding, a function and a constant each take the name of `State.Idle` as they would
     // without the enum: each row is the statement, and the codes it reports from line 2.
-    let rows: [Row; 4] = [
+    let rows: [Row<'_>; 4] = [
         (
             "let Idle = 1\n    let _ = Idle(2)",
             &[(Code::FunctionNotFound, (3, 13))],

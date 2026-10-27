@@ -634,7 +634,8 @@ fn liveness_reads_grow_linearly() {
             "    if c { print(a.len()) }\n".repeat(n)
         )
     };
-    for shape in [&line as &dyn Fn(usize) -> String, &branch] {
+    let shapes: [&dyn Fn(usize) -> String; 2] = [&line, &branch];
+    for shape in shapes {
         let reads = |n: usize| {
             let program = checked(&shape(n));
             CONSULTED.set(0);

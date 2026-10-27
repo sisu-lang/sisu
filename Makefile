@@ -15,9 +15,10 @@ help: ## List the targets
 	@echo 'BASE=<commit> sets where the changes start: by default where HEAD left main.'
 	@echo 'On a stacked branch, pass the stage below, so its changes stay out.'
 
-setup: ## Once per clone: LLVM 23, the pre-commit hook, cargo-mutants, cargo-llvm-cov, cargo-fuzz
+setup: ## Once per clone: LLVM 23, the pre-commit hook, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz
 	scripts/install-llvm.sh
 	prek install
+	cargo install --locked cargo-shear
 	cargo install --locked cargo-mutants
 	cargo install --locked cargo-llvm-cov
 	cargo install --locked cargo-fuzz@0.13.2

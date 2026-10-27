@@ -88,7 +88,7 @@ impl Program {
     fn into_source(self) -> Source {
         self.file
             .map(Source::File)
-            .or(self.inline.map(Source::Inline))
+            .or_else(|| self.inline.map(Source::Inline))
             .expect("clap should require a file or `-e`")
     }
 }

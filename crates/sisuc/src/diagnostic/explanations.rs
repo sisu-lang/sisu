@@ -268,7 +268,7 @@ fn all_fixtures() -> Vec<(PathBuf, String)> {
         let Some(stem) = path
             .extension()
             .filter(|e| *e == "sisu")
-            .and(path.file_stem())
+            .and_then(|_| path.file_stem())
             .and_then(|s| s.to_str())
         else {
             continue;

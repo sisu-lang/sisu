@@ -92,19 +92,22 @@ impl<'ctx> Codegen<'ctx, '_> {
         let layout = self.array_layout(element);
         let i64_type = self.context.i64_type();
         let offset = i64_type.const_int(layout.offset, false);
-        // SAFETY: each GEP takes one `i64` index, which steps over whole `i8` or element
-        // values and never indexes into an aggregate, so the index list is valid for its
-        // pointee type. `inbounds` is sound because the block holds the header and then its
-        // length's elements, `offset` is where the elements start, and every caller passes
-        // an index below the length: `check_bounds` proved it, a loop counts up to it, or
-        // `array_lit` stores at the constant indexes `0..n` of a block it just sized to `n`.
-        // `unique` passes 0, whose address is at most one past the block's end, which
-        // `inbounds` allows.
-        unsafe {
-            let elements = self
-                .builder
+        // SAFETY: the GEP takes one `i64` index, which steps over whole `i8` values and never
+        // indexes into an aggregate, so the index list is valid for its pointee type.
+        // `inbounds` is sound because the block holds the header and then its elements, and
+        // `offset` is where the elements start, which is at most one past the block's end.
+        let elements = unsafe {
+            self.builder
                 .build_in_bounds_gep(self.context.i8_type(), array, &[offset], "elements")
-                .expect(POSITIONED);
+                .expect(POSITIONED)
+        };
+        // SAFETY: the GEP takes one `i64` index, which steps over whole element values and
+        // never indexes into an aggregate, so the index list is valid for its pointee type.
+        // `inbounds` is sound because every caller passes an index below the length:
+        // `check_bounds` proved it, a loop counts up to it, or `array_lit` stores at the
+        // constant indexes `0..n` of a block it just sized to `n`. `unique` passes 0, whose
+        // address is at most one past the block's end, which `inbounds` allows.
+        unsafe {
             self.builder
                 .build_in_bounds_gep(layout.element, elements, &[index], "element")
                 .expect(POSITIONED)

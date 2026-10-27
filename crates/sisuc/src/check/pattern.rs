@@ -279,7 +279,7 @@ impl Checker<'_> {
                 let line_end = source
                     .rest(end)
                     .find('\n')
-                    .map_or(source.end(), |n| end + n);
+                    .map_or_else(|| source.end(), |n| end + n);
                 if close.start() < line_end {
                     Span::new(line_start(start) - 1, end)
                 } else {

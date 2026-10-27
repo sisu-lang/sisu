@@ -18,8 +18,9 @@ are skipped, and `make coverage`, `make mutants`, `make verify`, `make fuzz`,
   against. On macOS: Homebrew's `zstd`; LLVM looks for it in
   `/opt/homebrew/lib`.
 - [prek](https://prek.j178.dev) for the Git hooks, with
-  [typos](https://github.com/crate-ci/typos) and `shellcheck`, which two of
-  the hooks run.
+  [typos](https://github.com/crate-ci/typos),
+  [cargo-shear](https://github.com/Boshen/cargo-shear) and `shellcheck`,
+  which three of the hooks run.
 - [cargo-nextest](https://nexte.st). Run the tests with it, not
   `cargo test`: its setup script builds the two runtime archives that
   the end-to-end tests link against.
@@ -49,7 +50,7 @@ audit-sisu skill's probes; `.llvm/23` then takes about 1.2 GB.
 Run this once per clone:
 
 ```console
-$ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-mutants, cargo-llvm-cov, cargo-fuzz
+$ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz
 ```
 
 ## Build and test
@@ -58,7 +59,7 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit hook, cargo-mutants, carg
 $ make help    # every target
 $ make build   # sisu and the two runtime archives
 $ make test    # unit tests and end-to-end cases
-$ make lint    # fmt, clippy (also with the fuzz feature), expect messages, typos, file hygiene, shell and workflow lint, as in CI
+$ make lint    # fmt, clippy (also with the fuzz feature), expect messages, unused dependencies, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
 $ make miri    # the runtime's unit tests under Miri, which stops at undefined behaviour
 $ make check   # lint, test and deny; CI also runs make miri

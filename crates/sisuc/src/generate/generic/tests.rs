@@ -76,7 +76,7 @@ fn identity(cost: u64) -> GFunc {
 }
 
 /// Declares the generics `generics` in `g`, in order, as the program text and the scope.
-fn declare(g: &mut Gen, generics: Vec<Generic>) {
+fn declare(g: &mut Gen<'_>, generics: Vec<Generic>) {
     for (id, generic) in generics.into_iter().enumerate() {
         match generic.body {
             Body::Enum(variants) => g.declare_enum(id, generic.params, variants),
@@ -222,8 +222,8 @@ fn an_enum_instance_should_know_whether_it_may_hold_a_class() {
         applied: None,
         inferable: false,
     });
-    let _ = g.instance(0, &[Ty::class(0, 1)]);
-    let _ = g.instance(0, &[Ty::I64]);
+    drop(g.instance(0, &[Ty::class(0, 1)]));
+    drop(g.instance(0, &[Ty::I64]));
     assert!(g.scope.enums[0].has_class);
     assert!(!g.scope.enums[1].has_class);
 }
@@ -264,7 +264,7 @@ fn the_instances_of_an_open_pair_should_name_each_other() {
 fn a_variant_should_be_inferable_when_its_fields_name_every_parameter() {
     let mut g = Gen::new(&[]);
     declare(&mut g, vec![wrapper()]);
-    let _ = g.instance(0, &[Ty::I64]);
+    drop(g.instance(0, &[Ty::I64]));
     let variants = &g.scope.enums[0].variants;
     assert!(!variants[0].inferable, "`V1` has no field");
     assert!(variants[1].inferable);
@@ -1284,7 +1284,7 @@ fn a_nested_value_should_be_one_level_deeper_than_the_value_around_it() {
     // At the depth limit's last level, the value inside an array, an optional, a class field or
     // a `match` has no call to offer; the byte that would pick one then changes nothing.
     let at = MAX_SOLVE - 1;
-    let setup = |g: &mut Gen| {
+    let setup = |g: &mut Gen<'_>| {
         declare(g, vec![wrapper()]);
         g.scope.generics.push(Generic {
             params: 1,
@@ -1439,7 +1439,7 @@ fn ranks(source: &str) -> Vec<(String, Vec<Rank>)> {
 
 #[test]
 fn each_shape_should_give_the_rank_it_is_for() {
-    let program = |build: &dyn Fn(&mut Gen)| {
+    let program = |build: &dyn Fn(&mut Gen<'_>)| {
         let mut g = Gen::new(&[]);
         declare(&mut g, vec![wrapper()]);
         build(&mut g);

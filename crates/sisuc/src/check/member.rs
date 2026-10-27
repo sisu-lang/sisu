@@ -41,7 +41,7 @@ impl Checker<'_> {
                 self.diagnostics.push(kind.into());
             }
             // Only its own diagnostics matter.
-            let _ = member(self, Err(Poisoned::of(type_of(&scrutinee))));
+            drop(member(self, Err(Poisoned::of(type_of(&scrutinee)))));
             return Err(Poisoned::error());
         };
         // `?.` takes one layer off: on a `C??` it leaves a `C?`, which has no members.
@@ -58,7 +58,7 @@ impl Checker<'_> {
             };
             self.diagnostics.push(kind.into());
             // Only its own diagnostics matter.
-            let _ = member(self, Err(Poisoned::error()));
+            drop(member(self, Err(Poisoned::error())));
             return Err(Poisoned::error());
         }
         let bind = self.fresh(payload);
@@ -504,7 +504,7 @@ impl Checker<'_> {
     pub(super) fn stray(&mut self, args: &[ast::Arg]) {
         for arg in args {
             // Only its diagnostics matter.
-            let _ = self.expr(&arg.value, Some(UNKNOWN));
+            drop(self.expr(&arg.value, Some(UNKNOWN)));
         }
     }
 }

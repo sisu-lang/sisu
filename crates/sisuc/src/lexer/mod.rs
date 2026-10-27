@@ -119,7 +119,7 @@ pub(crate) struct Token {
 
 // This size holds only on 64-bit targets: `TokenKind` holds `String`s, sized by the pointer width.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<Token>() == 40);
+const _: () = assert!(size_of::<Token>() == 40, "a token should be 40 bytes");
 
 impl TokenKind {
     /// The variant name, as `--emit tokens` prints it.
@@ -331,7 +331,7 @@ pub(crate) fn lex_at(text: &str, base: usize) -> Result<Lexed<'_>, Diagnostic> {
     if base == 0 {
         return Ok(lexed);
     }
-    if let Some(d) = lexed.diagnostics.first().or(lexed.warnings.first()) {
+    if let Some(d) = lexed.diagnostics.first().or_else(|| lexed.warnings.first()) {
         return Err(d.clone());
     }
     let moved = |at: Span| Span::new(at.start() + base, at.end() + base);
@@ -1047,7 +1047,7 @@ impl Brackets {
         &mut self,
         source: &str,
         start: usize,
-        chars: &mut Chars,
+        chars: &mut Chars<'_>,
         tokens: &mut Vec<Token>,
         diagnostics: &mut Vec<Diagnostic>,
     ) -> (Option<TokenKind>, Option<usize>) {
@@ -1102,7 +1102,7 @@ impl Brackets {
         &mut self,
         source: &str,
         start: usize,
-        chars: &mut Chars,
+        chars: &mut Chars<'_>,
         tokens: &mut Vec<Token>,
         diagnostics: &mut Vec<Diagnostic>,
     ) -> (Option<TokenKind>, Option<usize>) {
@@ -1576,7 +1576,7 @@ fn spec_end(source: &str, colon: usize) -> Option<usize> {
 }
 
 /// Consumes chars while `pred` holds and returns the byte offset after the last one.
-fn take_while(chars: &mut Chars, source: &str, pred: fn(char) -> bool) -> usize {
+fn take_while(chars: &mut Chars<'_>, source: &str, pred: fn(char) -> bool) -> usize {
     while chars.next_if(|&(_, c)| pred(c)).is_some() {}
     chars.peek().map_or(source.len(), |&(i, _)| i)
 }
@@ -1637,7 +1637,7 @@ pub(crate) fn literal_too_large(at: Span) -> Diagnostic {
 }
 
 /// The operator or punctuation starting with `c`, consuming a second char when it has one.
-fn symbol(c: char, chars: &mut Chars) -> Option<TokenKind> {
+fn symbol(c: char, chars: &mut Chars<'_>) -> Option<TokenKind> {
     use TokenKind::{
         Amp, AndAnd, Arrow, Bang, Colon, Comma, Dot, DotDot, DotDotEq, Eq, EqEq, FatArrow, Ge, Gt,
         LBrace, LBracket, LParen, Le, Lt, Minus, MinusEq, NotEq, OrOr, Percent, PercentEq, Pipe,

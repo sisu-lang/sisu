@@ -130,7 +130,7 @@ mod tests {
     fn private_dir_takes_the_first_free_name_and_is_the_owners_only() {
         let parent = std::env::temp_dir().join(format!("sisu-private-dir-{}", std::process::id()));
         // It is absent unless an earlier run failed, so a failure here is expected and harmless.
-        let _ = fs::remove_dir_all(&parent);
+        drop(fs::remove_dir_all(&parent));
         fs::create_dir_all(parent.join("taken")).expect("creates the directories");
 
         let dir =

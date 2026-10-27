@@ -420,7 +420,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     fn declare(&mut self, f: &mir::Function) {
-        let params: Vec<BasicMetadataTypeEnum> = f.locals[..f.params]
+        let params: Vec<BasicMetadataTypeEnum<'_>> = f.locals[..f.params]
             .iter()
             .map(|p| {
                 self.llvm_type(p.ty)
@@ -615,7 +615,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             Terminator::Return(value) => {
                 let value = value.as_ref().map(|value| self.operand(value).0);
                 self.builder
-                    .build_return(value.as_ref().map(|v| v as &dyn BasicValue))
+                    .build_return(value.as_ref().map(|v| -> &dyn BasicValue<'_> { v }))
                     .expect(POSITIONED);
             }
             Terminator::Panic { message, span } => self.panic_value(self.pointer(message), *span),
@@ -647,7 +647,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.optional_value(ty, value, "value")
             }
             Rvalue::Call { func, args, .. } => {
-                let args: Vec<BasicMetadataValueEnum> =
+                let args: Vec<BasicMetadataValueEnum<'_>> =
                     args.iter().map(|arg| self.operand(arg).0.into()).collect();
                 return self.call_value(*func, &args);
             }
@@ -1103,7 +1103,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             u64::try_from(text.len()).expect("a panic message should be shorter than 2^64 bytes"),
             false,
         );
-        let args: Vec<BasicMetadataValueEnum> = [msg.as_pointer_value().into(), len.into()]
+        let args: Vec<BasicMetadataValueEnum<'_>> = [msg.as_pointer_value().into(), len.into()]
             .into_iter()
             .chain(extra.iter().copied())
             .collect();

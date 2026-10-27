@@ -1034,7 +1034,7 @@ impl fmt::Display for Function {
         let ret = self
             .ret
             .as_ref()
-            .map_or("unit".to_string(), ToString::to_string);
+            .map_or_else(|| "unit".to_string(), ToString::to_string);
         write!(f, ") {ret} {})", self.body)
     }
 }

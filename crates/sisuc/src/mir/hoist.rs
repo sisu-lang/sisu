@@ -170,10 +170,13 @@ fn solve(nest: &Nest, own: &[Walk]) -> (Vec<Roots>, Vec<(usize, LocalId)>) {
         // The largest inner loop's states become this loop's, so each entry moves only when
         // it joins a set at least twice as large.
         let largest = (0..inner.len()).max_by_key(|&i| inner[i].1.len());
-        let (big, mut merged) = largest.map_or((None, States::default()), |i| {
-            let (child, states) = inner.swap_remove(i);
-            (Some(child), states)
-        });
+        let (big, mut merged) = largest.map_or_else(
+            || (None, States::default()),
+            |i| {
+                let (child, states) = inner.swap_remove(i);
+                (Some(child), states)
+            },
+        );
         // Every bar first, so that an `Eligible` left in `merged` is eligible in this loop.
         let bars = own[lp].barred.iter().copied().chain(
             inner

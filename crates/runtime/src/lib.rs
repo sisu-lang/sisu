@@ -215,7 +215,7 @@ fn eprint_bytes(bytes: &[u8]) {
     let mut line = Vec::with_capacity(bytes.len() + 1);
     line.extend_from_slice(bytes);
     line.push(b'\n');
-    let _ = std::io::stderr().write_all(&line);
+    drop(std::io::stderr().write_all(&line));
 }
 
 fn stdout_panic(error: &std::io::Error) -> ! {
@@ -298,8 +298,10 @@ pub unsafe extern "C" fn sisu_panic_message(
     msg_len: usize,
 ) -> ! {
     // SAFETY: the caller upholds the `# Safety` contract above, which is `raw_text`'s for
-    // each pair.
-    let (at, msg) = unsafe { (raw_text(at, at_len), raw_text(msg, msg_len)) };
+    // the pair `at` and `at_len`.
+    let at = unsafe { raw_text(at, at_len) };
+    // SAFETY: the same contract gives it for the pair `msg` and `msg_len`.
+    let msg = unsafe { raw_text(msg, msg_len) };
     exit_with_panic(format_args!("sisu: panic at {at}: {msg}"))
 }
 
@@ -353,14 +355,14 @@ fn flush_and_ignore_sigpipe() {
     unsafe {
         signal(SIGPIPE, SIG_IGN);
     }
-    let _ = with_stdout(Stdout::flush);
+    drop(with_stdout(Stdout::flush));
 }
 
 fn exit_with_panic(message: std::fmt::Arguments<'_>) -> ! {
     // Earlier lines come out before the panic line.
     flush_and_ignore_sigpipe();
     // `eprintln!` panics on a failed write, which would abort before exit code 101.
-    let _ = writeln!(std::io::stderr(), "{message}");
+    drop(writeln!(std::io::stderr(), "{message}"));
     std::process::exit(101)
 }
 
@@ -469,10 +471,10 @@ pub extern "C" fn sisu_rc_check_exit() {
         // The flush is a no-op here (`main` already flushed); the call ignores SIGPIPE.
         flush_and_ignore_sigpipe();
         // Write errors are ignored as in `exit_with_panic`: `eprintln!` would panic.
-        let _ = writeln!(
+        drop(writeln!(
             std::io::stderr(),
             "sisu: rc check: live objects at exit: {live}"
-        );
+        ));
         std::process::exit(RC_CHECK_EXIT);
     }
 }
@@ -488,7 +490,7 @@ pub extern "C" fn sisu_rc_check_exit() {
 #[unsafe(no_mangle)]
 pub extern "C" fn sisu_rc_fault(kind: u32) -> ! {
     flush_and_ignore_sigpipe();
-    let _ = match kind {
+    drop(match kind {
         0 => writeln!(
             std::io::stderr(),
             "sisu: rc check: retain of an object whose count is 0"
@@ -502,7 +504,7 @@ pub extern "C" fn sisu_rc_fault(kind: u32) -> ! {
             "sisu: rc check: read of a local after it was moved"
         ),
         other => writeln!(std::io::stderr(), "sisu: rc check: fault {other}"),
-    };
+    });
     std::process::exit(RC_CHECK_EXIT)
 }
 
@@ -536,11 +538,15 @@ mod tests {
         assert_eq!(ptr.addr() % 8, 0, "pointer must be 8-aligned");
         for i in 0..24 {
             // SAFETY: `ptr` points to 24 allocated bytes and `i` is below 24.
-            unsafe { ptr.add(i).write(u8::try_from(i).expect("i is below 24")) };
+            let slot = unsafe { ptr.add(i) };
+            // SAFETY: `slot` is inside the 24 allocated bytes.
+            unsafe { slot.write(u8::try_from(i).expect("i is below 24")) };
         }
         for i in 0..24 {
-            // SAFETY: the same 24 bytes were written above.
-            let byte = unsafe { ptr.add(i).read() };
+            // SAFETY: the same 24 bytes were written above, and `i` is below 24.
+            let slot = unsafe { ptr.add(i) };
+            // SAFETY: `slot` is inside the 24 bytes written above.
+            let byte = unsafe { slot.read() };
             assert_eq!(usize::from(byte), i);
         }
         // SAFETY: `ptr` came from `sisu_alloc(24, 8)` and is not used afterwards.
@@ -566,14 +572,18 @@ mod tests {
         let ptr = sisu_alloc(24, 8);
         for i in 0..24 {
             // SAFETY: `ptr` points to 24 allocated bytes and `i` is below 24.
-            unsafe { ptr.add(i).write(u8::try_from(i).expect("i is below 24")) };
+            let slot = unsafe { ptr.add(i) };
+            // SAFETY: `slot` is inside the 24 allocated bytes.
+            unsafe { slot.write(u8::try_from(i).expect("i is below 24")) };
         }
         // SAFETY: `ptr` came from `sisu_alloc(24, 8)` and is not used afterwards.
         let grown = unsafe { sisu_realloc(ptr, 24, 8, 4096) };
         assert_eq!(grown.addr() % 8, 0, "pointer must stay 8-aligned");
         for i in 0..24 {
-            // SAFETY: the grown block keeps the 24 bytes written above.
-            let byte = unsafe { grown.add(i).read() };
+            // SAFETY: the grown block keeps the 24 bytes written above, and `i` is below 24.
+            let slot = unsafe { grown.add(i) };
+            // SAFETY: `slot` is inside the 24 bytes written above.
+            let byte = unsafe { slot.read() };
             assert_eq!(usize::from(byte), i);
         }
         // SAFETY: `grown` came from `sisu_realloc` with the new size 4096 and alignment 8.
@@ -676,13 +686,14 @@ mod tests {
     #[test]
     fn str_output_reads_len_bytes() {
         let text = b"a\0b";
-        // SAFETY: each slice's pointer is non-null and readable for its length.
-        unsafe {
-            crate::text::sisu_print_str(text.as_ptr(), text.len());
-            crate::text::sisu_print_str([].as_ptr(), 0);
-            sisu_eprint_str(text.as_ptr(), text.len());
-            sisu_eprint_str([].as_ptr(), 0);
-        }
+        // SAFETY: the pointer is non-null and readable for the length of `text`.
+        unsafe { crate::text::sisu_print_str(text.as_ptr(), text.len()) };
+        // SAFETY: the pointer is non-null, and the length is 0, so nothing is read.
+        unsafe { crate::text::sisu_print_str([].as_ptr(), 0) };
+        // SAFETY: the pointer is non-null and readable for the length of `text`.
+        unsafe { sisu_eprint_str(text.as_ptr(), text.len()) };
+        // SAFETY: the pointer is non-null, and the length is 0, so nothing is read.
+        unsafe { sisu_eprint_str([].as_ptr(), 0) };
         // A terminal gets each line at once; otherwise both lines wait in the buffer.
         with_stdout(|out| {
             let line_buffered = out.sink.as_ref().is_some_and(|sink| sink.line_buffered);
@@ -700,9 +711,10 @@ mod tests {
     #[test]
     fn raw_text_reads_len_bytes() {
         let msg = b"f.sisu:3:7\xFF";
-        // SAFETY: each slice's pointer is non-null and readable for its length.
-        let (text, empty) =
-            unsafe { (raw_text(msg.as_ptr(), msg.len()), raw_text([].as_ptr(), 0)) };
+        // SAFETY: the pointer is non-null and readable for the length of `msg`.
+        let text = unsafe { raw_text(msg.as_ptr(), msg.len()) };
+        // SAFETY: the pointer is non-null, and the length is 0, so nothing is read.
+        let empty = unsafe { raw_text([].as_ptr(), 0) };
         assert_eq!(text, "f.sisu:3:7\u{FFFD}");
         assert_eq!(empty, "");
     }
@@ -834,20 +846,21 @@ mod tests {
                     fn setrlimit(resource: i32, limit: *const [u64; 2]) -> i32;
                     fn dup(fd: i32) -> i32;
                 }
-                // SAFETY: `limit` points to a valid `rlimit` (two `u64`s); `dup` takes any
-                // integer. Lowers the descriptor limit to 32 and uses every free slot, so
-                // the first `print` cannot duplicate the open standard output.
-                #[expect(unsafe_code, reason = "calls libc `setrlimit` and `dup`")]
-                unsafe {
-                    const RLIMIT_NOFILE: i32 = if cfg!(target_os = "macos") { 8 } else { 7 };
-                    assert_eq!(setrlimit(RLIMIT_NOFILE, &[32, 32]), 0);
-                    // `dup(0)` takes the lowest free slot, so it fills the table without a second
-                    // open file. Descriptor 0 is open here: std's startup reopens a closed one on
-                    // /dev/null. Were it closed just before the loop, `dup` would fail at once, the
-                    // table would stay unfilled, the `print` would succeed and the parent's
-                    // expected exit 101 would fail.
-                    while dup(0) >= 0 {}
-                }
+                // Lowers the descriptor limit to 32 and uses every free slot, so the first
+                // `print` cannot duplicate the open standard output.
+                const RLIMIT_NOFILE: i32 = if cfg!(target_os = "macos") { 8 } else { 7 };
+                // SAFETY: `limit` points to a valid `rlimit` (two `u64`s).
+                #[expect(unsafe_code, reason = "calls libc `setrlimit`")]
+                let lowered = unsafe { setrlimit(RLIMIT_NOFILE, &[32, 32]) };
+                assert_eq!(lowered, 0, "setrlimit should lower the descriptor limit");
+                // SAFETY: `dup` takes any integer.
+                // `dup(0)` takes the lowest free slot, so it fills the table without a second
+                // open file. Descriptor 0 is open here: std's startup reopens a closed one on
+                // /dev/null. Were it closed just before the loop, `dup` would fail at once, the
+                // table would stay unfilled, the `print` would succeed and the parent's
+                // expected exit 101 would fail.
+                #[expect(unsafe_code, reason = "calls libc `dup`")]
+                while unsafe { dup(0) } >= 0 {}
                 sisu_print_int(5);
             }
             "fault_full_stdout" => {
@@ -893,10 +906,14 @@ mod tests {
             }
             "print_str" => {
                 let long = [b'x'; RESERVED];
-                // SAFETY: each slice is readable for its length.
+                // SAFETY: the pointer is readable for 3 bytes.
                 #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
                 unsafe {
                     crate::text::sisu_print_str(b"a\0b".as_ptr(), 3);
+                }
+                // SAFETY: the pointer is readable for the length of `long`.
+                #[expect(unsafe_code, reason = "calls the runtime's C ABI function")]
+                unsafe {
                     crate::text::sisu_print_str(long.as_ptr(), long.len());
                 }
                 sisu_print_int(5);

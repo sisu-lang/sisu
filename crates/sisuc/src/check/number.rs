@@ -254,7 +254,7 @@ impl Checker<'_> {
         let (receiver, next) = (first.value.span, rest.first().map(|arg| arg.value.span));
         let deleted = [
             written.start()..receiver.start(),
-            receiver.end()..next.map_or(receiver.end(), Span::start),
+            receiver.end()..next.map_or_else(|| receiver.end(), Span::start),
         ];
         let arguments = self.number_arguments(ty, params, rest);
         if !arguments || self.comment_in(&deleted) {

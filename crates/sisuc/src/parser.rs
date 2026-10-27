@@ -890,7 +890,7 @@ impl<'a> Parser<'a> {
         diagnostics.append(&mut self.specs);
         diagnostics.append(&mut self.warnings);
         // An unnamed item starts where its line does, inside the item before, so items may overlap.
-        debug_assert!(rising(&covered));
+        debug_assert!(rising(&covered), "the covered spans should rise");
         diagnostics.extend(
             self.lexer
                 .iter()
@@ -1110,7 +1110,7 @@ impl<'a> Parser<'a> {
         let mut errors = Vec::new();
         let mut methods = Vec::new();
         let parsed = body(self, &mut errors, &mut methods);
-        debug_assert!(rising(&methods));
+        debug_assert!(rising(&methods), "the method spans should rise");
         let outside = self
             .lexer_in(bytes)
             .find(|d| !holds(&methods, d.span().start()))
@@ -5481,7 +5481,7 @@ mod tests {
     }
 
     /// Runs `f` on a parser of `src` at token `pos`.
-    fn parser_at<R>(src: &str, pos: usize, f: impl FnOnce(&mut Parser) -> R) -> R {
+    fn parser_at<R>(src: &str, pos: usize, f: impl FnOnce(&mut Parser<'_>) -> R) -> R {
         let lexed = lex(src).expect("source lexes");
         f(&mut Parser {
             source: lexed.source,
