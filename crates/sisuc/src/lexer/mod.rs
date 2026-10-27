@@ -4619,7 +4619,7 @@ mod tests {
         ] {
             let kinds = all_kinds(src);
             let at = kinds.iter().rposition(|k| *k == start);
-            let before = at.and_then(|at| kinds.get(at.checked_sub(1)?));
+            let before = at.map(|at| &kinds[at - 1]);
             assert_eq!(before, Some(&TokenKind::Newline), "{src}");
         }
     }
