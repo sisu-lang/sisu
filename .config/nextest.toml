@@ -19,10 +19,19 @@ filter = 'test(long_gaps_lex_correctly)'
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # Panic-site locations once scanned the text from the start, so codegen was quadratic and this
-# test hangs instead of failing.
+# test hangs instead of failing: no step counter sees such a new scan. It runs in about 0.5 s on a
+# developer machine, and its regression takes 15 s or more (a scan from the start, or a line index
+# for each site), so the kill is at 6 s: more than 10 times the run alone and less than half of the
+# regression.
 [[profile.default.overrides]]
 filter = 'test(many_panic_sites_compile_in_linear_time)'
-slow-timeout = { period = "10s", terminate-after = 3 }
+slow-timeout = { period = "2s", terminate-after = 3 }
+
+# A CI runner is about twice as slow, and coverage makes a test slower, so the kill is at 12 s: the
+# same ratios as above.
+[[profile.ci.overrides]]
+filter = 'test(many_panic_sites_compile_in_linear_time)'
+slow-timeout = { period = "4s", terminate-after = 3 }
 
 # Each render once cost the whole file, so many diagnostics in a large file were quadratic and
 # this test hangs instead of failing.

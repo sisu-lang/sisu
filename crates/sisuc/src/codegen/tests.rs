@@ -4,6 +4,7 @@ use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::tir::BinaryOp;
 use inkwell::values::{AnyValue, InstructionOpcode, InstructionValue, Operand};
+use std::panic::{self, AssertUnwindSafe};
 
 /// Lexes, parses, checks (no errors allowed), builds the mir of and compiles `src`, then
 /// verifies the module.
@@ -47,25 +48,42 @@ fn compiled_from<'ctx>(
 
 const FIB: &str = "fn fib(n: i64) -> i64 {\n    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }\n}\n\nfn main() {\n    print(fib(30))\n}\n";
 
+/// `compiled` verifies each module, so a source that lowers to a broken one fails its row. The
+/// panic message names the row.
 #[test]
-fn verifies_fib() {
-    compiled(&Context::create(), FIB);
-}
-
-#[test]
-fn verifies_all_paths_return() {
-    compiled(
-        &Context::create(),
-        "fn sign(n: i64) -> i64 {\n    if n < 0 { return -1 } else { return 1 }\n}\nfn main() { print(sign(2)) }",
-    );
-}
-
-#[test]
-fn verifies_chain_and_short_circuit() {
-    compiled(
-        &Context::create(),
-        "fn main() {\n    print(1 < 2 <= 3)\n    print(true && false || true)\n}",
-    );
+fn compile_should_verify_every_shape_of_control_flow() {
+    let rows = [
+        ("fib", FIB),
+        (
+            "all paths return",
+            "fn sign(n: i64) -> i64 {\n    if n < 0 { return -1 } else { return 1 }\n}\nfn main() { print(sign(2)) }",
+        ),
+        (
+            "chain and short circuit",
+            "fn main() {\n    print(1 < 2 <= 3)\n    print(true && false || true)\n}",
+        ),
+        (
+            "loop body ending in return",
+            "fn f() -> i64 {\n    loop { return 1 }\n    2\n}\nfn main() { print(f()) }",
+        ),
+        (
+            "early return in main",
+            "fn main() {\n    if true { return }\n    print(1)\n}",
+        ),
+        (
+            "discarded body value",
+            "fn g() { 1 }\nfn main() {\n    g()\n    if true { 1 } else { 2 }\n}",
+        ),
+        (
+            "else if with short circuit in branch",
+            "fn f(a: i64) -> i64 {\n    if a < 0 { -1 } else if a == 0 && true { 0 } else { 1 }\n}\nfn main() { print(f(2)) }",
+        ),
+    ];
+    for (name, src) in rows {
+        let context = Context::create();
+        panic::catch_unwind(AssertUnwindSafe(|| compiled(&context, src)))
+            .unwrap_or_else(|_| panic!("row {name:?} should compile to a verified module"));
+    }
 }
 
 /// An `if` with one returning branch: that branch returns on its own, and the block after the
@@ -88,38 +106,6 @@ fn verifies_one_returning_branch() {
         assert!(!preds.is_empty(), "{body}");
         assert!(preds.iter().all(|p| !p.contains(',')), "{body}");
     }
-}
-
-#[test]
-fn verifies_loop_body_ending_in_return() {
-    compiled(
-        &Context::create(),
-        "fn f() -> i64 {\n    loop { return 1 }\n    2\n}\nfn main() { print(f()) }",
-    );
-}
-
-#[test]
-fn verifies_early_return_in_main() {
-    compiled(
-        &Context::create(),
-        "fn main() {\n    if true { return }\n    print(1)\n}",
-    );
-}
-
-#[test]
-fn verifies_discarded_body_value() {
-    compiled(
-        &Context::create(),
-        "fn g() { 1 }\nfn main() {\n    g()\n    if true { 1 } else { 2 }\n}",
-    );
-}
-
-#[test]
-fn verifies_else_if_with_short_circuit_in_branch() {
-    compiled(
-        &Context::create(),
-        "fn f(a: i64) -> i64 {\n    if a < 0 { -1 } else if a == 0 && true { 0 } else { 1 }\n}\nfn main() { print(f(2)) }",
-    );
 }
 
 #[test]
@@ -1027,18 +1013,37 @@ fn niche_layouts_should_follow_the_payload() {
     let src = format!(
         "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\n{enums}fn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
     );
-    let ir = compiled(&context, &src).print_to_string().to_string();
-    let main = function_body(&ir, "define internal void @sisu.main()");
-    for (i, (ty, _, llvm, first)) in rows.iter().enumerate() {
-        assert!(
-            main.contains(&format!("%x{i} = alloca {llvm}, align")),
-            "{ty} should be {llvm} in\n{main}"
-        );
+    let module = compiled(&context, &src);
+    let main = module
+        .get_function("sisu.main")
+        .expect("the module should define `main`");
+    let code = instructions(main);
+    // Codegen makes the slots of the locals first and the temporaries' after, each at the top of
+    // the entry block: the locals' are the last `rows.len()` `alloca`s there, the last `let` first.
+    let allocas: Vec<_> = (code.iter())
+        .filter(|i| i.get_opcode() == InstructionOpcode::Alloca)
+        .collect();
+    let first_local = allocas.len().saturating_sub(rows.len());
+    let slots = allocas[first_local..].iter().rev();
+    assert_eq!(slots.len(), rows.len(), "{}", module.print_to_string());
+    for (slot, (ty, _, llvm, first)) in slots.zip(&rows) {
+        let allocated = slot
+            .get_allocated_type()
+            .expect("an `alloca` should have a type")
+            .print_to_string()
+            .to_string();
+        // A named struct prints as its definition: `%sisu.E = type { .. }`.
+        let allocated = allocated.split(" = type ").next().unwrap_or(&allocated);
+        assert_eq!(allocated, *llvm, "{ty} should be {llvm}");
         if let Some(first) = first {
-            assert!(
-                main.contains(&format!("store {first}, ptr %x{i},")),
-                "the first value of {ty} should be {first} in\n{main}"
-            );
+            let store = (code.iter())
+                .find(|i| {
+                    i.get_opcode() == InstructionOpcode::Store
+                        && operand_of(**i, 1).as_instruction_value() == Some(**slot)
+                })
+                .unwrap_or_else(|| panic!("no store into the slot of {ty}"));
+            let stored = operand_of(*store, 0).print_to_string().to_string();
+            assert_eq!(&stored, first, "the first value of {ty}");
         }
     }
 }
@@ -1446,13 +1451,23 @@ fn main_flushes_stdout_before_the_exit_check_and_the_return() {
     }
 }
 
+/// A build with the RC checks calls `sisu_rc_fault` and `sisu_rc_check_exit`, and the same source
+/// without them calls neither.
 #[test]
-fn plain_build_has_no_rc_checks() {
+fn rc_check_symbols_should_appear_only_in_an_rc_checks_build() {
     let context = Context::create();
     let src = format!("class P {{}}\n{FIB}");
-    let ir = compiled(&context, &src).print_to_string().to_string();
-    for unwanted in ["sisu_rc_fault", "sisu_rc_check_exit"] {
-        assert!(!ir.contains(unwanted), "{unwanted:?} in\n{ir}");
+    for (rc_checks, present) in [(false, false), (true, true)] {
+        let ir = compiled_with(&context, &src, rc_checks)
+            .print_to_string()
+            .to_string();
+        for symbol in ["sisu_rc_fault", "sisu_rc_check_exit"] {
+            assert_eq!(
+                ir.contains(symbol),
+                present,
+                "{symbol:?} with rc_checks {rc_checks} in\n{ir}"
+            );
+        }
     }
 }
 
@@ -2293,14 +2308,15 @@ fn static_release_checks_its_slot_under_rc_checks() {
     assert!(branch_at < release_at, "{body}");
 }
 
-/// `.config/nextest.toml` kills this test after 30 s, matching it by name: a rename must
-/// update the override there. Each `+=` is an overflow panic site, and finding its line and
-/// column from the start of the text made codegen quadratic in the number of sites.
+/// `.config/nextest.toml` kills this test after 6 s, matching it by name: a rename must update
+/// the override there. Each `+=` is an overflow panic site, and finding its line and column from
+/// the start of the text, or building a line index for each site, made codegen quadratic in the
+/// number of sites. No step counter sees such a new scan.
 #[test]
 fn many_panic_sites_compile_in_linear_time() {
     let src = format!(
         "fn main() {{\n    let mut x = 0\n{}    print(x)\n}}\n",
-        "    x += 1\n".repeat(100_000)
+        "    x += 1\n".repeat(20_000)
     );
     compiled(&Context::create(), &src);
 }
