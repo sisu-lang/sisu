@@ -38,6 +38,10 @@ class TestHealth(unittest.TestCase):
             "Tests over budget: 2",
         ])
 
+    def test_the_report_should_list_ten_tests_by_default_and_no_more_than_it_has(self):
+        self.assertEqual(th.TOP, 10)
+        self.assertIn("Slowest 4 tests:", th.report(REPORT).splitlines())
+
     def test_the_script_should_print_nothing_and_exit_0_for_a_missing_report(self):
         with tempfile.TemporaryDirectory() as directory:
             run = subprocess.run([sys.executable, SCRIPT, os.path.join(directory, 'none.xml')],

@@ -23,7 +23,7 @@ def report(junit: str, top: int = TOP) -> str:
              f"Sum of test times: {sum(t[0] for t in tests):.2f} s; wall time of the run: {wall:.2f} s",
              "Per binary:"]
     lines += [f"  {binary}: {len(times)} tests, {sum(times):.2f} s" for binary, times in sorted(binaries.items())]
-    lines.append(f"Slowest {top} tests:")
+    lines.append(f"Slowest {min(top, len(tests))} tests:")
     lines += [f"  {seconds:6.2f} s (budget {budget:g} s)  {name}" for seconds, budget, name in sorted(tests, reverse=True)[:top]]
     lines.append(f"Tests over budget: {len(slow_tests.over_budget(tests))}")
     return '\n'.join(lines)

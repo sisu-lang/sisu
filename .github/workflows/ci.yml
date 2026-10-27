@@ -79,12 +79,14 @@ jobs:
       # Shows the test health report in the job summary. It never fails the job.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
         run: |
-          {
-            echo '## Test health'
-            echo '```'
-            python3 scripts/test_health.py target/nextest/ci/junit.xml
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f target/nextest/ci/junit.xml ]; then
+            {
+              echo '## Test health'
+              echo '```'
+              python3 scripts/test_health.py target/nextest/ci/junit.xml
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       # Fails for a filter leaf of .config/nextest.toml that matches no test. The tests already ran,
       # so the build of the list is cached. A failed `cargo nextest list` fails the step, with its error.
       - if: (success() || failure()) && steps.nextest.outcome == 'success'
