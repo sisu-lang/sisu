@@ -7,6 +7,7 @@ import unittest
 
 import comment_width
 import registry_debug_format
+import session_url
 import test_names
 
 
@@ -42,6 +43,19 @@ class RegistryDebugFormat(unittest.TestCase):
     def test_debug_format_in_the_tests_passes(self):
         text = 'use a;\n#[cfg(test)]\nformat!("{x:?}")\n'
         self.assertEqual(run(registry_debug_format.main, text), (0, ''))
+
+
+class SessionUrl(unittest.TestCase):
+    def test_a_session_line_or_url_should_fail_at_its_line(self):
+        for line in ('Claude-Session: https://claude.ai/code/session_01ab',
+                     'See https://claude.ai/code/session_01ab'):
+            code, out = run(session_url.main, f'Fix the lexer\n\n{line}\n')
+            self.assertEqual(code, 1, line)
+            self.assertIn(':3: remove the session line', out)
+
+    def test_a_message_without_one_should_pass(self):
+        text = 'Fix the lexer\n\nThe session of a `let` ends at its line.\n# Claude-Session: a comment\n'
+        self.assertEqual(run(session_url.main, text), (0, ''))
 
 
 def run_test_names(text, path='crates/sisuc/src/f.rs', baseline=''):

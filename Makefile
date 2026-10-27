@@ -17,7 +17,7 @@ help: ## List the targets
 
 setup: ## Once per clone: LLVM 23, the pre-commit hook, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz
 	scripts/install-llvm.sh
-	prek install
+	prek install -t pre-commit -t commit-msg
 	cargo install --locked cargo-shear
 	cargo install --locked cargo-mutants
 	cargo install --locked cargo-llvm-cov
