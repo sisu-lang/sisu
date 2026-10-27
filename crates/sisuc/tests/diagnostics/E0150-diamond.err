@@ -1,0 +1,8 @@
+error[E0150]: `Top` inherits from itself, through `Left` and `Bottom`
+ --> E0150-diamond.sisu:1:16
+  |
+1 | interface Top: Left, Right {
+  |                ^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0150

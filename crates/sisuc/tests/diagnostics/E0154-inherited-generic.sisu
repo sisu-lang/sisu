@@ -1,0 +1,21 @@
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+interface Ord2: Same {
+    fn less(self, other: Self) -> bool
+}
+
+class Heap<T> {
+    items: [T]
+}
+
+extend<T: Same> Heap<T>: Ord2 {
+    fn less(self, other: Self) -> bool {
+        true
+    }
+}
+
+fn main() {
+    print(Heap(items: [1]).items.len())
+}

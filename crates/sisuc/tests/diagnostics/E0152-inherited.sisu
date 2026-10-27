@@ -1,0 +1,19 @@
+interface Named {
+    fn name(self) -> string
+}
+
+interface Shape: Named {
+    fn area(self) -> f64
+}
+
+class Circle: Shape {
+    r: f64
+
+    fn area(self) -> f64 {
+        self.r
+    }
+}
+
+fn main() {
+    print(Circle(r: 1.0).area())
+}

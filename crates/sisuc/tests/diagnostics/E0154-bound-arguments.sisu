@@ -1,0 +1,15 @@
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+class Node {
+    id: i64
+}
+
+fn show<T: Convert<i64>>(item: T) -> i64 {
+    0
+}
+
+fn main() {
+    print(show(Node(id: 1)))
+}

@@ -1,0 +1,8 @@
+error[E0140]: `Stack<T>.nest` instantiates itself without end
+ --> E0140-extend-method.sisu:7:9
+  |
+7 |         Stack(items: [self.items]).nest()
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Stack<[T]>.nest` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

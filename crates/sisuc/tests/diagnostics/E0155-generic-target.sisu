@@ -1,0 +1,13 @@
+class Stack<T> {
+    items: [T]
+}
+
+extend<T> Stack<i64> {
+    fn total(self) -> i64 {
+        self.items.sum()
+    }
+}
+
+fn main() {
+    print(Stack(items: [1, 2]).total())
+}

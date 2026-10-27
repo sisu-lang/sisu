@@ -1,0 +1,8 @@
+error[E0156]: `Item` on `S` could come from `Source` or `Feed`
+  --> E0156-associated.sisu:11:32
+   |
+11 | fn show<S: Source & Feed>(x: S.Item) {
+   |                                ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0156

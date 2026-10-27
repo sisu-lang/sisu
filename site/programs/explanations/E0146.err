@@ -1,0 +1,10 @@
+error[E0146]: an interface holds only method signatures and associated types
+ --> E0146.sisu:2:26
+  |
+2 |     fn area(self) -> f64 {
+  |                          ^
+  |
+  = help: write the body in each conforming type
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0146

@@ -1,0 +1,25 @@
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+interface Source {
+    type Item: Same
+    fn next(self) -> Item?
+}
+
+class Node {
+    id: i64
+}
+
+class Nodes: Source {
+    type Item = Node
+    mut n: i64
+
+    fn next(self) -> Item? {
+        None
+    }
+}
+
+fn main() {
+    print(Nodes(n: 0).n)
+}

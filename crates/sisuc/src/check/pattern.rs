@@ -191,7 +191,7 @@ impl Checker<'_> {
                 })
                 .collect();
             if let Some(rows) = rows {
-                let report = exhaust::check(&self.lowered_enums, ty, &rows);
+                let report = exhaust::check(&self.lowered_enums, &self.conformances, ty, &rows);
                 self.report_coverage(keyword, close, arms, report, &mut reachable);
             }
         }
@@ -445,7 +445,7 @@ impl Checker<'_> {
                         pattern,
                         guarded: false,
                     }];
-                    if exhaust::check(&self.lowered_enums, ty, &rows)
+                    if exhaust::check(&self.lowered_enums, &self.conformances, ty, &rows)
                         .missing
                         .is_none()
                     {
@@ -1075,6 +1075,7 @@ impl Checker<'_> {
                     kind: ast::TypeKind::Name(q.name),
                     optional: 0,
                     span: q.span,
+                    bare: q.span,
                 })?;
                 false
             }
@@ -1130,7 +1131,9 @@ impl Checker<'_> {
             },
             _ => {
                 let fields = &info.variants[variant].fields;
-                let fields = fields.iter().map(|ty| ty.map(|ty| ty.subst(args.get())));
+                let fields = fields
+                    .iter()
+                    .map(|ty| ty.and_then(|ty| self.subst(ty, args.get())));
                 return Some((variant, fields.collect()));
             }
         };

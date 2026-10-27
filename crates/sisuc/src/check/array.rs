@@ -184,13 +184,16 @@ impl Checker<'_> {
         let checked = self.value(value, hint);
         self.body.quiet_at = outer;
         let class = type_of(&checked).map(innermost).filter(|ty| {
-            matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Param(..)) && !none_literal(value)
+            matches!(
+                ty.kind(),
+                TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..)
+            ) && !none_literal(value)
         });
         if let Some(class) = class {
             self.report(DiagnosticKind::SameObject {
                 class: self.type_name(class),
                 at: value.span,
-                param: matches!(class.kind(), TypeKind::Param(..)),
+                param: matches!(class.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)),
             });
         }
         let (checked, mismatched) = match element {

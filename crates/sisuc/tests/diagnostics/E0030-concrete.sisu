@@ -1,0 +1,26 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+class Countdown: Source {
+    type Item = i64
+    mut n: i64
+
+    fn next(self) -> Item? {
+        if self.n > 0 {
+            self.n -= 1
+            self.n + 1
+        } else {
+            None
+        }
+    }
+}
+
+fn double(x: Countdown.Item) -> i64 {
+    x * 2
+}
+
+fn main() {
+    print(double(2))
+}

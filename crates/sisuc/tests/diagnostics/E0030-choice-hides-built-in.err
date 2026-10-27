@@ -1,0 +1,10 @@
+error[E0030]: an associated type's choice cannot name `string`
+ --> E0030-choice-hides-built-in.sisu:6:19
+  |
+6 |     type string = string
+  |                   ^^^^^^
+  |
+  = help: `string` also names a type, which this associated type hides: rename one of them
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

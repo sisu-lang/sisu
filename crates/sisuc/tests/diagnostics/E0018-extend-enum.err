@@ -1,0 +1,15 @@
+error[E0018]: `Dir` is an enum, and enum values never change
+ --> E0018-extend-enum.sisu:7:13
+  |
+7 |     fn flip(mut self) -> Dir {
+  |             ^^^
+  |
+  = help: return a new `Dir`
+help: remove the `mut`
+  |
+7 -     fn flip(mut self) -> Dir {
+7 +     fn flip(self) -> Dir {
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0018

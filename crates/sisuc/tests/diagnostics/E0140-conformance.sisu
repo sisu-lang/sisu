@@ -1,0 +1,21 @@
+interface Run {
+    fn run(self)
+}
+
+class Box<T> {
+    value: T
+}
+
+extend<T> Box<T>: Run {
+    fn run(self) {
+        dispatch(Box(value: self))
+    }
+}
+
+fn dispatch<T: Run>(x: T) {
+    x.run()
+}
+
+fn main() {
+    dispatch(Box(value: 1))
+}

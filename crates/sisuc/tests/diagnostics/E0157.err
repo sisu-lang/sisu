@@ -1,0 +1,10 @@
+error[E0157]: the bound `T: L4<string, string, string, string, string>` gives more than 256 inherited interfaces
+  --> E0157.sisu:13:11
+   |
+13 | fn use<T: L4<string, string, string, string, string>>(x: T) {
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: an interface that inherits one interface twice, with different arguments, doubles this number at each level
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0157

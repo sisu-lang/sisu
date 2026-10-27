@@ -87,7 +87,7 @@ codes! {
     BodyHasNoValue = "E0031",
     Mismatch | PatternMismatch = "E0032",
     BindingNotFound = "E0033",
-    DefinedTwice = "E0034",
+    DefinedTwice | InheritedRequirement = "E0034",
     ForNeedsArray = "E0035",
     ReturnNeedsValue = "E0036",
     UnexpectedReturnValue = "E0037",
@@ -158,7 +158,7 @@ codes! {
     ExponentNeedsDigits = "E0102",
     FloatOutOfRange = "E0103",
     NotExactlyF64 = "E0104",
-    TypeAsValue | FunctionAsValue = "E0105",
+    TypeAsValue | FunctionAsValue | InterfaceAsValue = "E0105",
     MathIdiom = "E0106",
     PowerOperator = "E0107",
     MalformedFormatSpec = "E0108",
@@ -199,6 +199,18 @@ codes! {
     LabelReused = "E0143",
     MissingLabel = "E0144",
     LabelNotOnLoop | UnnamedLabel = "E0145",
+    InterfaceBody = "E0146",
+    InterfaceAsType = "E0147",
+    NotAnInterface = "E0148",
+    SelfOutside = "E0149",
+    InheritanceCycle = "E0150",
+    InheritedArgument = "E0151",
+    ConformanceBody = "E0152",
+    ConformsTwice = "E0153",
+    NotConform = "E0154",
+    CannotExtend = "E0155",
+    Ambiguous = "E0156",
+    BoundTooWide = "E0157",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -316,12 +328,102 @@ pub(crate) enum DiagnosticKind {
     /// A method named at `at` with no `self`.
     MethodNeedsSelf { at: Span },
     /// A `mut` at `keyword` in front of the `self` at `receiver`, in a method of `owner`. In a
-    /// class, removing it is `safe` when `self` is the whole parameter; in an enum it never is.
+    /// class or an interface, removing it is `safe` when `self` is the whole parameter; in an enum
+    /// it never is.
     MutSelf {
         keyword: Span,
         receiver: Span,
         safe: bool,
         owner: Owner,
+    },
+    /// A body or a field at `at` in an interface, which holds signatures only.
+    InterfaceBody { at: Span, form: InterfaceBodyForm },
+    /// The interface `name`, written as `written` at `at`, where a type belongs. `written` is
+    /// `None` for the target of an `extend` block, where a type parameter is no advice.
+    InterfaceAsType {
+        name: String,
+        written: Option<String>,
+        at: Span,
+    },
+    /// The type `written` at `at`, which is a `kind` and no interface, where a bound, a
+    /// conformance or an inherited interface belongs.
+    NotAnInterface {
+        written: String,
+        at: Span,
+        kind: NotInterface,
+    },
+    /// A `Self` at `at`, outside a class, an enum, an interface and an `extend` block.
+    SelfOutside { at: Span },
+    /// The interface `name` inherits from itself, `through` the interfaces in between; `at` is
+    /// its inheritance list.
+    InheritanceCycle {
+        name: String,
+        at: Span,
+        through: Vec<String>,
+    },
+    /// The argument `arg`, at `at`, of an inherited interface of `interface`, which is built from
+    /// a type parameter.
+    InheritedArgument {
+        arg: String,
+        interface: String,
+        at: Span,
+    },
+    /// The requirement `name` of `interface`, at `at`, which `owner`, an interface that
+    /// `interface` inherits, has at `first` already.
+    InheritedRequirement {
+        name: String,
+        interface: String,
+        owner: String,
+        at: Span,
+        first: Span,
+        /// Whether `name` is an associated type, not a method.
+        assoc: bool,
+    },
+    /// The conformance of `ty` to `interface`, whose name is at `at`, and what is wrong with it.
+    ConformanceBody {
+        ty: String,
+        interface: String,
+        at: Span,
+        form: ConformanceForm,
+    },
+    /// A second conformance of `ty` to `interface`, whose name is at `at`; the first is at
+    /// `first`. `generic` when the interface takes type parameters.
+    ConformsTwice {
+        ty: String,
+        interface: String,
+        at: Span,
+        first: Span,
+        generic: bool,
+    },
+    /// `ty` does not conform to `interface`, which `form` says why that is needed, at `at`.
+    NotConform {
+        ty: String,
+        interface: String,
+        at: Span,
+        form: NotConformForm,
+    },
+    /// An `extend` of `written`, at `at`, which is no class or enum.
+    CannotExtend {
+        written: String,
+        at: Span,
+        form: CannotExtendForm,
+    },
+    /// The bound or conformance `written`, written at `at`, with the interfaces it inherits gives
+    /// more than `limit` interfaces.
+    BoundTooWide {
+        kind: WideKind,
+        written: String,
+        limit: usize,
+        at: Span,
+    },
+    /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
+    /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
+    Ambiguous {
+        method: String,
+        receiver: String,
+        interfaces: Vec<String>,
+        at: Span,
+        annotate: Option<Annotate>,
     },
     /// A `mut` at `at` in front of the parameter `name`.
     MutParameter { name: String, at: Span },
@@ -355,11 +457,12 @@ pub(crate) enum DiagnosticKind {
     /// A `main` at `at` that takes anything but nothing or one `[string]`, or returns a value;
     /// or, by `form`, that takes type parameters.
     MainSignature { at: Span, form: MainForm },
-    /// The type `name`, at `at`, which is not built in and names no class.
+    /// The type `name`, at `at`, which is not built in and names no class; or, by `form`, an
+    /// associated type that cannot be written there.
     UnknownType {
         name: String,
         at: Span,
-        suggestion: Option<Suggestion>,
+        form: UnknownForm,
     },
     /// The function `function`, whose body, ending at `at`, has no value of type `want`.
     BodyHasNoValue {
@@ -586,6 +689,8 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         suggestion: Option<Suggestion>,
+        /// For a type parameter: the bound that gives the method.
+        add: Option<AddBound>,
     },
     /// The constructor argument at `at`, after the last of the `fields` fields of `class`.
     TooManyArguments {
@@ -729,6 +834,8 @@ pub(crate) enum DiagnosticKind {
     },
     /// The built-in type or class `name`, at `at`, read as a value.
     TypeAsValue { name: String, at: Span },
+    /// The interface `name`, at `at`, read as a value.
+    InterfaceAsValue { name: String, at: Span },
     /// The function `name`, at `at`, read as a value. `takes_arguments` when it has parameters.
     FunctionAsValue {
         name: String,
@@ -1011,8 +1118,19 @@ pub(crate) enum DiagnosticKind {
         name: String,
         at: Span,
         instance: String,
-        through: Vec<(Span, String)>,
+        through: Vec<(Span, Hop)>,
+        /// The interface whose hub the cycle passes: a call through it counts as reaching every
+        /// conformance to it.
+        reach: Option<String>,
     },
+}
+
+/// What an instantiation on a cycle does, as a note at its site says.
+pub(crate) enum Hop {
+    /// It instantiates `instance`, as written.
+    Instantiates(String),
+    /// It calls through `interface`, which may run `method`, the one the cycle takes.
+    Calls { method: String, interface: String },
 }
 
 /// The receiver of a method that a call writes as a function.
@@ -1115,6 +1233,7 @@ pub(crate) enum ClashKind {
     Constant,
     Class,
     Enum,
+    Interface,
     BuiltInType,
 }
 
@@ -1126,6 +1245,7 @@ impl ClashKind {
             ClashKind::Constant => "constant",
             ClashKind::Class => "class",
             ClashKind::Enum => "enum",
+            ClashKind::Interface => "interface",
             ClashKind::BuiltInType => "built-in type",
         }
     }
@@ -1258,13 +1378,14 @@ pub(crate) enum Definition {
     Enum,
     Variant,
     LoopLabel,
+    Interface,
 }
 
 impl Definition {
     /// The indefinite article before `word`.
     fn article(self) -> &'static str {
         match self {
-            Definition::Enum => "an",
+            Definition::Enum | Definition::Interface => "an",
             _ => "a",
         }
     }
@@ -1281,6 +1402,7 @@ impl Definition {
             Definition::Enum => "enum",
             Definition::Variant => "variant",
             Definition::LoopLabel => "loop label",
+            Definition::Interface => "interface",
         }
     }
 
@@ -1293,9 +1415,76 @@ impl Definition {
             Definition::Constant
             | Definition::Binding
             | Definition::Type
-            | Definition::LoopLabel => "used",
+            | Definition::LoopLabel
+            | Definition::Interface => "used",
         }
     }
+}
+
+/// What gives more inherited interfaces than the limit.
+#[derive(Clone, Copy)]
+pub(crate) enum WideKind {
+    /// A bound of a type parameter: `T: Shape`.
+    Bound,
+    /// An interface in the list of a class or an enum, or in an `extend` block: `K: Shape`.
+    Conformance,
+}
+
+impl WideKind {
+    fn noun(self) -> &'static str {
+        match self {
+            WideKind::Bound => "bound",
+            WideKind::Conformance => "conformance",
+        }
+    }
+}
+
+/// What a name is that a bound, a conformance or an inherited interface names, and that is no
+/// interface.
+#[derive(Clone, Copy)]
+pub(crate) enum NotInterface {
+    Class,
+    Enum,
+    BuiltIn,
+    TypeParam,
+    Optional,
+    Array,
+}
+
+impl NotInterface {
+    /// The kind with its article: `a class`.
+    fn named(self) -> &'static str {
+        match self {
+            NotInterface::Class => "a class",
+            NotInterface::Enum => "an enum",
+            NotInterface::BuiltIn => "a built-in type",
+            NotInterface::TypeParam => "a type parameter",
+            NotInterface::Optional => "an optional type",
+            NotInterface::Array => "an array type",
+        }
+    }
+}
+
+/// Why a type is unknown.
+#[derive(Clone)]
+pub(crate) enum UnknownForm {
+    /// The name is no type; `suggestion` is a name in scope that it may have meant.
+    Name { suggestion: Option<Suggestion> },
+    /// The type parameter or associated type `base` has no associated type of the diagnostic's
+    /// name. `add` is the bound that gives it one, when one interface declares it.
+    NoAssociated { base: String, add: Option<AddBound> },
+    /// The associated type is written through a class, an enum or another type that is no type
+    /// parameter. `own` when the base is `Self` in a conformance, which writes the name alone.
+    ConcreteBase { own: bool },
+    /// The choice of an associated type names one of its own conformance. `shadows` when a class,
+    /// an enum or a built-in type has the name too, and the associated type hides it.
+    ChoiceNamesItself { shadows: bool },
+    /// The choice of an associated type needs the associated type itself, which the diagnostic's
+    /// name gives with its base, as `W<Leaf>.A`: the types the choice names lead back to it.
+    ChoiceLoops,
+    /// The associated type of the type parameter `base` is written in a bound that the bounds of
+    /// `base` wait for, so the bounds of `base` are not known yet.
+    BoundsLoop { base: String },
 }
 
 /// Where the earlier definition of a name is.
@@ -1463,6 +1652,100 @@ pub(crate) enum BadRange {
 pub(crate) enum Owner {
     Class,
     Enum(String),
+    Interface,
+}
+
+/// What is wrong with a conformance.
+#[derive(Clone)]
+pub(crate) enum ConformanceForm {
+    /// The signatures of the requirements that no method meets.
+    Missing(Vec<String>),
+    /// The method `method`, written as `found` at the diagnostic's span, which the requirement
+    /// `want` does not accept.
+    Wrong {
+        method: String,
+        found: String,
+        want: String,
+    },
+    /// The method `method` of an `extend` block, which is no requirement; `target` is the type
+    /// that its own block would extend.
+    NotRequirement { method: String, target: String },
+    /// The choice of the associated type `name`, which none of the interfaces `of` declares.
+    NotAssociated { name: String, of: Vec<String> },
+}
+
+/// Why an `extend` block cannot extend.
+#[derive(Clone)]
+pub(crate) enum CannotExtendForm {
+    /// The target is a built-in type.
+    BuiltIn,
+    /// The target is a type parameter.
+    TypeParam,
+    /// A type parameter of the block that `target`, as written, does not name. `remove` is the
+    /// text from `extend` to the target, which holds the list of type parameters, when the fix
+    /// may take the list out and leave one space.
+    Unused {
+        target: String,
+        remove: Option<Span>,
+    },
+    /// The target or an interface argument, as written, names an associated type.
+    Associated,
+}
+
+/// Why a type must conform to an interface.
+#[derive(Clone)]
+pub(crate) enum NotConformForm {
+    /// The type conforms to `via`, at the diagnostic's span, which requires `interface` at
+    /// `requires`. `extend` is the block that would add the conformance, when the type has none.
+    Inherited {
+        via: String,
+        requires: Span,
+        extend: Option<String>,
+        /// A conformance the type has already, whose bound fails: the bound as written there,
+        /// and where it is.
+        needs: Option<(String, Span)>,
+    },
+    /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
+    /// needs it. `add` is the bound that a type parameter would need.
+    Bound {
+        bound: Option<Span>,
+        add: Option<AddBound>,
+        /// A conformance the type has already, whose bound fails: the bound as written there,
+        /// and where it is.
+        needs: Option<(String, Span)>,
+    },
+}
+
+/// A bound that a type parameter lacks: `param`, then every bound it would have, in order.
+#[derive(Clone)]
+pub(crate) struct AddBound {
+    pub(crate) param: String,
+    pub(crate) bounds: Vec<String>,
+}
+
+impl AddBound {
+    /// The help that tells what to write.
+    fn help(&self) -> String {
+        format!("add a bound: `{}: {}`", self.param, self.bounds.join(" & "))
+    }
+}
+
+/// The `let` that picks one answer of an ambiguous call: the call as written, the name of the
+/// binding, and the type that exactly one answer returns.
+#[derive(Clone)]
+pub(crate) struct Annotate {
+    pub(crate) call: String,
+    pub(crate) binding: String,
+    pub(crate) ty: String,
+}
+
+/// What an interface holds that it should not.
+#[derive(Clone, Copy)]
+pub(crate) enum InterfaceBodyForm {
+    /// A `{` after a requirement.
+    Body,
+    /// A field.
+    Field,
 }
 
 /// What a built-in name is, and so why a program cannot take it.
@@ -1601,7 +1884,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    "`{` must be on the same line as `fn`, `class`, `enum`, `if`, `else`, `match`, `while`, `for` or `loop`",
+                    "`{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`",
                 );
                 match join {
                     Some(join) => d.with_fix(join_fix(
@@ -1776,14 +2059,10 @@ impl From<DiagnosticKind> for Diagnostic {
                 owner,
             } => {
                 let remove = Span::new(keyword.start(), receiver.start());
-                match owner {
-                    Owner::Class => Diagnostic::coded(
-                        code,
-                        keyword,
-                        "a class method takes `self`, not `mut self`",
-                    )
-                    .with_help("an object is shared: `self` can already write every `mut` field")
-                    .with_fix(Fix {
+                // The fix of a class or an interface method: safe when only `,` or `)` follows
+                // `self`.
+                let drop_mut = |d: Diagnostic| {
+                    d.with_fix(Fix {
                         message: if safe {
                             "remove the `mut`"
                         } else {
@@ -1795,7 +2074,27 @@ impl From<DiagnosticKind> for Diagnostic {
                             span: remove,
                             replacement: String::new(),
                         }],
-                    }),
+                    })
+                };
+                match owner {
+                    Owner::Class => drop_mut(
+                        Diagnostic::coded(
+                            code,
+                            keyword,
+                            "a class method takes `self`, not `mut self`",
+                        )
+                        .with_help("an object is shared: `self` can already write every `mut` field"),
+                    ),
+                    Owner::Interface => drop_mut(
+                        Diagnostic::coded(
+                            code,
+                            keyword,
+                            "an interface method cannot take `mut self`",
+                        )
+                        .with_help(
+                            "a class method changes its object's `mut` fields through plain `self`",
+                        ),
+                    ),
                     // The body may still assign `self`, so the fix is never safe.
                     Owner::Enum(name) => Diagnostic::coded(
                         code,
@@ -1806,6 +2105,259 @@ impl From<DiagnosticKind> for Diagnostic {
                     .with_fix(unsafe_fix("remove the `mut`", remove, "")),
                 }
             }
+            DiagnosticKind::InterfaceBody { at, form } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    "an interface holds only method signatures and associated types",
+                );
+                match form {
+                    InterfaceBodyForm::Body => d.with_help("write the body in each conforming type"),
+                    InterfaceBodyForm::Field => d,
+                }
+            }
+            DiagnosticKind::InterfaceAsType { name, written, at } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{name}` is an interface, not a type"),
+                );
+                match written {
+                    Some(written) => d.with_help(format!("use a type parameter: `T: {written}`")),
+                    None => d,
+                }
+            }
+            DiagnosticKind::ConformanceBody {
+                ty,
+                interface,
+                at,
+                form,
+            } => match form {
+                ConformanceForm::Missing(signatures) => {
+                    Diagnostic::coded(code, at, format!("`{ty}` does not meet `{interface}`"))
+                        .with_help(signatures.join("\n"))
+                }
+                ConformanceForm::Wrong {
+                    method,
+                    found,
+                    want,
+                } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{method}` does not match `{interface}`'s requirement"),
+                )
+                .with_label(format!("found `{found}`"))
+                .with_help(format!("`{interface}` requires `{want}`")),
+                ConformanceForm::NotRequirement { method, target } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{method}` is not a requirement of `{interface}`"),
+                )
+                .with_help(format!("move it to `extend {target} {{ ... }}`")),
+                ConformanceForm::NotAssociated { name, of } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!(
+                        "`{name}` is not an associated type of {}",
+                        listed(&of, "or")
+                    ),
+                ),
+            },
+            DiagnosticKind::ConformsTwice {
+                ty,
+                interface,
+                at,
+                first,
+                generic,
+            } => {
+                let d = Diagnostic::coded(code, at, format!("`{ty}` conforms to `{interface}` twice"))
+                    .with_secondary(first, "first conformance here");
+                if generic {
+                    d.with_help(
+                        "a type conforms to an interface once for each list of the interface's type arguments",
+                    )
+                } else {
+                    d
+                }
+            }
+            DiagnosticKind::NotConform {
+                ty,
+                interface,
+                at,
+                form,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{ty}` does not conform to `{interface}`"),
+                );
+                match form {
+                    NotConformForm::Inherited {
+                        via,
+                        requires,
+                        extend,
+                        needs,
+                    } => {
+                        let d = d.with_secondary(
+                            requires,
+                            format!("`{via}` requires `{interface}`"),
+                        );
+                        let d = match needs {
+                            Some((bound, at)) => {
+                                d.with_secondary(at, format!("this conformance needs `{bound}`"))
+                            }
+                            None => d,
+                        };
+                        match extend {
+                            Some(block) => d.with_help(format!("write `{block}`")),
+                            None => d,
+                        }
+                    }
+                    NotConformForm::Bound { bound, add, needs } => {
+                        let d = match bound {
+                            Some(bound) => d.with_secondary(bound, "required by this bound"),
+                            None => d,
+                        };
+                        let d = match needs {
+                            Some((bound, at)) => {
+                                d.with_secondary(at, format!("this conformance needs `{bound}`"))
+                            }
+                            None => d,
+                        };
+                        match add {
+                            Some(add) => d.with_help(add.help()),
+                            None => d,
+                        }
+                    }
+                }
+            }
+            DiagnosticKind::CannotExtend { written, at, form } => {
+                let (message, remove) = match form {
+                    CannotExtendForm::BuiltIn => (
+                        format!("`{written}` is a built-in type; only the prelude extends it"),
+                        None,
+                    ),
+                    CannotExtendForm::TypeParam => (
+                        format!(
+                            "`extend` takes a class or enum, and `{written}` is a type parameter"
+                        ),
+                        None,
+                    ),
+                    CannotExtendForm::Unused { target, remove } => {
+                        (format!("`{written}` does not appear in `{target}`"), remove)
+                    }
+                    CannotExtendForm::Associated => (
+                        format!("an `extend` block cannot name an associated type in `{written}`"),
+                        None,
+                    ),
+                };
+                let d = Diagnostic::coded(code, at, message);
+                match remove {
+                    Some(span) => d.with_fix(Fix {
+                        message: "remove the type parameters".to_string(),
+                        safe: true,
+                        edits: vec![Edit {
+                            span,
+                            replacement: " ".to_string(),
+                        }],
+                    }),
+                    None => d,
+                }
+            }
+            DiagnosticKind::Ambiguous {
+                method,
+                receiver,
+                interfaces,
+                at,
+                annotate,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!(
+                        "`{method}` on `{receiver}` could come from {}",
+                        listed(&interfaces, "or")
+                    ),
+                );
+                match annotate {
+                    Some(Annotate { call, binding, ty }) => {
+                        d.with_help(format!("annotate the result: `let {binding}: {ty} = {call}`"))
+                    }
+                    None => d,
+                }
+            }
+            DiagnosticKind::BoundTooWide {
+                kind,
+                written,
+                limit,
+                at,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!(
+                    "the {} `{written}` gives more than {limit} inherited interfaces",
+                    kind.noun()
+                ),
+            )
+            .with_help(
+                "an interface that inherits one interface twice, with different arguments, \
+                 doubles this number at each level",
+            ),
+            DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
+                code,
+                at,
+                format!("`{written}` is {}, not an interface", kind.named()),
+            ),
+            DiagnosticKind::SelfOutside { at } => Diagnostic::coded(
+                code,
+                at,
+                "`Self` is valid only inside a class, enum, interface or `extend` block",
+            ),
+            DiagnosticKind::InheritanceCycle { name, at, through } => {
+                let message = if through.is_empty() {
+                    format!("`{name}` inherits from itself")
+                } else {
+                    format!(
+                        "`{name}` inherits from itself, through {}",
+                        listed(&through, "and")
+                    )
+                };
+                Diagnostic::coded(code, at, message)
+            }
+            DiagnosticKind::InheritedArgument {
+                arg,
+                interface,
+                at,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!("`{arg}` cannot be an argument of an inherited interface"),
+            )
+            .with_help(format!(
+                "write a type parameter of `{interface}` alone, or a type with no type \
+                 parameter. With arguments built from type parameters, the inherited \
+                 interfaces of a bound can double at each level of inheritance."
+            )),
+            DiagnosticKind::InheritedRequirement {
+                name,
+                interface,
+                owner,
+                at,
+                first,
+                assoc,
+            } => Diagnostic::coded(
+                code,
+                at,
+                format!(
+                    "`{name}` is already {} of `{owner}`, which `{interface}` inherits",
+                    if assoc {
+                        "an associated type"
+                    } else {
+                        "a requirement"
+                    }
+                ),
+            )
+            .with_secondary(first, "first declared here"),
             DiagnosticKind::MutParameter { name, at } => {
                 Diagnostic::coded(code, at, "a parameter cannot be `mut`").with_help(format!(
                     "copy it into a variable: `let mut {name} = {name}`"
@@ -1896,17 +2448,60 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::UnknownType {
-                name,
-                at,
-                suggestion,
-            } => similar(
-                Diagnostic::coded(code, at, format!("cannot find type `{name}`")).with_help(
-                    "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`",
+            DiagnosticKind::UnknownType { name, at, form } => match form {
+                UnknownForm::Name { suggestion } => similar(
+                    Diagnostic::coded(code, at, format!("cannot find type `{name}`")).with_help(
+                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`",
+                    ),
+                    at,
+                    suggestion,
                 ),
-                at,
-                suggestion,
-            ),
+                UnknownForm::NoAssociated { base, add } => {
+                    let d = Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{base}` has no associated type `{name}`"),
+                    );
+                    match add {
+                        Some(add) => d.with_help(add.help()),
+                        None => d,
+                    }
+                }
+                UnknownForm::ConcreteBase { own } => {
+                    let d = Diagnostic::coded(
+                        code,
+                        at,
+                        "an associated type is written through a type parameter, as `S.Item` for `S: Source`",
+                    );
+                    if own {
+                        d.with_help(format!("write `{name}`"))
+                    } else {
+                        d
+                    }
+                }
+                UnknownForm::ChoiceNamesItself { shadows } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("an associated type's choice cannot name `{name}`"),
+                )
+                .with_help(if shadows {
+                    format!("`{name}` also names a type, which this associated type hides: rename one of them")
+                } else {
+                    "write the type itself".to_string()
+                }),
+                UnknownForm::ChoiceLoops => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("the associated type `{name}` needs itself to find its type"),
+                )
+                .with_help("write a choice that does not lead back to the same associated type"),
+                UnknownForm::BoundsLoop { base } => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{base}.{name}` is not known here: a bound of `{base}` waits for this bound"),
+                )
+                .with_help("write one of the bounds that wait for each other without an associated type"),
+            },
             DiagnosticKind::BodyHasNoValue { function, want, at } => Diagnostic::coded(
                 code,
                 at,
@@ -2436,15 +3031,22 @@ impl From<DiagnosticKind> for Diagnostic {
                 name,
                 at,
                 suggestion,
-            } => similar(
-                Diagnostic::coded(
-                    code,
+                add,
+            } => {
+                let d = similar(
+                    Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{owner}` has no {} `{name}`", kind.word()),
+                    ),
                     at,
-                    format!("`{owner}` has no {} `{name}`", kind.word()),
-                ),
-                at,
-                suggestion,
-            ),
+                    suggestion,
+                );
+                match add {
+                    Some(add) => d.with_help(add.help()),
+                    None => d,
+                }
+            }
             DiagnosticKind::TooManyArguments { class, fields, at } => {
                 let plural = if fields == 1 { "" } else { "s" };
                 Diagnostic::coded(
@@ -2835,6 +3437,9 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::TypeAsValue { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a type, not a value"))
+            }
+            DiagnosticKind::InterfaceAsValue { name, at } => {
+                Diagnostic::coded(code, at, format!("`{name}` is an interface, not a value"))
             }
             DiagnosticKind::FunctionAsValue {
                 name,
@@ -3586,13 +4191,34 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 instance,
                 through,
-            } => through.into_iter().fold(
-                Diagnostic::coded(code, at, format!("`{name}` instantiates itself without end"))
+                reach,
+            } => {
+                let d = through.into_iter().fold(
+                    Diagnostic::coded(
+                        code,
+                        at,
+                        format!("`{name}` instantiates itself without end"),
+                    )
                     .with_label(format!("`{instance}` here")),
-                |d, (site, instance)| {
-                    d.with_secondary(site, format!("which instantiates `{instance}`"))
-                },
-            ),
+                    |d, (site, hop)| {
+                        let text = match hop {
+                            Hop::Instantiates(instance) => {
+                                format!("which instantiates `{instance}`")
+                            }
+                            Hop::Calls { method, interface } => {
+                                format!("which may call `{method}` through `{interface}`")
+                            }
+                        };
+                        d.with_secondary(site, text)
+                    },
+                );
+                match reach {
+                    Some(i) => d.with_help(format!(
+                        "a call through `{i}` counts as reaching every conformance to `{i}`"
+                    )),
+                    None => d,
+                }
+            }
             DiagnosticKind::NanComparison { at, negated, fix } => {
                 let always = if negated { "true" } else { "false" };
                 let d = Diagnostic::coded(

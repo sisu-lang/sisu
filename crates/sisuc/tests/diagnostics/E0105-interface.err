@@ -1,0 +1,8 @@
+error[E0105]: `Shape` is an interface, not a value
+ --> E0105-interface.sisu:6:13
+  |
+6 |     let s = Shape(1)
+  |             ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0105

@@ -1,0 +1,8 @@
+error[E0147]: `Shape` is an interface, not a type
+ --> E0147-extend.sisu:5:8
+  |
+5 | extend Shape {
+  |        ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0147

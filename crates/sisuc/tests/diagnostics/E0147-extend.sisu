@@ -1,0 +1,13 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+extend Shape {
+    fn twice(self) -> f64 {
+        2.0
+    }
+}
+
+fn main() {
+    print(1)
+}

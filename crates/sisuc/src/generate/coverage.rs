@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::item::{MAX_KNOWN, MOST};
+use super::item::{MAX_INTERFACES, MAX_KNOWN, MAX_REQUIREMENTS, MOST};
 use super::scope::{Class, Const, Enum, Field, Func, Ty, Var, Variant};
 use super::writer::{Rewrite, Site, Writer, allowed};
 use super::{Answer, BUDGET, Cost, DEPTHS, FUEL, Gen, MAX_BOUND, MAX_NESTING, MAX_SIZE, generate};
@@ -24,7 +24,7 @@ const SEEDS: u64 = 64;
 const SEED_LEN: usize = 4_096;
 
 /// What no generated program holds, and why.
-const EXCLUDED: [(&str, &str); 10] = [
+const EXCLUDED: [(&str, &str); 14] = [
     (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
@@ -39,6 +39,14 @@ const EXCLUDED: [(&str, &str); 10] = [
     ),
     (
         "ast::BrokenKind::Constant",
+        "only an item with a syntax error is broken",
+    ),
+    (
+        "ast::BrokenKind::Interface",
+        "only an item with a syntax error is broken",
+    ),
+    (
+        "ast::BrokenKind::Extend",
         "only an item with a syntax error is broken",
     ),
     (
@@ -58,11 +66,19 @@ const EXCLUDED: [(&str, &str); 10] = [
         "a private worklist item of `types::write_steps`, which is no type",
     ),
     (
+        "types::Step::Assoc",
+        "a private worklist item of `types::write_steps`, which is no type",
+    ),
+    (
         "types::Head::Class",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
     (
         "types::Head::Enum",
+        "the key by which `types::write_type` asks for a name, which is no type",
+    ),
+    (
+        "types::Head::Assoc",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
 ];
@@ -92,7 +108,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 62] = [
+const REACH: [&str; 79] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -155,6 +171,23 @@ const REACH: [&str; 62] = [
     "reach: an optional of an optional of `char` or `bool` is stored",
     "reach: an `Option`-shaped enum has a niche",
     "reach: an `Option`-shaped enum holds itself",
+    "reach: an interface inherits another",
+    "reach: an interface requirement names `Self`",
+    "reach: a class method names `Self`",
+    "reach: an enum method names `Self`",
+    "reach: a conformance is in a declaration list",
+    "reach: a conformance is an `extend` block",
+    "reach: a bound lists two interfaces with `&`",
+    "reach: a call goes through an inherited bound",
+    "reach: a generic class has a bound",
+    "reach: a generic `extend` block is called",
+    "reach: a conditional conformance holds through a bound",
+    "reach: an `extend` block extends one instantiation",
+    "reach: a generic interface has two conformances on one type",
+    "reach: an expected type picks a conformance",
+    "reach: a bound has interface arguments",
+    "reach: an associated type has a bound",
+    "reach: an associated type's choice is counted",
 ];
 
 /// Whether a program's text holds a form.
@@ -246,6 +279,13 @@ fn checked(source: &str) -> (ast::Program, tir::Program) {
     });
     let lexed = lexer::lex(source).expect("a program that checks should lex");
     (parser::parse(lexed, false).program, program)
+}
+
+/// The syntax tree of a program, which the other tests have checked: a test that reads only
+/// the tree does not check the program again.
+fn parsed(source: &str) -> ast::Program {
+    let lexed = lexer::lex(source).expect("a generated program should lex");
+    parser::parse(lexed, false).program
 }
 
 /// Everything the generated programs should hold between them.
@@ -433,6 +473,39 @@ struct Walk {
     labels: Vec<Option<Symbol>>,
     /// Where each `loop` that counts down starts.
     counted: FxHashSet<usize>,
+    /// The interfaces that the bounds of each type parameter of a function name, by the
+    /// function's name.
+    bounded: FxHashMap<String, Vec<Vec<String>>>,
+    /// The interfaces of the typed tree, by `InterfaceId`.
+    interface_names: Vec<String>,
+    /// The bare name of each function and method in source order, with the bounds of each type
+    /// parameter in scope: its owner's, then its own.
+    signatures: Vec<(String, Vec<Vec<String>>)>,
+    /// The bounds of the type parameters of the class, enum or block whose methods are walked.
+    owner_bounds: Vec<Vec<String>>,
+    /// The bounds of the type parameters of each function of the typed tree, and of the one being
+    /// walked in it.
+    bounds_of: Vec<Vec<Vec<String>>>,
+    tir_bounds: Vec<Vec<String>>,
+    /// The methods of the `extend` blocks over a generic type, by `FuncId`.
+    generic_blocks: FxHashSet<usize>,
+    /// The conformances that hold when a bound of the block does: the class or enum that the block
+    /// extends and the interface it conforms to.
+    conditional: FxHashSet<(String, String)>,
+    /// The methods, by `FuncId`, of the conformances of a type that conforms to one interface
+    /// more than once: a call of one is picked by its expected type.
+    picked: FxHashSet<usize>,
+    /// The functions, classes and enums of the typed tree, by id.
+    function_names: Vec<String>,
+    class_names: Vec<String>,
+    enum_names: Vec<String>,
+}
+
+/// The text of the bounds of each of `params`.
+fn written_bounds(params: &[ast::TypeParam]) -> Vec<Vec<String>> {
+    (params.iter())
+        .map(|p| p.bounds.iter().map(ToString::to_string).collect())
+        .collect()
 }
 
 impl Walk {
@@ -455,6 +528,10 @@ impl Walk {
         self.arithmetic.clear();
         self.compounds.clear();
         self.counted.clear();
+        self.bounded.clear();
+        self.signatures.clear();
+        self.owner_bounds.clear();
+        self.conditional.clear();
         self.ast(&ast);
         self.tir(&tir);
         for (feature, holds) in TEXT {
@@ -470,20 +547,36 @@ impl Walk {
             .iter()
             .filter_map(|item| match item {
                 ast::Item::Function(f) => Some(f.name.name.as_str().to_string()),
-                ast::Item::Class(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+                ast::Item::Class(_)
+                | ast::Item::Enum(_)
+                | ast::Item::Const(_)
+                | ast::Item::Interface(_)
+                | ast::Item::Extend(_) => None,
             })
             .collect();
         self.generic_funcs = generic_names(program, |item| match item {
             ast::Item::Function(f) => Some((&f.name, &f.type_params)),
-            ast::Item::Class(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+            ast::Item::Class(_)
+            | ast::Item::Enum(_)
+            | ast::Item::Const(_)
+            | ast::Item::Interface(_)
+            | ast::Item::Extend(_) => None,
         });
         self.generic_classes = generic_names(program, |item| match item {
             ast::Item::Class(c) => Some((&c.name, &c.type_params)),
-            ast::Item::Function(_) | ast::Item::Enum(_) | ast::Item::Const(_) => None,
+            ast::Item::Function(_)
+            | ast::Item::Enum(_)
+            | ast::Item::Const(_)
+            | ast::Item::Interface(_)
+            | ast::Item::Extend(_) => None,
         });
         self.generic_enums = generic_names(program, |item| match item {
             ast::Item::Enum(e) => Some((&e.name, &e.type_params)),
-            ast::Item::Function(_) | ast::Item::Class(_) | ast::Item::Const(_) => None,
+            ast::Item::Function(_)
+            | ast::Item::Class(_)
+            | ast::Item::Const(_)
+            | ast::Item::Interface(_)
+            | ast::Item::Extend(_) => None,
         });
         self.variants = program
             .items
@@ -496,7 +589,11 @@ impl Walk {
                         .map(|v| v.name.name.as_str().to_string())
                         .collect(),
                 )),
-                ast::Item::Function(_) | ast::Item::Class(_) | ast::Item::Const(_) => None,
+                ast::Item::Function(_)
+                | ast::Item::Class(_)
+                | ast::Item::Const(_)
+                | ast::Item::Interface(_)
+                | ast::Item::Extend(_) => None,
             })
             .collect();
         for broken in &program.broken {
@@ -505,6 +602,8 @@ impl Walk {
                 ast::BrokenKind::Class => "ast::BrokenKind::Class",
                 ast::BrokenKind::Enum => "ast::BrokenKind::Enum",
                 ast::BrokenKind::Constant => "ast::BrokenKind::Constant",
+                ast::BrokenKind::Interface => "ast::BrokenKind::Interface",
+                ast::BrokenKind::Extend => "ast::BrokenKind::Extend",
             });
         }
         for item in &program.items {
@@ -512,32 +611,12 @@ impl Walk {
                 ast::Item::Function(f) => {
                     self.mark("ast::Item::Function");
                     self.ast_function(f);
+                    self.note_bounds(f);
                 }
-                ast::Item::Class(c) => {
-                    self.mark("ast::Item::Class");
-                    for member in &c.members {
-                        match member {
-                            ast::Member::Field(field) => {
-                                self.mark("ast::Member::Field");
-                                self.mark(&format!("ast::FieldDecl.mutable = {}", field.mutable));
-                                self.type_expr(&field.ty);
-                            }
-                            ast::Member::Method(f) => {
-                                self.mark("ast::Member::Method");
-                                self.ast_function(f);
-                            }
-                        }
-                    }
-                }
-                ast::Item::Enum(e) => {
-                    self.mark("ast::Item::Enum");
-                    for field in e.variants.iter().flat_map(|v| v.payload.iter().flatten()) {
-                        self.type_expr(&field.ty);
-                    }
-                    for f in &e.methods {
-                        self.ast_function(f);
-                    }
-                }
+                ast::Item::Class(c) => self.ast_class(c),
+                ast::Item::Interface(interface) => self.ast_interface(interface),
+                ast::Item::Extend(extend) => self.ast_extend(extend),
+                ast::Item::Enum(e) => self.ast_enum(e),
                 ast::Item::Const(c) => {
                     self.mark("ast::Item::Const");
                     if let Some(ty) = &c.ty {
@@ -572,9 +651,163 @@ impl Walk {
         }
     }
 
+    /// Walks the bounds, target and methods of `extend`.
+    fn ast_extend(&mut self, extend: &ast::Extend) {
+        self.mark("ast::Item::Extend");
+        self.bounds(&extend.type_params);
+        self.type_expr(&extend.target);
+        if extend.type_params.is_empty() && matches!(extend.target.kind, ast::TypeKind::Applied(_))
+        {
+            self.mark("reach: an `extend` block extends one instantiation");
+        }
+        if let Some(interface) = &extend.interface {
+            // Marked where a call meets a bound with it (`meets_conditional_bound`), not here.
+            if extend.type_params.iter().any(|p| !p.bounds.is_empty()) {
+                let target = extend.target.to_string();
+                let head = target
+                    .split_once('<')
+                    .map_or(target.as_str(), |(head, _)| head);
+                self.conditional
+                    .insert((head.to_string(), interface.to_string()));
+            }
+            self.mark("reach: a conformance is an `extend` block");
+            self.type_expr(interface);
+        }
+        self.choices(&extend.assoc);
+        self.owner_bounds = written_bounds(&extend.type_params);
+        for f in &extend.methods {
+            self.ast_function(f);
+        }
+        self.owner_bounds.clear();
+    }
+
+    /// Walks the bounds, payloads and methods of the enum `e`.
+    fn ast_enum(&mut self, e: &ast::Enum) {
+        self.mark("ast::Item::Enum");
+        self.bounds(&e.type_params);
+        self.listed(&e.conforms, &e.assoc);
+        for field in e.variants.iter().flat_map(|v| v.payload.iter().flatten()) {
+            self.type_expr(&field.ty);
+        }
+        self.owner_bounds = written_bounds(&e.type_params);
+        for f in &e.methods {
+            if names_self_in(f) {
+                self.mark("reach: an enum method names `Self`");
+            }
+            self.ast_function(f);
+        }
+        self.owner_bounds.clear();
+    }
+
+    /// Walks the bounds and members of `c`.
+    fn ast_class(&mut self, c: &ast::Class) {
+        self.mark("ast::Item::Class");
+        if c.type_params.iter().any(|p| !p.bounds.is_empty()) {
+            self.mark("reach: a generic class has a bound");
+        }
+        self.bounds(&c.type_params);
+        self.listed(&c.conforms, &c.assoc);
+        self.owner_bounds = written_bounds(&c.type_params);
+        for member in &c.members {
+            match member {
+                ast::Member::Field(field) => {
+                    self.mark("ast::Member::Field");
+                    self.mark(&format!("ast::FieldDecl.mutable = {}", field.mutable));
+                    self.type_expr(&field.ty);
+                }
+                ast::Member::Method(f) => {
+                    self.mark("ast::Member::Method");
+                    if names_self_in(f) {
+                        self.mark("reach: a class method names `Self`");
+                    }
+                    self.ast_function(f);
+                }
+            }
+        }
+        self.owner_bounds.clear();
+    }
+
+    /// Walks the bounds, inherited interfaces, requirements and associated types of `interface`.
+    fn ast_interface(&mut self, interface: &ast::Interface) {
+        self.mark("ast::Item::Interface");
+        if !interface.inherits.is_empty() {
+            self.mark("reach: an interface inherits another");
+        }
+        self.bounds(&interface.type_params);
+        for inherited in &interface.inherits {
+            self.type_expr(inherited);
+        }
+        for bound in interface.assoc.iter().flat_map(|a| &a.bounds) {
+            self.mark("reach: an associated type has a bound");
+            self.type_expr(bound);
+        }
+        for requirement in &interface.methods {
+            if (requirement.params.iter().map(|p| &p.ty))
+                .chain(&requirement.ret)
+                .any(names_self)
+            {
+                self.mark("reach: an interface requirement names `Self`");
+            }
+            self.bounds(&requirement.type_params);
+            for param in &requirement.params {
+                self.type_expr(&param.ty);
+            }
+            if let Some(ret) = &requirement.ret {
+                self.type_expr(ret);
+            }
+        }
+    }
+
+    /// Walks the interfaces a class or an enum lists after its name, and the associated types it
+    /// chooses.
+    fn listed(&mut self, conforms: &[ast::TypeExpr], assoc: &[ast::AssocChoice]) {
+        if !conforms.is_empty() {
+            self.mark("reach: a conformance is in a declaration list");
+        }
+        for interface in conforms {
+            self.type_expr(interface);
+        }
+        self.choices(assoc);
+    }
+
+    /// Walks the types of the associated types a conformance chooses.
+    fn choices(&mut self, assoc: &[ast::AssocChoice]) {
+        for choice in assoc {
+            self.type_expr(&choice.ty);
+        }
+    }
+
+    /// Walks the bounds of `params`.
+    fn bounds(&mut self, params: &[ast::TypeParam]) {
+        if params.iter().any(|p| p.bounds.len() > 1) {
+            self.mark("reach: a bound lists two interfaces with `&`");
+        }
+        for bound in params.iter().flat_map(|p| &p.bounds) {
+            if matches!(bound.kind, ast::TypeKind::Applied(_)) {
+                self.mark("reach: a bound has interface arguments");
+            }
+            self.type_expr(bound);
+        }
+    }
+
+    /// Records the bounds of the function `f`, which the typed tree finds by its name. A method is
+    /// named for its type there, so it is not recorded: its bare name may be a function's.
+    fn note_bounds(&mut self, f: &ast::Function) {
+        let named =
+            (f.type_params.iter()).map(|p| p.bounds.iter().map(ToString::to_string).collect());
+        self.bounded
+            .insert(f.name.name.as_str().to_string(), named.collect());
+    }
+
     fn ast_function(&mut self, f: &ast::Function) {
+        let own = written_bounds(&f.type_params);
+        self.signatures.push((
+            f.name.name.as_str().to_string(),
+            self.owner_bounds.iter().cloned().chain(own).collect(),
+        ));
         self.func = f.name.name.as_str().to_string();
         self.in_generic = !f.type_params.is_empty();
+        self.bounds(&f.type_params);
         self.params.clear();
         for param in &f.params {
             self.type_expr(&param.ty);
@@ -612,6 +845,11 @@ impl Walk {
             ast::TypeKind::Array(element) => {
                 self.mark("ast::TypeKind::Array");
                 self.type_expr(element);
+            }
+            ast::TypeKind::SelfType => self.mark("ast::TypeKind::SelfType"),
+            ast::TypeKind::Member { base, .. } => {
+                self.mark("ast::TypeKind::Member");
+                self.type_expr(base);
             }
         }
     }
@@ -1474,7 +1712,68 @@ impl Walk {
         for (id, e) in program.enums.iter().enumerate() {
             self.option_shaped(id, e);
         }
-        for function in &program.functions {
+        self.interface_names = program.interfaces.iter().map(|i| i.name.clone()).collect();
+        self.function_names = program.functions.iter().map(|f| f.name.clone()).collect();
+        self.class_names = program.classes.iter().map(|c| c.name.clone()).collect();
+        self.enum_names = program.enums.iter().map(|e| e.name.clone()).collect();
+        // A method of an `extend` block over a generic type is named for the type it extends,
+        // `G0<T>.top`, and a method of a class for its class alone.
+        self.picked.clear();
+        let mut seen: FxHashSet<(tir::InterfaceId, Type)> = FxHashSet::default();
+        let mut again: FxHashSet<(tir::InterfaceId, Type)> = FxHashSet::default();
+        for (interface, conformance) in program.conformances.iter() {
+            if !seen.insert((interface, conformance.target)) {
+                again.insert((interface, conformance.target));
+            }
+        }
+        // A call of the method of a block picks it by its expected type when the type has no
+        // method of its own by the name: the type's own, in its body, are not the block's.
+        // shortcut: only a type that two conformances without type parameters name is counted.
+        // Each of them covers the type, so a call must pick one by its expected type; a conformance
+        // with parameters may hold or not under bounds that the tree does not carry, and a call
+        // of one may have no other that holds. Upgrade when the tree carries the bounds.
+        let mut concrete: FxHashMap<(tir::InterfaceId, Type), usize> = FxHashMap::default();
+        for (interface, conformance) in program.conformances.iter() {
+            if conformance.type_params == 0 {
+                *concrete.entry((interface, conformance.target)).or_default() += 1;
+            }
+        }
+        for (interface, conformance) in program.conformances.iter() {
+            if conformance.type_params == 0 && concrete[&(interface, conformance.target)] > 1 {
+                let blocks = (conformance.methods.iter().map(|f| f.0))
+                    .filter(|&f| program.functions[f].conformance.is_some());
+                self.picked.extend(blocks);
+            }
+            // A `string`, a class or an array is reference counted.
+            let counted = conformance.assoc.iter().flatten().any(|choice| {
+                matches!(
+                    choice.kind(),
+                    TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_)
+                )
+            });
+            if counted {
+                self.mark("reach: an associated type's choice is counted");
+            }
+        }
+        if !again.is_empty() {
+            self.mark("reach: a generic interface has two conformances on one type");
+        }
+        self.generic_blocks = (program.functions.iter().enumerate())
+            .filter(|(_, f)| f.owner_params > 0 && f.name.contains('<'))
+            .map(|(i, _)| i)
+            .collect();
+        // The functions of the typed tree are the source's in order, after any the prelude adds.
+        let skip = (program.functions.len())
+            .checked_sub(self.signatures.len())
+            .expect("the typed tree should hold every function the source writes");
+        self.bounds_of = vec![Vec::new(); program.functions.len()];
+        for (at, (name, bounds)) in self.signatures.iter().enumerate() {
+            let function = &program.functions[skip + at];
+            assert_eq!(function.name.rsplit('.').next(), Some(name.as_str()));
+            self.bounds_of[skip + at].clone_from(bounds);
+        }
+        for (at, function) in program.functions.iter().enumerate() {
+            self.tir_bounds.clone_from(&self.bounds_of[at]);
             self.ty(function.ret);
             for local in &function.locals {
                 self.ty(local.ty);
@@ -1482,6 +1781,24 @@ impl Walk {
             }
             self.tir_block(&function.body);
         }
+    }
+
+    /// Whether a call of the function `func` gives a type argument to a bound of its own
+    /// parameter that the type meets through a conformance of a block with bounds.
+    fn meets_conditional_bound(&self, func: usize, types: &[Type]) -> bool {
+        let Some(bounds) = self.bounded.get(&self.function_names[func]) else {
+            return false;
+        };
+        types.iter().zip(bounds).any(|(ty, bounds)| {
+            let name = match ty.kind() {
+                TypeKind::Class(id, _) => &self.class_names[id.0],
+                TypeKind::Enum(id, _) => &self.enum_names[id.0],
+                _ => return false,
+            };
+            bounds
+                .iter()
+                .any(|bound| self.conditional.contains(&(name.clone(), bound.clone())))
+        })
     }
 
     /// Records an enum `id` of two variants, one with no payload and one with one field. The
@@ -1556,6 +1873,7 @@ impl Walk {
             TypeKind::Param(..) => ("types::TypeKind::Param", None),
             TypeKind::Array(element) => ("types::TypeKind::Array", Some(element)),
             TypeKind::Optional(inner) => ("types::TypeKind::Optional", Some(inner)),
+            TypeKind::Assoc(base, ..) => ("types::TypeKind::Assoc", Some(base)),
         };
         self.mark(key);
         if let Some(inner) = inner {
@@ -1621,7 +1939,7 @@ impl Walk {
     /// type parameter of a generic body may stand for a class.
     fn holds_class(&self, ty: Type, seen: &mut Vec<tir::EnumId>) -> bool {
         match ty.kind() {
-            TypeKind::Class(..) | TypeKind::Param(..) => true,
+            TypeKind::Class(..) | TypeKind::Param(..) | TypeKind::Assoc(..) => true,
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.holds_class(inner, seen),
             TypeKind::Enum(id, args) => {
                 !seen.contains(&id) && {
@@ -1691,7 +2009,8 @@ impl Walk {
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
                 | TypeKind::Enum(..)
-                | TypeKind::Param(..) => {}
+                | TypeKind::Param(..)
+                | TypeKind::Assoc(..) => {}
             }
         }
         if written && left && matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8) {
@@ -1719,14 +2038,43 @@ impl Walk {
             tir::ExprKind::Str(_) => self.mark("tir::ExprKind::Str"),
             tir::ExprKind::None => self.mark("tir::ExprKind::None"),
             tir::ExprKind::Local(_) => self.mark("tir::ExprKind::Local"),
-            tir::ExprKind::Call { types, args, .. } => {
+            tir::ExprKind::Call { func, types, args } => {
                 self.mark("tir::ExprKind::Call");
+                if self.generic_blocks.contains(&func.0) {
+                    self.mark("reach: a generic `extend` block is called");
+                }
+                if self.meets_conditional_bound(func.0, types.get()) {
+                    self.mark("reach: a conditional conformance holds through a bound");
+                }
+                if self.picked.contains(&func.0) {
+                    self.mark("reach: an expected type picks a conformance");
+                }
                 if types
                     .get()
                     .iter()
                     .any(|t| matches!(t.kind(), TypeKind::Optional(_)))
                 {
                     self.mark("reach: an optional is a type argument");
+                }
+                self.tir_exprs(args);
+            }
+            tir::ExprKind::InterfaceCall {
+                interface,
+                iargs,
+                args,
+                ..
+            } => {
+                self.mark("tir::ExprKind::InterfaceCall");
+                // The bounds of the receiver's type parameter name the interface, or one that
+                // inherits it. A receiver that is no type parameter has no bounds here.
+                let name = &self.interface_names[interface.0];
+                let direct = |bound: &String| bound.split('<').next() == Some(name.as_str());
+                if let Some(&TypeKind::Param(_, at)) =
+                    iargs.get().first().map(|t| t.kind()).as_ref()
+                    && let Some(bounds) = self.tir_bounds.get(at as usize)
+                    && !bounds.iter().any(direct)
+                {
+                    self.mark("reach: a call goes through an inherited bound");
                 }
                 self.tir_exprs(args);
             }
@@ -2018,6 +2366,7 @@ fn kind_name(ty: Type) -> &'static str {
         TypeKind::Param(..) => "Param",
         TypeKind::Array(_) => "Array",
         TypeKind::Optional(_) => "Optional",
+        TypeKind::Assoc(..) => "Assoc",
     }
 }
 
@@ -2064,10 +2413,28 @@ fn tail(block: &ast::Block) -> Option<&ast::Expr> {
     }
 }
 
+/// Whether the parameters or the return type of `f` is `Self` or holds it.
+fn names_self_in(f: &ast::Function) -> bool {
+    (f.params.iter().map(|p| &p.ty))
+        .chain(&f.ret)
+        .any(names_self)
+}
+
+/// Whether `ty` is `Self` or holds it.
+fn names_self(ty: &ast::TypeExpr) -> bool {
+    match &ty.kind {
+        ast::TypeKind::SelfType => true,
+        ast::TypeKind::Array(element) => names_self(element),
+        ast::TypeKind::Applied(applied) => applied.args.iter().any(names_self),
+        ast::TypeKind::Member { base, .. } => names_self(base),
+        ast::TypeKind::Name(_) => false,
+    }
+}
+
 /// The names of the items `pick` selects, with their type parameters, that have any.
 fn generic_names<'a>(
     program: &'a ast::Program,
-    pick: impl Fn(&'a ast::Item) -> Option<(&'a ast::Ident, &'a Vec<ast::Ident>)>,
+    pick: impl Fn(&'a ast::Item) -> Option<(&'a ast::Ident, &'a Vec<ast::TypeParam>)>,
 ) -> FxHashSet<String> {
     program
         .items
@@ -2238,6 +2605,33 @@ fn checked_should_reject_a_loop_whose_condition_never_changes() {
     checked("fn f(n: i64) {\n    while n > 0 { print(n) }\n}\nfn main() {}\n");
 }
 
+/// A requirement type builds only the type it picks: one `RequirementType` for each ask, and the
+/// value of a declared type, which `default` walks, only for an ask that picks a declared type.
+/// The asks, the types built and the values built are those of `SEEDS` seeds and of twice as
+/// many: the work grows with the asks, and no value is built for a type that is not picked.
+#[test]
+fn a_requirement_type_should_build_only_the_type_it_picks() {
+    let work = |seeds_taken: u64| {
+        super::item::REQUIREMENT_TYPES.set([0; 4]);
+        for data in (0..seeds_taken).map(seed) {
+            generate(&data);
+        }
+        super::item::REQUIREMENT_TYPES.get()
+    };
+    let (small, large) = (work(SEEDS), work(2 * SEEDS));
+    for [asked, built, declared, defaulted] in [small, large] {
+        assert!(asked > 0, "no seed asks for a requirement type");
+        // Some ask picks a declared type, and some picks another.
+        assert!(0 < declared && declared < asked, "{declared} of {asked}");
+        assert_eq!(built, asked);
+        assert_eq!(defaulted, declared);
+    }
+    assert!(
+        large[0] > small[0] && large[2] > small[2],
+        "{small:?} {large:?}"
+    );
+}
+
 #[test]
 fn every_short_input_checks_clean() {
     checked(&generate(&[]).program);
@@ -2286,6 +2680,141 @@ fn every_variant_is_generated() {
     );
 }
 
+/// What no generated program writes yet, the walk marks all the same: an `extend` block,
+/// bounds, a member type, and a broken item of each new kind. Without
+/// this, the walk's arms for them would never run until the generator writes them.
+#[test]
+fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
+    let src = "interface Shape<T: Same>: Named {\n    type Item: Same\n    fn area<U: Same>(self, x: U) -> Self\n    fn done(self)\n}\nclass Box<T: Same> {}\nextend<T: Same> Stack<T> {\n    fn first(self, x: S.Item) {}\n}\ninterface Bad: {}\nextend C: {}\n";
+    let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+    let mut walk = Walk::default();
+    walk.ast(&parsed.program);
+    for key in [
+        "ast::Item::Interface",
+        "ast::Item::Extend",
+        "ast::Item::Class",
+        "ast::TypeKind::SelfType",
+        "ast::TypeKind::Member",
+        "ast::BrokenKind::Interface",
+        "ast::BrokenKind::Extend",
+        "reach: an interface inherits another",
+        "reach: an interface requirement names `Self`",
+    ] {
+        assert!(walk.seen.contains(key), "the walk should mark {key}");
+    }
+    // A conformance is a key of its own in a list and in a block.
+    for (src, key) in [
+        (
+            "class C: Named {}\n",
+            "reach: a conformance is in a declaration list",
+        ),
+        (
+            "enum E: Named {\n    A\n}\n",
+            "reach: a conformance is in a declaration list",
+        ),
+        (
+            "extend C: Named {}\n",
+            "reach: a conformance is an `extend` block",
+        ),
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert!(
+            walk.seen.contains(key),
+            "the walk should mark {key} in {src}"
+        );
+    }
+    // `Self` in a method is a key of its own for a class and for an enum.
+    for (src, key) in [
+        (
+            "class C {\n    fn f(self, x: Self) {}\n}\n",
+            "reach: a class method names `Self`",
+        ),
+        (
+            "class C {\n    fn f(self) -> [Self] {}\n}\n",
+            "reach: a class method names `Self`",
+        ),
+        (
+            "enum E {\n    A\n    fn f(self, x: Self) {}\n}\n",
+            "reach: an enum method names `Self`",
+        ),
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert!(
+            walk.seen.contains(key),
+            "the walk should mark {key} in {src}"
+        );
+    }
+    // `Self` inside another type in a requirement is `Self` too.
+    for src in [
+        "interface I {\n    fn f(self, b: Box<Self>)\n}\n",
+        "interface I {\n    fn f(self, x: Self.Item)\n}\n",
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert!(
+            walk.seen
+                .contains("reach: an interface requirement names `Self`"),
+            "the walk should find `Self` in {src}"
+        );
+    }
+    // A bound is a type of its own: the only `?` in each source is on a bound, so the key shows
+    // that the walk read it there.
+    for src in [
+        "class Box<T: Same?> {}\n",
+        "enum E<T: Same?> {\n    A\n}\n",
+        "interface I<T: Same?> {}\n",
+        "interface I {\n    type Item: Same?\n}\n",
+        "interface I {\n    fn f<U: Same?>(self)\n}\n",
+        "interface I: Same? {}\n",
+        "class C: Same? {}\n",
+        "enum E: Same? {\n    A\n}\n",
+        "extend C: Same? {}\n",
+        "class C: Source {\n    type Item = i64?\n}\n",
+        "enum E: Source {\n    A\n    type Item = i64?\n}\n",
+        "extend C: Source {\n    type Item = i64?\n}\n",
+        "extend<T: Same?> Stack<T> {}\n",
+        "fn f<T: Same?>() {}\n",
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert!(
+            walk.seen.contains("reach: a type has one `?` layer"),
+            "the walk should read the bound in {src}"
+        );
+    }
+}
+
+/// A program may declare as many interfaces as `MAX_INTERFACES` and give one as many requirements
+/// as `MAX_REQUIREMENTS`.
+#[test]
+fn generated_interfaces_should_reach_their_maxima() {
+    let (mut most, mut requirements) = (0, 0);
+    for data in seeds() {
+        let program = parsed(&generate(&data).plain);
+        let interfaces: Vec<&ast::Interface> = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::Interface(interface) => Some(interface),
+                _ => None,
+            })
+            .collect();
+        most = most.max(interfaces.len());
+        requirements = interfaces
+            .iter()
+            .map(|interface| interface.methods.len())
+            .fold(requirements, usize::max);
+    }
+    assert_eq!(most, MAX_INTERFACES);
+    assert_eq!(requirements, MAX_REQUIREMENTS);
+}
+
 #[test]
 fn main_holds_several_statements() {
     // Each top-level statement of `main` takes a share of its fuel, so the first cannot spend
@@ -2304,7 +2833,9 @@ fn main_holds_several_statements() {
                     ast::Item::Function(_)
                     | ast::Item::Class(_)
                     | ast::Item::Enum(_)
-                    | ast::Item::Const(_) => None,
+                    | ast::Item::Const(_)
+                    | ast::Item::Interface(_)
+                    | ast::Item::Extend(_) => None,
                 })
                 .expect("a program should have `main`")
         })
@@ -4091,10 +4622,11 @@ fn each_count_reaches_its_most_and_stays_within_it() {
             .collect();
         let mut g = Gen::new(&data);
         g.class();
+        // The class alone: an enum has one method of its own.
+        let class = g.w.out.program.clone();
         g.enumeration();
-        let program = &g.w.out.program;
         fields = fields.max(g.scope.classes[0].fields.len());
-        methods = methods.max(program.lines().filter(|l| l.starts_with("    fn ")).count());
+        methods = methods.max(class.lines().filter(|l| l.starts_with("    fn ")).count());
         let count = g.scope.enums[0].variants.len();
         variants = (variants.0.min(count), variants.1.max(count));
         let most = g.scope.enums[0]
@@ -4515,6 +5047,7 @@ impl<'f> Lets<'f> {
                 }
             }
             tir::ExprKind::Call { args, .. }
+            | tir::ExprKind::InterfaceCall { args, .. }
             | tir::ExprKind::New { args, .. }
             | tir::ExprKind::Variant { args, .. }
             | tir::ExprKind::ArrayLit(args)
@@ -4626,6 +5159,7 @@ impl<'f> Lets<'f> {
             tir::ExprKind::Local(local) => reads || !self.locals[local.0].mutable,
             tir::ExprKind::Field { base, .. } => reads && self.pure(base, reads),
             tir::ExprKind::Call { .. }
+            | tir::ExprKind::InterfaceCall { .. }
             | tir::ExprKind::Print { .. }
             | tir::ExprKind::Panic(_)
             | tir::ExprKind::ReadLine
@@ -5050,4 +5584,585 @@ fn known_answers_are_integer() {
         calls += sites;
     }
     assert!(calls > 0, "no seed calls a known function");
+}
+
+/// A class or an enum conforms to a generated interface in its declaration list or in an
+/// `extend` block, and the four forms all occur.
+#[test]
+fn generated_conformances_should_reach_every_form() {
+    let mut forms = FxHashSet::default();
+    for data in seeds() {
+        let program = parsed(&generate(&data).plain);
+        let classes: FxHashSet<String> = (program.items.iter())
+            .filter_map(|item| match item {
+                ast::Item::Class(c) => Some(c.name.name.to_string()),
+                _ => None,
+            })
+            .collect();
+        for item in &program.items {
+            let form = match item {
+                ast::Item::Class(c) if !c.conforms.is_empty() => "a class lists an interface",
+                ast::Item::Enum(e) if !e.conforms.is_empty() => "an enum lists an interface",
+                ast::Item::Extend(x) if x.interface.is_some() => {
+                    if classes.contains(&x.target.to_string()) {
+                        "a block gives a class an interface"
+                    } else {
+                        "a block gives an enum an interface"
+                    }
+                }
+                _ => continue,
+            };
+            forms.insert(form);
+        }
+    }
+    assert_eq!(forms.len(), 4, "{forms:?}");
+}
+
+/// The walk marks a bound that lists two interfaces, a generic class with a bound and a call
+/// through an inherited bound, and only those.
+#[test]
+fn the_walk_should_mark_what_bounds_hold() {
+    let interfaces = "interface Named {\n    fn name(self) -> string\n}\ninterface Shape: Named {\n    fn area(self) -> f64\n}\nclass C: Shape {\n    fn name(self) -> string { \"c\" }\n    fn area(self) -> f64 { 1.0 }\n}\n";
+    let keys = [
+        "reach: a bound lists two interfaces with `&`",
+        "reach: a call goes through an inherited bound",
+        "reach: a generic class has a bound",
+    ];
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{interfaces}{rest}fn main() {{}}\n"));
+        keys.map(|key| walk.seen.contains(key))
+    };
+    // One bound, named by the call: none.
+    assert_eq!(
+        marked("fn f<T: Named>(x: T) -> string {\n    x.name()\n}\n"),
+        [false, false, false]
+    );
+    // The call names `Named`, and the bound `Shape`, which inherits it.
+    assert_eq!(
+        marked("fn f<T: Shape>(x: T) -> string {\n    x.name()\n}\n"),
+        [false, true, false]
+    );
+    assert_eq!(
+        marked("fn f<T: Shape & Named>(x: T) -> f64 {\n    x.area()\n}\n"),
+        [true, false, false]
+    );
+    assert_eq!(
+        marked("class H<T: Shape> {\n    v: T\n}\n"),
+        [false, false, true]
+    );
+    // A method of the name of a function, after it, does not take its bounds.
+    assert_eq!(
+        marked(
+            "fn f<T: Named>(x: T) -> string {\n    x.name()\n}\nclass H {\n    fn f(self) -> i64 { 1 }\n}\n"
+        ),
+        [false, false, false]
+    );
+}
+
+/// A call through a bound that writes interface arguments is no call through an inherited bound,
+/// and one through the bound of a sub-interface that writes them is.
+#[test]
+fn the_walk_should_mark_an_inherited_bound_by_the_interface_it_names() {
+    let decls = "interface Conv<T> {\n    fn convert(self) -> T\n}\ninterface Sub: Conv<i64> {}\nclass B: Sub {\n    fn convert(self) -> i64 { 1 }\n}\n";
+    let key = "reach: a call goes through an inherited bound";
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{decls}{rest}fn main() {{}}\n"));
+        walk.seen.contains(key)
+    };
+    assert!(!marked(
+        "fn f<T: Conv<i64>>(x: T) -> i64 {\n    x.convert()\n}\n"
+    ));
+    assert!(marked("fn f<T: Sub>(x: T) -> i64 {\n    x.convert()\n}\n"));
+    // The bound of the receiver's parameter counts, not the bounds of the others.
+    assert!(marked(
+        "fn f<T: Sub, U: Conv<i64>>(x: T, y: U) -> i64 {\n    x.convert()\n}\n"
+    ));
+    assert!(!marked(
+        "fn f<T: Sub, U: Conv<i64>>(x: T, y: U) -> i64 {\n    y.convert()\n}\n"
+    ));
+    // A generic method, a method of a generic class and a block, each with its own bounds.
+    assert!(marked(
+        "class H {\n    fn m<T: Sub>(self, x: T) -> i64 { x.convert() }\n}\n"
+    ));
+    assert!(!marked(
+        "class H {\n    fn m<T: Conv<i64>>(self, x: T) -> i64 { x.convert() }\n}\n"
+    ));
+    assert!(marked(
+        "class H<T: Sub> {\n    v: T\n    fn m(self) -> i64 { self.v.convert() }\n}\n"
+    ));
+    assert!(marked(
+        "class R<T> {\n    v: T\n}\nextend<T: Sub> R<T> {\n    fn m(self) -> i64 { self.v.convert() }\n}\n"
+    ));
+    let pair = "class P<T, U> {\n    v: T\n    w: U\n}\nextend<T: Sub, U: Conv<i64>> P<T, U> {\n";
+    assert!(!marked(&format!(
+        "{pair}    fn m(self) -> i64 {{ self.w.convert() }}\n}}\n"
+    )));
+    assert!(marked(&format!(
+        "{pair}    fn m(self) -> i64 {{ self.v.convert() }}\n}}\n"
+    )));
+}
+
+/// The walk marks an `extend` block over a generic type that a call reaches, a conditional
+/// conformance and a block over one instantiation, and only those.
+#[test]
+fn the_walk_should_mark_what_extension_holds() {
+    let decls = "interface Named {\n    fn name(self) -> string\n}\nclass C: Named {\n    fn name(self) -> string { \"c\" }\n}\nclass R<T> {\n    v: T\n}\n";
+    let keys = [
+        "reach: a generic `extend` block is called",
+        "reach: a conditional conformance holds through a bound",
+        "reach: an `extend` block extends one instantiation",
+    ];
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{decls}{rest}"));
+        keys.map(|key| walk.seen.contains(key))
+    };
+    // A block over every `T` that nothing calls, and a method of the class that something does.
+    assert_eq!(
+        marked("extend<T> R<T> {\n    fn top(self) -> T { self.v }\n}\nfn main() {}\n"),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked(
+            "class P<T> {\n    v: T\n    fn top(self) -> T { self.v }\n}\nfn main() {\n    print(P(v: 1).top())\n}\n"
+        ),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked(
+            "extend<T> R<T> {\n    fn top(self) -> T { self.v }\n}\nfn main() {\n    print(R(v: 1).top())\n}\n"
+        ),
+        [true, false, false]
+    );
+    // A conditional conformance that nothing meets a bound with is declared, not used.
+    let block = "extend<T: Named> R<T>: Named {\n    fn name(self) -> string { \"r\" }\n}\nfn show<T: Named>(x: T) -> string {\n    x.name()\n}\nfn keep<T>(x: T) -> T {\n    x\n}\n";
+    assert_eq!(
+        marked(&format!("{block}fn main() {{}}\n")),
+        [false, false, false]
+    );
+    // A bound met by the conditional conformance, and not by the class's own, or not by a bound.
+    assert_eq!(
+        marked(&format!(
+            "{block}fn main() {{\n    print(show(R(v: C())))\n}}\n"
+        )),
+        [false, true, false]
+    );
+    assert_eq!(
+        marked(&format!("{block}fn main() {{\n    print(show(C()))\n}}\n")),
+        [false, false, false]
+    );
+    // The bound belongs to the first parameter: the block is met there, and not by the second.
+    let two = "fn two<T: Named, U>(x: T, y: U) -> string {\n    x.name()\n}\n";
+    assert_eq!(
+        marked(&format!(
+            "{block}{two}fn main() {{\n    print(two(R(v: C()), C()))\n}}\n"
+        )),
+        [false, true, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{block}{two}fn main() {{\n    print(two(C(), R(v: C())))\n}}\n"
+        )),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{block}fn main() {{\n    print(keep(R(v: C())).v.name())\n}}\n"
+        )),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked("extend R<i64> {\n    fn solo(self) -> i64 { 1 }\n}\nfn main() {}\n"),
+        [false, false, true]
+    );
+}
+
+/// Every interface that the generator writes is used: named in a live bound, or called through a
+/// conformance. No generated program gives W0012 on an interface.
+#[test]
+fn generated_interfaces_should_be_used() {
+    let mut interfaces = 0;
+    for data in seeds() {
+        let source = generate(&data).plain;
+        let (_, diagnostics) = crate::front_end::checked(&source);
+        interfaces += source.matches("interface ").count();
+        for d in &diagnostics {
+            // The name of an interface follows its keyword.
+            let unused =
+                d.code().as_str() == "W0012" && source[..d.span().start()].ends_with("interface ");
+            assert!(!unused, "an interface is never used in\n{source}");
+        }
+    }
+    assert!(interfaces > 0, "no seed writes an interface");
+}
+
+/// `source` without everything W0012 names, deleted all at once: each function, method, constant
+/// and interface, and each conformance block of a deleted interface. A class or an enum stays: a
+/// type that names it is not a use, so deleting it can break correct code. Gives the new text and
+/// how many items it cut.
+fn without_unused(source: &str) -> (String, usize) {
+    let parsed = parser::parse(
+        lexer::lex(source).expect("a generated program should lex"),
+        false,
+    );
+    let prelude = crate::front_end::prelude_program(crate::front_end::PRELUDE_SOURCE);
+    let (_, diagnostics) =
+        crate::check::check(&parsed.program, &prelude, source, &parsed.diagnostics);
+    let unused: FxHashSet<usize> = (diagnostics.iter())
+        .filter(|d| d.code().as_str() == "W0012")
+        .map(|d| d.span().start())
+        .collect();
+    let program = parsed.program;
+    let mut cuts: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut interfaces = FxHashSet::default();
+    let mut methods: Vec<&ast::Function> = Vec::new();
+    for item in &program.items {
+        match item {
+            ast::Item::Function(f) => methods.push(f),
+            ast::Item::Class(c) => methods.extend(c.members.iter().filter_map(|m| match m {
+                ast::Member::Method(f) => Some(f),
+                ast::Member::Field(_) => None,
+            })),
+            ast::Item::Enum(e) => methods.extend(&e.methods),
+            ast::Item::Extend(x) => methods.extend(&x.methods),
+            ast::Item::Const(c) if unused.contains(&c.name.span.start()) => {
+                let keyword = source[..c.name.span.start()].rfind("const");
+                cuts.push(keyword.expect("a constant should follow `const`")..c.value.span.end());
+            }
+            // `generated_interfaces_should_be_used` fails first when W0012 names an interface, so
+            // this arm runs only on a tree that already fails.
+            ast::Item::Interface(i) if unused.contains(&i.name.span.start()) => {
+                cuts.push(i.span.range());
+                interfaces.insert(i.name.name.as_str().to_string());
+            }
+            ast::Item::Const(_) | ast::Item::Interface(_) => {}
+        }
+    }
+    for f in methods
+        .into_iter()
+        .filter(|f| unused.contains(&f.name.span.start()))
+    {
+        cuts.push(f.span.range());
+    }
+    for item in &program.items {
+        if let ast::Item::Extend(x) = item
+            && let Some(interface) = &x.interface
+            && let written = interface.to_string()
+            && interfaces.contains(written.split('<').next().unwrap_or_default())
+        {
+            cuts.push(x.span.range());
+        }
+    }
+    // A block cut as a whole holds the methods cut inside it: keep the outer range.
+    cuts.sort_by_key(|r| (r.start, std::cmp::Reverse(r.end)));
+    let mut kept: Vec<std::ops::Range<usize>> = Vec::new();
+    for cut in cuts {
+        if kept.last().is_none_or(|last| last.end <= cut.start) {
+            kept.push(cut);
+        }
+    }
+    let mut text = source.to_string();
+    for cut in kept.iter().rev() {
+        text.replace_range(cut.clone(), "");
+    }
+    (text, kept.len())
+}
+
+/// Deleting what W0012 names, all at once, from the programs of `seeds` leaves programs with no
+/// error. This holds for what the generator writes. It does not hold for every program: a plain
+/// `extend` block with a bound, whose methods are all dead, still names the deleted interface.
+fn deleting_unused_should_leave_programs_that_check(seeds: impl Iterator<Item = Vec<u8>>) {
+    let mut cut = 0;
+    for data in seeds {
+        let source = generate(&data).program;
+        let (text, count) = without_unused(&source);
+        cut += count;
+        let (_, diagnostics) = crate::front_end::checked(&text);
+        let errors: Vec<_> = (diagnostics.iter())
+            .filter(|d| d.severity() == Severity::Error)
+            .map(|d| d.code().as_str())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "{errors:?} after deleting what W0012 names from\n{source}\nleaving\n{text}"
+        );
+    }
+    assert!(cut > 0, "no seed has anything for W0012 to name");
+}
+
+/// The seeds are split in four tests, so that nextest runs them in parallel.
+#[test]
+fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_first_seeds() {
+    deleting_unused_should_leave_programs_that_check(seeds().take(16));
+}
+
+#[test]
+fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_second_seeds() {
+    deleting_unused_should_leave_programs_that_check(seeds().skip(16).take(16));
+}
+
+#[test]
+fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_third_seeds() {
+    deleting_unused_should_leave_programs_that_check(seeds().skip(32).take(16));
+}
+
+#[test]
+fn deleting_what_w0012_names_should_leave_a_program_that_checks_in_the_fourth_seeds() {
+    deleting_unused_should_leave_programs_that_check(seeds().skip(48));
+}
+
+/// `shapes` calls every requirement of each interface that a generated type conforms to.
+#[test]
+fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
+    let mut calls = 0;
+    for data in seeds() {
+        let source = generate(&data).plain;
+        let lexed = lexer::lex(&source).expect("a generated program should lex");
+        let program = parser::parse(lexed, false).program;
+        let shapes = (program.items.iter()).find_map(|item| match item {
+            ast::Item::Function(f) if f.name.name.as_str() == "shapes" => {
+                Some(&source[f.span.range()])
+            }
+            _ => None,
+        });
+        let Some(shapes) = shapes else { continue };
+        let conformed = program.items.iter().flat_map(|item| match item {
+            ast::Item::Class(c) => c.conforms.iter().collect::<Vec<_>>(),
+            ast::Item::Enum(e) => e.conforms.iter().collect(),
+            ast::Item::Extend(x) => x.interface.iter().collect(),
+            _ => Vec::new(),
+        });
+        for interface in conformed {
+            // The interface without its arguments.
+            let written = interface.to_string();
+            let name = written.split('<').next().unwrap_or_default();
+            let requirements = program.items.iter().find_map(|item| match item {
+                ast::Item::Interface(i) if i.name.name.as_str() == name => Some(&i.methods),
+                _ => None,
+            });
+            for requirement in requirements.expect("a conformed interface should be declared") {
+                let call = format!(".{}(", requirement.name.name);
+                assert!(shapes.contains(&call), "{call} in {shapes}");
+                calls += 1;
+            }
+        }
+    }
+    assert!(
+        calls > 0,
+        "some seed's types should conform to an interface"
+    );
+}
+
+/// The seeds between them write each kind of associated type: bounded by its interface, chosen as
+/// `i64`, and chosen as a counted `string`.
+#[test]
+fn generated_associated_types_should_reach_every_kind() {
+    let mut kinds = FxHashSet::default();
+    for data in seeds() {
+        for line in generate(&data).plain.lines().map(str::trim) {
+            if line.starts_with("type A") {
+                if line.contains(": I") {
+                    kinds.insert("bounded");
+                }
+                if line.ends_with("= i64") {
+                    kinds.insert("i64");
+                }
+                if line.ends_with("= string") {
+                    kinds.insert("string");
+                }
+            }
+        }
+    }
+    assert_eq!(kinds.len(), 3, "{kinds:?}");
+}
+
+/// The walk marks a generic interface that a type conforms to more than once, a call that its
+/// expected type picks and a bound with interface arguments, and only those.
+#[test]
+fn the_walk_should_mark_what_generic_interfaces_hold() {
+    let decls = "interface Conv<T> {\n    fn convert(self) -> T\n}\ninterface Other<T> {\n    fn other(self) -> T\n}\nclass A {}\nclass B: Conv<i64> {\n    fn convert(self) -> i64 { 1 }\n}\n";
+    let keys = [
+        "reach: a generic interface has two conformances on one type",
+        "reach: an expected type picks a conformance",
+        "reach: a bound has interface arguments",
+    ];
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{decls}{rest}"));
+        keys.map(|key| walk.seen.contains(key))
+    };
+    let int = "extend A: Conv<i64> {\n    fn convert(self) -> i64 { 1 }\n}\n";
+    let string = "extend A: Conv<string> {\n    fn convert(self) -> string { \"s\" }\n}\n";
+    let other = "extend A: Other<i64> {\n    fn other(self) -> i64 { 1 }\n}\n";
+    // One conformance per interface, called, and a bound with an argument.
+    assert_eq!(
+        marked(&format!(
+            "{int}{other}fn main() {{\n    let n: i64 = A().convert()\n}}\n"
+        )),
+        [false, false, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{int}fn f<T: Conv<i64>>(x: T) {{}}\nfn main() {{}}\n"
+        )),
+        [false, false, true]
+    );
+    // Two conformances of one interface in blocks, and in a list and a block, and called.
+    assert_eq!(
+        marked(&format!("{int}{string}fn main() {{}}\n")),
+        [true, false, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{string}extend B: Conv<string> {{\n    fn convert(self) -> string {{ \"s\" }}\n}}\nfn main() {{}}\n"
+        )),
+        [true, false, false]
+    );
+    assert_eq!(
+        marked(&format!(
+            "{int}{string}fn main() {{\n    let n: string = A().convert()\n}}\n"
+        )),
+        [true, true, false]
+    );
+    // A call of the one conformance that the type has is picked by nothing.
+    assert_eq!(
+        marked(&format!(
+            "{int}{string}fn main() {{\n    let n: i64 = B().convert()\n}}\n"
+        )),
+        [true, false, false]
+    );
+    // Two conformances with bounds, of which only one holds for the receiver: the expected type
+    // picks nothing, however the conformances are counted.
+    let conditional = "interface Flag {}\ninterface Rare {}\nclass Box<T> {\n    value: T\n}\nclass Node: Flag {}\nextend<T: Flag> Box<T>: Conv<i64> {\n    fn convert(self) -> i64 { 1 }\n}\nextend<T: Rare> Box<T>: Conv<string> {\n    fn convert(self) -> string { \"s\" }\n}\n";
+    assert_eq!(
+        marked(&format!(
+            "{conditional}fn main() {{\n    let n = Box(value: Node()).convert()\n}}\n"
+        )),
+        [true, false, false]
+    );
+    // The method in the body of `B` wins, with an expected type or without.
+    let own = "extend B: Conv<string> {\n    fn convert(self) -> string { \"s\" }\n}\n";
+    for call in ["let n = B().convert()", "let n: i64 = B().convert()"] {
+        assert_eq!(
+            marked(&format!("{own}fn main() {{\n    {call}\n}}\n")),
+            [true, false, false],
+            "{call}"
+        );
+    }
+}
+
+/// An interface lists each interface it inherits once.
+#[test]
+fn generated_interfaces_should_inherit_each_interface_once() {
+    let mut lists = 0;
+    for data in seeds() {
+        let source = generate(&data).plain;
+        let lexed = lexer::lex(&source).expect("a generated program should lex");
+        let program = parser::parse(lexed, false).program;
+        for item in &program.items {
+            let ast::Item::Interface(interface) = item else {
+                continue;
+            };
+            let names: FxHashSet<String> =
+                interface.inherits.iter().map(ToString::to_string).collect();
+            assert_eq!(names.len(), interface.inherits.len(), "{source}");
+            lists += usize::from(interface.inherits.len() > 1);
+        }
+    }
+    assert!(lists > 0, "no seed writes an interface that inherits two");
+}
+
+/// The walk marks an associated type with a bound, and a choice that is a `string`, a class or an
+/// array, and only those.
+#[test]
+fn the_walk_should_mark_what_associated_types_hold() {
+    let decls = "interface Plain {\n    type Item\n}\ninterface Bounded {\n    type Item: Plain\n}\nclass K0 {}\nclass R2<T> {\n    v: T\n}\nenum N1 {\n    A\n}\n";
+    let keys = [
+        "reach: an associated type has a bound",
+        "reach: an associated type's choice is counted",
+    ];
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{decls}{rest}"));
+        keys.map(|key| walk.seen.contains(key))
+    };
+    // A bound is in the interface; each choice is read where its class or enum conforms.
+    assert_eq!(marked("fn main() {}\n"), [true, false]);
+    // Without the bounded interface, no bound is marked.
+    let plain = "interface Plain {\n    type Item\n}\nfn main() {}\n";
+    let mut walk = Walk::default();
+    walk.program(plain);
+    assert!(!walk.seen.contains(keys[0]));
+    for (choice, counted) in [
+        ("string", true),
+        ("K0", true),
+        ("R2<i64>", true),
+        ("[i64]", true),
+        ("[string]", true),
+        ("i64", false),
+        ("N1", false),
+        ("string?", false),
+    ] {
+        let rest = format!("class C: Plain {{\n    type Item = {choice}\n}}\nfn main() {{}}\n");
+        assert_eq!(marked(&rest)[1], counted, "{choice}");
+        // The same choice in a block.
+        let rest = format!(
+            "class D {{}}\nextend D: Plain {{\n    type Item = {choice}\n}}\nfn main() {{}}\n"
+        );
+        assert_eq!(marked(&rest)[1], counted, "{choice} in a block");
+    }
+    // The name of a type's kind, as the receiver rows write it.
+    let item = Type::intern(TypeKind::Assoc(
+        Type::I64,
+        tir::InterfaceId(0),
+        crate::types::TypeArgs::NONE,
+        0,
+    ));
+    assert_eq!(kind_name(item), "Assoc");
+}
+
+/// The seeds between them write each type a requirement may name: the fixed ones, the interface's
+/// parameter, its associated type, and a class or an enum of the program.
+#[test]
+fn generated_requirements_should_name_every_kind_of_type() {
+    let mut kinds = FxHashSet::default();
+    for data in seeds() {
+        for line in generate(&data).plain.lines().map(str::trim) {
+            let Some(signature) = line.strip_prefix("fn r").filter(|_| !line.contains('{')) else {
+                continue;
+            };
+            let (params, ret) = signature.split_once("-> ").unwrap_or((signature, ""));
+            let params = params
+                .split(", ")
+                .skip(1)
+                .filter_map(|p| p.split(": ").nth(1));
+            for ty in params.chain([ret]).map(|ty| ty.trim_end_matches(')')) {
+                let kind = match ty {
+                    "" => continue,
+                    "i64" | "string" | "Self" | "[Self]" | "Self?" | "T" => ty,
+                    _ if ty.starts_with('A') => "an associated type",
+                    _ => "a class or an enum",
+                };
+                kinds.insert(kind.to_string());
+            }
+        }
+    }
+    let wanted = [
+        "i64",
+        "string",
+        "Self",
+        "[Self]",
+        "Self?",
+        "T",
+        "an associated type",
+        "a class or an enum",
+    ];
+    for kind in wanted {
+        assert!(
+            kinds.contains(kind),
+            "no requirement names {kind}: {kinds:?}"
+        );
+    }
 }

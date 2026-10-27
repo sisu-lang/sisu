@@ -8,6 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::enums::VariantInfo;
 use super::expr::{bare_none, int_literal, option_written, rank};
+use super::interface::{Bound, Required};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::stmt::BlockSoFar;
@@ -49,13 +50,36 @@ fn mark_params(ty: Type, named: &mut [bool]) {
                 mark_params(arg, named);
             }
         }
+        TypeKind::Assoc(base, _, args, _) => {
+            mark_params(base, named);
+            for &arg in args.get() {
+                mark_params(arg, named);
+            }
+        }
+        _ => unreachable!("only a kind with a child can name a parameter"),
+    }
+}
+
+/// Whether `ty` names the type parameter at place `param` other than under an associated type:
+/// only such a name lets the type that a result is annotated with bind the parameter.
+fn names_outside_assoc(ty: Type, param: usize) -> bool {
+    if !ty.has_param() {
+        return false;
+    }
+    match ty.kind() {
+        TypeKind::Param(_, j) => j as usize == param,
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => names_outside_assoc(inner, param),
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => {
+            (args.get().iter()).any(|&arg| names_outside_assoc(arg, param))
+        }
+        TypeKind::Assoc(..) => false,
         _ => unreachable!("only a kind with a child can name a parameter"),
     }
 }
 
 /// Which of the first `len` type parameters `types` name. A type that did not resolve names
 /// nothing.
-fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
+pub(super) fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bool> {
     let mut named = vec![false; len];
     for ty in types.flatten() {
         mark_params(ty, &mut named);
@@ -68,6 +92,27 @@ fn named_params(types: impl Iterator<Item = Option<Type>>, len: usize) -> Vec<bo
 /// rather than leave it uninferred, and no call waits for it.
 fn broken_param(seen: &mut FxHashSet<Symbol>, name: Symbol) -> bool {
     !seen.insert(name) || built_in_type(name.as_str()).is_some()
+}
+
+/// Binds each of `names`, a declaration's type parameters, that is broken (see `broken_param`)
+/// and that no argument bound to `UNKNOWN`, and whether any was. Such a parameter may be one no
+/// type names: it poisons the call rather than go uninferred. One pass over the names finds
+/// them, and only a call that leaves one unbound makes it.
+fn poison_broken_params(bindings: &mut Bindings, names: &[Symbol]) -> bool {
+    let mut broken = false;
+    if bindings.found.contains(&None) {
+        let mut seen = FxHashSet::default();
+        for (i, &name) in names.iter().enumerate() {
+            #[cfg(test)]
+            SCANNED.set(SCANNED.get() + 1);
+            let broken_name = broken_param(&mut seen, name);
+            if bindings.found[i].is_none() && broken_name {
+                bindings.found[i] = Some(UNKNOWN);
+                broken = true;
+            }
+        }
+    }
+    broken
 }
 
 /// Which of `names`, a declaration's type parameters, are broken (see `broken_param`).
@@ -227,6 +272,9 @@ impl Bindings {
             }
             (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => self.bind_all(p, v),
             (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => self.bind_all(p, v),
+            // An associated type binds nothing: the type it stands for is known once its base is
+            // bound, and the argument is then checked against it (see `Checker::known`).
+            (TypeKind::Assoc(..), _) => true,
             _ => false,
         }
     }
@@ -281,6 +329,15 @@ impl Bindings {
             }
             TypeKind::Enum(id, args) => {
                 Type::intern(TypeKind::Enum(id, self.resolve_all(args, unbound)?))
+            }
+            TypeKind::Assoc(base, interface, args, k) => {
+                let base = self.resolve(base, unbound)?;
+                // A hole stands for the whole type, which its base fixes.
+                if base.holds_hole() {
+                    return Some(*HOLE);
+                }
+                let args = self.resolve_all(args, unbound)?;
+                Type::intern(TypeKind::Assoc(base, interface, args, k))
             }
             _ => unreachable!("only a kind with a child can name a parameter"),
         })
@@ -339,6 +396,9 @@ pub(super) struct GenericSig<'a> {
     pub(super) owner: &'a [Type],
     pub(super) params: &'a [Option<Type>],
     pub(super) ret: Option<Type>,
+    /// The bounds of the parameters after the receiver's, in order; a parameter past the end has
+    /// none. The call checks them once it has inferred the arguments.
+    pub(super) bounds: &'a [Vec<Bound>],
 }
 
 /// How a call writes its callee: its name, the type arguments in `angles` (none written when
@@ -372,6 +432,57 @@ struct Inference {
     last: Vec<(usize, Type)>,
     /// Whether a parameter was bound to a type that no parameter takes.
     failed: bool,
+    /// Where each parameter was bound: the argument, or the type argument written for it.
+    origin: Vec<Option<Span>>,
+    /// The bounds that the call checks as soon as a parameter is bound, when its parameter
+    /// types write an associated type through some parameter.
+    early: Option<Early>,
+}
+
+/// The bounds a call checks as soon as the parameter they bound is bound: an argument that waits
+/// for an associated type of the parameter must not meet a type that has none.
+struct Early {
+    /// How many of the callee's parameters its receiver binds.
+    owned: usize,
+    /// Which parameters a parameter type writes an associated type through, by place.
+    through: Vec<bool>,
+    /// The bounds of the parameters after the receiver's, as `GenericSig::bounds`.
+    bounds: Vec<Vec<Bound>>,
+    /// The bounds already checked, by the place of their parameter and their own place.
+    checked: FxHashSet<(usize, usize)>,
+    /// The bounds of a parameter that is bound, that name a parameter that is not bound yet, by
+    /// the same places: they are checked as soon as the call binds what they name.
+    waiting: Vec<(usize, usize)>,
+    /// Whether one failed: an associated type that the call writes through the parameter does not
+    /// exist, so no argument waits for it any more.
+    failed: bool,
+}
+
+impl Early {
+    /// The bounds `sig`'s call checks early: none unless a parameter type writes an associated
+    /// type.
+    fn of(sig: &GenericSig<'_>) -> Option<Early> {
+        if !sig.params.iter().flatten().any(|param| param.has_assoc()) {
+            return None;
+        }
+        let mut through = vec![false; sig.declared.len()];
+        for param in sig
+            .params
+            .iter()
+            .flatten()
+            .filter(|param| param.has_assoc())
+        {
+            mark_params(*param, &mut through);
+        }
+        Some(Early {
+            owned: sig.owner.len(),
+            through,
+            bounds: sig.bounds.to_vec(),
+            checked: FxHashSet::default(),
+            waiting: Vec::new(),
+            failed: false,
+        })
+    }
 }
 
 /// `checked`, an argument, made `Error` that its rule rejected when `mismatched`.
@@ -440,6 +551,34 @@ pub(super) fn mismatched(checked: &Checked) -> bool {
 }
 
 impl Checker<'_> {
+    /// `bindings.known(ty)`, with each associated type of a known type replaced by the type its
+    /// conformance chose. `None` while `ty` names a parameter that is unbound, and too when a base
+    /// has no conformance, which its bound check reports: the argument then waits.
+    fn known(&self, bindings: &Bindings, ty: Type) -> Option<Type> {
+        bindings.known(ty).and_then(|ty| self.normalize(ty))
+    }
+
+    /// `known` for `ty`, a parameter type of the call or a part of one: only a call whose
+    /// parameter types write an associated type has any to replace.
+    fn known_in(&self, call: &Inference, ty: Type) -> Option<Type> {
+        match call.early {
+            None => call.bindings.known(ty),
+            Some(_) => self.known(&call.bindings, ty),
+        }
+    }
+
+    /// `bindings.partial(ty)`, with the associated types of known types replaced.
+    fn partial(&self, bindings: &Bindings, ty: Type) -> Type {
+        let partial = bindings.partial(ty);
+        self.normalize(partial).unwrap_or(partial)
+    }
+
+    /// `bindings.printed(ty)`, with the associated types of known types replaced.
+    fn printed(&self, bindings: &Bindings, ty: Type) -> Type {
+        let printed = bindings.printed(ty);
+        self.normalize(printed).unwrap_or(printed)
+    }
+
     /// The arguments of a call of the generic `sig`, checked in four passes that bind its type
     /// parameters. The caller has matched the arguments to the parameters by count and label.
     /// `written` gives every type parameter that the receiver does not give.
@@ -498,6 +637,8 @@ impl Checker<'_> {
             slots: args.iter().map(|_| None).collect(),
             last: Vec::new(),
             failed: false,
+            origin: vec![None; sig.declared.len()],
+            early: Early::of(sig),
         };
         if !written.is_empty() {
             let Some(list) = self.type_args(sig.name, &sig.declared[owned..], written, angles)
@@ -508,17 +649,14 @@ impl Checker<'_> {
             // `type_args` rejects each type that `report_fresh` would.
             for (i, &ty) in list.get().iter().enumerate() {
                 call.bindings.found[owned + i] = Some(ty);
+                call.origin[owned + i] = written.get(i).map(|ty| ty.span);
             }
+            let bound: Vec<usize> = (owned..sig.declared.len()).collect();
+            self.check_early(&mut call, &bound, span);
         }
         // Whether every call in an argument fits its declaration.
         let mut fit = vec![true; args.len()];
-        let ranks: Vec<u8> = iter::zip(args, &mut fit)
-            .map(|(arg, fit)| match &arg.value {
-                e if self.waits(e, fit) => 2,
-                e if self.literal_like(e) => 1,
-                _ => 0,
-            })
-            .collect();
+        let ranks = self.rank_arguments(&call, sig, args, &mut fit);
         for (i, arg) in args.iter().enumerate().filter(|&(i, _)| ranks[i] == 0) {
             self.infer_arg(&mut call, i, &arg.value, sig.params[i], None);
         }
@@ -546,7 +684,7 @@ impl Checker<'_> {
         for (i, ty) in std::mem::take(&mut call.last) {
             let (e, param) = (&args[i].value, sig.params[i]);
             if let Some(param) = param
-                && call.bindings.known(param).is_none()
+                && self.known_in(&call, param).is_none()
                 && self.bind_param(&mut call, param, ty, e.span)
             {
                 continue;
@@ -554,24 +692,13 @@ impl Checker<'_> {
             self.no_value(e.span, ty);
             call.slots[i] = Some(Err(Poisoned::error()));
         }
-        // A parameter whose name `type_params` reported, a second `T` or a built-in name, may
-        // be one no type names: it poisons the call rather than go uninferred. One pass over
-        // the names finds them, and only a call that leaves one unbound makes it.
-        let mut broken = false;
-        if call.bindings.found.contains(&None) {
-            let mut seen = FxHashSet::default();
-            for (i, &name) in sig.declared.iter().enumerate() {
-                #[cfg(test)]
-                SCANNED.set(SCANNED.get() + 1);
-                let broken_name = broken_param(&mut seen, name);
-                if call.bindings.found[i].is_none() && broken_name {
-                    call.bindings.found[i] = Some(UNKNOWN);
-                    broken = true;
-                }
-            }
-        }
+        let broken = poison_broken_params(&mut call.bindings, sig.declared);
+        // Once every parameter is bound, an argument is still unchecked only when its parameter
+        // type names an associated type that has no choice. The conformance reported that, and
+        // the call fails after it.
+        let unchecked = call.slots.iter().any(Option::is_none);
         let list = match call.bindings.finish() {
-            Ok(list) if !call.failed && !broken => Some(list),
+            Ok(list) if !call.failed && !broken && !unchecked => Some(list),
             Ok(_) => None,
             Err(i) => {
                 // An argument that failed, or a parameter's or the return type that did, may be
@@ -580,7 +707,12 @@ impl Checker<'_> {
                     || sig.params.contains(&None)
                     || sig.ret.is_none();
                 if !errored && !call.failed && expected != Some(UNKNOWN) {
-                    self.report_unbound(span, sig, i, misfit.map(|ret| call.bindings.printed(ret)));
+                    self.report_unbound(
+                        span,
+                        sig,
+                        i,
+                        misfit.map(|ret| self.printed(&call.bindings, ret)),
+                    );
                 }
                 None
             }
@@ -595,6 +727,9 @@ impl Checker<'_> {
             }
             return None;
         };
+        if !self.check_call_bounds(span, sig, &call, list) {
+            return None;
+        }
         self.instantiates = true;
         let checked = call
             .slots
@@ -603,7 +738,120 @@ impl Checker<'_> {
                 slot.expect("every argument should be checked once each parameter is bound")
             })
             .collect();
-        Some((checked, list, sig.ret.map(|ret| ret.subst(list.get()))))
+        let ret = sig.ret.and_then(|ret| self.subst(ret, list.get()));
+        Some((checked, list, ret))
+    }
+
+    /// The rank of each argument of the call: 2 for one that waits for context, 1 for one whose
+    /// type comes from its literals' defaults, else 0. An argument for a type that writes an
+    /// associated type through a parameter that is not bound waits for it, whatever the argument
+    /// is. `fit` is cleared where a call in an argument does not fit its declaration.
+    fn rank_arguments(
+        &mut self,
+        call: &Inference,
+        sig: &GenericSig<'_>,
+        args: &[ast::Arg],
+        fit: &mut [bool],
+    ) -> Vec<u8> {
+        iter::zip(args, fit)
+            .enumerate()
+            .map(|(i, (arg, fit))| {
+                let writes_assoc = sig.params[i]
+                    .is_some_and(|param| param.has_assoc() && self.known_in(call, param).is_none());
+                match &arg.value {
+                    _ if writes_assoc => 2,
+                    e if self.waits(e, fit) => 2,
+                    e if self.literal_like(e) => 1,
+                    _ => 0,
+                }
+            })
+            .collect()
+    }
+
+    /// Whether the arguments `list` of the call at `span` meet the bounds of `sig`. A parameter
+    /// whose argument fails is reported once, at the place that bound the parameter (`origin`).
+    fn check_call_bounds(
+        &mut self,
+        span: Span,
+        sig: &GenericSig<'_>,
+        call: &Inference,
+        list: TypeArgs,
+    ) -> bool {
+        let owned = sig.owner.len();
+        let mut holds = true;
+        for (k, bounds) in sig.bounds.iter().enumerate() {
+            for (j, &bound) in bounds.iter().enumerate() {
+                // Checked already, as soon as its parameter was bound.
+                if call
+                    .early
+                    .as_ref()
+                    .is_some_and(|e| e.checked.contains(&(owned + k, j)))
+                {
+                    continue;
+                }
+                let at = call.origin[owned + k].unwrap_or(span);
+                holds &= self.check_bound(at, list.get()[owned + k], bound, list.get());
+            }
+        }
+        holds
+    }
+
+    /// Checks the bounds of the parameters `bound`, which a binding has just bound, when a
+    /// parameter type writes an associated type through the parameter: the type it stands for
+    /// exists only if the bound holds. A bound whose arguments name a parameter that is not bound
+    /// yet waits, and is checked as soon as a binding binds what it names, before any argument
+    /// that waits for the associated type is checked. A bound that fails is reported once, and
+    /// the call fails.
+    fn check_early(&mut self, call: &mut Inference, bound: &[usize], at: Span) {
+        let Some(early) = &mut call.early else { return };
+        let mut due = std::mem::take(&mut early.waiting);
+        for &i in bound
+            .iter()
+            .filter(|&&i| i >= early.owned && early.through[i])
+        {
+            let count = early.bounds.get(i - early.owned).map_or(0, Vec::len);
+            due.extend((0..count).map(|j| (i, j)));
+        }
+        let mut with: Option<Vec<Type>> = None;
+        for (i, j) in due {
+            let early = call
+                .early
+                .as_ref()
+                .expect("a call that checks early should say so");
+            let bound = early.bounds[i - early.owned][j];
+            let named = bound.args.get().iter();
+            if !named
+                .into_iter()
+                .all(|&arg| self.known(&call.bindings, arg).is_some())
+            {
+                call.early
+                    .as_mut()
+                    .expect("a call that checks early should say so")
+                    .waiting
+                    .push((i, j));
+                continue;
+            }
+            let ty = call.bindings.found[i]
+                .expect("a parameter that a binding bound should have a type");
+            let with = with.get_or_insert_with(|| {
+                (call.bindings.found.iter())
+                    .map(|t| t.unwrap_or(UNKNOWN))
+                    .collect()
+            });
+            let early = call
+                .early
+                .as_mut()
+                .expect("a call that checks early should say so");
+            early.checked.insert((i, j));
+            let at = call.origin[i].unwrap_or(at);
+            if !self.check_bound(at, ty, bound, with) {
+                call.failed = true;
+                call.early
+                    .as_mut()
+                    .expect("a call that checks early should say so")
+                    .failed = true;
+            }
+        }
     }
 
     /// Whether the call at `span` is a misfit: `want`, its context, holds a hole, and the result
@@ -638,7 +886,7 @@ impl Checker<'_> {
             return;
         }
         // `unify` lets a `T?` take a value that is not optional, which the result cannot do.
-        let result = context.known(ret);
+        let result = self.known(&context, ret);
         if result != Some(want) && result.map(optional_of) != Some(want) {
             return;
         }
@@ -653,7 +901,7 @@ impl Checker<'_> {
             let (Some(param), Some(got)) = (sig.params[i], got) else {
                 continue;
             };
-            let Some(fit) = context.known(param) else {
+            let Some(fit) = self.known(&context, param) else {
                 continue;
             };
             // As `against`: the type, or its payload wrapped.
@@ -693,6 +941,10 @@ impl Checker<'_> {
         fit: &[bool],
     ) {
         for _ in 0..2 {
+            // The call fails, and the arguments that wait are checked for their own mistakes.
+            if call.early.as_ref().is_some_and(|early| early.failed) {
+                return;
+            }
             for (i, arg) in args.iter().enumerate() {
                 if ranks[i] == 2 && call.slots[i].is_none() {
                     self.infer_waiting(call, i, &arg.value, sig.params[i], fit[i]);
@@ -714,7 +966,7 @@ impl Checker<'_> {
         param: Option<Type>,
         fit: bool,
     ) {
-        if !fit || param.is_none_or(|param| call.bindings.known(param).is_some()) {
+        if !fit || param.is_none_or(|param| self.known_in(call, param).is_some()) {
             self.infer_arg(call, i, e, param, None);
         } else if let Some(param) = param
             && let Some(context) = self.call_context(call, e, param)
@@ -722,7 +974,7 @@ impl Checker<'_> {
             // The call reports a context it cannot meet as a mismatch with this type.
             let hint = ContextHint {
                 at: e.span,
-                want: call.bindings.printed(param),
+                want: self.printed(&call.bindings, param),
                 safe: matches!(e.kind, ast::ExprKind::MethodCall { safe: true, .. }),
             };
             let outer = self.body.context_hint.replace(hint);
@@ -751,7 +1003,7 @@ impl Checker<'_> {
     fn call_context(&mut self, call: &Inference, e: &ast::Expr, param: Type) -> Option<Type> {
         // A waiting call is a generic one, so its shape needs no `generic` check.
         let (shape, _) = self.call_shape(e)?;
-        let partial = (!shape.some).then(|| call.bindings.partial(param))?;
+        let partial = (!shape.some).then(|| self.partial(&call.bindings, param))?;
         (partial != *HOLE).then_some(partial)
     }
 
@@ -770,7 +1022,7 @@ impl Checker<'_> {
             call.slots[i] = Some(mark(self.operand(e, None)));
             return;
         };
-        let unbound = call.bindings.known(pattern).is_none();
+        let unbound = self.known_in(call, pattern).is_none();
         let checked = self.infer_value(call, e, pattern, context);
         if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
             call.last.push((i, ty));
@@ -790,7 +1042,7 @@ impl Checker<'_> {
         pattern: Type,
         context: Option<Type>,
     ) -> Checked {
-        match call.bindings.known(pattern) {
+        match self.known_in(call, pattern) {
             Some(want) => mark(self.operand(e, Some(want))),
             None => self.infer_unbound(call, e, pattern, context),
         }
@@ -820,13 +1072,13 @@ impl Checker<'_> {
         match type_of(&checked) {
             Some(Type::UNIT | Type::NEVER) | None => checked,
             Some(ty) if !self.bind_param(call, pattern, ty, e.span) => {
-                let want = call.bindings.printed(pattern);
+                let want = self.printed(&call.bindings, pattern);
                 let d = self.mismatch(e.span, Some(e), want, ty);
                 self.diagnostics.push(d);
                 mark((checked, true))
             }
             Some(_) => {
-                let want = call.bindings.known(pattern);
+                let want = self.known_in(call, pattern);
                 debug_assert!(
                     want.is_some(),
                     "a unified pattern should name only bound parameters"
@@ -863,7 +1115,7 @@ impl Checker<'_> {
                     let checked = self.infer_unbound(call, e, element, None);
                     // Only a new binding can bind `element`.
                     if call.bindings.kept != kept {
-                        bound = call.bindings.known(element);
+                        bound = self.known_in(call, element);
                     }
                     checked
                 } else {
@@ -912,6 +1164,7 @@ impl Checker<'_> {
         for &i in &call.bindings.fresh {
             #[cfg(test)]
             VISITS.set(VISITS.get() + 1);
+            call.origin[i].get_or_insert(at);
             let ty = call.bindings.found[i].expect("a fresh parameter should be bound");
             if matches!(ty, Type::UNIT | Type::NEVER) {
                 self.report(DiagnosticKind::TypeArgument {
@@ -920,6 +1173,10 @@ impl Checker<'_> {
                 });
                 call.failed = true;
             }
+        }
+        if call.early.is_some() {
+            let fresh = call.bindings.fresh.clone();
+            self.check_early(call, &fresh, at);
         }
     }
 
@@ -996,7 +1253,7 @@ impl Checker<'_> {
             callee,
             example,
             at,
-            in_result: named_params(iter::once(sig.ret), sig.declared.len())[param],
+            in_result: sig.ret.is_some_and(|ret| names_outside_assoc(ret, param)),
         });
     }
 
@@ -1086,6 +1343,21 @@ impl Checker<'_> {
     fn call_shape<'e>(&mut self, e: &'e ast::Expr) -> Option<(CallShape, &'e [ast::Arg])> {
         use ast::ExprKind as K;
         match &e.kind {
+            K::MethodCall {
+                receiver,
+                method,
+                types,
+                args,
+                safe,
+                ..
+            } if !types.is_empty() => {
+                // Type arguments written for a method fix its own parameters, so the call waits
+                // only when several methods answer it, and its context picks one.
+                if !self.answered_by_several(receiver, method, *safe) {
+                    return None;
+                }
+                Some((self.generic_method(receiver, method, args, *safe), args))
+            }
             K::MethodCall {
                 receiver,
                 method,
@@ -1284,24 +1556,55 @@ impl Checker<'_> {
                 _ => ty,
             });
         }
-        let (methods, owner) = match ty.map(Type::kind) {
-            Some(TypeKind::Class(id, _)) => {
-                let info = &self.classes[id.0];
-                (&info.methods, info.type_params.len())
-            }
-            Some(TypeKind::Enum(id, _)) => {
-                let info = &self.enums[id.0];
-                (&info.methods, info.type_params.len())
-            }
-            _ => return CallShape::default(),
-        };
-        let Some(&Declared::Known(func)) = methods.get(&method.name) else {
+        let Some(ty) = ty else {
             return CallShape::default();
         };
+        match ty.kind() {
+            TypeKind::Class(..) | TypeKind::Enum(..) => {}
+            TypeKind::Param(..) | TypeKind::Assoc(..) => return self.bound_shape(ty, method, args),
+            _ => return CallShape::default(),
+        }
+        // The method the call will find, as `find_method` finds it, without its reports.
+        let func = match self.applicable_method(ty, method.name) {
+            Some(Declared::Known(func)) => func,
+            Some(Declared::Broken) => return CallShape::default(),
+            None => {
+                self.conforming_methods(ty, method.name);
+                match self.candidates[..] {
+                    [] => return CallShape::default(),
+                    [(func, ..)] => func,
+                    // The call's context picks among several (`pick_conforming`): it waits for
+                    // it, as a call whose arguments cannot bind its parameters does.
+                    _ => {
+                        // Candidates that all return one known type give the call that type: the
+                        // context cannot pick among them, and the call reports it at once.
+                        let first = self.signatures[self.candidates[0].0.0].ret;
+                        let alike = first.is_some_and(|ret| !ret.has_param())
+                            && (self.candidates.iter())
+                                .all(|&(func, ..)| self.signatures[func.0].ret == first);
+                        if alike {
+                            return CallShape::default();
+                        }
+                        let shaped = self.candidates.iter().all(|&(func, ..)| {
+                            let sig = &self.signatures[func.0];
+                            sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args)
+                        });
+                        return CallShape {
+                            generic: true,
+                            shaped,
+                            open: shaped,
+                            ..CallShape::default()
+                        };
+                    }
+                }
+            }
+        };
         let sig = &self.signatures[func.0];
+        // The receiver binds the owner's type parameters: its class's, or its block's.
+        let owner = sig.type_params.len() - sig.own;
         let shaped = sig.ret.is_some() && fits(sig.params.iter().map(|&ty| (ty, None)), args);
         CallShape {
-            generic: sig.type_params.len() > owner,
+            generic: sig.own > 0,
             shaped,
             // The receiver binds the owner's type parameters.
             open: shaped
@@ -1309,6 +1612,91 @@ impl Checker<'_> {
                     leaves_open_in(sig.params.iter().copied(), ret, &sig.type_params, owner)
                 }),
             ..CallShape::default()
+        }
+    }
+
+    /// Whether several methods answer `receiver.method(...)`, or `receiver?.method(...)` with
+    /// `safe`: the requirements of a type parameter's bounds, or the methods of the conformance
+    /// blocks of a class or an enum.
+    fn answered_by_several(
+        &mut self,
+        receiver: &ast::Expr,
+        method: &ast::Ident,
+        safe: bool,
+    ) -> bool {
+        let Some(mut ty) = self.receiver_ahead(receiver) else {
+            return false;
+        };
+        if let (true, TypeKind::Optional(payload)) = (safe, ty.kind()) {
+            ty = payload;
+        }
+        match ty.kind() {
+            TypeKind::Param(..) | TypeKind::Assoc(..) => self.required(ty, method.name).len() > 1,
+            TypeKind::Class(..) | TypeKind::Enum(..) => {
+                if self.applicable_method(ty, method.name).is_some() {
+                    return false;
+                }
+                self.conforming_methods(ty, method.name);
+                self.candidates.len() > 1
+            }
+            _ => false,
+        }
+    }
+
+    /// The shape of a call of `method` on a value whose type `receiver` is a type parameter or an
+    /// associated type: the requirements its bounds give. One is a generic call if it has type
+    /// parameters of its own. Several wait for the context that picks one, unless all return one
+    /// type.
+    fn bound_shape(&mut self, receiver: Type, method: &ast::Ident, args: &[ast::Arg]) -> CallShape {
+        let found = self.required(receiver, method.name);
+        let requirement = |found: &Required| {
+            let interface = &self.interfaces[found.interface.0];
+            &interface.requirements[found.method]
+        };
+        let shaped = |found: &Required| {
+            let requirement = requirement(found);
+            requirement.ret.is_some() && fits(requirement.params.iter().map(|&ty| (ty, None)), args)
+        };
+        match &found[..] {
+            [] => CallShape::default(),
+            [one] => {
+                let interface = &self.interfaces[one.interface.0];
+                let requirement = &interface.requirements[one.method];
+                let shaped = shaped(one);
+                let mut names = interface.type_params.clone();
+                names.extend_from_slice(&requirement.own);
+                CallShape {
+                    generic: !requirement.own.is_empty(),
+                    shaped,
+                    open: shaped
+                        && requirement.ret.is_some_and(|ret| {
+                            let params = requirement.params.iter().copied();
+                            leaves_open_in(params, ret, &names, interface.type_params.len())
+                        }),
+                    ..CallShape::default()
+                }
+            }
+            _ => {
+                // The results for this receiver, where only the requirement's own parameters
+                // are open: `Self` is the receiver, whatever it is.
+                let results: Vec<Option<Type>> = (found.iter())
+                    .map(|one| {
+                        let ret = requirement(one).ret?;
+                        self.requirement_result(receiver, one, ret, &[])
+                    })
+                    .collect();
+                let alike = results[0].is_some() && results.iter().all(|ret| *ret == results[0]);
+                if alike {
+                    return CallShape::default();
+                }
+                let shaped = found.iter().all(shaped);
+                CallShape {
+                    generic: true,
+                    shaped,
+                    open: shaped,
+                    ..CallShape::default()
+                }
+            }
         }
     }
 
@@ -1428,19 +1816,37 @@ impl Checker<'_> {
     /// Reports each of `own` that takes a built-in type's name, or the name of one before it;
     /// `owner`'s are reported where they are declared. Every name keeps its place, so that a
     /// `Param`'s index is its place.
-    pub(super) fn type_params(&mut self, owner: &[ast::Ident], own: &[ast::Ident]) -> Vec<Symbol> {
+    pub(super) fn type_params(
+        &mut self,
+        owner: &[ast::TypeParam],
+        own: &[ast::TypeParam],
+    ) -> Vec<Symbol> {
         let mut first = FxHashMap::default();
         for param in owner {
             first
-                .entry(param.name)
-                .or_insert((param.span, Definition::Type));
+                .entry(param.name.name)
+                .or_insert((param.name.span, Definition::Type));
         }
+        self.own_type_params(&mut first, own);
+        owner
+            .iter()
+            .chain(own)
+            .map(|param| param.name.name)
+            .collect()
+    }
+
+    /// Reports each of `own` that takes a built-in type's name, or a name in `first`, where
+    /// `first` holds the type parameters before them; `own` join `first`.
+    pub(super) fn own_type_params(
+        &mut self,
+        first: &mut FxHashMap<Symbol, (Span, Definition)>,
+        own: &[ast::TypeParam],
+    ) {
         for param in own {
-            if !self.built_in(param) {
-                self.first_definition(&mut first, Definition::Type, None, param);
+            if !self.built_in(&param.name) {
+                self.first_definition(first, Definition::Type, None, &param.name);
             }
         }
-        owner.iter().chain(own).map(|param| param.name).collect()
     }
 
     /// The type arguments `written` in `angles` after `name`, whose declaration's type
@@ -1453,6 +1859,21 @@ impl Checker<'_> {
         declared: &[Symbol],
         written: &[ast::TypeExpr],
         angles: Span,
+    ) -> Option<TypeArgs> {
+        self.type_args_of(name, declared, written, angles, true)
+    }
+
+    /// `type_args`, where `instantiates` says whether a list that fits records a type argument
+    /// (see `tir::Program::instantiates`). An interface's list records none: `mono` copies no
+    /// interface, so a program with generic interfaces and no generic item takes its fast path.
+    /// A type argument that is itself an applied type records its own.
+    pub(super) fn type_args_of(
+        &mut self,
+        name: &ast::Ident,
+        declared: &[Symbol],
+        written: &[ast::TypeExpr],
+        angles: Span,
+        instantiates: bool,
     ) -> Option<TypeArgs> {
         let form = match (declared.len(), written.len()) {
             (0, 0) => return Some(TypeArgs::NONE),
@@ -1467,7 +1888,7 @@ impl Checker<'_> {
             _ => {
                 // Each argument is checked, so this collects into a `Vec` before it gives up.
                 let args: Vec<_> = written.iter().map(|arg| self.type_argument(arg)).collect();
-                self.instantiates = true;
+                self.instantiates |= instantiates;
                 return args
                     .into_iter()
                     .collect::<Option<Vec<_>>>()
@@ -1524,7 +1945,7 @@ impl Checker<'_> {
         let named = lex(rest).map_or(true, |lexed| {
             lexed.tokens.iter().any(|token| {
                 matches!(token.kind, TokenKind::Ident(name)
-                    if main.type_params.iter().any(|p| p.name == name))
+                    if main.type_params.iter().any(|p| p.name.name == name))
             })
         });
         let remove = (!named && !self.comment_in(&[angles.range()])).then_some(angles);
@@ -1690,23 +2111,18 @@ impl Checker<'_> {
         first: &ast::TypeExpr,
         angles: Span,
     ) -> Option<Poisoned> {
-        let (methods, owner_params, field) = match type_of(receiver)?.kind() {
+        let ty = type_of(receiver)?;
+        let field = match ty.kind() {
             TypeKind::Class(id, _) => {
-                let info = &self.classes[id.0];
-                let field = info.fields.iter().any(|f| f.name.name == method.name);
-                (&info.methods, info.type_params.len(), field)
+                (self.classes[id.0].fields.iter()).any(|f| f.name.name == method.name)
             }
-            TypeKind::Enum(id, _) => {
-                let info = &self.enums[id.0];
-                (&info.methods, info.type_params.len(), false)
-            }
+            TypeKind::Enum(..) => false,
             // A built-in's list is reported once its method is found.
             _ => return None,
         };
-        match methods.get(&method.name).copied() {
+        match self.own_method(ty, method.name) {
             // A method with parameters of its own takes the list at its call.
-            Some(Declared::Known(func))
-                if self.signatures[func.0].type_params.len() > owner_params => {}
+            Some(Declared::Known(func)) if self.signatures[func.0].own > 0 => {}
             Some(Declared::Known(_)) => self.not_generic(method.name, angles),
             None if field => {
                 return Some(self.misread(receiver_expr.span.to(method.span), Some(first)));
@@ -1742,5 +2158,78 @@ impl Checker<'_> {
             at: angles,
             form: ArgumentsForm::Variant { instead },
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tir::InterfaceId;
+
+    /// The type of `S.Item`, where `S` is the parameter at place 0.
+    fn item() -> Type {
+        let s = Type::intern(TypeKind::Param(Symbol::intern("S"), 0));
+        Type::intern(TypeKind::Assoc(s, InterfaceId(0), TypeArgs::NONE, 0))
+    }
+
+    /// An associated type of a parameter binds nothing: what it stands for is known once the
+    /// parameter is bound, and an argument is then checked against it. A binding of the
+    /// parameter by the type of an argument would take the item for the type of the source.
+    #[test]
+    fn an_associated_type_pattern_should_bind_nothing() {
+        let mut bindings = Bindings::new(1, &[]);
+        assert!(bindings.unify(item(), Type::I64));
+        assert!(bindings.unify(Type::optional(item()), Type::optional(Type::I64)));
+        assert_eq!(bindings.finish(), Err(0));
+        // It does not hide a parameter that is bound beside it.
+        let s = Type::intern(TypeKind::Param(Symbol::intern("S"), 0));
+        let two = Type::array(s);
+        assert!(bindings.unify(two, Type::array(Type::STRING)));
+        assert_eq!(
+            bindings.finish().map(|list| list.get().to_vec()),
+            Ok(vec![Type::STRING])
+        );
+        // The type waits for its base, and then names it.
+        assert_eq!(
+            bindings.known(item()),
+            Some(Type::intern(TypeKind::Assoc(
+                Type::STRING,
+                InterfaceId(0),
+                TypeArgs::NONE,
+                0
+            )))
+        );
+    }
+
+    /// An associated type of a parameter that is not bound is the hole as a whole, and is not known
+    /// while its base or an argument of its interface is unbound; `printed` keeps the names.
+    #[test]
+    fn an_associated_type_should_wait_for_its_base_and_its_arguments() {
+        let param = |name, place| Type::intern(TypeKind::Param(Symbol::intern(name), place));
+        let (s, t) = (param("S", 0), param("T", 1));
+        let item = Type::intern(TypeKind::Assoc(s, InterfaceId(0), TypeArgs::NONE, 0));
+        let with_arg = Type::intern(TypeKind::Assoc(
+            s,
+            InterfaceId(0),
+            TypeArgs::intern(&[t]),
+            0,
+        ));
+        let mut bindings = Bindings::new(2, &[]);
+        assert_eq!(bindings.partial(item), *HOLE);
+        assert_eq!(bindings.known(item), None);
+        assert_eq!(bindings.printed(item), item);
+        assert!(bindings.unify(s, Type::STRING));
+        // The base is bound, and the argument is not: the type waits, and a hole stands for it.
+        assert_eq!(bindings.known(with_arg), None);
+        assert_ne!(bindings.partial(with_arg), *HOLE);
+        assert!(bindings.partial(with_arg).holds_hole());
+        assert!(bindings.unify(t, Type::I64));
+        let string_item = Type::intern(TypeKind::Assoc(
+            Type::STRING,
+            InterfaceId(0),
+            TypeArgs::intern(&[Type::I64]),
+            0,
+        ));
+        assert_eq!(bindings.known(with_arg), Some(string_item));
     }
 }

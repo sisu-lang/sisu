@@ -1,0 +1,15 @@
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+interface Feed<T: Same> {
+    fn feed(self) -> T
+}
+
+interface Relay<T>: Feed<T> {
+    fn relay(self) -> T
+}
+
+fn main() {
+    print(0)
+}

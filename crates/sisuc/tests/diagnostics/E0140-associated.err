@@ -1,0 +1,13 @@
+error[E0140]: `go` instantiates itself without end
+  --> E0140-associated.sisu:13:9
+   |
+13 |         x.poke()
+   |         ^^^^^^^^ `Deep.poke` here
+...
+25 |         go(self.value)
+   |         -------------- which instantiates `go<T>`
+   |
+   = help: a call through `Deep` counts as reaching every conformance to `Deep`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

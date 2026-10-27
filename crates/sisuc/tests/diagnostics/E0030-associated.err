@@ -1,0 +1,10 @@
+error[E0030]: `S` has no associated type `Item`
+ --> E0030-associated.sisu:6:24
+  |
+6 | fn first<S>(s: S, x: S.Item) {
+  |                        ^^^^
+  |
+  = help: add a bound: `S: Source`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

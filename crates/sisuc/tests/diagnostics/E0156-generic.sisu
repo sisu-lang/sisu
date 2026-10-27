@@ -1,0 +1,26 @@
+interface One {
+    fn make<U>(self, x: U) -> U
+}
+
+interface Many {
+    fn make<V>(self, x: V) -> [V]
+}
+
+class C {}
+
+extend C: One {
+    fn make<U>(self, x: U) -> U {
+        x
+    }
+}
+
+extend C: Many {
+    fn make<V>(self, x: V) -> [V] {
+        [x]
+    }
+}
+
+fn main() {
+    let n: i64 = C().make(1)
+    print(n)
+}

@@ -1,0 +1,19 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Circle {
+    r: f64
+}
+
+fn _area<T: [Shape]>(_shape: T) {
+    print(1)
+}
+
+fn _size<U: [Circle]>(_circle: U) {
+    print(2)
+}
+
+fn main() {
+    print(3)
+}

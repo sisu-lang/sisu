@@ -1,0 +1,11 @@
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+interface Feed<T>: Convert<[T]> {
+    fn feed(self) -> T
+}
+
+fn main() {
+    print(1)
+}

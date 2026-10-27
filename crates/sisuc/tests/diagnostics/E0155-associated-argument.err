@@ -1,0 +1,8 @@
+error[E0155]: an `extend` block cannot name an associated type in `Convert<S.Item>`
+  --> E0155-associated-argument.sisu:14:28
+   |
+14 | extend<S: Source> Peek<S>: Convert<S.Item> {
+   |                            ^^^^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0155

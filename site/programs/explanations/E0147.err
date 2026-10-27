@@ -1,0 +1,10 @@
+error[E0147]: `Shape` is an interface, not a type
+ --> E0147.sisu:5:22
+  |
+5 | fn _describe(_shape: Shape) {
+  |                      ^^^^^
+  |
+  = help: use a type parameter: `T: Shape`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0147

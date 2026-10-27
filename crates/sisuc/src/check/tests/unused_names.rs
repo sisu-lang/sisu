@@ -801,3 +801,208 @@ fn equal_of_primitives_should_not_walk_the_generic_classes() {
     // Finding the held parameters would take a step for each class.
     assert!(HELD_STEPS.get() < n);
 }
+
+/// An interface, and the code that follows.
+const SHAPE: &str = "interface Shape {\n    fn area(self) -> f64\n}\n";
+
+/// A method of a conformance is live when its class or enum is built: an interface call names a
+/// requirement, so no use of the method itself reaches it, as rustc reports no method of a trait
+/// impl of a type it builds.
+#[test]
+fn conformance_method_should_not_warn_when_its_type_is_built() {
+    judge_unused();
+    for src in [
+        // In the list of a class, in a block of a class, and in a block of an enum.
+        "class Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n}\nfn main() {\n    print(Circle(r: 1.0).r)\n}",
+        "class Circle {\n    r: f64\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\nfn main() {\n    print(Circle(r: 1.0).r)\n}",
+        "enum Dir {\n    North\n}\nextend Dir: Shape {\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let _ = Dir.North\n}",
+        "enum Dir: Shape {\n    North\n    fn area(self) -> f64 { 1.0 }\n}\nfn main() {\n    let _ = Dir.North\n}",
+    ] {
+        // Nothing calls the method or names the interface, so the interface is the one warning:
+        // the method of a conformance of a type that is built gives none of its own.
+        assert_eq!(
+            found(&format!("{SHAPE}{src}")),
+            [(W0012, (1, 11), vec![])],
+            "{src}"
+        );
+    }
+}
+
+/// A conformance method that live code calls before its class is built is live already.
+#[test]
+fn conformance_method_should_not_warn_when_a_root_calls_it_before_its_class_is_built() {
+    judge_unused();
+    clean(&format!(
+        "{SHAPE}fn main() {{\n    print(Circle(r: 1.0).r)\n}}\nfn _show(c: Circle) -> f64 {{\n    c.area()\n}}\nclass Circle: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ self.r }}\n}}"
+    ));
+}
+
+/// What only the method of a conformance of an unbuilt class calls is not live: the method is
+/// not, so rustc reports the helper, and the class is reported, not its method.
+#[test]
+fn helper_should_warn_when_only_the_conformance_method_of_an_unbuilt_class_calls_it() {
+    judge_unused();
+    let src = format!(
+        "{SHAPE}fn helper() -> f64 {{\n    1.0\n}}\nclass Circle: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ helper() }}\n}}\nfn main() {{}}"
+    );
+    assert_eq!(
+        found(&src),
+        [
+            (W0012, (1, 11), vec![]),
+            (W0012, (4, 4), vec![(9, 28)]),
+            (W0012, (7, 7), vec![])
+        ]
+    );
+}
+
+/// A method of an `extend` block is unused when nothing calls it and its class is built; an
+/// unbuilt class is the one reported.
+#[test]
+fn extend_method_should_warn_only_when_its_type_is_built() {
+    judge_unused();
+    let block = "extend Circle {\n    fn grow(self) -> f64 { 1.0 }\n}\n";
+    let class = "class Circle {\n    r: f64\n}\n";
+    diagnostic(
+        &format!("{class}{block}fn main() {{\n    print(Circle(r: 1.0).r)\n}}"),
+        W0012,
+        (5, 8, "grow"),
+        &[],
+    );
+    diagnostic(
+        &format!("{class}{block}fn main() {{}}"),
+        W0012,
+        (1, 7, "Circle"),
+        &[],
+    );
+    // A call is a use, whichever block holds the method.
+    clean(&format!(
+        "{class}{block}fn main() {{\n    let c = Circle(r: 1.0)\n    print(c.grow() + c.r)\n}}"
+    ));
+}
+
+/// A class that conforms to `Shape` with an `area` that nothing calls, and `main` that builds it.
+const CIRCLE: &str = "class Circle {\n    r: f64\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\n";
+
+/// An interface that nothing names is unused, and so is one that only a conformance names: a
+/// conformance dispatches nothing. The methods of the conformance of a type that is built are live,
+/// so they give no warning of their own. A bound in dead code names the interface for no live
+/// code, and the warning cites it.
+#[test]
+fn interface_should_warn_when_no_live_code_names_or_calls_it() {
+    judge_unused();
+    diagnostic(
+        &format!("{SHAPE}fn main() {{}}"),
+        W0012,
+        (1, 11, "Shape"),
+        &[],
+    );
+    // Only `extend Circle: Shape` names it, and `Circle` is built.
+    diagnostic(
+        &format!("{SHAPE}{CIRCLE}fn main() {{\n    print(Circle(r: 1.0).r)\n}}"),
+        W0012,
+        (1, 11, "Shape"),
+        &[],
+    );
+    // Only a dead function's bound names it: the warning cites the bound.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}fn dead<T: Shape>(x: T) -> T {{ x }}\nfn main() {{}}"
+        )),
+        [(W0012, (1, 11), vec![(4, 12)]), (W0012, (4, 4), vec![])]
+    );
+    // Only the bound of a block whose methods are all dead names it: the warning cites the bound.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n    fn spelled(self) -> i64 {{ 1 }}\n}}\nfn main() {{\n    print(Crate(inner: 1).inner)\n}}"
+        )),
+        [(W0012, (1, 11), vec![(7, 11)]), (W0012, (8, 8), vec![])]
+    );
+    // Only the bound of a block with no method names it, and its class is never built.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n}}\nfn main() {{}}"
+        )),
+        [(W0012, (1, 11), vec![]), (W0012, (4, 7), vec![])]
+    );
+}
+
+/// An interface that live code names in a bound, calls through a requirement or a method of a
+/// conformance, or that a used interface names, is used.
+#[test]
+fn interface_should_not_warn_when_live_code_uses_it() {
+    judge_unused();
+    let circle = |rest: &str| format!("{SHAPE}{CIRCLE}{rest}");
+    for src in [
+        // (a) A live function's bound, a live method's bound, and a built class's bound.
+        circle("fn total<T: Shape>(_x: T) -> f64 {\n    1.0\n}\nfn main() {\n    print(total(Circle(r: 1.0)))\n}"),
+        circle("extend Circle {\n    fn fit<T: Shape>(self, _x: T) -> f64 { 1.0 }\n}\nfn main() {\n    let c = Circle(r: 1.0)\n    print(c.fit(c))\n}"),
+        circle("class Sorted<T: Shape> {\n    items: [T]\n}\nfn main() {\n    let s: Sorted<Circle> = Sorted(items: [Circle(r: 1.0)])\n    print(s.items.len())\n}"),
+        // (a) A live method's block names it in a bound of the block's parameter: for a plain
+        // block, for a conformance block, and beside the bound of a generic method.
+        circle("class Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T> {\n    fn spelled(self) -> f64 { self.inner.area() }\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).spelled())\n}"),
+        circle("interface Other {\n    fn other(self) -> f64\n}\nclass Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T>: Other {\n    fn other(self) -> f64 { self.inner.area() }\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).other())\n}"),
+        circle("class Crate<T> {\n    inner: T\n}\nextend<T> Crate<T> {\n    fn spelled<U: Shape>(self, _u: U) -> i64 { 3 }\n}\nfn main() {\n    let c = Crate(inner: 1)\n    print(c.inner)\n    print(c.spelled(Circle(r: 1.0)))\n}"),
+        // (a) The bound of a block with no live method names it when the block conforms a built
+        // class or enum, or has no method at all: no method names the bound.
+        circle("interface Marker {\n}\nclass Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T>: Marker {\n}\nfn want<X: Marker>(_x: X) -> i64 {\n    2\n}\nfn main() {\n    let c = Crate(inner: Circle(r: 1.0))\n    print(c.inner.r)\n    print(want(c))\n}"),
+        circle("interface Marker {\n}\nenum Maybe<T> {\n    Has(T)\n    No\n}\nextend<T: Shape> Maybe<T>: Marker {\n}\nfn want<X: Marker>(_x: X) -> i64 {\n    2\n}\nfn main() {\n    let m: Maybe<Circle> = Maybe.No\n    print(want(m))\n    print(want(Maybe.Has(Circle(r: 1.0))))\n}"),
+        circle("class Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T> {\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).inner.r)\n}"),
+        // (b) A method of a conformance, with no bound: the call selects it.
+        circle("fn main() {\n    print(Circle(r: 1.0).area())\n}"),
+        // A method of the body that meets a requirement of a listed interface.
+        format!("{SHAPE}class Disc: Shape {{\n    r: f64\n    fn area(self) -> f64 {{ self.r }}\n}}\nfn main() {{\n    print(Disc(r: 1.0).area())\n}}"),
+        // (c) An interface that a used interface inherits.
+        "interface Named {\n    fn name(self) -> string\n}\ninterface Shape: Named {\n    fn area(self) -> f64\n}\nclass Disc: Shape {\n    fn name(self) -> string { \"d\" }\n    fn area(self) -> f64 { 1.0 }\n}\nfn total<T: Shape>(_x: T) -> f64 {\n    1.0\n}\nfn main() {\n    print(total(Disc()))\n}".to_string(),
+        // (c) An interface that the bound of a used requirement's own parameter names.
+        "interface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Mapper {\n    fn map<U: Same>(self, x: U) -> U\n}\nclass Id: Mapper {\n    fn map<U: Same>(self, x: U) -> U { x }\n}\nfn use_mapper<T: Mapper>(_m: T) -> i64 {\n    1\n}\nfn main() {\n    print(use_mapper(Id()))\n}".to_string(),
+        // A name that starts with `_` is kept on purpose.
+        "interface _Shape {\n    fn area(self) -> f64\n}\nfn main() {}".to_string(),
+    ] {
+        clean(&src);
+    }
+}
+
+/// A generic interface is used by a call that selects a method of its conformance.
+#[test]
+fn generic_interface_should_not_warn_when_a_call_selects_its_conformance() {
+    judge_unused();
+    for src in [
+        // The program of the language specification.
+        "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Fahrenheit {\n    d: f64\n}\nclass Celsius {\n    d: f64\n}\nextend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nfn main() {\n    let f: Fahrenheit = Celsius(d: 1.0).convert()\n    print(f.d)\n}",
+        // The `Transform` example of the generics reference.
+        "class Celsius {\n    degrees: f64\n}\nclass Fahrenheit {\n    degrees: f64\n}\ninterface Transform<T> {\n    fn transform(self) -> T\n}\nextend Celsius: Transform<Fahrenheit> {\n    fn transform(self) -> Fahrenheit {\n        Fahrenheit(degrees: self.degrees * 1.8 + 32.0)\n    }\n}\nfn main() {\n    let f: Fahrenheit = Celsius(degrees: 100.0).transform()\n    print(f.degrees)\n}",
+    ] {
+        clean(src);
+    }
+}
+
+/// An interface that only the bound of a used interface's own type parameter names is used: the
+/// conformance that meets the bound names it too, and a conformance is no use.
+#[test]
+fn interface_should_not_warn_when_the_bound_of_a_used_interfaces_parameter_names_it() {
+    judge_unused();
+    clean(
+        "interface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Feed<T: Same> {\n    fn feed(self, x: T) -> i64\n}\nclass A {\n    n: i64\n}\nextend A: Same {\n    fn same(self, other: A) -> bool { self.n == other.n }\n}\nclass B {\n    m: i64\n}\nextend B: Feed<A> {\n    fn feed(self, x: A) -> i64 { self.m + x.n }\n}\nfn run<T: Feed<A>>(x: T, a: A) -> i64 {\n    x.feed(a)\n}\nfn main() {\n    print(run(B(m: 1), A(n: 2)))\n}",
+    );
+}
+
+/// An interface that only the bound of a used interface's associated type names is used: the
+/// class that is the item conforms to it, and a conformance is no use.
+#[test]
+fn interface_should_not_warn_when_the_bound_of_a_used_interfaces_associated_type_names_it() {
+    judge_unused();
+    clean(
+        "interface Same {\n    fn same(self, other: Self) -> bool\n}\ninterface Source {\n    type Item: Same\n    fn next(self) -> Item?\n}\nclass Tag: Same {\n    id: i64\n    fn same(self, other: Tag) -> bool { self.id == other.id }\n}\nclass Countdown: Source {\n    type Item = Tag\n    n: i64\n    fn next(self) -> Item? { if self.n > 0 { Tag(id: self.n) } else { None } }\n}\nfn first_of<S: Source>(s: S) -> S.Item? {\n    s.next()\n}\nfn main() {\n    print(first_of(Countdown(n: 1)) == None)\n    print(Tag(id: 1).id)\n}",
+    );
+}
+
+/// An interface of the prelude is out of the user's sight: nothing in it is unused, as nothing
+/// else in the prelude is.
+#[test]
+fn prelude_interface_should_not_warn_when_nothing_uses_it() {
+    judge_unused();
+    let prelude = prelude_program("interface Stock {\n    fn stock(self) -> i64\n}\n");
+    let src = "fn main() {}";
+    let (_, ds) = check(&parse_ok(src), &prelude, src, &[]);
+    assert!(ds.is_empty(), "{ds:?}");
+}

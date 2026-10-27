@@ -6,6 +6,7 @@ use std::{fmt, mem};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::generic::{GenericSig, Site, mismatched};
+use super::interface::Slot;
 use super::unused_names::Used;
 use super::{Checked, Checker, Declared, Definition, DiagnosticKind, Poisoned, own_args};
 use crate::ast;
@@ -18,12 +19,18 @@ use crate::tir::{self, EnumId, Rank, Type, TypeArgs, TypeKind};
 pub(super) struct EnumInfo {
     pub(super) name: ast::Ident,
     pub(super) type_params: Vec<Symbol>,
+    /// Whether a type parameter is written with a bound.
+    pub(super) bounded: bool,
+    /// The bounds of each of `type_params`; empty when `bounded` is false.
+    pub(super) bounds: Vec<Vec<super::Bound>>,
     /// The first variant of each name, in declaration order.
     pub(super) variants: Vec<VariantInfo>,
     /// Each variant's index in `variants`, by name.
     pub(super) index: FxHashMap<Symbol, usize>,
     /// The first method of each name that no variant takes, and every broken one.
     pub(super) methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// The associated types the declaration's body chooses.
+    pub(super) assoc: std::rc::Rc<super::Choices>,
 }
 
 pub(super) struct VariantInfo {
@@ -112,6 +119,16 @@ impl Checker<'_> {
                 at: e.name.span,
             });
         }
+        let receiver = Type::intern(TypeKind::Enum(id, own_args(&self.enums[id.0].type_params)));
+        self.body.self_type = Some(receiver);
+        self.body.set_type_params(&self.enums[id.0].type_params);
+        let bounds = self.declare_bounds(0, Vec::new(), &e.type_params);
+        if self.enums[id.0].bounded {
+            self.enums[id.0].bounds = bounds;
+        }
+        // The choices come before the payloads and the signatures, which may name them. The
+        // scope stays for the payloads of all variants.
+        self.enums[id.0].assoc = self.declare_choices(&e.assoc, owner);
         let mut first = FxHashMap::default();
         for variant in &e.variants {
             let name = &variant.name;
@@ -141,13 +158,22 @@ impl Checker<'_> {
             for label in payload.iter().filter_map(|field| field.label.as_ref()) {
                 self.first_definition(&mut labels, Definition::Field, Some(owner), label);
             }
-            self.body.set_type_params(&self.enums[id.0].type_params);
+            // The checks that each field's type queues.
+            let mut queued = Vec::new();
             let (fields, inner): (Vec<_>, Vec<_>) = payload
                 .iter()
-                .map(|field| self.resolve_written(&field.ty))
+                .map(|field| {
+                    let from = self.queued();
+                    let resolved = self.resolve_written(&field.ty);
+                    queued.push(from..self.queued());
+                    resolved
+                })
                 .unzip();
-            self.body.set_type_params(&[]);
             if self.first_definition(&mut first, Definition::Variant, Some(owner), name) {
+                let variant = self.enums[id.0].variants.len();
+                for (i, queued) in queued.into_iter().enumerate() {
+                    self.keep_at(queued, Slot::Payload(id, variant, i));
+                }
                 let info = &mut self.enums[id.0];
                 info.index.insert(name.name, info.variants.len());
                 info.variants.push(VariantInfo {
@@ -162,7 +188,7 @@ impl Checker<'_> {
                 });
             }
         }
-        let receiver = Type::intern(TypeKind::Enum(id, own_args(&self.enums[id.0].type_params)));
+        self.body.set_type_params(&[]);
         for method in &e.methods {
             let func = tir::FuncId(self.signatures.len());
             if self.first_definition(&mut first, Definition::Method, Some(owner), &method.name) {
@@ -170,10 +196,12 @@ impl Checker<'_> {
                     .methods
                     .insert(method.name.name, Declared::Known(func));
             }
+            let bounds = self.enums[id.0].bounds.clone();
             self.signature(
                 method,
                 format!("{owner}.{}", method.name.name),
                 &e.type_params,
+                bounds,
             );
             declared.push((method, Some(receiver)));
         }
@@ -182,6 +210,8 @@ impl Checker<'_> {
                 .methods
                 .insert(method.name, Declared::Broken);
         }
+        self.body.self_type = None;
+        self.body.assoc = std::rc::Rc::default();
     }
 
     /// `Enum.member`, or `Enum.member(args)` when `call` gives the arguments and the span of their
@@ -309,6 +339,7 @@ impl Checker<'_> {
         let path = format_args!("{enum_name}.{}", member.name);
         let (declared, fields, labels) =
             (info.type_params.clone(), v.fields.clone(), v.labels.clone());
+        let bounds = info.bounds.clone();
         let args = call.map_or(&[][..], |(args, _)| args);
         let labeled = if labels.iter().all(Option::is_some) && !labels.is_empty() {
             let names: Vec<_> = labels.iter().flatten().copied().collect();
@@ -333,6 +364,7 @@ impl Checker<'_> {
             owner: &[],
             params: &fields,
             ret: Some(Type::intern(TypeKind::Enum(id, own_args(&declared)))),
+            bounds: &bounds,
         };
         let written = (site.written, site.angles);
         let Some((args, _, Some(ty))) = self.generic_call(span, &sig, written, args, site.expected)
@@ -590,7 +622,7 @@ impl Checker<'_> {
         let mut key = start;
         while on_chain.insert(key) {
             let with = args.get();
-            let held = |ty: &Option<Type>| ty.map(|ty| ty.subst(with));
+            let held = |ty: &Option<Type>| ty.and_then(|ty| self.subst(ty, with));
             let (holder, field) = if at < classes {
                 let class = &self.classes[at];
                 let mut fields = class

@@ -1,0 +1,29 @@
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+class Fahrenheit {
+    degrees: f64
+}
+
+class Kelvin {
+    degrees: f64
+}
+
+class Rankine {
+    degrees: f64
+}
+
+extend Rankine: Convert<Fahrenheit> {
+    fn convert(self) -> Fahrenheit {
+        Fahrenheit(degrees: self.degrees - 459.67)
+    }
+}
+
+fn to_kelvin<T: Convert<Kelvin>>(x: T) -> Kelvin {
+    x.convert()
+}
+
+fn main() {
+    print(to_kelvin(Rankine(degrees: 491.67)).degrees)
+}

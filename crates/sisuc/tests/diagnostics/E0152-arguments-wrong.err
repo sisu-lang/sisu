@@ -1,0 +1,10 @@
+error[E0152]: `convert` does not match `Convert`'s requirement
+  --> E0152-arguments-wrong.sisu:11:8
+   |
+11 |     fn convert(self) -> f64 {
+   |        ^^^^^^^ found `fn convert(self) -> f64`
+   |
+   = help: `Convert` requires `fn convert(self) -> i64`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

@@ -1,0 +1,8 @@
+error[E0150]: `Named` inherits from itself, through `Labeled`
+ --> E0150.sisu:1:18
+  |
+1 | interface Named: Labeled {
+  |                  ^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0150

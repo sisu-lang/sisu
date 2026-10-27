@@ -1,0 +1,18 @@
+error[E0030]: `W.Sink` is not known here: a bound of `W` waits for this bound
+ --> E0030-bounds-loop.sisu:9:21
+  |
+9 | fn copy<R: Reader<W.Sink>, W: Writer<R.Item>>(from: R, to: W) {
+  |                     ^^^^
+  |
+  = help: write one of the bounds that wait for each other without an associated type
+
+error[E0030]: `R.Item` is not known here: a bound of `R` waits for this bound
+ --> E0030-bounds-loop.sisu:9:40
+  |
+9 | fn copy<R: Reader<W.Sink>, W: Writer<R.Item>>(from: R, to: W) {
+  |                                        ^^^^
+  |
+  = help: write one of the bounds that wait for each other without an associated type
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0030

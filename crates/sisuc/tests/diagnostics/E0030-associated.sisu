@@ -1,0 +1,12 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+fn first<S>(s: S, x: S.Item) {
+    print(1)
+}
+
+fn main() {
+    print(1)
+}

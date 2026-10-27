@@ -1,0 +1,17 @@
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+interface Mix<T> {
+    fn mix<U: Convert<T>>(self, other: U) -> T
+}
+
+class Meter {
+    d: f64
+}
+
+extend Meter: Mix<i64> {}
+
+fn main() {
+    print(Meter(d: 1.0).d)
+}

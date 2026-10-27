@@ -2,14 +2,19 @@
 //! checks, and records every error instead of stopping at the first.
 
 mod array;
+mod assoc;
+mod bound;
 mod branch;
 mod call;
+mod conform;
 mod constant;
 mod cycle;
 mod enums;
 mod exhaust;
 mod expr;
+mod extend;
 mod generic;
+mod interface;
 mod member;
 mod number;
 mod operator;
@@ -22,21 +27,26 @@ mod stmt;
 mod string;
 mod unused_names;
 
+use std::rc::Rc;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
 use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
-    MismatchSource, Severity, Unbuilt, suggestion,
+    MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
 };
 use crate::source::{self, Span};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{Head, write_type};
+use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
+use extend::Extension;
+use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot};
 use prelude::PRELUDE;
-use unused_names::{Owner, Pending, Use};
+use unused_names::{Owner, Pending, Use, Used};
 
 /// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when
 /// still known (an `if` with one failed branch takes the other's), else it is the poison
@@ -81,17 +91,38 @@ type CheckedBlock = Result<tir::Block, Poisoned>;
 /// `never`, so it stands for `Error` there: a `None` it reaches is `Error`, with no diagnostic.
 static UNKNOWN: Type = Type::NEVER;
 
+/// A class or an enum: the holder of a method, or of type parameters.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Holder {
+    Class(tir::ClassId),
+    Enum(tir::EnumId),
+}
+
+/// The type parameters of a declaration with the bounds of each.
+type ParamBounds = (Vec<Symbol>, Vec<Vec<Bound>>);
+
 /// A type of `None` is `Error`: its error is reported where the signature names it.
 struct Signature {
     /// `f`, or `P.m` for a method.
     name: String,
     /// The type parameters in scope: a method's owner's, then its own.
     type_params: Vec<Symbol>,
+    /// How many of `type_params` are the function's own, the last ones.
+    own: usize,
+    /// The bounds of each of the function's own type parameters.
+    bounds: Vec<Vec<Bound>>,
     /// Without a method's `self`.
     params: Vec<Option<Type>>,
     ret: Option<Type>,
     /// The name's span.
     span: Span,
+    /// `fn` through the end of the signature, before the body.
+    header: Span,
+    /// The interface, with its arguments, of the `extend` block that declares a method.
+    conformance: Option<(tir::InterfaceId, TypeArgs)>,
+    /// The place among `Checker.extensions` of the `extend` block that declares a method, if the
+    /// checker takes the block: its target and bounds are the owner's.
+    extension: Option<usize>,
 }
 
 /// What a function, class, constant or method name stands for: the first intact item of that
@@ -106,10 +137,16 @@ enum Declared<T> {
 struct ClassInfo {
     name: ast::Ident,
     type_params: Vec<Symbol>,
+    /// Whether a type parameter is written with a bound.
+    bounded: bool,
+    /// The bounds of each of `type_params`; empty when `bounded` is false.
+    bounds: Vec<Vec<Bound>>,
     /// The first field of each name, in declaration order.
     fields: Vec<FieldInfo>,
     /// The first method of each name, and every broken one.
     methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
+    /// The associated types the declaration's body chooses.
+    assoc: Rc<Choices>,
 }
 
 struct FieldInfo {
@@ -289,6 +326,34 @@ thread_local! {
     /// How many types the walks for comparisons and for held type parameters have taken from
     /// their stacks on this thread.
     pub(super) static HELD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many inherited interfaces the check for a requirement that an interface declares
+    /// again has visited on this thread.
+    pub(super) static INHERIT_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many candidate results a call that picks among conformance blocks has read.
+    pub(super) static PICK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many interfaces the closures of a type's conformances have put in a visited set, read
+    /// as an inherited one, or traced back to the interface that inherits them.
+    pub(super) static CLOSURE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many fields of a class the check for a method named like a field has indexed.
+    pub(super) static FIELDS_INDEXED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `conforms` has looked for the conformance of a class or an enum, not
+    /// counting an answer it kept.
+    pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many conformances and choices the checks of the choices have read, or looked up by
+    /// the name of an associated type, on this thread.
+    pub(super) static CHOICE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times a bound that writes an associated type of a parameter has been tried.
+    pub(super) static BOUND_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many declarations of associated types `names_of` has built for an interface, with the
+    /// ones it inherits, on this thread.
+    pub(super) static DECLARED_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many declarations of an interface `probe_associated` has read, on this thread.
+    pub(super) static PROBE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many scopes (type parameters with their bounds) have been kept on this thread.
+    pub(super) static SCOPES_KEPT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many closure entries have been indexed, and how many entries of an interface have been
+    /// read for the name of an associated type, on this thread.
+    pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 struct Checker<'src> {
@@ -306,6 +371,71 @@ struct Checker<'src> {
     enums: Vec<EnumInfo>,
     /// The first enum of each name, and every broken one.
     enum_ids: FxHashMap<Symbol, Declared<tir::EnumId>>,
+    /// Indexed by `InterfaceId`, so a duplicate interface has requirements of its own.
+    interfaces: Vec<InterfaceInfo>,
+    /// For each method that meets a requirement, its interfaces: a call of it uses them.
+    meets: FxHashMap<tir::FuncId, Vec<tir::InterfaceId>>,
+    /// For each method name, the interfaces that declare a requirement of it.
+    declaring: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
+    /// For each name of an associated type, the interfaces that declare one of it, with its place
+    /// among theirs.
+    declaring_assoc: FxHashMap<Symbol, Vec<(tir::InterfaceId, usize)>>,
+    /// The place of the associated type of a name among those of an interface, if it declares one.
+    assoc_at: FxHashMap<(tir::InterfaceId, Symbol), usize>,
+    /// The bound checks of types resolved before every conformance is known; `None` once they
+    /// run, and later types are checked as they are resolved.
+    pending_bounds: Option<Vec<PendingBound>>,
+    /// The type parameters in scope where a pending check was queued.
+    scopes: Vec<Scope>,
+    /// Where each bound is written whose closure went past the limit and was reported.
+    wide_reported: FxHashSet<Span>,
+    /// A buffer for the walk of an interface closure, kept from one closure to the next.
+    closure_seen: FxHashSet<(tir::InterfaceId, TypeArgs)>,
+    /// The first interface of each name, and every broken one.
+    interface_ids: FxHashMap<Symbol, Declared<tir::InterfaceId>>,
+    /// Each `extend` block whose target is a class or an enum, in source order.
+    extensions: Vec<Extension>,
+    /// For each class or enum and method name, the blocks that hold a method of that name, and
+    /// the method, so that a method call reads only the blocks that hold its name.
+    extension_methods: FxHashMap<(Holder, Symbol), Vec<(usize, tir::FuncId)>>,
+    /// The names of the types that a broken `extend` block, or a block of a conformance that
+    /// failed, may have given methods to. A method no one finds on them is poisoned.
+    broken_extensions: FxHashSet<Symbol>,
+    /// The methods that a block of an intact target lost to a syntax error.
+    broken_extension_methods: FxHashSet<(Holder, Symbol)>,
+    /// The methods of the conformance blocks that cover the receiver of the call being found, with
+    /// the block's interface and its arguments for the receiver: a buffer that `find_method` fills
+    /// and clears per call.
+    candidates: Vec<(tir::FuncId, tir::InterfaceId, TypeArgs)>,
+    /// Every conformance of a class or an enum to an interface.
+    conformances: tir::Conformances,
+    /// The type parameters of each conformance that has bounded ones, with their bounds, by
+    /// interface and place among the interface's: the class's or the block's.
+    conformance_bounds: FxHashMap<(tir::InterfaceId, usize), ParamBounds>,
+    /// Where each choice that writes an associated type is written, by conformance (interface and
+    /// place among the interface's) and place of the associated type among the interface's.
+    choice_ats: FxHashMap<(tir::InterfaceId, usize, usize), Span>,
+    /// The choices that `normalize` found to need their own associated type, each with the first
+    /// type found for it; reported once all bodies are checked (see `report_loops`).
+    loops: std::cell::RefCell<FxHashMap<(tir::InterfaceId, usize, usize), Type>>,
+    /// The associated types that a bound of each interface gives its type, with the ones that the
+    /// interfaces it inherits declare, indexed by name: built when first asked for, once every
+    /// interface has its inheritance (`interfaces_resolved`), and kept for the program.
+    declared: std::cell::RefCell<FxHashMap<tir::InterfaceId, Rc<interface::Names>>>,
+    /// Whether pass 1b is done: every interface has its inheritance, so what an interface
+    /// declares will not change.
+    interfaces_resolved: bool,
+    /// The types that `probe_associated` has probed for a bound, by interface and arguments: a
+    /// type is probed once for a bound, however many calls ask.
+    probed_types: FxHashSet<(Type, tir::InterfaceId, TypeArgs)>,
+    /// The associated types that `probe_associated` has normalized: two bounds that inherit one
+    /// interface give it once.
+    probed_assoc: FxHashSet<Type>,
+    /// The answers of `conforms` for a type with no type parameter, which no body changes.
+    conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
+    /// The place among `extensions` of the first block that covers the receiver of the call being
+    /// found and whose bounds fail, when `conforming_methods` finds no method for it.
+    failed_block: Option<usize>,
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
@@ -388,6 +518,15 @@ impl std::ops::DerefMut for Diagnostics {
     }
 }
 
+/// The entries of the closure of a type parameter or an associated type, by interface.
+#[derive(Default)]
+struct ClosureIndex {
+    /// How many entries of the closure are indexed.
+    done: usize,
+    /// For each interface, its entries with their places in the closure.
+    by_interface: FxHashMap<tir::InterfaceId, Vec<(usize, TypeArgs)>>,
+}
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 struct Body {
@@ -397,6 +536,38 @@ struct Body {
     type_params: Vec<Symbol>,
     /// Where in `type_params` each name first is, so a lookup does not scan them.
     type_param_at: FxHashMap<Symbol, usize>,
+    /// The bounds of the type parameters in scope, by place; a place past the end has none.
+    bounds: Vec<Vec<Bound>>,
+    /// The places of the type parameters whose closure went past `BOUND_CLOSURE_LIMIT`: they stay
+    /// unknown in this body.
+    wide: Vec<usize>,
+    /// The interfaces each type parameter conforms to, by place, once found (`param_interfaces`).
+    conforming: Vec<Option<Vec<(tir::InterfaceId, TypeArgs)>>>,
+    /// The interfaces each associated type of a type parameter conforms to through the bounds of
+    /// its declaration, once found (`assoc_interfaces`). The bounds of the type parameters in scope
+    /// do not change them, so a body keeps them as it goes.
+    assoc_conforming: FxHashMap<Type, Vec<(tir::InterfaceId, TypeArgs)>>,
+    /// The associated types whose closure went past `BOUND_CLOSURE_LIMIT`: they stay unknown in
+    /// this body.
+    wide_assoc: FxHashSet<Type>,
+    /// The requirements of the bounds of each type parameter or associated type by name, once
+    /// indexed (`required`). All these caches change with the bounds, and a body's are cleared
+    /// with it.
+    required: FxHashMap<Type, FxHashMap<Symbol, Vec<Required>>>,
+    /// For each type parameter or associated type, how many entries of its closure are indexed,
+    /// and the entries by interface, each with its place in the closure (`index_closure`).
+    named: FxHashMap<Type, ClosureIndex>,
+    /// The associated types that a bare name stands for: the interface's own in an interface,
+    /// the conformance's choices in a class, an enum or an `extend` block. `None` is `Error`.
+    assoc: Rc<Choices>,
+    /// The names of the associated types whose choices are being resolved: a choice cannot name
+    /// one of them.
+    choosing: Vec<Symbol>,
+    /// The answers of `conforms` for a type that holds a type parameter: they change with the
+    /// bounds, and a body's are cleared with them.
+    conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
+    /// Where in `Checker.scopes` the type parameters now in scope are, once a check waits.
+    scope: Option<usize>,
     /// Where each call of a value, `a<b, c>(d)`, that has been reported starts: comparisons
     /// misread as a call change the count of the arguments of the call they are an argument of,
     /// which is then not reported.
@@ -466,6 +637,7 @@ struct Body {
 impl Body {
     /// Puts `params` in scope, in place of the type parameters there.
     fn set_type_params(&mut self, params: &[Symbol]) {
+        self.forget_bounds(0);
         self.type_params.clear();
         self.type_params.extend_from_slice(params);
         self.type_param_at.clear();
@@ -475,6 +647,48 @@ impl Body {
             PARAM_STEPS.set(PARAM_STEPS.get() + 1);
             self.type_param_at.insert(name, i);
         }
+    }
+
+    /// Puts `params` after the type parameters in scope; a name in scope keeps its place.
+    fn push_type_params(&mut self, params: &[Symbol]) {
+        self.forget_bounds(self.type_params.len());
+        for &name in params {
+            #[cfg(test)]
+            PARAM_STEPS.set(PARAM_STEPS.get() + 1);
+            self.type_param_at
+                .entry(name)
+                .or_insert(self.type_params.len());
+            self.type_params.push(name);
+        }
+    }
+
+    /// Drops the type parameters after the first `len`, which `push_type_params` added.
+    fn truncate_type_params(&mut self, len: usize) {
+        self.forget_bounds(len);
+        for at in (len..self.type_params.len()).rev() {
+            if self.type_param_at.get(&self.type_params[at]) == Some(&at) {
+                self.type_param_at.remove(&self.type_params[at]);
+            }
+        }
+        self.type_params.truncate(len);
+    }
+
+    /// Drops the bounds from the place `first` on, and what was found from them.
+    fn forget_bounds(&mut self, first: usize) {
+        self.bounds.truncate(first);
+        self.conforming.clear();
+        self.wide.clear();
+        self.required.clear();
+        self.named.clear();
+        self.conformed.clear();
+        self.scope = None;
+    }
+
+    /// Gives the type parameters from the place `first` on their `bounds`.
+    fn set_bounds(&mut self, first: usize, bounds: Vec<Vec<Bound>>) {
+        self.forget_bounds(first);
+        self.bounds.resize(first, Vec::new());
+        self.bounds.extend(bounds);
     }
 
     /// Where the type parameter `name` is in `type_params`, if it is one.
@@ -505,7 +719,10 @@ pub(crate) fn check<'src>(
         .chain(prelude.items.iter().filter(|item| !option(item)))
         .collect();
     checker.collect_names(&items, program.items.len(), &program.broken);
+    checker.interface_signatures(&items);
     let declared = checker.collect_signatures(&items);
+    checker.read_declared_bounds();
+    checker.conformances(&items);
     checker.fold_constants(&items);
     let cyclic = checker.never_constructed();
     let unbuilt;
@@ -513,12 +730,11 @@ pub(crate) fn check<'src>(
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
-    let functions: Vec<_> = declared
-        .iter()
-        .enumerate()
-        .map(|(i, &(f, owner))| checker.function(f, tir::FuncId(i), owner))
+    let functions: Vec<_> = (declared.iter().enumerate())
+        .map(|(i, &(f, owner))| checker.method_or_function(f, tir::FuncId(i), owner))
         .collect();
     checker.instantiation_cycles(&functions, &unbuilt);
+    checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
     let mut diagnostics = std::mem::take(&mut checker.diagnostics).into_vec();
     diagnostics.sort_by_key(|d| d.span().start());
@@ -565,10 +781,15 @@ pub(crate) fn check<'src>(
         || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
             ast::Item::Enum(e) => !e.broken_methods.is_empty(),
-            ast::Item::Function(_) | ast::Item::Const(_) => false,
+            ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
+            // Nothing poisons a call of a method an interface loses without an error yet: Task 4
+            // resolves such calls, and until then the program has an error of its own.
+            ast::Item::Function(_) | ast::Item::Const(_) | ast::Item::Interface(_) => false,
         });
+    let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
     let (instantiates, prelude) = (checker.instantiates, checker.prelude);
+    let conformances = checker.conformances;
     let program = functions
         .into_iter()
         .collect::<Option<_>>()
@@ -580,6 +801,8 @@ pub(crate) fn check<'src>(
             functions,
             instantiates,
             prelude,
+            interfaces,
+            conformances,
         });
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
@@ -668,6 +891,31 @@ impl<'src> Checker<'src> {
             class_ids: FxHashMap::default(),
             enums: Vec::new(),
             enum_ids: FxHashMap::default(),
+            interfaces: Vec::new(),
+            meets: FxHashMap::default(),
+            declaring: FxHashMap::default(),
+            declaring_assoc: FxHashMap::default(),
+            assoc_at: FxHashMap::default(),
+            pending_bounds: Some(Vec::new()),
+            scopes: Vec::new(),
+            wide_reported: FxHashSet::default(),
+            closure_seen: FxHashSet::default(),
+            interface_ids: FxHashMap::default(),
+            extensions: Vec::new(),
+            extension_methods: FxHashMap::default(),
+            broken_extensions: FxHashSet::default(),
+            broken_extension_methods: FxHashSet::default(),
+            candidates: Vec::new(),
+            conformances: tir::Conformances::default(),
+            conformance_bounds: FxHashMap::default(),
+            choice_ats: FxHashMap::default(),
+            loops: std::cell::RefCell::default(),
+            declared: std::cell::RefCell::default(),
+            interfaces_resolved: false,
+            probed_types: FxHashSet::default(),
+            probed_assoc: FxHashSet::default(),
+            conformed: FxHashMap::default(),
+            failed_block: None,
             lowered_enums: Vec::new(),
             written: None,
             constants: FxHashMap::default(),
@@ -692,6 +940,21 @@ impl<'src> Checker<'src> {
 }
 
 impl Checker<'_> {
+    /// The interfaces as `tir` names them.
+    fn lowered_interfaces(&self) -> Vec<tir::Interface> {
+        (self.interfaces.iter())
+            .map(|info| tir::Interface {
+                name: info.name.name.to_string(),
+                methods: (info.requirements.iter())
+                    .map(|requirement| requirement.name.name.to_string())
+                    .collect(),
+                assoc: (info.assoc.iter())
+                    .map(|assoc| assoc.name.name.to_string())
+                    .collect(),
+            })
+            .collect()
+    }
+
     /// Records a coded diagnostic.
     fn report(&mut self, kind: DiagnosticKind) {
         self.diagnostics.push(kind.into());
@@ -718,8 +981,11 @@ impl Checker<'_> {
                     self.classes.push(ClassInfo {
                         name: class.name.clone(),
                         type_params,
+                        bounded: class.type_params.iter().any(|p| !p.bounds.is_empty()),
+                        bounds: Vec::new(),
                         fields: Vec::new(),
                         methods: FxHashMap::default(),
+                        assoc: Rc::default(),
                     });
                     let name = &class.name;
                     if !self.built_in(name)
@@ -748,9 +1014,12 @@ impl Checker<'_> {
                     self.enums.push(EnumInfo {
                         name: e.name.clone(),
                         type_params,
+                        bounded: e.type_params.iter().any(|p| !p.bounds.is_empty()),
+                        bounds: Vec::new(),
                         variants: Vec::new(),
                         index: FxHashMap::default(),
                         methods: FxHashMap::default(),
+                        assoc: Rc::default(),
                     });
                     if !self.built_in(&e.name)
                         && self.first_callable(&mut first, Definition::Enum, &e.name)
@@ -770,11 +1039,37 @@ impl Checker<'_> {
                     }
                     order += 1;
                 }
+                ast::Item::Interface(interface) => {
+                    let mut type_params = self.type_params(&[], &interface.type_params);
+                    type_params.insert(0, Symbol::intern("Self"));
+                    let id = tir::InterfaceId(self.interfaces.len());
+                    self.interfaces.push(InterfaceInfo {
+                        name: interface.name.clone(),
+                        type_params,
+                        inherits: Vec::new(),
+                        inherits_at: Vec::new(),
+                        requirements: Vec::new(),
+                        bounds: Vec::new(),
+                        assoc: Vec::new(),
+                    });
+                    let name = &interface.name;
+                    if !self.built_in(name)
+                        && self.first_callable(&mut first, Definition::Interface, name)
+                    {
+                        self.interface_ids.insert(name.name, Declared::Known(id));
+                    }
+                }
+                ast::Item::Extend(extend) => next_function += extend.methods.len(),
             }
         }
         if user_items == items.len() {
             self.prelude = self.item_counts(next_function);
         }
+        self.poison_broken(broken);
+    }
+
+    /// Poisons the name of each broken item.
+    fn poison_broken(&mut self, broken: &[ast::Broken]) {
         for broken in broken {
             let name = &broken.name.name;
             match broken.kind {
@@ -784,15 +1079,27 @@ impl Checker<'_> {
                 ast::BrokenKind::Class => {
                     self.class_ids.insert(*name, Declared::Broken);
                 }
+                ast::BrokenKind::Interface => {
+                    self.interface_ids.insert(*name, Declared::Broken);
+                }
                 ast::BrokenKind::Enum => {
                     self.enum_ids.insert(*name, Declared::Broken);
                 }
                 ast::BrokenKind::Constant => {
                     self.constants.insert(*name, Declared::Broken);
                 }
+                // Its target is intact, and its parse error already fails the program. A method
+                // call on the target that finds no method is poisoned.
+                ast::BrokenKind::Extend => {
+                    self.broken_extensions.insert(*name);
+                    continue;
+                }
             }
-            // Functions, classes, enums and constants share a namespace, so an intact item of
-            // another kind and this name is poisoned too.
+            // Functions, classes, enums, interfaces and constants share a namespace, so an intact
+            // item of another kind and this name is poisoned too.
+            if let Some(interface) = self.interface_ids.get_mut(name) {
+                *interface = Declared::Broken;
+            }
             if let Some(class) = self.class_ids.get_mut(name) {
                 *class = Declared::Broken;
             }
@@ -889,7 +1196,7 @@ impl Checker<'_> {
         for item in items {
             let class = match item {
                 ast::Item::Function(f) => {
-                    self.signature(f, f.name.name.to_string(), &[]);
+                    self.signature(f, f.name.name.to_string(), &[], Vec::new());
                     declared.push((f, None));
                     continue;
                 }
@@ -899,25 +1206,47 @@ impl Checker<'_> {
                     next_enum += 1;
                     continue;
                 }
-                ast::Item::Const(_) => continue,
+                ast::Item::Extend(extend) => {
+                    self.extend_signatures(extend, &mut declared);
+                    continue;
+                }
+                ast::Item::Const(_) | ast::Item::Interface(_) => continue,
             };
             let id = tir::ClassId(next_class);
             next_class += 1;
             let owner = self.classes[id.0].type_params.clone();
             let receiver = Type::intern(TypeKind::Class(id, own_args(&owner)));
+            self.body.self_type = Some(receiver);
+            self.body.set_type_params(&owner);
+            let bounds = self.declare_bounds(0, Vec::new(), &class.type_params);
+            if self.classes[id.0].bounded {
+                self.classes[id.0].bounds = bounds;
+            }
+            // The choices come before the fields and the signatures, which may name them.
+            self.classes[id.0].assoc = self.declare_choices(&class.assoc, class.name.name.as_str());
+            self.body.set_type_params(&[]);
             let mut first = FxHashMap::default();
+            let mut scoped = false;
             for member in &class.members {
                 match member {
                     ast::Member::Field(field) => {
-                        self.body.set_type_params(&owner);
+                        // The class's parameters stay in scope from one field to the next, and a
+                        // method takes them out.
+                        if !scoped {
+                            self.body.set_type_params(&owner);
+                            self.body.set_bounds(0, self.classes[id.0].bounds.clone());
+                            scoped = true;
+                        }
+                        let from = self.queued();
                         let (ty, inner) = self.resolve_written(&field.ty);
-                        self.body.set_type_params(&[]);
+                        let queued = from..self.queued();
                         if self.first_definition(
                             &mut first,
                             Definition::Field,
                             Some(class.name.name.as_str()),
                             &field.name,
                         ) {
+                            self.keep_at(queued, Slot::Field(id, self.classes[id.0].fields.len()));
                             self.classes[id.0].fields.push(FieldInfo {
                                 name: field.name.clone(),
                                 ty_span: field.ty.span,
@@ -928,6 +1257,7 @@ impl Checker<'_> {
                         }
                     }
                     ast::Member::Method(method) => {
+                        scoped = false;
                         let func = tir::FuncId(self.signatures.len());
                         if self.first_definition(
                             &mut first,
@@ -940,37 +1270,64 @@ impl Checker<'_> {
                                 .insert(method.name.name, Declared::Known(func));
                         }
                         let name = format!("{}.{}", class.name.name, method.name.name);
-                        self.signature(method, name, &class.type_params);
+                        let bounds = self.classes[id.0].bounds.clone();
+                        self.signature(method, name, &class.type_params, bounds);
                         declared.push((method, Some(receiver)));
                     }
                 }
             }
+            self.body.set_type_params(&[]);
             for method in &class.broken_methods {
                 self.classes[id.0]
                     .methods
                     .insert(method.name, Declared::Broken);
             }
+            self.body.self_type = None;
+            self.body.assoc = Rc::default();
         }
         declared
     }
 
     /// `f`'s signature, named `name`, where `owner` are the type parameters of a method's class
-    /// or enum.
-    fn signature(&mut self, f: &ast::Function, name: String, owner: &[ast::Ident]) {
+    /// or enum, with `owner_bounds` their bounds.
+    fn signature(
+        &mut self,
+        f: &ast::Function,
+        name: String,
+        owner: &[ast::TypeParam],
+        owner_bounds: Vec<Vec<Bound>>,
+    ) {
         let type_params = self.type_params(owner, &f.type_params);
         self.body.set_type_params(&type_params);
-        let params = f.params.iter().map(|p| self.resolve(&p.ty)).collect();
+        self.body.set_bounds(0, owner_bounds);
+        let bounds = self.declare_bounds(owner.len(), Vec::new(), &f.type_params);
+        let func = tir::FuncId(self.signatures.len());
+        let params = (f.params.iter().enumerate())
+            .map(|(i, p)| {
+                let from = self.queued();
+                let ty = self.resolve(&p.ty);
+                self.keep_at(from..self.queued(), Slot::Param(func, i));
+                ty
+            })
+            .collect();
+        let from = self.queued();
         let ret = f
             .ret
             .as_ref()
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
+        self.keep_at(from..self.queued(), Slot::Ret(func));
         self.body.set_type_params(&[]);
         self.signatures.push(Signature {
             name,
             type_params,
+            own: f.type_params.len(),
+            bounds,
             params,
             ret,
             span: f.name.span,
+            header: Span::new(f.span.start(), f.body.span.start()),
+            conformance: None,
+            extension: None,
         });
     }
 
@@ -1085,6 +1442,14 @@ impl Checker<'_> {
                 self.named_type(ty, applied.name, &applied.args, applied.angles)?
             }
             ast::TypeKind::Name(name) => self.named_type(ty, *name, &[], ty.span)?,
+            ast::TypeKind::SelfType => {
+                let Some(declared) = self.body.self_type else {
+                    self.report(DiagnosticKind::SelfOutside { at: ty.bare });
+                    return None;
+                };
+                declared
+            }
+            ast::TypeKind::Member { base, name } => self.member_type(ty, base, name)?,
         };
         // Only an applied name can be an instance that grows: a plain name has no arguments.
         // Arguments on a parameter or a built-in type are E0137, and no instance has that type.
@@ -1120,6 +1485,11 @@ impl Checker<'_> {
             let i = u32::try_from(i).expect("a declaration should have fewer than 2^32 parameters");
             return plain(self, Type::intern(TypeKind::Param(name, i)));
         }
+        match self.assoc_named(name, ident().span) {
+            Named::Type(ty) => return plain(self, ty),
+            Named::Failed => return None,
+            Named::Unknown => {}
+        }
         let declared = (
             self.class_ids.get(&name).copied(),
             self.enum_ids.get(&name).copied(),
@@ -1128,27 +1498,41 @@ impl Checker<'_> {
         if let (Some(Declared::Broken), _) | (_, Some(Declared::Broken)) = declared {
             return None;
         }
+        if let Some(found) = self.interface_ids.get(&name) {
+            if matches!(found, Declared::Known(_)) {
+                self.report(DiagnosticKind::InterfaceAsType {
+                    name: name.to_string(),
+                    written: Some(self.source.file.slice(ty.bare.range()).to_string()),
+                    at: ident().span,
+                });
+            }
+            return None;
+        }
         if let Some(named) = built_in_type(name.as_str()) {
             return plain(self, named);
         }
         match declared {
             (Some(Declared::Known(id)), _) => {
-                let args = if args.is_empty() && self.classes[id.0].type_params.is_empty() {
+                let list = if args.is_empty() && self.classes[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
                     let declared = self.classes[id.0].type_params.clone();
                     self.type_args(&ident(), &declared, args, angles)?
                 };
-                Some(Type::intern(TypeKind::Class(id, args)))
+                let ty = Type::intern(TypeKind::Class(id, list));
+                self.bounded(self.classes[id.0].bounded, ty, args)
+                    .then_some(ty)
             }
             (_, Some(Declared::Known(id))) => {
-                let args = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
+                let list = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
                     let declared = self.enums[id.0].type_params.clone();
                     self.type_args(&ident(), &declared, args, angles)?
                 };
-                Some(Type::intern(TypeKind::Enum(id, args)))
+                let ty = Type::intern(TypeKind::Enum(id, list));
+                self.bounded(self.enums[id.0].bounded, ty, args)
+                    .then_some(ty)
             }
             // `Option<T>` is `T?`: the prelude's declaration of it makes no enum.
             _ if name.as_str() == "Option" => {
@@ -1160,15 +1544,39 @@ impl Checker<'_> {
                     ["i64", "u8", "f64", "bool", "char", "string"].map(|ty| (ty, Definition::Type));
                 let classes = self.class_names();
                 let enums = self.enum_ids.keys().map(|e| (e.as_str(), Definition::Enum));
-                let candidates = types.into_iter().chain(classes).chain(enums);
+                let interfaces =
+                    (self.interface_ids.keys()).map(|i| (i.as_str(), Definition::Interface));
+                let candidates = (types.into_iter().chain(classes).chain(enums)).chain(interfaces);
                 self.report(DiagnosticKind::UnknownType {
                     name: name.to_string(),
                     at: ident().span,
-                    suggestion: suggestion(name.as_str(), candidates),
+                    form: UnknownForm::Name {
+                        suggestion: suggestion(name.as_str(), candidates),
+                    },
                 });
                 None
             }
         }
+    }
+
+    /// Whether the applied type `ty` meets the bounds of its class or enum, which is `bounded` when
+    /// its declaration writes one, and `written` are its arguments as written.
+    fn bounded(&mut self, bounded: bool, ty: Type, written: &[ast::TypeExpr]) -> bool {
+        !bounded || self.check_applied(ty, written.iter().map(|arg| arg.span).collect())
+    }
+
+    /// `function`, except that a method of a block that failed has the unknown receiver and is not
+    /// checked: the block's own error says what is wrong.
+    fn method_or_function(
+        &mut self,
+        f: &ast::Function,
+        id: tir::FuncId,
+        owner: Option<Type>,
+    ) -> Option<tir::Function> {
+        if owner == Some(UNKNOWN) {
+            return None;
+        }
+        self.function(f, id, owner)
     }
 
     /// Checks `f`'s body against its own signature, `id`. The function, unless its return type
@@ -1183,11 +1591,10 @@ impl Checker<'_> {
     ) -> Option<tir::Function> {
         let sig = &self.signatures[id.0];
         let (name, param_types, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
-        let owner_params = match owner.map(Type::kind) {
-            Some(TypeKind::Class(class, _)) => self.classes[class.0].type_params.len(),
-            Some(TypeKind::Enum(e, _)) => self.enums[e.0].type_params.len(),
-            _ => 0,
-        };
+        let conformance = sig.conformance;
+        // The parameters of a method's owner: its class's, or its `extend` block's.
+        let owner_params = sig.type_params.len() - sig.own;
+        let extension = sig.extension.is_some();
         let mut fresh = Body {
             owner: Some(Owner::Func(id)),
             ret,
@@ -1195,7 +1602,25 @@ impl Checker<'_> {
             ..Body::default()
         };
         fresh.set_type_params(&sig.type_params);
+        fresh.assoc = self.assoc_scope(id, owner);
+        // The method's own bounds come after the places of its owner's parameters, which have none
+        // when the class or enum is not bounded.
+        let mut bounds = match sig.extension {
+            Some(at) => self.extensions[at].bounds.clone(),
+            None => self.owner_bounds(owner),
+        };
+        bounds.resize(owner_params, Vec::new());
+        bounds.extend(sig.bounds.iter().cloned());
+        fresh.set_bounds(0, bounds);
         let ((params, body), state) = self.with_body(fresh, |c| {
+            // The signature's bounds name interfaces for this function, and a method of an
+            // `extend` block also names those of the block's parameters.
+            let first = if extension { 0 } else { owner_params };
+            for place in first..c.body.bounds.len() {
+                for bound in c.body.bounds[place].clone() {
+                    c.record(Used::Interface(bound.interface), bound.at);
+                }
+            }
             c.body.scopes.push(FxHashMap::default());
             // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.
             let receiver = owner.map(|ty| {
@@ -1255,6 +1680,9 @@ impl Checker<'_> {
         }
         Some(tir::Function {
             name,
+            owner,
+            conformance,
+            method: owner.map(|_| f.name.name.to_string()),
             type_params,
             owner_params,
             params,
@@ -1262,6 +1690,16 @@ impl Checker<'_> {
             locals,
             body: body.ok()?,
         })
+    }
+
+    /// The bounds of the type parameters of the class or enum `owner`, a method's `self`; empty
+    /// for a function, and when none is bounded.
+    fn owner_bounds(&self, owner: Option<Type>) -> Vec<Vec<Bound>> {
+        match owner.map(Type::kind) {
+            Some(TypeKind::Class(id, _)) => self.classes[id.0].bounds.clone(),
+            Some(TypeKind::Enum(id, _)) => self.enums[id.0].bounds.clone(),
+            _ => Vec::new(),
+        }
     }
 
     /// The classes, as candidates for a name.
@@ -1282,6 +1720,7 @@ impl Checker<'_> {
             || self.class_ids.contains_key(&name)
             || self.function_ids.contains_key(&name)
             || self.enum_ids.contains_key(&name)
+            || self.interface_ids.contains_key(&name)
             || self.constants.contains_key(&name);
         let enums = self.variant_of(name);
         let at_start = self.starts_break_value(span);
@@ -1317,6 +1756,13 @@ impl Checker<'_> {
     /// open loop label right after an unlabeled `break`. A type's name, built in or a class's or
     /// an enum's, is in scope, but as a type: that is reported instead. So is a function's name.
     fn not_found(&mut self, name: Symbol, span: Span) -> Diagnostic {
+        if self.interface_ids.contains_key(&name) {
+            return DiagnosticKind::InterfaceAsValue {
+                name: name.to_string(),
+                at: span,
+            }
+            .into();
+        }
         if built_in_type(name.as_str()).is_some()
             || name.as_str() == "Option"
             || self.class_ids.contains_key(&name)
@@ -1384,6 +1830,10 @@ impl Checker<'_> {
         match head {
             Head::Class(id) => self.classes[id.0].name.name.as_str(),
             Head::Enum(id) => self.enums[id.0].name.name.as_str(),
+            Head::Assoc(interface, k) => self.interfaces[interface.0].assoc[k as usize]
+                .name
+                .name
+                .as_str(),
         }
     }
 

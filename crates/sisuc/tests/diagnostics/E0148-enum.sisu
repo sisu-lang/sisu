@@ -1,0 +1,12 @@
+enum Color {
+    Red
+    Green
+}
+
+fn _paint<T: Color>(_x: T) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

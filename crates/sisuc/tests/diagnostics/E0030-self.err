@@ -1,0 +1,10 @@
+error[E0030]: an associated type is written through a type parameter, as `S.Item` for `S: Source`
+  --> E0030-self.sisu:10:22
+   |
+10 |     fn next(self) -> Self.Item? {
+   |                      ^^^^^^^^^
+   |
+   = help: write `Item`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

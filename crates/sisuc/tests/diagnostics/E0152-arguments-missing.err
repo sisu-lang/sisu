@@ -1,0 +1,11 @@
+error[E0152]: `Meter` does not meet `Convert`
+  --> E0152-arguments-missing.sisu:10:15
+   |
+10 | extend Meter: Convert<i64> {}
+   |               ^^^^^^^^^^^^
+   |
+   = help: fn convert(self) -> i64
+           fn scale(self, by: i64) -> Self
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

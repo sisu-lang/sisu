@@ -1,0 +1,19 @@
+interface Top: Left, Right {
+    fn top(self)
+}
+
+interface Left: Bottom {
+    fn left(self)
+}
+
+interface Right: Bottom {
+    fn right(self)
+}
+
+interface Bottom: Top {
+    fn bottom(self)
+}
+
+fn main() {
+    print(1)
+}

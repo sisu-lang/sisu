@@ -1,0 +1,25 @@
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+interface Feed<T: Same> {
+    fn feed(self) -> T
+}
+
+class Node {
+    id: i64
+}
+
+class Feeder {
+    n: i64
+}
+
+extend Feeder: Feed<Node> {
+    fn feed(self) -> Node {
+        Node(id: self.n)
+    }
+}
+
+fn main() {
+    print(Feeder(n: 1).feed().id)
+}

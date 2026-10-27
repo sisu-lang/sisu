@@ -1,0 +1,21 @@
+interface Wrap {
+    fn wrap<U>(self, x: U)
+}
+
+class Ring {
+    r: f64
+}
+
+extend Ring: Wrap {
+    fn wrap<U>(self, x: U) {
+        go(self, [x])
+    }
+}
+
+fn go<T: Wrap, U>(t: T, x: U) {
+    t.wrap(x)
+}
+
+fn main() {
+    go(Ring(r: 1.0), 1)
+}

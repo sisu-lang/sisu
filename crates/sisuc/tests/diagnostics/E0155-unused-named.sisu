@@ -1,0 +1,13 @@
+class Meters {
+    value: i64
+}
+
+extend<T> Meters {
+    fn keep(self, x: T) -> T {
+        x
+    }
+}
+
+fn main() {
+    print(Meters(value: 1).value)
+}

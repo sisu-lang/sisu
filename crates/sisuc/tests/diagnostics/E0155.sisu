@@ -1,0 +1,9 @@
+extend i64 {
+    fn double(self) -> i64 {
+        self * 2
+    }
+}
+
+fn main() {
+    print(1)
+}

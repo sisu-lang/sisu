@@ -11,11 +11,18 @@ use std::mem;
 
 use rustc_hash::FxHashMap;
 
+use crate::conformance::{find, normalize};
 use crate::tir::{
-    Arm, Block, Class, ClassId, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, Place,
-    Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
+    Arm, Block, Class, ClassId, Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId,
+    Function, Place, Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
 };
-use crate::types::{Head, write_args};
+use crate::types::{Head, write_args, write_method};
+
+#[cfg(test)]
+thread_local! {
+    /// How many programs on this thread have taken the path that instantiates nothing.
+    static FAST_PATHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// `program` with each generic function, class and enum replaced by the instantiations it
 /// reaches, and its enums laid out again.
@@ -32,11 +39,25 @@ pub(crate) fn instantiate(mut program: Program) -> Program {
         || (program.classes[..prelude.classes].iter()).any(|c| !c.type_params.is_empty())
         || (program.enums[..prelude.enums].iter()).any(|e| !e.type_params.is_empty());
     if !generic && !program.instantiates {
+        #[cfg(test)]
+        FAST_PATHS.set(FAST_PATHS.get() + 1);
         // Reaching a generic item records a type argument, so nothing of the prelude's that a
         // program does not name is used: they are all templates or unused.
         program.functions.truncate(prelude.funcs);
         program.classes.truncate(prelude.classes);
         program.enums.truncate(prelude.enums);
+        // A method of a conformance block has its interface in its symbol.
+        for i in 0..program.functions.len() {
+            if let Some((mut name, cut)) = program.method_name(&program.functions[i]) {
+                if cut {
+                    name.push('#');
+                    name.push_str(&i.to_string());
+                }
+                let f = &mut program.functions[i];
+                f.name = name;
+                f.method = None;
+            }
+        }
         return program;
     }
     let program = Mono::new(program).run();
@@ -85,6 +106,8 @@ struct Mono {
     functions: Vec<Option<Function>>,
     /// The output, without its functions until the end: its classes name types as they arrive.
     out: Program,
+    /// The checked program's conformances, which resolve each interface call.
+    conformances: Conformances,
     work: VecDeque<Work>,
 }
 
@@ -99,7 +122,11 @@ impl Mono {
             enum_decls: Vec::with_capacity(program.enums.len()),
             types: FxHashMap::default(),
             functions: Vec::new(),
-            out: Program::default(),
+            out: Program {
+                interfaces: program.interfaces,
+                ..Program::default()
+            },
+            conformances: program.conformances,
             work: VecDeque::new(),
         };
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -154,6 +181,9 @@ impl Mono {
             let mut f = self.functions[i]
                 .take()
                 .expect("every non-generic function should be in place before the worklist runs");
+            if f.method.is_some() {
+                f.name = self.instance_name(&f, &[], i);
+            }
             self.function(&mut f, &[]);
             self.functions[i] = Some(f);
         }
@@ -216,7 +246,22 @@ impl Mono {
 
     /// `ty` of a body instantiated with `args`, as the output names it.
     fn ty(&mut self, ty: Type, args: &[Type]) -> Type {
-        self.output(ty.subst(args))
+        let ty = self.subst(ty, args);
+        self.output(ty)
+    }
+
+    /// `ty` with `args` for its type parameters and each associated type replaced by the type its
+    /// conformance chose. The checker has accepted the program, and checked the bound that gives
+    /// each base its conformance.
+    fn subst(&self, ty: Type, args: &[Type]) -> Type {
+        normalize(&self.conformances, ty.subst(args))
+            .expect("a call that checks should find the conformance of every associated type")
+    }
+
+    /// `subst` for a list of arguments.
+    fn subst_args(&self, list: TypeArgs, args: &[Type]) -> TypeArgs {
+        let list: Vec<Type> = list.get().iter().map(|&ty| self.subst(ty, args)).collect();
+        TypeArgs::intern(&list)
     }
 
     /// The output's type for the concrete checked type `ty`: each class and enum by its output
@@ -251,25 +296,43 @@ impl Mono {
         }
     }
 
-    /// The name of the instance `id` of the declaration `name`, with the concrete checked `args`.
-    /// The first `owner` of `args` are its class's. The name writes the arguments as a program
-    /// does: `Stack<i64>.push`. It writes the checked types, because an output type's head is a
-    /// whole instance name. A name cut at `NAME_LIMIT` ends in `#id`, so it stays distinct.
-    fn instance_name(&self, name: &str, args: &[Type], owner: usize, id: usize) -> String {
+    /// The name of the instance `id` of the function `decl`, with the concrete checked `args`. A
+    /// method is written from its owner type, the interface of its conformance block and its
+    /// bare name (`write_method`), then its own arguments: `Stack<i64>.top`,
+    /// `Pair<Circle>.Same.same`, `Stack<[i64]>.flat`. It writes the checked types, because an
+    /// output type's head is a whole instance name. A name cut at `NAME_LIMIT` in any part ends
+    /// in `#id`, so it stays distinct.
+    fn instance_name(&self, decl: &Function, args: &[Type], id: usize) -> String {
         let head = |head| self.head(head);
-        let (owner_args, own) = args.split_at(owner);
         let mut out = String::new();
-        let mut cut = false;
-        if let Some((class, method)) = name.split_once('.') {
-            out.push_str(class);
-            cut = write_args(&mut out, owner_args, head);
-            out.push('.');
-            out.push_str(method);
+        let (own, mut cut) = if let (Some(method), Some(owner)) = (&decl.method, decl.owner) {
+            let interface = decl.conformance.map(|(interface, args_of)| {
+                (
+                    self.out.interfaces[interface.0].name.as_str(),
+                    self.subst_args(args_of, args),
+                )
+            });
+            let cut = write_method(&mut out, self.subst(owner, args), interface, method, head);
+            (&args[decl.owner_params..], cut)
         } else {
-            out.push_str(name);
-        }
-        if write_args(&mut out, own, head) || cut {
+            out.push_str(&decl.name);
+            (args, false)
+        };
+        cut |= write_args(&mut out, own, head);
+        if cut {
             // `#` cannot occur in an identifier, so a cut name never meets a whole one.
+            out.push('#');
+            out.push_str(&id.to_string());
+        }
+        out
+    }
+
+    /// The name of the instance `id` of the class or enum `name`, with the concrete checked
+    /// `args`, written as a program writes it: `Stack<i64>`. A name cut at `NAME_LIMIT` ends in
+    /// `#id`.
+    fn type_instance_name(&self, name: &str, args: &[Type], id: usize) -> String {
+        let mut out = name.to_string();
+        if write_args(&mut out, args, |head| self.head(head)) {
             out.push('#');
             out.push_str(&id.to_string());
         }
@@ -279,6 +342,7 @@ impl Mono {
     /// The declared name of the checked class or enum `head`.
     fn head(&self, head: Head) -> &str {
         match head {
+            Head::Assoc(..) => unreachable!("mono should replace every associated type"),
             Head::Class(id) => match &self.class_decls[id.0] {
                 Some(decl) => &decl.name,
                 None => &self.out.classes[self.class_ids[&(id, TypeArgs::NONE)].0].name,
@@ -301,7 +365,7 @@ impl Mono {
             .as_ref()
             .expect("a class reached with arguments should be generic");
         let class = Class {
-            name: self.instance_name(&decl.name, args.get(), 0, done.0),
+            name: self.type_instance_name(&decl.name, args.get(), done.0),
             type_params: Vec::new(),
             fields: Vec::new(),
         };
@@ -326,7 +390,7 @@ impl Mono {
             .as_ref()
             .expect("an enum reached with arguments should be generic");
         let e = Enum {
-            name: self.instance_name(&decl.name, args.get(), 0, done.0),
+            name: self.type_instance_name(&decl.name, args.get(), done.0),
             type_params: Vec::new(),
             variants: Vec::new(),
             counted: false,
@@ -353,7 +417,7 @@ impl Mono {
         let decl = self.decls[id.0]
             .as_ref()
             .expect("a function reached with arguments should be generic");
-        let name = self.instance_name(&decl.name, args.get(), decl.owner_params, done.0);
+        let name = self.instance_name(decl, args.get(), done.0);
         self.functions.push(None);
         self.function_ids.insert((id, args), done);
         self.work.push_back(Work::Function {
@@ -371,6 +435,14 @@ impl Mono {
             local.ty = self.ty(local.ty, args);
         }
         f.ret = self.ty(f.ret, args);
+        // The output's ids replace the checker's in the types a method names as its own.
+        f.owner = f.owner.map(|ty| self.ty(ty, args));
+        f.conformance = f.conformance.map(|(interface, types)| {
+            let types: Vec<Type> = (types.get().iter()).map(|&ty| self.ty(ty, args)).collect();
+            (interface, TypeArgs::intern(&types))
+        });
+        // The name is written whole.
+        f.method = None;
         self.block(&mut f.body, args);
     }
 
@@ -426,9 +498,35 @@ impl Mono {
                 types,
                 args: operands,
             } => {
-                *func = self.function_id(*func, types.subst(args));
+                *func = self.function_id(*func, self.subst_args(*types, args));
                 *types = TypeArgs::NONE;
                 self.exprs(operands, args);
+            }
+            K::InterfaceCall {
+                interface,
+                iargs,
+                method,
+                types,
+                args: operands,
+            } => {
+                // The conformance of the receiver's type, which the checker found a bound for.
+                let (receiver, rest) = (self.subst_args(*iargs, args).get().split_first())
+                    .map(|(&receiver, rest)| (receiver, TypeArgs::intern(rest)))
+                    .expect("an interface call should name its receiver's type");
+                let (index, bindings) = find(&self.conformances, *interface, receiver, rest)
+                    .expect("a call that checks should find the conformance of its receiver");
+                let found = self.conformances.get(*interface, index).methods[*method as usize];
+                // The conformance's parameters, then the requirement's own.
+                let mut with = bindings.get().to_vec();
+                with.extend_from_slice(self.subst_args(*types, args).get());
+                let func = self.function_id(found, TypeArgs::intern(&with));
+                let mut operands = mem::take(operands);
+                self.exprs(&mut operands, args);
+                e.kind = K::Call {
+                    func,
+                    types: TypeArgs::NONE,
+                    args: operands,
+                };
             }
             K::New {
                 class,
@@ -585,6 +683,11 @@ fn assert_concrete(program: &Program) {
                     f.name
                 );
             }
+            assert!(
+                !matches!(e.kind, ExprKind::InterfaceCall { .. }),
+                "mono should leave no interface call in {}",
+                f.name
+            );
         }
     }
 }
@@ -592,7 +695,7 @@ fn assert_concrete(program: &Program) {
 /// Whether `ty` names no type parameter and holds no type arguments, at any depth.
 fn concrete(ty: Type) -> bool {
     match ty.kind() {
-        TypeKind::Param(..) => false,
+        TypeKind::Param(..) | TypeKind::Assoc(..) => false,
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args == TypeArgs::NONE,
         TypeKind::Array(inner) | TypeKind::Optional(inner) => concrete(inner),
         _ => true,
@@ -1025,5 +1128,219 @@ mod tests {
         let program = instantiate(program);
         assert_eq!(program.to_string(), text);
         assert_eq!(program.functions.len(), count);
+    }
+
+    /// The arguments of a conformance's interface name output classes: `G<i64>` in the symbol is
+    /// the output's class.
+    #[test]
+    fn a_conformance_method_should_name_its_interface_arguments_by_output_ids() {
+        let program = instantiated(
+            "interface Label<T> {\n    fn name(self) -> T\n}\nclass G<T> {\n    value: T\n}\nclass C {}\nextend C: Label<G<i64>> {\n    fn name(self) -> G<i64> { G(value: 1) }\n}\nfn main() {\n    print(C().name().value)\n}",
+        );
+        let method = (program.functions.iter())
+            .find(|f| f.name == "C.Label<G<i64>>.name")
+            .expect("the method should be kept");
+        let (_, args) = method.conformance.expect("the conformance should be kept");
+        let [TypeKind::Class(id, _)] = args.get().iter().map(|t| t.kind()).collect::<Vec<_>>()[..]
+        else {
+            panic!("the argument should be a class: {args:?}");
+        };
+        assert_eq!(program.classes[id.0].name, "G<i64>");
+    }
+
+    /// Two conformances of one generic interface give two symbols, with the interface's arguments
+    /// in them, on the path that instantiates nothing and on the one that does.
+    #[test]
+    fn two_conformances_of_a_generic_interface_should_get_two_symbols() {
+        let blocks = "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Fahrenheit {\n    d: f64\n}\nclass Kelvin {\n    d: f64\n}\nclass Celsius {\n    d: f64\n}\nextend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nextend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\n";
+        let main = "fn main() {\n    let c = Celsius(d: 1.0)\n    let f: Fahrenheit = c.convert()\n    let k: Kelvin = c.convert()\n    print(f.d + k.d)\n}";
+        // Nothing generic: the fast path, which writes the symbols from the checker's fields.
+        let before = FAST_PATHS.get();
+        let program = instantiated(&format!("{blocks}{main}"));
+        assert_eq!(FAST_PATHS.get(), before + 1);
+        // A generic function that nothing calls changes nothing but the path.
+        let generic = format!("{blocks}fn id<T>(x: T) -> T {{ x }}\n{main}");
+        for program in [program, instantiated(&generic)] {
+            let names = function_names(&program);
+            for want in [
+                "Celsius.Convert<Fahrenheit>.convert",
+                "Celsius.Convert<Kelvin>.convert",
+            ] {
+                assert!(names.contains(&want), "{want} in {names:?}");
+            }
+        }
+    }
+
+    /// Two conformances whose symbols are alike up to the cut take `#id`, each its own, on the
+    /// path that instantiates nothing: the program has no generic class, enum or function, and
+    /// an interface is none of those.
+    #[test]
+    fn conformances_with_long_interface_arguments_should_get_distinct_symbols() {
+        let long = "L".repeat(100);
+        let src = format!(
+            "interface Conv4<A, B, C, D> {{\n    fn convert(self) -> D\n}}\nclass {long} {{}}\nclass C {{}}\nextend C: Conv4<{long}, {long}, {long}, i64> {{\n    fn convert(self) -> i64 {{ 1 }}\n}}\nextend C: Conv4<{long}, {long}, {long}, bool> {{\n    fn convert(self) -> bool {{ true }}\n}}\nfn main() {{\n    let c = C()\n    let a: i64 = c.convert()\n    let b: bool = c.convert()\n    print(a)\n    print(b)\n}}"
+        );
+        let before = FAST_PATHS.get();
+        let program = instantiated(&src);
+        assert_eq!(FAST_PATHS.get(), before + 1, "the fast path should run");
+        let cut: Vec<&str> = (function_names(&program).into_iter())
+            .filter(|name| name.starts_with("C.Conv4<"))
+            .collect();
+        assert_eq!(cut.len(), 2, "{cut:?}");
+        assert_ne!(cut[0], cut[1]);
+        for name in cut {
+            assert!(name.contains("...") && name.contains('#'), "{name}");
+        }
+    }
+
+    /// Two conformances of one generic interface to one instantiation of a generic class, whose
+    /// arguments the occurs check keeps apart, name the interface's arguments in the symbols.
+    #[test]
+    fn conformances_of_one_instantiation_should_name_the_interface_arguments() {
+        let program = instantiated(
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Box<T> {\n    value: T\n}\nextend<T> Box<T>: Convert<T> {\n    fn convert(self) -> T { self.value }\n}\nextend<T> Box<[T]>: Convert<T> {\n    fn convert(self) -> T { self.value[0] }\n}\nfn main() {\n    let b = Box(value: [1])\n    let a: [i64] = b.convert()\n    let n: i64 = b.convert()\n    print(a.len() + n)\n}",
+        );
+        let names = function_names(&program);
+        for want in [
+            "Box<[i64]>.Convert<[i64]>.convert",
+            "Box<[i64]>.Convert<i64>.convert",
+        ] {
+            assert!(names.contains(&want), "{want} in {names:?}");
+        }
+    }
+
+    /// A method is named from the type it is declared on, as the block writes it, whichever
+    /// parameters the block has: `Stack<i64>.top` for `extend<T> Stack<T>`, `Stack<[i64]>.flat`
+    /// for `extend<T> Stack<[T]>`, and the interface of a conformance block between the type and
+    /// the method.
+    #[test]
+    fn a_method_of_an_extend_block_should_be_named_from_its_owner() {
+        let program = instantiated(
+            "interface Same {\n    fn same(self, other: Self) -> bool\n}\n\
+             class Circle: Same {\n    r: f64\n    fn same(self, other: Circle) -> bool { self.r == other.r }\n}\n\
+             class Stack<T> {\n    items: [T]\n}\n\
+             class Pair<T> {\n    first: T\n    second: T\n}\n\
+             extend<T> Stack<T> {\n    fn top(self) -> T? { self.items[0] }\n}\n\
+             extend<T> Stack<[T]> {\n    fn flat(self) -> [T] { self.items[0] }\n}\n\
+             extend Stack<f64> {\n    fn sum2<U>(self, u: U) -> U { u }\n}\n\
+             extend<T: Same> Pair<T>: Same {\n    fn same(self, other: Self) -> bool { self.first.same(other.first) }\n}\n\
+             fn agree<T: Same>(a: T, b: T) -> bool { a.same(b) }\n\
+             fn main() {\n    let c = Circle(r: 1.0)\n    print(Stack(items: [1]).top() ?? 0)\n    print(Stack(items: [[1]]).flat().len())\n    print(Stack(items: [1.5]).sum2(\"s\"))\n    print(agree(Pair(first: c, second: c), Pair(first: c, second: c)))\n}",
+        );
+        let names = function_names(&program);
+        for want in [
+            "Stack<i64>.top",
+            "Stack<[i64]>.flat",
+            "Stack<f64>.sum2<string>",
+            "Pair<Circle>.Same.same",
+        ] {
+            assert!(names.contains(&want), "{want} in {names:?}");
+        }
+    }
+
+    /// A method name that is cut in any component ends in the id of the function, so that two cut
+    /// names stay two, on the path that names no instance too.
+    #[test]
+    fn a_cut_method_name_should_end_in_the_id_of_the_function_when_nothing_is_instantiated() {
+        let src = "interface Label {\n    fn name(self) -> string\n}\nclass C {}\nextend C: Label {\n    fn name(self) -> string { \"c\" }\n}\nfn main() {\n    print(C().name())\n}";
+        let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+        let mut program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+        // The interface's arguments name a type longer than a name may be.
+        let mut deep = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        for _ in 0..NAME_LIMIT {
+            deep = Type::array(deep);
+        }
+        let method = (program.functions.iter_mut())
+            .find(|f| f.name == "C.name")
+            .expect("the method should be declared");
+        let (interface, _) = method.conformance.expect("a conformance's method");
+        method.conformance = Some((interface, TypeArgs::intern(&[deep])));
+        let program = instantiate(program);
+        let method = (program.functions.iter())
+            .find(|f| f.name.starts_with("C.Label<"))
+            .expect("the method should be named");
+        let name = method.name.as_str();
+        assert!(name.contains("...") && name.ends_with("#0"), "{name}");
+        // The name is whole: the output prints it, `#0` included, not the parts it was cut from.
+        assert!(method.method.is_none());
+        assert!(
+            program.to_string().contains(&format!("(fn {name} (")),
+            "{program}"
+        );
+    }
+
+    /// The unused generic class comes before `C`, so `C` has another id in the output than in the
+    /// checked program, and the printed owner of its conformance method reads the output's.
+    #[test]
+    fn a_conformance_method_should_name_its_owner_by_the_output_id() {
+        let src = "interface Label {\n    fn name(self) -> string\n}\nclass G<T> {\n    value: T\n}\nclass C {}\nextend C: Label {\n    fn name(self) -> string { \"c\" }\n}\nfn main() {\n    print(C().name())\n}";
+        let program = instantiated(src);
+        assert!(
+            program.to_string().contains("(fn C.Label.name ("),
+            "{program}"
+        );
+    }
+
+    /// An interface call becomes a call of the method of the conformance that the receiver's type
+    /// has, in each instantiation: no interface call is left in the output.
+    #[test]
+    fn an_interface_call_should_become_a_call_of_the_conformance_method() {
+        let program = instantiated(
+            "interface Shape {\n    fn area(self) -> f64\n}\n\
+             class Circle {\n    r: f64\n}\n\
+             extend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\n\
+             class Square: Shape {\n    side: f64\n    fn area(self) -> f64 { self.side }\n}\n\
+             fn total<T: Shape>(x: T) -> f64 {\n    x.area()\n}\n\
+             fn main() {\n    print(total(Circle(r: 1.0)))\n    print(total(Square(side: 2.0)))\n}",
+        );
+        let printed = program.to_string();
+        for part in [
+            "(fn total<Circle> ((x#0 Circle)) f64 (block (call Circle.Shape.area x#0)))",
+            "(fn total<Square> ((x#0 Square)) f64 (block (call Square.area x#0)))",
+        ] {
+            assert!(printed.contains(part), "{part} in {printed}");
+        }
+        assert!(!printed.contains("(call Shape.area"), "{printed}");
+    }
+
+    /// A call through a bound of a generic interface finds the conformance whose interface
+    /// arguments are the bound's: the same type conforms twice, and each bound reaches its own.
+    #[test]
+    fn an_interface_call_should_find_the_conformance_by_the_arguments_of_its_bound() {
+        let program = instantiated(
+            "interface Convert<T> {\n    fn convert(self) -> T\n}\n\
+             class Fahrenheit {\n    d: f64\n}\n\
+             class Kelvin {\n    d: f64\n}\n\
+             class Celsius {\n    d: f64\n}\n\
+             extend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\n\
+             extend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\n\
+             fn to_f<T: Convert<Fahrenheit>>(x: T) -> Fahrenheit {\n    x.convert()\n}\n\
+             fn to_k<T: Convert<Kelvin>>(x: T) -> Kelvin {\n    x.convert()\n}\n\
+             fn main() {\n    let c = Celsius(d: 1.0)\n    print(to_f(c).d + to_k(c).d)\n}",
+        );
+        let printed = program.to_string();
+        for part in [
+            "(fn to_f<Celsius> ((x#0 Celsius)) Fahrenheit (block (call Celsius.Convert<Fahrenheit>.convert x#0)))",
+            "(fn to_k<Celsius> ((x#0 Celsius)) Kelvin (block (call Celsius.Convert<Kelvin>.convert x#0)))",
+        ] {
+            assert!(printed.contains(part), "{part} in {printed}");
+        }
+    }
+
+    /// The conformance's parameters come before the method's own type arguments in the
+    /// instantiation: the interface call of a requirement with a type parameter of its own names
+    /// the method with the argument the call infers.
+    #[test]
+    fn an_interface_call_should_instantiate_the_method_with_its_own_type_arguments() {
+        let program = instantiated(
+            "interface Keep {\n    fn keep<U>(self, x: U) -> U\n}\n\
+             class C {}\n\
+             extend C: Keep {\n    fn keep<V>(self, x: V) -> V { x }\n}\n\
+             fn go<T: Keep>(t: T) -> string {\n    let n: i64 = t.keep(1)\n    t.keep(\"a\")\n}\n\
+             fn main() {\n    print(go(C()))\n}",
+        );
+        let names = function_names(&program);
+        assert!(names.contains(&"C.Keep.keep<i64>"), "{names:?}");
+        assert!(names.contains(&"C.Keep.keep<string>"), "{names:?}");
     }
 }

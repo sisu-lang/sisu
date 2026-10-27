@@ -1,0 +1,8 @@
+error[E0155]: `extend` takes a class or enum, and `T` is a type parameter
+ --> E0155-type-param.sisu:1:11
+  |
+1 | extend<T> T {
+  |           ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0155

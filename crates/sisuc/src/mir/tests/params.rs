@@ -645,3 +645,30 @@ fn instantiations_should_infer_their_own_modes() {
     signature(&printed, "peek<i64>", "fn peek<i64>(x#0: i64)");
     signature(&printed, "keep<string>", "fn keep<string>(x#0: string)");
 }
+
+/// A conformance method is a function like any other once `mono` has resolved the interface call
+/// to it, so inference gives each its own mode: `Circle.area` only reads `self.r` and borrows
+/// `self`, and `Square.area` binds `self` to a local first, which makes it owned.
+#[test]
+fn conformance_methods_should_infer_their_own_modes() {
+    let printed = built(
+        "interface Shape {\n    fn area(self) -> f64\n}\n\
+         class Circle: Shape {\n    r: f64\n    fn area(self) -> f64 { self.r }\n}\n\
+         class Square {\n    side: f64\n}\n\
+         extend Square: Shape {\n    fn area(self) -> f64 {\n        let s = self\n        s.side\n    }\n}\n\
+         fn total<T: Shape>(x: T) -> f64 {\n    x.area()\n}\n\
+         fn main() {\n    print(total(Circle(r: 1.0)))\n    print(total(Square(side: 2.0)))\n}",
+    );
+    has(&printed, "total<Circle>", &["call Circle.area("]);
+    has(&printed, "total<Square>", &["call Square.Shape.area("]);
+    signature(
+        &printed,
+        "Circle.area",
+        "fn Circle.area(self#0: borrow Circle)",
+    );
+    signature(
+        &printed,
+        "Square.Shape.area",
+        "fn Square.Shape.area(self#0: Square)",
+    );
+}

@@ -1,0 +1,7 @@
+fn _count<T: i64>(_x: T) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

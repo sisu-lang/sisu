@@ -1,0 +1,10 @@
+error[E0050]: cannot infer `S` for `collect`
+  --> E0050-associated.sisu:15:21
+   |
+15 |     let xs: [i64] = collect()
+   |                     ^^^^^^^
+   |
+   = help: write the type: `collect<...>(...)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

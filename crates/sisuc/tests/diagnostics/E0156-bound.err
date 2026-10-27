@@ -1,0 +1,10 @@
+error[E0156]: `name` on `T` could come from `Label` or `Code`
+  --> E0156-bound.sisu:10:15
+   |
+10 |     let n = x.name()
+   |               ^^^^
+   |
+   = help: annotate the result: `let n: string = x.name()`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0156

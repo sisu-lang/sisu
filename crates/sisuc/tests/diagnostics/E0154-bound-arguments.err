@@ -1,0 +1,11 @@
+error[E0154]: `Node` does not conform to `Convert<i64>`
+  --> E0154-bound-arguments.sisu:14:16
+   |
+ 9 | fn show<T: Convert<i64>>(item: T) -> i64 {
+   |            ------------ required by this bound
+...
+14 |     print(show(Node(id: 1)))
+   |                ^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

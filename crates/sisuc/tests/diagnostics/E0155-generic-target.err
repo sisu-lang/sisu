@@ -1,0 +1,14 @@
+error[E0155]: `T` does not appear in `Stack<i64>`
+ --> E0155-generic-target.sisu:5:8
+  |
+5 | extend<T> Stack<i64> {
+  |        ^
+  |
+help: remove the type parameters
+  |
+5 - extend<T> Stack<i64> {
+5 + extend Stack<i64> {
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0155

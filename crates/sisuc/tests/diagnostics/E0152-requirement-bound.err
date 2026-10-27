@@ -1,0 +1,10 @@
+error[E0152]: `Meter` does not meet `Mix`
+  --> E0152-requirement-bound.sisu:13:15
+   |
+13 | extend Meter: Mix<i64> {}
+   |               ^^^^^^^^
+   |
+   = help: fn mix<U: Convert<i64>>(self, other: U) -> i64
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

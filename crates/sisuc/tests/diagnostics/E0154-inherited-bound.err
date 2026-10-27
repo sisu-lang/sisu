@@ -1,0 +1,14 @@
+error[E0154]: `Heap<T>` does not conform to `Same`
+  --> E0154-inherited-bound.sisu:19:26
+   |
+ 5 | interface Ord2: Same {
+   |                 ---- `Ord2` requires `Same`
+...
+13 | extend<T: Ord2> Heap<T>: Same {
+   |           ---- this conformance needs `T: Ord2`
+...
+19 | extend<T: Same> Heap<T>: Ord2 {
+   |                          ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

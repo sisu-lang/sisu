@@ -3,12 +3,14 @@
 
 use std::fmt;
 
+use rustc_hash::FxHashMap;
+
 use crate::ast::angled;
 use crate::graph::components;
 use crate::source::Span;
 
 pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
-use crate::types::{Head, write_args, write_type};
+use crate::types::{Head, write_args, write_method, write_type};
 pub(crate) use crate::types::{Type, TypeArgs, TypeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -22,6 +24,9 @@ pub(crate) struct ClassId(pub(crate) usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EnumId(pub(crate) usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct InterfaceId(pub(crate) usize);
 
 /// `==` and `!=` are `ExprKind::Equal`, comparisons are `ExprKind::Compare`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +119,122 @@ pub(crate) struct Program {
     /// Where the prelude's items start in each list; the user's come first. Only the checker
     /// sets it.
     pub(crate) prelude: ItemCounts,
+    /// Indexed by `InterfaceId`. Only the checker sets it.
+    pub(crate) interfaces: Vec<Interface>,
+    /// Every conformance of a class or an enum to an interface. Only the checker sets it.
+    pub(crate) conformances: Conformances,
+}
+
+/// An interface, as the typed tree names it.
+#[derive(Clone, Debug)]
+pub(crate) struct Interface {
+    pub(crate) name: String,
+    /// The names of its requirements, in the order of `InterfaceCall::method`.
+    pub(crate) methods: Vec<String>,
+    /// The names of its associated types, in the order of `TypeKind::Assoc`'s index.
+    pub(crate) assoc: Vec<String>,
+}
+
+/// The conformance of the class or enum `target` to an interface with the arguments `args`
+/// (without `Self`). `type_params` is how many type parameters of an `extend` block the target
+/// binds: they are the `Param`s of `target` and `args`. `methods` hold, in the order of the
+/// interface's requirements, the method that meets each; the list is complete only in a program
+/// that checks without an error. `assoc` holds, in the order of the interface's associated types,
+/// the type that the conformance chooses for each, over the same type parameters as `target`;
+/// `None` where it chooses none, which is an error.
+#[derive(Clone, Debug)]
+pub(crate) struct Conformance {
+    pub(crate) type_params: usize,
+    pub(crate) target: Type,
+    pub(crate) args: TypeArgs,
+    pub(crate) methods: Vec<FuncId>,
+    pub(crate) assoc: Vec<Option<Type>>,
+}
+
+/// The conformances of a program, by interface. A target without parameters is indexed by its
+/// exact type and the interface's arguments, and a target with parameters by its class or enum,
+/// so that a lookup reads the exact entry and then only the generic targets of the receiver's
+/// class or enum. A target
+/// without parameters is indexed by its class or enum too, for a new target with parameters to
+/// meet.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Conformances {
+    list: Vec<Vec<Conformance>>,
+    exact: FxHashMap<(InterfaceId, Type, TypeArgs), Vec<usize>>,
+    exact_heads: FxHashMap<(InterfaceId, Head), Vec<usize>>,
+    generic: FxHashMap<(InterfaceId, Head), Vec<usize>>,
+}
+
+impl Conformances {
+    /// Adds `conformance` to those of `interface`, and gives its index among them. Its target is
+    /// a class or an enum type.
+    pub(crate) fn add(&mut self, interface: InterfaceId, conformance: Conformance) -> usize {
+        if self.list.len() <= interface.0 {
+            self.list.resize_with(interface.0 + 1, Vec::new);
+        }
+        let list = &mut self.list[interface.0];
+        let index = list.len();
+        let head = head_of(conformance.target)
+            .expect("the target of a conformance should be a class or an enum type");
+        if conformance.type_params == 0 {
+            self.exact
+                .entry((interface, conformance.target, conformance.args))
+                .or_default()
+                .push(index);
+            self.exact_heads
+                .entry((interface, head))
+                .or_default()
+                .push(index);
+        } else {
+            self.generic
+                .entry((interface, head))
+                .or_default()
+                .push(index);
+        }
+        list.push(conformance);
+        index
+    }
+
+    /// The conformance `index` of `interface`.
+    pub(crate) fn get(&self, interface: InterfaceId, index: usize) -> &Conformance {
+        &self.list[interface.0][index]
+    }
+
+    /// The conformance `index` of `interface`, to fill its methods.
+    pub(crate) fn get_mut(&mut self, interface: InterfaceId, index: usize) -> &mut Conformance {
+        &mut self.list[interface.0][index]
+    }
+
+    /// Every conformance, with its interface.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (InterfaceId, &Conformance)> {
+        (self.list.iter().enumerate())
+            .flat_map(|(i, list)| list.iter().map(move |c| (InterfaceId(i), c)))
+    }
+
+    /// The conformances of `interface` with the arguments `args` whose target is `ty`, which has
+    /// no parameters.
+    pub(crate) fn exact(&self, interface: InterfaceId, ty: Type, args: TypeArgs) -> &[usize] {
+        (self.exact.get(&(interface, ty, args))).map_or(&[], Vec::as_slice)
+    }
+
+    /// The conformances of `interface` whose target has no parameters and names `head`.
+    pub(crate) fn exact_of(&self, interface: InterfaceId, head: Head) -> &[usize] {
+        (self.exact_heads.get(&(interface, head))).map_or(&[], Vec::as_slice)
+    }
+
+    /// The conformances of `interface` whose target has parameters and names `head`.
+    pub(crate) fn generic(&self, interface: InterfaceId, head: Head) -> &[usize] {
+        (self.generic.get(&(interface, head))).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// The class or enum that `ty` is, if it is one.
+pub(crate) fn head_of(ty: Type) -> Option<Head> {
+    match ty.kind() {
+        TypeKind::Class(id, _) => Some(Head::Class(id)),
+        TypeKind::Enum(id, _) => Some(Head::Enum(id)),
+        _ => None,
+    }
 }
 
 /// How many classes, enums and functions (methods too) come first in their lists.
@@ -194,6 +315,15 @@ pub(crate) struct Field {
 #[derive(Clone, Debug)]
 pub(crate) struct Function {
     pub(crate) name: String,
+    /// The type a method is declared on (`self`'s); `None` for a function.
+    pub(crate) owner: Option<Type>,
+    /// The interface, with its arguments, of the `extend` block that declares a method; `None`
+    /// for every other function.
+    pub(crate) conformance: Option<(InterfaceId, TypeArgs)>,
+    /// A method's bare name, which `owner` and `conformance` write the rest of its name around
+    /// (`write_method`). `None` for a function, and for an instance that `mono` named: its `name`
+    /// is then the whole symbol.
+    pub(crate) method: Option<String>,
     /// The names of the type parameters in scope: a method's owner's, then its own.
     pub(crate) type_params: Vec<String>,
     /// How many of `type_params` belong to the class or enum of a method.
@@ -328,6 +458,17 @@ pub(crate) enum ExprKind {
         func: FuncId,
         /// The callee's type arguments, a method's receiver's first; `NONE` when it is not
         /// generic.
+        types: TypeArgs,
+        args: Vec<Expr>,
+    },
+    /// A call of the requirement `method` of `interface` on a receiver whose type is a type
+    /// parameter: `iargs` are `Self` and then the interface's own arguments, `types` the
+    /// requirement's own, and `args` hold the receiver first. `mono` replaces it with a `Call` of
+    /// the conformance's method.
+    InterfaceCall {
+        interface: InterfaceId,
+        iargs: TypeArgs,
+        method: u32,
         types: TypeArgs,
         args: Vec<Expr>,
     },
@@ -627,6 +768,7 @@ impl Expr {
             | ExprKind::Local(_) => false,
             ExprKind::Break { .. } | ExprKind::Continue { .. } | ExprKind::Return(_) => true,
             ExprKind::Call { args, .. }
+            | ExprKind::InterfaceCall { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. } => args.iter().any(Expr::exits),
             ExprKind::Compare { operands, .. }
@@ -710,6 +852,7 @@ impl Expr {
             | ExprKind::Break { value: None, .. }
             | ExprKind::Return(None) => {}
             ExprKind::Call { args, .. }
+            | ExprKind::InterfaceCall { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. }
             | ExprKind::Compare { operands: args, .. }
@@ -861,6 +1004,7 @@ impl Expr {
             | K::Continue { .. }
             | K::Return(None) => {}
             K::Call { args, .. }
+            | K::InterfaceCall { args, .. }
             | K::New { args, .. }
             | K::Variant { args, .. }
             | K::ArrayLit(args)
@@ -964,6 +1108,7 @@ impl fmt::Display for Type {
             TypeKind::Never => "never",
             // A class's name lives in the program: `Program::type_name` prints it.
             TypeKind::Param(name, _) => return write!(f, "{name}"),
+            TypeKind::Assoc(base, _, _, k) => return write!(f, "{base}.assoc#{k}"),
             TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
             TypeKind::Enum(id, _) => return write!(f, "enum#{}", id.0),
             TypeKind::Array(element) => return write!(f, "[{element}]"),
@@ -1051,9 +1196,30 @@ impl Printer<'_> {
             ExprKind::None => f.write_str("None"),
             ExprKind::Local(id) => self.local(f, *id),
             ExprKind::Call { func, types, args } => {
-                let name = &self.program.functions[func.0].name;
+                let callee = &self.program.functions[func.0];
+                let name = (callee
+                    .conformance
+                    .and_then(|_| self.program.method_name(callee)))
+                .map_or_else(|| callee.name.clone(), |(name, _)| name);
                 let types = self.program.args_name(types.get());
                 self.list(f, format_args!("call {name}{types}"), args)
+            }
+            ExprKind::InterfaceCall {
+                interface,
+                iargs,
+                method,
+                types,
+                args,
+            } => {
+                let info = &self.program.interfaces[interface.0];
+                let name = format!(
+                    "{}{}.{}{}",
+                    info.name,
+                    self.program.args_name(&iargs.get()[1..]),
+                    info.methods[*method as usize],
+                    self.program.args_name(types.get()),
+                );
+                self.list(f, format_args!("call {name}"), args)
             }
             ExprKind::New { class, args } => {
                 let name = &self.program.classes[class.0].name;
@@ -1376,10 +1542,28 @@ impl Program {
         name
     }
 
+    /// The name of `function`, a method, as `--emit tir` prints it, written from the type it is
+    /// declared on, the interface of its conformance block and its bare name: the interface
+    /// stands between the type and the method, so two conformances may each hold a `name`. Its
+    /// own type arguments follow. `None` for a function, and for an instance that `mono` named:
+    /// `Function::name` is then the whole name. Before `mono`, `Function::name` keeps the text
+    /// without the interface.
+    pub(crate) fn method_name(&self, function: &Function) -> Option<(String, bool)> {
+        let method = function.method.as_deref()?;
+        let owner = (function.owner).expect("a method should have the type it is declared on");
+        let interface = function
+            .conformance
+            .map(|(interface, args)| (self.interfaces[interface.0].name.as_str(), args));
+        let mut name = String::new();
+        let cut = write_method(&mut name, owner, interface, method, |head| self.head(head));
+        Some((name, cut))
+    }
+
     fn head(&self, head: Head) -> &str {
         match head {
             Head::Class(id) => &self.classes[id.0].name,
             Head::Enum(id) => &self.enums[id.0].name,
+            Head::Assoc(interface, k) => &self.interfaces[interface.0].assoc[k as usize],
         }
     }
 }
@@ -1431,13 +1615,10 @@ impl fmt::Display for Program {
                 program: self,
                 function,
             };
-            let (owner, own) = function.type_params.split_at(function.owner_params);
-            match function.name.split_once('.') {
-                Some((class, method)) => {
-                    write!(f, "(fn {class}{}.{method}{} (", angled(owner), angled(own))?;
-                }
-                None => write!(f, "(fn {}{} (", function.name, angled(own))?,
-            }
+            let own = &function.type_params[function.owner_params..];
+            let name = (self.method_name(function))
+                .map_or_else(|| function.name.clone(), |(name, _)| name);
+            write!(f, "(fn {name}{} (", angled(own))?;
             for (j, param) in function.params.iter().enumerate() {
                 if j > 0 {
                     f.write_str(" ")?;
@@ -1524,6 +1705,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: vec![],
                 owner_params: 0,
                 params: vec![],
@@ -1641,6 +1825,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -1746,6 +1933,9 @@ mod tests {
             }],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -1828,6 +2018,9 @@ mod tests {
         let program = Program {
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -1851,6 +2044,98 @@ mod tests {
         assert_eq!(
             program.to_string(),
             "(fn f ((o#0 i64?)) i64 (block (match o#0 (arm (Some _) (block 1)) (arm None (block 0)))))"
+        );
+        // Whichever single write fails, the print gives that error and does not go on.
+        let mut counter = FailsAt {
+            at: usize::MAX,
+            writes: 0,
+        };
+        write!(counter, "{program}").expect("a writer that never fails takes the print");
+        for at in 0..counter.writes {
+            let mut writer = FailsAt { at, writes: 0 };
+            assert!(write!(writer, "{program}").is_err(), "write {at}");
+        }
+    }
+
+    /// A method of a conformance block prints its interface between its type and its name, in its
+    /// definition and in a call, and a method of the class itself prints none; a write that fails
+    /// in any of them gives that error.
+    #[test]
+    fn print_should_name_a_conformance_method_with_its_interface() {
+        use fmt::Write as _;
+
+        let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let method = Function {
+            name: "C.name".into(),
+            owner: Some(class),
+            conformance: Some((InterfaceId(0), TypeArgs::NONE)),
+            method: Some("name".into()),
+            type_params: Vec::new(),
+            owner_params: 0,
+            params: vec![LocalId(0)],
+            ret: Type::I64,
+            locals: vec![param("self", class)],
+            body: Block {
+                stmts: vec![],
+                value: Some(Box::new(int(1))),
+                ty: Type::I64,
+            },
+        };
+        // A method of the class itself prints no interface.
+        let own = Function {
+            name: "C.get".into(),
+            conformance: None,
+            method: Some("get".into()),
+            body: Block {
+                stmts: vec![],
+                value: Some(Box::new(int(2))),
+                ty: Type::I64,
+            },
+            ..method.clone()
+        };
+        let caller = Function {
+            name: "f".into(),
+            owner: None,
+            conformance: None,
+            method: None,
+            type_params: Vec::new(),
+            owner_params: 0,
+            params: vec![LocalId(0)],
+            ret: Type::I64,
+            locals: vec![param("c", class)],
+            body: Block {
+                stmts: vec![],
+                value: Some(Box::new(expr(
+                    ExprKind::Call {
+                        func: FuncId(1),
+                        types: TypeArgs::NONE,
+                        args: vec![expr(ExprKind::Local(LocalId(0)), class)],
+                    },
+                    Type::I64,
+                ))),
+                ty: Type::I64,
+            },
+        };
+        let program = Program {
+            classes: vec![Class {
+                name: "C".into(),
+                type_params: Vec::new(),
+                fields: Vec::new(),
+            }],
+            interfaces: vec![Interface {
+                methods: Vec::new(),
+                assoc: Vec::new(),
+                name: "Label".into(),
+            }],
+            functions: vec![caller, method, own],
+            ..Program::default()
+        };
+        assert_eq!(
+            program.to_string(),
+            "(class C)\n\
+             (fn f ((c#0 C)) i64 (block (call C.Label.name c#0)))\n\
+             (fn C.Label.name ((self#0 C)) i64 (block 1))\n\
+             (fn C.get ((self#0 C)) i64 (block 2))"
         );
         // Whichever single write fails, the print gives that error and does not go on.
         let mut counter = FailsAt {
@@ -1889,6 +2174,9 @@ mod tests {
         // fn second(a: i64, ok: bool) -> bool { first(); ok && (a == 3 && a < 4) }
         let first = Function {
             name: "first".into(),
+            owner: None,
+            conformance: None,
+            method: None,
             type_params: Vec::new(),
             owner_params: 0,
             params: vec![],
@@ -1923,6 +2211,9 @@ mod tests {
         let value = binary(BinaryOp::And, ok, binary(BinaryOp::And, a_eq_3, a_lt_4));
         let second = Function {
             name: "second".into(),
+            owner: None,
+            conformance: None,
+            method: None,
             type_params: Vec::new(),
             owner_params: 0,
             params: vec![LocalId(0), LocalId(1)],
@@ -1972,6 +2263,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2007,6 +2301,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2037,6 +2334,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2058,6 +2358,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2080,6 +2383,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2110,6 +2416,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2146,6 +2455,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
@@ -2197,6 +2509,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0), LocalId(1)],
@@ -2224,6 +2539,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![LocalId(0)],
@@ -2269,6 +2587,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2304,6 +2625,9 @@ mod tests {
             enums: vec![],
             functions: vec![Function {
                 name: "f".into(),
+                owner: None,
+                conformance: None,
+                method: None,
                 type_params: Vec::new(),
                 owner_params: 0,
                 params: vec![],
@@ -2586,6 +2910,16 @@ mod tests {
                 2,
             ),
             (
+                ExprKind::InterfaceCall {
+                    interface: InterfaceId(0),
+                    iargs: TypeArgs::NONE,
+                    method: 0,
+                    types: TypeArgs::NONE,
+                    args: ints([1, 2]),
+                },
+                2,
+            ),
+            (
                 ExprKind::New {
                     class: ClassId(0),
                     args: ints([1, 2]),
@@ -2764,5 +3098,17 @@ mod tests {
             });
             assert_eq!(seen, (1..=children).collect::<Vec<_>>(), "{:?}", e.kind);
         }
+    }
+
+    /// A type is written without its program, so an associated type shows its base and its place.
+    #[test]
+    fn display_should_write_an_associated_type_through_its_base() {
+        let t = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let item = Type::intern(TypeKind::Assoc(t, InterfaceId(0), TypeArgs::NONE, 3));
+        assert_eq!(item.to_string(), "T.assoc#3");
+        assert_eq!(
+            Type::array(Type::optional(item)).to_string(),
+            "[T.assoc#3?]"
+        );
     }
 }

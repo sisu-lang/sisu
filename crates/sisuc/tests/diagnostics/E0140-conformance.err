@@ -1,0 +1,13 @@
+error[E0140]: `Box<T>.run` instantiates itself without end
+  --> E0140-conformance.sisu:11:9
+   |
+11 |         dispatch(Box(value: self))
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ `dispatch<Box<Box<T>>>` here
+...
+16 |     x.run()
+   |     ------- which may call `Box<T>.run` through `Run`
+   |
+   = help: a call through `Run` counts as reaching every conformance to `Run`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

@@ -1,0 +1,11 @@
+error[E0153]: `Pair<i64, i64>` conforms to `Named` twice
+  --> E0153-overlap.sisu:16:25
+   |
+10 | extend<T> Pair<T, i64>: Named {
+   |                         ----- first conformance here
+...
+16 | extend<U> Pair<i64, U>: Named {
+   |                         ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0153

@@ -1,0 +1,14 @@
+interface Convert<T> {
+    fn convert(self) -> T
+    fn scale(self, by: T) -> Self
+}
+
+class Meter {
+    d: f64
+}
+
+extend Meter: Convert<i64> {}
+
+fn main() {
+    print(Meter(d: 1.0).d)
+}

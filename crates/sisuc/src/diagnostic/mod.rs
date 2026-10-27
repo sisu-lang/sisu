@@ -8,11 +8,13 @@ mod render;
 mod suggest;
 
 pub(crate) use registry::{
-    ArgumentsForm, BadRange, BuiltIn, ClashForm, ClashKind, Code, Conversion, Definition,
-    DiagnosticKind, Earlier, ForeignPattern, ForeignRange, GuardHelp, Immutable, InterpolateHelp,
-    Join, LetField, Literal, LiteralKind, MainForm, MatchIdiomForm, MathFix, Member,
-    MethodReceiver, MismatchFix, MismatchSource, NanFix, Operand, Owner, Panic, Peel, PowerFix,
-    RETIRED, ReceiverArgument, TypedLiteral, Unbuilt, Unwrap, VariantLabels, invisible,
+    AddBound, Annotate, ArgumentsForm, BadRange, BuiltIn, CannotExtendForm, ClashForm, ClashKind,
+    Code, ConformanceForm, Conversion, Definition, DiagnosticKind, Earlier, ForeignPattern,
+    ForeignRange, GuardHelp, Hop, Immutable, InterfaceBodyForm, InterpolateHelp, Join, LetField,
+    Literal, LiteralKind, MainForm, MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix,
+    MismatchSource, NanFix, NotConformForm, NotInterface, Operand, Owner, Panic, Peel, PowerFix,
+    RETIRED, ReceiverArgument, TypedLiteral, Unbuilt, UnknownForm, Unwrap, VariantLabels, WideKind,
+    invisible,
 };
 pub(crate) use suggest::{Suggestion, alias, closest, suggestion};
 

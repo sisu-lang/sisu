@@ -1,0 +1,49 @@
+// GIVEN a generic class `Box<T>` with a plain `extend` block of `get` that needs `T: Flag`, and
+// a conformance `Box<Node>: Get` with its own `get`, where `Mark` meets `Flag` and `Node` does not
+// WHEN `weigh` is called on a `Mark`, and `get` on a `Box<Mark>` and on a `Box<Node>`
+// THEN `weigh` prints 1, the call on `Box<Mark>` runs the plain block's method and prints 1, and
+// the call on `Box<Node>` runs the conformance's method and prints 2, though the plain block
+// covers `Box<Node>` and its bound fails
+interface Flag {
+    fn weight(self) -> i64
+}
+
+interface Get {
+    fn get(self) -> i64
+}
+
+class Box<T> {
+    value: T
+}
+
+class Node {
+    id: i64
+}
+
+class Mark: Flag {
+    fn weight(self) -> i64 {
+        1
+    }
+}
+
+extend<T: Flag> Box<T> {
+    fn get(self) -> i64 {
+        self.value.weight()
+    }
+}
+
+extend Box<Node>: Get {
+    fn get(self) -> i64 {
+        self.value.id
+    }
+}
+
+fn weigh<T: Flag>(x: T) -> i64 {
+    x.weight()
+}
+
+fn main() {
+    print(weigh(Mark()))                    // 1
+    print(Box(value: Mark()).get())         // 1
+    print(Box(value: Node(id: 2)).get())    // 2
+}

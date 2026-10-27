@@ -1,0 +1,11 @@
+error[E0034]: `Item` is already an associated type of `Feed`, which `Source` inherits
+ --> E0034-associated.sisu:6:10
+  |
+2 |     type Item
+  |          ---- first declared here
+...
+6 |     type Item
+  |          ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

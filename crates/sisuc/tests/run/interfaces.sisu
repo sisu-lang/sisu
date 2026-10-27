@@ -1,0 +1,103 @@
+// GIVEN a class and an enum that each conform to two interfaces, one in the declaration and one
+// in an `extend` block, with a plain `extend` block on each
+// WHEN `main` calls their conformance methods and the plain methods on concrete values, and
+// passes a `string` through `Rect.label`
+// THEN each call runs the method of its own type, and every string is released once
+// args: a b
+// o2-calls: main Rect.label 1
+interface Shape {
+    fn area(self) -> i64
+    fn label(self, suffix: string) -> string
+}
+
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+class Rect: Shape {
+    w: i64
+    h: i64
+    tag: string
+
+    fn area(self) -> i64 {
+        self.w * self.h
+    }
+
+    // It calls itself with a longer suffix and appends a `.` after the call, so the call is not a
+    // tail call and `-O2` keeps the call that `main` makes. The depth comes from the arguments
+    // of the program, which the optimizer does not know.
+    fn label(self, suffix: string) -> string {
+        if self.w == 0 {
+            return self.tag + suffix
+        }
+        Rect(w: self.w - 1, h: self.h, tag: self.tag).label(suffix + "!") + "."
+    }
+}
+
+extend Rect: Same {
+    fn same(self, other: Rect) -> bool {
+        self.w == other.w && self.h == other.h
+    }
+}
+
+extend Rect {
+    fn grow(self, by: i64) -> Rect {
+        Rect(w: self.w + by, h: self.h + by, tag: self.tag)
+    }
+}
+
+enum Level: Same {
+    Low
+    High
+
+    fn same(self, other: Self) -> bool {
+        self.rank() == other.rank()
+    }
+
+    fn rank(self) -> i64 {
+        match self {
+            Level.Low => 1
+            Level.High => 2
+        }
+    }
+}
+
+extend Level: Shape {
+    fn area(self) -> i64 {
+        self.rank() * 10
+    }
+
+    fn label(self, suffix: string) -> string {
+        match self {
+            Level.Low => "low" + suffix
+            Level.High => "high" + suffix
+        }
+    }
+}
+
+extend Level {
+    fn flip(self) -> Level {
+        match self {
+            Level.Low => Level.High
+            Level.High => Level.Low
+        }
+    }
+}
+
+fn main(args: [string]) {
+    let r = Rect(w: args.len(), h: 3, tag: "rect")
+    print(r.area())                                  // 6
+    print(r.label("?"))                              // rect?!!..
+    let g = r.grow(1)
+    print(g.area())                                  // 12
+    print(r.same(g))                                 // false
+    print(r.same(Rect(w: 2, h: 3, tag: "other")))    // true
+    let low = Level.Low
+    print(low.area())                                // 10
+    print(low.label("!"))                            // low!
+    let high = low.flip()
+    print(high.area())                               // 20
+    print(high.label("?"))                           // high?
+    print(high.same(Level.High))                     // true
+    print(low.same(high))                            // false
+}

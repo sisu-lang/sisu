@@ -312,7 +312,7 @@ The rules:
 
 An *interface* lists the methods that a type must have. A class or an enum names its interfaces after its name. A method in an interface has `self` and no body.
 
-```sisu pending
+```sisu
 interface Shape {
     fn area(self) -> f64
 }
@@ -334,7 +334,7 @@ fn total_area<T: Shape>(shapes: [T]) -> f64 {
 }
 
 fn main() {
-    print(total_area([Circle(r: 1.0), Circle(r: 2.0)]))
+    print(total_area([Circle(r: 1.0), Circle(r: 2.0)]))   // 15.707963267948966
 }
 ```
 
@@ -351,7 +351,7 @@ The rules:
 
 `extend` adds methods to a type that is declared elsewhere. `extend Type: Interface` makes the type conform to the interface, with the methods of that interface in its body. One block names one interface.
 
-```sisu pending
+```sisu
 class Celsius {
     degrees: f64
 }

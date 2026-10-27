@@ -1,0 +1,11 @@
+error[E0154]: `Rankine` does not conform to `Convert<Kelvin>`
+  --> E0154-other-arguments.sisu:28:21
+   |
+23 | fn to_kelvin<T: Convert<Kelvin>>(x: T) -> Kelvin {
+   |                 --------------- required by this bound
+...
+28 |     print(to_kelvin(Rankine(degrees: 491.67)).degrees)
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

@@ -1,0 +1,7 @@
+interface Counter {
+    fn bump(mut self)
+}
+
+fn main() {
+    print(1)
+}

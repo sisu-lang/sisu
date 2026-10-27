@@ -1,0 +1,8 @@
+error[E0150]: `Loop` inherits from itself
+ --> E0150-self.sisu:1:17
+  |
+1 | interface Loop: Loop {
+  |                 ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0150

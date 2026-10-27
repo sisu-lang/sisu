@@ -11,7 +11,7 @@ The design decisions behind Sisu, each written down as a short record with its r
   <section class="ph"><div class="w">
     <h1>Design decisions</h1>
     <p class="lede">Every design choice in Sisu is written down with its reasons, as a short decision record. This page lists them all.</p>
-    <p class="meta">{{adr-count}} records · at commit 3c93176</p>
+    <p class="meta">{{adr-count}} records · at commit 9d3965c</p>
   </div></section>
   <!-- source: docs/adr/ (35 files, 0001 to 0035), README.md ("Read why a design choice was made") -->
 
@@ -43,7 +43,7 @@ The design decisions behind Sisu, each written down as a short record with its r
       <!-- source: docs/adr/0006-values-correctness-simplicity-readability-performance.md -->
 
       <h2 id="principles">Principles</h2>
-      <div class="callout info"><p>Some records settle features that are still planned, such as interfaces. The <a href="status.html">status page</a> shows what works today.</p></div>
+      <div class="callout info"><p>Some records settle features that are still planned, such as weak references. The <a href="status.html">status page</a> shows what works today.</p></div>
       <ul class="rows">
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0004-python-syntax-rust-semantics-swift-memory-model.md"><span class="num">0004</span><b>Python syntax, Rust semantics, Swift memory model</b><span>Surface syntax follows Python, semantics follow Rust, and memory management and everyday ergonomics follow Swift.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0027-what-sisu-is-for.md"><span class="num">0027</span><b>What Sisu is for<small>proposed</small></b><span>Fast, small, reliable command-line tools, scripts and server-side software, with code that is fast and easy to verify; three acceptance programs define 1.0.</span></a></li>
@@ -139,7 +139,7 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><strong>Mutable memory shared between tasks.</strong> Tasks share no objects, so counts stay non-atomic and Sisu code cannot have a data race (ADR 0010, proposed).</li>
         <li><strong>A package registry, for a long time.</strong> A registry means hosting, security and name squatting.</li>
       </ul>
-      <p>Interfaces are <span class="soon">planned</span>. Planned work has no promised date and may change.</p>
+      <p>Interfaces work as bounds on type parameters. Interface values are <span class="soon">planned</span>. Planned work has no promised date and may change.</p>
       <p>Compile-time evaluation and reflection are left open, to decide once Sisu has grown; the roadmap's <a href="https://github.com/sisu-lang/sisu/blob/main/docs/roadmap.md#open-decisions">Open decisions</a> lists what has to be settled first.</p>
       <!-- source: docs/roadmap.md "Deliberately avoided", "Open decisions" ("Compile-time evaluation and reflection"), "Proposed milestones 8 to 12"; docs/adr/0010-tasks-share-no-objects.md; README.md (interfaces proposed) -->
 

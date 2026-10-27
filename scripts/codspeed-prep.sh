@@ -16,7 +16,7 @@ small_sections=20
 
 cargo build --release --locked -p sisuc -p sisu-runtime-mimalloc
 rm -rf "$out"
-mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp}
+mkdir -p "$out"/{fib,sieve,binary_trees,quicksort,nbody,mandelbrot,fannkuch_redux,large,large_20,build_hello,build_binary_trees,build_large,build_large_20,strings,enum_match,shared_arrays,compare,tree_rewrite,interp,interfaces}
 
 fail() {
     echo "codspeed-prep: $*" >&2
@@ -40,15 +40,17 @@ reduce nbody 's/let steps = 5_000_000/let steps = 100_000/'
 reduce mandelbrot 's/let n = 4000/let n = 400/'
 reduce fannkuch_redux 's/fannkuch(10)/fannkuch(9)/'
 # bench/features/ programs are sized for simulation and Sisu-only: no reduction.
-for b in strings enum_match shared_arrays compare tree_rewrite interp; do
+for b in strings enum_match shared_arrays compare tree_rewrite interp interfaces; do
     target/release/sisu build -O2 "bench/features/$b/main.sisu" -o "$out/$b/main" || fail "$b failed to compile"
 done
 
 # step0 returns its argument. stepi adds 1 through an array, a class and an
 # optional chain, and 0 through constants, an enum, f64 methods, a string built
 # with += and format specs, while let, u8 and char, a generic function,
-# class and enum, each instantiated twice, a match on a prelude Result, and
-# an i64?? that two ?? peel to 0;
+# class and enum, each instantiated twice, a match on a prelude Result,
+# an i64?? that two ?? peel to 0, an interface with an associated type that
+# a class conforms to in its declaration and another in `extend` blocks, a
+# bound with &, and a call through each bound, which adds 0;
 # then it calls step(i-1).
 # main prints step(N-1)(0) = N-1. Not fi: f64 is a built-in type.
 large_input() {
@@ -99,6 +101,44 @@ enum Tree$i<T> {
     }
 }
 
+interface Gauge$i {
+    type Unit
+    fn read(self) -> i64
+    fn unit(self) -> Unit
+}
+
+interface Tag$i {
+    fn tag(self) -> i64
+}
+
+class Dial$i: Gauge$i, Tag$i {
+    type Unit = i64
+    n: i64
+
+    fn read(self) -> i64 { self.n }
+    fn unit(self) -> Unit { self.n }
+    fn tag(self) -> i64 { 1 }
+}
+
+class Bar$i {
+    n: i64
+}
+
+extend Bar$i: Gauge$i {
+    type Unit = string
+
+    fn read(self) -> i64 { self.n }
+    fn unit(self) -> Unit { "u" }
+}
+
+extend Bar$i: Tag$i {
+    fn tag(self) -> i64 { 1 }
+}
+
+fn both$i<T: Gauge$i & Tag$i>(t: T) -> i64 { t.read() + t.tag() }
+
+fn unit_of$i<T: Gauge$i>(t: T) -> T.Unit { t.unit() }
+
 fn below$i(k: i64) -> i64? {
     if k > 0 { k - 1 } else { None }
 }
@@ -136,7 +176,8 @@ fn step$i(x: i64) -> i64 {
         Result.Ok(v) => v - K$i
         Result.Err(_) => 1
     }
-    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled
+    let gauge = both$i(Dial$i(n: K$i)) - both$i(Bar$i(n: K$i)) + unit_of$i(Dial$i(n: K$i)) - K$i + unit_of$i(Bar$i(n: K$i)).len() - 1
+    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU
@@ -218,6 +259,7 @@ expected() {
         compare) printf '%s\n' 1494 640 2880 ;;
         tree_rewrite) printf '%s\n' 732347 163697 ;;
         interp) printf '%s\n' 549000 126 ;;
+        interfaces) printf '%s\n' 699988 949994 1010000 ;;
         *) return 1 ;;
     esac
 }

@@ -1,0 +1,13 @@
+error[E0154]: `Dir` does not conform to `Named`
+  --> E0154-conforms.sisu:14:13
+   |
+ 5 | interface Shape: Named {
+   |                  ----- `Shape` requires `Named`
+...
+14 | extend Dir: Shape {
+   |             ^^^^^
+   |
+   = help: write `extend Dir: Named { ... }`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

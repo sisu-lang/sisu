@@ -89,6 +89,7 @@ impl Walk {
                 flow.then(Flow::RECURSE)
             }
             ExprKind::Call { args, .. }
+            | ExprKind::InterfaceCall { args, .. }
             | ExprKind::New { args, .. }
             | ExprKind::Variant { args, .. }
             | ExprKind::Math { operands: args, .. }

@@ -1,0 +1,9 @@
+extend<T> T {
+    fn same(self) -> bool {
+        true
+    }
+}
+
+fn main() {
+    print(1)
+}

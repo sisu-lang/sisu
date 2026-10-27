@@ -1,0 +1,10 @@
+error[E0152]: `Box` does not meet `Mix`
+  --> E0152-requirement-capture-class.sisu:17:13
+   |
+17 | extend Box: Mix<M_2> {}
+   |             ^^^^^^^^
+   |
+   = help: fn mix<M_22: Convert<M_2>>(self, other: M_22) -> M_2
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

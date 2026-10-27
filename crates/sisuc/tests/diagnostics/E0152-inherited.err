@@ -1,0 +1,10 @@
+error[E0152]: `Circle` does not meet `Named`
+ --> E0152-inherited.sisu:9:15
+  |
+9 | class Circle: Shape {
+  |               ^^^^^
+  |
+  = help: fn name(self) -> string
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

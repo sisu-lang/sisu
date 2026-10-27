@@ -1,0 +1,11 @@
+error[E0034]: `name` is already a requirement of `Named`, which `Shape` inherits
+ --> E0034-inherited.sisu:7:8
+  |
+2 |     fn name(self) -> string
+  |        ---- first declared here
+...
+7 |     fn name(self) -> string
+  |        ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0034

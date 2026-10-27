@@ -1,0 +1,11 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+class Drawing {
+    shape: Shape
+}
+
+fn main() {
+    print(1)
+}

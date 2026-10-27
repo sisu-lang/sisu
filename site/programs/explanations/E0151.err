@@ -1,0 +1,10 @@
+error[E0151]: `[T]` cannot be an argument of an inherited interface
+ --> E0151.sisu:5:28
+  |
+5 | interface Feed<T>: Convert<[T]> {
+  |                            ^^^
+  |
+  = help: write a type parameter of `Feed` alone, or a type with no type parameter. With arguments built from type parameters, the inherited interfaces of a bound can double at each level of inheritance.
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0151

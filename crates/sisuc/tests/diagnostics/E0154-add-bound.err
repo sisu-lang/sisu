@@ -1,0 +1,13 @@
+error[E0154]: `T` does not conform to `Same`
+  --> E0154-add-bound.sisu:14:10
+   |
+ 9 | fn both<T: Same>(a: T, b: T) -> bool {
+   |            ---- required by this bound
+...
+14 |     both(a, b)
+   |          ^
+   |
+   = help: add a bound: `T: Named & Same`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

@@ -1,0 +1,31 @@
+interface Pair2<T, U> {
+    fn first(self) -> T
+}
+
+class Tag {
+    n: i64
+}
+
+extend Tag: Pair2<i64, bool> {
+    fn first(self) -> i64 {
+        self.n
+    }
+}
+
+extend Tag: Pair2<i64, char> {
+    fn first(self) -> i64 {
+        self.n + 1
+    }
+}
+
+extend Tag: Pair2<string, bool> {
+    fn first(self) -> string {
+        "tag"
+    }
+}
+
+fn main() {
+    let t = Tag(n: 1)
+    let x = t.first()
+    print(t.n)
+}

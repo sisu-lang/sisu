@@ -652,6 +652,9 @@ impl<'a> Lowering<'a> {
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
                 borrowed: vec![false; args.len()],
             },
+            ExprKind::InterfaceCall { .. } => {
+                panic!("mono should replace every interface call")
+            }
             ExprKind::New { class, args } => Rvalue::New {
                 class: *class,
                 args: self.operands(&args.iter().collect::<Vec<_>>())?,
@@ -1244,6 +1247,7 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::Str(_)
         | ExprKind::None
         | ExprKind::Call { .. }
+        | ExprKind::InterfaceCall { .. }
         | ExprKind::New { .. }
         | ExprKind::Variant { .. }
         | ExprKind::Wrap(_)
@@ -1384,6 +1388,7 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Continue { .. }
         | ExprKind::Return(None) => {}
         ExprKind::Local(local) => found.found.push(local.0),
+        ExprKind::InterfaceCall { .. } => unreachable!("mono should replace every interface call"),
         ExprKind::Call { args, .. }
         | ExprKind::New { args, .. }
         | ExprKind::Variant { args, .. }

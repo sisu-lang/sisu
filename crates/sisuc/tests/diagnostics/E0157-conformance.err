@@ -1,0 +1,10 @@
+error[E0157]: the conformance `Tag: Wide` gives more than 256 inherited interfaces
+  --> E0157-conformance.sisu:13:12
+   |
+13 | class Tag: Wide {
+   |            ^^^^
+   |
+   = help: an interface that inherits one interface twice, with different arguments, doubles this number at each level
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0157

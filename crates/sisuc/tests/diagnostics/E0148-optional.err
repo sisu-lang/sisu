@@ -1,0 +1,14 @@
+error[E0148]: `Shape?` is an optional type, not an interface
+ --> E0148-optional.sisu:9:13
+  |
+9 | fn _area<T: Shape?>(_shape: T) {
+  |             ^^^^^^
+
+error[E0148]: `Circle?` is an optional type, not an interface
+  --> E0148-optional.sisu:13:13
+   |
+13 | fn _size<U: Circle?>(_circle: U) {
+   |             ^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0148

@@ -1,0 +1,23 @@
+interface Named {
+    fn name(self) -> string
+}
+
+class Stack<T> {
+    items: [T]
+}
+
+extend<T> Stack<T>: Named {
+    fn name(self) -> string {
+        "stack"
+    }
+}
+
+extend Stack<i64>: Named {
+    fn name(self) -> string {
+        "ints"
+    }
+}
+
+fn main() {
+    print(Stack(items: [1]).name())
+}

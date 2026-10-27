@@ -1,0 +1,12 @@
+interface Named {
+    fn name(self) -> string
+}
+
+interface Shape: Named {
+    fn area(self) -> f64
+    fn name(self) -> string
+}
+
+fn main() {
+    print(1)
+}

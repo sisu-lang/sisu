@@ -708,6 +708,14 @@ fn declared_math_should_not_be_the_idiom() {
         (class, "Math.PI", Code::TypeAsValue, (5, 13)),
         (class, "Math.sqrt(x)", Code::TypeAsValue, (5, 13)),
         (class, "Math.sqrt", Code::TypeAsValue, (5, 13)),
+        // An interface is declared too, and is a type, as a class is.
+        ("interface Math {}\n", "Math.PI", Code::TypeAsValue, (3, 13)),
+        (
+            "interface Math {}\n",
+            "Math.sqrt(x)",
+            Code::TypeAsValue,
+            (3, 13),
+        ),
         ("fn math() {}\n", "math.sqrt(x)", Code::TypeAsValue, (3, 13)),
         ("fn math() {}\n", "math.pi", Code::TypeAsValue, (3, 13)),
         ("const Math = 1\n", "Math.PI", Code::NoMember, (3, 18)),

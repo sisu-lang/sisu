@@ -1,0 +1,21 @@
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+interface Wide: Convert<i64> {
+    fn wide(self) -> f64
+}
+
+class Circle {
+    r: f64
+}
+
+extend Circle: Wide {
+    fn wide(self) -> f64 {
+        self.r
+    }
+}
+
+fn main() {
+    print(Circle(r: 1.0).wide())
+}

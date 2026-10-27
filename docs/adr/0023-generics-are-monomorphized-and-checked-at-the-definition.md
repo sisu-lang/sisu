@@ -39,6 +39,84 @@ Four more rules go with them.
   `Convert<Kelvin>`). A type conforms to an interface with the same arguments
   at most once.
 
+## Interfaces
+
+Milestone 8 part 4 adds interfaces to the same two rules. A call through a
+bound is checked at the definition, and each instantiation is compiled to
+the code of a copy written by hand.
+
+- **Static dispatch through `mono`.** A call of a requirement on a value of
+  type `T` is an interface call in the checked tree. `mono` replaces it with
+  a call of the method of the conformance that the type argument has. So
+  `total<Circle>` calls `Circle.area` directly, and the later stages
+  see an ordinary call. Interface values and dynamic dispatch
+  are a later milestone. ADR 0029 infers the modes of a conformance method
+  for each instantiation: `Circle.area` can borrow `self` while
+  `Square.area` takes it, because a requirement's signature carries no
+  ownership.
+- **A conformance owns its methods.** The methods of `extend T: I { ... }`
+  belong to that conformance. Two conformances of one type may each have a
+  method `name`, and the symbol of a method names its interface:
+  `Celsius.Convert<Fahrenheit>.convert`. A method in the body of the type
+  with the same name wins a call on the type, as an inherent method wins in
+  Rust. The method of the conformance is still reached through a bound.
+  When no method of the body fits, a call collects the methods of the
+  conformance blocks whose target covers the receiver. More than one is
+  ambiguous, and the expected type picks one when only one of them returns
+  it.
+- **A declaration list meets the interfaces it inherits.** `class Cube:
+  Solid` with `Solid: Named` has the methods of `Named` in its body. A
+  `extend Cube: Solid` block holds the methods of `Solid` only, so `Named`
+  needs a conformance of its own. A conformance holds only when the type
+  conforms to what its interface inherits, under the same conditions.
+- **An associated type is written through a type parameter.** `S.Item` for
+  `S: Source`, and `S.Item.Key` for an associated type of an associated
+  type. Inside the interface it is `Item`, and inside a conformance `Item`
+  is the type it chose. A choice never names an associated type of its own
+  conformance, and an `extend` block never names one in its target. A choice
+  can still name an associated type of one of its parameters, as `T.Item.Item`,
+  so the replacement of the associated types of a known type can lead back
+  to the associated type it started with. The replacement keeps a list of the
+  types it replaces and stops at such a loop. The checker reports the choice that
+  closes the loop once, and the call that needs the type fails. `mono` does
+  the same replacement for each instantiation. A loop that no signature
+  writes is found where a type meets a bound: the checker replaces the
+  associated types that the bound's interface and the interfaces it inherits
+  declare, and then the same for each type that a choice gives, as the bound of
+  its associated type says. A choice of a generic block gives a type that no
+  block names, so a body that writes `S.B.B` can meet a loop only there. The
+  chain of chosen types stops at a type that nests its arguments deeper than 16
+  levels, because a choice such as `type B = W<W<T>>` gives a larger type at each
+  step and has no end. A loop that closes past that depth reaches `mono`. A call
+  that compiles finds the conformance of each base.
+- **An instantiation cycle through an interface is a cycle of weights.** The
+  rule for `fn f<T>(x: T) { f([x]) }` becomes a graph where each edge has a
+  weight, the depth at which an argument nests a type parameter. A call
+  through a bound reaches every conformance of its interface, so each
+  interface has one hub node, and a path through the hub stands for an edge
+  from the parameter of the caller to a parameter of each conformance. An
+  edge out of the hub weighs minus the depth of the parameter in the
+  conformance's target. An associated type adds the growth of its choices, and
+  a choice that names `T.A.B` adds the growth of `A` and of `B`. A cycle of
+  positive weight among the choices has no end, even when no choice starts it.
+  A cycle with a total weight above zero is an error naming the call that
+  grows.
+
+  The rule is conservative by design. Take `Start<T>.run`, which calls
+  `dispatch(Done(value: [self.value]))`, with `Done<T>.run` calling nothing.
+  The hub cannot see that the receiver of `dispatch` is then a `Done`, so
+  the compiler reports four copies that never run. No rule is exact:
+  conformances on distinct targets, dispatched through bounds, can run a
+  counter machine, so whether the copies end is undecidable. Go has no edge
+  that shrinks, and Rust stops at a recursion limit in `mono`. Sisu cannot
+  do that, because a call that compiles never fails in `mono`. A finer
+  graph, with one hub for each outer type of the receiver, would accept
+  `Start` and `Done`. It waits until a program needs it.
+
+The section leaves two features open: specialization, which is a more
+specific conformance that wins over a general one, and type tests on `T`.
+The roadmap lists both under "Open decisions". Nothing here rules them out.
+
 ## Considered options
 
 - **Brackets, `[T]` (Go, Scala)**: no `<` rule needed. But array types and

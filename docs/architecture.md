@@ -48,11 +48,11 @@ between two statements on one line becomes a `Newline` too, and an
 unnecessary one, such as a `;` at the end of a line, is dropped with W0007
 ([ADR 0028](adr/0028-a-semicolon-stands-in-for-a-line-break.md)). A `>` at
 a line's end ends the statement when it closes a type annotation, as in
-`b: Box<i64>`. Any other `>` there lets the line go on: a comparison, a
-header's type parameters, or a call's type arguments. A `??` at a line's end
-follows the same rule: it ends the statement in `b: i64??`, and otherwise the
-line goes on to the operand of `??`. The lexer
-decodes a `char` literal and its escapes into one scalar value, and a string
+`b: Box<i64>`, or the type that `type Item = Box<T>` chooses. Any other `>`
+there lets the line go on: a comparison, a header's type parameters, or a
+call's type arguments. A `??` at a line's end follows the same rule: it ends
+the statement in `b: i64??`, and otherwise the line goes on to the operand of
+`??`. The lexer decodes a `char` literal and its escapes into one scalar value, and a string
 literal into its text, so later stages never see the escape text. An integer
 literal's token holds only its value; a diagnostic that quotes the literal as
 written slices the source with its span. A string with `{expr}` parts
@@ -83,7 +83,16 @@ that loop's body; after `break` or `continue`, a name is the loop label when a
 loop around the jump has it, and otherwise begins the value
 ([ADR 0034](adr/0034-loop-and-loop-labels.md)). A function, class
 or enum header may take type parameters, `<T, U>`, and a type may take type
-arguments, `Stack<i64>`. In an expression, a `<` after a name starts type
+arguments, `Stack<i64>`. A type parameter may take bounds, `T: Shape & Named`.
+An `interface` item parses into its type parameters, the interfaces it
+inherits after a `:`, and its requirements: a method signature with no body,
+or an associated type, `type Item`. A class or an enum lists the interfaces it
+conforms to after its name, `class Circle: Shape`, and may choose an
+associated type, `type Item = i64`. An `extend` block,
+`extend<T> Stack<T>: Eq { ... }`, parses into its type parameters, its target,
+an optional interface and its methods; a broken one keeps the name of its
+target. In a type, `Self` is the conforming type and `S.Item` is an
+associated type. In an expression, a `<` after a name starts type
 arguments only when the tokens up to its `>` read as types and a `(` or `.`
 follows, as in `first<i64>([])`; any other `<` compares. A `>=` that closes a
 list, as in `let s: Stack<i64>= x`, splits into the `>` and the `=`. It rejects an item that nests deeper than
@@ -132,18 +141,36 @@ code does not read or a variant that it does not build, and W0014 for a local
 or parameter of live code that nothing reads. `check/operator.rs` checks operators (arithmetic, comparison,
 equality, `is` and `??`), `check/branch.rs` `if` and `if let` and the join of
 their branch types, `check/call.rs` calls, method calls and constructors, and
-`check/member.rs` fields and methods found through `.` and `?.`.
+`check/member.rs` fields and methods found through `.` and `?.`,
+including the methods of `extend` blocks.
 `check/generic.rs` handles type parameters. It checks a generic function,
 class or enum once, at its definition, with each type parameter an opaque
 `TypeKind::Param`. A value of a type parameter can be moved, stored, passed,
-returned, put in an array or a field, or wrapped in `T?`, and nothing else: an
-operator on one is E0139. A call takes its type arguments written out, or
+returned, put in an array or a field, wrapped in `T?`, and called with the
+methods of its bounds. No interface gives an operator yet, so an operator on
+one is E0139. A call takes its type arguments written out, or
 infers them from its receiver, its arguments and the expected type. `tir`
 keeps the type parameters, and a call records the type arguments it chose.
+`check/interface.rs` declares each interface, with its type parameters,
+requirements and inherited interfaces, and reads each bound. A bound gives
+the interfaces it names and every interface they inherit. `check/conform.rs`
+records the conformances that a class or an enum lists and that an `extend`
+block writes, and checks that each meets its requirements and the
+conformances it needs (E0152, E0154). `check/extend.rs` finds the methods of
+an `extend` block, and `check/assoc.rs` the associated types that a
+conformance chooses: it replaces an associated type of a known type with the
+type its conformance chose. `check/bound.rs` checks a method call on a value
+of type `T`: the name is a requirement of the interfaces of `T`'s bounds, and
+the call becomes an `InterfaceCall` node in `tir`. `conformance.rs` finds the
+conformance that covers a type, for the checker and for `mono`. A type
+argument that does not conform to a bound is an error at the call (E0154).
 `check/cycle.rs` then rejects a program whose instantiations would never end
 (E0140). Its graph has a node for each type parameter of every declaration,
-and an edge for each type argument that names one; a cycle through an edge
-whose argument grows, as `[T]` for `T` does, is the error. The checker
+a node for each interface, and an edge for each type argument that names a
+parameter, with a weight: the depth at which the argument nests the
+parameter, so `[T]` for `T` weighs 1. A call through a bound reaches every
+conformance of its interface. A cycle with a total weight above zero is the
+error ([ADR 0023](adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md)). The checker
 reports every error in one run: an expression that already failed gets the
 poison type, so one mistake produces one diagnostic. A program with no errors comes out as the
 typed tree, `tir`, which `mir` is built from. A type in `tir` is a
@@ -157,8 +184,15 @@ type. Each copy is named as a program writes it: `first<i64>`,
 `Stack<string>.peek`, `Tree<i64>`. A method is copied only when a call reaches
 it, never with its class. `mono` then lays out the enums again with
 `tir::layout_enums`, because an instantiation can close a cycle of enums that
-no declaration has. `mir` and codegen see only concrete types, and a program
-with no generic declaration passes through unchanged. `--emit tir` prints the
+no declaration has. A call of a requirement through a bound is an
+`InterfaceCall` in `tir`; `mono` replaces it with a call of the method of the
+conformance that the type argument has, so `total<Circle>` calls `Circle.area`
+directly and dispatch is static. It also replaces each associated type with
+the type its conformance chose. A method of an `extend` block that names an
+interface has the interface between its type and its name,
+`Celsius.Convert<Fahrenheit>.convert`, so two conformances may each hold a
+method of one name. `mir` and codegen see only concrete types, and a program
+with no generic declaration passes through, apart from those method names. `--emit tir` prints the
 program after `mono`.
 
 **mir** (`mir/`). The mid-level IR between `tir` and LLVM IR
@@ -196,7 +230,8 @@ that nothing writes or changes what a borrow reads.
 [inkwell](https://github.com/TheDan64/inkwell) bindings. Each Sisu function
 becomes an LLVM function named `sisu.<name>`, and each method of a class or an
 enum one named `sisu.<Type>.<method>`; an instantiation keeps the name `mono`
-gave it, as in `sisu.first<i64>` and `sisu.Stack<string>.peek`. Codegen also emits a `main` with the C
+gave it, as in `sisu.first<i64>`, `sisu.Stack<string>.peek` and
+`sisu.Celsius.Convert<Fahrenheit>.convert`. Codegen also emits a `main` with the C
 signature,
 which the C startup code calls and which runs `sisu.main`, passing it `args`,
 a `[string]` built from `argc` and `argv`, when `sisu.main` takes that

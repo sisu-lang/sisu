@@ -4,6 +4,7 @@ mod args;
 mod ast;
 mod check;
 mod codegen;
+mod conformance;
 mod diagnostic;
 mod front_end;
 mod fuzz;

@@ -1,0 +1,8 @@
+error[E0152]: `Item` is not an associated type of `Named`
+  --> E0152-not-associated.sisu:15:10
+   |
+15 |     type Item = i64
+   |          ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

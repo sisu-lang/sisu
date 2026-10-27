@@ -1,0 +1,137 @@
+// GIVEN a generic class `Stack<T>` that conforms to `Same` in its body, a generic `Pair<T>`
+// that conforms to `Same` when `T` does, and `extend` blocks that extend `Stack<T>` for every
+// `T`, `Stack<[T]>`, `Stack<i64>` and `Stack<f64>` alone, with counted `string`s inside
+// WHEN the stacks and pairs call the methods of those blocks, a generic function compares
+// `Pair<Circle>` and `Pair<Pair<Circle>>` through the bound `T: Same`, and a call passes the
+// result of a block's generic method on to a function that waits for it, and a `Rack<T: Ord2>`
+// that lists `Ord2` and gets its inherited `Same` from a block that needs `T: Ord2`
+// THEN each call runs the method of the instantiation it is called for, the conditional
+// conformance holds two levels deep, the inherited one holds under the bound of the list, and
+// every string is released once
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+interface Ord2: Same {
+    fn less(self, other: Self) -> bool
+}
+
+class Circle: Ord2 {
+    tag: string
+    r: f64
+
+    fn same(self, other: Circle) -> bool {
+        self.r == other.r
+    }
+
+    fn less(self, other: Circle) -> bool {
+        self.r < other.r
+    }
+}
+
+class Rack<T: Ord2>: Ord2 {
+    items: [T]
+
+    fn less(self, other: Self) -> bool {
+        self.items[0].less(other.items[0])
+    }
+}
+
+extend<T: Ord2> Rack<T>: Same {
+    fn same(self, other: Self) -> bool {
+        other.items[0].less(self.items[0]) == false
+    }
+}
+
+fn order<T: Ord2>(x: T) -> bool {
+    x.same(x)
+}
+
+class Stack<T>: Same {
+    items: [T]
+
+    fn same(self, other: Self) -> bool {
+        self.items.len() == other.items.len()
+    }
+}
+
+class Pair<T> {
+    first: T
+    second: T
+}
+
+extend<T: Same> Pair<T>: Same {
+    fn same(self, other: Self) -> bool {
+        self.first.same(other.first) && self.second.same(other.second)
+    }
+}
+
+extend<T> Stack<T> {
+    fn top(self) -> T? {
+        if self.items.len() == 0 {
+            None
+        } else {
+            self.items[self.items.len() - 1]
+        }
+    }
+}
+
+extend Stack<i64> {
+    fn total(self) -> i64 {
+        self.items.sum()
+    }
+
+    fn sum2(self) -> i64 {
+        self.items.sum() * 2
+    }
+
+    // `U` is the method's own parameter, though `Stack` has one too.
+    fn make<U>(self) -> [U] {
+        []
+    }
+}
+
+extend Stack<f64> {
+    fn sum2(self) -> f64 {
+        self.items.sum() * 2.0
+    }
+}
+
+extend<T> Stack<[T]> {
+    fn flat(self) -> [T] {
+        self.items[0]
+    }
+}
+
+fn agree<T: Same>(a: T, b: T) -> bool {
+    a.same(b)
+}
+
+fn take<T>(x: T, y: T) -> T {
+    [x, y][0]
+}
+
+fn main() {
+    let ints = Stack(items: [1, 2, 3])
+    let words = Stack(items: ["a" + "b", "c"])
+    print(ints.top() ?? 0)                        // 3
+    print(words.top() ?? "")                      // c
+    print(Stack(items: [1]).same(Stack(items: [2])))   // true
+    print(ints.total())                           // 6
+    print(ints.sum2())                            // 12
+    print(Stack(items: [1.5, 2.5]).sum2())        // 8.0
+    let nested = Stack(items: [[1, 2], [3]])
+    print(nested.flat().len())                    // 2
+    print(take(ints.make(), [1]).len())           // 0
+    let a = Circle(tag: "a" + "1", r: 1.0)
+    let b = Circle(tag: "b" + "2", r: 1.0)
+    let c = Circle(tag: "c" + "3", r: 2.0)
+    print(agree(Pair(first: a, second: b), Pair(first: b, second: a)))   // true
+    print(agree(Pair(first: a, second: b), Pair(first: b, second: c)))   // false
+    let deep = Pair(first: Pair(first: a, second: b), second: Pair(first: b, second: a))
+    print(agree(deep, deep))                      // true
+    print(Pair(first: a, second: c).same(Pair(first: a, second: c)))   // true
+    print(order(Rack(items: [a])))                // true
+    print(Rack(items: [c]).same(Rack(items: [a])))   // false
+    print(a.tag)                                  // a1
+}

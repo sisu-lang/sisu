@@ -1,0 +1,8 @@
+error[E0148]: `Color` is an enum, not an interface
+ --> E0148-enum.sisu:6:14
+  |
+6 | fn _paint<T: Color>(_x: T) {
+  |              ^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0148

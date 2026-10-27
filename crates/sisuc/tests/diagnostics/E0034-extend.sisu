@@ -1,0 +1,17 @@
+class Circle {
+    r: f64
+
+    fn grow(self, by: f64) -> f64 {
+        self.r + by
+    }
+}
+
+extend Circle {
+    fn grow(self, by: f64) -> f64 {
+        self.r + by + 1.0
+    }
+}
+
+fn main() {
+    print(Circle(r: 1.0).grow(1.0))
+}

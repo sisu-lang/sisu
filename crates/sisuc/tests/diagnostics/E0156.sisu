@@ -1,0 +1,30 @@
+interface Label {
+    fn name(self) -> string
+}
+
+interface Code {
+    fn name(self) -> i64
+}
+
+class Circle {
+    r: f64
+}
+
+extend Circle: Label {
+    fn name(self) -> string {
+        "circle"
+    }
+}
+
+extend Circle: Code {
+    fn name(self) -> i64 {
+        7
+    }
+}
+
+fn main() {
+    let c = Circle(r: 1.0)
+    let n = c.name()
+    print(n)
+    print(c.r)
+}

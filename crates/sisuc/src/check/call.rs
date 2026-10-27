@@ -43,6 +43,7 @@ impl Checker<'_> {
             declared,
             (Some(Declared::Broken), _) | (_, Some(Declared::Broken))
         ) || matches!(self.constants.get(&callee.name), Some(Declared::Broken))
+            || matches!(self.interface_ids.get(&callee.name), Some(Declared::Broken))
         {
             self.stray(args);
             return Err(Poisoned::error());
@@ -58,6 +59,14 @@ impl Checker<'_> {
         match declared {
             (Some(Declared::Known(class)), _) => self.construct_class(span, class, site, args),
             (_, Some(Declared::Known(func))) => self.invoke(span, func, None, site, args),
+            _ if self.interface_ids.contains_key(&callee.name) => {
+                self.report(DiagnosticKind::InterfaceAsValue {
+                    name: callee.name.to_string(),
+                    at: callee.span,
+                });
+                self.stray(args);
+                Err(Poisoned::error())
+            }
             // Here `Some` is the prelude's. A user item named `Some` is reported, and the two arms
             // above call it.
             _ if callee.name.as_str() == "Some" => self.some(span, site, None, args),
@@ -209,13 +218,13 @@ impl Checker<'_> {
             .first()
             .copied()
             .flatten()
-            .map(|ty| ty.subst(owner))
+            .and_then(|ty| self.subst(ty, owner))
     }
 
     /// How the method `name` belongs to a receiver of type `ty`: a built-in array or number
     /// method, or a method of a class or an enum. `None` when the type has no such method.
     fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
-        let (methods, owner) = match ty.kind() {
+        match ty.kind() {
             TypeKind::Array(element)
                 if matches!(name.as_str(), "len" | "contains")
                     || name.as_str() == "sum" && matches!(element, Type::I64 | Type::F64) =>
@@ -223,12 +232,11 @@ impl Checker<'_> {
                 return Some(Idiom::Built);
             }
             _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
-            TypeKind::Class(id, owner) => (&self.classes[id.0].methods, owner),
-            TypeKind::Enum(id, owner) => (&self.enums[id.0].methods, owner),
+            TypeKind::Class(..) | TypeKind::Enum(..) => {}
             _ => return None,
-        };
-        match methods.get(&name) {
-            Some(&Declared::Known(func)) => Some(Idiom::Method(func, owner)),
+        }
+        match self.own_method(ty, name) {
+            Some(Declared::Known(func)) => Some(Idiom::Method(func, self.owner_args(func, ty))),
             _ => None,
         }
     }
@@ -297,7 +305,7 @@ impl Checker<'_> {
             .params
             .iter()
             .take(args.len())
-            .map(|ty| ty.map(|ty| ty.subst(owner)))
+            .map(|ty| ty.and_then(|ty| self.subst(ty, owner)))
             .collect();
         let mut first = first;
         for (arg, &want) in args
@@ -433,9 +441,13 @@ impl Checker<'_> {
             Some(ty @ (Type::I64 | Type::F64)) => {
                 return self.number_method(span, receiver, ty, method, args);
             }
+            Some(ty) if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) => {
+                return self.bound_method(span, receiver, ty, site, args);
+            }
             _ => {}
         }
-        let Some(func) = self.find_method(type_of(&receiver), receiver_expr, method, target) else {
+        let Some(func) = self.find_method(type_of(&receiver), receiver_expr, site, target, span)
+        else {
             self.labels(args);
             self.stray(args);
             return Err(Poisoned::error());
@@ -454,10 +466,28 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         self.record(Used::Func(func), span);
+        // A method that meets a requirement uses the interfaces that it meets.
+        if let Some(interfaces) = self.meets.get(&func).cloned() {
+            for interface in interfaces {
+                self.record(Used::Interface(interface), span);
+            }
+        }
         let labeled = self.labels(args);
         let sig = &self.signatures[func.0];
         let (name, params, ret) = (sig.name.clone(), sig.params.clone(), sig.ret);
         let declared = sig.type_params.clone();
+        let bounds = sig.bounds.clone();
+        let conforming = sig.conformance.is_some();
+        // A method's receiver binds its owner's parameters.
+        let owner = match receiver.as_ref().and_then(type_of) {
+            Some(ty) => self.owner_args(func, ty).get(),
+            None => &[],
+        };
+        // The method of a conformance block is found by the call, so the list a method that takes
+        // none of its own is given is reported here, as `method_args` does for the others.
+        if conforming && !site.written.is_empty() && declared.len() <= owner.len() {
+            self.not_generic(site.name.name, site.angles);
+        }
         if params.len() != args.len() {
             self.stray(args);
             if !self.misread_in(args) {
@@ -478,11 +508,6 @@ impl Checker<'_> {
                 .collect();
             (checked, TypeArgs::NONE, ret)
         } else {
-            // A method's receiver binds its owner's parameters.
-            let owner = match receiver.as_ref().and_then(type_of).map(Type::kind) {
-                Some(TypeKind::Class(_, owner) | TypeKind::Enum(_, owner)) => owner.get(),
-                _ => &[],
-            };
             // A list on a method that takes none of its own is reported already.
             let written = if declared.len() > owner.len() {
                 site.written
@@ -496,6 +521,7 @@ impl Checker<'_> {
                 owner,
                 params: &params,
                 ret,
+                bounds: &bounds,
             };
             match self.generic_call(span, &sig, (written, site.angles), args, site.expected) {
                 Some(call) => call,
@@ -580,6 +606,7 @@ impl Checker<'_> {
             info.fields.iter().map(|f| (f.name.name, f.ty)).collect();
         if !info.type_params.is_empty() {
             let declared = info.type_params.clone();
+            let bounds = info.bounds.clone();
             let names: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
             if !self.shaped(span, &name, &names, args) {
                 return Err(Poisoned::error());
@@ -592,6 +619,7 @@ impl Checker<'_> {
                 owner: &[],
                 params: &params,
                 ret: Some(Type::intern(TypeKind::Class(class, own_args(&declared)))),
+                bounds: &bounds,
             };
             let written = (site.written, site.angles);
             let Some((args, _, Some(ty))) =

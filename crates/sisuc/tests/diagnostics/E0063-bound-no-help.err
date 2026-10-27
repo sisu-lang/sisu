@@ -1,0 +1,14 @@
+error[E0063]: `T` has no method `area`
+  --> E0063-bound-no-help.sisu:14:7
+   |
+14 |     x.area()
+   |       ^^^^
+
+error[E0063]: `T` has no method `convert`
+  --> E0063-bound-no-help.sisu:18:7
+   |
+18 |     x.convert()
+   |       ^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0063

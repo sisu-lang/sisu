@@ -1035,6 +1035,176 @@ fn main() {
         assert_eq!(codes(src), [(Code::Expected, (4, 13))]);
     }
 
+    /// A broken `interface` header or `extend` block is a name for the checker to handle: it
+    /// reports only the parse error and goes on, with no panic.
+    #[test]
+    fn a_broken_interface_or_extend_block_should_give_its_parse_error_only() {
+        for (src, at) in [
+            ("extend C: {}\nfn main() {}\n", (1, 11)),
+            ("interface Shape: {}\nfn main() {}\n", (1, 18)),
+        ] {
+            assert_eq!(codes(src), [(Code::Expected, at)], "{src}");
+        }
+    }
+
+    /// A broken `extend` block with a target that is a class or an enum poisons that type only for
+    /// what the block could have given it: a call that finds no method. Every other use of the
+    /// type, and every other item, is checked.
+    #[test]
+    fn broken_extend_should_poison_only_its_target() {
+        let src = "class C {\n    x: i64\n}\nextend C: {}\nfn good() {\n    let b: bool = 1\n}\nfn main() {\n    let c = C(x: 1)\n    let y: bool = c.x\n    c.grow()\n}\n";
+        assert_eq!(
+            codes(src),
+            [
+                (Code::Expected, (4, 11)),
+                (Code::Mismatch, (6, 19)),
+                (Code::Mismatch, (10, 19))
+            ]
+        );
+    }
+
+    /// A block with no name for its target stops the checker, as an unnamed broken item does.
+    #[test]
+    fn unnamed_broken_extend_should_stop_the_checker() {
+        let src = "extend {}\nfn good() {\n    let b: bool = 1\n}\n";
+        assert_eq!(codes(src), [(Code::Expected, (1, 8))]);
+    }
+
+    /// A method that a syntax error took from an intact block poisons a call of its name only,
+    /// and is no missing requirement; a broken block's target conforms to every interface that a
+    /// conformance of it needs.
+    #[test]
+    fn a_method_lost_to_a_syntax_error_should_poison_only_its_calls() {
+        let src = "class C {\n    x: i64\n}\nextend C {\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    let c = C(x: 1)\n    c.grow()\n    c.shrink()\n}\n";
+        assert_eq!(
+            codes(src),
+            [(Code::Expected, (6, 13)), (Code::NoMember, (12, 7))]
+        );
+        // Nothing else is reported, so the program is withheld for the lost method alone.
+        let lost = [
+            "class C {\n    x: i64\n}\nextend C {\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    C(x: 1).grow()\n}\n",
+            "enum E {\n    A\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    E.A.grow()\n}\n",
+        ];
+        for (src, at) in lost.into_iter().zip([(6, 13), (4, 13)]) {
+            assert_eq!(codes(src), [(Code::Expected, at)], "{src}");
+        }
+        // A lost method in a generic call's argument is a call of unknown shape.
+        let generic = "fn take<T>(x: T, y: T) -> T { x }\n";
+        for (src, at) in [
+            (
+                "class C {\n    x: i64\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    take(C(x: 1).grow(), 1)\n}\n",
+                (4, 13),
+            ),
+            (
+                "class C {\n    x: i64\n}\nextend C {\n    fn grow(self) {\n        let = 1\n    }\n}\nfn main() {\n    take(C(x: 1).grow(), 1)\n}\n",
+                (6, 13),
+            ),
+        ] {
+            assert_eq!(
+                codes(&format!("{src}{generic}")),
+                [(Code::Expected, at)],
+                "{src}"
+            );
+        }
+        let interfaces = "interface Named {\n    fn name(self) -> string\n}\ninterface Solid: Named {\n    fn volume(self) -> f64\n}\nclass C {\n    x: i64\n}\n";
+        let src = format!(
+            "{interfaces}extend C: Solid {{\n    fn volume(self) -> f64 {{ 1.0 }}\n}}\nextend C: Named {{\n    fn name(self) -> string {{\n        let = 1\n    }}\n}}\nfn main() {{}}\n"
+        );
+        assert_eq!(codes(&src), [(Code::Expected, (15, 13))]);
+        let src = format!(
+            "{interfaces}extend C: Solid {{\n    fn volume(self) -> f64 {{ 1.0 }}\n}}\nextend C: {{}}\nfn main() {{}}\n"
+        );
+        assert_eq!(codes(&src), [(Code::Expected, (13, 11))]);
+    }
+
+    /// A bound that the target of a broken `extend` block may have met holds, so the call of a
+    /// function with that bound reports the parse error alone.
+    #[test]
+    fn a_bound_should_hold_for_the_target_of_a_broken_extend() {
+        let src = "interface Same {\n    fn same(self, other: Self) -> bool\n}\nclass C {\n    x: i64\n}\nextend C: {}\nfn f<T: Same>(x: T) {}\nfn main() {\n    f(C(x: 1))\n}\n";
+        assert_eq!(codes(src), [(Code::Expected, (7, 11))]);
+    }
+
+    /// A bound that the prelude writes has no label for the user: nothing in the prelude is
+    /// theirs to read. The failure itself is reported at the user's code.
+    #[test]
+    fn a_bound_in_the_prelude_should_give_a_report_with_no_label_into_it() {
+        let prelude = "interface Weigh {\n    fn weigh(self) -> i64\n}\nclass Scale<T: Weigh> {\n    item: T\n}\n";
+        let src = "class Stone {}\nfn put(s: Scale<Stone>) {}\nfn main() {}\n";
+        let (_, ds) = front_end_with(prelude, src);
+        let [d] = &ds[..] else {
+            panic!("one diagnostic expected: {ds:?}");
+        };
+        assert_eq!(d.code(), Code::NotConform);
+        assert_eq!(line_col(src, d.span().start()), (2, 17));
+        assert_eq!(d.secondary(), []);
+    }
+
+    /// A prelude that extends a built-in type is an internal error.
+    #[test]
+    #[should_panic(expected = "internal compiler error: the prelude does not check clean")]
+    fn prelude_should_be_an_internal_error_when_it_extends_a_built_in_type() {
+        front_end_with("extend i64 {}", "fn main() {}");
+    }
+
+    /// A broken interface poisons its name for every use, as a broken class does, and so does a
+    /// broken function of the name an intact interface has.
+    #[test]
+    fn a_broken_interface_should_poison_its_name() {
+        for (src, at) in [
+            (
+                "interface Shape: {}\nfn f<T: Shape>(x: T, y: Shape) { Shape(1) }\nfn main() {}\n",
+                (1, 18),
+            ),
+            (
+                "interface Shape {}\nfn Shape() {\n    let = 1\n}\nfn f(s: Shape) {}\nfn main() {}\n",
+                (3, 9),
+            ),
+        ] {
+            assert_eq!(codes(src), [(Code::Expected, at)], "{src}");
+        }
+    }
+
+    /// A line break or a space before a `?` is no part of the type: the report covers the type
+    /// alone and renders (the renderer rejects a span that ends with a line break).
+    #[test]
+    fn an_unsupported_type_should_be_reported_without_the_question_marks_after_it() {
+        for (src, code, text) in [
+            (
+                "fn f(x: Self\n?) {}\nfn main() {}\n",
+                Code::SelfOutside,
+                "Self",
+            ),
+            (
+                "class C {}\nfn f(x: C.Item\n?) {}\nfn main() {}\n",
+                Code::UnknownType,
+                "C.Item",
+            ),
+            (
+                "fn f<T: Ord ? ?>(x: T) {}\nfn main() {}\n",
+                Code::UnknownType,
+                "Ord",
+            ),
+            // An optional bound is reported through its `?`, which is the error.
+            (
+                "fn f<T: [i64] ?>(x: T) {}\nfn main() {}\n",
+                Code::NotAnInterface,
+                "[i64] ?",
+            ),
+            (
+                "fn f<T: [i64]\n?>(x: T) {}\nfn main() {}\n",
+                Code::NotAnInterface,
+                "[i64]\n?",
+            ),
+        ] {
+            let diagnostics = front_end(src).1;
+            let first = diagnostics.first().expect("the type should be reported");
+            assert_eq!(first.code(), code, "{src}");
+            assert_eq!(&src[first.span().range()], text, "{src}");
+            first.render("t.sisu", src, &crate::source::LineIndex::new(src), false);
+        }
+    }
+
     #[test]
     fn broken_name_poisons_the_other_kind() {
         // Functions and classes share a namespace: the broken function `Tree` poisons the type.
@@ -1169,6 +1339,20 @@ fn main() {
         let (program, _) = front_end("fn id<T>(x: T) -> T { x }\nfn main() {}");
         let program = program.expect("the program should check");
         assert_eq!(names(&program), [vec![], vec![], vec!["main"]]);
+    }
+
+    /// A type argument that a type alone writes, with no call of a generic item, is enough to make
+    /// the enum of the prelude an enum of the program.
+    #[test]
+    fn mono_should_instantiate_a_prelude_enum_that_only_a_type_argument_names() {
+        let src = "fn main() {\n    let _: [Result<i64, string>] = []\n}";
+        let (program, diagnostics) = front_end(src);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let program = program.expect("the program should check");
+        assert_eq!(
+            names(&program),
+            [vec![], vec!["Result<i64, string>"], vec!["main"]]
+        );
     }
 
     /// A written type argument is what makes `Result<i64, string>` an enum of the program.

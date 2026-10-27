@@ -1,0 +1,13 @@
+error[E0154]: `T` does not conform to `Same`
+ --> E0154-interface-inherited.sisu:9:26
+  |
+5 | interface Feed<T: Same> {
+  |                   ---- required by this bound
+...
+9 | interface Relay<T>: Feed<T> {
+  |                          ^
+  |
+  = help: add a bound: `T: Same`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

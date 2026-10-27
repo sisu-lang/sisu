@@ -1,0 +1,14 @@
+error[E0030]: cannot find type `Shap`
+ --> E0030-interface.sisu:6:12
+  |
+6 |     let x: Shap = 1
+  |            ^^^^
+  |
+  = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+help: an interface with a similar name exists: `Shape`
+  |
+6 |     let x: Shape = 1
+  |                +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

@@ -1,0 +1,16 @@
+interface Label {
+    fn name(self) -> string
+}
+
+interface Code {
+    fn name(self) -> i64
+}
+
+fn show<T: Label & Code>(x: T) {
+    let n = x.name()
+    print(n)
+}
+
+fn main() {
+    print(1)
+}

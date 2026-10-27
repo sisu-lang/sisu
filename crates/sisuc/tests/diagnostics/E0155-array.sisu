@@ -1,0 +1,9 @@
+extend [i64] {
+    fn first(self) -> i64 {
+        self[0]
+    }
+}
+
+fn main() {
+    print(1)
+}

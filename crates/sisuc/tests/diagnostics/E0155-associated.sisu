@@ -1,0 +1,18 @@
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+class Wrap<T> {
+    value: T
+}
+
+extend<S: Source> Wrap<S.Item> {
+    fn size(self) -> i64 {
+        1
+    }
+}
+
+fn main() {
+    print(1)
+}

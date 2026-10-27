@@ -1,0 +1,27 @@
+interface Same {
+    fn same(self, other: Self) -> bool
+}
+
+class Pair<T> {
+    first: T
+    second: T
+}
+
+class Node {
+    id: i64
+}
+
+extend<T: Same> Pair<T>: Same {
+    fn same(self, other: Self) -> bool {
+        self.first.same(other.first) && self.second.same(other.second)
+    }
+}
+
+fn agree<T: Same>(a: T, b: T) -> bool {
+    a.same(b)
+}
+
+fn main() {
+    let p = Pair(first: Node(id: 1), second: Node(id: 2))
+    print(agree(p, p))
+}

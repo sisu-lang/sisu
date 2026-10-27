@@ -1,25 +1,25 @@
 // args: a b
-// o2-calls: main extend 1
-// `main` passes `args` on. `extend` copies its array before it changes it, because the caller's
+// o2-calls: main grow 1
+// `main` passes `args` on. `grow` copies its array before it changes it, because the caller's
 // array is still in use: `xs` stays live past the change, so the copy is needed and `xs` keeps
 // its string. Every copy and every string is released. Each level appends `!` before its
 // call and `?` after it, so the call is not a tail call and `-O2` keeps it.
-fn extend(xs: [string], n: i64) -> [string] {
+fn grow(xs: [string], n: i64) -> [string] {
     if n == 0 || xs.len() == 0 {
         return xs
     }
     let mut ys = xs
     ys[0] += "!"
     if xs[0] == ys[0] {
-        panic("extend changed the caller's array")
+        panic("grow changed the caller's array")
     }
-    let mut zs = extend(ys, n - 1)
+    let mut zs = grow(ys, n - 1)
     zs[0] += "?"
     zs
 }
 
 fn main(args: [string]) {
-    for a in extend(args, args.len()) {
+    for a in grow(args, args.len()) {
         print(a)        // a!!??, b
     }
 }

@@ -1,0 +1,11 @@
+interface Named: Labeled {
+    fn name(self) -> string
+}
+
+interface Labeled: Named {
+    fn label(self) -> string
+}
+
+fn main() {
+    print(1)
+}

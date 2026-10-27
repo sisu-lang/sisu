@@ -1,0 +1,8 @@
+error[E0148]: `Circle` is a class, not an interface
+ --> E0148.sisu:5:13
+  |
+5 | fn _area<T: Circle>(_shape: T) {
+  |             ^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0148

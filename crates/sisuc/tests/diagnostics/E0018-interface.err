@@ -1,0 +1,15 @@
+error[E0018]: an interface method cannot take `mut self`
+ --> E0018-interface.sisu:2:13
+  |
+2 |     fn bump(mut self)
+  |             ^^^
+  |
+  = help: a class method changes its object's `mut` fields through plain `self`
+help: remove the `mut`
+  |
+2 -     fn bump(mut self)
+2 +     fn bump(self)
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0018

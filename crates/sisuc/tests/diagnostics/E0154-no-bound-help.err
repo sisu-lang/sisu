@@ -1,0 +1,11 @@
+error[E0154]: `U` does not conform to `Convert<i64>`
+  --> E0154-no-bound-help.sisu:10:10
+   |
+ 5 | fn show<T: Convert<i64>>(item: T) -> i64 {
+   |            ------------ required by this bound
+...
+10 |     show(item)
+   |          ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0154

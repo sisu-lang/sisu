@@ -1,0 +1,21 @@
+interface Named {
+    fn name(self) -> string
+}
+
+interface Shape: Named {
+    fn area(self) -> f64
+}
+
+class Square {
+    side: f64
+}
+
+extend Square: Shape {
+    fn area(self) -> f64 {
+        self.side * self.side
+    }
+}
+
+fn main() {
+    print(Square(side: 2.0).area())
+}

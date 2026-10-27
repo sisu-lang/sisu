@@ -1,0 +1,10 @@
+error[E0030]: the associated type `Link<End>.Next` needs itself to find its type
+  --> E0030-choice-loops.sisu:20:17
+   |
+20 |     type Next = T.Next.Next
+   |                 ^^^^^^^^^^^
+   |
+   = help: write a choice that does not lead back to the same associated type
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

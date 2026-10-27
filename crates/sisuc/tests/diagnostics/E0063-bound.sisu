@@ -1,0 +1,11 @@
+interface Shape {
+    fn area(self) -> f64
+}
+
+fn area_of<T>(x: T) -> f64 {
+    x.area()
+}
+
+fn main() {
+    print(1)
+}

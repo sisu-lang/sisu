@@ -1,0 +1,8 @@
+error[E0155]: `T` does not appear in `Meters`
+ --> E0155-unused-named.sisu:5:8
+  |
+5 | extend<T> Meters {
+  |        ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0155

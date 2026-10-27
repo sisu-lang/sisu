@@ -1,0 +1,31 @@
+interface Deep {
+    type Item: Deep
+    fn next(self) -> Item?
+    fn poke(self)
+}
+
+class Chain<T> {
+    value: T
+}
+
+fn go<S: Deep>(s: S) {
+    if let x = s.next() {
+        x.poke()
+    }
+}
+
+extend<T: Deep> Chain<T>: Deep {
+    type Item = Chain<Chain<Chain<T>>>
+
+    fn next(self) -> Item? {
+        None
+    }
+
+    fn poke(self) {
+        go(self.value)
+    }
+}
+
+fn main() {
+    print(1)
+}

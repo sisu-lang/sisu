@@ -1,0 +1,43 @@
+interface Convert<T> {
+    fn convert(self) -> T
+}
+
+class Fahrenheit {
+    degrees: f64
+}
+
+class Kelvin {
+    degrees: f64
+}
+
+class Celsius {
+    degrees: f64
+}
+
+extend Celsius: Convert<Fahrenheit> {
+    fn convert(self) -> Fahrenheit {
+        Fahrenheit(degrees: self.degrees * 1.8 + 32.0)
+    }
+}
+
+extend Celsius: Convert<Kelvin> {
+    fn convert(self) -> Kelvin {
+        Kelvin(degrees: self.degrees + 273.0)
+    }
+}
+
+class Rankine {
+    degrees: f64
+}
+
+extend Celsius: Convert<Rankine> {
+    fn convert(self) -> Rankine {
+        Rankine(degrees: self.degrees * 1.8 + 491.67)
+    }
+}
+
+fn main() {
+    let c = Celsius(degrees: 100.0)
+    let x = c.convert()
+    print(c.degrees)
+}
