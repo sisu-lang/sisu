@@ -66,6 +66,11 @@ struct Shape {
     assoc: Option<Assoc>,
 }
 
+/// Whether a requirement has a result, for the pick `pick` below 3: two in three do.
+fn has_result(pick: usize) -> bool {
+    pick != 0
+}
+
 /// An associated type `A<n>` of an interface. A conformance chooses `plain` for it, or, when the
 /// interface bounds it, the conforming type itself, which conforms to the interface.
 struct Assoc {
@@ -76,6 +81,18 @@ struct Assoc {
 }
 
 impl Assoc {
+    /// The associated type that `draw`, a pick below 18, gives interface `id`. The draw is in six
+    /// parts of three: an associated type in the upper half, bounded by the interface itself in
+    /// the last third, and chosen as `i64` rather than `string` in the first.
+    fn drawn(id: usize, draw: usize) -> Option<Assoc> {
+        let part = draw / 3;
+        (part >= 3).then(|| Assoc {
+            name: format!("A{id}"),
+            bounded: part == 5,
+            plain: if part == 3 { "i64" } else { "string" },
+        })
+    }
+
     /// The type chosen for it where `ty` conforms.
     fn chosen<'a>(&'a self, ty: &'a str) -> &'a str {
         if self.bounded { ty } else { self.plain }
@@ -564,12 +581,7 @@ impl Gen<'_> {
                 }
             }
             let param = if takes { "<T>" } else { "" };
-            // An associated type in half of them, bounded by the interface itself in a third.
-            let assoc = (draw / 3 >= 3).then(|| Assoc {
-                name: format!("A{id}"),
-                bounded: draw / 3 == 5,
-                plain: if draw / 3 == 3 { "i64" } else { "string" },
-            });
+            let assoc = Assoc::drawn(id, draw);
             self.w.text(&format!("interface I{id}{param}"));
             if !inherits.is_empty() {
                 let list: Vec<String> = inherits
@@ -606,7 +618,8 @@ impl Gen<'_> {
                     params.push((param, ty));
                 }
                 signature += ")";
-                let ret = (self.pick(3) != 0).then(|| self.requirement_type(takes, assoc.as_ref()));
+                let ret =
+                    has_result(self.pick(3)).then(|| self.requirement_type(takes, assoc.as_ref()));
                 if let Some(ty) = &ret {
                     write!(signature, " -> {}", ty.written)
                         .expect("writing to a `String` should succeed");
@@ -1375,4 +1388,31 @@ pub(crate) fn payload(labels: &[String], values: &[String]) -> String {
 /// A parameter: in scope, never assigned.
 fn param(name: String, ty: Ty, size: u64) -> Var {
     Var::new(name, ty, false, size, 0, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_draw_should_give_an_interface_the_associated_type_of_its_part() {
+        for draw in 0..18 {
+            let expected = match draw {
+                0..=8 => None,
+                9..=11 => Some((false, "i64")),
+                12..=14 => Some((false, "string")),
+                _ => Some((true, "string")),
+            };
+            let drawn = Assoc::drawn(7, draw).map(|a| {
+                assert_eq!(a.name, "A7");
+                (a.bounded, a.plain)
+            });
+            assert_eq!(drawn, expected, "draw {draw}");
+        }
+    }
+
+    #[test]
+    fn a_pick_of_zero_should_leave_a_requirement_without_a_result() {
+        assert_eq!([0, 1, 2].map(has_result), [false, true, true],);
+    }
 }

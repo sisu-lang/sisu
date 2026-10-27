@@ -117,7 +117,7 @@ fn g<S: Source>(s: S) -> S.Item? {
     first_of(s)
 }
 
-fn drain<S: Source>(s: S) -> [S.Item] {
+fn last_of<S: Source>(s: S) -> [S.Item] {
     let mut last: [S.Item] = []
     while let x = s.next() {
         last = [x]
@@ -175,45 +175,45 @@ fn words() -> Words {
 fn main() {
     // Countdown: the items are `i64`s.
     let n: i64? = first_of(Countdown(n: 3))
-    print(n ?? 0)
+    print(n ?? 0) // 3
     let m: i64? = g(Relay(inner: Countdown(n: 5)))
-    print(m ?? 0)
-    print(drain(Countdown(n: 4))[0])
-    print(pass(Countdown(n: 1), 40) + pass2(2, Countdown(n: 1)))
+    print(m ?? 0) // 5
+    print(last_of(Countdown(n: 4))[0]) // 1, the last item of 4, 3, 2, 1
+    print(pass(Countdown(n: 1), 40) + pass2(2, Countdown(n: 1))) // 42
     let held: Holder<Countdown> = Holder(item: 7)
-    print(held.item + held.get())
+    print(held.item + held.get()) // 14
     let got: Got<Countdown> = Got.Got(9)
     match got {
-        Got.Got(v) => print(v + 1)
-        Got.Nothing => print(0)
+        Got.Got(v) => print(v + 1) // 10
+        Got.Nothing => print(0) // not reached
     }
     // A bound that names the `Item` of the parameter before or after it.
-    print(after(Countdown(n: 1), Twice(k: 21)) ?? 0)
-    print(before(Twice(k: 1), Countdown(n: 8)))
+    print(after(Countdown(n: 1), Twice(k: 21)) ?? 0) // 42
+    print(before(Twice(k: 1), Countdown(n: 8))) // 8
     // A chain of bounds that name the `Item` of a parameter that comes later.
-    print(chain(Pair2(k: 5), Countdown(n: 1), Twice(k: 3))[1])
+    print(chain(Pair2(k: 5), Countdown(n: 1), Twice(k: 3))[1]) // 6
     // A bound that writes the `Item` of its own parameter, which another bound of it declares.
-    print(own(Both(n: 11)))
+    print(own(Both(n: 11))) // 11
     // Words: the items are counted `string`s, and each is released once.
     let w: string? = first_of(words())
-    print(w ?? "none")
+    print(w ?? "none") // ab
     let r: string? = g(Relay(inner: words()))
-    print(r ?? "none")
-    let all = drain(words())
-    print(all[0])
-    print(all.len())
-    print(pass(words(), "x" + "y"))
-    print(pass2("p" + "q", words()))
+    print(r ?? "none") // ab
+    let all = last_of(words())
+    print(all[0]) // ef, the last item
+    print(all.len()) // 1
+    print(pass(words(), "x" + "y")) // xy
+    print(pass2("p" + "q", words())) // pq
     let kept: Holder<Words> = Holder(item: "h" + "i")
-    print(kept.item + kept.get())
+    print(kept.item + kept.get()) // hihi
     let there: Got<Words> = Got.Got("m" + "n")
     match there {
-        Got.Got(v) => print(v + "!")
-        Got.Nothing => print("nothing")
+        Got.Got(v) => print(v + "!") // mn!
+        Got.Nothing => print("nothing") // not reached
     }
     let nothing: Got<Words> = Got.Nothing
     match nothing {
-        Got.Got(v) => print(v)
-        Got.Nothing => print("nothing")
+        Got.Got(v) => print(v) // not reached
+        Got.Nothing => print("nothing") // nothing
     }
 }

@@ -572,7 +572,6 @@ impl Walk {
                 | ast::Item::Extend(_) => None,
             })
             .collect();
-        self.generic_conformances(program);
         for broken in &program.broken {
             self.mark(match broken.kind {
                 ast::BrokenKind::Function => "ast::BrokenKind::Function",
@@ -588,6 +587,7 @@ impl Walk {
                 ast::Item::Function(f) => {
                     self.mark("ast::Item::Function");
                     self.ast_function(f);
+                    self.note_bounds(f);
                 }
                 ast::Item::Class(c) => self.ast_class(c),
                 ast::Item::Interface(interface) => self.ast_interface(interface),
@@ -637,30 +637,6 @@ impl Walk {
             } else {
                 "reach: a generic class is built with written type arguments"
             });
-        }
-    }
-
-    /// Marks a type that conforms to one generic interface more than once, in its declaration
-    /// list or in `extend` blocks.
-    fn generic_conformances(&mut self, program: &ast::Program) {
-        let mut counts: FxHashMap<(String, String), usize> = FxHashMap::default();
-        for item in &program.items {
-            let (target, interfaces) = match item {
-                ast::Item::Class(c) => (c.name.name.to_string(), c.conforms.iter().collect()),
-                ast::Item::Enum(e) => (e.name.name.to_string(), e.conforms.iter().collect()),
-                ast::Item::Extend(x) => (x.target.to_string(), x.interface.iter().collect()),
-                _ => continue,
-            };
-            let interfaces: Vec<&ast::TypeExpr> = interfaces;
-            for interface in interfaces {
-                if let ast::TypeKind::Applied(applied) = &interface.kind {
-                    let key = (target.clone(), applied.name.as_str().to_string());
-                    *counts.entry(key).or_default() += 1;
-                }
-            }
-        }
-        if counts.values().any(|&n| n > 1) {
-            self.mark("reach: a generic interface has two conformances on one type");
         }
     }
 
@@ -764,10 +740,6 @@ impl Walk {
     /// Walks the types of the associated types a conformance chooses.
     fn choices(&mut self, assoc: &[ast::AssocChoice]) {
         for choice in assoc {
-            // A `string` or an object: the choice is reference counted.
-            if choice.ty.optional == 0 && counted_name(&choice.ty.kind) {
-                self.mark("reach: an associated type's choice is counted");
-            }
             self.type_expr(&choice.ty);
         }
     }
@@ -785,13 +757,19 @@ impl Walk {
         }
     }
 
+    /// Records the bounds of the function `f`, which the typed tree finds by its name. A method is
+    /// named for its type there, so it is not recorded: its bare name may be a function's.
+    fn note_bounds(&mut self, f: &ast::Function) {
+        let named =
+            (f.type_params.iter()).map(|p| p.bounds.iter().map(ToString::to_string).collect());
+        self.bounded
+            .insert(f.name.name.as_str().to_string(), named.collect());
+    }
+
     fn ast_function(&mut self, f: &ast::Function) {
         self.func = f.name.name.as_str().to_string();
         self.in_generic = !f.type_params.is_empty();
         self.bounds(&f.type_params);
-        let named =
-            (f.type_params.iter()).map(|p| p.bounds.iter().map(ToString::to_string).collect());
-        self.bounded.insert(self.func.clone(), named.collect());
         self.params.clear();
         for param in &f.params {
             self.type_expr(&param.ty);
@@ -1710,10 +1688,27 @@ impl Walk {
                 again.insert((interface, conformance.target));
             }
         }
+        // A call of the method of a block picks it by its expected type when the type has no
+        // method of its own by the name: the type's own, in its body, are not the block's.
         for (interface, conformance) in program.conformances.iter() {
             if again.contains(&(interface, conformance.target)) {
-                self.picked.extend(conformance.methods.iter().map(|f| f.0));
+                let blocks = (conformance.methods.iter().map(|f| f.0))
+                    .filter(|&f| program.functions[f].conformance.is_some());
+                self.picked.extend(blocks);
             }
+            // A `string`, a class or an array is reference counted.
+            let counted = conformance.assoc.iter().flatten().any(|choice| {
+                matches!(
+                    choice.kind(),
+                    TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_)
+                )
+            });
+            if counted {
+                self.mark("reach: an associated type's choice is counted");
+            }
+        }
+        if !again.is_empty() {
+            self.mark("reach: a generic interface has two conformances on one type");
         }
         self.generic_blocks = (program.functions.iter().enumerate())
             .filter(|(_, f)| f.owner_params > 0 && f.name.contains('<'))
@@ -2011,8 +2006,9 @@ impl Walk {
                 self.mark("tir::ExprKind::InterfaceCall");
                 // The bounds of the function name the interface, or one that inherits it.
                 let name = &self.interface_names[interface.0];
-                if !(self.bounded.get(&self.tir_func))
-                    .is_some_and(|named| named.iter().flatten().any(|bound| bound == name))
+                let direct = |bound: &String| bound.split('<').next() == Some(name.as_str());
+                if (self.bounded.get(&self.tir_func))
+                    .is_some_and(|named| !named.iter().flatten().any(direct))
                 {
                     self.mark("reach: a call goes through an inherited bound");
                 }
@@ -2288,17 +2284,6 @@ impl Walk {
             tir::PatternKind::None => self.mark("tir::PatternKind::None"),
         }
     }
-}
-
-/// Whether the written type `kind` names `string` or a class of the generator (`K<n>` and
-/// `Q<n>`, and `R<n>` over an argument), whose values are reference counted.
-fn counted_name(kind: &ast::TypeKind) -> bool {
-    let name = match kind {
-        ast::TypeKind::Name(name) => name.as_str(),
-        ast::TypeKind::Applied(applied) => applied.name.as_str(),
-        _ => return false,
-    };
-    name == "string" || name.starts_with(['K', 'Q', 'R'])
 }
 
 /// A type's kind, as `RECEIVERS` and `CONVERSIONS` write it.
@@ -5584,6 +5569,30 @@ fn the_walk_should_mark_what_bounds_hold() {
         marked("class H<T: Shape> {\n    v: T\n}\n"),
         [false, false, true]
     );
+    // A method of the name of a function, after it, does not take its bounds.
+    assert_eq!(
+        marked(
+            "fn f<T: Named>(x: T) -> string {\n    x.name()\n}\nclass H {\n    fn f(self) -> i64 { 1 }\n}\n"
+        ),
+        [false, false, false]
+    );
+}
+
+/// A call through a bound that writes interface arguments is no call through an inherited bound,
+/// and one through the bound of a sub-interface that writes them is.
+#[test]
+fn the_walk_should_mark_an_inherited_bound_by_the_interface_it_names() {
+    let decls = "interface Conv<T> {\n    fn convert(self) -> T\n}\ninterface Sub: Conv<i64> {}\nclass B: Sub {\n    fn convert(self) -> i64 { 1 }\n}\n";
+    let key = "reach: a call goes through an inherited bound";
+    let marked = |rest: &str| {
+        let mut walk = Walk::default();
+        walk.program(&format!("{decls}{rest}fn main() {{}}\n"));
+        walk.seen.contains(key)
+    };
+    assert!(!marked(
+        "fn f<T: Conv<i64>>(x: T) -> i64 {\n    x.convert()\n}\n"
+    ));
+    assert!(marked("fn f<T: Sub>(x: T) -> i64 {\n    x.convert()\n}\n"));
 }
 
 /// The walk marks an `extend` block over a generic type that a call reaches, a conditional
@@ -5722,6 +5731,29 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
     );
 }
 
+/// The seeds between them write each kind of associated type: bounded by its interface, chosen as
+/// `i64`, and chosen as a counted `string`.
+#[test]
+fn generated_associated_types_should_reach_every_kind() {
+    let mut kinds = FxHashSet::default();
+    for data in seeds() {
+        for line in generate(&data).plain.lines().map(str::trim) {
+            if line.starts_with("type A") {
+                if line.contains(": I") {
+                    kinds.insert("bounded");
+                }
+                if line.ends_with("= i64") {
+                    kinds.insert("i64");
+                }
+                if line.ends_with("= string") {
+                    kinds.insert("string");
+                }
+            }
+        }
+    }
+    assert_eq!(kinds.len(), 3, "{kinds:?}");
+}
+
 /// The walk marks a generic interface that a type conforms to more than once, a call that its
 /// expected type picks and a bound with interface arguments, and only those.
 #[test]
@@ -5777,6 +5809,15 @@ fn the_walk_should_mark_what_generic_interfaces_hold() {
         )),
         [true, false, false]
     );
+    // The method in the body of `B` wins, with an expected type or without.
+    let own = "extend B: Conv<string> {\n    fn convert(self) -> string { \"s\" }\n}\n";
+    for call in ["let n = B().convert()", "let n: i64 = B().convert()"] {
+        assert_eq!(
+            marked(&format!("{own}fn main() {{\n    {call}\n}}\n")),
+            [true, false, false],
+            "{call}"
+        );
+    }
 }
 
 /// An interface lists each interface it inherits once.
@@ -5800,42 +5841,44 @@ fn generated_interfaces_should_inherit_each_interface_once() {
     assert!(lists > 0, "no seed writes an interface that inherits two");
 }
 
-/// The walk marks an associated type with a bound, and a choice that is a `string` or a class,
-/// and only those.
+/// The walk marks an associated type with a bound, and a choice that is a `string`, a class or an
+/// array, and only those.
 #[test]
 fn the_walk_should_mark_what_associated_types_hold() {
-    let decls = "interface Plain {\n    type Item\n}\ninterface Bounded {\n    type Item: Plain\n}\nclass K0 {}\n";
+    let decls = "interface Plain {\n    type Item\n}\ninterface Bounded {\n    type Item: Plain\n}\nclass K0 {}\nclass R2<T> {\n    v: T\n}\nenum N1 {\n    A\n}\n";
     let keys = [
         "reach: an associated type has a bound",
         "reach: an associated type's choice is counted",
     ];
     let marked = |rest: &str| {
-        let src = format!("{decls}{rest}");
-        let parsed = parser::parse(lexer::lex(&src).expect("the source should lex"), false);
         let mut walk = Walk::default();
-        walk.ast(&parsed.program);
+        walk.program(&format!("{decls}{rest}"));
         keys.map(|key| walk.seen.contains(key))
     };
-    // A bound is in the interface; each choice is read where a type writes it.
+    // A bound is in the interface; each choice is read where its class or enum conforms.
     assert_eq!(marked("fn main() {}\n"), [true, false]);
     // Without the bounded interface, no bound is marked.
-    let plain = "interface Plain {\n    type Item\n}\n";
-    let parsed = parser::parse(lexer::lex(plain).expect("the source should lex"), false);
+    let plain = "interface Plain {\n    type Item\n}\nfn main() {}\n";
     let mut walk = Walk::default();
-    walk.ast(&parsed.program);
+    walk.program(plain);
     assert!(!walk.seen.contains(keys[0]));
     for (choice, counted) in [
         ("string", true),
         ("K0", true),
-        ("Q1", true),
         ("R2<i64>", true),
+        ("[i64]", true),
+        ("[string]", true),
         ("i64", false),
         ("N1", false),
-        ("[string]", false),
         ("string?", false),
     ] {
         let rest = format!("class C: Plain {{\n    type Item = {choice}\n}}\nfn main() {{}}\n");
         assert_eq!(marked(&rest)[1], counted, "{choice}");
+        // The same choice in a block.
+        let rest = format!(
+            "class D {{}}\nextend D: Plain {{\n    type Item = {choice}\n}}\nfn main() {{}}\n"
+        );
+        assert_eq!(marked(&rest)[1], counted, "{choice} in a block");
     }
     // The name of a type's kind, as the receiver rows write it.
     let item = Type::intern(TypeKind::Assoc(
