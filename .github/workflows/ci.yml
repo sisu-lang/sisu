@@ -76,6 +76,12 @@ jobs:
           git -c core.quotepath=off diff -z --name-only --diff-filter=d "$base" -- '*.rs' | xargs -0 --no-run-if-empty python3 scripts/test_names.py --diff "$base" || status=1
           python3 scripts/slow_tests.py target/nextest/ci/junit.xml --fail-changed "$base" || status=1
           exit "$status"
+      # Fails for a filter leaf of .config/nextest.toml that matches no test. The tests already ran,
+      # so the build of the list is cached. A failed `cargo nextest list` fails the step, with its error.
+      - if: (success() || failure()) && steps.nextest.outcome == 'success'
+        run: |
+          cargo nextest list --workspace --locked --message-format json > "$RUNNER_TEMP/list.json"
+          python3 scripts/nextest_filters.py .config/nextest.toml "$RUNNER_TEMP/list.json"
 
   # The same tests on an aarch64 host. It runs on main and by hand, not on every
   # pull request: a pull request can start it with workflow_dispatch on its branch.

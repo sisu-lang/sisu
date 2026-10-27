@@ -31,6 +31,7 @@ build: ## Build sisu and the two runtime archives
 
 test: ## Run every test with nextest, whose setup script builds the runtime
 	cargo nextest run --workspace --locked
+	list=$$(mktemp) && cargo nextest list --workspace --locked --message-format json > $$list && python3 scripts/nextest_filters.py .config/nextest.toml $$list; status=$$?; rm -f $$list; exit $$status
 
 bless: ## Fill the expected .out/.err/.json files of the end-to-end cases and the site's programs
 	SISU_BLESS=1 cargo nextest run -E 'binary(cases)'
