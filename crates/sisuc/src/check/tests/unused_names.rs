@@ -917,6 +917,13 @@ fn interface_should_warn_when_no_live_code_names_or_calls_it() {
         )),
         [(W0012, (1, 11), vec![(7, 11)]), (W0012, (8, 8), vec![])]
     );
+    // Only the bound of a block with no method names it, and its class is never built.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n}}\nfn main() {{}}"
+        )),
+        [(W0012, (1, 11), vec![]), (W0012, (4, 7), vec![])]
+    );
 }
 
 /// An interface that live code names in a bound, calls through a requirement or a method of a
@@ -935,6 +942,11 @@ fn interface_should_not_warn_when_live_code_uses_it() {
         circle("class Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T> {\n    fn spelled(self) -> f64 { self.inner.area() }\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).spelled())\n}"),
         circle("interface Other {\n    fn other(self) -> f64\n}\nclass Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T>: Other {\n    fn other(self) -> f64 { self.inner.area() }\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).other())\n}"),
         circle("class Crate<T> {\n    inner: T\n}\nextend<T> Crate<T> {\n    fn spelled<U: Shape>(self, _u: U) -> i64 { 3 }\n}\nfn main() {\n    let c = Crate(inner: 1)\n    print(c.inner)\n    print(c.spelled(Circle(r: 1.0)))\n}"),
+        // (a) The bound of a block with no live method names it when the block conforms a built
+        // class or enum, or has no method at all: no method names the bound.
+        circle("interface Marker {\n}\nclass Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T>: Marker {\n}\nfn want<X: Marker>(_x: X) -> i64 {\n    2\n}\nfn main() {\n    let c = Crate(inner: Circle(r: 1.0))\n    print(c.inner.r)\n    print(want(c))\n}"),
+        circle("interface Marker {\n}\nenum Maybe<T> {\n    Has(T)\n    No\n}\nextend<T: Shape> Maybe<T>: Marker {\n}\nfn want<X: Marker>(_x: X) -> i64 {\n    2\n}\nfn main() {\n    let m: Maybe<Circle> = Maybe.No\n    print(want(m))\n    print(want(Maybe.Has(Circle(r: 1.0))))\n}"),
+        circle("class Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T> {\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).inner.r)\n}"),
         // (b) A method of a conformance, with no bound: the call selects it.
         circle("fn main() {\n    print(Circle(r: 1.0).area())\n}"),
         // A method of the body that meets a requirement of a listed interface.

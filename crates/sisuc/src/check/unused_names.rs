@@ -559,15 +559,8 @@ impl Checker<'_> {
         let held = OnceCell::new();
         // One for every comparison, so each type is walked once.
         let mut seen = Seen::default();
-        // The methods of a class's or an enum's conformances. An interface call names a
-        // requirement, so no use reaches them: they are live when the type is built, as rustc
-        // reports no method of a trait impl of a type it builds.
-        let mut conforming: FxHashMap<Holder, Vec<usize>> = FxHashMap::default();
-        for (_, conformance) in self.conformances.iter() {
-            let holder = holder_of(conformance.target)
-                .expect("the target of a conformance should be a class or an enum");
-            (conforming.entry(holder).or_default()).extend(conformance.methods.iter().map(|f| f.0));
-        }
+        let conforming = self.conformance_methods();
+        let block_bounds = self.block_bounds();
         let mut enum_started = vec![false; self.enums.len()];
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
@@ -591,13 +584,16 @@ impl Checker<'_> {
                             stack.push(method);
                         }
                     }
-                    // A class or an enum that is built names the interfaces of its bounds.
+                    // A class or an enum that is built names the interfaces of its bounds, and of
+                    // the bounds of the blocks that conform it.
                     let bounds = match holder {
                         Holder::Class(c) => &self.classes[c.0].bounds,
                         Holder::Enum(e) => &self.enums[e.0].bounds,
                     };
-                    for bound in bounds.iter().flatten() {
-                        use_interface(&mut interfaces, &mut to_follow, bound.interface.0);
+                    let bounds = bounds.iter().flatten().map(|bound| bound.interface.0);
+                    let blocks = block_bounds.get(&holder).into_iter().flatten().copied();
+                    for interface in bounds.chain(blocks) {
+                        use_interface(&mut interfaces, &mut to_follow, interface);
                     }
                 }
                 match to {
@@ -631,6 +627,32 @@ impl Checker<'_> {
             interfaces,
             held,
         }
+    }
+
+    /// The methods of the conformances of each class and enum. An interface call names a
+    /// requirement, so no use reaches them: they are live when the type is built, as rustc
+    /// reports no method of a trait impl of a type it builds.
+    fn conformance_methods(&self) -> FxHashMap<Holder, Vec<usize>> {
+        let mut conforming: FxHashMap<Holder, Vec<usize>> = FxHashMap::default();
+        for (_, conformance) in self.conformances.iter() {
+            let holder = holder_of(conformance.target)
+                .expect("the target of a conformance should be a class or an enum");
+            (conforming.entry(holder).or_default()).extend(conformance.methods.iter().map(|f| f.0));
+        }
+        conforming
+    }
+
+    /// The interfaces in the bounds of the `extend` blocks of each class and enum that conform it
+    /// or have no method. They are used when the type is built, like the methods of its
+    /// conformances are live: no method names them.
+    fn block_bounds(&self) -> FxHashMap<Holder, Vec<usize>> {
+        let mut bounds: FxHashMap<Holder, Vec<usize>> = FxHashMap::default();
+        let blocks = self.extensions.iter();
+        for block in blocks.filter(|b| b.interface.is_some() || b.methods.is_empty()) {
+            let interfaces = block.bounds.iter().flatten().map(|b| b.interface.0);
+            (bounds.entry(block.holder).or_default()).extend(interfaces);
+        }
+        bounds
     }
 
     /// Marks as used the interfaces that the used ones in `to_follow` name: those they inherit,
