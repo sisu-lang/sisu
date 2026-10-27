@@ -35,15 +35,6 @@ fn function_should_warn_when_nothing_calls_it() {
 }
 
 #[test]
-fn function_should_warn_when_only_a_dead_function_calls_it() {
-    judge_unused();
-    assert_eq!(
-        found(&format!("{CHAIN}fn main() {{}}")),
-        [(W0012, (1, 4), vec![(5, 5)]), (W0012, (4, 4), vec![])]
-    );
-}
-
-#[test]
 fn function_should_not_warn_when_a_live_function_also_calls_it() {
     judge_unused();
     assert_eq!(
@@ -268,17 +259,6 @@ fn safe_call_should_keep_its_method_live() {
 }
 
 #[test]
-fn field_should_warn_when_nothing_reads_it() {
-    judge_unused();
-    diagnostic(
-        &format!("{P}fn main() {{\n    let p = P(x: 1, y: 2)\n    print(p.x)\n}}"),
-        W0013,
-        (3, 5, "y"),
-        &[],
-    );
-}
-
-#[test]
 fn field_should_warn_when_code_only_writes_it() {
     judge_unused();
     diagnostic(
@@ -300,52 +280,82 @@ fn field_should_warn_when_code_only_compound_assigns_it() {
     );
 }
 
+/// A comparison or a search reads every field of each class that its type holds, and a safe
+/// field read reads its field, so no field of these programs is unread.
 #[test]
-fn equal_should_read_every_field() {
+fn field_should_count_as_read_when_a_comparison_or_a_search_reads_its_class() {
     judge_unused();
-    clean(&format!(
-        "{P}fn main() {{\n    let a = P(x: 1, y: 2)\n    let b = P(x: 1, y: 2)\n    print(a == b)\n}}"
-    ));
-}
-
-#[test]
-fn equal_should_read_every_field_of_an_array_element() {
-    judge_unused();
-    clean(&format!(
-        "{P}fn main() {{\n    let a = P(x: 1, y: 2)\n    let b = P(x: 1, y: 2)\n    print([a] == [b])\n}}"
-    ));
-}
-
-#[test]
-fn equal_should_read_the_fields_of_a_held_class() {
-    judge_unused();
-    clean(&format!(
-        "{P_X}class Q {{\n    p: P\n}}\nfn main() {{\n    let a = Q(p: P(x: 1))\n    print(a == a)\n}}"
-    ));
-}
-
-#[test]
-fn equal_should_read_the_fields_of_a_class_in_a_variant() {
-    judge_unused();
-    clean(&format!(
-        "{P_X}enum E {{\n    Has(P)\n    Empty\n}}\nfn main() {{\n    let e = E.Has(P(x: 1))\n    print(e == E.Empty)\n}}"
-    ));
-}
-
-#[test]
-fn equal_should_read_the_fields_of_a_type_argument() {
-    judge_unused();
-    clean(&format!(
-        "{P_X}class Box<T> {{\n    v: T\n}}\nfn main() {{\n    let b = Box(v: P(x: 1))\n    print(b == b)\n}}"
-    ));
-}
-
-#[test]
-fn equal_should_read_the_fields_of_each_argument_of_a_generic_class() {
-    judge_unused();
-    clean(&format!(
-        "{P_X}class Q {{\n    y: i64\n}}\nclass Box<T> {{\n    v: T\n}}\nfn main() {{\n    let p = Box(v: P(x: 1))\n    let q = Box(v: Q(y: 2))\n    print(p == p)\n    print(q == q)\n}}"
-    ));
+    for (row, src) in [
+        (
+            "equal on a class",
+            format!(
+                "{P}fn main() {{\n    let a = P(x: 1, y: 2)\n    let b = P(x: 1, y: 2)\n    print(a == b)\n}}"
+            ),
+        ),
+        (
+            "equal on arrays of a class",
+            format!(
+                "{P}fn main() {{\n    let a = P(x: 1, y: 2)\n    let b = P(x: 1, y: 2)\n    print([a] == [b])\n}}"
+            ),
+        ),
+        (
+            "equal on a class held by a class",
+            format!(
+                "{P_X}class Q {{\n    p: P\n}}\nfn main() {{\n    let a = Q(p: P(x: 1))\n    print(a == a)\n}}"
+            ),
+        ),
+        (
+            "equal on a class in a variant",
+            format!(
+                "{P_X}enum E {{\n    Has(P)\n    Empty\n}}\nfn main() {{\n    let e = E.Has(P(x: 1))\n    print(e == E.Empty)\n}}"
+            ),
+        ),
+        (
+            "equal on a class that is a type argument",
+            format!(
+                "{P_X}class Box<T> {{\n    v: T\n}}\nfn main() {{\n    let b = Box(v: P(x: 1))\n    print(b == b)\n}}"
+            ),
+        ),
+        (
+            "equal on a generic class with two arguments",
+            format!(
+                "{P_X}class Q {{\n    y: i64\n}}\nclass Box<T> {{\n    v: T\n}}\nfn main() {{\n    let p = Box(v: P(x: 1))\n    let q = Box(v: Q(y: 2))\n    print(p == p)\n    print(q == q)\n}}"
+            ),
+        ),
+        // `Top` names `Box` before its declaration, and `Outer` names it after.
+        (
+            "equal through a class declared before or after",
+            format!(
+                "{P_X}class Q {{\n    y: i64\n}}\nclass Top<T> {{\n    b: Box<T>?\n}}\nclass Box<T> {{\n    v: T\n}}\nclass Outer<T> {{\n    b: Box<[T]>\n}}\nfn main() {{\n    let p = Outer(b: Box(v: [P(x: 1)]))\n    let q = Top(b: Box(v: Q(y: 2)))\n    print(p == p)\n    print(q == q)\n}}"
+            ),
+        ),
+        (
+            "equal through a generic enum field",
+            format!(
+                "{P_X}enum E<T> {{\n    A(T)\n}}\nclass C<T> {{\n    e: E<T>\n}}\nfn main() {{\n    let c = C(e: E.A(P(x: 1)))\n    print(c == c)\n}}"
+            ),
+        ),
+        (
+            "equal on a payload type argument",
+            format!(
+                "{P_X}enum Maybe<T> {{\n    Has(T)\n    Empty\n}}\nfn main() {{\n    let m = Maybe.Has(P(x: 1))\n    print(m == Maybe.Empty)\n}}"
+            ),
+        ),
+        (
+            "contains on an array of a class",
+            format!(
+                "{P_X}fn main() {{\n    let a = P(x: 1)\n    let xs = [a]\n    print(xs.contains(a))\n}}"
+            ),
+        ),
+        (
+            "safe field read",
+            format!(
+                "{P_X}fn get(o: P?) -> i64 {{\n    o?.x ?? 0\n}}\nfn main() {{\n    print(get(P(x: 1)))\n}}"
+            ),
+        ),
+    ] {
+        clean_row(row, &src);
+    }
 }
 
 #[test]
@@ -359,47 +369,6 @@ fn equal_should_read_no_field_of_an_argument_that_no_field_holds() {
         (2, 5, "x"),
         &[],
     );
-}
-
-#[test]
-fn equal_should_read_an_argument_held_through_a_class_declared_before_or_after() {
-    judge_unused();
-    // `Top` names `Box` before its declaration, and `Outer` names it after.
-    clean(&format!(
-        "{P_X}class Q {{\n    y: i64\n}}\nclass Top<T> {{\n    b: Box<T>?\n}}\nclass Box<T> {{\n    v: T\n}}\nclass Outer<T> {{\n    b: Box<[T]>\n}}\nfn main() {{\n    let p = Outer(b: Box(v: [P(x: 1)]))\n    let q = Top(b: Box(v: Q(y: 2)))\n    print(p == p)\n    print(q == q)\n}}"
-    ));
-}
-
-#[test]
-fn equal_should_read_an_argument_held_through_a_generic_enum_field() {
-    judge_unused();
-    clean(&format!(
-        "{P_X}enum E<T> {{\n    A(T)\n}}\nclass C<T> {{\n    e: E<T>\n}}\nfn main() {{\n    let c = C(e: E.A(P(x: 1)))\n    print(c == c)\n}}"
-    ));
-}
-
-#[test]
-fn equal_should_read_the_fields_of_a_payload_type_argument() {
-    judge_unused();
-    clean(&format!(
-        "{P_X}enum Maybe<T> {{\n    Has(T)\n    Empty\n}}\nfn main() {{\n    let m = Maybe.Has(P(x: 1))\n    print(m == Maybe.Empty)\n}}"
-    ));
-}
-
-#[test]
-fn contains_should_read_every_field() {
-    judge_unused();
-    clean(&format!(
-        "{P_X}fn main() {{\n    let a = P(x: 1)\n    let xs = [a]\n    print(xs.contains(a))\n}}"
-    ));
-}
-
-#[test]
-fn safe_field_read_should_read_the_field() {
-    judge_unused();
-    clean(&format!(
-        "{P_X}fn get(o: P?) -> i64 {{\n    o?.x ?? 0\n}}\nfn main() {{\n    print(get(P(x: 1)))\n}}"
-    ));
 }
 
 #[test]

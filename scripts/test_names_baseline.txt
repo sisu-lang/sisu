@@ -222,14 +222,11 @@ crates/sisuc/src/check/tests/mod.rs::all_paths_return_is_fine
 crates/sisuc/src/check/tests/mod.rs::and_needs_bool
 crates/sisuc/src/check/tests/mod.rs::annotated_let_matches
 crates/sisuc/src/check/tests/mod.rs::annotated_let_type
-crates/sisuc/src/check/tests/mod.rs::argument_type
-crates/sisuc/src/check/tests/mod.rs::arithmetic_needs_i64
 crates/sisuc/src/check/tests/mod.rs::arity
 crates/sisuc/src/check/tests/mod.rs::assign_bare_field
 crates/sisuc/src/check/tests/mod.rs::assign_field_type
 crates/sisuc/src/check/tests/mod.rs::assign_if_let_binding
 crates/sisuc/src/check/tests/mod.rs::assign_to_let
-crates/sisuc/src/check/tests/mod.rs::assign_to_param
 crates/sisuc/src/check/tests/mod.rs::assign_type
 crates/sisuc/src/check/tests/mod.rs::assign_while_let_binding
 crates/sisuc/src/check/tests/mod.rs::assigning_to_a_function_names_it
@@ -244,7 +241,6 @@ crates/sisuc/src/check/tests/mod.rs::block_scope_ends
 crates/sisuc/src/check/tests/mod.rs::block_value_and_type
 crates/sisuc/src/check/tests/mod.rs::body_value_type
 crates/sisuc/src/check/tests/mod.rs::body_without_value
-crates/sisuc/src/check/tests/mod.rs::break_after_while_let
 crates/sisuc/src/check/tests/mod.rs::break_in_a_value_makes_endless_loop_unit
 crates/sisuc/src/check/tests/mod.rs::break_in_header
 crates/sisuc/src/check/tests/mod.rs::break_in_inner_header_does_not_count
@@ -252,7 +248,6 @@ crates/sisuc/src/check/tests/mod.rs::break_in_loop_inside_header
 crates/sisuc/src/check/tests/mod.rs::break_makes_endless_loop_unit
 crates/sisuc/src/check/tests/mod.rs::break_name_is_a_label_only_near_one
 crates/sisuc/src/check/tests/mod.rs::break_never_value_is_allowed
-crates/sisuc/src/check/tests/mod.rs::break_outside_loop
 crates/sisuc/src/check/tests/mod.rs::builtin_type_as_class
 crates/sisuc/src/check/tests/mod.rs::class_after_function_of_same_name
 crates/sisuc/src/check/tests/mod.rs::class_and_function_share_names
@@ -268,11 +263,6 @@ crates/sisuc/src/check/tests/mod.rs::coalesce_with_none_in_an_if
 crates/sisuc/src/check/tests/mod.rs::coalesce_with_none_right
 crates/sisuc/src/check/tests/mod.rs::coalesce_with_optional_right
 crates/sisuc/src/check/tests/mod.rs::code_after_endless_loop_is_unreachable
-crates/sisuc/src/check/tests/mod.rs::compound_assign_to_let
-crates/sisuc/src/check/tests/mod.rs::compound_assign_to_param
-crates/sisuc/src/check/tests/mod.rs::compound_assign_unknown_target_and_bad_value
-crates/sisuc/src/check/tests/mod.rs::compound_assign_unknown_target_once
-crates/sisuc/src/check/tests/mod.rs::condition_must_be_bool
 crates/sisuc/src/check/tests/mod.rs::constructor_extra_argument
 crates/sisuc/src/check/tests/mod.rs::constructor_field_type
 crates/sisuc/src/check/tests/mod.rs::constructor_is_error_only_when_its_rule_fails
@@ -282,7 +272,6 @@ crates/sisuc/src/check/tests/mod.rs::constructor_out_of_order
 crates/sisuc/src/check/tests/mod.rs::constructor_reports_its_first_mistake_and_later_expression_errors
 crates/sisuc/src/check/tests/mod.rs::constructor_unknown_label
 crates/sisuc/src/check/tests/mod.rs::continue_in_endless_loop
-crates/sisuc/src/check/tests/mod.rs::continue_outside_loop
 crates/sisuc/src/check/tests/mod.rs::continue_to_missing_label_in_header_is_missing_label
 crates/sisuc/src/check/tests/mod.rs::dot_on_optional
 crates/sisuc/src/check/tests/mod.rs::duplicate_body_still_checked
@@ -294,12 +283,10 @@ crates/sisuc/src/check/tests/mod.rs::duplicate_function
 crates/sisuc/src/check/tests/mod.rs::duplicate_member
 crates/sisuc/src/check/tests/mod.rs::duplicate_member_of_the_same_kind
 crates/sisuc/src/check/tests/mod.rs::each_label_on_a_call_is_reported
-crates/sisuc/src/check/tests/mod.rs::empty_file_has_no_main
 crates/sisuc/src/check/tests/mod.rs::equal_none_on_non_optional
 crates/sisuc/src/check/tests/mod.rs::equal_two_classes
 crates/sisuc/src/check/tests/mod.rs::equal_unit
 crates/sisuc/src/check/tests/mod.rs::equal_wraps_the_plain_side
-crates/sisuc/src/check/tests/mod.rs::equality_needs_same_type
 crates/sisuc/src/check/tests/mod.rs::error_branches_without_mismatch_keep_the_rule_type
 crates/sisuc/src/check/tests/mod.rs::every_error_in_one_run
 crates/sisuc/src/check/tests/mod.rs::expected_type_checks_every_break
@@ -431,7 +418,6 @@ crates/sisuc/src/check/tests/mod.rs::none_for_non_optional
 crates/sisuc/src/check/tests/mod.rs::none_from_every_source
 crates/sisuc/src/check/tests/mod.rs::none_needs_a_type
 crates/sisuc/src/check/tests/mod.rs::none_on_the_left_takes_the_other_type
-crates/sisuc/src/check/tests/mod.rs::not_needs_bool
 crates/sisuc/src/check/tests/mod.rs::only_the_literal_is_endless
 crates/sisuc/src/check/tests/mod.rs::operator_after_a_failed_operand_reports_once
 crates/sisuc/src/check/tests/mod.rs::optional_breaks_the_cycle
@@ -444,11 +430,8 @@ crates/sisuc/src/check/tests/mod.rs::poisoned_operand_checks_siblings
 crates/sisuc/src/check/tests/mod.rs::poisoned_receiver_checks_args
 crates/sisuc/src/check/tests/mod.rs::print_argument_errors_sit_on_the_argument
 crates/sisuc/src/check/tests/mod.rs::print_class
-crates/sisuc/src/check/tests/mod.rs::print_no_argument
 crates/sisuc/src/check/tests/mod.rs::print_optional
 crates/sisuc/src/check/tests/mod.rs::print_reports_labels_and_still_checks_its_arguments
-crates/sisuc/src/check/tests/mod.rs::print_two_arguments
-crates/sisuc/src/check/tests/mod.rs::print_unit_argument
 crates/sisuc/src/check/tests/mod.rs::rejected_if_let_scrutinee_reports_once
 crates/sisuc/src/check/tests/mod.rs::rejected_none_reports_once
 crates/sisuc/src/check/tests/mod.rs::repeated_param
@@ -467,7 +450,6 @@ crates/sisuc/src/check/tests/mod.rs::safe_optional_field_not_wrapped
 crates/sisuc/src/check/tests/mod.rs::self_outside_method
 crates/sisuc/src/check/tests/mod.rs::separate_namespaces
 crates/sisuc/src/check/tests/mod.rs::shadow_in_block
-crates/sisuc/src/check/tests/mod.rs::shadowing_in_inner_block
 crates/sisuc/src/check/tests/mod.rs::shadowing_makes_two_locals
 crates/sisuc/src/check/tests/mod.rs::spills_call_argument
 crates/sisuc/src/check/tests/mod.rs::spills_class_optional_before_exit_in_if_let
@@ -507,14 +489,11 @@ crates/sisuc/src/check/tests/mod.rs::unknown_type
 crates/sisuc/src/check/tests/mod.rs::unknown_type_in_signature
 crates/sisuc/src/check/tests/mod.rs::unreachable_break_still_counts
 crates/sisuc/src/check/tests/mod.rs::unreachable_warned_once_per_block
-crates/sisuc/src/check/tests/mod.rs::unused_variable
-crates/sisuc/src/check/tests/mod.rs::unused_variables_in_source_order
 crates/sisuc/src/check/tests/mod.rs::value_branches_of_different_types_still_mismatch
 crates/sisuc/src/check/tests/mod.rs::variable_may_shadow_a_param
 crates/sisuc/src/check/tests/mod.rs::variable_reassigned_in_inner_block
 crates/sisuc/src/check/tests/mod.rs::warning_and_error_in_position_order
 crates/sisuc/src/check/tests/mod.rs::warning_only_program_lowers
-crates/sisuc/src/check/tests/mod.rs::while_condition_must_be_bool
 crates/sisuc/src/check/tests/mod.rs::while_let_needs_optional
 crates/sisuc/src/check/tests/mod.rs::while_true_without_break_is_never
 crates/sisuc/src/check/tests/mod.rs::widening_leaves_a_never_value_unwrapped
@@ -606,8 +585,6 @@ crates/sisuc/src/check/tests/prelude.rs::todo_message_rules
 crates/sisuc/src/check/tests/prelude.rs::todo_with_a_label_is_an_error
 crates/sisuc/src/check/tests/shadowing.rs::if_let_binding_shadowed
 crates/sisuc/src/check/tests/shadowing.rs::let_mut_shadows_let
-crates/sisuc/src/check/tests/shadowing.rs::redeclared_label_outer_scope
-crates/sisuc/src/check/tests/shadowing.rs::redeclared_label_same_scope
 crates/sisuc/src/check/tests/shadowing.rs::rhs_sees_old_binding
 crates/sisuc/src/check/tests/shadowing.rs::type_can_change
 crates/sisuc/src/check/tests/strings.rs::cannot_interpolate

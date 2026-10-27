@@ -43,9 +43,10 @@ fn shadowed_variable_should_warn_unless_reassigned_first() {
 }
 
 /// The error's secondary span is the shadowing `let`'s name, and its safe fix makes that
-/// `let` a `let mut`, which leaves only the shadowed binding's warning.
+/// `let` a `let mut`, which leaves only the shadowed binding's warning. The shadowed `let mut` has
+/// a warning of its own, so `diagnostic`, which takes one diagnostic, does not fit.
 #[test]
-fn redeclared_label_same_scope() {
+fn shadowing_let_should_be_cited_when_a_variable_is_assigned_in_the_same_scope() {
     let src = "fn main() {\n    let mut total = 0\n    let total = total\n    total += 1\n}";
     codes(
         src,
@@ -54,13 +55,12 @@ fn redeclared_label_same_scope() {
             (Code::AssignToImmutable, (4, 5)),
         ],
     );
+    assert_eq!(found(src)[1].2, [(3, 9)]);
     let ds = diags(src);
     let d = ds
         .iter()
         .find(|d| d.code() == Code::AssignToImmutable)
         .expect("the assignment should be reported");
-    let secondary: Vec<_> = d.secondary().iter().map(|(s, _)| at(src, *s)).collect();
-    assert_eq!(secondary, [(3, 9)]);
     assert_eq!(
         fixes(src, d),
         [(true, vec![(3, 9, "", "mut ".to_string())])]
@@ -69,7 +69,7 @@ fn redeclared_label_same_scope() {
 }
 
 #[test]
-fn redeclared_label_outer_scope() {
+fn shadowing_let_should_be_cited_when_a_variable_is_assigned_in_an_inner_scope() {
     let src = "fn main() {\n    let mut total = 0\n    total = 1\n    if true {\n        let total = total\n        total += 1\n    }\n}";
     let d = diagnostic(
         src,

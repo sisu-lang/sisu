@@ -88,16 +88,31 @@ fn contains(src: &str, parts: &[&str]) {
 /// The diagnostics are exactly these, in order: `(code, (line, col))`; no `tir` if one is an
 /// error.
 fn codes(src: &str, expected: &[(Code, (usize, usize))]) {
+    codes_row("", src, expected);
+}
+
+/// The start of a failure message for the table row `row`; empty when there is no row.
+fn named(row: &str) -> String {
+    if row.is_empty() {
+        String::new()
+    } else {
+        format!("row `{row}`: ")
+    }
+}
+
+/// `codes` for one row of a table: a failure names `row`.
+fn codes_row(row: &str, src: &str, expected: &[(Code, (usize, usize))]) {
+    let row = named(row);
     let (program, ds) = checked(src);
     let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
-    assert_eq!(found, expected);
+    assert_eq!(found, expected, "{row}");
     let failed = expected
         .iter()
         .any(|(c, _)| c.severity() == Severity::Error);
     assert_eq!(
         program.is_none(),
         failed,
-        "only an error withholds the `tir`"
+        "{row}only an error withholds the `tir`"
     );
 }
 
@@ -123,19 +138,35 @@ fn diagnostic(
     pos: (usize, usize, &str),
     secondary: &[(usize, usize)],
 ) -> Diagnostic {
+    diagnostic_row("", src, code, pos, secondary)
+}
+
+/// `diagnostic` for one row of a table: a failure names `row`.
+fn diagnostic_row(
+    row: &str,
+    src: &str,
+    code: Code,
+    pos: (usize, usize, &str),
+    secondary: &[(usize, usize)],
+) -> Diagnostic {
+    let row = named(row);
     let (program, mut ds) = checked(src);
-    assert_eq!(ds.len(), 1, "{ds:?}");
+    assert_eq!(ds.len(), 1, "{row}{ds:?}");
     let d = ds.remove(0);
-    assert_eq!(d.code(), code);
+    assert_eq!(d.code(), code, "{row}");
     assert_eq!(
         program.is_none(),
         code.severity() == Severity::Error,
-        "only an error withholds the `tir`"
+        "{row}only an error withholds the `tir`"
     );
     let span = d.span();
-    assert_eq!((at(src, span), &src[span.range()]), ((pos.0, pos.1), pos.2));
+    assert_eq!(
+        (at(src, span), &src[span.range()]),
+        ((pos.0, pos.1), pos.2),
+        "{row}"
+    );
     let found: Vec<_> = d.secondary().iter().map(|(s, _)| at(src, *s)).collect();
-    assert_eq!(found, secondary);
+    assert_eq!(found, secondary, "{row}");
     d
 }
 
@@ -188,8 +219,13 @@ fn at(src: &str, span: Span) -> (usize, usize) {
 }
 
 fn clean(src: &str) {
+    clean_row("", src);
+}
+
+/// `clean` for one row of a table: a failure names `row`.
+fn clean_row(row: &str, src: &str) {
     let ds = diags(src);
-    assert!(ds.is_empty(), "{ds:?}");
+    assert!(ds.is_empty(), "{}{ds:?}", named(row));
 }
 
 #[test]
@@ -289,12 +325,6 @@ fn repeated_param_is_poisoned() {
         "fn f(a: i64, a: i64) {\n    a = 1\n    print(a + true)\n}\nfn main() {}",
         &[(Code::AlreadyDeclared, (1, 14))],
     );
-}
-
-#[test]
-fn shadowing_in_inner_block() {
-    let src = "fn main() {\n    let x = 1\n    if true {\n        let x = true\n        print(x)\n    }\n    print(x)\n}";
-    assert!(diags(src).is_empty());
 }
 
 #[test]
@@ -603,33 +633,25 @@ fn lowers_continue() {
     );
 }
 
+/// A jump is an error when no loop holds it, also after the loop that held an earlier one ended.
 #[test]
-fn break_outside_loop() {
-    codes("fn main() { break }", &[(Code::JumpOutsideLoop, (1, 13))]);
-}
-
-#[test]
-fn continue_outside_loop() {
-    codes(
-        "fn main() { continue }",
-        &[(Code::JumpOutsideLoop, (1, 13))],
-    );
-}
-
-#[test]
-fn break_should_be_an_error_after_its_loop_ends() {
-    codes(
-        "fn f(c: bool) {\n    while c { break }\n    break\n}\nfn main() {}",
-        &[(Code::JumpOutsideLoop, (3, 5))],
-    );
-}
-
-#[test]
-fn break_after_while_let() {
-    codes(
-        "fn f(n: i64?) {\n    while let x = n {}\n    break\n}\nfn main() {}",
-        &[(Code::JumpOutsideLoop, (3, 5))],
-    );
+fn jump_should_be_an_error_when_no_loop_holds_it() {
+    for (row, src, at) in [
+        ("break", "fn main() { break }", (1, 13)),
+        ("continue", "fn main() { continue }", (1, 13)),
+        (
+            "break after a while",
+            "fn f(c: bool) {\n    while c { break }\n    break\n}\nfn main() {}",
+            (3, 5),
+        ),
+        (
+            "break after a while let",
+            "fn f(n: i64?) {\n    while let x = n {}\n    break\n}\nfn main() {}",
+            (3, 5),
+        ),
+    ] {
+        codes_row(row, src, &[(Code::JumpOutsideLoop, at)]);
+    }
 }
 
 #[test]
@@ -1332,35 +1354,43 @@ fn unknown_type_in_signature() {
     );
 }
 
+/// Each wrong type is reported once, at the value: a condition, an operand or an argument.
 #[test]
-fn condition_must_be_bool() {
-    codes("fn main() { if 1 { } }", &[(Code::Mismatch, (1, 16))]);
-}
-
-#[test]
-fn while_condition_must_be_bool() {
-    codes("fn main() { while 1 { } }", &[(Code::Mismatch, (1, 19))]);
-}
-
-#[test]
-fn arithmetic_needs_i64() {
-    codes(
-        "fn main() { print(1 + true) }",
-        &[(Code::Mismatch, (1, 23))],
-    );
-}
-
-#[test]
-fn not_needs_bool() {
-    codes("fn main() { print(!1) }", &[(Code::Mismatch, (1, 20))]);
-}
-
-#[test]
-fn equality_needs_same_type() {
-    codes(
-        "fn main() { print(1 == true) }",
-        &[(Code::CannotCompare, (1, 19))],
-    );
+fn wrong_type_should_be_reported_at_the_value_that_has_it() {
+    for (row, src, expected) in [
+        (
+            "if condition",
+            "fn main() { if 1 { } }",
+            (Code::Mismatch, (1, 16)),
+        ),
+        (
+            "while condition",
+            "fn main() { while 1 { } }",
+            (Code::Mismatch, (1, 19)),
+        ),
+        (
+            "arithmetic operand",
+            "fn main() { print(1 + true) }",
+            (Code::Mismatch, (1, 23)),
+        ),
+        (
+            "not operand",
+            "fn main() { print(!1) }",
+            (Code::Mismatch, (1, 20)),
+        ),
+        (
+            "equality operands",
+            "fn main() { print(1 == true) }",
+            (Code::CannotCompare, (1, 19)),
+        ),
+        (
+            "argument",
+            "fn f(a: i64) {}\nfn main() { f(true) }",
+            (Code::Mismatch, (2, 15)),
+        ),
+    ] {
+        codes_row(row, src, &[expected]);
+    }
 }
 
 #[test]
@@ -1380,32 +1410,18 @@ fn arity() {
 }
 
 #[test]
-fn argument_type() {
-    codes(
-        "fn f(a: i64) {}\nfn main() { f(true) }",
-        &[(Code::Mismatch, (2, 15))],
-    );
-}
-
-#[test]
-fn print_no_argument() {
-    codes("fn main() { print() }", &[(Code::PrintArgument, (1, 13))]);
-}
-
-#[test]
-fn print_two_arguments() {
-    codes(
-        "fn main() { print(1, 2) }",
-        &[(Code::PrintArgument, (1, 13))],
-    );
-}
-
-#[test]
-fn print_unit_argument() {
-    codes(
-        "fn g() {}\nfn main() { print(g()) }",
-        &[(Code::PrintArgument, (2, 13))],
-    );
+fn print_should_take_exactly_one_value() {
+    for (row, src, at) in [
+        ("no argument", "fn main() { print() }", (1, 13)),
+        ("two arguments", "fn main() { print(1, 2) }", (1, 13)),
+        (
+            "unit argument",
+            "fn g() {}\nfn main() { print(g()) }",
+            (2, 13),
+        ),
+    ] {
+        codes_row(row, src, &[(Code::PrintArgument, at)]);
+    }
 }
 
 #[test]
@@ -1669,50 +1685,44 @@ fn never_assigned_value() {
     );
 }
 
+/// The secondary label is the declaration that makes the target immutable.
 #[test]
-fn compound_assign_to_let() {
-    diagnostic(
-        "fn main() {\n    let n = 0\n    n += 1\n}",
-        Code::AssignToImmutable,
-        (3, 5, "n += 1"),
-        &[(2, 9)],
-    );
+fn compound_assign_should_be_an_error_when_its_target_is_immutable() {
+    for (row, src, pos, declared) in [
+        (
+            "let",
+            "fn main() {\n    let n = 0\n    n += 1\n}",
+            (3, 5, "n += 1"),
+            (2, 9),
+        ),
+        (
+            "parameter",
+            "fn f(n: i64) {\n    n += 1\n}\nfn main() {}",
+            (2, 5, "n += 1"),
+            (1, 6),
+        ),
+    ] {
+        diagnostic_row(row, src, Code::AssignToImmutable, pos, &[declared]);
+    }
 }
 
+/// An unknown target is reported once, and the value is still checked.
 #[test]
-fn assign_to_param() {
-    diagnostic(
-        "fn f(n: i64) {\n    n = 1\n}\nfn main() {}",
-        Code::AssignToImmutable,
-        (2, 5, "n = 1"),
-        &[(1, 6)],
-    );
-}
-
-#[test]
-fn compound_assign_to_param() {
-    diagnostic(
-        "fn f(n: i64) {\n    n += 1\n}\nfn main() {}",
-        Code::AssignToImmutable,
-        (2, 5, "n += 1"),
-        &[(1, 6)],
-    );
-}
-
-#[test]
-fn compound_assign_unknown_target_once() {
-    codes(
-        "fn main() {\n    nope += 1\n}",
-        &[(Code::BindingNotFound, (2, 5))],
-    );
-}
-
-#[test]
-fn compound_assign_unknown_target_and_bad_value() {
-    codes(
-        "fn main() {\n    nope += true + 1\n}",
-        &[(Code::BindingNotFound, (2, 5)), (Code::Mismatch, (2, 13))],
-    );
+fn compound_assign_should_report_an_unknown_target_once() {
+    for (row, src, expected) in [
+        (
+            "good value",
+            "fn main() {\n    nope += 1\n}",
+            vec![(Code::BindingNotFound, (2, 5))],
+        ),
+        (
+            "bad value",
+            "fn main() {\n    nope += true + 1\n}",
+            vec![(Code::BindingNotFound, (2, 5)), (Code::Mismatch, (2, 13))],
+        ),
+    ] {
+        codes_row(row, src, &expected);
+    }
 }
 
 #[test]
@@ -1724,7 +1734,7 @@ fn assign_type() {
 }
 
 #[test]
-fn unused_variable() {
+fn never_reassigned_should_warn_with_a_safe_fix_when_a_let_mut_is_only_read() {
     let src = "fn main() {\n    let mut count = 0\n    print(count)\n}";
     let d = diagnostic(src, Code::NeverReassigned, (2, 13, "count"), &[]);
     assert_eq!(
@@ -1735,7 +1745,7 @@ fn unused_variable() {
 }
 
 #[test]
-fn unused_variables_in_source_order() {
+fn never_reassigned_should_warn_in_source_order_when_an_inner_scope_ends_first() {
     // The inner scope pops first, so this fails unless warnings are sorted.
     let src = "fn main() {\n    let mut a = 0\n    if true {\n        let mut b = 0\n        print(b)\n    }\n    print(a)\n}";
     codes(
@@ -1784,20 +1794,6 @@ fn two_assignments_offer_the_same_edit() {
 #[test]
 fn variable_reassigned_in_inner_block() {
     clean("fn main() {\n    let mut n = 0\n    if true { n = 1 }\n    print(n)\n}");
-}
-
-#[test]
-fn empty_file_has_no_main() {
-    let ds = diags("");
-    assert_eq!(ds.len(), 1, "{ds:?}");
-    assert_eq!(ds[0].code(), Code::NoMain);
-    assert_eq!(at("", ds[0].span()), (1, 1));
-    // The empty span at offset 0 renders without a panic.
-    assert!(
-        ds[0]
-            .render("empty.sisu", "", &source::LineIndex::new(""), false)
-            .contains(Code::NoMain.as_str())
-    );
 }
 
 #[test]

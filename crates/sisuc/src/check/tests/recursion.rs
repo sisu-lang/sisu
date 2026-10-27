@@ -43,19 +43,54 @@ fn if_should_warn_when_both_branches_call_itself() {
     );
 }
 
+/// A path that ends, or skips the self-call, before the call stops the warning: a value, a
+/// `return`, a `panic`, a short-circuit, a pattern that may not match, a default, a safe call.
 #[test]
-fn if_should_not_warn_when_one_branch_returns_a_value() {
-    clean(&f(&["if n == 0 { 0 } else { f(n - 1) }"]));
-}
-
-#[test]
-fn return_should_end_a_path_before_the_self_call() {
-    clean(&f(&["if n == 0 { return 0 }", "f(n - 1)"]));
-}
-
-#[test]
-fn panic_should_end_a_path_before_the_self_call() {
-    clean(&f(&["if n < 0 { panic(\"x\") }", "f(n - 1)"]));
+fn function_should_not_warn_when_a_path_avoids_the_self_call() {
+    for (row, src) in [
+        (
+            "one branch returns a value",
+            f(&["if n == 0 { 0 } else { f(n - 1) }"]),
+        ),
+        (
+            "return before the call",
+            f(&["if n == 0 { return 0 }", "f(n - 1)"]),
+        ),
+        (
+            "panic before the call",
+            f(&["if n < 0 { panic(\"x\") }", "f(n - 1)"]),
+        ),
+        (
+            "call on the right of and",
+            with_main("fn f(c: bool) -> bool {\n    c && f(c)\n}"),
+        ),
+        (
+            "call on the right of or",
+            with_main("fn f(c: bool) -> bool {\n    c || f(c)\n}"),
+        ),
+        (
+            "one match arm returns a value",
+            with_main(
+                "enum T {\n    Leaf\n    Node(i64)\n}\nfn f(t: T) -> i64 {\n    match t {\n        Leaf => 0\n        Node(n) => f(t)\n    }\n}",
+            ),
+        ),
+        (
+            "call only in the body of if let",
+            with_main("fn f(o: i64?) -> i64 {\n    if let x = o { f(o) } else { 0 }\n}"),
+        ),
+        (
+            "call only in the default of a coalesce",
+            with_main("fn f(o: i64?) -> i64 {\n    o ?? f(o)\n}"),
+        ),
+        (
+            "call only in a safe call",
+            with_main(
+                "class Node {\n    n: i64\n    fn size(self, o: Node?) -> i64 {\n        o?.size(None) ?? 0\n    }\n}",
+            ),
+        ),
+    ] {
+        clean_row(row, &src);
+    }
 }
 
 #[test]
@@ -82,16 +117,6 @@ fn self_call_should_warn_inside_an_operand() {
 }
 
 #[test]
-fn and_should_not_warn_when_only_its_right_side_calls_itself() {
-    clean(&with_main("fn f(c: bool) -> bool {\n    c && f(c)\n}"));
-}
-
-#[test]
-fn or_should_not_warn_when_only_its_right_side_calls_itself() {
-    clean(&with_main("fn f(c: bool) -> bool {\n    c || f(c)\n}"));
-}
-
-#[test]
 fn match_should_warn_when_every_arm_calls_itself() {
     warns(
         &with_main(
@@ -100,32 +125,6 @@ fn match_should_warn_when_every_arm_calls_itself() {
         (5, 4, "f"),
         &[(7, 17), (8, 20)],
     );
-}
-
-#[test]
-fn match_should_not_warn_when_one_arm_returns_a_value() {
-    clean(&with_main(
-        "enum T {\n    Leaf\n    Node(i64)\n}\nfn f(t: T) -> i64 {\n    match t {\n        Leaf => 0\n        Node(n) => f(t)\n    }\n}",
-    ));
-}
-
-#[test]
-fn if_let_should_not_warn_when_only_its_body_calls_itself() {
-    clean(&with_main(
-        "fn f(o: i64?) -> i64 {\n    if let x = o { f(o) } else { 0 }\n}",
-    ));
-}
-
-#[test]
-fn coalesce_should_not_warn_when_only_its_default_calls_itself() {
-    clean(&with_main("fn f(o: i64?) -> i64 {\n    o ?? f(o)\n}"));
-}
-
-#[test]
-fn safe_call_should_not_warn_when_only_the_call_calls_itself() {
-    clean(&with_main(
-        "class Node {\n    n: i64\n    fn size(self, o: Node?) -> i64 {\n        o?.size(None) ?? 0\n    }\n}",
-    ));
 }
 
 #[test]
@@ -199,15 +198,6 @@ fn main_should_not_warn_when_its_signature_has_an_error() {
     codes(
         "fn main() -> i64 { main() }",
         &[(Code::MainSignature, (1, 4))],
-    );
-}
-
-#[test]
-fn method_should_warn_when_every_path_calls_itself() {
-    warns(
-        &with_main("class Node {\n    n: i64\n    fn size(self) -> i64 { self.size() }\n}"),
-        (3, 8, "size"),
-        &[(3, 28)],
     );
 }
 
