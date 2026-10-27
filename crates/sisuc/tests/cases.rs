@@ -19,7 +19,6 @@
 use std::path::Path;
 use std::process::Command;
 
-#[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod site;
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
 mod support;

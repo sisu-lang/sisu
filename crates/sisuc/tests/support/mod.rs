@@ -405,8 +405,9 @@ pub(crate) const RUN_EXPECTATIONS: [&str; 3] = ["out", "err", "in"];
 /// Lists `dir` once and returns one message for each entry that no case reads: a hidden entry
 /// (a stray `.ghost.out`), and any file that is neither a `.sisu` case nor a file whose
 /// extension is one of `expectations` (the files the directory's mode reads) beside a `.sisu`
-/// of the same name. The messages come in name order. Panics when `dir` holds no `.sisu`, as a
-/// wrong `dir` would otherwise pass with no entry checked.
+/// of the same name. A case directory is flat, so a subdirectory is one more bad entry. The
+/// messages come in name order. Panics when `dir` holds no `.sisu`, as a wrong `dir` would
+/// otherwise pass with no entry checked.
 pub(crate) fn orphans(dir: &Path, expectations: &[&str]) -> Vec<String> {
     let paths = sorted_entries(dir);
     assert!(
@@ -419,7 +420,7 @@ pub(crate) fn orphans(dir: &Path, expectations: &[&str]) -> Vec<String> {
     paths
         .iter()
         .filter_map(|path| {
-            hidden_message(path).or_else(|| {
+            stray_message(path).or_else(|| {
                 let belongs = match path.extension().and_then(OsStr::to_str) {
                     Some("sisu") => true,
                     Some(ext) if expectations.contains(&ext) => {
@@ -448,17 +449,24 @@ pub(crate) fn sorted_entries(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// The message for a hidden `path`, or `None` for any other. The harness never lists a hidden
-/// file, so a stray `.ghost.out` would otherwise go unseen.
-pub(crate) fn hidden_message(path: &Path) -> Option<String> {
-    path.file_name()
+/// The message for a hidden or directory `path`, or `None` for any other. The harness never
+/// lists a hidden file, so a stray `.ghost.out` would otherwise go unseen.
+pub(crate) fn stray_message(path: &Path) -> Option<String> {
+    let display = path.display();
+    if path
+        .file_name()
         .is_some_and(|name| name.as_encoded_bytes().starts_with(b"."))
-        .then(|| {
-            format!(
-                "{} is hidden, so no case reads it; remove it",
-                path.display()
-            )
-        })
+    {
+        Some(format!(
+            "{display} is hidden, so no case reads it; remove it"
+        ))
+    } else if path.is_dir() {
+        Some(format!(
+            "{display} is a directory; a case directory holds only files"
+        ))
+    } else {
+        None
+    }
 }
 
 /// The builds `build` makes: the executable's name in the case directory, and `sisu`'s flags.

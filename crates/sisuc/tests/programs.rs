@@ -2251,6 +2251,26 @@ fn orphans_should_list_every_bad_entry_of_a_directory() {
     assert!(messages[1].contains("notes.txt"), "{messages:?}");
 }
 
+/// GIVEN a directory with the case `a` and a subdirectory `sub`
+/// WHEN `orphans` lists the directory
+/// THEN it returns one message, which names `sub` as a directory
+///
+/// A case directory is flat, so a case inside `sub` would go unchecked.
+#[test]
+fn orphans_should_reject_a_subdirectory() {
+    let dir = fixture(
+        "subdirectory_rejected",
+        &[
+            ("a.sisu", PRINTS_1),
+            ("a.out", "1\n"),
+            ("sub/b.sisu", PRINTS_1),
+        ],
+    );
+    let messages = support::orphans(&dir, &["out"]);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("sub is a directory"), "{messages:?}");
+}
+
 /// GIVEN a directory with `a.out` and no `.sisu` file
 /// WHEN `orphans` lists the directory
 /// THEN it panics and says that the directory holds no case
