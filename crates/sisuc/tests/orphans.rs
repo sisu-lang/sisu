@@ -5,7 +5,6 @@
 //! hidden entry.
 
 use std::ffi::OsStr;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 #[expect(dead_code, reason = "this binary uses only part of the shared helpers")]
@@ -135,29 +134,12 @@ fn explanations_directory_should_hold_only_files_of_explanations() {
     );
 }
 
-/// A new directory under the target directory that holds the empty `files`, and `subdirectory`.
-fn fixture(test: &str, files: &[&str], subdirectory: Option<&str>) -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join("orphan_fixtures")
-        .join(test);
-    // It is absent on the first run, so a failure here is expected and harmless.
-    drop(fs::remove_dir_all(&dir));
-    fs::create_dir_all(&dir).expect("creates the fixture directory");
-    for file in files {
-        fs::write(dir.join(file), "").expect("writes the fixture file");
-    }
-    if let Some(name) = subdirectory {
-        fs::create_dir(dir.join(name)).expect("creates the fixture subdirectory");
-    }
-    dir
-}
-
 /// GIVEN a directory with `E9999.err`, and no `docs/diagnostics/E9999.md`
 /// WHEN `explanation_orphans` lists the directory
 /// THEN it returns one message, which names `E9999.err`
 #[test]
 fn explanation_orphans_should_list_a_file_of_a_code_with_no_explanation() {
-    let dir = fixture("explanation_without_page", &["E9999.err"], None);
+    let dir = support::fixture("explanation_without_page", &[("E9999.err", "")]);
     let messages = explanation_orphans(&dir);
     assert_eq!(messages.len(), 1, "{messages:?}");
     assert!(messages[0].contains("E9999.err"), "{messages:?}");
@@ -169,19 +151,18 @@ fn explanation_orphans_should_list_a_file_of_a_code_with_no_explanation() {
 #[test]
 #[should_panic(expected = "holds no `.err` file")]
 fn explanation_orphans_should_fail_for_a_directory_with_no_err_file() {
-    let dir = fixture("explanations_with_no_err", &["E0001.json"], None);
+    let dir = support::fixture("explanations_with_no_err", &[("E0001.json", "")]);
     explanation_orphans(&dir);
 }
 
-/// GIVEN a directory with `E0001.err` and a subdirectory `sub`
+/// GIVEN a directory with `E0001.err` and a subdirectory `sub` that holds a file
 /// WHEN `explanation_orphans` lists the directory
 /// THEN it returns one message, which names `sub` as a directory
 #[test]
 fn explanation_orphans_should_list_a_subdirectory() {
-    let dir = fixture(
+    let dir = support::fixture(
         "explanations_with_subdirectory",
-        &["E0001.err"],
-        Some("sub"),
+        &[("E0001.err", ""), ("sub/E0002.err", "")],
     );
     let messages = explanation_orphans(&dir);
     assert_eq!(messages.len(), 1, "{messages:?}");

@@ -462,11 +462,28 @@ pub(crate) fn stray_message(path: &Path) -> Option<String> {
         ))
     } else if path.is_dir() {
         Some(format!(
-            "{display} is a directory; a case directory holds only files"
+            "{display} is a directory; this directory holds only files"
         ))
     } else {
         None
     }
+}
+
+/// Writes each `(path, contents)` under a fresh `<CARGO_TARGET_TMPDIR>/fixtures/<test>/` and
+/// returns that directory.
+pub(crate) fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("fixtures")
+        .join(test);
+    // It is absent on the first run, so a failure here is expected and harmless.
+    drop(fs::remove_dir_all(&dir));
+    for (path, contents) in files {
+        let path = dir.join(path);
+        fs::create_dir_all(path.parent().expect("a fixture file should have a parent"))
+            .expect("creates the fixture directory");
+        fs::write(path, contents).expect("writes the fixture file");
+    }
+    dir
 }
 
 /// The builds `build` makes: the executable's name in the case directory, and `sisu`'s flags.

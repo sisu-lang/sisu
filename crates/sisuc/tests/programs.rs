@@ -15,6 +15,7 @@ mod scratch_path;
 mod support;
 
 use scratch_path::{empty_dir, only_cc};
+use support::fixture;
 
 const PROGRAMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/programs");
 const RUN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/run");
@@ -1776,23 +1777,6 @@ const PRINTS_1: &str = "fn main() {\n    print(1)\n}\n";
 /// that a write of its stdout would change an empty `.out`.
 const PRINTS_1_THEN_PANICS: &str =
     "fn main() {\n    print(1)\n    let z = 0\n    print(1 / z)\n}\n";
-
-/// Writes each `(path, contents)` under a fresh `<CARGO_TARGET_TMPDIR>/fixtures/<test>/` and
-/// returns that directory.
-fn fixture(test: &str, files: &[(&str, &str)]) -> PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join("fixtures")
-        .join(test);
-    // It is absent on the first run, so a failure here is expected and harmless.
-    drop(fs::remove_dir_all(&dir));
-    for (path, contents) in files {
-        let path = dir.join(path);
-        fs::create_dir_all(path.parent().expect("a fixture file should have a parent"))
-            .expect("creates the fixture directory");
-        fs::write(path, contents).expect("writes the fixture file");
-    }
-    dir
-}
 
 /// Runs `f`, which should panic, and returns its panic message.
 fn panic_message(f: impl FnOnce()) -> String {
