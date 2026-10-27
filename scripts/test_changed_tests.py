@@ -23,6 +23,7 @@ write = git_fixture.write
 RAW = '#[test]\nfn a_should_x() {\n    let s = "\n-- x\n";\n    one();\n}\n\n#[test]\nfn b_should_y() {\n    four();\n}\n'
 ONE_LINE = '#[test]\nfn a_should_x() {}\n#[test]\nfn b_should_y() {\n    four();\n}\n'
 NO_NEWLINE = '#[test]\nfn a_should_x() {\n    one();\n}'
+HELPER = '\nfn helper() {\n    two();\n}\n'
 FAR = THREE + '\n#[test]\nfn c_should_z() {\n    six();\n}\n'
 
 
@@ -101,6 +102,15 @@ class ChangedTests(unittest.TestCase):
              edit_the_last_line_of_a_file_with_no_final_newline_and_another_file,
              a | {('u.rs', 'b_should_y')}),
         ]
+        for ending in ['} // why', '} /* x */', '}// x', '}  //', '} /* x']:
+            text = f'#[test]\nfn a_should_x() {{\n    one();\n{ending}\n{HELPER}'
+            rows += [(f'an edit in a helper after a test that closes with `{ending}`', text,
+                      rewrite(text.replace('two', 'three')), set()),
+                     (f'an edit in a test that closes with `{ending}`', text, rewrite(text.replace('one', 'uno')), a)]
+        for ending in ['{} // x', '{} /* x */', '{ one(); } // x']:
+            text = f'#[test]\nfn a_should_x() {ending}\n{HELPER}'
+            rows.append((f'an edit in a helper after the one-line test `fn a_should_x() {ending}`', text,
+                         rewrite(text.replace('two', 'three')), set()))
         for message, files, change, want in rows:
             with self.subTest(message):
                 files = files if isinstance(files, dict) else {'t.rs': files}
@@ -147,6 +157,26 @@ class ChangedTests(unittest.TestCase):
         lines = ('#[test]\nfn a_should_x() {\n    let c = \'}\';\n    /* } */\n    one();\n}\n'
                  '#[test]\nfn b_should_y() {}\n#[test]\nfn c_should_z() {\n}\n').splitlines()
         self.assertEqual(ct.bodies(lines), [('a_should_x', 2, 6), ('b_should_y', 8, 8), ('c_should_z', 10, 11)])
+
+    def test_a_comment_after_the_closing_brace_should_not_extend_the_body(self):
+        lines = ('#[test]\nfn a_should_x() {\n    one();\n} // why\n'
+                 '#[test]\nfn b_should_y() { four(); } /* x */\n'
+                 '#[test]\nfn c_should_z() {\n    f("http://x");\n}\n'
+                 '#[test]\nfn d_should_w() { f("//x") }\nfn helper() {\n}\n').splitlines()
+        self.assertEqual(ct.bodies(lines), [('a_should_x', 2, 4), ('b_should_y', 6, 6),
+                                            ('c_should_z', 8, 10), ('d_should_w', 12, 12)])
+
+    def test_a_body_without_its_closing_brace_should_end_before_the_next_test(self):
+        lines = '#[test]\nfn a_should_x() {\n    one();\n#[test]\nfn b_should_y() {\n}\n'.splitlines()
+        self.assertEqual(ct.bodies(lines), [('a_should_x', 2, 4), ('b_should_y', 5, 6)])
+
+    def test_the_hit_tests_should_equal_those_of_a_scan_of_every_body(self):
+        found = [('a', 3, 5), ('b', 8, 8), ('c', 10, 14), ('d', 16, 16)]
+        for start in range(0, 19):
+            for count in range(0, 20):
+                want = {name for name, first, last in found
+                        if count > 0 and start <= last and start + count - 1 >= first}
+                self.assertEqual(ct.hit(found, start, count), want, f'start {start}, count {count}')
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@
 Usage: python3 changed_tests.py REF
 """
 
+import bisect
 import os
 import re
 import subprocess
@@ -13,22 +14,30 @@ import test_names
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
+# A `}` that ends a line, alone or before a comment: `} // why`, `} /* x */`.
+CLOSE = re.compile(r"\}\s*(?://.*|/\*.*)?$")
+
+
 def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
     """(name, first line, last line), counted from 1, of each test that `test_names.tests()` finds.
-    The body starts at the `fn` line. A `fn` line that ends with `}` is the whole body. Otherwise
-    the body ends at the first later line that is `}` at the indent of the `fn` line.
+    The body starts at the `fn` line. A `fn` line that ends with `}`, a comment after it allowed,
+    is the whole body. Otherwise the body ends at the first later line that is `}` at the indent of
+    the `fn` line, a comment after it allowed, and before the next `fn`. So the bodies are in order
+    and do not overlap.
 
     shortcut: a raw string that holds a `}` at the indent of its `fn` ends the body early, so a
     later change in that body is missed. Upgrade to a lexer if such a miss is ever seen. The miss
     never flags a test whose body did not change."""
+    tests = test_names.tests(lines)
     found = []
-    for first, name, _ in test_names.tests(lines):
+    for i, (first, name, _) in enumerate(tests):
         text = lines[first - 1]
-        closing = text[: len(text) - len(text.lstrip())] + "}"
+        closing = re.compile(re.escape(text[: len(text) - len(text.lstrip())]) + CLOSE.pattern)
+        stop = tests[i + 1][0] - 1 if i + 1 < len(tests) else len(lines)  # the line before the next `fn`
         last = first
-        if not text.rstrip().endswith("}"):
-            last = next((n for n in range(first + 1, len(lines) + 1) if lines[n - 1].rstrip() == closing),
-                        len(lines))
+        if not CLOSE.search(text.rstrip()):
+            last = next((n for n in range(first + 1, stop + 1) if closing.fullmatch(lines[n - 1].rstrip())),
+                        max(stop, first))
         found.append((name, first, last))
     return found
 
@@ -43,9 +52,15 @@ def git(repo: str, *args: str) -> str:
 
 
 def hit(found: list[tuple[str, int, int]], start: int, count: int) -> set[str]:
-    """The tests whose body meets the range of `count` lines from `start`; a count of 0 is empty."""
-    return {name for name, first, last in found
-            if count > 0 and start <= last and start + count - 1 >= first}
+    """The tests whose body meets the range of `count` lines from `start`; a count of 0 is empty.
+    `found` is in order and its bodies do not overlap, so a bisect finds the first test to meet it."""
+    end = start + count - 1
+    found_at = bisect.bisect_left(found, start, key=lambda body: body[2])
+    meeting = set()
+    while count > 0 and found_at < len(found) and found[found_at][1] <= end:
+        meeting.add(found[found_at][0])
+        found_at += 1
+    return meeting
 
 
 # These flags make the output the same under any user config: no color, no external diff driver
@@ -68,6 +83,7 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
     old_path = new_path = ""
     old: list[tuple[str, int, int]] | None = None  # the bodies of the file at REF
     new: list[tuple[str, int, int]] = []  # the bodies of the file now
+    new_names: set[str] = set()
     left = [0, 0]  # lines of the current hunk not yet read, on the old and the new side
     for line in diff:
         if left[0] or left[1]:  # a hunk line; one that starts `---` or `+++` is not a header
@@ -88,7 +104,7 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
                 old = bodies(text.splitlines())
                 with open(f"{repo}/{new_path}", encoding="utf-8", errors="surrogateescape") as f:
                     new = bodies(f.read().splitlines())
-            new_names = {name for name, _, _ in new}
+                new_names = {name for name, _, _ in new}
             found |= {(new_path, n) for n in hit(old, a, b) & new_names}
             found |= {(new_path, n) for n in hit(new, c, d)}
     return found
