@@ -4158,6 +4158,16 @@ mod tests {
                 "fn f<T: A & B, U: C & D>() ]",
                 (Code::UnexpectedClosingBracket, 1, 28),
             ),
+            // A `,` inside the arguments of a bound does not start the next parameter.
+            (
+                "fn f<T: A<X, Y> & B>() ]",
+                (Code::UnexpectedClosingBracket, 1, 24),
+            ),
+            // An associated type that follows the `}` of an item on the same line.
+            (
+                "interface I { fn a() {} type Item: A & B }\nfn main() { ] }",
+                (Code::UnexpectedClosingBracket, 2, 13),
+            ),
             // No `:` before the `&`, in the first parameter and in a later one.
             ("fn f<T & U>() ]", (Code::UnexpectedCharacter, 1, 8)),
             ("fn f<T: A, U & B>() ]", (Code::UnexpectedCharacter, 1, 14)),

@@ -1,0 +1,21 @@
+interface Convert<Y> {
+    fn convert(self) -> Y
+}
+
+interface Mix<T> {
+    fn mix<M_2: Convert<T>>(self, other: M_2) -> T
+}
+
+class M_2 {
+    n: i64
+}
+
+class Box {
+    n: i64
+}
+
+extend Box: Mix<M_2> {}
+
+fn main() {
+    print(Box(n: 1).n + M_2(n: 2).n)
+}

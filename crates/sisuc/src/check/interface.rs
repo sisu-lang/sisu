@@ -1217,6 +1217,8 @@ impl Checker<'_> {
         let mut with = vec![ty];
         with.extend_from_slice(args.get());
         for declaration in &names.list {
+            #[cfg(test)]
+            super::PROBE_STEPS.set(super::PROBE_STEPS.get() + 1);
             let args = declaration.args.subst(&with);
             let assoc = Type::intern(TypeKind::Assoc(
                 ty,
@@ -1612,7 +1614,7 @@ fn nests_within(ty: Type, limit: usize) -> bool {
     match ty.kind() {
         TypeKind::Array(t) | TypeKind::Optional(t) => inner(&[t]),
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) => inner(args.get()),
-        TypeKind::Assoc(base, _, args, _) => inner(&[base]) && inner(args.get()),
+        // A normalized type with no type parameter holds no associated type.
         _ => true,
     }
 }

@@ -26,6 +26,9 @@ fn interface_declarations_should_check_clean() {
         "interface C {\n    fn c(self) -> i64\n}\ninterface A: C {}\ninterface B: C {}\ninterface D: A, B {\n    fn d(self) -> i64\n}",
         "interface Solid: Named {\n    fn area(self) -> f64\n}",
         "interface Solid: Named, Same, Shape {}",
+        // A parameter of an interface has a bound that writes the associated type of another: the
+        // declarations of `Holds2` are read while the interfaces are not all resolved.
+        "interface Holds2 {\n    type Item\n}\ninterface Wrap<S: Holds2, T: Convert<S.Item>> {\n    fn wrap(self, s: S, t: T)\n}",
         // A requirement may name a class, and `Self`, in any position of its signature.
         "interface Draw {\n    fn f(self, c: Circle) -> Self\n    fn g(self, xs: [Self], b: Box<Self>?) -> [Self?]\n}",
         "interface Both {\n    fn f(self) -> Circle\n    fn g<U>(self, u: U) -> U\n    fn h(self)\n}",
@@ -992,6 +995,9 @@ fn a_call_through_a_bound_should_wait_for_the_arguments_that_bind_its_type() {
         "fn f<B: List & Text>(b: B) -> i64 {\n    take(b.make(), \"s\").len()\n}",
         // The parameter's type fixes the call's own `E`, while `T` is unbound.
         "fn f<B: Mk>(b: B) -> i64 {\n    g(b.mk())\n}",
+        // Two bounds answer `make` with different results, and no context is set: the call waits
+        // for the second argument, which binds `T`, and then the result `i64` picks one.
+        "interface One {\n    fn make(self) -> i64\n}\ninterface Two {\n    fn make(self) -> string\n}\nfn mkr<E>() -> Res<i64, E> {\n    Res.Good(5)\n}\nfn pair<T>(a: T, r: Res<T, string>) -> T {\n    a\n}\nfn f<B: One & Two>(b: B) -> i64 {\n    let r = pair(b.make(), mkr())\n    r\n}",
     ] {
         clean(&format!("{decls}{body}\nfn main() {{}}"));
     }
@@ -1720,8 +1726,9 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
 /// are at most twice those of 32 (and a few more), for an interface that declares `n` types
 /// which `n` functions each name through a bound (not one index for each function), for a type
 /// that an interface with `n` types, inherited by the bound `Holder`, meets in `n` calls (not
-/// every type for each call), and for a type that meets `n` interfaces which inherit each other,
-/// each with a type (not every type for each interface).
+/// every type for each call, and not every declaration read for each call), and for a type that
+/// meets `n` interfaces which inherit each other, each with a type (not every type for each
+/// interface).
 #[test]
 fn a_bound_should_build_what_its_interface_declares_once_and_probe_a_type_once() {
     let functions = |n: usize| {
@@ -1764,27 +1771,36 @@ fn a_bound_should_build_what_its_interface_declares_once_and_probe_a_type_once()
     };
     let steps = |src: String| {
         DECLARED_BUILT.set(0);
+        PROBE_STEPS.set(0);
         crate::conformance::NORMALIZED.set(0);
         let ds = diags(&with_convert_interface(&src));
         assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
-        (DECLARED_BUILT.get(), crate::conformance::NORMALIZED.get())
+        [
+            DECLARED_BUILT.get(),
+            crate::conformance::NORMALIZED.get(),
+            PROBE_STEPS.get(),
+        ]
     };
-    for (name, shape, counted) in [
-        ("functions", &functions as &dyn Fn(usize) -> String, 0),
-        ("calls", &calls, 1),
-        ("chain", &chain, 1),
+    // The counters each shape is measured by: the declarations built, the types walked, and the
+    // declarations the probes read.
+    for (name, shape, counters) in [
+        (
+            "functions",
+            &functions as &dyn Fn(usize) -> String,
+            &[0][..],
+        ),
+        ("calls", &calls, &[1, 2]),
+        ("chain", &chain, &[1]),
     ] {
         let (small, large) = (steps(shape(32)), steps(shape(64)));
-        let (small, large) = if counted == 0 {
-            (small.0, large.0)
-        } else {
-            (small.1, large.1)
-        };
-        assert!(small >= 32, "{name}: {small} steps for 32");
-        assert!(
-            large <= 2 * small + 8,
-            "{name}: {large} steps for 64, {small} for 32"
-        );
+        for &counter in counters {
+            let (small, large) = (small[counter], large[counter]);
+            assert!(small >= 32, "{name}: {small} steps for 32");
+            assert!(
+                large <= 2 * small + 8,
+                "{name}: {large} steps for 64, {small} for 32 (counter {counter})"
+            );
+        }
     }
 }
 
@@ -3797,9 +3813,14 @@ fn an_associated_type_that_needs_itself_should_be_reported_once() {
     codes(nested, &[(Code::UnknownType, (17, 14))]);
     // The same chain ends at `Leaf`: clean.
     codes(&nested.replace("T.B.B.B", "T"), &[]);
-    // A choice that gives a larger type at each step has no loop and no end: the probe stops.
-    let growing = nested.replace("T.B.B.B", "W<W<T>>");
-    codes(&growing, &[]);
+    // A choice that gives a larger type at each step has no loop and no end: the probe stops. The
+    // type grows by a level of arguments, of an array, and of an optional.
+    for grown in ["W<W<T>>", "W<[T]>", "W<W<T>?>"] {
+        let growing = format!(
+            "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Leaf {{}}\nextend Leaf: Base {{\n    type B = W<Leaf>\n}}\nextend Leaf: Holder {{}}\nclass W<T> {{}}\nextend<T> W<T>: Base {{\n    type B = {grown}\n}}\nextend<T> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B] = []\n}}\nfn main() {{\n    get(Leaf())\n}}"
+        );
+        codes(&growing, &[]);
+    }
 }
 
 /// A bound whose argument names an associated type of a sibling parameter finds that parameter's
