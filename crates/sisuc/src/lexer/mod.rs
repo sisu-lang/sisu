@@ -4229,7 +4229,9 @@ mod tests {
         ] {
             let d = fatal(src);
             assert_eq!(d.code(), Code::UnexpectedCharacter, "{src}");
-            assert_eq!(d.fixes().len(), usize::from(fix), "{src}");
+            let start = src.find('&').expect("every row has a `&`");
+            let want = fix.then(|| (false, vec![(start, start + 1, "&&".to_string())]));
+            assert_eq!(fix_edits(&d), want, "{src}");
         }
     }
 
