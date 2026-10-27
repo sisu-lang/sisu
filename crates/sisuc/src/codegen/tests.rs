@@ -3,7 +3,7 @@ use crate::check::check_alone;
 use crate::mir::tests::assert_near_linear;
 use crate::parser::parse_ok;
 use crate::tir::BinaryOp;
-use inkwell::values::{AnyValue, InstructionOpcode, InstructionValue, Operand};
+use inkwell::values::{AnyValue, CallSiteValue, InstructionOpcode, InstructionValue, Operand};
 use std::panic::{self, AssertUnwindSafe};
 
 /// Lexes, parses, checks (no errors allowed), builds the mir of and compiles `src`, then
@@ -949,6 +949,8 @@ fn niche_should_run_out_past_its_storage() {
 }
 
 /// The LLVM type of each local, from its `alloca`, and the value that its first value stores.
+/// A call that takes the local leads back to its slot, so the test does not depend on the order
+/// of the `alloca`s.
 /// An optional is a spare value of the payload where it has one, and `null` for one layer around
 /// a pointer. Every other optional is a `{ i1, T }` pair. An `Option`-shaped enum has one variant
 /// with no payload and one with one field. It is that field's storage in either order of its
@@ -998,8 +1000,12 @@ fn niche_layouts_should_follow_the_payload() {
     let context = Context::create();
     let lets = (rows.iter().enumerate())
         .map(|(i, (ty, init, ..))| {
-            format!("    let x{i}: {ty} = {init}\n    print(x{i} == {init})\n")
+            format!("    let x{i}: {ty} = {init}\n    print(x{i} == {init})\n    take{i}(x{i})\n")
         })
+        .collect::<Vec<_>>()
+        .concat();
+    let takers = (rows.iter().enumerate())
+        .map(|(i, (ty, ..))| format!("fn take{i}(x: {ty}) {{}}\n"))
         .collect::<Vec<_>>()
         .concat();
     let enums = "enum Maybe {\n    Nothing\n    Just(char)\n}\n\
@@ -1010,23 +1016,26 @@ fn niche_layouts_should_follow_the_payload() {
         enum Wide {\n    A\n    B(i64)\n}\n\
         enum Two {\n    A(char)\n    B(char)\n}\n";
     let src = format!(
-        "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\n{enums}fn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
+        "class Node {{\n    n: i64\n}}\nenum E {{\n    A\n    B\n}}\n{enums}{takers}fn main() {{\n    let _ = Node(n: 1)\n    let _ = E.A\n    let _ = E.B\n{lets}}}\n"
     );
     let module = compiled(&context, &src);
     let main = module
         .get_function("sisu.main")
         .expect("the module should define `main`");
     let code = instructions(main);
-    // Mir numbers the named locals before the temporaries (`mir::Function::locals`), and
-    // `entry_alloca` puts each new `alloca` first in the entry block. So the last `rows.len()`
-    // `alloca`s are the locals, the last `let` first.
-    let allocas: Vec<_> = (code.iter())
-        .filter(|i| i.get_opcode() == InstructionOpcode::Alloca)
-        .collect();
-    let first_local = allocas.len().saturating_sub(rows.len());
-    let slots = allocas[first_local..].iter().rev();
-    assert_eq!(slots.len(), rows.len(), "{}", module.print_to_string());
-    for (slot, (ty, _, llvm, first)) in slots.zip(&rows) {
+    for (i, (ty, _, llvm, first)) in rows.iter().enumerate() {
+        // `take{i}` gets `x{i}` through its slot, maybe through a temporary: follow the copies
+        // back to the slot that holds the value of the `let`.
+        let call = (code.iter())
+            .find(|c| {
+                CallSiteValue::try_from(**c)
+                    .ok()
+                    .and_then(CallSiteValue::get_called_fn_value)
+                    .is_some_and(|f| f.get_name().to_str() == Ok(&format!("sisu.take{i}")))
+            })
+            .unwrap_or_else(|| panic!("no call of `take{i}` in\n{}", module.print_to_string()));
+        let (initial, slot) = stored_trail(&code, operand_of(*call, 0));
+        let slot = slot.unwrap_or_else(|| panic!("the argument of `take{i}` should be a load"));
         let allocated = slot
             .get_allocated_type()
             .expect("an `alloca` should have a type")
@@ -1036,14 +1045,11 @@ fn niche_layouts_should_follow_the_payload() {
         let allocated = allocated.split(" = type ").next().unwrap_or(&allocated);
         assert_eq!(allocated, *llvm, "{ty} should be {llvm}");
         if let Some(first) = first {
-            let store = (code.iter())
-                .find(|i| {
-                    i.get_opcode() == InstructionOpcode::Store
-                        && operand_of(**i, 1).as_instruction_value() == Some(**slot)
-                })
-                .unwrap_or_else(|| panic!("no store into the slot of {ty}"));
-            let stored = operand_of(*store, 0).print_to_string().to_string();
-            assert_eq!(&stored, first, "the first value of {ty}");
+            assert_eq!(
+                &initial.print_to_string().to_string(),
+                first,
+                "the first value of {ty}"
+            );
         }
     }
 }
@@ -1916,8 +1922,18 @@ fn instructions(function: FunctionValue<'_>) -> Vec<InstructionValue<'_>> {
 /// the load.
 fn stored_origin<'ctx>(
     code: &[InstructionValue<'ctx>],
-    mut value: BasicValueEnum<'ctx>,
+    value: BasicValueEnum<'ctx>,
 ) -> BasicValueEnum<'ctx> {
+    stored_trail(code, value).0
+}
+
+/// `stored_origin`, with the last slot that it went through: the one whose store gave the
+/// origin.
+fn stored_trail<'ctx>(
+    code: &[InstructionValue<'ctx>],
+    mut value: BasicValueEnum<'ctx>,
+) -> (BasicValueEnum<'ctx>, Option<InstructionValue<'ctx>>) {
+    let mut last_slot = None;
     while let Some(load) = value.as_instruction_value().filter(|i| {
         i.get_opcode() == InstructionOpcode::Load
             && operand_of(*i, 0)
@@ -1926,6 +1942,7 @@ fn stored_origin<'ctx>(
                 .is_some_and(|slot| slot.get_opcode() == InstructionOpcode::Alloca)
     }) {
         let slot = operand_of(load, 0);
+        last_slot = slot.into_pointer_value().as_instruction();
         let before = code
             .iter()
             .position(|i| *i == load)
@@ -1937,7 +1954,7 @@ fn stored_origin<'ctx>(
             .expect("a slot should be stored before it is loaded");
         value = operand_of(*store, 0);
     }
-    value
+    (value, last_slot)
 }
 
 /// Operand `n` of `instruction`, which should be a value, not a block.
