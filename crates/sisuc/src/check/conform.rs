@@ -8,8 +8,9 @@ use super::interface::{Bound, RequirementInfo};
 use super::{Body, Checker, Choice, Choices, Declared, Holder, own_args};
 use crate::ast;
 use crate::conformance::{self, find};
-use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm};
-use crate::source::Span;
+use crate::diagnostic::{ConformanceForm, DiagnosticKind, NotConformForm, Ungenerated};
+use crate::front_end::LANG_SOURCE;
+use crate::source::{PRELUDE_BASE, Source as Text, Span};
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeKind};
 
@@ -32,6 +33,29 @@ struct Pending {
     source: Source,
     /// Among the conformances to `interface`.
     index: usize,
+    /// Whether the method `to_string` of the type made the conformance, with no interface written.
+    by_name: bool,
+}
+
+/// A listed interface that the compiler writes for the type, with no method of the type to meet
+/// it: `enum Expr: Eq` or `class Node: Display`. Checked as Rust's `derive` is, once every
+/// conformance is known.
+struct Derived {
+    interface: Bound,
+    target: Type,
+    at: Span,
+    source: Source,
+}
+
+/// What the recording of conformances keeps while it runs.
+#[derive(Default)]
+struct Added {
+    /// Where each conformance is written, by interface and index.
+    ats: FxHashMap<(InterfaceId, usize), Span>,
+    /// The listed interfaces that the compiler writes.
+    derived: Vec<Derived>,
+    /// The types and interfaces in `derived`, so that a repeated listing is checked once.
+    derived_keys: FxHashSet<(Type, InterfaceId, tir::TypeArgs)>,
 }
 
 /// An interface that the list of a class or an enum gets from another, when a block gave the type
@@ -56,14 +80,14 @@ impl Checker<'_> {
     /// each meets its requirements and, for an `extend` block, the conformances it needs.
     pub(super) fn conformances(&mut self, items: &[&ast::Item]) {
         self.extension_clashes();
-        // Where each conformance is written, by interface and index.
-        let mut ats: FxHashMap<(InterfaceId, usize), Span> = FxHashMap::default();
+        let mut added = Added::default();
         let mut pending = Vec::new();
         let lists = self.listed_conformances(items);
         for (holder, receiver, roots) in &lists {
             for &(bound, at) in roots {
                 let source = Source::Body(*holder);
-                pending.extend(self.add_conformance(bound, *receiver, at, source, &mut ats));
+                let one = self.add_listed(bound, *receiver, at, source, (&mut added, None));
+                pending.extend(one);
             }
         }
         let blocks: Vec<_> = (self.extensions.iter().enumerate())
@@ -74,10 +98,61 @@ impl Checker<'_> {
             .collect();
         for (block, bound, at, target) in blocks {
             let source = Source::Block(block);
-            let added = self.add_conformance(bound, target, at, source, &mut ats);
-            self.extensions[block].duplicate = added.is_none();
-            pending.extend(added);
+            let derived = added.derived.len();
+            let one = self.add_listed(bound, target, at, source, (&mut added, None));
+            // A listing that the compiler writes is no second conformance.
+            self.extensions[block].duplicate = one.is_none() && added.derived.len() == derived;
+            pending.extend(one);
         }
+        let (inherited_found, gives_display) =
+            self.listed_closures(&lists, &mut added, &mut pending);
+        pending.extend(self.name_displays(&gives_display, &mut added));
+        // The choices of the associated types are recorded: an enum that grows through one is
+        // marked, before the first query.
+        let growing = self.growing_enums();
+        for (marked, grows) in self.marked.iter_mut().zip(growing) {
+            *marked |= grows;
+        }
+        // Every conformance is known now: the checks that waited for them run, and a type that
+        // fails is unknown before a requirement is compared with a method.
+        self.run_pending_bounds();
+        for derived in &added.derived {
+            self.check_derived(derived);
+        }
+        for p in &pending {
+            self.meet_requirements(p);
+        }
+        for p in &pending {
+            self.check_choices(p);
+        }
+        self.stray_choices(&lists, &pending);
+        for p in pending
+            .iter()
+            .filter(|p| matches!(p.source, Source::Block(_)))
+        {
+            self.inherited_conformances(p);
+        }
+        for found in &inherited_found {
+            self.listed_inheritance(found);
+        }
+        for (interface, conformance) in self.conformances.iter() {
+            for &method in &conformance.methods {
+                self.meets.entry(method).or_default().push(interface);
+            }
+        }
+        // A broken block may be named late: what was answered before it is asked again.
+        self.conformed.clear();
+    }
+
+    /// Records the interfaces that the listed ones inherit, and gives the conformances that a
+    /// block gave instead, which are asked once every conformance is known, and the holders whose
+    /// list gives them `Display`.
+    fn listed_closures(
+        &mut self,
+        lists: &[Listed],
+        added: &mut Added,
+        pending: &mut Vec<Pending>,
+    ) -> (Vec<Found>, FxHashSet<Holder>) {
         // The interfaces a listed one inherits are the type's too, unless a block gives them: the
         // body holds their methods as well.
         //
@@ -87,7 +162,9 @@ impl Checker<'_> {
         // listed interface stops at `BOUND_CLOSURE_LIMIT` entries and E0157 is reported at it.
         // The work follows the sum of the closures, which are at most the limit each.
         let mut inherited_found = Vec::new();
-        for (holder, receiver, roots) in &lists {
+        // The holders whose list gives them `Display`, directly or by inheritance.
+        let mut gives_display = FxHashSet::default();
+        for (holder, receiver, roots) in lists {
             let mut closure = Vec::new();
             // The listed interface through which each entry of `closure` is reached.
             let mut via = Vec::new();
@@ -119,6 +196,9 @@ impl Checker<'_> {
                     break;
                 }
             }
+            if closure.iter().any(|&(i, _)| i == self.lang.display) {
+                gives_display.insert(*holder);
+            }
             if wide {
                 continue;
             }
@@ -143,35 +223,12 @@ impl Checker<'_> {
                     at,
                 };
                 let source = Source::Body(*holder);
-                pending.extend(self.add_conformance(bound, *receiver, at, source, &mut ats));
+                let from = parents[k].map(|(parent, written)| (closure[parent].0, written));
+                let one = self.add_listed(bound, *receiver, at, source, (added, from));
+                pending.extend(one);
             }
         }
-        // Every conformance is known now: the checks that waited for them run, and a type that
-        // fails is unknown before a requirement is compared with a method.
-        self.run_pending_bounds();
-        for p in &pending {
-            self.meet_requirements(p);
-        }
-        for p in &pending {
-            self.check_choices(p);
-        }
-        self.stray_choices(&lists, &pending);
-        for p in pending
-            .iter()
-            .filter(|p| matches!(p.source, Source::Block(_)))
-        {
-            self.inherited_conformances(p);
-        }
-        for found in &inherited_found {
-            self.listed_inheritance(found);
-        }
-        for (interface, conformance) in self.conformances.iter() {
-            for &method in &conformance.methods {
-                self.meets.entry(method).or_default().push(interface);
-            }
-        }
-        // A broken block may be named late: what was answered before it is asked again.
-        self.conformed.clear();
+        (inherited_found, gives_display)
     }
 
     /// For each class and enum that lists interfaces, what it lists. Reports a list entry that
@@ -247,7 +304,7 @@ impl Checker<'_> {
         target: Type,
         at: Span,
         source: Source,
-        ats: &mut FxHashMap<(InterfaceId, usize), Span>,
+        added: &mut Added,
     ) -> Option<Pending> {
         let (params, bounds) = self.source_params(source);
         let clash = conformance::clash(
@@ -258,7 +315,7 @@ impl Checker<'_> {
             bound.args,
         );
         if let Some((k, common)) = clash {
-            let earlier = ats[&(bound.interface, k)];
+            let earlier = added.ats[&(bound.interface, k)];
             let (first, second) = if earlier.start() <= at.start() {
                 (earlier, at)
             } else {
@@ -287,7 +344,7 @@ impl Checker<'_> {
         for (k, at) in written {
             self.choice_ats.insert((bound.interface, index, k), at);
         }
-        ats.insert((bound.interface, index), at);
+        added.ats.insert((bound.interface, index), at);
         if bounds.iter().any(|bounds| !bounds.is_empty()) {
             self.conformance_bounds
                 .insert((bound.interface, index), (params, bounds));
@@ -298,7 +355,173 @@ impl Checker<'_> {
             at,
             source,
             index,
+            by_name: false,
         })
+    }
+
+    /// `add_conformance` for an interface that a list or an `extend` block writes, or that a list
+    /// gets from `via`, an interface that inherits it, and where it writes that. Only a class
+    /// conforms to `AnyObject`; that is reported, and the conformance is recorded all the same,
+    /// so that nothing else reports it. An interface that the compiler writes for the type, which
+    /// no method of the type meets (`enum Expr: Eq`), adds no record: the generated rule answers.
+    fn add_listed(
+        &mut self,
+        bound: Bound,
+        target: Type,
+        at: Span,
+        source: Source,
+        (added, via): (&mut Added, Option<(InterfaceId, Span)>),
+    ) -> Option<Pending> {
+        if bound.interface == self.lang.any_object && !matches!(target.kind(), TypeKind::Class(..))
+        {
+            self.report_class_only(target, at, via);
+        }
+        if self.is_derived(bound.interface, target, source) {
+            if added
+                .derived_keys
+                .insert((target, bound.interface, bound.args))
+            {
+                added.derived.push(Derived {
+                    interface: bound,
+                    target,
+                    at,
+                    source,
+                });
+            }
+            return None;
+        }
+        self.add_conformance(bound, target, at, source, added)
+    }
+
+    /// Reports that `target`, which is no class, conforms to `AnyObject` at `at`, through `via`
+    /// when an interface it lists inherits `AnyObject`.
+    fn report_class_only(&mut self, target: Type, at: Span, via: Option<(InterfaceId, Span)>) {
+        let via = via.map(|(interface, written)| {
+            (self.interfaces[interface.0].name.name.to_string(), written)
+        });
+        self.report(DiagnosticKind::ClassOnly {
+            ty: self.type_name(target),
+            at,
+            via,
+        });
+    }
+
+    /// Whether the listing of `interface` for `target` in `source` is one that the compiler writes,
+    /// with no method to meet it: an enum's `Eq` or any type's `Display`, when `source` has no
+    /// method of the requirement's name, and an `extend` block has no method at all. A broken
+    /// method counts as one: its own error says what is wrong.
+    fn is_derived(&self, interface: InterfaceId, target: Type, source: Source) -> bool {
+        let eq_of_enum = interface == self.lang.eq && matches!(target.kind(), TypeKind::Enum(..));
+        if !eq_of_enum && interface != self.lang.display {
+            return false;
+        }
+        match source {
+            Source::Body(holder) => {
+                let methods = match holder {
+                    Holder::Class(c) => &self.classes[c.0].methods,
+                    Holder::Enum(e) => &self.enums[e.0].methods,
+                };
+                (self.interfaces[interface.0].requirements.iter())
+                    .all(|requirement| !methods.contains_key(&requirement.name.name))
+            }
+            Source::Block(block) => {
+                let ext = &self.extensions[block];
+                ext.methods.is_empty()
+            }
+        }
+    }
+
+    /// Records the `Display` of each type whose method `to_string` makes it: a method of that name
+    /// in the body of a class or an enum, or in a plain `extend` block, unless the type's list
+    /// gives it `Display` (`gives`), where the method meets that conformance. The method must have
+    /// `Display`'s signature, as `meet_requirements` checks.
+    fn name_displays(&mut self, gives: &FxHashSet<Holder>, added: &mut Added) -> Vec<Pending> {
+        let name = Symbol::intern("to_string");
+        let mut named: Vec<(Holder, Type, Source, tir::FuncId)> = Vec::new();
+        for (c, class) in self.classes.iter().enumerate() {
+            if let Some(&Declared::Known(func)) = class.methods.get(&name) {
+                let holder = Holder::Class(tir::ClassId(c));
+                let args = own_args(&class.type_params);
+                let ty = Type::intern(TypeKind::Class(tir::ClassId(c), args));
+                named.push((holder, ty, Source::Body(holder), func));
+            }
+        }
+        for (e, info) in self.enums.iter().enumerate() {
+            if let Some(&Declared::Known(func)) = info.methods.get(&name) {
+                let holder = Holder::Enum(tir::EnumId(e));
+                let args = own_args(&info.type_params);
+                let ty = Type::intern(TypeKind::Enum(tir::EnumId(e), args));
+                named.push((holder, ty, Source::Body(holder), func));
+            }
+        }
+        for (block, ext) in self.extensions.iter().enumerate() {
+            if let (None, Some(&func)) = (ext.interface, ext.methods.get(&name)) {
+                named.push((ext.holder, ext.target, Source::Block(block), func));
+            }
+        }
+        let mut pending = Vec::new();
+        for (holder, target, source, func) in named {
+            if gives.contains(&holder) {
+                continue;
+            }
+            let at = self.signatures[func.0].span;
+            let bound = Bound {
+                interface: self.lang.display,
+                args: tir::TypeArgs::NONE,
+                at,
+            };
+            if let Some(mut one) = self.add_conformance(bound, target, at, source, added) {
+                one.by_name = true;
+                pending.push(one);
+            }
+        }
+        pending
+    }
+
+    /// Checks a listing that the compiler writes, as Rust's `derive` is checked: the generated
+    /// rule must hold for the type with each of its parameters taken to conform, so `enum
+    /// Wrap<T>: Eq { A(T) }` is clean, and `enum H: Eq { N(Node) }` is not. `Display` holds for
+    /// every type, so only an enum's `Eq` can fail, and then the failing leaf is named.
+    fn check_derived(&mut self, derived: &Derived) {
+        let Derived {
+            interface,
+            target,
+            at,
+            source,
+        } = *derived;
+        if interface.interface != self.lang.eq {
+            return;
+        }
+        let (params, declared) = self.source_params(source);
+        let bounds: Vec<Vec<Bound>> = (0..params.len())
+            .map(|i| {
+                let mut list = declared.get(i).cloned().unwrap_or_default();
+                list.push(interface);
+                list
+            })
+            .collect();
+        let (leaf, _) = self.with_body(Body::default(), |checker| {
+            checker.body.set_type_params(&params);
+            checker.body.set_bounds(0, bounds);
+            let args = interface.args;
+            if checker.conforms(target, interface.interface, args) {
+                return None;
+            }
+            Some(checker.failing_leaf(target, interface.interface, args))
+        });
+        let Some(leaf) = leaf else { return };
+        let info = &self.interfaces[interface.interface.0];
+        let requirement = &info.requirements[0];
+        let signature = self.required_text(source, interface, requirement);
+        self.report(DiagnosticKind::ConformanceBody {
+            ty: self.type_name(target),
+            interface: info.name.name.to_string(),
+            at,
+            form: ConformanceForm::Missing {
+                signatures: vec![signature],
+                generated: Some(Ungenerated::Since(self.type_name(leaf))),
+            },
+        });
     }
 
     /// Reports what the conformance `p` lacks of its interface's requirements, and records the
@@ -354,14 +577,21 @@ impl Checker<'_> {
             }
         }
         if !missing.is_empty() {
+            // Nothing generates `Eq` for a class, or `Ord` for anything that is not built in.
+            let language = p.interface.interface;
+            let generated = (language == self.lang.eq || language == self.lang.ord)
+                .then_some(Ungenerated::Never);
             reports.push(DiagnosticKind::ConformanceBody {
                 ty: ty.clone(),
                 interface: interface.clone(),
                 at: p.at,
-                form: ConformanceForm::Missing(missing),
+                form: ConformanceForm::Missing {
+                    signatures: missing,
+                    generated,
+                },
             });
         }
-        if let Source::Block(b) = p.source {
+        if let (Source::Block(b), false) = (p.source, p.by_name) {
             let required: FxHashSet<Symbol> = (info.requirements.iter())
                 .map(|requirement| requirement.name.name)
                 .collect();
@@ -559,11 +789,17 @@ impl Checker<'_> {
             checker.body.set_type_params(&params);
             checker.body.set_bounds(0, bounds);
             for (k, &(interface, args)) in closure.iter().enumerate().skip(1) {
+                let (parent, requires) = reached[k - 1];
+                let via = closure[parent].0;
+                if interface == checker.lang.any_object
+                    && !matches!(p.target.kind(), TypeKind::Class(..))
+                {
+                    checker.report_class_only(p.target, p.at, Some((via, requires)));
+                    continue;
+                }
                 if checker.conforms(p.target, interface, args) {
                     continue;
                 }
-                let (parent, requires) = reached[k - 1];
-                let via = closure[parent].0;
                 checker.report_inherited(
                     (p.target, p.at),
                     Some(block),
@@ -618,7 +854,8 @@ impl Checker<'_> {
             at,
             form: NotConformForm::Inherited {
                 via: self.interfaces[via.0].name.name.to_string(),
-                requires,
+                // No label points into the prelude.
+                requires: (!requires.in_prelude()).then_some(requires),
                 extend,
                 needs,
             },
@@ -740,11 +977,11 @@ impl Checker<'_> {
         let mut out = String::new();
         let mut from = requirement.span.start();
         for (at, text) in changed {
-            out.push_str(self.source.file.slice(from..at.start()));
+            out.push_str(self.source_slice(from..at.start()));
             out.push_str(&text);
             from = at.end();
         }
-        out.push_str(self.source.file.slice(from..requirement.span.end()));
+        out.push_str(self.source_slice(from..requirement.span.end()));
         out
     }
 
@@ -770,8 +1007,19 @@ impl Checker<'_> {
         (chosen, written)
     }
 
-    /// The source text at `span`.
+    /// The source text at `span`: the program's, or, for a span in the prelude, the language
+    /// interfaces', the only declarations of the prelude that a diagnostic quotes (a requirement
+    /// of `Eq` that a class lacks). They come first in the prelude, so their spans index
+    /// `LANG_SOURCE` from `PRELUDE_BASE`.
     fn source_text(&self, span: Span) -> &str {
-        self.source.file.text(span)
+        self.source_slice(span.range())
+    }
+
+    /// The source text between the offsets of `range`, as `source_text` reads it.
+    fn source_slice(&self, range: std::ops::Range<usize>) -> &str {
+        if range.start >= PRELUDE_BASE as usize {
+            return Text::new(LANG_SOURCE, PRELUDE_BASE as usize).slice(range);
+        }
+        self.source.file.slice(range)
     }
 }

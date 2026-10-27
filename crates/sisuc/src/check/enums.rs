@@ -475,10 +475,8 @@ impl Checker<'_> {
     }
 
     /// Lowers every enum, with each payload field's `Rank` from its declared type, and lays them
-    /// out (`tir::layout_enums`). Reports the enums no value can be built of; `cyclic` marks the
-    /// classes on a cycle of fields, which `never_constructed` reports. Returns the enums, and
-    /// which declarations have an error of that kind, as `never_built` does.
-    pub(super) fn lower_enums(&mut self, cyclic: &[bool]) -> (Vec<tir::Enum>, Vec<bool>) {
+    /// out (`tir::layout_enums`).
+    pub(super) fn lower_enums(&self) -> Vec<tir::Enum> {
         // The declarations each enum's generic fields name, inline (see `Rank::Late`); a
         // program without a generic enum has no such field and skips the graph.
         let declared = if self.enums.iter().any(|info| !info.type_params.is_empty()) {
@@ -535,8 +533,7 @@ impl Checker<'_> {
             })
             .collect();
         tir::layout_enums(&mut lowered);
-        let unbuilt = self.never_built(cyclic);
-        (lowered, unbuilt)
+        lowered
     }
 
     /// Reports each enum or class no value can be built of. Which classes and enums can be
@@ -548,7 +545,7 @@ impl Checker<'_> {
     /// enum, or else its first class; a type that only needs one of those is not. Returns, by
     /// node (the classes, then the enums), whether it is in a component reported here, or is a
     /// class in `cyclic`: whether it has an error of that kind of its own.
-    fn never_built(&mut self, cyclic: &[bool]) -> Vec<bool> {
+    pub(super) fn never_built(&mut self, cyclic: &[bool]) -> Vec<bool> {
         let mut fix = Buildable::new(self, cyclic);
         fix.run();
         let classes = self.classes.len();

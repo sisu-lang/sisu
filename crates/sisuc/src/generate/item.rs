@@ -790,6 +790,7 @@ impl Gen<'_> {
             calls.push("let qboth = QBoth(v: 1)".to_string());
             calls.push("both(qboth)".to_string());
         }
+        calls.extend(self.language_bounds(!declared.is_empty()));
         self.w.text("fn shapes() ");
         self.w.open();
         for call in &calls {
@@ -798,6 +799,35 @@ impl Gen<'_> {
         }
         self.w.close();
         self.w.line();
+    }
+
+    /// The generic functions `lang_eq<T: Eq>`, `lang_ord<T: Ord>` and `lang_display<T: Display>`,
+    /// whose bodies call nothing, and the statements of `shapes` that call each with types that
+    /// conform: the compiler writes those conformances. With `enum_value`, `shapes` also calls
+    /// `lang_eq` on an enum, which has `Eq` when its payloads do. It takes no byte.
+    fn language_bounds(&mut self, enum_value: bool) -> Vec<String> {
+        for (name, bound, result) in [
+            ("eq", "Eq", 1),
+            ("ord", "Ord", 2),
+            ("display", "Display", 3),
+        ] {
+            self.w.text(&format!(
+                "fn lang_{name}<T: {bound}>(x: T) -> i64 {{ {result} }}"
+            ));
+            self.w.line();
+        }
+        let mut calls = vec![
+            "let _ = lang_eq([1, 2])".to_string(),
+            "let _ = lang_eq(\"a\")".to_string(),
+            "let _ = lang_ord(1.5)".to_string(),
+            "let _ = lang_ord('c')".to_string(),
+            "let _ = lang_display(true)".to_string(),
+            "let _ = lang_display([\"a\"])".to_string(),
+        ];
+        if enum_value {
+            calls.push("let _ = lang_eq(N0.A)".to_string());
+        }
+        calls
     }
 
     /// A generic class `R<k><T>` that conforms to the interface `k`, and to those it inherits,
@@ -1029,7 +1059,14 @@ impl Gen<'_> {
     /// with a cap on its size, then methods, which may take and give the class itself.
     pub(crate) fn class(&mut self) {
         let id = self.scope.classes.len();
-        self.w.text(&format!("class K{id} "));
+        // One class in three lists `Display`, which the compiler writes, and one in three writes
+        // a method `to_string`, which is its `Display`. Neither takes a byte.
+        let listed = if id.is_multiple_of(3) {
+            ": Display"
+        } else {
+            ""
+        };
+        self.w.text(&format!("class K{id}{listed} "));
         self.w.open();
         let mut fields = Vec::new();
         let mut size = 1;
@@ -1068,6 +1105,10 @@ impl Gen<'_> {
             self.w.line();
             self.function(Some(ty.clone()));
         }
+        if id % 3 == 1 {
+            self.w.line();
+            self.w.text("fn to_string(self) -> string { \"k\" }");
+        }
         self.w.close();
         self.w.line();
     }
@@ -1077,7 +1118,8 @@ impl Gen<'_> {
     /// one may hold the enum itself, which a value built finite ends in the first.
     pub(crate) fn enumeration(&mut self) {
         let id = self.scope.enums.len();
-        self.w.text(&format!("enum E{id} "));
+        // The body goes into a piece, so the header can name what the compiler writes for it.
+        let header = self.w.swap(Piece::default());
         self.w.open();
         let mut variants: Vec<Variant> = Vec::new();
         let mut least = 1;
@@ -1141,6 +1183,18 @@ impl Gen<'_> {
         });
         self.scope.types.push(Ty::enumeration(id, least));
         self.w.close();
+        let body = self.w.swap(header);
+        // An enum with no class in it lists `Eq`, which the compiler writes for it; every other
+        // enum of three lists `Display`. Neither takes a byte.
+        let listed = if !has_class && id.is_multiple_of(2) {
+            ": Eq"
+        } else if id % 3 == 1 {
+            ": Display"
+        } else {
+            ""
+        };
+        self.w.text(&format!("enum E{id}{listed} "));
+        self.w.paste(&body);
         self.w.line();
     }
 

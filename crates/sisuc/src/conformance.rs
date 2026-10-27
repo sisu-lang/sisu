@@ -7,7 +7,9 @@ use std::cmp::Ordering;
 use rustc_hash::FxHashMap;
 
 use crate::symbol::Symbol;
-use crate::tir::{ChoicePlace, Conformances, InterfaceId, Type, TypeArgs, TypeKind, head_of};
+use crate::tir::{
+    ChoicePlace, Conformances, EnumId, InterfaceId, LangInterfaces, Type, TypeArgs, TypeKind, head_of,
+};
 
 #[cfg(test)]
 thread_local! {
@@ -56,6 +58,194 @@ pub(crate) fn find(
         let bound = bind(c.target, c.type_params, ty)?;
         (c.args.subst(bound.get()) == args).then_some((k, bound))
     })
+}
+
+/// What the generated rule of an interface asks of a type, for the caller to settle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Generated {
+    /// The type has the interface, with no part query.
+    Holds,
+    /// The generated rule gives the type no such interface.
+    Fails,
+    /// An array or an optional has `Eq` when this part, its element or its contents, has.
+    Element(Type),
+    /// An enum has `Eq` when each payload type of each variant, with the arguments in place of
+    /// the enum's parameters, has.
+    Payloads(EnumId, TypeArgs),
+}
+
+/// The generated rule (spec, "Generated conformances"): what the compiler writes for `ty` and the
+/// language interface `interface`, when no written conformance covers `ty`. `Display` holds for
+/// every type but `unit` and `never`, a type parameter and a class included, and asks nothing.
+/// `Eq` holds for scalars and `string`, for an array or an optional of a type that has `Eq`, and
+/// for an enum whose payload types have it; never for a class. `Ord` holds for numbers, `char`
+/// and `string`, never for `bool`, and nothing else has it. `AnyObject` holds for a class and for
+/// nothing else. An interface of the program has no generated rule. The caller asks the parts, so
+/// that the checker and `mono` each keep their own answers.
+pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) -> Generated {
+    let holds = |yes: bool| {
+        if yes {
+            Generated::Holds
+        } else {
+            Generated::Fails
+        }
+    };
+    let kind = ty.kind();
+    if interface == lang.display {
+        return holds(!matches!(kind, TypeKind::Unit | TypeKind::Never));
+    }
+    if interface == lang.any_object {
+        return holds(matches!(kind, TypeKind::Class(..)));
+    }
+    let number = matches!(
+        kind,
+        TypeKind::I64 | TypeKind::U8 | TypeKind::F64 | TypeKind::Char | TypeKind::String
+    );
+    if interface == lang.ord {
+        return holds(number);
+    }
+    if interface != lang.eq {
+        return Generated::Fails;
+    }
+    match kind {
+        _ if number || kind == TypeKind::Bool => Generated::Holds,
+        TypeKind::Array(part) | TypeKind::Optional(part) => Generated::Element(part),
+        TypeKind::Enum(id, args) => Generated::Payloads(id, args),
+        _ => Generated::Fails,
+    }
+}
+
+/// A class or an enum type asked for an interface with arguments: what a query remembers.
+pub(crate) type Key = (Type, InterfaceId, TypeArgs);
+
+/// What `Open::enter` found for a key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Entered {
+    /// The key is on the stack, with this number: its query is open.
+    Open(usize),
+    /// The key has a pending answer, which holds if the keys below it hold, with this number.
+    Pending(usize),
+    /// The key is new, and is now on the stack.
+    New,
+}
+
+/// An entry of the stack of an `Open`.
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    key: Key,
+    number: usize,
+    /// The lowest number among the keys on the stack that the key's query rests on.
+    low: usize,
+}
+
+/// The state of one root query for a generated conformance. The query for an enum can reach
+/// itself (`enum Expr { Num(i64)\n Add(Expr, Expr) }`), so it is decided assuming that it holds,
+/// and then each part is checked: a coinductive check, as Rust's. The state follows Tarjan's
+/// algorithm for strongly connected components. It holds the stack of the keys in progress, each
+/// with its entry number and its `low`; the pending answers, each with its key and its entry
+/// number; and the counter that gives the numbers, which starts again only when the stack is
+/// empty, so one number never names two keys in one root query.
+///
+/// Every query nested in a query is a conjunction (the one fallback rule: a written conformance
+/// decides, and `Display` holds without one), so the rule is exact. A key that leaves with `false`
+/// holds under assumptions that are all `true`, so its answer is never wrong, and every caller
+/// then fails too. A key that leaves with `true` and a `low` equal to its own number is a head:
+/// it and every pending answer entered after it are final. A `true` with a lower `low` rests on a
+/// key that is still open, so it waits as a pending answer, which a later part query finds by its
+/// key: no key is expanded twice in one root query. When the root query returns, the pending
+/// answers that are left rest, through conjunctions, on a key that failed, so each is `false`.
+///
+/// The fourth recorded exception to "A pass is linear in the program" (user, 2026-10-27; ruling
+/// F9): a query costs one step for each class or enum type that it forms (see
+/// `CODING_STANDARDS.md`, Performance), and the types that a query forms from a concrete type
+/// are the types that `mono` instantiates when the program uses them.
+#[derive(Debug, Default)]
+pub(crate) struct Open {
+    stack: Vec<Frame>,
+    /// The number of each key on the stack.
+    on_stack: FxHashMap<Key, usize>,
+    /// The pending answers in the order they left, so those entered after a head are a suffix.
+    pending: Vec<(Key, usize)>,
+    /// The number of each key that has a pending answer.
+    pending_at: FxHashMap<Key, usize>,
+    /// The number the last key got.
+    counter: usize,
+}
+
+impl Open {
+    /// Starts the query for `key`, if it is new: the key goes on the stack with the next number.
+    pub(crate) fn enter(&mut self, key: Key) -> Entered {
+        if let Some(&number) = self.on_stack.get(&key) {
+            return Entered::Open(number);
+        }
+        if let Some(&number) = self.pending_at.get(&key) {
+            return Entered::Pending(number);
+        }
+        if self.stack.is_empty() {
+            self.counter = 0;
+        }
+        self.counter += 1;
+        self.stack.push(Frame {
+            key,
+            number: self.counter,
+            low: self.counter,
+        });
+        self.on_stack.insert(key, self.counter);
+        Entered::New
+    }
+
+    /// Records that the key on top of the stack, the caller, rests on the key with the number
+    /// `number`, which `enter` found open or pending: the part query answers `true` with no
+    /// expansion.
+    pub(crate) fn hit(&mut self, number: usize) {
+        let caller = (self.stack.last_mut()).expect("a hit should have a caller on the stack");
+        caller.low = caller.low.min(number);
+    }
+
+    /// Ends the query for `key`, the key on top of the stack, with `answer`. Gives the answers
+    /// that are final, for the memo. A `false` is final at once. A `true` is final when it is a
+    /// head, with the pending answers entered after it; otherwise it waits.
+    pub(crate) fn leave(&mut self, key: Key, answer: bool) -> Vec<(Key, bool)> {
+        let frame = (self.stack.pop()).expect("a query that ends should be on the stack");
+        debug_assert_eq!(frame.key, key, "the query that ends should be the top one");
+        self.on_stack.remove(&key);
+        if !answer {
+            return vec![(key, false)];
+        }
+        if frame.low == frame.number {
+            let mut done = vec![(key, true)];
+            while let Some(&(pending, number)) = self.pending.last() {
+                if number <= frame.number {
+                    break;
+                }
+                self.pending.pop();
+                self.pending_at.remove(&pending);
+                done.push((pending, true));
+            }
+            return done;
+        }
+        self.pending.push((key, frame.number));
+        self.pending_at.insert(key, frame.number);
+        // The root has the lowest number, so it is a head: a key that waits has a caller.
+        let caller = (self.stack.last_mut()).expect("a key that waits should have a caller");
+        caller.low = caller.low.min(frame.low);
+        Vec::new()
+    }
+
+    /// Whether no query is open: the root query has returned.
+    pub(crate) fn is_idle(&self) -> bool {
+        self.stack.is_empty()
+    }
+
+    /// Ends the root query: gives the pending answers that are left as `false` for the memo. A
+    /// root that holds is a head, since no key has a lower number, so answers are left only when
+    /// the root fails.
+    pub(crate) fn settle(&mut self) -> Vec<(Key, bool)> {
+        self.pending_at.clear();
+        (self.pending.drain(..))
+            .map(|(key, _)| (key, false))
+            .collect()
+    }
 }
 
 /// `ty` with every associated type replaced whose base is a class or an enum: by the type that

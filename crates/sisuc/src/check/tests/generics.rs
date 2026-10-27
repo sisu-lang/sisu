@@ -1542,8 +1542,8 @@ fn type_parameters_should_be_found_in_one_step() {
         checked(&src);
         PARAM_STEPS.get()
     };
-    assert_eq!(steps(500), 1502);
-    assert_eq!(steps(1000), 3002);
+    assert_eq!(steps(500), 1502 + LANG_PARAM_STEPS);
+    assert_eq!(steps(1000), 3002 + LANG_PARAM_STEPS);
 }
 
 /// Work kept ahead of a call is found by its span in one step, so finding it grows with the

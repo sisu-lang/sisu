@@ -288,21 +288,22 @@ impl Graph {
     }
 }
 
-impl Checker<'_> {
-    /// Reports each strongly connected component of the instantiation graph (see the module
-    /// doc) that holds a cycle of positive weight, once, at the first edge of positive weight of
-    /// the cycle it finds, in source order, with a note at each other instantiation on the cycle.
-    /// `functions` are the lowered bodies, by `FuncId`; `unbuilt`, by class and then enum, marks
-    /// the declarations that have their own error for no value being buildable, which stands for
-    /// their cycle.
-    pub(super) fn instantiation_cycles(
-        &mut self,
-        functions: &[Option<tir::Function>],
-        unbuilt: &[bool],
-    ) {
-        let graph = self.instantiation_graph(functions, unbuilt);
-        #[cfg(test)]
-        EDGES.set(graph.edges.len());
+/// The strongly connected components of an instantiation graph, and what each holds.
+struct Strands {
+    /// By node, the edges that start at it.
+    out: Vec<Vec<usize>>,
+    /// By node, its component.
+    component: Vec<usize>,
+    /// By component, whether an edge of negative weight is in it.
+    negative: Vec<bool>,
+    /// By component, its first growing edge in source order.
+    growing: Vec<Option<usize>>,
+    /// By component with a negative weight, its nodes, gathered in one pass.
+    members: Vec<Vec<usize>>,
+}
+
+impl Strands {
+    fn of(graph: &Graph) -> Strands {
         let nodes = graph.first[graph.first.len() - 1] + graph.typed.len();
         let mut out = vec![Vec::new(); nodes];
         for (i, edge) in graph.edges.iter().enumerate() {
@@ -313,8 +314,6 @@ impl Checker<'_> {
             .map(|edges| edges.iter().map(|&i| graph.edges[i].to).collect())
             .collect();
         let component = components(&targets);
-        // By component, whether an edge of negative weight is in it, and its first growing edge
-        // in source order.
         let mut negative = vec![false; nodes];
         let mut growing: Vec<Option<usize>> = vec![None; nodes];
         for (i, edge) in graph.edges.iter().enumerate() {
@@ -331,10 +330,6 @@ impl Checker<'_> {
                 growing[k] = Some(i);
             }
         }
-        // Components that grow at one site, as `f([x], [y])` does for each parameter, are
-        // reported once.
-        let mut reported = FxHashSet::default();
-        let mut cycles = Vec::new();
         // The nodes of each component with a negative weight, gathered in one pass.
         let mut members: Vec<Vec<usize>> = vec![Vec::new(); nodes];
         for (n, &k) in component.iter().enumerate() {
@@ -344,6 +339,52 @@ impl Checker<'_> {
                 members[k].push(n);
             }
         }
+        Strands {
+            out,
+            component,
+            negative,
+            growing,
+            members,
+        }
+    }
+
+    /// Whether the component `k` holds a cycle of positive weight: a growing edge when no weight
+    /// is negative, else the search that `instantiation_cycles` makes.
+    fn grows(&self, graph: &Graph, k: usize) -> bool {
+        if self.negative[k] {
+            positive_cycle(graph, &self.out, &self.component, k, &self.members[k]).is_some()
+        } else {
+            self.growing[k].is_some()
+        }
+    }
+}
+
+impl Checker<'_> {
+    /// Reports each strongly connected component of the instantiation graph (see the module
+    /// doc) that holds a cycle of positive weight, once, at the first edge of positive weight of
+    /// the cycle it finds, in source order, with a note at each other instantiation on the cycle.
+    /// `functions` are the lowered bodies, by `FuncId`; `unbuilt`, by class and then enum, marks
+    /// the declarations that have their own error for no value being buildable, which stands for
+    /// their cycle.
+    pub(super) fn instantiation_cycles(
+        &mut self,
+        functions: &[Option<tir::Function>],
+        unbuilt: &[bool],
+    ) {
+        let graph = self.instantiation_graph(functions, unbuilt);
+        #[cfg(test)]
+        EDGES.set(graph.edges.len());
+        let Strands {
+            out,
+            component,
+            negative,
+            growing,
+            members,
+        } = Strands::of(&graph);
+        // Components that grow at one site, as `f([x], [y])` does for each parameter, are
+        // reported once.
+        let mut reported = FxHashSet::default();
+        let mut cycles = Vec::new();
         for (k, &first) in growing.iter().enumerate() {
             if negative[k] {
                 if let Some(cycle) = positive_cycle(&graph, &out, &component, k, &members[k]) {
@@ -475,8 +516,11 @@ impl Checker<'_> {
         });
     }
 
-    /// The instantiation graph of the program: see `instantiation_cycles`.
-    fn instantiation_graph(&self, functions: &[Option<tir::Function>], unbuilt: &[bool]) -> Graph {
+    /// The graph of the program's declarations with no edges yet: the nodes of every function,
+    /// class and enum, of each hub, and the associated types' growths. Also the hubs: of each own
+    /// type parameter of a requirement, by interface, requirement and parameter, and where those
+    /// of the interfaces start.
+    fn graph_frame(&self) -> (Graph, FxHashMap<(usize, usize, usize), usize>, usize) {
         // Each own type parameter of a requirement is a hub, a node of a declaration of its own:
         // every call of the requirement passes its argument to the hub, and the hub passes it to
         // the same parameter of each method that meets the requirement. So is each interface, for
@@ -513,6 +557,12 @@ impl Checker<'_> {
             growth: Vec::new(),
         };
         (graph.assoc_first, graph.growth) = self.growths();
+        (graph, hubs, interface_hubs)
+    }
+
+    /// The instantiation graph of the program: see `instantiation_cycles`.
+    fn instantiation_graph(&self, functions: &[Option<tir::Function>], unbuilt: &[bool]) -> Graph {
+        let (mut graph, hubs, interface_hubs) = self.graph_frame();
         let mut exprs = Vec::new();
         for (holder, function) in functions.iter().enumerate() {
             let Some(function) = function.as_ref().filter(|f| !f.type_params.is_empty()) else {
@@ -553,6 +603,39 @@ impl Checker<'_> {
             }
         }
         self.hub_edges(&mut graph, &hubs, interface_hubs);
+        self.declaration_edges(&mut graph, unbuilt);
+        graph
+    }
+
+    /// By `EnumId`, whether the enum is on a cycle that grows its type arguments (E0140): an enum
+    /// with a parameter in a component of the declarations' graph that holds a cycle of positive
+    /// weight (`Strands::grows`). The graph is the declarations' alone, `declaration_edges` over
+    /// `Strands`, with no hub. It needs the choices of the conformances for the growth of an
+    /// associated type, so it runs once they are recorded, before any query. With no associated
+    /// type, no weight is negative.
+    pub(super) fn growing_enums(&self) -> Vec<bool> {
+        if self.enums.iter().all(|info| info.type_params.is_empty()) {
+            return vec![false; self.enums.len()];
+        }
+        let (mut graph, _, _) = self.graph_frame();
+        let unbuilt = vec![false; self.classes.len() + self.enums.len()];
+        self.declaration_edges(&mut graph, &unbuilt);
+        let strands = Strands::of(&graph);
+        (self.enums.iter().enumerate())
+            .map(|(e, info)| {
+                let first = graph.first[graph.functions + graph.classes + e];
+                (first..first + info.type_params.len())
+                    .any(|node| strands.grows(&graph, strands.component[node]))
+            })
+            .collect()
+    }
+
+    /// The edges that the field types of each class and the payload types of each enum give,
+    /// except for a declaration in `unbuilt`, by class and then enum, whose own error stands for
+    /// its cycle. They read the declarations alone, so the marks of growing enums use them with
+    /// no function (`growing_enums`).
+    fn declaration_edges(&self, graph: &mut Graph, unbuilt: &[bool]) {
+        let declared = graph.functions;
         for (c, class) in self.classes.iter().enumerate() {
             if unbuilt[c] {
                 continue;
@@ -580,7 +663,6 @@ impl Checker<'_> {
                 }
             }
         }
-        graph
     }
 
     /// The edges from each hub to the parameters of the methods that meet what it stands for. The

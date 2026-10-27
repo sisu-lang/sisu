@@ -25,8 +25,18 @@ pub(crate) struct ClassId(pub(crate) usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EnumId(pub(crate) usize);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct InterfaceId(pub(crate) usize);
+
+/// The prelude's four language interfaces, which the compiler maps operators, `print` and
+/// interpolation to by name. Only the checker sets them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LangInterfaces {
+    pub(crate) display: InterfaceId,
+    pub(crate) eq: InterfaceId,
+    pub(crate) ord: InterfaceId,
+    pub(crate) any_object: InterfaceId,
+}
 
 /// `==` and `!=` are `ExprKind::Equal`, comparisons are `ExprKind::Compare`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +136,8 @@ pub(crate) struct Program {
     /// Where each choice that writes an associated type is written: `mono` reports a walk that it
     /// cannot end there. Only the checker sets it.
     pub(crate) choice_ats: FxHashMap<ChoicePlace, Span>,
+    /// Where the language interfaces are among `interfaces`. Only the checker sets it.
+    pub(crate) lang: LangInterfaces,
 }
 
 /// An interface, as the typed tree names it.

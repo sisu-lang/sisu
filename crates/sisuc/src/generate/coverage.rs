@@ -108,7 +108,7 @@ const CONVERSIONS: [(&str, &str); 6] = [
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 79] = [
+const REACH: [&str; 82] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -188,6 +188,9 @@ const REACH: [&str; 79] = [
     "reach: a bound has interface arguments",
     "reach: an associated type has a bound",
     "reach: an associated type's choice is counted",
+    "reach: a declaration names a generated conformance",
+    "reach: a class gets `Display` through a `to_string` method",
+    "reach: a bound names a language interface",
 ];
 
 /// Whether a program's text holds a form.
@@ -685,7 +688,8 @@ impl Walk {
     fn ast_enum(&mut self, e: &ast::Enum) {
         self.mark("ast::Item::Enum");
         self.bounds(&e.type_params);
-        self.listed(&e.conforms, &e.assoc);
+        let methods: Vec<&str> = (e.methods.iter()).map(|f| f.name.name.as_str()).collect();
+        self.listed(&e.conforms, &e.assoc, (&methods, true));
         for field in e.variants.iter().flat_map(|v| v.payload.iter().flatten()) {
             self.type_expr(&field.ty);
         }
@@ -706,7 +710,13 @@ impl Walk {
             self.mark("reach: a generic class has a bound");
         }
         self.bounds(&c.type_params);
-        self.listed(&c.conforms, &c.assoc);
+        let methods: Vec<&str> = (c.members.iter())
+            .filter_map(|member| match member {
+                ast::Member::Method(f) => Some(f.name.name.as_str()),
+                ast::Member::Field(_) => None,
+            })
+            .collect();
+        self.listed(&c.conforms, &c.assoc, (&methods, false));
         self.owner_bounds = written_bounds(&c.type_params);
         for member in &c.members {
             match member {
@@ -717,6 +727,9 @@ impl Walk {
                 }
                 ast::Member::Method(f) => {
                     self.mark("ast::Member::Method");
+                    if f.name.name.as_str() == "to_string" {
+                        self.mark("reach: a class gets `Display` through a `to_string` method");
+                    }
                     if names_self_in(f) {
                         self.mark("reach: a class method names `Self`");
                     }
@@ -759,12 +772,27 @@ impl Walk {
     }
 
     /// Walks the interfaces a class or an enum lists after its name, and the associated types it
-    /// chooses.
-    fn listed(&mut self, conforms: &[ast::TypeExpr], assoc: &[ast::AssocChoice]) {
+    /// chooses. `methods` are the names of its methods, and whether it is an enum: `Display`, and
+    /// `Eq` of an enum, listed with no method to meet it are conformances that the compiler
+    /// writes.
+    fn listed(
+        &mut self,
+        conforms: &[ast::TypeExpr],
+        assoc: &[ast::AssocChoice],
+        (methods, is_enum): (&[&str], bool),
+    ) {
         if !conforms.is_empty() {
             self.mark("reach: a conformance is in a declaration list");
         }
         for interface in conforms {
+            let generated = match interface.to_string().as_str() {
+                "Display" => !methods.contains(&"to_string"),
+                "Eq" => is_enum && !methods.contains(&"eq"),
+                _ => false,
+            };
+            if generated {
+                self.mark("reach: a declaration names a generated conformance");
+            }
             self.type_expr(interface);
         }
         self.choices(assoc);
@@ -785,6 +813,9 @@ impl Walk {
         for bound in params.iter().flat_map(|p| &p.bounds) {
             if matches!(bound.kind, ast::TypeKind::Applied(_)) {
                 self.mark("reach: a bound has interface arguments");
+            }
+            if ["Display", "Eq", "Ord", "AnyObject"].contains(&bound.to_string().as_str()) {
+                self.mark("reach: a bound names a language interface");
             }
             self.type_expr(bound);
         }
@@ -5986,6 +6017,10 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
             // The interface without its arguments.
             let written = interface.to_string();
             let name = written.split('<').next().unwrap_or_default();
+            // The language interfaces are the prelude's, and the program declares none.
+            if ["Display", "Eq", "Ord", "AnyObject"].contains(&name) {
+                continue;
+            }
             let requirements = program.items.iter().find_map(|item| match item {
                 ast::Item::Interface(i) if i.name.name.as_str() == name => Some(&i.methods),
                 _ => None,
@@ -6213,4 +6248,121 @@ fn generated_requirements_should_name_every_kind_of_type() {
             "no requirement names {kind}: {kinds:?}"
         );
     }
+}
+
+/// The seeds between them bound a type parameter by each language interface, and name a
+/// conformance that the compiler writes, in a class and in an enum.
+#[test]
+fn generated_programs_should_name_each_language_interface() {
+    let mut wanted = FxHashMap::from_iter([
+        ("fn lang_eq<T: Eq>", false),
+        ("fn lang_ord<T: Ord>", false),
+        ("fn lang_display<T: Display>", false),
+        ("lang_eq(N0.A)", false),
+        ("fn to_string(self) -> string", false),
+    ]);
+    let (mut class, mut enumeration) = (false, false);
+    for data in seeds() {
+        let text = generate(&data).plain;
+        for (form, seen) in &mut wanted {
+            *seen |= text.contains(form);
+        }
+        let lines = || text.lines();
+        class |= lines().any(|l| l.starts_with("class K") && l.contains(": Display {"));
+        enumeration |= lines().any(|l| {
+            l.starts_with("enum E") && (l.contains(": Eq {") || l.contains(": Display {"))
+        });
+    }
+    for (form, seen) in wanted {
+        assert!(seen, "no seed writes {form}");
+    }
+    assert!(class, "no seed lists Display after a class");
+    assert!(enumeration, "no seed lists Eq or Display after an enum");
+}
+
+/// The walk marks what the language interfaces add: a class or an enum that lists `Display` or
+/// `Eq` with no method to meet it, a class that has a method `to_string`, and a bound that names
+/// a language interface; and not a listing that a method meets.
+#[test]
+fn the_ast_walk_should_mark_the_language_interfaces() {
+    let generated = "reach: a declaration names a generated conformance";
+    let to_string = "reach: a class gets `Display` through a `to_string` method";
+    let bound = "reach: a bound names a language interface";
+    for (src, key, marked) in [
+        ("class C: Display {}\n", generated, true),
+        ("enum E: Eq {\n    A\n}\n", generated, true),
+        ("class C: Eq {}\n", generated, false),
+        (
+            "enum E: Eq {\n    A\n    fn eq(self, other: E) -> bool {}\n}\n",
+            generated,
+            false,
+        ),
+        (
+            "class C: Display {\n    fn to_string(self) {}\n}\n",
+            generated,
+            false,
+        ),
+        ("class C: Named {}\n", generated, false),
+        ("class C {\n    fn to_string(self) {}\n}\n", to_string, true),
+        ("class C {\n    fn other(self) {}\n}\n", to_string, false),
+        ("fn f<T: Ord>(x: T) {}\n", bound, true),
+        ("fn f<T: Display>(x: T) {}\n", bound, true),
+        ("fn f<T: Named>(x: T) {}\n", bound, false),
+    ] {
+        let parsed = parser::parse(lexer::lex(src).expect("the source should lex"), false);
+        let mut walk = Walk::default();
+        walk.ast(&parsed.program);
+        assert_eq!(walk.seen.contains(key), marked, "{key} in {src}");
+    }
+}
+
+/// A class lists `Display` in one case of three, with no method to meet it, and writes a method
+/// `to_string` in another; an enum with no class in it lists `Eq`, and every other enum of
+/// three lists `Display`. None of it takes a byte.
+#[test]
+fn declarations_should_name_the_conformances_the_compiler_writes() {
+    let mut g = Gen::new(&[0; 64]);
+    let mut classes = Vec::new();
+    for _ in 0..5 {
+        let before = g.w.out.program.len();
+        g.class();
+        classes.push(g.w.out.program[before..].to_string());
+    }
+    let headers: Vec<&str> = classes
+        .iter()
+        .map(|c| c.lines().next().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        headers,
+        [
+            "class K0: Display {",
+            "class K1 {",
+            "class K2 {",
+            "class K3: Display {",
+            "class K4 {"
+        ]
+    );
+    let to_string: Vec<bool> = (classes.iter())
+        .map(|c| c.contains("    fn to_string(self) -> string { \"k\" }"))
+        .collect();
+    assert_eq!(to_string, [false, true, false, false, true]);
+    let mut g = Gen::new(&[0; 64]);
+    let mut headers = Vec::new();
+    for _ in 0..6 {
+        let before = g.w.out.program.len();
+        g.enumeration();
+        let text = &g.w.out.program[before..];
+        headers.push(text.lines().next().unwrap_or("").to_string());
+    }
+    assert_eq!(
+        headers,
+        [
+            "enum E0: Eq {",
+            "enum E1: Display {",
+            "enum E2: Eq {",
+            "enum E3 {",
+            "enum E4: Eq {",
+            "enum E5 {"
+        ]
+    );
 }

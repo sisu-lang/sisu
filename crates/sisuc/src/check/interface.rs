@@ -9,7 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::extend::holder_of;
 use super::{BindingKind, Body, Checker, Choice, Choices, Declared, Definition};
 use crate::ast;
-use crate::conformance::{CHOICE_DEPTH_LIMIT, find};
+use crate::conformance::{CHOICE_DEPTH_LIMIT, Entered, Generated, find, generated};
 use crate::diagnostic::{
     AddBound, Definition as Kind, DiagnosticKind, NotConformForm, NotInterface, UnknownForm,
     WideKind,
@@ -137,6 +137,24 @@ pub(super) struct Scope {
     params: Vec<Symbol>,
     bounds: Vec<Vec<Bound>>,
     self_type: Option<Type>,
+}
+
+/// How a language interface holds for a type (`Checker::lang_path`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Task 2's operators match on the path")
+)]
+pub(super) enum LangPath {
+    /// A written conformance, the one at this place among the interface's, whose methods all exist.
+    Written(usize),
+    /// The compiler writes it.
+    Generated,
+    /// It holds only because a broken block may have given it, or because a conformance lacks
+    /// methods and has its own error: no code is made from it.
+    PoisonOnly,
+    /// The type has no such conformance.
+    None,
 }
 
 impl Checker<'_> {
@@ -1090,16 +1108,32 @@ impl Checker<'_> {
     }
 
     /// Whether `ty` conforms to `interface` with `args` (without `Self`): a type parameter
-    /// through its bounds and what they inherit, a class or an enum through its conformance,
-    /// when what the conformance's parameters stand for meets their bounds. A broken `extend`
-    /// block may have given its target the conformance, so that holds.
+    /// through its bounds and what they inherit, a class or an enum through its written
+    /// conformance, and when none covers it, through the generated rule of a language interface
+    /// (`conformance::generated`). A broken `extend` block may have given its target the
+    /// conformance, so that holds.
+    ///
+    /// `Display` comes first: it holds for every type but `unit` and `never`, and reads no written
+    /// conformance and no bound. A written `Eq` or `Ord` that covers a type decides, and when its
+    /// bounds fail, the type has no such interface: no fallback to the generated rule. So every
+    /// query nested here is a conjunction.
     ///
     /// An answer is kept by the type, the interface and its arguments, so a bound that several
     /// conformances share costs one answer for each type, not one for each way to it: with
     /// `extend<T: A & B> Box<T>: A` and `: B`, `Box^n<Leaf>: A` costs steps linear in `n`. The
     /// answer for a type that holds a type parameter changes with the bounds, so it is kept with
     /// the body (`Body.conformed`).
+    ///
+    /// The fourth recorded exception to "A pass is linear in the program" (user, 2026-10-27;
+    /// ruling F9): a query costs one step for each class or enum type that it forms (see
+    /// `conformance::Open`). It decides each such type once: a type with no type parameter once
+    /// in the program, and a type that names one once in each body. Each is a type that `mono`
+    /// instantiates when the program uses it. The worst input is a branching chain of enums, each
+    /// with two ways to the next level, which forms 2^n types at its last level.
     pub(super) fn conforms(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
+        if interface == self.lang.display {
+            return generated(self.lang, ty, interface) == Generated::Holds;
+        }
         match ty.kind() {
             TypeKind::Param(_, place) => {
                 let place = place as usize;
@@ -1107,46 +1141,81 @@ impl Checker<'_> {
                     || self.body.wide.contains(&place)
             }
             TypeKind::Assoc(..) => self.assoc_conforms(ty, interface, args),
-            TypeKind::Class(..) | TypeKind::Enum(..) => {
-                let broken = holder_of(ty).is_some_and(|holder| {
-                    self.broken_extensions.contains(&self.holder_name(holder))
-                });
-                if broken {
-                    return true;
-                }
-                let key = (ty, interface, args);
-                let kept = if ty.has_param() {
-                    self.body.conformed.get(&key)
-                } else {
-                    self.conformed.get(&key)
-                };
-                if let Some(&answer) = kept {
-                    return answer;
-                }
-                let answer = self.conforms_by_conformance(ty, interface, args);
-                if ty.has_param() {
-                    self.body.conformed.insert(key, answer);
-                } else {
-                    self.conformed.insert(key, answer);
-                }
-                answer
-            }
-            _ => false,
+            TypeKind::Class(..) | TypeKind::Enum(..) => self.conforms_holder(ty, interface, args),
+            _ => match generated(self.lang, ty, interface) {
+                Generated::Holds => true,
+                Generated::Element(part) => self.conforms(part, interface, args),
+                Generated::Fails | Generated::Payloads(..) => false,
+            },
         }
     }
 
-    /// `conforms` for the class or enum type `ty`, asking for the conformance.
-    fn conforms_by_conformance(
-        &mut self,
-        ty: Type,
-        interface: InterfaceId,
-        args: TypeArgs,
-    ) -> bool {
-        #[cfg(test)]
-        super::CONFORMS_STEPS.set(super::CONFORMS_STEPS.get() + 1);
-        let Some((k, stands)) = find(&self.conformances, interface, ty, args) else {
-            return false;
+    /// `conforms` for the class or enum `ty`. It decides the key (`ty`, `interface`, `args`) as
+    /// `conformance::Open` says: a key whose query is open or pending holds, and any other key is
+    /// expanded once.
+    fn conforms_holder(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
+        let broken = holder_of(ty)
+            .is_some_and(|holder| self.broken_extensions.contains(&self.holder_name(holder)));
+        if broken {
+            return true;
+        }
+        let key = (ty, interface, args);
+        let kept = if ty.has_param() {
+            self.body.conformed.get(&key)
+        } else {
+            self.conformed.get(&key)
         };
+        if let Some(&answer) = kept {
+            return answer;
+        }
+        match self.open.enter(key) {
+            Entered::Open(number) | Entered::Pending(number) => {
+                self.open.hit(number);
+                return true;
+            }
+            Entered::New => {}
+        }
+        #[cfg(test)]
+        {
+            super::CONFORMS_STEPS.set(super::CONFORMS_STEPS.get() + 1);
+            assert!(
+                super::CONFORMS_STEPS.get() <= super::CONFORMS_BUDGET.get(),
+                "conforms should stay within its budget of {} steps",
+                super::CONFORMS_BUDGET.get()
+            );
+        }
+        let answer = self.conforms_expanded(ty, interface, args);
+        let mut done = self.open.leave(key, answer);
+        if self.open.is_idle() {
+            done.extend(self.open.settle());
+        }
+        for ((ty, interface, args), answer) in done {
+            let kept = if ty.has_param() {
+                &mut self.body.conformed
+            } else {
+                &mut self.conformed
+            };
+            kept.insert((ty, interface, args), answer);
+        }
+        answer
+    }
+
+    /// The answer for a key that `conforms_holder` has opened: the conformance that covers `ty`
+    /// decides, with its bounds; when none does, the generated rule.
+    fn conforms_expanded(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) -> bool {
+        if let Some((k, stands)) = find(&self.conformances, interface, ty, args) {
+            return self.record_holds(interface, k, stands);
+        }
+        match generated(self.lang, ty, interface) {
+            Generated::Holds => true,
+            Generated::Fails | Generated::Element(_) => false,
+            Generated::Payloads(id, own) => self.payloads_conform(id, own, interface),
+        }
+    }
+
+    /// Whether the conformance `k` of `interface` holds when its parameters stand for `stands`:
+    /// each bound of each parameter holds for the type that stands for it.
+    fn record_holds(&mut self, interface: InterfaceId, k: usize, stands: TypeArgs) -> bool {
         let Some((_, bounds)) = self.conformance_bounds.get(&(interface, k)) else {
             return true;
         };
@@ -1160,6 +1229,131 @@ impl Checker<'_> {
             }
         }
         true
+    }
+
+    /// Whether each payload type of each variant of the enum `id`, with `own` for its
+    /// parameters, conforms to `interface`. An enum that grows, or that no value can be built of,
+    /// holds with no part query: its own error is its only diagnostic. A payload that is an
+    /// error, or whose associated type has no choice, has its report already, so it holds.
+    fn payloads_conform(&mut self, id: EnumId, own: TypeArgs, interface: InterfaceId) -> bool {
+        if self.marked[id.0] {
+            return true;
+        }
+        let payloads: Vec<Type> = (self.enums[id.0].variants.iter())
+            .flat_map(|variant| variant.fields.iter().flatten().copied())
+            .collect();
+        for payload in payloads {
+            let Some(part) = self.subst(payload, own.get()) else {
+                continue;
+            };
+            if !self.conforms(part, interface, TypeArgs::NONE) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// How the language interface `interface` holds for `ty`: through a written conformance, which
+    /// is a call of its method; through the generated rule; through the poison of a broken block
+    /// or a record that lacks methods, which has its own error; or not at all. A written `Eq` or
+    /// `Ord` that covers `ty` decides, and when its bounds fail the type has none. `Display` is
+    /// different: every type but `unit` and `never` has it, so when each written record fails its
+    /// bounds, the path is the generated `Display`. Each record's bounds are asked as a root
+    /// query of their own, so `conforms` reads none for `Display`.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Task 2's operators choose their lowering by this path"
+        )
+    )]
+    pub(super) fn lang_path(&mut self, ty: Type, interface: InterfaceId) -> LangPath {
+        let args = TypeArgs::NONE;
+        if let Some(holder) = holder_of(ty) {
+            if self.broken_extensions.contains(&self.holder_name(holder)) {
+                return LangPath::PoisonOnly;
+            }
+            if let Some((k, stands)) = find(&self.conformances, interface, ty, args) {
+                if self.record_holds(interface, k, stands) {
+                    let met = self.conformances.get(interface, k).methods.len();
+                    return if met == self.interfaces[interface.0].requirements.len() {
+                        LangPath::Written(k)
+                    } else {
+                        LangPath::PoisonOnly
+                    };
+                }
+                if interface != self.lang.display {
+                    return LangPath::None;
+                }
+            }
+        }
+        if self.conforms(ty, interface, args) {
+            LangPath::Generated
+        } else {
+            LangPath::None
+        }
+    }
+
+    /// The part of `ty` that makes `ty` fail `interface` with `args` on its own, the first in the
+    /// order of the generated rule: a class with no matching record, a type whose matching
+    /// written record fails its bounds, or a type parameter whose bounds lack the interface. It
+    /// walks the rule again with a visited set, so a type is read once, and is only for a type
+    /// that `conforms` has found to fail; `ty` itself if the walk finds no part.
+    pub(super) fn failing_leaf(
+        &mut self,
+        ty: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+    ) -> Type {
+        let mut seen = FxHashSet::default();
+        self.leaf(ty, interface, args, &mut seen).unwrap_or(ty)
+    }
+
+    /// `failing_leaf` for one type; `None` when it holds, or is already being read.
+    fn leaf(
+        &mut self,
+        ty: Type,
+        interface: InterfaceId,
+        args: TypeArgs,
+        seen: &mut FxHashSet<(Type, InterfaceId, TypeArgs)>,
+    ) -> Option<Type> {
+        match ty.kind() {
+            TypeKind::Param(..) | TypeKind::Assoc(..) => {
+                (!self.conforms(ty, interface, args)).then_some(ty)
+            }
+            TypeKind::Class(..) | TypeKind::Enum(..) => {
+                let broken = holder_of(ty).is_some_and(|holder| {
+                    self.broken_extensions.contains(&self.holder_name(holder))
+                });
+                if broken || !seen.insert((ty, interface, args)) {
+                    return None;
+                }
+                if let Some((k, stands)) = find(&self.conformances, interface, ty, args) {
+                    return (!self.record_holds(interface, k, stands)).then_some(ty);
+                }
+                match generated(self.lang, ty, interface) {
+                    Generated::Holds => None,
+                    Generated::Fails | Generated::Element(_) => Some(ty),
+                    Generated::Payloads(id, own) => {
+                        if self.marked[id.0] {
+                            return None;
+                        }
+                        let payloads: Vec<Type> = (self.enums[id.0].variants.iter())
+                            .flat_map(|variant| variant.fields.iter().flatten().copied())
+                            .collect();
+                        payloads.into_iter().find_map(|payload| {
+                            let part = self.subst(payload, own.get())?;
+                            self.leaf(part, interface, TypeArgs::NONE, seen)
+                        })
+                    }
+                }
+            }
+            _ => match generated(self.lang, ty, interface) {
+                Generated::Holds => None,
+                Generated::Fails | Generated::Payloads(..) => Some(ty),
+                Generated::Element(part) => self.leaf(part, interface, args, seen),
+            },
+        }
     }
 
     /// `interface` with `args`, as a program writes a bound.
@@ -1192,6 +1386,7 @@ impl Checker<'_> {
             form: NotConformForm::Bound {
                 // No label points into the prelude.
                 bound: (!bound.at.in_prelude()).then_some(bound.at),
+                class_only: bound.interface == self.lang.any_object,
                 add,
                 needs,
             },

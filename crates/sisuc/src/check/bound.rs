@@ -5,7 +5,7 @@ use super::generic::{GenericSig, Site, mismatched, named_params};
 use super::interface::Required;
 use super::{Checked, Checker, Poisoned};
 use crate::ast;
-use crate::diagnostic::{Definition, DiagnosticKind};
+use crate::diagnostic::{Definition, DiagnosticKind, UnknownForm};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs};
 
@@ -33,6 +33,18 @@ impl Checker<'_> {
             args: iargs,
             method,
         } = picked;
+        // Until the tasks that lower them, a call of `eq`, `less` or `to_string` through a bound
+        // of a language interface waits: `mono` would find no conformance for a generated one.
+        if [self.lang.display, self.lang.eq, self.lang.ord].contains(&interface) {
+            self.labels(args);
+            self.stray(args);
+            self.report(DiagnosticKind::UnknownType {
+                name: site.name.name.to_string(),
+                at: site.name.span,
+                form: UnknownForm::Name { suggestion: None },
+            });
+            return Err(Poisoned::error());
+        }
         let labeled = self.labels(args);
         // The call keeps copies of the requirement while it checks its arguments, as `invoke`
         // does of a function.

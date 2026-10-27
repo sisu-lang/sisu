@@ -8,6 +8,7 @@ use crate::source::line_col;
 
 mod arrays;
 mod chars;
+mod conformances;
 mod constants;
 mod enums;
 mod floats;
@@ -25,6 +26,10 @@ mod strings;
 mod u8;
 mod unused;
 mod unused_names;
+
+/// The `PARAM_STEPS` that checking the four language interfaces takes, which every test's count
+/// holds: `Self` and one more step for each.
+const LANG_PARAM_STEPS: usize = 8;
 
 thread_local! {
     /// Whether this test judges unused names; `judge_unused` sets it.
@@ -49,11 +54,7 @@ fn judge_unused() {
 }
 
 pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    let prelude = if PRELUDE.get() {
-        prelude_program(PRELUDE_SOURCE)
-    } else {
-        ast::Program::default()
-    };
+    let prelude = prelude_program(if PRELUDE.get() { PRELUDE_SOURCE } else { "" });
     let (program, mut ds) = check(&parse_ok(src), &prelude, src, &[]);
     if !UNUSED.get() {
         ds.retain(|d| !is_judged(d));

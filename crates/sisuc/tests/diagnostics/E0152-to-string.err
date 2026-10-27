@@ -1,0 +1,10 @@
+error[E0152]: `to_string` does not match `Display`'s requirement
+ --> E0152-to-string.sisu:4:8
+  |
+4 |     fn to_string(self) -> i64 {
+  |        ^^^^^^^^^ found `fn to_string(self) -> i64`
+  |
+  = help: `Display` requires `fn to_string(self) -> string`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

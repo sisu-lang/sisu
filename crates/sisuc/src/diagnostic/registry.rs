@@ -212,6 +212,7 @@ codes! {
     CannotExtend = "E0155",
     Ambiguous = "E0156",
     BoundTooWide = "E0157",
+    ClassOnly = "E0158",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -419,6 +420,14 @@ pub(crate) enum DiagnosticKind {
         written: String,
         limit: usize,
         at: Span,
+    },
+    /// The conformance of the type `ty` to `AnyObject`, whose name is at `at`, though only a class
+    /// conforms to it. `via` is the interface that inherits `AnyObject`, and where, when `ty`
+    /// does not write the conformance itself.
+    ClassOnly {
+        ty: String,
+        at: Span,
+        via: Option<(String, Span)>,
     },
     /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
     /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
@@ -1705,8 +1714,12 @@ pub(crate) enum Owner {
 /// What is wrong with a conformance.
 #[derive(Clone)]
 pub(crate) enum ConformanceForm {
-    /// The signatures of the requirements that no method meets.
-    Missing(Vec<String>),
+    /// The signatures of the requirements that no method meets. `generated` says why the compiler
+    /// writes none for a language interface.
+    Missing {
+        signatures: Vec<String>,
+        generated: Option<Ungenerated>,
+    },
     /// The method `method`, written as `found` at the diagnostic's span, which the requirement
     /// `want` does not accept.
     Wrong {
@@ -1719,6 +1732,16 @@ pub(crate) enum ConformanceForm {
     NotRequirement { method: String, target: String },
     /// The choice of the associated type `name`, which none of the interfaces `of` declares.
     NotAssociated { name: String, of: Vec<String> },
+}
+
+/// Why the compiler writes no conformance of a language interface for a type.
+#[derive(Clone)]
+pub(crate) enum Ungenerated {
+    /// It writes none for the type at all: a class has no `Eq`, and nothing has an `Ord` but
+    /// the built-in numbers, `char` and `string`.
+    Never,
+    /// The rule for the type needs `leaf` to have the interface, and it has none.
+    Since(String),
 }
 
 /// Why an `extend` block cannot extend.
@@ -1743,10 +1766,11 @@ pub(crate) enum CannotExtendForm {
 #[derive(Clone)]
 pub(crate) enum NotConformForm {
     /// The type conforms to `via`, at the diagnostic's span, which requires `interface` at
-    /// `requires`. `extend` is the block that would add the conformance, when the type has none.
+    /// `requires`, nowhere a user can see for the prelude's. `extend` is the block that would add
+    /// the conformance, when the type has none.
     Inherited {
         via: String,
-        requires: Span,
+        requires: Option<Span>,
         extend: Option<String>,
         /// A conformance the type has already, whose bound fails: the bound as written there,
         /// and where it is.
@@ -1756,6 +1780,8 @@ pub(crate) enum NotConformForm {
     /// needs it. `add` is the bound that a type parameter would need.
     Bound {
         bound: Option<Span>,
+        /// Whether the interface is `AnyObject`, which only classes have.
+        class_only: bool,
         add: Option<AddBound>,
         /// A conformance the type has already, whose bound fails: the bound as written there,
         /// and where it is.
@@ -2186,9 +2212,22 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 form,
             } => match form {
-                ConformanceForm::Missing(signatures) => {
-                    Diagnostic::coded(code, at, format!("`{ty}` does not meet `{interface}`"))
-                        .with_help(signatures.join("\n"))
+                ConformanceForm::Missing {
+                    signatures,
+                    generated,
+                } => {
+                    let d =
+                        Diagnostic::coded(code, at, format!("`{ty}` does not meet `{interface}`"));
+                    let d = match generated {
+                        None => d,
+                        Some(Ungenerated::Never) => {
+                            d.with_label(format!("`{ty}` gets no generated `{interface}`"))
+                        }
+                        Some(Ungenerated::Since(leaf)) => d.with_label(format!(
+                            "`{ty}` gets no generated `{interface}`, since `{leaf}` has none"
+                        )),
+                    };
+                    d.with_help(signatures.join("\n"))
                 }
                 ConformanceForm::Wrong {
                     method,
@@ -2251,10 +2290,11 @@ impl From<DiagnosticKind> for Diagnostic {
                         extend,
                         needs,
                     } => {
-                        let d = d.with_secondary(
-                            requires,
-                            format!("`{via}` requires `{interface}`"),
-                        );
+                        let note = format!("`{via}` requires `{interface}`");
+                        let d = match requires {
+                            Some(requires) => d.with_secondary(requires, note),
+                            None => d.with_label(note),
+                        };
                         let d = match needs {
                             Some((bound, at)) => {
                                 d.with_secondary(at, format!("this conformance needs `{bound}`"))
@@ -2266,7 +2306,17 @@ impl From<DiagnosticKind> for Diagnostic {
                             None => d,
                         }
                     }
-                    NotConformForm::Bound { bound, add, needs } => {
+                    NotConformForm::Bound {
+                        bound,
+                        class_only,
+                        add,
+                        needs,
+                    } => {
+                        let d = if class_only {
+                            d.with_label("only classes conform to `AnyObject`")
+                        } else {
+                            d
+                        };
                         let d = match bound {
                             Some(bound) => d.with_secondary(bound, "required by this bound"),
                             None => d,
@@ -2356,6 +2406,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 "an interface that inherits one interface twice, with different arguments, \
                  doubles this number at each level",
             ),
+            DiagnosticKind::ClassOnly { ty, at, via } => {
+                let d = Diagnostic::coded(code, at, "only classes conform to `AnyObject`")
+                    .with_label(format!("`{ty}` is not a class"));
+                match via {
+                    Some((interface, at)) => {
+                        d.with_secondary(at, format!("`{interface}` inherits `AnyObject`"))
+                    }
+                    None => d,
+                }
+            }
             DiagnosticKind::NotAnInterface { written, at, kind } => Diagnostic::coded(
                 code,
                 at,

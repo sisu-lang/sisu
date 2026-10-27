@@ -136,6 +136,7 @@ impl Mono {
             functions: Vec::new(),
             out: Program {
                 interfaces: program.interfaces,
+                lang: program.lang,
                 ..Program::default()
             },
             conformances: program.conformances,

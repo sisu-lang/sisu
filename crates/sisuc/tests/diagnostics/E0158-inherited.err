@@ -1,0 +1,11 @@
+error[E0158]: only classes conform to `AnyObject`
+ --> E0158-inherited.sisu:5:13
+  |
+1 | interface Observer: AnyObject {
+  |                     --------- `Observer` inherits `AnyObject`
+...
+5 | enum Light: Observer {
+  |             ^^^^^^^^ `Light` is not a class
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0158

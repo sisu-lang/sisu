@@ -1,0 +1,947 @@
+//! The prelude's language interfaces (`Display`, `Eq`, `Ord`, `AnyObject`) and the conformances
+//! that the compiler writes for the types: the rules in `Checker::conforms`.
+
+use super::*;
+use crate::check::interface::LangPath;
+
+/// The functions that ask for each language interface, with bodies that call nothing.
+const NEEDS: &str = "fn need_eq<T: Eq>(x: T) {}\nfn need_ord<T: Ord>(x: T) {}\nfn need_display<T: Display>(x: T) {}\nfn need_object<T: AnyObject>(x: T) {}\n";
+
+/// A program that asks `need_<interface>` of a parameter of type `ty`, after `decls`.
+fn asking(decls: &str, interface: &str, ty: &str) -> String {
+    format!("{NEEDS}{decls}\nfn f(x: {ty}) {{\n    need_{interface}(x)\n}}\nfn main() {{}}")
+}
+
+/// Where the argument of the call `call` (`need_eq(x)`) is in `src`.
+fn argument(src: &str, call: &str) -> (usize, usize) {
+    let start = src.find(call).expect("the call should be in the program");
+    line_col(
+        src,
+        start + call.find('(').expect("a call has an argument list") + 1,
+    )
+}
+
+/// `src` with `calls` as the body of `fn f`, after `decls`, where each call names a parameter.
+fn calling(decls: &str, params: &str, calls: &[&str]) -> String {
+    let body: Vec<String> = calls.iter().map(|call| format!("    {call}\n")).collect();
+    format!(
+        "{NEEDS}{decls}\nfn f({params}) {{\n{}}}\nfn main() {{}}",
+        body.concat()
+    )
+}
+
+/// The `NotConform` that each call in `failing` gets, in the order of the calls in `src`.
+fn failures(src: &str, failing: &[&str]) -> Vec<(Code, (usize, usize))> {
+    failing
+        .iter()
+        .map(|call| (Code::NotConform, argument(src, call)))
+        .collect()
+}
+
+const NODE: &str = "class Node {}";
+const DIR: &str = "enum Dir {\n    North\n    South\n}";
+const EXPR: &str = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}";
+const HOLDS_NODE: &str = "class Node {}\nenum H {\n    N(Node)\n}";
+const GROWS_NODE: &str = "class Node {}\nenum W<T> {\n    A(T)\n    B(W<Node>)\n}";
+const PQ: &str =
+    "class Node {}\nenum P<T> {\n    A(Q<T>)\n}\nenum Q<T> {\n    B(P<T>)\n    C(T)\n}";
+
+#[test]
+fn generated_conformances_should_follow_the_spec_table() {
+    with_prelude();
+    // Each row: the declarations, the parameter type, and whether `Eq`, `Ord` and `Display` hold.
+    let rows: [(&str, &str, &str, [bool; 3]); 25] = [
+        ("i64", "", "i64", [true, true, true]),
+        ("u8", "", "u8", [true, true, true]),
+        ("char", "", "char", [true, true, true]),
+        ("string", "", "string", [true, true, true]),
+        ("f64", "", "f64", [true, true, true]),
+        ("bool has no Ord", "", "bool", [true, false, true]),
+        ("array", "", "[i64]", [true, false, true]),
+        ("nested array", "", "[[i64]]", [true, false, true]),
+        ("optional", "", "i64?", [true, false, true]),
+        ("array of optionals", "", "[string?]", [true, false, true]),
+        ("array of classes", NODE, "[Node]", [false, false, true]),
+        ("optional class", NODE, "Node?", [false, false, true]),
+        ("class", NODE, "Node", [false, false, true]),
+        ("enum of scalars", DIR, "Dir", [true, false, true]),
+        ("recursive enum", EXPR, "Expr", [true, false, true]),
+        (
+            "enum holding a class",
+            HOLDS_NODE,
+            "H",
+            [false, false, true],
+        ),
+        ("array of enums", DIR, "[Dir]", [true, false, true]),
+        (
+            "array of recursive enums",
+            EXPR,
+            "[Expr?]",
+            [true, false, true],
+        ),
+        (
+            "enum that meets a class",
+            GROWS_NODE,
+            "W<i64>",
+            [false, false, true],
+        ),
+        (
+            "enums that need each other, with Eq",
+            PQ,
+            "P<i64>",
+            [true, false, true],
+        ),
+        (
+            "enums that need each other, without Eq",
+            PQ,
+            "P<Node>",
+            [false, false, true],
+        ),
+        ("result", "", "Result<i64, string>", [true, false, true]),
+        (
+            "result with a class",
+            NODE,
+            "Result<i64, Node>",
+            [false, false, true],
+        ),
+        (
+            "array of optional arrays",
+            "",
+            "[[i64]?]",
+            [true, false, true],
+        ),
+        ("unit-like enum array", DIR, "[[Dir]]", [true, false, true]),
+    ];
+    for (name, decls, ty, [eq, ord, display]) in rows {
+        for (interface, passes) in [("eq", eq), ("ord", ord), ("display", display)] {
+            let src = asking(decls, interface, ty);
+            let row = format!("{name}: {interface}");
+            if passes {
+                clean_row(&row, &src);
+            } else {
+                let at = argument(&src, &format!("need_{interface}(x)"));
+                codes_row(&row, &src, &[(Code::NotConform, at)]);
+            }
+        }
+    }
+}
+
+#[test]
+fn generated_any_object_should_hold_for_classes_only() {
+    for (name, decls, ty, passes) in [
+        ("class", "class Node {}", "Node", true),
+        (
+            "generic class",
+            "class Box<T> {\n    v: T\n}",
+            "Box<i64>",
+            true,
+        ),
+        ("number", "", "i64", false),
+        ("enum", "enum Dir {\n    North\n}", "Dir", false),
+        ("array of classes", "class Node {}", "[Node]", false),
+        ("optional class", "class Node {}", "Node?", false),
+        ("string", "", "string", false),
+    ] {
+        let src = asking(decls, "object", ty);
+        if passes {
+            clean_row(name, &src);
+        } else {
+            let at = argument(&src, "need_object(x)");
+            codes_row(name, &src, &[(Code::NotConform, at)]);
+        }
+    }
+}
+
+#[test]
+fn generated_eq_should_follow_the_bounds_of_a_type_parameter() {
+    let wrap = "enum Wrap<T> {\n    A(T)\n}";
+    let calls = ["need_eq(a)", "need_eq(b)", "need_eq(c)"];
+    for (row, bound, passes) in [("bounded", "T: Eq", true), ("unbounded", "T", false)] {
+        let src = calling(wrap, "", &calls).replace(
+            "fn f()",
+            &format!("fn f<{bound}>(a: [T], b: T?, c: Wrap<T>)"),
+        );
+        if passes {
+            clean_row(row, &src);
+        } else {
+            codes_row(row, &src, &failures(&src, &calls));
+        }
+    }
+    // `Display` holds for a type parameter whatever its bounds.
+    let shown = calling("", "", &["need_display(x)"]).replace("fn f()", "fn f<T>(x: T)");
+    clean_row("display of a parameter", &shown);
+}
+
+#[test]
+fn generated_eq_of_a_type_parameter_should_not_be_kept_for_the_next_body() {
+    let wrap = "enum Wrap<T> {\n    A(T)\n}\n";
+    let yes = "fn yes<T: Eq>(y: Wrap<T>) {\n    need_eq(y)\n}\n";
+    let no = "fn no<T>(n: Wrap<T>) {\n    need_eq(n)\n}\n";
+    for (row, first, second) in [("yes then no", yes, no), ("no then yes", no, yes)] {
+        let src = format!("{NEEDS}{wrap}{first}{second}fn main() {{}}");
+        codes_row(row, &src, &failures(&src, &["need_eq(n)"]));
+    }
+}
+
+#[test]
+fn generated_eq_of_an_enum_with_an_associated_type_payload_should_follow_the_choices() {
+    let decls = "class Node {}\ninterface Plain {\n    type Item\n}\ninterface Source {\n    type Item: Eq\n}\nclass Fine: Plain {\n    type Item = i64\n}\nclass Rough: Plain {\n    type Item = Node\n}\nenum W<S: Plain> {\n    A(S.Item)\n}\n";
+    let rows = [
+        // The bound of the associated type gives `Eq`.
+        (
+            "item with a bound",
+            "fn a<S: Source>(x: S.Item) {\n    need_eq(x)\n}\n",
+            true,
+        ),
+        (
+            "item without a bound",
+            "fn a<S: Plain>(x: S.Item) {\n    need_eq(x)\n}\n",
+            false,
+        ),
+        (
+            "display of an item",
+            "fn a<S: Plain>(x: S.Item) {\n    need_display(x)\n}\n",
+            true,
+        ),
+        // The payload of an enum is an associated type: the choice of the argument decides.
+        (
+            "enum of an item",
+            "fn a<S: Plain>(x: W<S>) {\n    need_eq(x)\n}\n",
+            false,
+        ),
+        (
+            "enum of a chosen number",
+            "fn a(x: W<Fine>) {\n    need_eq(x)\n}\n",
+            true,
+        ),
+        (
+            "enum of a chosen class",
+            "fn a(x: W<Rough>) {\n    need_eq(x)\n}\n",
+            false,
+        ),
+    ];
+    for (row, function, passes) in rows {
+        let src = format!("{NEEDS}{decls}{function}fn main() {{}}");
+        if passes {
+            clean_row(row, &src);
+        } else {
+            codes_row(row, &src, &failures(&src, &["need_eq(x)"]));
+        }
+    }
+}
+
+/// `enum A { X(B)\n Y(Node) }` and `enum B { Z(A) }`: neither has `Eq`, whichever is asked first.
+#[test]
+fn generated_eq_of_enums_that_need_each_other_and_a_class_should_fail_in_both_orders() {
+    let decls = "class Node {}\nenum A {\n    X(B)\n    Y(Node)\n}\nenum B {\n    Z(A)\n}";
+    for (row, calls) in [
+        ("A first", ["need_eq(a)", "need_eq(b)"]),
+        ("B first", ["need_eq(b)", "need_eq(a)"]),
+    ] {
+        let src = calling(decls, "a: A, b: B", &calls);
+        codes_row(row, &src, &failures(&src, &calls));
+    }
+}
+
+/// `enum A { P(B)\n Q(Node) }`, `enum B { P(C)\n Q(A) }` and `enum C { P(B) }`: none has `Eq`,
+/// and an answer that rests on a key that fails is never kept as `true`.
+#[test]
+fn generated_eq_of_three_enums_that_rest_on_a_failing_key_should_fail_in_both_orders() {
+    let decls = "class Node {}\nenum A {\n    P(B)\n    Q(Node)\n}\nenum B {\n    P(C)\n    Q(A)\n}\nenum C {\n    P(B)\n}";
+    for (row, calls) in [
+        ("A first", ["need_eq(a)", "need_eq(b)", "need_eq(c)"]),
+        ("C first", ["need_eq(c)", "need_eq(a)", "need_eq(b)"]),
+    ] {
+        let src = calling(decls, "a: A, b: B, c: C", &calls);
+        codes_row(row, &src, &failures(&src, &calls));
+        // Each of `A`, `B`, `C` and `Node` is decided once: the root keeps the answers that its
+        // failure leaves as `false`, so the calls after the first add no step.
+        assert_eq!(steps(&src).0, 4, "{row}");
+    }
+}
+
+/// A written `Display` bound does not make `Eq` read bounds: `conforms` for `Display` is `true`
+/// with no record read.
+#[test]
+fn generated_eq_under_a_written_display_bound_should_not_read_that_bound() {
+    let decls = "class Node {}\nclass Box<T> {\n    v: T\n}\nclass Wr<T> {\n    v: T\n}\nextend<T: Display> Box<T>: Eq {\n    fn eq(self, other: Box<T>) -> bool { true }\n}\nextend<T: Eq> Wr<T>: Display {\n    fn to_string(self) -> string { \"w\" }\n}\nenum H {\n    P(Box<Wr<A>>)\n}\nenum A {\n    X(B)\n    Y(Node)\n}\nenum B {\n    Z(A)\n    M(H)\n}";
+    for (row, calls) in [
+        ("H first", ["need_eq(h)", "need_eq(b)"]),
+        ("B first", ["need_eq(b)", "need_eq(h)"]),
+    ] {
+        let src = calling(decls, "h: H, b: B", &calls);
+        codes_row(row, &src, &failures(&src, &["need_eq(b)"]));
+    }
+}
+
+/// A written record inside an enum decides with its bounds, which see the enum's arguments.
+#[test]
+fn generated_eq_of_an_enum_should_ask_the_bounds_of_a_written_record_inside_it() {
+    let boxed = "class Box<T> {\n    v: T\n}\n";
+    let eq = |bound: &str| {
+        format!(
+            "extend{bound} Box<T>: Eq {{\n    fn eq(self, other: Box<T>) -> bool {{ true }}\n}}\n"
+        )
+    };
+    let rows: Vec<(&str, String, &str, bool)> = vec![
+        (
+            "a display bound holds for an array",
+            format!("{boxed}{}enum E<U> {{\n    A(Box<[U]>)\n}}\n", eq("<T: Display>")),
+            "E<i64>",
+            true,
+        ),
+        (
+            "an ord bound holds for a number",
+            format!("{boxed}{}enum E {{\n    A(Box<i64>)\n}}\n", eq("<T: Ord>")),
+            "E",
+            true,
+        ),
+        (
+            "an ord bound fails for an enum, which has no Ord",
+            format!(
+                "{boxed}{}enum Inner<U> {{\n    A(U)\n}}\nenum E<U> {{\n    A(Box<Inner<U>>)\n}}\n",
+                eq("<T: Ord>")
+            ),
+            "E<i64>",
+            false,
+        ),
+        (
+            "a record for one argument holds for it",
+            format!(
+                "{boxed}extend Box<i64>: Eq {{\n    fn eq(self, other: Box<i64>) -> bool {{ true }}\n}}\nenum E<T> {{\n    A(Box<T>)\n}}\n"
+            ),
+            "E<i64>",
+            true,
+        ),
+        (
+            "a record for one argument fails for another",
+            format!(
+                "{boxed}extend Box<i64>: Eq {{\n    fn eq(self, other: Box<i64>) -> bool {{ true }}\n}}\nenum E<T> {{\n    A(Box<T>)\n}}\n"
+            ),
+            "E<string>",
+            false,
+        ),
+        (
+            "a class with an ord bound on an enum fails",
+            "class C<T> {\n    v: T\n}\nextend<T: Ord> C<T>: Eq {\n    fn eq(self, other: C<T>) -> bool { true }\n}\nenum E {\n    A\n}\nenum H {\n    One(C<E>)\n}\n".to_string(),
+            "H",
+            false,
+        ),
+        (
+            "a class with an ord bound on a number holds",
+            "class C<T> {\n    v: T\n}\nextend<T: Ord> C<T>: Eq {\n    fn eq(self, other: C<T>) -> bool { true }\n}\nenum H {\n    One(C<i64>)\n}\n".to_string(),
+            "H",
+            true,
+        ),
+    ];
+    for (row, decls, ty, passes) in rows {
+        let src = asking(&decls, "eq", ty);
+        if passes {
+            clean_row(row, &src);
+        } else {
+            let at = argument(&src, "need_eq(x)");
+            codes_row(row, &src, &[(Code::NotConform, at)]);
+        }
+    }
+}
+
+/// The bound of a written record names an interface with an argument, which takes the types that
+/// stand for the record's parameters: `Tag<[T]>` for `F<T>`.
+#[test]
+fn generated_eq_of_an_enum_should_substitute_the_interface_arguments_of_a_record_bound() {
+    let decls = |tag: &str| {
+        format!(
+            "interface Tag<X> {{}}\nclass K {{}}\nextend K: Tag<{tag}> {{}}\nclass Two<A, B> {{\n    a: A\n    b: B\n}}\nextend<A: Tag<B>, B> Two<A, B>: Eq {{\n    fn eq(self, other: Two<A, B>) -> bool {{ true }}\n}}\nenum F<T> {{\n    One(Two<K, [T]>)\n}}"
+        )
+    };
+    clean_row("tag of the array", &asking(&decls("[i64]"), "eq", "F<i64>"));
+    let src = asking(&decls("i64"), "eq", "F<i64>");
+    codes_row(
+        "tag of the element",
+        &src,
+        &[(Code::NotConform, argument(&src, "need_eq(x)"))],
+    );
+}
+
+/// A written `Eq` that covers a type decides: when its bounds fail the type has no `Eq`, with no
+/// fallback to the generated rule, and the enum that holds it has none either.
+#[test]
+fn a_written_eq_whose_bound_fails_should_not_fall_back_to_the_generated_rule() {
+    let decls = "enum Pair<T> {\n    X(T)\n}\nextend<T: Ord> Pair<T>: Eq {\n    fn eq(self, other: Pair<T>) -> bool { true }\n}\nenum Outer<T> {\n    A(Pair<T>)\n}";
+    for (row, calls) in [
+        ("pair first", ["need_eq(p)", "need_eq(o)"]),
+        ("outer first", ["need_eq(o)", "need_eq(p)"]),
+    ] {
+        let src = calling(decls, "p: Pair<bool>, o: Outer<bool>", &calls);
+        codes_row(row, &src, &failures(&src, &calls));
+    }
+    // The same enums with a type that has `Ord` hold.
+    let src = calling(
+        decls,
+        "p: Pair<i64>, o: Outer<i64>",
+        &["need_eq(p)", "need_eq(o)"],
+    );
+    clean_row("pair of a number", &src);
+}
+
+#[test]
+fn a_listed_eq_with_no_method_should_give_the_enum_its_generated_conformance() {
+    let wrap = "enum Wrap<T>: Eq {\n    A(T)\n}\nclass Node {}";
+    clean_row("number", &asking(wrap, "eq", "Wrap<i64>"));
+    let src = asking(wrap, "eq", "Wrap<Node>");
+    codes_row(
+        "class",
+        &src,
+        &[(Code::NotConform, argument(&src, "need_eq(x)"))],
+    );
+}
+
+/// A program of `n` enums.
+type Program = fn(usize) -> String;
+
+/// `CONFORMS_STEPS` counts one step for each class or enum key that a query expands.
+fn steps(src: &str) -> (usize, Vec<Code>) {
+    CONFORMS_STEPS.set(0);
+    CONFORMS_BUDGET.set(1_000);
+    let (_, ds) = checked(src);
+    (
+        CONFORMS_STEPS.get(),
+        ds.iter().map(Diagnostic::code).collect(),
+    )
+}
+
+/// `enum C0 { A(C1, C1) }` … `enum C(n-1) { A(Cn, Cn) }` and `enum Cn { End(i64) }`: with the
+/// second payload of each a memo hit, `need_eq` on a `C0` takes one step for each enum.
+fn chain(n: usize) -> String {
+    let mut enums: Vec<String> = (0..n - 1)
+        .map(|k| format!("enum C{k} {{\n    A(C{}, C{})\n}}\n", k + 1, k + 1))
+        .collect();
+    enums.push(format!("enum C{} {{\n    End(i64)\n}}\n", n - 1));
+    asking(&enums.concat(), "eq", "C0")
+}
+
+/// The enums of the cyclic chain: `Ck` has `End` and `A(C(k+1), C(k+1))`, and the last has
+/// `A(C0)`.
+fn cycle_enums(n: usize) -> String {
+    let mut enums: Vec<String> = (0..n - 1)
+        .map(|k| format!("enum C{k} {{\n    End\n    A(C{}, C{})\n}}\n", k + 1, k + 1))
+        .collect();
+    enums.push(format!("enum C{} {{\n    End\n    A(C0)\n}}\n", n - 1));
+    enums.concat()
+}
+
+fn cycle(n: usize) -> String {
+    asking(&cycle_enums(n), "eq", "C0")
+}
+
+/// The cyclic chain of `n` enums under `n` roots `enum Rk { X(C0)\n Y(Node) }`, each asked.
+fn roots(n: usize) -> String {
+    let decls: Vec<String> = (1..=n)
+        .map(|k| format!("enum R{k} {{\n    X(C0)\n    Y(Node)\n}}\n"))
+        .collect();
+    let decls = format!("class Node {{}}\n{}{}", cycle_enums(n), decls.concat());
+    let params: Vec<String> = (1..=n).map(|k| format!("r{k}: R{k}")).collect();
+    let calls: Vec<String> = (1..=n).map(|k| format!("need_eq(r{k})")).collect();
+    let calls: Vec<&str> = calls.iter().map(String::as_str).collect();
+    calling(&decls, &params.join(", "), &calls)
+}
+
+#[test]
+fn generated_should_decide_each_type_once() {
+    assert_eq!(steps(&chain(40)), (40, vec![]));
+    // The coinductive hit costs no step of its own.
+    let expr = "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}";
+    assert_eq!(steps(&asking(expr, "eq", "Expr")), (1, vec![]));
+    // A declaration that grows ends its query in one step, and has its own error alone.
+    let nest = "enum Nest<T> {\n    End\n    Next(Nest<[T]>)\n}";
+    assert_eq!(
+        steps(&asking(nest, "eq", "Nest<i64>")),
+        (1, vec![Code::InstantiationCycle])
+    );
+}
+
+#[test]
+fn generated_should_decide_each_type_of_a_branching_chain_once() {
+    // `Ek<T>` has `A(E(k+1)<[T]>)`, `B(E(k+1)<T?>)` and a repeat of `A`'s payload, so the types
+    // formed at level k are 2^k, and the 127 of the 7 levels are all distinct.
+    let mut decls: Vec<String> = (0..6)
+        .map(|k| {
+            format!(
+                "enum E{k}<T> {{\n    A(E{n}<[T]>)\n    B(E{n}<T?>)\n    C(E{n}<[T]>)\n}}\n",
+                n = k + 1
+            )
+        })
+        .collect();
+    decls.push("enum E6<T> {\n    A(T)\n}\n".to_string());
+    let decls = decls.concat();
+    let src = calling(&decls, "x: E0<i64>", &["need_eq(x)"]);
+    assert_eq!(steps(&src), (127, vec![]));
+}
+
+#[test]
+fn pending_answers_should_expand_each_key_once() {
+    assert_eq!(steps(&cycle(40)), (40, vec![]));
+}
+
+#[test]
+fn failing_roots_should_keep_the_answers_of_a_cycle_below_them() {
+    let src = roots(40);
+    let (count, codes) = steps(&src);
+    assert_eq!(count, 81);
+    assert_eq!(codes, vec![Code::NotConform; 40]);
+}
+
+#[test]
+fn queries_should_cost_steps_in_proportion_to_the_types_they_form() {
+    let programs: [(&str, Program); 3] = [
+        ("chain of enums", chain),
+        ("cycle of enums", cycle),
+        ("roots that fail", roots),
+    ];
+    for (row, program) in programs {
+        let count = |n: usize| {
+            CONFORMS_STEPS.set(0);
+            CONFORMS_BUDGET.set(100_000);
+            checked(&program(n));
+            CONFORMS_STEPS.get()
+        };
+        let (one, two, three) = (count(20), count(40), count(60));
+        assert!(one > 0, "{row}");
+        assert_near_linear(one, two, three);
+    }
+}
+
+/// A declaration that grows or that no value can be built of has its own error, and the query
+/// for it ends in one step with no part query, so nothing else reports it.
+#[test]
+fn growing_and_never_built_declarations_should_give_their_own_error_alone() {
+    let nest = "enum Nest<T> {\n    End\n    Next(Nest<[T]>)\n}\n";
+    for (row, src, expected) in [
+        (
+            "an enum that no value can be built of",
+            "class Node {}\nenum Dead {\n    Again(Dead, Node)\n}\nclass NeedsEq<T: Eq> {\n    value: T\n}\nfn use(x: NeedsEq<Dead>) {}\nfn main() {}"
+                .to_string(),
+            vec![(Code::NeverConstructed, (2, 6))],
+        ),
+        (
+            "a growing enum that lists Eq",
+            "enum Nest<T>: Eq {\n    End\n    Next(Nest<[T]>)\n}\nfn main() {}".to_string(),
+            vec![(Code::InstantiationCycle, (3, 10))],
+        ),
+        (
+            // The growth is through the choice of an associated type, which a conformance
+            // records: the enum is marked once the choices are known, before the first query.
+            "an enum that grows through an associated type",
+            format!(
+                "interface Seq {{\n    type Item: Seq\n}}\nclass Wrap<T> {{\n    v: T\n}}\nextend<T: Seq> Wrap<T>: Seq {{\n    type Item = Wrap<Wrap<T>>\n}}\nclass Start {{}}\nextend Start: Seq {{\n    type Item = Wrap<Start>\n}}\nenum Grow<S: Seq> {{\n    End\n    Next(Grow<S.Item>)\n}}\n{NEEDS}fn f(x: Grow<Start>) {{\n    need_eq(x)\n}}\nfn main() {{}}"
+            ),
+            vec![(Code::InstantiationCycle, (16, 10))],
+        ),
+        (
+            "a growing enum under the bound of a class",
+            format!("class C<T: Eq> {{}}\n{nest}enum U {{\n    A(C<Nest<i64>>)\n}}\nfn main() {{}}"),
+            vec![(Code::InstantiationCycle, (4, 10))],
+        ),
+    ] {
+        codes_row(row, &src, &expected);
+    }
+}
+
+#[test]
+fn conformance_lists_should_accept_generated_and_by_name_conformances() {
+    let main = "fn main() {}";
+    for (row, src) in [
+        (
+            "a listed generated Eq or Display with no method",
+            format!(
+                "{NEEDS}enum Expr: Eq {{\n    Num(i64)\n    Add(Expr, Expr)\n}}\nenum Wrap<T>: Eq {{\n    A(T)\n}}\nclass Node: Display {{}}\n{main}"
+            ),
+        ),
+        (
+            "an empty extend block of a generated Eq",
+            format!(
+                "{NEEDS}enum Expr {{\n    Num(i64)\n    Add(Expr, Expr)\n}}\nextend Expr: Eq {{}}\nfn f(x: Expr) {{\n    need_eq(x)\n}}\n{main}"
+            ),
+        ),
+        (
+            "an empty extend block of a generated Display",
+            format!("{NEEDS}class Node {{}}\nextend Node: Display {{}}\n{main}"),
+        ),
+        (
+            "written Eq and Ord",
+            format!(
+                "{NEEDS}class Circle: Eq, Ord {{\n    fn eq(self, other: Circle) -> bool {{ true }}\n    fn less(self, other: Circle) -> bool {{ true }}\n}}\nfn f(x: Circle) {{\n    need_eq(x)\n    need_ord(x)\n}}\n{main}"
+            ),
+        ),
+        (
+            "a method named to_string",
+            format!(
+                "{NEEDS}class Circle {{\n    fn to_string(self) -> string {{ \"c\" }}\n}}\nfn f(x: Circle) {{\n    need_display(x)\n}}\n{main}"
+            ),
+        ),
+        (
+            "a method named to_string in a plain extend block",
+            format!(
+                "{NEEDS}class Circle {{}}\nextend Circle {{\n    fn to_string(self) -> string {{ \"c\" }}\n    fn other(self) -> i64 {{ 1 }}\n}}\nfn f(x: Circle) {{\n    need_display(x)\n}}\n{main}"
+            ),
+        ),
+        (
+            "a listed Display met by the method of the body",
+            format!(
+                "{NEEDS}class Circle: Display {{\n    fn to_string(self) -> string {{ \"c\" }}\n}}\n{main}"
+            ),
+        ),
+        (
+            "an interface that inherits Display, met by the method of the body",
+            format!(
+                "{NEEDS}interface Shape: Display {{}}\nclass Circle: Shape {{\n    fn to_string(self) -> string {{ \"c\" }}\n}}\n{main}"
+            ),
+        ),
+        (
+            "a class that lists AnyObject",
+            format!("{NEEDS}class C: AnyObject {{}}\n{main}"),
+        ),
+        (
+            "a class of an interface that inherits AnyObject",
+            format!(
+                "{NEEDS}interface Observer: AnyObject {{}}\nclass Button: Observer {{}}\nfn f(x: Button) {{\n    need_object(x)\n}}\n{main}"
+            ),
+        ),
+    ] {
+        clean_row(row, &src);
+    }
+}
+
+#[test]
+fn conformance_lists_should_report_what_is_not_generated() {
+    let circle =
+        "class Circle: Ord {\n    fn less(self, other: Circle) -> bool { true }\n}\nfn main() {}";
+    for (row, src, expected) in [
+        (
+            "a class that lists Eq with no method",
+            "class Node: Eq {}\nfn main() {}",
+            vec![(Code::ConformanceBody, (1, 13))],
+        ),
+        (
+            "an enum that lists Ord with no method",
+            "enum E: Ord {\n    A\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (1, 9))],
+        ),
+        (
+            "an enum that lists Eq and holds a class",
+            "class Node {}\nenum H: Eq {\n    N(Node)\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (2, 9))],
+        ),
+        (
+            "a class that lists Ord with less alone",
+            circle,
+            vec![(Code::ConformanceBody, (1, 15))],
+        ),
+        (
+            "a block of Ord with no Eq",
+            "class Circle {}\nextend Circle: Ord {\n    fn less(self, other: Circle) -> bool { true }\n}\nfn main() {}",
+            vec![(Code::NotConform, (2, 16))],
+        ),
+        (
+            "a to_string that returns the wrong type",
+            "class C {\n    fn to_string(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (2, 8))],
+        ),
+        (
+            "an enum that lists AnyObject",
+            "enum E: AnyObject {\n    A\n}\nfn main() {}",
+            vec![(Code::ClassOnly, (1, 9))],
+        ),
+        (
+            "an enum that lists an interface that inherits AnyObject",
+            "interface Observer: AnyObject {}\nenum E: Observer {\n    A\n}\nfn main() {}",
+            vec![(Code::ClassOnly, (2, 9))],
+        ),
+        (
+            "a block of an interface that inherits AnyObject for an enum",
+            "interface Observer: AnyObject {}\nenum E {\n    A\n}\nextend E: Observer {}\nfn main() {}",
+            vec![(Code::ClassOnly, (5, 11))],
+        ),
+        (
+            "a block of Display beside a method named to_string",
+            "class Circle {\n    fn to_string(self) -> string { \"c\" }\n}\nextend Circle: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nfn main() {}",
+            vec![(Code::ConformsTwice, (4, 16))],
+        ),
+    ] {
+        codes_row(row, src, &expected);
+    }
+}
+
+#[test]
+fn language_interface_calls_should_wait_for_their_task() {
+    for (row, src, at) in [
+        (
+            "eq",
+            "fn same<T: Eq>(a: T, b: T) -> bool { a.eq(b) }\nfn main() {\n    print(same(1, 2))\n}",
+            (1, 40),
+        ),
+        (
+            "less",
+            "fn lt<T: Ord>(a: T, b: T) -> bool { a.less(b) }\nfn main() {\n    print(lt(1, 2))\n}",
+            (1, 39),
+        ),
+        (
+            "to_string",
+            "fn s<T: Display>(x: T) -> string { x.to_string() }\nfn main() {\n    print(s(1))\n}",
+            (1, 38),
+        ),
+    ] {
+        codes_row(row, src, &[(Code::UnknownType, at)]);
+    }
+}
+
+/// How `lang_path` finds the language interface `interface` for `ty`, once the checker has
+/// recorded every conformance of `src`.
+fn path_of(src: &str, ty: &str, interface: &str) -> LangPath {
+    // The type is the parameter of a function that follows the program.
+    with_probe(src, ("T", ty), interface, |checker, ty, interface| {
+        checker.lang_path(ty, interface)
+    })
+}
+
+/// Checks `src` up to its conformances, with the function `probe<params>(x: ty)` after it, and
+/// gives `f` the checker, the type `ty` with the parameters in scope, and the language interface
+/// `interface`. A program may be broken: the checker then holds the poison of its broken items.
+fn with_probe<R>(
+    src: &str,
+    (params, ty): (&str, &str),
+    interface: &str,
+    f: impl FnOnce(&mut Checker<'_>, Type, tir::InterfaceId) -> R,
+) -> R {
+    let src = format!("{src}fn probe<{params}>(x: {ty}) {{}}\n");
+    let lexed = crate::lexer::lex(&src).expect("the source should lex");
+    let program = crate::parser::parse(lexed, false).program;
+    let prelude = prelude_program("");
+    let mut checker = Checker::new(&program, &src);
+    let items: Vec<&ast::Item> = program.items.iter().chain(&prelude.items).collect();
+    checker.declare_items(&items, program.items.len(), &program.broken);
+    let probe = (checker.signatures.iter())
+        .find(|signature| signature.name == "probe")
+        .expect("the program should declare `probe`");
+    let ty = probe.params[0].expect("the row should name a type of the program");
+    let (scope, bounds) = (probe.type_params.clone(), probe.bounds.clone());
+    let interface = match interface {
+        "Display" => checker.lang.display,
+        "Eq" => checker.lang.eq,
+        "Ord" => checker.lang.ord,
+        "AnyObject" => checker.lang.any_object,
+        other => panic!("{other} is no language interface of the rows"),
+    };
+    let (out, _) = checker.with_body(Body::default(), |checker| {
+        checker.body.set_type_params(&scope);
+        checker.body.set_bounds(0, bounds);
+        f(checker, ty, interface)
+    });
+    out
+}
+
+#[test]
+fn lang_path_should_choose_the_path_of_each_language_interface() {
+    let boxed = "class Node {}\nclass Box<T> {\n    v: T\n}\n";
+    let eq = "extend<T: Ord> Box<T>: Eq {\n    fn eq(self, other: Box<T>) -> bool { true }\n}\n";
+    let display =
+        "extend<T: Eq> Box<T>: Display {\n    fn to_string(self) -> string { \"b\" }\n}\n";
+    let rows = [
+        // A written conformance whose bounds hold.
+        (
+            "written Eq",
+            format!("{boxed}{eq}"),
+            "Box<i64>",
+            "Eq",
+            LangPath::Written(0),
+        ),
+        // Its bounds fail: no fallback to the generated rule, which has no `Eq` for a class.
+        (
+            "written Eq that fails",
+            format!("{boxed}{eq}"),
+            "Box<bool>",
+            "Eq",
+            LangPath::None,
+        ),
+        (
+            "class with no Eq",
+            boxed.to_string(),
+            "Node",
+            "Eq",
+            LangPath::None,
+        ),
+        // `Display` falls back to the generated rule when each written record fails.
+        (
+            "written Display",
+            format!("{boxed}{display}"),
+            "Box<i64>",
+            "Display",
+            LangPath::Written(0),
+        ),
+        (
+            "written Display that fails",
+            format!("{boxed}{display}"),
+            "Box<Node>",
+            "Display",
+            LangPath::Generated,
+        ),
+        (
+            "class with no Display",
+            boxed.to_string(),
+            "Node",
+            "Display",
+            LangPath::Generated,
+        ),
+        ("number", String::new(), "i64", "Eq", LangPath::Generated),
+        (
+            "number Ord",
+            String::new(),
+            "i64",
+            "Ord",
+            LangPath::Generated,
+        ),
+        ("bool Ord", String::new(), "bool", "Ord", LangPath::None),
+        (
+            "enum",
+            "enum Dir {\n    North\n}\n".to_string(),
+            "Dir",
+            "Eq",
+            LangPath::Generated,
+        ),
+        // A broken block may have given the type the conformance.
+        (
+            "broken block",
+            "class C {}\nextend C: {}\n".to_string(),
+            "C",
+            "Eq",
+            LangPath::PoisonOnly,
+        ),
+        // A conformance with too few methods has its own error, and no code is made from it.
+        (
+            "record with no methods",
+            "class C: Eq {}\n".to_string(),
+            "C",
+            "Eq",
+            LangPath::PoisonOnly,
+        ),
+    ];
+    for (row, src, ty, interface, expected) in rows {
+        assert_eq!(path_of(&src, ty, interface), expected, "{row}");
+    }
+}
+
+/// The part that makes `ty` fail `interface`, as `failing_leaf` finds it, written as the program
+/// does. A type that holds, or one with no part to find, is itself.
+fn leaf_of(src: &str, (params, ty): (&str, &str), interface: &str) -> String {
+    with_probe(src, (params, ty), interface, |checker, ty, interface| {
+        let leaf = checker.failing_leaf(ty, interface, TypeArgs::NONE);
+        checker.type_name(leaf)
+    })
+}
+
+#[test]
+fn failing_leaf_should_name_the_part_that_fails_on_its_own() {
+    let node = "class Node {}\n";
+    let hold = format!("{node}enum H {{\n    N(Node)\n}}\n");
+    let pair = "enum Pair<T> {\n    X(T)\n}\nextend<T: Ord> Pair<T>: Eq {\n    fn eq(self, other: Pair<T>) -> bool { true }\n}\n";
+    let rows = [
+        ("a class", node.to_string(), "Node", "Eq", "Node"),
+        ("an enum holding a class", hold.clone(), "H", "Eq", "Node"),
+        ("an array of classes", hold, "[H?]", "Eq", "Node"),
+        (
+            "an enum that meets itself before the class",
+            format!("{node}enum A {{\n    X(B)\n    Y(Node)\n}}\nenum B {{\n    Z(A)\n}}\n"),
+            "B",
+            "Eq",
+            "Node",
+        ),
+        ("a type parameter", String::new(), "[T?]", "Eq", "T"),
+        ("a type with no Ord", String::new(), "bool", "Ord", "bool"),
+        ("a record whose bound fails", pair.to_string(), "[Pair<bool>]", "Eq", "Pair<bool>"),
+        ("a record whose bound holds", pair.to_string(), "[Pair<i64>]", "Eq", "[Pair<i64>]"),
+        ("a type that holds", String::new(), "i64", "Eq", "i64"),
+        ("a class that holds", node.to_string(), "Node", "AnyObject", "Node"),
+        ("an array of classes that hold", node.to_string(), "[Node]", "AnyObject", "[Node]"),
+        (
+            "an enum that grows",
+            "enum Nest<U> {\n    End\n    Next(Nest<[U]>)\n}\n".to_string(),
+            "[Nest<i64>]",
+            "Eq",
+            "[Nest<i64>]",
+        ),
+        ("a poisoned class", "class C {}\nextend C: {}\n".to_string(), "C", "Eq", "C"),
+        (
+            "a payload with no choice",
+            "interface Plain {\n    type Item\n}\nclass Bare: Plain {}\nenum W<S: Plain> {\n    A(S.Item)\n}\n"
+                .to_string(),
+            "W<Bare>",
+            "Eq",
+            "W<Bare>",
+        ),
+    ];
+    for (row, src, ty, interface, leaf) in rows {
+        assert_eq!(leaf_of(&src, ("T", ty), interface), leaf, "{row}");
+    }
+    // A parameter and an associated type fail on their own when their bounds lack the interface.
+    let items = "interface Plain {\n    type Item\n}\ninterface Source {\n    type Item: Eq\n}\n";
+    let bounded = [
+        ("a parameter with the bound", "T: Eq", "[T]", "Eq", "[T]"),
+        ("a parameter without the bound", "T: Eq", "T", "Ord", "T"),
+        (
+            "an item with the bound",
+            "S: Source",
+            "[S.Item]",
+            "Eq",
+            "[S.Item]",
+        ),
+        (
+            "an item without the bound",
+            "S: Plain",
+            "[S.Item]",
+            "Eq",
+            "S.Item",
+        ),
+    ];
+    for (row, params, ty, interface, leaf) in bounded {
+        assert_eq!(leaf_of(items, (params, ty), interface), leaf, "{row}");
+    }
+}
+
+/// The step that passes the budget panics, so a query that blows up fails at once.
+#[test]
+#[should_panic(expected = "conforms should stay within its budget of 3 steps")]
+fn conforms_should_panic_at_the_step_that_passes_its_budget() {
+    CONFORMS_STEPS.set(0);
+    CONFORMS_BUDGET.set(3);
+    checked(&chain(5));
+}
+
+#[test]
+fn a_later_head_should_leave_an_earlier_pending_answer_alone() {
+    // `A` waits for `R`, which is open. Then `B` is a head of its own, and commits itself only:
+    // `R` fails through `Node`, and `A`, which rested on it, fails with it.
+    let decls = "class Node {}\nenum R {\n    P(A)\n    Q(B)\n    W(Node)\n}\nenum A {\n    X(R)\n}\nenum B {\n    Y(i64)\n}";
+    let calls = ["need_eq(r)", "need_eq(a)"];
+    let src = calling(decls, "r: R, a: A", &calls);
+    codes(&src, &failures(&src, &calls));
+    // `R`, `A`, `B` and `Node` are each decided once.
+    assert_eq!(steps(&src).0, 4);
+    // With no `Node` to fail, the same enums hold.
+    let decls = "enum R {\n    P(A)\n    Q(B)\n}\nenum A {\n    X(R)\n}\nenum B {\n    Y(i64)\n}";
+    assert_eq!(steps(&asking(decls, "eq", "R")), (3, vec![]));
+}
+
+#[test]
+fn generated_eq_of_an_enum_that_shrinks_through_an_associated_type_should_hold() {
+    // The choice `T` of `Wrap<T>` is one level less than its target: no cycle grows.
+    let decls = "interface Seq {\n    type Item: Seq\n}\nclass Wrap<T> {\n    v: T\n}\nextend<T: Seq> Wrap<T>: Seq {\n    type Item = T\n}\nclass Stop {}\nextend Stop: Seq {\n    type Item = Stop\n}\nenum Peel<S: Seq> {\n    End\n    Next(Peel<S.Item>)\n}";
+    clean(&asking(decls, "eq", "Peel<Wrap<Stop>>"));
+}
+
+#[test]
+fn generated_eq_of_an_enum_with_a_payload_that_has_no_choice_should_hold() {
+    // The class lacks the choice, which is its own error; the payload is poison, not a failure.
+    let decls = "interface Plain {\n    type Item\n}\nclass Bare: Plain {}\nenum W<S: Plain> {\n    A(S.Item)\n}";
+    let src = asking(decls, "eq", "W<Bare>");
+    codes(&src, &[(Code::ConformanceBody, (8, 13))]);
+}

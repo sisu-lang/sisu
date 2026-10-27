@@ -32,7 +32,7 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
-use crate::conformance::StuckChoices;
+use crate::conformance::{self, StuckChoices};
 use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
     MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
@@ -341,6 +341,9 @@ thread_local! {
     /// How many times `conforms` has looked for the conformance of a class or an enum, not
     /// counting an answer it kept.
     pub(super) static CONFORMS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The most steps `conforms` may count on this thread: the step that passes it panics, so a
+    /// test of a query that would take too many steps fails at once.
+    pub(super) static CONFORMS_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
     /// How many conformances and choices the checks of the choices have read, or looked up by
     /// the name of an associated type, on this thread.
     pub(super) static CHOICE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -440,6 +443,16 @@ struct Checker<'src> {
     probe_budget: usize,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
+    /// The language interfaces, found by name once the prelude's names are collected.
+    lang: tir::LangInterfaces,
+    /// The state of the root query of `conforms` that is open, if one is.
+    open: conformance::Open,
+    /// By class and then enum, whether the declaration has the never-built error.
+    unbuilt: Vec<bool>,
+    /// By `EnumId`, whether the enum grows (`enum Nest<T> { End\n Next(Nest<[T]>) }`, E0140) or
+    /// no value can be built of it (the never-built error): the generated rule answers `true`
+    /// for it with no part query, so its own error is its only diagnostic.
+    marked: Vec<bool>,
     /// The place among `extensions` of the first block that covers the receiver of the call being
     /// found and whose bounds fail, when `conforming_methods` finds no method for it.
     failed_block: Option<usize>,
@@ -725,21 +738,16 @@ pub(crate) fn check<'src>(
     let items: Vec<&ast::Item> = (program.items.iter())
         .chain(prelude.items.iter().filter(|item| !option(item)))
         .collect();
-    checker.collect_names(&items, program.items.len(), &program.broken);
-    checker.interface_signatures(&items);
-    let declared = checker.collect_signatures(&items);
-    checker.read_declared_bounds();
-    checker.conformances(&items);
+    let declared = checker.declare_items(&items, program.items.len(), &program.broken);
     checker.fold_constants(&items);
-    let cyclic = checker.never_constructed();
-    let unbuilt;
-    (checker.lowered_enums, unbuilt) = checker.lower_enums(&cyclic);
+    checker.lowered_enums = checker.lower_enums();
     checker.holds_table = checker.holds_table();
     checker.check_main(&declared);
     // Every body is checked, so this collects into a `Vec` before it gives up on a `None`.
     let functions: Vec<_> = (declared.iter().enumerate())
         .map(|(i, &(f, owner))| checker.method_or_function(f, tir::FuncId(i), owner))
         .collect();
+    let unbuilt = std::mem::take(&mut checker.unbuilt);
     checker.instantiation_cycles(&functions, &unbuilt);
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
@@ -795,7 +803,7 @@ pub(crate) fn check<'src>(
         });
     let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
-    let (instantiates, prelude) = (checker.instantiates, checker.prelude);
+    let (instantiates, prelude, lang) = (checker.instantiates, checker.prelude, checker.lang);
     let (conformances, choice_ats) = (checker.conformances, checker.choice_ats);
     let program = functions
         .into_iter()
@@ -811,6 +819,7 @@ pub(crate) fn check<'src>(
             interfaces,
             conformances,
             choice_ats,
+            lang,
         });
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
@@ -820,15 +829,21 @@ pub(crate) fn check<'src>(
     (program, diagnostics)
 }
 
-/// `check` over a program with no prelude, for the tests of what follows the checker: the
-/// prelude's templates would stay in a program that `mono` has not run on.
+/// `check` over a program with no prelude but the language interfaces, for the tests of what
+/// follows the checker: the prelude's templates would stay in a program that `mono` has not run
+/// on.
 #[cfg(test)]
 pub(crate) fn check_alone(
     program: &ast::Program,
     source: &str,
     parsed: &[Diagnostic],
 ) -> (Option<tir::Program>, Vec<Diagnostic>) {
-    check(program, &ast::Program::default(), source, parsed)
+    check(
+        program,
+        &crate::front_end::prelude_program(""),
+        source,
+        parsed,
+    )
 }
 
 /// The non-empty spans of the errors in `diagnostics`, in order. `NoMain`'s empty span at offset
@@ -924,6 +939,10 @@ impl<'src> Checker<'src> {
             probed_assoc: FxHashSet::default(),
             probe_budget: 0,
             conformed: FxHashMap::default(),
+            lang: tir::LangInterfaces::default(),
+            open: conformance::Open::default(),
+            unbuilt: Vec::new(),
+            marked: Vec::new(),
             failed_block: None,
             lowered_enums: Vec::new(),
             written: None,
@@ -949,6 +968,48 @@ impl<'src> Checker<'src> {
 }
 
 impl Checker<'_> {
+    /// Passes 1 to 2b: the names, the signatures, the declarations that a query for a generated
+    /// conformance must not expand, and every conformance. Returns each function with the type of
+    /// a method's `self`.
+    fn declare_items<'a>(
+        &mut self,
+        items: &[&'a ast::Item],
+        user_items: usize,
+        broken: &[ast::Broken],
+    ) -> Vec<(&'a ast::Function, Option<Type>)> {
+        self.collect_names(items, user_items, broken);
+        self.lang = self.language_interfaces();
+        self.interface_signatures(items);
+        let declared = self.collect_signatures(items);
+        // The first queries for a generated conformance come before the bodies, in
+        // `conformances`, so the enums that a query must not expand are known first: those that
+        // grow, and those no value can be built of. Each has its own error, which stands alone.
+        // The enums that grow are marked in `conformances`, once the choices of the associated
+        // types are recorded, which a growth through an associated type needs.
+        let cyclic = self.never_constructed();
+        self.unbuilt = self.never_built(&cyclic);
+        self.marked = self.unbuilt[self.classes.len()..].to_vec();
+        self.read_declared_bounds();
+        self.conformances(items);
+        declared
+    }
+
+    /// The language interfaces: the prelude's `Display`, `Eq`, `Ord` and `AnyObject`. A prelude
+    /// that lacks one is the compiler's fault: `prelude_program` puts them in every prelude.
+    fn language_interfaces(&self) -> tir::LangInterfaces {
+        let find = |name: &str| {
+            let at = (self.interfaces.iter())
+                .position(|info| info.name.span.in_prelude() && info.name.name.as_str() == name);
+            tir::InterfaceId(at.expect("the prelude should declare the language interfaces"))
+        };
+        tir::LangInterfaces {
+            display: find("Display"),
+            eq: find("Eq"),
+            ord: find("Ord"),
+            any_object: find("AnyObject"),
+        }
+    }
+
     /// The interfaces as `tir` names them.
     fn lowered_interfaces(&self) -> Vec<tir::Interface> {
         (self.interfaces.iter())
