@@ -162,6 +162,7 @@ impl Checker<'_> {
                 (self.declaring.entry(requirement.name.name).or_default()).push(InterfaceId(i));
             }
         }
+        self.interfaces_resolved = true;
     }
 
     /// Records the associated types of `interface`, whose id is `id` and whose parameters are
@@ -483,7 +484,6 @@ impl Checker<'_> {
         for (m, &(i, _)) in members.iter().enumerate() {
             by_param[i].push(m);
         }
-        let mut memo: FxHashMap<InterfaceId, Names> = FxHashMap::default();
         for (root, bounds) in by_param.iter().enumerate() {
             if !waits.is_root[root] {
                 continue;
@@ -504,20 +504,11 @@ impl Checker<'_> {
                 if !new {
                     continue;
                 }
-                let declared = memo.entry(interface).or_insert_with(|| {
-                    let (list, wide) = self.declarations(interface);
-                    let mut by_name: FxHashMap<Symbol, Vec<Declaration>> = FxHashMap::default();
-                    for declaration in list {
-                        by_name
-                            .entry(declaration.name)
-                            .or_default()
-                            .push(declaration);
-                    }
-                    Names { by_name, wide }
-                });
+                let declared = self.names_of(interface);
                 let keys = std::mem::take(&mut waits.keys_of[root]);
                 let give = |waits: &mut Waits, key, name| {
-                    for declaration in declared.by_name.get(&name).into_iter().flatten() {
+                    for &at in declared.by_name.get(&name).into_iter().flatten() {
+                        let declaration = declared.list[at];
                         let args = declaration.args.subst(&with);
                         waits.give(class, key, declaration.declarer, args);
                     }
@@ -622,10 +613,10 @@ impl Checker<'_> {
     /// The associated types that a bound of `interface` declares, with the ones that the interfaces
     /// it inherits declare. The arguments of a declaration are those of the interface that
     /// declares it, over the parameters of `interface`; `Self` stays the `Self` of `interface`,
-    /// for the caller to replace with the type that has the bound.
-    /// The walk stops at the closure limit, as the closure of a bound does (E0157): then the second
-    /// answer is `true`, and the interfaces past the limit may declare any name.
-    fn declarations(&self, interface: InterfaceId) -> (Vec<Declaration>, bool) {
+    /// for the caller to replace with the type that has the bound. The walk stops at the closure
+    /// limit, as the closure of a bound does (E0157): then `wide` is `true`, and the interfaces
+    /// past the limit may declare any name.
+    fn build_names(&self, interface: InterfaceId) -> Names {
         let params = &self.interfaces[interface.0].type_params;
         let this = Type::intern(TypeKind::Param(params[0], 0));
         let own: Vec<Type> = (1..)
@@ -645,6 +636,8 @@ impl Checker<'_> {
             #[cfg(test)]
             super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
             for (k, declared) in (0..).zip(&self.interfaces[declarer.0].assoc) {
+                #[cfg(test)]
+                super::DECLARED_BUILT.set(super::DECLARED_BUILT.get() + 1);
                 out.push(Declaration {
                     name: declared.name.name,
                     declarer,
@@ -664,7 +657,30 @@ impl Checker<'_> {
                 }
             }
         }
-        (out, wide)
+        let mut by_name: FxHashMap<Symbol, Vec<usize>> = FxHashMap::default();
+        for (at, declaration) in out.iter().enumerate() {
+            by_name.entry(declaration.name).or_default().push(at);
+        }
+        Names {
+            list: out,
+            by_name,
+            wide,
+        }
+    }
+
+    /// What `build_names` finds for `interface`: built once for the program, as soon as every
+    /// interface has its inheritance.
+    fn names_of(&self, interface: InterfaceId) -> Rc<Names> {
+        if let Some(names) = self.declared.borrow().get(&interface) {
+            return Rc::clone(names);
+        }
+        let names = Rc::new(self.build_names(interface));
+        if self.interfaces_resolved {
+            self.declared
+                .borrow_mut()
+                .insert(interface, Rc::clone(&names));
+        }
+        names
     }
 
     /// The interface `ty` names with its arguments, for the type `this` that has it, if that is
@@ -1189,16 +1205,10 @@ impl Checker<'_> {
         {
             return;
         }
-        let declared = if let Some(declared) = self.probed.get(&interface) {
-            Rc::clone(declared)
-        } else {
-            let declared: Rc<[Declaration]> = self.declarations(interface).0.into();
-            self.probed.insert(interface, Rc::clone(&declared));
-            declared
-        };
+        let names = self.names_of(interface);
         let mut with = vec![ty];
         with.extend_from_slice(args.get());
-        for declaration in declared.iter() {
+        for declaration in &names.list {
             let args = declaration.args.subst(&with);
             let assoc = Type::intern(TypeKind::Assoc(
                 ty,
@@ -1206,6 +1216,9 @@ impl Checker<'_> {
                 args,
                 declaration.k,
             ));
+            if !self.probed_assoc.insert(assoc) {
+                continue;
+            }
             // A type with a parameter is no instance: `mono` never meets it.
             let Some(chosen) = (self.normalize(assoc))
                 .filter(|chosen| !chosen.has_param() && nests_within(*chosen, PROBE_NESTING))
@@ -1574,10 +1587,12 @@ impl Checker<'_> {
     }
 }
 
-/// The associated types that a bound of an interface declares, by name, and whether the walk
-/// stopped at the closure limit.
-struct Names {
-    by_name: FxHashMap<Symbol, Vec<Declaration>>,
+/// The associated types that a bound of an interface declares, in the order of the closure and
+/// by name, and whether the walk stopped at the closure limit.
+pub(super) struct Names {
+    list: Vec<Declaration>,
+    /// The places in `list` of the declarations of each name.
+    by_name: FxHashMap<Symbol, Vec<usize>>,
     wide: bool,
 }
 
@@ -1595,6 +1610,7 @@ fn nests_within(ty: Type, limit: usize) -> bool {
 }
 
 /// An associated type that an interface declares, or that one it inherits declares.
+#[derive(Clone, Copy)]
 pub(super) struct Declaration {
     name: Symbol,
     /// The interface that declares it, and its arguments over the parameters of the interface

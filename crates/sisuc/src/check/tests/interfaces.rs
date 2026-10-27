@@ -1712,6 +1712,84 @@ fn bounds_that_write_associated_types_should_be_read_a_fixed_number_of_times() {
     }
 }
 
+/// What an interface declares is indexed by name once for the program, and a type is probed once
+/// for a bound. The steps are the declarations built and the types `normalize` walks. Those of 64
+/// are at most twice those of 32 (and a few more), for an interface that declares `n` types
+/// which `n` functions each name through a bound (not one index for each function), for a type
+/// that an interface with `n` types, inherited by the bound `Holder`, meets in `n` calls (not
+/// every type for each call), and for a type that meets `n` interfaces which inherit each other,
+/// each with a type (not every type for each interface).
+#[test]
+fn a_bound_should_build_what_its_interface_declares_once_and_probe_a_type_once() {
+    let functions = |n: usize| {
+        let declared: Vec<String> = (0..n).map(|i| format!("    type A{i}\n")).collect();
+        let each: Vec<String> = (0..n)
+            .map(|i| format!("fn f{i}<S: Big, U: Convert<S.A0>>(_s: S, _u: U) {{}}"))
+            .collect();
+        format!(
+            "interface Big {{\n{}}}\n{}\nfn main() {{}}",
+            declared.concat(),
+            each.join("\n")
+        )
+    };
+    let calls = |n: usize| {
+        let declared: Vec<String> = (0..n).map(|i| format!("    type A{i}\n")).collect();
+        let chosen: Vec<String> = (0..n).map(|i| format!("    type A{i} = i64\n")).collect();
+        format!(
+            "interface Big {{\n{}}}\ninterface Holder: Big {{}}\nclass Leaf {{}}\nextend Leaf: Big {{\n{}}}\nextend Leaf: Holder {{}}\nfn need<S: Holder>(_s: S) {{}}\nfn main() {{\n{}}}",
+            declared.concat(),
+            chosen.concat(),
+            "    need(Leaf())\n".repeat(n)
+        )
+    };
+    // `n` interfaces, each inheriting the one before and declaring a type, and a call for each.
+    let chain = |n: usize| {
+        let mut src = String::from("interface I0 {\n    type T0\n}\n");
+        for i in 1..n {
+            let _ = writeln!(src, "interface I{i}: I{} {{\n    type T{i}\n}}", i - 1);
+        }
+        src.push_str("class Leaf {}\n");
+        for i in 0..n {
+            let _ = writeln!(src, "extend Leaf: I{i} {{\n    type T{i} = i64\n}}");
+            let _ = writeln!(src, "fn go{i}<S: I{i}>(_s: S) {{}}");
+        }
+        src.push_str("fn main() {\n");
+        for i in 0..n {
+            let _ = writeln!(src, "    go{i}(Leaf())");
+        }
+        src + "}"
+    };
+    let steps = |src: String| {
+        DECLARED_BUILT.set(0);
+        crate::conformance::NORMALIZED.set(0);
+        let ds = diags(&with_convert_interface(&src));
+        assert!(ds.iter().all(|d| d.severity() != Severity::Error), "{ds:?}");
+        (DECLARED_BUILT.get(), crate::conformance::NORMALIZED.get())
+    };
+    for (name, shape, counted) in [
+        ("functions", &functions as &dyn Fn(usize) -> String, 0),
+        ("calls", &calls, 1),
+        ("chain", &chain, 1),
+    ] {
+        let (small, large) = (steps(shape(32)), steps(shape(64)));
+        let (small, large) = if counted == 0 {
+            (small.0, large.0)
+        } else {
+            (small.1, large.1)
+        };
+        assert!(small >= 32, "{name}: {small} steps for 32");
+        assert!(
+            large <= 2 * small + 8,
+            "{name}: {large} steps for 64, {small} for 32"
+        );
+    }
+}
+
+/// `src` and the interface `Convert`, which no shape of a counting test declares.
+fn with_convert_interface(src: &str) -> String {
+    format!("interface Convert<Y> {{}}\n{src}")
+}
+
 /// A type written through a parameter, as `S.Name`, is found by its name in an index of the
 /// parameter's closure, which grows with the closure: a lookup reads the entries of the
 /// interfaces that declare the name, and no others. The steps are the entries indexed and the

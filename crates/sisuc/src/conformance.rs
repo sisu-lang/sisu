@@ -20,7 +20,7 @@ thread_local! {
     /// How many parameters `Unifier::walk` has stepped over on this thread.
     static WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many types `normalize` has walked on this thread.
-    static NORMALIZED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static NORMALIZED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The conformance of `interface` to `ty` with the interface arguments `args`, as its index

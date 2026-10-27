@@ -344,6 +344,9 @@ thread_local! {
     pub(super) static CHOICE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times a bound that writes an associated type of a parameter has been tried.
     pub(super) static BOUND_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many declarations of associated types `names_of` has built for an interface, with the
+    /// ones it inherits, on this thread.
+    pub(super) static DECLARED_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many scopes (type parameters with their bounds) have been kept on this thread.
     pub(super) static SCOPES_KEPT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many closure entries have been indexed, and how many entries of an interface have been
@@ -414,11 +417,18 @@ struct Checker<'src> {
     /// type found for it; reported once all bodies are checked (see `report_loops`).
     loops: std::cell::RefCell<FxHashMap<(tir::InterfaceId, usize, usize), Type>>,
     /// The associated types that a bound of each interface gives its type, with the ones that the
-    /// interfaces it inherits declare, found when first asked for (see `probe_associated`).
-    probed: FxHashMap<tir::InterfaceId, Rc<[interface::Declaration]>>,
+    /// interfaces it inherits declare, indexed by name: built when first asked for, once every
+    /// interface has its inheritance (`interfaces_resolved`), and kept for the program.
+    declared: std::cell::RefCell<FxHashMap<tir::InterfaceId, Rc<interface::Names>>>,
+    /// Whether pass 1b is done: every interface has its inheritance, so what an interface
+    /// declares will not change.
+    interfaces_resolved: bool,
     /// The types that `probe_associated` has probed for a bound, by interface and arguments: a
     /// type is probed once for a bound, however many calls ask.
     probed_types: FxHashSet<(Type, tir::InterfaceId, TypeArgs)>,
+    /// The associated types that `probe_associated` has normalized: two bounds that inherit one
+    /// interface give it once.
+    probed_assoc: FxHashSet<Type>,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// The place among `extensions` of the first block that covers the receiver of the call being
@@ -898,8 +908,10 @@ impl<'src> Checker<'src> {
             conformance_bounds: FxHashMap::default(),
             choice_ats: FxHashMap::default(),
             loops: std::cell::RefCell::default(),
-            probed: FxHashMap::default(),
+            declared: std::cell::RefCell::default(),
+            interfaces_resolved: false,
             probed_types: FxHashSet::default(),
+            probed_assoc: FxHashSet::default(),
             conformed: FxHashMap::default(),
             failed_block: None,
             lowered_enums: Vec::new(),
