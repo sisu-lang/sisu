@@ -1,5 +1,6 @@
 """Unit tests for slow_tests.py: python3 -m unittest discover -s scripts -p 'test_*.py'."""
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -90,16 +91,17 @@ def report(*tests: tuple[str, str, float]) -> str:
     return f'<testsuites><testsuite name="x">{cases}</testsuite></testsuites>'
 
 
-def fail_changed(files: dict[str, str], edits: dict[str, str], *tests: tuple[str, str, float]):
+def fail_changed(files: dict[str, str], edits: dict[str, str], *tests: tuple[str, str, float], extra_env=None):
     """Runs `--fail-changed HEAD` on a repository of `files` whose working tree holds `edits`.
-    Returns the exit code and the "binary name" of each failure line."""
+    Returns the run and the "binary name" of each failure line, without its `path:line: `."""
     with git_fixture.repo({'crates/sisuc/Cargo.toml': MANIFEST, **files}) as tmp:
         for name, text in edits.items():
             git_fixture.write(tmp, name, text)
         git_fixture.write(tmp, 'junit.xml', report(*tests))
         run = subprocess.run([sys.executable, SCRIPT, os.path.join(tmp, 'junit.xml'), '--fail-changed', 'HEAD'],
-                             capture_output=True, text=True, cwd=tmp, env=git_fixture.env())
-    failed = [line.split(' took ')[0] for line in run.stdout.splitlines() if ' limit for a changed test ' in line]
+                             capture_output=True, text=True, cwd=tmp, env={**git_fixture.env(), **(extra_env or {})})
+    failed = [re.sub(r'^\S+:\d+: ', '', line.split(' took ')[0])
+              for line in run.stdout.splitlines() if ' limit for a changed test ' in line]
     return run, failed
 
 
@@ -115,9 +117,37 @@ class FailChanged(unittest.TestCase):
         lib = 'crates/sisuc/src/parser.rs'
         run, failed = fail_changed({lib: rust('1;')}, {lib: rust('2;')}, ('sisuc', 'parser::tests::pattern_spans', 2.5))
         self.assertEqual((run.returncode, failed), (1, ['sisuc parser::tests::pattern_spans']))
-        self.assertIn("sisuc parser::tests::pattern_spans took 2.50 s; its budget is 1 s and the limit for a "
+        self.assertIn("crates/sisuc/src/parser.rs:3: sisuc parser::tests::pattern_spans took 2.50 s; its budget is 1 s and the limit for a "
                       "changed test is 2 s: shrink its input or split it (CODING_STANDARDS.md, Tests)",
                       run.stdout)
+
+    def test_a_failure_should_start_with_the_path_and_line_of_its_test(self):
+        lib = 'crates/sisuc/src/parser.rs'
+        second = 'mod tests {\n    #[test]\n    fn first_should_x() {}\n\n    #[test]\n    #[ignore = "a"]\n' \
+                 '    fn pattern_spans() {\n        1;\n    }\n}\n'
+        cases = {'crates/sisuc/tests/cases.rs': HARNESS, 'crates/sisuc/tests/run/a.sisu': 'x\n',
+                 'crates/sisuc/tests/run/a.out': '1\n'}
+        for row, files, edits, test, where in [
+                ('a test of a src file: its fn line', {lib: rust('1;')}, {lib: rust('2;')},
+                 ('sisuc', 'parser::tests::pattern_spans', 3), f'{lib}:3'),
+                ('the fn line, not the attribute line, of the second test', {lib: second},
+                 {lib: second.replace('1;', '2;')}, ('sisuc', 'parser::tests::pattern_spans', 3), f'{lib}:7'),
+                ('a test of a tests/ file', {'crates/sisuc/tests/cli.rs': rust('1;')},
+                 {'crates/sisuc/tests/cli.rs': rust('2;')}, ('sisuc::cli', 'tests::pattern_spans', 9),
+                 'crates/sisuc/tests/cli.rs:3'),
+                ('a case whose file changed: line 1', cases, {'crates/sisuc/tests/run/a.sisu': 'y\n'},
+                 ('sisuc::cases', 'run::a.sisu', 9), 'crates/sisuc/tests/run/a.sisu:1'),
+                ('a case whose .out file changed: its case file', cases, {'crates/sisuc/tests/run/a.out': '2\n'},
+                 ('sisuc::cases', 'run::a.sisu', 9), 'crates/sisuc/tests/run/a.sisu:1')]:
+            run, _ = fail_changed(files, edits, test)
+            [line] = [l for l in run.stdout.splitlines() if ' limit for a changed test ' in l]
+            self.assertTrue(line.startswith(f'{where}: {test[0]} {test[1]} took '), f'{row}: {line}')
+            run, _ = fail_changed(files, edits, test, extra_env={'GITHUB_ACTIONS': 'true'})
+            file, _, number = where.partition(':')
+            [annotation] = [l for l in run.stdout.splitlines() if l.startswith('::error')]
+            self.assertTrue(annotation.startswith(
+                f'::error title=Slow changed test,file={file},line={number}::{test[0]} {test[1]} took '),
+                f'{row}: {annotation}')
 
     def test_the_slow_check_should_fail_only_for_a_changed_test(self):
         """S5. Its fourth row, a report with no test, is test_a_report_with_no_test_should_print_one_note_and_pass."""
@@ -171,6 +201,11 @@ class FailChanged(unittest.TestCase):
                  {cli: rust('1;'), 'crates/sisuc/src/lib.rs': rust('1;')},
                  {cli: rust('2;')},
                  [('sisuc::cli', 'tests::pattern_spans', 9), ('sisuc', 'tests::pattern_spans', 9)],
+                 ['sisuc::cli tests::pattern_spans']),
+                ('a tests/<bin>/main.rs test has no prefix',
+                 {'crates/sisuc/tests/cli/main.rs': rust('1;'), 'crates/sisuc/tests/cli/x.rs': rust('1;')},
+                 {'crates/sisuc/tests/cli/main.rs': rust('2;')},
+                 [('sisuc::cli', 'tests::pattern_spans', 9), ('sisuc::cli', 'x::tests::pattern_spans', 9)],
                  ['sisuc::cli tests::pattern_spans']),
                 ('a tests/<bin>/x.rs test has the prefix x::',
                  {'crates/sisuc/tests/cli/x.rs': rust('1;'), 'crates/sisuc/tests/cli.rs': rust('1;')},

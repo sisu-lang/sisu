@@ -9,7 +9,8 @@ GitHub Actions, each slow test is also a workflow warning. It exits 0, except wi
 With --diff, it lists only the slow tests whose name `git diff -U0 REF` mentions, the tests a
 change added or edited, and counts the rest: on a loaded machine the rest are noise. With
 --fail-changed, it exits 1 when a test that the diff to REF adds or edits takes more than
-FAIL_FACTOR times its budget. It then lists every slow test, as a warning.
+FAIL_FACTOR times its budget. Each failure line starts with the `path:line:` of the test, and a
+GitHub annotation has `file` and `line`. It then lists every slow test, as a warning.
 """
 import argparse
 import os
@@ -135,29 +136,38 @@ def case_files(test: str, repo: str) -> list[str]:
     return [f for f in files if os.path.exists(f'{repo}/{f}')]
 
 
-def is_changed(test: str, files: set[str], pairs: set[tuple[str, str]], repo: str) -> bool:
-    """Whether the diff changes the report entry `test`: its case file or a file next to it with
-    the same stem, or the body of the test it maps to by its full name."""
+def is_changed(test: str, files: set[str], pairs: set[tuple[str, str]], repo: str) -> tuple[str, int] | None:
+    """The (path, line) of the report entry `test`, if the diff changes it: its case file, which
+    starts at line 1, when that file or a file next to it with the same stem changed; or the `fn`
+    line of the test it maps to by its full name, when its body changed."""
     for case in case_files(test, repo):
         stem = os.path.splitext(case)[0]
         if any(os.path.splitext(f)[0] == stem for f in files):
-            return True
-    for path, name in pairs:
+            return case, 1
+    for path, name in sorted(pairs):
         located = locate(path, repo)
         if located and maps_to(test, name, located, repo):
-            return True
-    return False
+            with open(f'{repo}/{path}', encoding='utf-8', errors='surrogateescape') as file:
+                first = next(first for found, first, _ in changed_tests.bodies(file.read().splitlines())
+                             if found == name)
+            return path, first
+    return None
 
 
-def too_slow(tests: list[tuple[float, float, str]], ref: str, repo: str = '.') -> list[tuple[float, float, str]]:
-    """The tests over FAIL_FACTOR times their budget that the diff to REF adds or edits."""
+def too_slow(tests: list[tuple[float, float, str]], ref: str, repo: str = '.'
+             ) -> list[tuple[tuple[float, float, str], tuple[str, int]]]:
+    """Each test over FAIL_FACTOR times its budget that the diff to REF adds or edits, with its
+    (path, line).
+
+    shortcut: a test that a macro writes or that libtest-mimic makes is never a changed test (see
+    `changed_tests.changed`), so it only warns."""
     limit = [test for test in tests if test[0] > FAIL_FACTOR * test[1]]
     if not limit:
         return []
     files = set(changed_tests.git(repo, '-c', 'core.quotepath=off', 'diff', '--name-only', '-M', '--no-color',
                                   '--no-ext-diff', '--no-textconv', ref).splitlines())
     pairs = changed_tests.changed(ref, repo)
-    return [test for test in limit if is_changed(test[2], files, pairs, repo)]
+    return [(test, where) for test in limit if (where := is_changed(test[2], files, pairs, repo))]
 
 
 def main(path: str, ref: str | None = None, fail_ref: str | None = None) -> int:
@@ -193,10 +203,11 @@ def main(path: str, ref: str | None = None, fail_ref: str | None = None) -> int:
         if os.environ.get('GITHUB_ACTIONS') == 'true':
             print(f"::warning title=Slow test::{name} took {seconds:.2f} s; its budget is {budget:g} s")
     failures = too_slow(tests, fail_ref) if fail_ref is not None else []
-    for seconds, budget, name in failures:
-        line = (f"{name} took {seconds:.2f} s; its budget is {budget:g} s and the limit for a changed test is "
+    for (seconds, budget, name), (file, line) in failures:
+        text = (f"{name} took {seconds:.2f} s; its budget is {budget:g} s and the limit for a changed test is "
                 f"{FAIL_FACTOR * budget:g} s: shrink its input or split it (CODING_STANDARDS.md, Tests)")
-        print(f"::error title=Slow changed test::{line}" if os.environ.get('GITHUB_ACTIONS') == 'true' else line)
+        print(f"::error title=Slow changed test,file={file},line={line}::{text}"
+              if os.environ.get('GITHUB_ACTIONS') == 'true' else f"{file}:{line}: {text}")
     return int(bool(failures))
 
 

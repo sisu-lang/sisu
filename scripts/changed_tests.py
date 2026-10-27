@@ -75,6 +75,10 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
     """The (new path, test name) pairs whose body `git diff -U0 -M -l10000 REF` changes, for `.rs`
     files only. A deleted test is left out.
 
+    shortcut: a test that a macro writes (`fn $name`) or that libtest-mimic makes (`reference`) is
+    not found by `test_names.tests()`, so it is never a changed test and its slow check only warns.
+    Map a changed macro row to its test if one of them is ever slow.
+
     shortcut: a path that git quotes (it holds a quote, a backslash or a control character) keeps
     its quotes, so its file is not found. No such path is in the tree; read `-z` output if one is
     ever added."""
