@@ -3997,6 +3997,33 @@ fn a_parameter_that_went_past_the_limit_should_stay_unknown_for_later_bounds() {
     }
 }
 
+/// A bound that writes an associated type of its own parameter finds the closure of the parameter
+/// before it joins it, so the closure grows by the bound's, and passes the limit there. It is
+/// reported once, at the bound, with the bound before the others, after them, and in a method.
+#[test]
+fn a_bound_that_writes_its_own_parameters_type_should_be_reported_past_the_limit() {
+    let mut chain = String::new();
+    for k in 1..=257 {
+        let from = if k == 1 {
+            String::new()
+        } else {
+            format!(": C{}", k - 1)
+        };
+        writeln!(chain, "interface C{k}{from} {{}}").expect("writing to a `String` should succeed");
+    }
+    for (function, at) in [
+        ("fn f<S: Source & Big<S.Item>>(_s: S) {}", (259, 18)),
+        ("fn f<S: Big<S.Item> & Source>(_s: S) {}", (259, 9)),
+        (
+            "class H {\n    fn f<S: Source & Big<S.Item>>(self, _s: S) {}\n}",
+            (260, 22),
+        ),
+    ] {
+        let row = format!("interface Big<X>: C257 {{}}\n{chain}{function}");
+        codes(&with_sources(&row), &[(Code::BoundTooWide, at)]);
+    }
+}
+
 /// A cycle through an associated type is a cycle of the type it stands for: its edge weighs how
 /// much more deeply the choices of its conformances nest the types that stand for their
 /// parameters than their targets do. A choice that grows by 1 closes a cycle with a call that

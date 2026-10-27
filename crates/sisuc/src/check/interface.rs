@@ -574,11 +574,12 @@ impl Checker<'_> {
             let place32 =
                 u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters");
             let receiver = Type::intern(TypeKind::Param(name, place32));
-            let wide = self.extend_closure(receiver, &[bound], &mut out, seen, |_, _| {});
+            // A closure that goes past the limit is reported where `read_declared_bounds` reads the
+            // bound, for each bound that is declared. The bounds that wait for this parameter wait
+            // for the bound that is past the limit too (see `Waits`), so none reads the closure
+            // before it is made again.
+            let _ = self.extend_closure(receiver, &[bound], &mut out, seen, |_, _| {});
             self.body.conforming[place] = Some(out);
-            if wide.is_err() {
-                self.too_wide(place, self.body.bounds[place].len() - 1);
-            }
         }
     }
 
