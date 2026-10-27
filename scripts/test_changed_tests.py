@@ -1,4 +1,5 @@
 """Unit tests for changed_tests.py: python3 -m unittest discover -s scripts -p 'test_*.py'."""
+import os
 import unittest
 
 import changed_tests as ct
@@ -21,6 +22,7 @@ fn b_should_y() {
 write = git_fixture.write
 RAW = '#[test]\nfn a_should_x() {\n    let s = "\n-- x\n";\n    one();\n}\n\n#[test]\nfn b_should_y() {\n    four();\n}\n'
 ONE_LINE = '#[test]\nfn a_should_x() {}\n#[test]\nfn b_should_y() {\n    four();\n}\n'
+NO_NEWLINE = '#[test]\nfn a_should_x() {\n    one();\n}'
 FAR = THREE + '\n#[test]\nfn c_should_z() {\n    six();\n}\n'
 
 
@@ -45,9 +47,28 @@ def move_and_edit(tmp):
     write(tmp, 'u.rs', THREE.replace('four();', 'five();'))
 
 
-def edit_next_to_a_binary_file(tmp):
+def edit_next_to_a_non_utf8_file(tmp):
     write(tmp, 't.rs', THREE.replace('four', 'five'))
     write(tmp, 'x.sisu', b'a\n\xe9\n')
+
+
+def edit_with_diff_opts(tmp):
+    os.environ['GIT_DIFF_OPTS'] = '--unified=7'  # `repo()` restores the environment at its exit
+    write(tmp, 't.rs', THREE.replace('one', 'uno'))
+
+
+def edit_a_sql_file_and_a_rust_test(tmp):
+    write(tmp, 'a.sql', '++ b.rs\nq\nz\nQ\n')
+    write(tmp, 't.rs', THREE.replace('four', 'five'))
+
+
+def edit_the_last_line_of_a_file_with_no_final_newline_and_another_file(tmp):
+    write(tmp, 't.rs', NO_NEWLINE + ' // end')
+    write(tmp, 'u.rs', THREE.replace('four', 'five'))
+
+
+def edit_a_rust_file_to_hold_a_non_utf8_byte(tmp):
+    write(tmp, 't.rs', THREE.replace('four();', 'four(); // \u00e9').encode('latin-1'))
 
 
 class ChangedTests(unittest.TestCase):
@@ -69,11 +90,21 @@ class ChangedTests(unittest.TestCase):
              rewrite(RAW.replace('-- x\n', '').replace('four', 'five')), a | b),
             ('an added line that starts with `++ ` and an edit in a later test', RAW,
              rewrite(RAW.replace('-- x\n', '++ y\n').replace('four', 'five')), a | b),
-            ('a non-UTF-8 line in a non-.rs file next to an edit', THREE, edit_next_to_a_binary_file, b),
+            ('a non-UTF-8 line in a non-.rs file next to an edit', THREE, edit_next_to_a_non_utf8_file, b),
+            ('a non-UTF-8 byte in a .rs file', THREE, edit_a_rust_file_to_hold_a_non_utf8_byte, b),
+            ('GIT_DIFF_OPTS=--unified=7 and an edit in the test before a neighbour', THREE,
+             edit_with_diff_opts, a),
+            ('a `-- a` line of a text file changed to `++ b.rs` next to a .rs edit',
+             {'t.rs': THREE, 'a.sql': '-- a\nq\nz\nq\n'}, edit_a_sql_file_and_a_rust_test, b),
+            ('no final newline and an edit of its last line, and an edit in a second file',
+             {'t.rs': NO_NEWLINE, 'u.rs': THREE},
+             edit_the_last_line_of_a_file_with_no_final_newline_and_another_file,
+             a | {('u.rs', 'b_should_y')}),
         ]
         for message, files, change, want in rows:
             with self.subTest(message):
-                self.assertEqual(changed_after({'t.rs': files, 'x.sisu': 'a\n'}, change), want, message)
+                files = files if isinstance(files, dict) else {'t.rs': files}
+                self.assertEqual(changed_after({'x.sisu': 'a\n', **files}, change), want, message)
 
     def test_the_users_git_config_should_not_change_the_result(self):
         text = FAR + '\n#[test]\nfn d_should_w() {\n    seven();\n}\n'

@@ -3,6 +3,7 @@
 Usage: python3 changed_tests.py REF
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -34,9 +35,11 @@ def bodies(lines: list[str]) -> list[tuple[str, int, int]]:
 
 def git(repo: str, *args: str) -> str:
     """The output of `git -C repo ARGS`. A byte that is not UTF-8 in some tracked text file must
-    not stop the check, so it is kept as a surrogate."""
+    not stop the check, so it is kept as a surrogate. GIT_DIFF_OPTS would beat `-U0`; the other
+    `GIT_*` variables, such as GIT_DIR in a hook, stay."""
+    env = {key: value for key, value in os.environ.items() if key != "GIT_DIFF_OPTS"}
     return subprocess.run(["git", "-C", repo, *args], check=True, capture_output=True, text=True,
-                          encoding="utf-8", errors="surrogateescape").stdout
+                          encoding="utf-8", errors="surrogateescape", env=env).stdout
 
 
 def hit(found: list[tuple[str, int, int]], start: int, count: int) -> set[str]:
@@ -46,8 +49,8 @@ def hit(found: list[tuple[str, int, int]], start: int, count: int) -> set[str]:
 
 
 # These flags make the output the same under any user config: no color, no external diff driver
-# or text conversion, the `a/` and `b/` prefixes, and no merge of
-# near hunks, which would add unchanged lines to a range.
+# or text conversion, the `a/` and `b/` prefixes, and no merge of near hunks, which would add
+# unchanged lines to a range.
 DIFF = ("-c", "core.quotepath=off", "diff", "-U0", "-M", "-l10000", "--no-color", "--no-ext-diff",
         "--no-textconv", "--inter-hunk-context=0", "--src-prefix=a/",
         "--dst-prefix=b/")
@@ -75,9 +78,11 @@ def changed(ref: str, repo: str = ".") -> set[tuple[str, str]]:
         elif line.startswith("+++ "):
             new_path = line[4:].split("\t")[0].removeprefix("b/") if line != "+++ /dev/null" else ""
             old = None
-        elif (m := HUNK.match(line)) and new_path.endswith(".rs"):
+        elif m := HUNK.match(line):
             a, b, c, d = (int(x) if x is not None else 1 for x in m.groups())
-            left = [b, d]
+            left = [b, d]  # for every file, so a `-- a` line of a text file is not a header
+            if not new_path.endswith(".rs"):
+                continue
             if old is None:  # the first hunk of the file
                 text = git(repo, "show", f"{ref}:{old_path}") if old_path else ""
                 old = bodies(text.splitlines())
