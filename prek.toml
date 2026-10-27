@@ -1,6 +1,9 @@
 # Git hooks, run by prek (https://prek.j178.dev). Install once per clone:
-#   prek install
+#   make setup (it runs: prek install -t pre-commit -t commit-msg)
 # Run everything by hand: prek run --all-files
+
+# A hook with no `stages` runs before a commit only, not again on its message.
+default_stages = ["pre-commit"]
 
 [[repos]]
 repo = "builtin"
@@ -78,6 +81,14 @@ language = "system"
 entry = "python3 scripts/test_names.py"
 types = ["rust"]
 
+# Runs on the message, not the files: `make setup` installs this stage's Git shim.
+[[repos.hooks]]
+id = "no-session-url"
+name = "commit message holds no session line"
+language = "system"
+entry = "python3 scripts/session_url.py"
+stages = ["commit-msg"]
+
 [[repos.hooks]]
 id = "registry-no-debug-format"
 name = "diagnostic text does not use {:?}"
@@ -113,7 +124,7 @@ id = "python-tests"
 name = "script unit tests"
 language = "system"
 entry = "python3 -m unittest discover -s scripts -p 'test_*.py'"
-files = '^scripts/.*\.py$'
+files = '^(scripts|\.agents/skills/[^/]+/scripts)/.*\.py$'
 pass_filenames = false
 
 # A new diagnostic code needs a category, or the site build fails long after the commit.

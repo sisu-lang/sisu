@@ -9,7 +9,9 @@ REPO and each --doc are written as absolute paths: the reviewer runs in REPO, an
 the main checkout's gitignored docs/superpowers/ is not in a worktree.
   --focus  a file whose text goes under "# Focus"; without it, Focus is "none"
   --verify-log  the log of `make verify LOG=...` for the diff; Focus names it by its absolute
-           path, so the reviewer checks its verdict line. Fails when the file does not exist.
+           path, so the reviewer checks its verdict line. Fails when the file does not exist,
+           or when its verdict line names another commit than HEAD of the range, or uncommitted
+           changes: a commit after the verify run makes its log describe other code.
 The template comes from origin/main, so a branch that started before a change to the review
 criteria still gets the current ones. Without origin/main it falls back to ../brief.md.
 """
@@ -40,6 +42,21 @@ SKILLS = {
 }
 
 
+def verify_mismatch(log, repo, head):
+    """Why the verdict line of `log` does not describe commit `head` of `repo`, or None."""
+    lines = [line for line in log.read_text().splitlines() if line.startswith('verify: ')]
+    found = re.search(r'\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$', lines[-1]) if lines else None
+    if not found:
+        return f'no verdict line ending "(HEAD <sha>)" in {log}'
+    want = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--verify', f'{head}^{{commit}}'],
+                          capture_output=True, text=True).stdout.strip()
+    if found[1] != want:
+        return f'{log} measured {found[1][:8]}, not {head} ({want[:8] or "unknown"}); run make verify again'
+    if found[2]:
+        return f'{log} measured uncommitted changes; commit them and run make verify again'
+    return None
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('repo')
@@ -52,6 +69,8 @@ def main():
     log = Path(a.verify_log).resolve() if a.verify_log else None
     if log and not log.is_file():
         sys.exit(f'diff_brief: no verify log at {log}')
+    if log and (why := verify_mismatch(log, a.repo, a.range.split('..')[-1])):
+        sys.exit(f'diff_brief: {why}')
 
     shown = subprocess.run(['git', '-C', str(TEMPLATE.parent), 'show', MAIN_TEMPLATE],
                            capture_output=True, text=True)
