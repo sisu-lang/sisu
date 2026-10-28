@@ -111,7 +111,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 94] = [
+const REACH: [&str; 95] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -196,6 +196,7 @@ const REACH: [&str; 94] = [
     "reach: a class gets `Display` through a `to_string` method",
     "reach: a bound names a language interface",
     "reach: an operator runs on a bounded type parameter",
+    "reach: `is` runs on a type parameter",
     "reach: an operator calls a written `eq` or `less`",
     "reach: an `==` or `print` runs a written method inside a value",
     "reach: an `==` or `print` on a compound value runs no written method",
@@ -207,6 +208,14 @@ const REACH: [&str; 94] = [
     "reach: a top-level optional is interpolated",
     "reach: an optional is printed through `.to_string()`",
 ];
+
+/// The type under every `?` layer of `ty`.
+fn under_optionals(mut ty: Type) -> Type {
+    while let TypeKind::Optional(inner) = ty.kind() {
+        ty = inner;
+    }
+    ty
+}
 
 /// Whether `ty` is an array, an optional, an enum or a class: a type whose value `print` writes
 /// through a helper.
@@ -2339,11 +2348,7 @@ impl Walk {
                 // A class has no `Eq`: only the comparison with `None` is left of it.
                 let none = matches!(lhs.kind, tir::ExprKind::None)
                     || matches!(rhs.kind, tir::ExprKind::None);
-                let mut held = lhs.ty;
-                while let TypeKind::Optional(inner) = held.kind() {
-                    held = inner;
-                }
-                if none && matches!(held.kind(), TypeKind::Class(..)) {
+                if none && matches!(under_optionals(lhs.ty).kind(), TypeKind::Class(..)) {
                     self.mark(IDENTITY);
                 }
                 // `x == None` on a `T?` calls nothing and needs no bound.
@@ -2359,6 +2364,9 @@ impl Walk {
             tir::ExprKind::Is { lhs, rhs } => {
                 self.mark("tir::ExprKind::Is");
                 self.mark(IDENTITY);
+                if matches!(under_optionals(lhs.ty).kind(), TypeKind::Param(..)) {
+                    self.mark("reach: `is` runs on a type parameter");
+                }
                 self.tir_expr(lhs, Parent::Other);
                 self.tir_expr(rhs, Parent::Other);
             }
@@ -3003,7 +3011,7 @@ fn the_ast_walk_should_mark_what_interfaces_and_extend_blocks_hold() {
 }
 
 /// A program may declare as many interfaces as `MAX_INTERFACES` and give one as many requirements
-/// as `MAX_REQUIREMENTS`.
+/// as `MAX_REQUIREMENTS`. `Pinned`, which `shapes` declares at a fixed place, is not one of them.
 #[test]
 fn generated_interfaces_should_reach_their_maxima() {
     let (mut most, mut requirements) = (0, 0);
@@ -3013,7 +3021,9 @@ fn generated_interfaces_should_reach_their_maxima() {
             .items
             .iter()
             .filter_map(|item| match item {
-                ast::Item::Interface(interface) => Some(interface),
+                ast::Item::Interface(interface) if interface.name.name.as_str() != "Pinned" => {
+                    Some(interface)
+                }
                 _ => None,
             })
             .collect();
@@ -6396,6 +6406,8 @@ fn generated_programs_should_name_each_language_interface() {
         ("fn lang_eq<T: Eq>", false),
         ("fn lang_ord<T: Ord>", false),
         ("fn lang_display<T: Display>", false),
+        ("fn lang_same<T: AnyObject>", false),
+        ("fn lang_pinned<T: Pinned>", false),
         ("lang_eq(N0.A)", false),
         ("fn to_string(self) -> string", false),
     ]);

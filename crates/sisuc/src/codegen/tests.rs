@@ -787,6 +787,30 @@ fn comparing_an_optional_class_with_none_should_test_the_pointer() {
     }
 }
 
+/// `a is b` on a `T: AnyObject` costs nothing at run time: with `T = Node` it is one pointer
+/// comparison with no helper, and a `T?` local is a bare pointer, as any `Node?` is.
+#[test]
+fn is_on_a_t_any_object_should_be_one_pointer_compare() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "class Node {}\nfn same<T: AnyObject>(a: T, b: T) -> bool { a is b }\nfn kept<T: AnyObject>(a: T) -> bool {\n    let held: T? = a\n    held is a\n}\nfn main() {\n    let n = Node()\n    print(same(n, n))\n    print(kept(n))\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let compares = |body: &str| {
+        body.lines()
+            .filter(|line| line.contains("icmp eq ptr ") && !line.ends_with(", null"))
+            .count()
+    };
+    let same = function_body(&ir, "define internal i1 @\"sisu.same<Node>\"(ptr");
+    assert_eq!(compares(same), 1, "{same}");
+    assert!(!same.contains("call"), "{same}");
+    let kept = function_body(&ir, "define internal i1 @\"sisu.kept<Node>\"(ptr");
+    assert_eq!(compares(kept), 1, "{kept}");
+    assert!(kept.contains("%held = alloca ptr,"), "{kept}");
+}
+
 /// An `eq` helper answers "equal" for one pointer on both sides only when its type's `==` is
 /// reflexive; where an `f64` is reachable, or a class has a written `eq`, which need not be
 /// reflexive, one block or object may differ from itself, so only two `null`s are equal at once.

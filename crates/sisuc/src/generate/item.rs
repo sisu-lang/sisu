@@ -807,7 +807,9 @@ impl Gen<'_> {
     /// conformances. With `enum_value`, `shapes` also calls `lang_eq` on an enum, which has `Eq`
     /// when its payloads do. The class `Ranked` writes its `Eq` and `Ord`, and `shapes` compares
     /// it directly and inside an array, an optional and an enum payload, and calls the generated
-    /// `eq` and `less` of a number. None of it takes a byte.
+    /// `eq` and `less` of a number. `is` runs in `lang_same<T: AnyObject>`, on a `T?` in
+    /// `lang_held`, and through `Pinned`, an interface that inherits `AnyObject`, in `lang_pinned`.
+    /// None of it takes a byte.
     fn language_bounds(&mut self, enum_value: bool) -> Vec<String> {
         for (name, bound, body) in [
             (
@@ -832,7 +834,7 @@ impl Gen<'_> {
             self.w.line();
         }
         self.w.text(
-            "class Ranked: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\nenum Choice {\n    One(Ranked)\n    Nothing\n}",
+            "class Ranked: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\nenum Choice {\n    One(Ranked)\n    Nothing\n}\ninterface Pinned: AnyObject {}\nclass Anchor: Pinned {}\nfn lang_same<T: AnyObject>(a: T, b: T) -> bool { a is b }\nfn lang_held<T: AnyObject>(a: T?, b: T) -> bool { a is b }\nfn lang_pinned<T: Pinned>(a: T, b: T) -> bool { a is b }",
         );
         self.w.line();
         let mut calls = vec![
@@ -856,6 +858,9 @@ impl Gen<'_> {
             "let _ = [rank_a].contains(rank_b)".to_string(),
             "let _ = rank_a.eq(rank_b) || rank_a.less(rank_b)".to_string(),
             "let _ = lang_eq(rank_a) + lang_ord(rank_b)".to_string(),
+            "let anchor = Anchor()".to_string(),
+            "let _ = lang_same(rank_a, rank_b) || lang_held(rank_m, rank_a)".to_string(),
+            "let _ = lang_pinned(anchor, anchor)".to_string(),
             "let _ = 5.eq(5) || 1.5.less(2.5)".to_string(),
         ];
         if enum_value {

@@ -240,7 +240,7 @@ The rules:
 - An operator that computes with a `T` or compares it, such as `+`, `<` or `==`, is an error ([E0139](../diagnostics/E0139.md)), unless a bound gives it: `T: Eq` gives `==` and `!=`, and `T: Ord` gives `<`, `<=`, `>` and `>=` ([Bounds](#bounds)). The help names the bound to add. `contains` on a `[T]` uses `==`, so it needs `T: Eq`. `x != None` and `x == None` on a `T?` are valid. `x == y` on two `T?` needs `T: Eq`.
 - `!`, `&&` and `||` take only a `bool`, so a `T` there is a type mismatch ([E0032](../diagnostics/E0032.md)).
 - A `T` has the methods that its bounds give, and `to_string()`, which needs no bound. It has no other method and no field ([E0063](../diagnostics/E0063.md)).
-- `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)).
+- `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)). The bound `T: AnyObject` allows it ([Bounds](#bounds)). The help names the bound to add.
 - `print` takes a `T` with no bound, because every type has a `Display` ([Display, Eq and Ord](#display-eq-and-ord)). Interpolation and `to_string()` take a `T` as well.
 - `[x; n]` with `x: T` is an error ([E0067](../diagnostics/E0067.md)), because `T` can be a class ([Filled arrays](arrays.md#filled-arrays)). `[None; n]` is valid.
 - `match` does not take a `T` ([E0124](../diagnostics/E0124.md)). In a payload of the type `T`, a pattern is a name or `_` ([Variant patterns](enums.md#variants)).
@@ -307,6 +307,20 @@ The rules:
 - Every type parameter can print, with no bound. `print(x)`, `"{x}"` and `x.to_string()` work on a `T`.
 - Every class conforms to `AnyObject`. So does an `any` value of a class-only interface (next rule). Nothing else does. `T: AnyObject` lets the body use `is` on values of type `T`, and lets a class declare a [weak field](values.md#weak-fields) of type `T?`.
 - An interface that inherits `AnyObject` is class-only. Its `any` values support `is` too, and a class can hold one in a weak field.
+
+```sisu
+class Node {}
+
+fn same<T: AnyObject>(a: T, b: T) -> bool {
+    a is b
+}
+
+fn main() {
+    let a = Node()
+    print(same(a, a))                  // true
+    print(same(a, Node()))             // false
+}
+```
 
 ## Interfaces
 

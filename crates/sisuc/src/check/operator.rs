@@ -12,7 +12,7 @@ use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Literal};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
-use crate::tir::{self, Type, TypeKind};
+use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
     /// The type of unary `-`, its operand, `expected` passed down, and whether it was reported. A
@@ -649,9 +649,10 @@ impl Checker<'_> {
         })
     }
 
-    /// `lhs is rhs`: each a class or its optional, of one class. An enum value has no identity
-    /// to test: two equal ones are the same value. An optional of an optional class is no
-    /// object: one layer comes off first.
+    /// `lhs is rhs`: each a class or its optional, of one class, or a type parameter that is
+    /// bound to `AnyObject` or its optional. An enum value has no identity to test: two equal ones
+    /// are the same value. An optional of an optional object is no object: one layer comes off
+    /// first.
     pub(super) fn is(&mut self, span: Span, lhs: &ast::Expr, rhs: &ast::Expr) -> Checked {
         if none_literal(lhs) || none_literal(rhs) {
             let other = if none_literal(lhs) { rhs } else { lhs };
@@ -675,10 +676,13 @@ impl Checker<'_> {
             while let TypeKind::Optional(inner) = base.kind() {
                 base = inner;
             }
+            // A type parameter is an object when its bounds say so: `mono` then makes it a class.
+            let object_param = matches!(base.kind(), TypeKind::Param(..))
+                && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
             // Peeling a layer helps only when an object is under the rest.
             if let TypeKind::Optional(payload) = ty.kind()
                 && matches!(payload.kind(), TypeKind::Optional(_))
-                && matches!(base.kind(), TypeKind::Class(..))
+                && (matches!(base.kind(), TypeKind::Class(..)) || object_param)
             {
                 let text = |e: &ast::Expr| self.source.file.text(e.span).to_string();
                 let peeled = |e: &ast::Expr| {
@@ -692,6 +696,7 @@ impl Checker<'_> {
                     found: self.type_name(ty),
                     at: side.span,
                     help: false,
+                    add: None,
                     peel: Some(format!("{} is {}", peeled(lhs), peeled(rhs))),
                 };
                 self.diagnostics.push(kind.into());
@@ -700,12 +705,13 @@ impl Checker<'_> {
             if matches!(
                 base.kind(),
                 TypeKind::Array(_) | TypeKind::String | TypeKind::Enum(..)
-            ) || !ty.is_counted(&self.lowered_enums)
+            ) || !(object_param || ty.is_counted(&self.lowered_enums))
             {
                 let kind = DiagnosticKind::IsNeedsObjects {
                     found: self.type_name(ty),
                     at: side.span,
                     help: !ty.has_param(),
+                    add: self.add_bound(base, self.lang.any_object),
                     peel: None,
                 };
                 self.diagnostics.push(kind.into());

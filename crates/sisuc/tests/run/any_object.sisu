@@ -1,0 +1,41 @@
+// GIVEN `same`, a generic function over `T: AnyObject` that tests `a is b`, `Holder<T: AnyObject>`
+// with a field `mut held: T?`, and `Node`, a class with a `string` field
+// WHEN `same` runs on one `Node` twice and on two `Node`s that hold equal text, and the `Holder`
+// sets `held` to `None` and back to the `Node`
+// THEN it prints `true`, `false`, the state of `held` after each change, and Valgrind and
+// `--rc-checks` find every `Node` and its text released once
+class Node {
+    _label: string
+}
+
+fn same<T: AnyObject>(a: T, b: T) -> bool {
+    a is b
+}
+
+class Holder<T: AnyObject> {
+    mut held: T?
+
+    fn holds(self, x: T) -> bool {
+        self.held is x
+    }
+
+    fn state(self) -> string {
+        if self.held == None { "empty" } else { "full" }
+    }
+}
+
+fn main() {
+    let a = Node(_label: "a")
+    let b = Node(_label: "a")
+    print(same(a, a)) // true: one object
+    print(same(a, b)) // false: two objects with equal text
+    let holder = Holder(held: Some(a))
+    print(holder.state()) // full
+    print(holder.holds(a)) // true
+    print(holder.holds(b)) // false
+    holder.held = None
+    print(holder.state()) // empty
+    holder.held = Some(b)
+    print(holder.state()) // full
+    print(holder.holds(a)) // false
+}

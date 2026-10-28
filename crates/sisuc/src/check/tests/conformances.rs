@@ -2587,3 +2587,65 @@ fn printing_none_should_not_infer_a_type() {
         &[(Code::CannotInfer, (2, 11))],
     );
 }
+
+/// `is` on a type parameter bound to `AnyObject`, directly or through an interface that
+/// inherits it, and on its optional.
+#[test]
+fn is_should_check_on_an_any_object_parameter() {
+    for (row, decls, signature) in [
+        ("the bound", "", "same<T: AnyObject>(a: T, b: T)"),
+        ("an optional", "", "same<T: AnyObject>(a: T?, b: T?)"),
+        (
+            "an object beside an optional",
+            "",
+            "same<T: AnyObject>(a: T, b: T?)",
+        ),
+        (
+            "a bound that inherits it",
+            "interface Observer: AnyObject {}\n",
+            "same<T: Observer>(a: T, b: T)",
+        ),
+        (
+            "a bound beside another",
+            "interface Named {}\n",
+            "same<T: Named & AnyObject>(a: T, b: T)",
+        ),
+    ] {
+        let src = format!("{decls}fn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
+        clean_row(row, &src);
+    }
+}
+
+/// `is` on a type parameter with no `AnyObject` bound is E0046, and a call that gives the bound
+/// something that is no class is `NotConform`. The fixture `E0046-param` pins the help.
+#[test]
+fn is_should_report_a_parameter_with_no_object_bound() {
+    let at_a = (2, 5);
+    for (row, signature, expected) in [
+        ("no bound", "same<T>(a: T, b: T)", at_a),
+        ("another bound", "same<T: Display>(a: T, b: T)", at_a),
+        ("an optional with no bound", "same<T>(a: T?, b: T?)", at_a),
+        // `T??` can hold a `None` of `T?`, so it is no object: one layer comes off first.
+        (
+            "a double optional",
+            "same<T: AnyObject>(a: T??, b: T??)",
+            at_a,
+        ),
+    ] {
+        let src = format!("fn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
+        codes_row(row, &src, &[(Code::IsNeedsObjects, expected)]);
+    }
+    for (row, decls, call) in [
+        ("a number", "", "same(1, 2)"),
+        (
+            "an enum",
+            "enum Dir {\n    North\n}\n",
+            "same(Dir.North, Dir.North)",
+        ),
+    ] {
+        let src = format!(
+            "{decls}fn same<T: AnyObject>(a: T, b: T) -> bool {{\n    a is b\n}}\nfn main() {{\n    print({call})\n}}"
+        );
+        codes_row(row, &src, &[(Code::NotConform, argument(&src, call))]);
+    }
+}

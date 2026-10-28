@@ -452,14 +452,6 @@ fn values_of_parameter_types_should_have_no_operators() {
     }
 }
 
-/// The `==` help of `is` would point at an operator a parameter lacks.
-#[test]
-fn is_on_a_parameter_should_have_no_help() {
-    let src = with_decls("fn f<T>(a: T, b: T) -> bool { a is b }");
-    let d = diagnostic(&src, Code::IsNeedsObjects, (1, 31, "a"), &[]);
-    assert!(d.help().is_none());
-}
-
 #[test]
 fn main_should_take_no_type_parameters() {
     let src = "fn main<T>() {}";

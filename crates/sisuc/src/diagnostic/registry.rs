@@ -567,12 +567,14 @@ pub(crate) enum DiagnosticKind {
     /// path of the other side as written.
     IsTestsNone { tested: Option<String>, at: Span },
     /// An `is` whose operand at `at`, of type `found`, is no object. `help` when `==` may
-    /// compare it: its type names no type parameter. `peel`, for an optional of an optional, is
-    /// the `is` with one layer of that operand taken off, as written.
+    /// compare it: its type names no type parameter. `add`, for a type parameter in scope, is
+    /// the bound that makes it an object. `peel`, for an optional of an optional, is the `is`
+    /// with one layer of that operand taken off, as written.
     IsNeedsObjects {
         found: String,
         at: Span,
         help: bool,
+        add: Option<AddBound>,
         peel: Option<String>,
     },
     /// A comparison at `at` of a `left` with a `right`.
@@ -2935,11 +2937,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 found,
                 at,
                 help,
+                add,
                 peel,
             } => {
                 let d = Diagnostic::coded(code, at, format!("`is` needs objects; found `{found}`"));
                 if let Some(peel) = peel {
                     d.with_help(format!("peel one layer first: `{peel}`"))
+                } else if let Some(add) = add {
+                    d.with_help(add.help())
                 } else if help {
                     d.with_help("use `==` to compare values")
                 } else {
