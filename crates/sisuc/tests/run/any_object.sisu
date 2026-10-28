@@ -1,7 +1,7 @@
 // GIVEN `same`, a generic function over `T: AnyObject` that tests `a is b`, `Holder<T: AnyObject>`
 // with a field `mut held: T?`, and `Node`, a class with a `string` field
-// WHEN `same` runs on one `Node` twice and on two `Node`s that hold equal text, and the `Holder`
-// sets `held` to `None` and back to the `Node`
+// WHEN `same` runs on one `Node` twice and on two `Node`s that hold equal text built at run time,
+// and the `Holder` sets `held` to `None` and back to the `Node`
 // THEN it prints `true`, `false`, the state of `held` after each change, and Valgrind and
 // `--rc-checks` find every `Node` and its text released once
 class Node {
@@ -25,8 +25,9 @@ class Holder<T: AnyObject> {
 }
 
 fn main() {
-    let a = Node(_label: "a")
-    let b = Node(_label: "a")
+    // An interpolation allocates its text, so a missed release of the field leaks.
+    let a = Node(_label: "{1}")
+    let b = Node(_label: "{1}")
     print(same(a, a)) // true: one object
     print(same(a, b)) // false: two objects with equal text
     let holder = Holder(held: Some(a))
