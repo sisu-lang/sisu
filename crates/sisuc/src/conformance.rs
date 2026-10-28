@@ -152,14 +152,16 @@ struct Frame {
 /// number; and the counter that gives the numbers, which starts again only when the stack is
 /// empty, so one number never names two keys in one root query.
 ///
-/// Every query nested in a query is a conjunction (the one fallback rule: a written conformance
-/// decides, and `Display` holds without one), so the rule is exact. A key that leaves with `false`
-/// holds under assumptions that are all `true`, so its answer is never wrong, and every caller
-/// then fails too. A key that leaves with `true` and a `low` equal to its own number is a head:
-/// it and every pending answer entered after it are final. A `true` with a lower `low` rests on a
-/// key that is still open, so it waits as a pending answer, which a later part query finds by its
-/// key: no key is expanded twice in one root query. When the root query returns, the pending
-/// answers that are left rest, through conjunctions, on a key that failed, so each is `false`.
+/// Every query nested in a query is a conjunction (a written conformance decides, and a bound on
+/// `Display` always holds, so the key of a `Display` is never on the stack: its choice of a
+/// written conformance or the generated one is a disjunction), so the rule is exact. A key that
+/// leaves with `false` holds under assumptions that are all `true`, so its answer is never wrong,
+/// and every caller then fails too. A key that leaves with `true` and a `low` equal to its own
+/// number is a head: it and every pending answer entered after it are final. A `true` with a lower
+/// `low` rests on a key that is still open, so it waits as a pending answer, which a later part
+/// query finds by its key: no key is expanded twice in one root query. When the root query returns,
+/// the pending answers that are left rest, through conjunctions, on a key that failed, so each is
+/// `false`.
 ///
 /// The fourth recorded exception to "A pass is linear in the program" (user, 2026-10-27; ruling
 /// F9): a query costs one step for each class or enum type that it forms (see
@@ -347,9 +349,11 @@ pub(crate) struct Decide {
 
 /// How `interface` holds for the concrete type `ty` with the arguments `args`: the rule of the
 /// checker (`Checker::conforms`) over the input's ids. A written `Eq` or `Ord` that covers `ty`
-/// decides, with its bounds, and when they fail the type has none; only `Display` falls back to
-/// the generated rule. A key of a class or an enum is decided once (`cx.memo`), and a key whose
-/// query is open or pending holds (`Open`).
+/// decides, with its bounds, and when they fail the type has none. A key of a class or an enum is
+/// decided once (`cx.memo`), and a key whose query is open or pending holds (`Open`).
+///
+/// `Display` is different (see [`display_holds`]): a bound on it always holds, and the choice of
+/// a written `to_string` is a root query of its own. Ask it only when no query is open.
 pub(crate) fn holds<P: Payloads + ?Sized>(
     cx: &mut Decide,
     src: &Source<'_, P>,
@@ -357,6 +361,9 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
     interface: InterfaceId,
     args: TypeArgs,
 ) -> Holds {
+    if interface == src.lang.display {
+        return display_holds(cx, src, ty, args);
+    }
     match ty.kind() {
         TypeKind::Class(..) | TypeKind::Enum(..) => holder_holds(cx, src, ty, interface, args),
         _ => match generated(src.lang, ty, interface) {
@@ -371,6 +378,43 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
             Generated::Fails | Generated::Payloads(..) => Holds::No,
         },
     }
+}
+
+/// How `Display` holds for `ty`: a written conformance whose bounds hold, or else the generated
+/// one, which every type but `unit` and `never` has. This is a choice between two ways, so a
+/// failed bound is no failure of the query: the key is not on the stack of `cx.open`, and the
+/// bounds of the record are root queries that end before the choice does. A key on that stack
+/// would turn a pending answer of a query below it to `true` when its own fallback holds.
+fn display_holds<P: Payloads + ?Sized>(
+    cx: &mut Decide,
+    src: &Source<'_, P>,
+    ty: Type,
+    args: TypeArgs,
+) -> Holds {
+    let display = src.lang.display;
+    let generated = if generated(src.lang, ty, display) == Generated::Holds {
+        Holds::Generated
+    } else {
+        Holds::No
+    };
+    if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
+        return generated;
+    }
+    let key = (ty, display, args);
+    if let Some(&answer) = cx.memo.get(&key) {
+        return answer;
+    }
+    debug_assert!(
+        cx.open.is_idle(),
+        "the choice of a Display should be made when no query is open"
+    );
+    #[cfg(test)]
+    HOLDS_STEPS.set(HOLDS_STEPS.get() + 1);
+    let written = find(src.conformances, display, ty, args)
+        .filter(|&(k, stands)| record_holds(cx, src, display, k, stands));
+    let answer = written.map_or(generated, |(k, stands)| Holds::Written(k, stands));
+    cx.memo.insert(key, answer);
+    answer
 }
 
 fn holder_holds<P: Payloads + ?Sized>(
@@ -417,12 +461,11 @@ fn expanded<P: Payloads + ?Sized>(
     args: TypeArgs,
 ) -> Holds {
     if let Some((k, stands)) = find(src.conformances, interface, ty, args) {
-        if record_holds(cx, src, interface, k, stands) {
-            return Holds::Written(k, stands);
-        }
-        if interface != src.lang.display {
-            return Holds::No;
-        }
+        return if record_holds(cx, src, interface, k, stands) {
+            Holds::Written(k, stands)
+        } else {
+            Holds::No
+        };
     }
     match generated(src.lang, ty, interface) {
         Generated::Holds => Holds::Generated,
@@ -461,7 +504,14 @@ fn record_holds<P: Payloads + ?Sized>(
                 .collect();
             let Some(args) = args else { continue };
             let args = TypeArgs::intern(&args);
-            if !holds(cx, src, stands.get()[i], bound.interface, args).is_yes() {
+            let part = stands.get()[i];
+            // A bound on `Display` holds for every type that can stand for a parameter.
+            let yes = if bound.interface == src.lang.display {
+                generated(src.lang, part, bound.interface) == Generated::Holds
+            } else {
+                holds(cx, src, part, bound.interface, args).is_yes()
+            };
+            if !yes {
                 return false;
             }
         }
@@ -2044,6 +2094,41 @@ mod tests {
             ));
             assert_eq!(ask(class_named(program, "Box", &[node])), Holds::Generated);
         });
+    }
+
+    /// The answer to a query does not depend on the queries before it. Here `Display` of `Wr<B>`
+    /// and `Eq` of `H` meet in `Eq` of `A`, which fails after `B` has left it as pending: a
+    /// written `Display` whose bound fails must not make that pending answer final.
+    #[test]
+    fn holds_should_give_one_answer_in_either_order_of_queries() {
+        let src = "class Node {}\nclass Box<T> {\n    v: T\n}\nclass Wr<T> {\n    v: T\n}\n\
+                   extend<T: Display> Box<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\n\
+                   extend<T: Eq> Wr<T>: Display {\n    fn to_string(self) -> string { \"w\" }\n}\n\
+                   enum H {\n    P(Box<Wr<A>>)\n}\n\
+                   enum A {\n    X(B)\n    Y(Node)\n}\n\
+                   enum B {\n    Z(A)\n    M(H)\n}\nfn main() {}";
+        // Each row asks the three keys in its own order, on a fresh state.
+        for order in [[0, 1, 2], [1, 0, 2], [2, 1, 0], [1, 2, 0]] {
+            deciding(src, |program, cx, source| {
+                let lang = program.lang;
+                let h = enum_named(program, "H", &[]);
+                let b = enum_named(program, "B", &[]);
+                let wr_b = class_named(program, "Wr", &[b]);
+                let mut answers = [Holds::No; 3];
+                for key in order {
+                    answers[key] = match key {
+                        0 => holds(cx, source, h, lang.eq, TypeArgs::NONE),
+                        1 => holds(cx, source, wr_b, lang.display, TypeArgs::NONE),
+                        _ => holds(cx, source, b, lang.eq, TypeArgs::NONE),
+                    };
+                }
+                // `A` lacks `Eq` through `Node`, so `B` does; `Wr<B>` then prints as `Display`
+                // generates it. `H` holds `Box<Wr<A>>`, whose `Eq` needs only a `Display`.
+                assert!(matches!(answers[0], Holds::Written(..) | Holds::Generated));
+                assert_eq!(answers[1], Holds::Generated, "order {order:?}");
+                assert_eq!(answers[2], Holds::No, "order {order:?}");
+            });
+        }
     }
 
     /// `parts` lists the element of an array, the contents of an optional and each payload type of

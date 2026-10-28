@@ -1,0 +1,45 @@
+// The choice of a written `to_string` does not depend on the order of the queries. The `Eq` of `H`
+// and the `Display` of `Wr<B>` meet in the `Eq` of `A`, which fails because `Node` has no `Eq`.
+// So `Wr<B>` has no written `to_string`, and prints as the compiler writes it, after the `==`.
+class Node {}
+
+class Box<T> {
+    _v: T
+}
+
+class Wr<T> {
+    _v: T
+}
+
+extend<T: Display> Box<T>: Eq {
+    fn eq(self, _other: Self) -> bool {
+        true
+    }
+}
+
+extend<T: Eq> Wr<T>: Display {
+    fn to_string(self) -> string {
+        "WRITTEN"
+    }
+}
+
+enum H {
+    P(Box<Wr<A>>)
+}
+
+enum A {
+    X(B)
+    Y(Node)
+}
+
+enum B {
+    Z(A)
+    M(H)
+}
+
+fn main() {
+    let h = H.P(Box(_v: Wr(_v: A.Y(Node()))))
+    print(h == h) // true
+    print(Wr(_v: B.M(h))) // Wr<B>
+    print(A.X(B.Z(A.Y(Node())))) // X(Z(Y(Node)))
+}
