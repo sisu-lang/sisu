@@ -1213,9 +1213,11 @@ impl Checker<'_> {
     /// shortcut: a chosen type that nests deeper than `PROBE_NESTING` is not followed, as a choice
     /// such as `type B = W<W<T>>` gives a larger type at each step and has no end; and a probe
     /// stops after `PROBE_BUDGET` associated types, as choices that each grow the type in their
-    /// own way make `2^n` types. What it does not follow reaches `mono`, which reports a loop or a
-    /// chain that is too long (E0030) for a type that an instance meets. Upgrade when a program
-    /// needs `check` to find those too.
+    /// own way make `2^n` types. The budget costs up to `PROBE_BUDGET` normalizations for each
+    /// bound, each with a walk of up to `CHOICE_DEPTH_LIMIT` steps, so a program with many bounds
+    /// over growing types takes time in proportion to them, with a large constant. What it does not
+    /// follow reaches `mono`, which reports a loop or a chain that is too long (E0030) for a type
+    /// that an instance meets. Upgrade when a program needs `check` to find those too.
     fn probe_associated(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) {
         self.probe_budget = PROBE_BUDGET;
         self.probe_further(ty, interface, args);

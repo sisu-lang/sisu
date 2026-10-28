@@ -79,6 +79,10 @@ pub(crate) fn normalize(conformances: &Conformances, ty: Type) -> Option<Type> {
 /// one more. A choice that grows its types never meets the same associated type again, so this
 /// limit, and not a loop, ends such a walk. It is the recursion limit of Rust, and it bounds the
 /// depth of the walk, and so its stack.
+///
+/// The count is of the choices in progress, not of the steps that a type needs in all: a type that
+/// the walk has done already (`memo`) ends a chain at once, so the same type can be within the
+/// limit after another type of the same walk and past it alone.
 pub(crate) const CHOICE_DEPTH_LIMIT: usize = 128;
 
 /// The first type found for each choice that a walk stopped at, with why.
@@ -94,8 +98,10 @@ pub(crate) enum Cause {
 }
 
 /// An associated type that the walk did not follow: the type, the place of the choice that it
-/// stopped at, and why. The place is the interface, the index of the conformance among those of
-/// the interface and the index of the associated type among the interface's.
+/// stopped at, and why. The type is the one the walk was asked for: for a loop, the type that met
+/// itself, and for a chain that is too deep, the first of the chain, which needs the steps. The
+/// place is the interface, the index of the conformance among those of the interface and the
+/// index of the associated type among the interface's: the choice where the walk stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Stuck {
     pub(crate) assoc: Type,
@@ -119,6 +125,7 @@ pub(crate) fn normalize_noting(
         conformances,
         memo: FxHashMap::default(),
         active: FxHashMap::default(),
+        start: None,
         stuck,
     }
     .walk(ty)
@@ -131,6 +138,8 @@ struct Normalizer<'a> {
     memo: FxHashMap<Type, Type>,
     /// The associated types whose choice the walk is in, each with the place of that choice.
     active: FxHashMap<Type, (InterfaceId, usize, usize)>,
+    /// The first of the associated types in `active`: the one that the chain in progress began at.
+    start: Option<Type>,
     stuck: &'a mut Vec<Stuck>,
 }
 
@@ -203,6 +212,8 @@ impl Normalizer<'_> {
         let k = k as usize;
         if chosen.has_assoc() && self.active.len() >= CHOICE_DEPTH_LIMIT {
             let cause = Cause::TooDeep;
+            // The chain began at `start`, and needs the steps; the choice here is where it stops.
+            let assoc = self.start.unwrap_or(assoc);
             self.stuck.push(Stuck {
                 assoc,
                 interface,
@@ -211,6 +222,9 @@ impl Normalizer<'_> {
                 cause,
             });
             return None;
+        }
+        if self.active.is_empty() {
+            self.start = Some(assoc);
         }
         self.active.insert(assoc, (interface, index, k));
         let done = self.walk(chosen);
@@ -1278,7 +1292,8 @@ mod tests {
 
     /// The `n`th associated type in progress that names one more is the first past the limit: a
     /// chain of `CHOICE_DEPTH_LIMIT` such choices ends, and one more does not. The walk gives no
-    /// type and says which choice it would not enter (the `Wrap` conformance, the second).
+    /// type, says which choice it would not enter (the `Wrap` conformance, the second), and names
+    /// the associated type that it began at, which needs the steps, and not the one it stopped at.
     #[test]
     fn normalize_should_stop_a_chain_of_more_choices_than_the_limit() {
         let (all, item, wrapped) = with_chains();
@@ -1289,11 +1304,10 @@ mod tests {
         let mut stuck = Vec::new();
         let past = item(wrapped(CHOICE_DEPTH_LIMIT + 1));
         assert_eq!(normalize_noting(&all, past, &mut stuck), None);
-        let at = item(wrapped(1));
         assert_eq!(
             stuck,
             vec![Stuck {
-                assoc: at,
+                assoc: past,
                 interface: InterfaceId(0),
                 index: 1,
                 k: 0,
@@ -1316,6 +1330,7 @@ mod tests {
             panic!("one stop should be noted: {stuck:?}");
         };
         assert_eq!((one.index, one.cause), (2, Cause::TooDeep));
+        assert_eq!(one.assoc, start, "the type that the walk began at");
         // Each step walks the associated type, its base and the base's argument.
         let visits = NORMALIZED.get();
         assert!(visits <= 4 * (CHOICE_DEPTH_LIMIT + 2), "{visits} visits");

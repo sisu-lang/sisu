@@ -1,4 +1,4 @@
-error[E0030]: the associated type `W<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<Outer<...>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>` needs more than 128 steps to find its type
+error[E0030]: the associated type `W<Outer<Outer<T>>>.B` needs more than 128 steps to find its type
   --> E0030-choice-steps.sisu:17:14
    |
 17 |     type B = T.B.B

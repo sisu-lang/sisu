@@ -1669,6 +1669,34 @@ fn build_should_report_e0030_for_a_loop_that_only_the_instance_meets_and_not_pan
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
 
+/// GIVEN a chain that ends but is 129 steps long: `W<T>` chooses the `B` of `T`, `Done` chooses
+/// itself, and `main` calls a generic function with `W<..W<Done>..>` of 129 levels
+/// WHEN it is built
+/// THEN it exits 1 with E0030 at 12:14, and the message names the type that the walk began at,
+/// which needs the steps, and the name is cut but still ends in the name `.B` of the type
+#[test]
+fn build_should_name_the_start_of_a_chain_that_needs_more_than_128_steps() {
+    let nested = format!("{}Done{}", "W<".repeat(129), ">".repeat(129));
+    let source = format!(
+        "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Done {{}}\nextend Done: Base {{\n    type B = Done\n}}\nextend Done: Holder {{}}\nclass W<T> {{}}\nextend<T: Holder> W<T>: Base {{\n    type B = T.B\n}}\nextend<T: Holder> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B] = []\n}}\nfn main() {{\n    get({nested}())\n}}\n"
+    );
+    let out = run_on("chain_of_129_steps", &source, &["build"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("chain_of_129_steps.sisu:12:14"), "{stderr}");
+    let first = stderr.lines().next().expect("an error line");
+    assert!(
+        first.starts_with("error[E0030]: the associated type `W<W<W<W<"),
+        "{first}"
+    );
+    // The type that the walk stopped at is `W<Done>.B`, and is not what the message names.
+    assert!(!first.contains("`W<Done>.B`"), "{first}");
+    assert!(
+        first.ends_with(".B` needs more than 128 steps to find its type"),
+        "{first}"
+    );
+}
+
 /// GIVEN a file with an error
 /// WHEN `sisu check` runs with and without `--format text`
 /// THEN both runs exit 1, print the same stderr, and it starts with the text error E0001

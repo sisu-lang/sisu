@@ -225,7 +225,8 @@ enum Step<'a> {
 }
 
 /// Writes `ty` to `out` as a program writes it, each class and enum named by `head`. Returns
-/// whether the text was cut: past `NAME_LIMIT` bytes, `...` and the closers still owed end it.
+/// whether the text was cut: past `NAME_LIMIT` bytes, `...` and the closers and the associated
+/// type names still owed end it.
 pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> &'n str) -> bool {
     write_steps(out, vec![Step::Type(ty)], head)
 }
@@ -284,9 +285,21 @@ fn write_steps<'n>(
             Step::Rest([]) => continue,
             Step::Type(_) | Step::Rest(_) | Step::Assoc(..) if out.len() >= NAME_LIMIT => {
                 out.push_str("...");
+                // A name that ends in `.Item` must keep it, or it names a class. A suffix that
+                // stands before every closer belongs to the chain that the cut stopped inside:
+                // that chain is cut too, and its rest is not written.
+                let mut inside = false;
                 for step in steps.iter().rev() {
-                    if let Step::Close(text) = step {
-                        out.push_str(text);
+                    match step {
+                        Step::Close(text) => {
+                            inside = true;
+                            out.push_str(text);
+                        }
+                        Step::Assoc(interface, k) if inside => {
+                            out.push('.');
+                            out.push_str(head(Head::Assoc(*interface, *k)));
+                        }
+                        _ => {}
                     }
                 }
                 return true;
@@ -635,6 +648,32 @@ mod tests {
         let (closed, cut) = text(nested(127));
         assert_eq!(closed.len(), 257, "{closed}");
         assert!(!cut && !closed.contains("..."), "{closed}");
+    }
+
+    /// A name that is cut inside the type before an associated type's name keeps that name: the
+    /// text names an associated type, and not a class. The names are all `P` here. The suffixes of
+    /// a chain that the cut stopped inside are not written: the rest of that chain is cut too.
+    #[test]
+    fn type_text_should_keep_the_associated_type_name_when_the_base_is_cut() {
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        let (cut_inside, cut) = text(item(doubled(Type::I64, 40)));
+        assert!(cut && cut_inside.contains("..."), "{cut_inside}");
+        assert!(cut_inside.ends_with(">.P"), "{cut_inside}");
+        assert_eq!(
+            count(&cut_inside, '<'),
+            count(&cut_inside, '>'),
+            "{cut_inside}"
+        );
+        // The name after the closers of an array and an optional, outermost last.
+        let (wrapped, _) = text(Type::array(item(item(Type::optional(doubled(
+            Type::I64,
+            40,
+        ))))));
+        assert!(wrapped.ends_with("?.P.P]"), "{wrapped}");
+        // Cut while it writes a chain, nothing but the cut follows.
+        let chain = (0..200).fold(item(Type::I64), |t, _| item(t));
+        let (chain, cut) = text(chain);
+        assert!(cut && chain.ends_with("..."), "{chain}");
     }
 
     /// A list of 100,000 arguments, cut after a few dozen of them.
