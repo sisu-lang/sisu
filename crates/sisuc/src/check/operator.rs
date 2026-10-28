@@ -31,7 +31,7 @@ impl Checker<'_> {
         let before = self.diagnostics.len();
         let checked = self.value(operand, expected);
         if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
-            self.param_lacks(operand.span, ty, "-", None);
+            self.param_lacks(operand.span, ty, "-");
             return Err(Poisoned::error());
         }
         if type_of(&checked) == Some(Type::U8) {
@@ -367,7 +367,7 @@ impl Checker<'_> {
                     // checked; the help comes below, once they are known to be one type.
                     helped = (!arithmetic).then_some((self.diagnostics.len(), e.span, param, i));
                     if arithmetic {
-                        self.param_lacks(e.span, param, op(i), None);
+                        self.param_lacks(e.span, param, op(i));
                     } else {
                         let ord = self.lang.ord;
                         let d = self.missing_operator(e.span, param, &op(i), ord, false, false);
