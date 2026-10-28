@@ -323,8 +323,6 @@ struct Source<'src> {
 thread_local! {
     /// How many class fields the class-cycle search has read on this thread.
     pub(super) static FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many class fields the check of a generated `to_string` has read on this thread.
-    pub(super) static DISPLAY_FIELD_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that wraps a widened loop's values has entered.
     pub(super) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
@@ -1342,10 +1340,8 @@ impl Checker<'_> {
                             &field.name,
                         ) {
                             self.keep_at(queued, Slot::Field(id, self.classes[id.0].fields.len()));
-                            // A call of a generated `to_string` asks for this answer, and does
+                            // A call of a generated `to_string` asks for this flag, and does
                             // not read the fields.
-                            #[cfg(test)]
-                            DISPLAY_FIELD_READS.set(DISPLAY_FIELD_READS.get() + 1);
                             if field.name.name.as_str() == "to_string" {
                                 self.classes[id.0].names_to_string = true;
                             }

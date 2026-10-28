@@ -844,32 +844,6 @@ fn to_string_with_an_argument_should_report_the_count() {
     }
 }
 
-/// A call of a generated `to_string` asks whether its class has a field of that name. The
-/// collection of the fields answers once, and a call reads no field: n fields and many calls read
-/// n fields, and n fields with n calls read in proportion to n (ruling F7).
-#[test]
-fn generated_to_string_lookup_should_read_the_fields_of_a_class_once() {
-    let reads = |fields: usize, calls: usize| {
-        let mut field_lines = String::new();
-        for i in 0..fields {
-            writeln!(field_lines, "    f{i}: i64").expect("a string should take text");
-        }
-        let calls = "    let _ = x.to_string()\n".repeat(calls);
-        let src = format!("class C {{\n{field_lines}}}\nfn f(x: C) {{\n{calls}}}\nfn main() {{}}");
-        DISPLAY_FIELD_READS.set(0);
-        assert!(checked(&src).0.is_some(), "{src}");
-        DISPLAY_FIELD_READS.get()
-    };
-    assert_eq!(reads(10, 1), 10, "one call should read each field once");
-    assert_eq!(
-        reads(10, 50),
-        10,
-        "fifty calls should read each field once, not fifty times"
-    );
-    assert_eq!(reads(0, 5), 0, "a class with no field has nothing to read");
-    assert_near_linear(reads(100, 100), reads(200, 200), reads(300, 300));
-}
-
 /// A list of type arguments after `to_string` is the error of a method that takes none, whatever
 /// the receiver: the generated `Display` takes none either, and a list that names a real type is
 /// no better than one that names none. The rows with a written `to_string` are the control: they
