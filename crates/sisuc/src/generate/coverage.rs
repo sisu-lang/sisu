@@ -6406,6 +6406,7 @@ fn generated_programs_should_name_each_language_interface() {
         ("fn lang_eq<T: Eq>", false),
         ("fn lang_ord<T: Ord>", false),
         ("fn lang_display<T: Display>", false),
+        ("fn lang_both<T: Display & Eq>", false),
         ("fn lang_same<T: AnyObject>", false),
         ("fn lang_pinned<T: Pinned>", false),
         ("lang_eq(N0.A)", false),

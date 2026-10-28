@@ -42,6 +42,9 @@ benchmarks:
   - name: interfaces
     id: interfaces
     exec: target/codspeed/interfaces/main
+  - name: show
+    id: show
+    exec: target/codspeed/show/main
   - name: build_hello
     id: build_hello
     exec: target/release/sisu build -O2 bench/hello/main.sisu -o target/codspeed/build_hello/main

@@ -649,6 +649,18 @@ fn check_should_exit_0_with_no_output_when_the_file_is_valid() {
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
 }
 
+/// GIVEN `tests/run/generics.sisu`, the generics demo
+/// WHEN `sisu check` runs on it
+/// THEN it exits 0 and stderr is empty
+///
+/// A run case accepts warnings, so this test shows that the demo builds with none.
+#[test]
+fn check_should_print_nothing_for_the_generics_demo() {
+    let out = check("check_generics_demo", include_str!("run/generics.sisu"));
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
 /// GIVEN a file with an unused `let mut` and an unknown name
 /// WHEN `sisu check` runs on it
 /// THEN it exits 1 and the warning comes before the error on stderr

@@ -43,7 +43,8 @@ enums with `match`.
 - classes with fields and methods, whose objects are freed by reference
   counting when the last reference goes away; a field is bare, set once by
   the constructor, or `mut`
-- `==` that compares objects field by field, and `is` that tests identity
+- `is` that tests identity; a class has `==` only when it lists `Eq` and writes
+  the method (`E0159`)
 - optionals such as `i64?` and `Node?`, with `None`, `?.`, `??`, `if let` and
   `while let`; `T?` is short for the prelude enum `Option<T>`, with the bare
   names `Some` and `None`; an optional can hold an optional, such as `i64??`,
@@ -61,9 +62,10 @@ enums with `match`.
   is checked once, at its definition, and compiled once for each list of type
   arguments the program reaches. A type parameter takes bounds that name
   interfaces (`T: Shape & Named`), and a value of one calls the methods of
-  its bounds, but no interface gives an operator yet, so it has none
-  (`E0139`); `unit` and `never` are not type arguments (`E0138`); a use that
-  would need copies without end is an error (`E0140`)
+  its bounds, and the operators that `Eq` and `Ord` give it, but a `==` or
+  `<` on a `T` with no such bound is an error (`E0139`); `unit` and `never`
+  are not type arguments (`E0138`); a use that would need copies without end
+  is an error (`E0140`)
 - interfaces: `interface Shape { fn area(self) -> f64 }` lists method
   signatures with no body, associated types (`type Item`), type parameters
   and inherited interfaces (`interface Solid: Named`), and `Self` is the
@@ -77,9 +79,18 @@ enums with `match`.
   replaces it with a call of the conformance's method. A type that does not
   meet its conformance, a conformance twice, an interface used as a type and a
   call that more than one conformance answers are errors (`E0146` to
-  `E0157`). There are no interface values (`any`), and no `Display`, `Eq` or
-  `Ord` yet
+  `E0157`). There are no interface values (`any`) yet
   ([ADR 0023](adr/0023-generics-are-monomorphized-and-checked-at-the-definition.md))
+- the prelude's interfaces `Display`, `Eq`, `Ord` and `AnyObject`. `print`,
+  interpolation and `to_string()` use `Display`, and every type that can be a
+  type argument has one: a class prints its name, or the text of its own
+  `to_string`. `==` and `!=` use `Eq`, and `<`, `<=`, `>` and `>=` use `Ord`.
+  The compiler writes the conformances of numbers, strings, arrays,
+  optionals and enums, and a program writes those of a class. A type that has
+  no `==` or `<` is an error (`E0159`), and only a class conforms to
+  `AnyObject` (`E0158`); `a is b` on a `T: AnyObject` tests identity. Printing
+  an optional at the top level warns (`W0015`), and `.to_string()` does not
+  ([ADR 0036](adr/0036-every-type-prints-and-printing-an-optional-warns.md))
 - `match` on an enum, `i64`, `u8`, `bool`, `char` or `string`, as an
   expression or a statement, with one arm per line or a `;` between arms; a
   pattern is a variant, bare or through its enum (`Num(n)`, `Expr.Num(n)`),
@@ -633,6 +644,8 @@ The first candidates:
   dispatch are measured together, as a real tool uses them.
 - Done: `interfaces`, a generic function called through a bound at two
   conforming classes, and an associated type read through a bound.
+- Done: `show`, which prints an enum tree and an array of enum values, and
+  compares arrays of a class through a written `Eq`.
 - 8: a generic container used at two types.
 - 9: an iterator chain next to the same loop written by hand, with both
   printing the same result, so the cost of the chain shows.
@@ -715,7 +728,7 @@ settle before work starts.
 | Milestone 7: enums and `match` | Done | 8, 12 |
 | Milestone 8: generics and interfaces | 4, 7 | 12, iterator methods (9), generated conformances on request (10), the standard library (11) |
 | Milestone 12: `Result` and `?` | 7, 8 | File I/O, the standard library (11), concurrency |
-| `weak` fields (ADR 0008) | None | Closures that capture their owner |
+| `weak` fields (ADR 0008). The rule covers a `T?` with `T: AnyObject` and an `(any I)?` with a class-only `I`, so the `weak` examples for `any` in milestone 8 wait for it | None | Closures that capture their owner |
 | Milestone 9: closures and function types | `weak` fields. Decisions: closure syntax, weak captures, argument labels, `return` inside a closure | Iterator methods (9), concurrency |
 | Milestone 9: lazy iterator methods | 8, closures | The standard library (11) |
 | Milestone 10: named arguments, default parameters | Decision: argument labels | Records (10) |
