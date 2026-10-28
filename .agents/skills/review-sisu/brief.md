@@ -7,8 +7,9 @@ probe only inside the scratch directory your launch names.
 
 # Read first
 
-- The target. For a diff, read the code first, without the blessed fixture
-  output: `git -C <repository root> diff <base>..<head> -- . ':!*.err' ':!*.json'`.
+- The target.
+- For a diff, read the code first, without the blessed fixture output:
+  `git -C <repository root> diff <base>..<head> -- . ':!*.err' ':!*.json'`.
   Then read the `.err` and `.json` files of the codes it changes.
 - <the other documents to read with the target, at their paths: for a plan, its spec; for a diff, its spec and plan when there are any. Delete this line when there are none.>
 - `CODING_STANDARDS.md`. Its rules apply to every diff. For a spec or a
@@ -16,12 +17,14 @@ probe only inside the scratch directory your launch names.
 - `docs/adr/0006-values-correctness-simplicity-readability-performance.md`,
   and every other ADR in `docs/adr/` that the target touches.
 - `GLOSSARY.md`, and "What works today" in `docs/roadmap.md`.
-- `<test-audit SKILL.md path>`. Judge the tests, or the plan's tests, with
-  its authoring gate, value bar and coverage gaps.
+- `<test-audit SKILL.md path>`. Apply its authoring gate, junk patterns
+  and value bar to new and changed tests, or to the plan's tests. Where it
+  disagrees with "Tests" in `CODING_STANDARDS.md`, the standards win: for
+  example, a `#[cfg(test)]` step counter is an allowed test-only seam.
 - `<codebase-design SKILL.md path>`. Use its vocabulary (deep modules,
   interfaces, seams) to judge where code goes and what each module hides.
-- `<rust-best-practices SKILL.md path>`. Judge the Rust idiom with it, as
-  "Reviewing" in `CODING_STANDARDS.md` says.
+- `<rust-best-practices SKILL.md path>`. For a diff, judge the Rust idiom
+  with it, as "Reviewing" in `CODING_STANDARDS.md` says.
 
 # Values
 
@@ -36,8 +39,7 @@ languages do, not by what Sisu did before.
    LLVM rejects; a checker that accepts a wrong program or rejects a right
    one. Try the edges: empty, one, nested, recursive, overflow, NaN,
    non-ASCII text, evaluation order. Check how the change composes with
-   the features that exist: optionals, classes, methods, arrays, strings,
-   `f64`, constants, loops.
+   each feature that "What works today" in `docs/roadmap.md` lists.
 2. **Memory safety.** Reference counts balance on every path: early
    return, `break`, `continue`, a panic, a loop, copy-on-write. No leak,
    double free or use after free.
@@ -55,9 +57,10 @@ languages do, not by what Sisu did before.
    or worklist is linear in the program: build the worst input you can
    find, and give its cost. Of the generated code: the IR after `-O2` does no avoidable work. A claim that
    something is faster, or costs nothing, needs callgrind counts.
-6. **Tests.** Judge them with `test-audit`. Unit tests and end-to-end
-   cases (`crates/sisuc/tests/run`, and the fixture of each diagnostic
-   code) both prove the change. Each test fails when the contract its
+6. **Tests.** Apply "Tests" in `CODING_STANDARDS.md` and `test-audit`.
+   A unit test and an end-to-end case (`crates/sisuc/tests/run`, and the
+   fixture of each diagnostic code) can prove different risks: ask for
+   each one that the change needs. Each test fails when the contract its
    name states breaks. Check these too: a guard at the layer of its
    regression; an input sized to its property; a keeper, or a reason,
    for each deleted test; un-ticked mutations for counter proofs; one
@@ -127,6 +130,9 @@ vague or generic error, or with none.
 - **Diagnostic text.** Each message, label and help text a task names
   matches the spec word for word.
 - **Claims.** As in "Check, for every kind", item 8.
+- **Open design.** A choice that the spec does not make is a finding
+  against the spec, not a gap for the plan to fill. Name the choice and
+  its options, so that the user decides it before the plan grows.
 - **Tests.** Each task names its unit tests and end-to-end cases, and they
   pass the `test-audit` value bar.
 - **Scenarios.** Each spec scenario is in exactly one task, with the test
@@ -142,8 +148,12 @@ vague or generic error, or with none.
   in `CODING_STANDARDS.md` says. Keep two export directories in your
   scratch directory, `base` and `head`; for another commit, empty one and
   export into it again. Build both with one
-  `CARGO_TARGET_DIR=<scratch directory>/target`. Each new directory costs
-  a full build, about 7 GB.
+  `CARGO_TARGET_DIR=<scratch directory>/target`, and copy `sisu` out of
+  it to `base-sisu` after the base build, because the head build
+  overwrites it. Each new directory costs a full build, about 7 GB.
+- For each new regression test, revert the fix, or apply the mutation
+  that the test names, in your copy, and run the test. A test that still
+  passes does not prove its name.
 - To compare diagnostics before and after a change, build the base and
   the head, write probe programs into one directory, and run
   `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU DIR`. It prints
@@ -153,9 +163,32 @@ vague or generic error, or with none.
   `python3 scripts/golden_diff.py <base>..<head> OLD NEW [OLD NEW]...`
   and sample a few files rather than read them all. It fails on any
   changed line that is not the old line with those substitutions.
-- When "Focus" names a mutation-test log, check that its last line names
-  the target's head commit, then check the note on each surviving mutant.
-  Otherwise, name the riskiest changed path that no test runs.
+- When "Focus" names a mutation-test log or a coverage result, check the
+  note on each surviving mutant and on each uncovered region in changed
+  code. Commits that Focus lists after the log were not mutated: check
+  their tests yourself. A surviving mutant is a finding only when you
+  name the contract it breaks; a changed seed-to-program mapping alone
+  breaks none. Without a log or a result, name the riskiest changed path
+  that no test runs.
+
+# Re-review
+
+This is round <round>. The target is what the last fix round changed.
+The earlier reports are <prior reports>, and the caller's rulings on
+them are in <rulings>. The first brief, <first brief>, names the whole
+work under review.
+
+- The previous version: <previous version>. Compare it with the target.
+- For each accepted finding, say fixed, partly fixed or not fixed. Run
+  its repro on the target.
+- For each fix, try the neighbouring cases: the same rule in each
+  position the language allows it, and each path the fix changed. A
+  regression that a fix adds blocks.
+- Compare with the base of the whole work, not with the base of this
+  round. A defect that the work added blocks, also when an earlier fix
+  round added it.
+- Report a defect in code that this round did not change under
+  "Outside this round", after "Unverified", not as a finding.
 
 # Focus
 
@@ -182,7 +215,9 @@ Your final reply is the report. It has these parts, in this order:
    unsound IR, a wrong diagnostic code or span, a cascade, diagnostic
    wording that is wrong, misleading, vague or full of jargon, semantics
    the target leaves undefined, a task no reviewer can check, or a broken
-   rule of `CODING_STANDARDS.md`. A design clearly more complex than the
+   rule of `CODING_STANDARDS.md` that it does not itself call a nit. A
+   test over its time budget, text over the "Writing" limits, and a
+   departure from `rust-best-practices` are nits. A design clearly more complex than the
    job needs is blocking when you can name the simpler design. Everything
    else is a nit, and a nit names the input whose output, diagnostic or
    cost changes, or says "comment only".
