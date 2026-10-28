@@ -6572,6 +6572,11 @@ fn the_walk_should_mark_a_function_that_prints_and_compares_one_parameter() {
             "fn f<T: Display, U: Eq>(x: T, y: U) { print(x)\n    print(y == y) }\nfn g() { f(1, 2) }",
             false,
         ),
+        // The same `T` in two functions: each function starts with nothing printed or compared.
+        (
+            "fn f<T: Display>(x: T) { print(x) }\nfn g<T: Eq>(x: T) { print(x == x) }",
+            false,
+        ),
     ] {
         let mut walk = Walk::default();
         walk.program(&format!("{function}\nfn main() {{ print(1) }}"));

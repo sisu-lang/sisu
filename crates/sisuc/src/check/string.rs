@@ -14,6 +14,7 @@ use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, MismatchFix, MismatchSource, Operand,
     PrecisionHelp, invisible,
 };
+use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
@@ -125,7 +126,7 @@ impl Checker<'_> {
                     Some(PrecisionHelp::Default {
                         // `??` binds looser than a call, a field or an index; any other part
                         // needs parentheses before it.
-                        part: if postfix(part) {
+                        part: if postfix(part) || parenthesized(written) {
                             written.to_string()
                         } else {
                             format!("({written})")
@@ -555,6 +556,28 @@ fn and(lhs: tir::Expr, rhs: tir::Expr, span: Span) -> tir::Expr {
         ty: Type::BOOL,
         span,
     }
+}
+
+/// Whether `written` is one expression in a pair of parentheses: its first `(` closes at its last
+/// token, so `(a ?? b)` is and `(a) ?? (b)` is not.
+fn parenthesized(written: &str) -> bool {
+    lex(written).is_ok_and(|lexed| {
+        let body: Vec<_> = (lexed.tokens.iter().map(|token| &token.kind))
+            .filter(|kind| !matches!(kind, TokenKind::Eof | TokenKind::Newline))
+            .collect();
+        let mut depth = 0_usize;
+        // No parenthesis closes back to depth 0 before the last token.
+        let open = body.iter().take(body.len().saturating_sub(1)).all(|kind| {
+            match kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            depth > 0
+        });
+        open && body.first() == Some(&&TokenKind::LParen)
+            && body.last() == Some(&&TokenKind::RParen)
+    })
 }
 
 #[cfg(test)]

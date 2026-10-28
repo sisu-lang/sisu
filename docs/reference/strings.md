@@ -171,7 +171,7 @@ fn main() {
 
 Interpolation does not convert a value: it writes the text of the type that the value has. To write an optional without the warning [W0015](../diagnostics/W0015.md), use `??` or `if let`, or call `to_string()` to write `None` on purpose.
 
-The program calculates each expression once, from left to right, before it builds the text. This is so also when the parts have format specs.
+The program calculates each expression once, from left to right, before it builds the text. This is so also when the parts have format specs. The program calls a written `to_string` when it builds the text, after it calculates every part.
 
 ```sisu
 fn part(n: i64) -> i64 {

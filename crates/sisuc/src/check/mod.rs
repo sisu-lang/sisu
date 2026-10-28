@@ -1340,8 +1340,7 @@ impl Checker<'_> {
                             &field.name,
                         ) {
                             self.keep_at(queued, Slot::Field(id, self.classes[id.0].fields.len()));
-                            // A call of a generated `to_string` asks for this flag, and does
-                            // not read the fields.
+                            // `names_to_string_field` reads this flag, not the fields.
                             if field.name.name.as_str() == "to_string" {
                                 self.classes[id.0].names_to_string = true;
                             }

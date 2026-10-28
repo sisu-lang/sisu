@@ -332,8 +332,8 @@ impl Checker<'_> {
         // by the second operand, if that is a `string`.
         let mut unlabelled = None;
         let mut lacks = false;
-        // The type under every `?` of the first operand that has one, whether each later one has
-        // it too, and where the report of a lacking `Ord` stands.
+        // The type of the first operand that has one, with one `?` removed. Whether each later
+        // operand has it too. Where the report of a lacking `Ord` stands.
         let (mut shared, mut one_type) = (None, true);
         let mut helped = None;
         for (i, e) in operands.iter().enumerate() {

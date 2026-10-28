@@ -21,4 +21,7 @@ fn main() {
     print("{q?.price:.2}")
     print("{a ?? price:.2}")
     print("{if c { a } else { price }:4.1}")
+    print("{(a ?? price):.2}")
+    print("{(a) ?? (price):.2}")
+    print("{(a ?? (price)):.2}")
 }
