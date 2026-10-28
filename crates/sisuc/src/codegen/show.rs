@@ -245,16 +245,6 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// Writes the value of type `ty` at `place`: an enum by its helper with no copy, any other
-    /// type loaded.
-    fn show_at(&self, sink: PointerValue<'ctx>, ty: Type, place: PointerValue<'ctx>, quoted: bool) {
-        if let TypeKind::Enum(..) = ty.kind() {
-            self.call(self.helper(Helper::Show, ty), &[sink.into(), place.into()]);
-        } else {
-            self.show_value(sink, ty, self.load_value(ty, place), quoted);
-        }
-    }
-
     /// Writes an optional by the Some rule: it unwraps every `Some`; at a value it writes the
     /// value's text, and at a `None` under `k` `Some`s it writes `Some(` `k` times, `None` and
     /// `)` `k` times. So every state of `i64??` writes differently, and `Some(` wraps only `None`.
@@ -436,12 +426,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) {
         let ty = self.program.enums[id.0].variants[variant].fields[field].ty;
         if let TypeKind::Enum(..) = ty.kind() {
-            self.show_at(
-                sink,
-                ty,
-                self.payload_place(value, id, variant, field),
-                true,
-            );
+            let place = self.payload_place(value, id, variant, field);
+            self.call(self.helper(Helper::Show, ty), &[sink.into(), place.into()]);
         } else {
             self.show_value(
                 sink,

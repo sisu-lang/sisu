@@ -92,6 +92,73 @@ enum Pairs {
     Pair(Two<Pairs>)
 }
 
+// A written `to_string` on an enum, on a member of a component with boxes, and on a class that
+// keeps its receiver, so that the method owns `self`.
+enum Level {
+    Low
+    High
+}
+
+extend Level: Display {
+    fn to_string(self) -> string {
+        "level"
+    }
+}
+
+enum Ring {
+    End
+    Next(Ring)
+}
+
+extend Ring: Display {
+    fn to_string(self) -> string {
+        "ring"
+    }
+}
+
+enum PA {
+    ToB(PB)
+}
+
+enum PB {
+    ToA(PA)
+    End
+}
+
+extend PB: Display {
+    fn to_string(self) -> string {
+        "pb"
+    }
+}
+
+class Keeper {
+    _n: i64
+}
+
+extend Keeper: Display {
+    fn to_string(self) -> string {
+        let kept = [self]
+        "kept{kept.len()}"
+    }
+}
+
+// Links that are not the last field: two of them wait at once, with labels; and boxed links
+// under one and two `?`.
+enum Tri {
+    Leaf
+    Node(left: Tri, mid: Tri, right: Tri)
+}
+
+enum Maybe {
+    End
+    Next(Maybe?)
+}
+
+enum Maybe2 {
+    End
+    Next(Maybe2??)
+}
+
 fn both<T>(x: T) {
     print(x)
     eprint(x)
@@ -192,4 +259,23 @@ fn main() {
     both(Wrap.Nothing(Tree.Leaf))
     both(Pairs.Pair(Two.Both(Pairs.Lit(1), None)))
     both(Pairs.Pair(Two.Both(Pairs.Lit(1), Pairs.Lit(2))))
+
+    // Written `to_string`s on an enum, in a component and in a class that keeps `self`.
+    both(Level.Low)
+    both([Level.High])
+    both(Ring.Next(Ring.End))
+    both(PA.ToB(PB.End))
+    both(PA.ToB(PB.ToA(PA.ToB(PB.End))))
+    both([Keeper(_n: 1)])
+
+    // Links that wait, with labels, and boxed links under `?`.
+    both(Tri.Node(left: Tri.Node(left: Tri.Leaf, mid: Tri.Leaf, right: Tri.Leaf), mid: Tri.Leaf, right: Tri.Node(left: Tri.Leaf, mid: Tri.Leaf, right: Tri.Leaf)))
+    both(Maybe.Next(None))
+    both(Maybe.Next(Maybe.End))
+    both(Maybe.Next(Maybe.Next(Maybe.End)))
+    both(Maybe2.Next(None))
+    let middle2: Maybe2? = None
+    both(Maybe2.Next(middle2))
+    let inner2: Maybe2? = Maybe2.End
+    both(Maybe2.Next(inner2))
 }

@@ -728,6 +728,8 @@ mod tests {
 
     /// The variable that makes `stdout_child_should_write_a_line_in_pieces_when_asked` run.
     const CASE_VAR: &str = "SISU_RUNTIME_SHOW_CASE";
+    /// The variable that makes `full_child_should_fail_a_write_when_asked` run, and its case.
+    const FULL_VAR: &str = "SISU_RUNTIME_SHOW_FULL";
 
     /// The child of `stdout_sink_should_write_pieces_where_the_line_has_got_to`: a line written
     /// in pieces through a sink over standard output, with a `print` and a piece as long as the
@@ -773,5 +775,70 @@ mod tests {
         want.extend_from_slice(b"y]\n");
         // The child is a test binary, so libtest's own lines surround the output.
         assert!(out.stdout.windows(want.len()).any(|w| w == want));
+    }
+
+    #[expect(unsafe_code, reason = "declares libc `dup2`")]
+    unsafe extern "C" {
+        fn dup2(old: i32, new: i32) -> i32;
+    }
+
+    /// The child of `stdout_sink_should_panic_when_standard_output_is_full`: standard output is
+    /// `/dev/full`, and the case in the variable writes to it through a sink. It does nothing
+    /// unless the variable is set.
+    #[expect(
+        unsafe_code,
+        reason = "the test calls the runtime's C ABI and libc `dup2`"
+    )]
+    #[test]
+    fn full_child_should_fail_a_write_when_asked() {
+        let Ok(case) = std::env::var(FULL_VAR) else {
+            return;
+        };
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full should exist on Linux");
+        // SAFETY: `full` is an open descriptor, and 1 is a valid target.
+        let moved = unsafe { dup2(std::os::fd::AsRawFd::as_raw_fd(&full), 1) };
+        assert_eq!(moved, 1, "dup2 should succeed");
+        let mut slot = MaybeUninit::<Sink>::uninit();
+        let sink = slot.as_mut_ptr();
+        // SAFETY: `sink` is writable for one sink.
+        unsafe { sisu_show_stdout(sink) };
+        if case == "piece" {
+            // A piece as long as the buffer goes straight out.
+            raw(sink, &"x".repeat(crate::RESERVED));
+        } else {
+            // Pieces that fill the buffer past its capacity, and the line end writes it out.
+            raw(sink, &"x".repeat(crate::BUFFER_CAPACITY + 1));
+            // SAFETY: the sink is started.
+            unsafe { sisu_show_line_end(sink) };
+        }
+    }
+
+    /// A failed write to standard output through a sink is a Sisu panic, as a failed `print` is:
+    /// exit code 101 and the message on standard error. The write fails in a piece or at the end
+    /// of the line.
+    #[test]
+    #[cfg_attr(miri, ignore = "spawns a child process, which Miri cannot")]
+    fn stdout_sink_should_panic_when_standard_output_is_full() {
+        for case in ["piece", "line"] {
+            let exe = std::env::current_exe().expect("the test binary should have a path");
+            let out = std::process::Command::new(exe)
+                .args([
+                    "--exact",
+                    "show::tests::full_child_should_fail_a_write_when_asked",
+                    "--nocapture",
+                ])
+                .env(FULL_VAR, case)
+                .output()
+                .expect("the child test should start");
+            assert_eq!(out.status.code(), Some(101), "{case}: {:?}", out.status);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                stderr.contains("standard output could not be written"),
+                "{case}: {stderr}"
+            );
+        }
     }
 }
