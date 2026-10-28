@@ -1395,7 +1395,10 @@ fn valgrind_runs_should_refuse_a_mimalloc_build_and_a_stripped_build() {
 ///
 /// The `tests/run` harness uses it on its `-O2` build on mimalloc.
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "macOS symbol names have a leading `_`, so the check runs on Linux only"
+)]
 fn require_mimalloc_should_accept_a_default_build_and_refuse_a_system_build() {
     const PROGRAM: &str = "fn main() {\n    print(1)\n}\n";
     let default = compile_tmp("require_default", PROGRAM, true);

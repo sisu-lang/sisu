@@ -115,12 +115,12 @@ file.
 
 A `run/` or `run-fail/` case that reads standard input has a `<name>.in` beside
 it, which every run of the case gets on its standard input: plain, `-O2`, both
-Valgrind runs, `--rc-checks` and, on Linux, `-O2` on mimalloc. Without the file, standard input is empty.
-Write the file with `printf` or a script, byte for byte: the formatting hooks
-leave the `.in`, `.out` and `.err` files of these directories alone, so a
-`\r\n`, a lone `\r` or a last line without a newline stays as written. Input
-that is large or generated, such as a line longer than the runtime's input
-buffer, goes in a `programs.rs` test instead.
+Valgrind runs, `--rc-checks` and, on Linux, `-O2` on mimalloc. Without the
+file, standard input is empty. Write the file with `printf` or a script, byte
+for byte: the formatting hooks leave the `.in`, `.out` and `.err` files of
+these directories alone, so a `\r\n`, a lone `\r` or a last line without a
+newline stays as written. Input that is large or generated, such as a line
+longer than the runtime's input buffer, goes in a `programs.rs` test instead.
 
 A `run/` or `run-fail/` case that takes arguments gives them in a marker line,
 `// args: <arg> <arg> ...`, at the start of a line. Every run of the case gets
@@ -131,10 +131,11 @@ argument that holds a space, or that is not valid UTF-8, goes in a
 `programs.rs` test instead, which can pass any bytes.
 
 A `run/` case that writes to standard error on purpose, with `eprint`, has a
-`<name>.err` beside it. The plain, `-O2`, `--rc-checks` and, on Linux, `-O2` on mimalloc runs must all
-write exactly that to stderr. Without the file, stderr must stay empty. The Valgrind
-runs' stderr holds Valgrind's own log, so they check only stdout and the exit
-code. To add the file to a case, `touch` it like any expected file.
+`<name>.err` beside it. The plain, `-O2`, `--rc-checks` and, on Linux, `-O2` on
+mimalloc runs must all write exactly that to stderr. Without the file, stderr
+must stay empty. The Valgrind runs' stderr holds Valgrind's own log, so they
+check only stdout and the exit code. To add the file to a case, `touch` it
+like any expected file.
 
 The runs go in order: plain and `-O2` without Valgrind, then, on Linux, both
 under Valgrind, then `--rc-checks`, then, on Linux, `-O2` on mimalloc, and the

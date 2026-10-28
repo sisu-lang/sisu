@@ -175,9 +175,8 @@ fn refuse_mimalloc(exe: &Path) {
     );
 }
 
-/// Panics unless `exe` links mimalloc: a build with no `--allocator` flag must. Linux only: the
-/// symbol names differ on macOS, where `refuse_mimalloc` has no use.
-#[cfg(target_os = "linux")]
+/// Panics unless `exe` links mimalloc: a build with no `--allocator` flag must. Call it on Linux
+/// only: a macOS symbol name has a leading `_`, so `links_mimalloc` finds none there.
 pub(crate) fn require_mimalloc(exe: &Path) {
     assert!(
         links_mimalloc(&defined_symbols(exe)),
@@ -235,14 +234,11 @@ pub(crate) fn run(path: &Path, bless: bool) {
     let out_dir = case_dir(path);
     let [o0, o2, rc] = build_into(path, &out_dir, [VALGRIND_O0, VALGRIND_O2, RC_CHECKS]);
     // On macOS, `o2` is on mimalloc already, so there is no further build.
-    #[cfg(target_os = "linux")]
-    let mimalloc = {
+    let mimalloc = cfg!(target_os = "linux").then(|| {
         let [exe] = build_into(path, &out_dir, [MIMALLOC_O2]);
         require_mimalloc(&exe);
-        Some(exe)
-    };
-    #[cfg(not(target_os = "linux"))]
-    let mimalloc: Option<PathBuf> = None;
+        exe
+    });
     assert!(
         fs::read(&o0).expect("reads the plain build")
             != fs::read(&o2).expect("reads the -O2 build"),
@@ -530,7 +526,6 @@ const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
 /// `-O2` on the default allocator, mimalloc, for `run` on Linux, where `VALGRIND_O2` is a System
 /// build: without it, no Linux case runs `-O2` code on mimalloc, the allocator that users get.
 /// On macOS `VALGRIND_O2` is this build already.
-#[cfg(target_os = "linux")]
 const MIMALLOC_O2: Build = ("O2-mimalloc", &["-O2"]);
 /// `O0` and `O2` for `run`, whose plain builds also run under Valgrind.
 const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
