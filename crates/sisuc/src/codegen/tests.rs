@@ -774,9 +774,16 @@ fn comparing_an_optional_class_with_none_should_test_the_pointer() {
         let body = function_body(&ir, &format!("define internal i1 @sisu.{name}(ptr"));
         let test = body
             .lines()
-            .any(|line| line.contains("icmp ne ptr") && line.ends_with(", null"));
-        assert!(test, "{name}: no test against null in\n{body}");
-        assert_eq!(body.contains("xor i1 %present, true"), negated, "{body}");
+            .find(|line| line.contains("icmp ne ptr") && line.ends_with(", null"));
+        let result = test
+            .and_then(|line| line.trim().split_once(" = "))
+            .map_or_else(
+                || panic!("{name}: no test against null in\n{body}"),
+                |(result, _)| result,
+            );
+        // The negation takes the result of that test, whatever LLVM calls it.
+        let negation = format!("xor i1 {result}, true");
+        assert_eq!(body.contains(&negation), negated, "{name}:\n{body}");
     }
 }
 
