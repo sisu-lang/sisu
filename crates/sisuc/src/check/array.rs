@@ -1,6 +1,6 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
-use super::expr::{fits, literal_type, no_member, none_literal, path, rank, typed};
+use super::expr::{bare_none, fits, literal_type, no_member, none_literal, path, rank, typed};
 use super::interface::Operation;
 use super::{Checked, Checker, Poisoned, UNKNOWN, as_optional, payload, type_of, wrap};
 use crate::ast;
@@ -306,11 +306,21 @@ impl Checker<'_> {
                 self.labels(args);
                 let argument = self.expr(&args[0].value, Some(UNKNOWN));
                 let got = type_of(&argument);
-                let alike = got.is_none_or(|got| got == element || Type::optional(got) == element);
+                // A `None` has no type of its own: it is an element only of an optional element.
+                let alike = if bare_none(&args[0].value) {
+                    matches!(element.kind(), TypeKind::Optional(_))
+                } else {
+                    got.is_none_or(|got| got == element || Type::optional(got) == element)
+                };
                 if !element.has_param() && !alike {
-                    return self
-                        .against(&args[0].value, argument, Some(element), None)
-                        .0;
+                    // The `None` was checked with no type to take, so it is checked again as an
+                    // element, which reports it.
+                    return if got.is_none() {
+                        self.operand(&args[0].value, Some(element)).0
+                    } else {
+                        self.against(&args[0].value, argument, Some(element), None)
+                            .0
+                    };
                 }
                 if !element.has_param() && got.is_none() && self.diagnostics.len() > first {
                     return Err(Poisoned::error());

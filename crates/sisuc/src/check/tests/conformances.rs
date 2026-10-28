@@ -1913,6 +1913,23 @@ fn contains_should_report_an_argument_that_is_not_an_element_first() {
             (Code::NoOperator, "xs.contains(None)"),
         ),
         (
+            "`None` for classes",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains(None) }}"),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "`None` for enums that hold a class",
+            format!(
+                "{node}enum H {{\n    N(Node)\n}}\nfn f(xs: [H]) -> bool {{ xs.contains(None) }}"
+            ),
+            (Code::Mismatch, "None"),
+        ),
+        (
+            "`None` for arrays of classes",
+            format!("{node}fn f(xs: [[Node]]) -> bool {{ xs.contains(None) }}"),
+            (Code::Mismatch, "None"),
+        ),
+        (
             "a number for a type parameter",
             "fn f<T>(xs: [T]) -> bool { xs.contains(5) }".to_string(),
             (Code::ParamLacks, "xs.contains(5)"),
