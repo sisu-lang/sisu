@@ -2,14 +2,16 @@
 # Mutation-tests the changes since <base>: by default where HEAD left main.
 # On a stacked branch, pass the stage's base so earlier stages stay out.
 # Arguments after <base> go to cargo mutants, for example --list or -j 8.
-# The summary reads ./mutants.out, so the script refuses an argument that moves it
-# (-o, --output, -d, --dir, --manifest-path) and the CARGO_MUTANTS_OUTPUT variable.
+# The summary reads ./mutants.out. The script passes --output ., which beats the
+# CARGO_MUTANTS_OUTPUT variable and a config file, and it refuses an argument that moves
+# the output or the tree (-o, --output, -d, --dir, --manifest-path).
 # An argument that tests no mutant (--list, --list-files, --check and the like) ends with
 # "mutation-test: NOT RUN", never PASS.
 # Each mutant costs one build and one full test run, so this takes an hour or more.
 # It runs under nice -n 19 with 2 mutants at a time unless -j or CARGO_MUTANTS_JOBS says otherwise.
-# The last line is a summary that starts "mutation-test: PASS" or "mutation-test: FAIL"
-# and ends "(HEAD <sha>)", the commit it measured.
+# The last line is a summary that starts "mutation-test: PASS" or "mutation-test: FAIL".
+# A summary of a run that measured a commit ends "(HEAD <sha>)"; NOT RUN lines and the
+# lines of a refused argument do not.
 # PASS needs no missed mutant; a timeout counts as caught.
 # A run that tests no mutant, for example when the diff holds none, passes with "no mutant tested".
 # A diff that changes no .rs file passes without running cargo mutants.
@@ -59,11 +61,6 @@ for arg in "$@"; do
       ;;
   esac
 done
-if [[ -n ${CARGO_MUTANTS_OUTPUT:-} ]]; then
-  verdict="mutation-test: FAIL: CARGO_MUTANTS_OUTPUT moves mutants.out; the summary needs the default"
-  echo "$verdict"
-  exit 1
-fi
 # Mutation testing changes Rust code only, so a diff without any has nothing to mutate.
 if git diff --quiet "$base" -- '*.rs'; then
   verdict="mutation-test: PASS: no Rust changes since $base"
@@ -94,7 +91,7 @@ touch "$started"
 # build at the original.
 status=0
 TMPDIR=$run CARGO_MUTANTS_JOBS=${CARGO_MUTANTS_JOBS:-2} \
-  LLVM_SYS_231_PREFIX="$PWD/.llvm/23" nice -n 19 cargo mutants --in-diff "$diff" "$@" || status=$?
+  LLVM_SYS_231_PREFIX="$PWD/.llvm/23" nice -n 19 cargo mutants --in-diff "$diff" --output . "$@" || status=$?
 
 if [[ -n $not_run ]]; then
   verdict="mutation-test: NOT RUN: $not_run tests no mutant"

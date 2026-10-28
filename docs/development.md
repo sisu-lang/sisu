@@ -215,8 +215,10 @@ mutant) passes with `no mutant tested`; cargo-mutants leaves the old
 `mutants.out` alone, and the script does not read it.
 An argument that tests no mutant (`--list`, `--list-files`, `--check`) ends
 with `mutation-test: NOT RUN` and the exit status of cargo-mutants. The summary
-reads `./mutants.out`, so the script refuses `-o`, `--output`, `-d`, `--dir`,
-`--manifest-path` and the variable `CARGO_MUTANTS_OUTPUT`, which move it.
+reads `./mutants.out`, so the script passes `--output .`, which beats the
+variable `CARGO_MUTANTS_OUTPUT` and the `output` key of a config file. It
+refuses `-o`, `--output`, `-d`, `--dir` and `--manifest-path`, which move the
+output or the tree.
 
 One `make mutation-test` runs at a time in a worktree; a second one prints
 `mutation-test: FAIL: another make mutation-test is running in this worktree`

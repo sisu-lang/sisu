@@ -12,9 +12,9 @@ import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mutants.sh')
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
-# A caller's LOG, CARGO_MUTANTS_JOBS and CARGO_MUTANTS_OUTPUT would change what the script does.
+# A caller's LOG and CARGO_MUTANTS_JOBS would change what the script does.
 ENV = {k: v for k, v in os.environ.items()
-       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS', 'CARGO_MUTANTS_OUTPUT')}
+       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS')}
 # The fake cargo mutants records its jobs, niceness and arguments, and whether an old
 # mutants.out was there. Unless FAKE_WRITE is 0, it then writes a new mutants.out with the
 # result files that the test names in FAKE_CAUGHT, FAKE_MISSED and FAKE_TIMEOUT. It exits
@@ -171,7 +171,7 @@ class Mutants(unittest.TestCase):
     def test_an_argument_that_moves_the_output_should_fail_without_running_cargo(self):
         self.rust_commit()
         for args, env in ((('-o', 'x'), {}), (('--output=x',), {}), (('-d', 'x'), {}), (('--dir', 'x'), {}),
-                          (('--manifest-path=x',), {}), ((), {'CARGO_MUTANTS_OUTPUT': 'x'})):
+                          (('--manifest-path=x',), {})):
             with self.subTest(args=args, env=env):
                 run = self.mutate(*args, env=env)
                 self.assertEqual(run.returncode, 1)
@@ -183,7 +183,14 @@ class Mutants(unittest.TestCase):
         self.rust_commit()
         run = self.mutate('--', '-o', 'x', caught=1)
         self.assertEqual(run.returncode, 0)
-        self.assertTrue(self.seen('seen'))
+        with open(os.path.join(self.repo, 'args'), encoding='utf-8') as f:
+            self.assertTrue(f.read().strip().endswith('-- -o x'))
+
+    def test_cargo_should_get_output_dot_to_beat_the_environment_and_a_config_file(self):
+        self.rust_commit()
+        self.mutate(log=False, env={'CARGO_MUTANTS_OUTPUT': 'x'}, caught=1)
+        with open(os.path.join(self.repo, 'args'), encoding='utf-8') as f:
+            self.assertIn(' --output .', f.read())
 
 
 if __name__ == '__main__':
