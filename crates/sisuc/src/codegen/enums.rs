@@ -21,6 +21,7 @@
 //! depth and shape of value.
 
 use std::num::NonZeroU32;
+use std::rc::Rc;
 
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
@@ -106,6 +107,43 @@ pub(super) fn nested(ty: Type) -> Option<Type> {
         }
         _ => None,
     }
+}
+
+/// An enum's component with boxes: its members in declaration order, and the index of the enum
+/// among them.
+pub(super) struct Component {
+    pub(super) members: Rc<[EnumId]>,
+    pub(super) index: usize,
+}
+
+/// The component of each enum of `enums`, when it has boxes, built in one pass over `enums`.
+pub(super) fn components(enums: &[Enum]) -> Vec<Option<Component>> {
+    #[cfg(test)]
+    super::MEMBER_SCANS.set(super::MEMBER_SCANS.get() + enums.len());
+    let mut by_cycle: FxHashMap<usize, Vec<EnumId>> = FxHashMap::default();
+    let indices: Vec<Option<usize>> = enums
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let members = by_cycle.entry(e.cycle?).or_default();
+            members.push(EnumId(i));
+            Some(members.len() - 1)
+        })
+        .collect();
+    let shared: FxHashMap<usize, Rc<[EnumId]>> = by_cycle
+        .into_iter()
+        .map(|(cycle, members)| (cycle, members.into()))
+        .collect();
+    enums
+        .iter()
+        .zip(indices)
+        .map(|(e, index)| {
+            Some(Component {
+                members: Rc::clone(shared.get(&e.cycle?)?),
+                index: index?,
+            })
+        })
+        .collect()
 }
 
 /// The index of `member` in a component of `members`.
@@ -749,15 +787,9 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// The members of the enum `id`'s component, in declaration order, when the component has
     /// boxes; `None` otherwise.
-    pub(super) fn component(&self, id: EnumId) -> Option<Vec<EnumId>> {
-        let enums = &self.program.enums;
-        let cycle = enums[id.0].cycle?;
-        Some(
-            (0..enums.len())
-                .filter(|&e| enums[e].cycle == Some(cycle))
-                .map(EnumId)
-                .collect(),
-        )
+    pub(super) fn component(&self, id: EnumId) -> Option<Rc<[EnumId]>> {
+        let component = self.components[id.0].as_ref()?;
+        Some(Rc::clone(&component.members))
     }
 
     /// The enum of payload field `payload` of the enum `id`, whose component has boxes, when the
@@ -1394,7 +1426,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         let position = member_position(members, member);
         #[cfg(test)]
         super::MEMBER_SCANS.set(super::MEMBER_SCANS.get() + position + 1);
-        let index = u64::try_from(position).expect("a member index should fit in a `u64`");
+        self.kind(position)
+    }
+
+    /// The `kind` of the member at `index` in a component, as an `i32`.
+    pub(super) fn kind(&self, index: usize) -> IntValue<'ctx> {
+        let index = u64::try_from(index).expect("a member index should fit in a `u64`");
         self.context.i32_type().const_int(index, false)
     }
 
@@ -1936,7 +1973,7 @@ impl<'ctx> Codegen<'ctx, '_> {
 
 /// The blocks and phis of an `eq_component` helper's loop that each variant's comparison uses.
 struct EqLoop<'ctx> {
-    members: Vec<EnumId>,
+    members: Rc<[EnumId]>,
     /// The loop's head, and its `kind`, `a` and `b` phis.
     top: BasicBlock<'ctx>,
     current: [PhiValue<'ctx>; 3],

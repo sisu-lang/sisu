@@ -2958,9 +2958,10 @@ fn reflexivity_should_read_linearly() {
 }
 
 /// The `show` of an enum in a component with boxes is written by one loop over the component. The
-/// loop gives each member its index in the `kind` switch, and each link the index of the enum it
-/// enters, without a search of the component: a search for each member and each link reads a ring
-/// of enums quadratically. Each enum of the ring links to the next, and `print` writes the first.
+/// loop gives each member its index in the `kind` switch. It gives each link the index of the
+/// enum it enters. A search of the component for each member or link reads a ring of enums
+/// quadratically. The `show` helper of each enum does the same. So each enum of the ring links to
+/// the next, and `print` writes every enum of the ring.
 #[test]
 fn show_of_a_component_should_find_each_member_in_linear_steps() {
     let scans = |n: usize| {
@@ -2968,7 +2969,11 @@ fn show_of_a_component_should_find_each_member_in_linear_steps() {
             .map(|i| format!("enum R{i} {{\n    End\n    Link(R{})\n}}\n", (i + 1) % n))
             .collect::<Vec<_>>()
             .concat();
-        let src = format!("{enums}fn main() {{\n    print(R0.End)\n}}\n");
+        let prints = (0..n)
+            .map(|i| format!("    print(R{i}.End)\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let src = format!("{enums}fn main() {{\n{prints}}}\n");
         MEMBER_SCANS.set(0);
         let context = Context::create();
         compiled(&context, &src);

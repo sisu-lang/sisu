@@ -31,17 +31,18 @@ use inkwell::values::{
 use inkwell::attributes::AttributeLoc;
 
 use super::abi::{self, Abi, PAD_CENTER, PAD_LEFT, PAD_RIGHT, SINK_CAP, SINK_LEN, SINK_SIZE};
-use super::enums::{Pending, boxed_enum, nested};
+use super::enums::{Component, Pending, boxed_enum, nested};
 use super::layout::{BYTES, CAP, LEN};
 use super::rc::{Helper, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::tir::{Align, EnumId, Format, FuncId, Pad, Stream, Type, TypeArgs, TypeKind};
 use rustc_hash::FxHashMap;
+use std::rc::Rc;
 
 /// The blocks and phis of a `show_component` helper's loop that each variant uses.
 struct ShowLoop<'ctx> {
     sink: PointerValue<'ctx>,
-    members: Vec<EnumId>,
+    members: Rc<[EnumId]>,
     /// The `kind` of each member, so that a link finds the one it enters at once.
     kinds: FxHashMap<EnumId, u64>,
     /// The loop's head, and its `kind`, address and `owed` phis.
@@ -378,10 +379,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Some(method) => {
                     self.show_written(sink, method, ty, self.load_value(ty, value));
                 }
-                None => match self.component(id) {
-                    Some(members) => {
+                None => match &self.components[id.0] {
+                    Some(Component { members, index }) => {
                         let first = Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE));
-                        let kind = self.member_index(&members, id);
+                        let kind = self.kind(*index);
                         self.call(
                             self.helper(Helper::ShowComponent, first),
                             &[sink.into(), kind.into(), value.into()],
@@ -586,7 +587,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             )
             .expect(POSITIONED);
         let kinds = (0_u64..)
-            .zip(&members)
+            .zip(members.iter())
             .map(|(kind, &m)| (m, kind))
             .collect();
         let show = ShowLoop {

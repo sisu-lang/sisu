@@ -36,7 +36,7 @@ use inkwell::values::{
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
 
 use self::array::element_of;
-use self::enums::EnumLayout;
+use self::enums::{Component, EnumLayout};
 use self::layout::{ClassLayout, HeapBlock, tbaa_tag};
 use self::rc::Helper;
 use crate::mir::{
@@ -58,7 +58,8 @@ thread_local! {
     static TYPE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many token places and rest places a `take_apart` has visited on this thread.
     static TAKE_APART_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many members of a component `member_index` has stepped over on this thread.
+    /// How many enums and members the lookup of a component has stepped over on this thread: the
+    /// enums that `components` builds the table from, and the members that `member_index` passes.
     static MEMBER_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -126,6 +127,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             mir,
             unreflexive: rc::reaching_unreflexive(program),
             class_cycles: rc::class_cycles(program),
+            components: enums::components(&program.enums),
             helpers: RefCell::new(FxHashMap::default()),
             pending: RefCell::new(Vec::new()),
             target_data,
@@ -269,6 +271,9 @@ struct Codegen<'ctx, 'src> {
     unreflexive: Vec<bool>,
     /// The classes that hold each other in a loop; see `rc::class_cycles`.
     class_cycles: rc::ClassCycles,
+    /// For each enum, indexed by `EnumId`, its component when the component has boxes; see
+    /// `enums::components`.
+    components: Vec<Option<Component>>,
     /// The helpers declared so far, by kind and counted type; see `rc::helper`.
     helpers: RefCell<FxHashMap<(Helper, Type), FunctionValue<'ctx>>>,
     /// The helpers declared but not yet defined; `define_helpers` empties it.
