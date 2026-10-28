@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use super::DEPTHS;
 use super::generic::{GFunc, Generic};
+use crate::check::built_in_type;
 
 /// The generic that is the prelude's `Result<T, U>`, which no `Scope::generics` entry holds and
 /// no declaration writes.
@@ -372,10 +373,10 @@ impl Scope {
         }
     }
 
-    /// A name that no other name of the program has: `prefix` and a number.
+    /// A name that no other `fresh` call makes, and that names no built-in type: `prefix` and a
+    /// number. See [`fresh_name`].
     pub(crate) fn fresh(&mut self, prefix: &str) -> String {
-        self.names += 1;
-        format!("{prefix}{}", self.names)
+        fresh_name(&mut self.names, prefix)
     }
 
     /// Whether a value of `ty` may hold a class object, which no field or element assignment
@@ -419,5 +420,40 @@ impl Scope {
             .pop()
             .expect("each closed block should have been opened");
         self.vars.truncate(start);
+    }
+}
+
+/// `prefix` and the next number of `counter`. A number that makes the name of a built-in type,
+/// such as `f64`, is skipped. `Scope::fresh` and `Writer::fresh` both make their names here.
+pub(super) fn fresh_name(counter: &mut usize, prefix: &str) -> String {
+    loop {
+        *counter += 1;
+        let name = format!("{prefix}{counter}");
+        if built_in_type(&name).is_none() {
+            return name;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustc_hash::FxHashSet;
+
+    use super::fresh_name;
+    use crate::check::built_in_type;
+
+    #[test]
+    fn fresh_name_should_be_unique_and_name_no_built_in_type() {
+        // `f`, `i` and `u` reach `f64`, `i64` and `u8`. The largest number any of them needs is
+        // 64, so 640 names per prefix is 10x the smallest size that shows the skip.
+        for prefix in ["f", "i", "u"] {
+            let mut counter = 0;
+            let names: Vec<String> = (0..640).map(|_| fresh_name(&mut counter, prefix)).collect();
+            for name in &names {
+                assert!(built_in_type(name).is_none(), "{name} is a built-in type");
+            }
+            let unique: FxHashSet<&String> = names.iter().collect();
+            assert_eq!(unique.len(), names.len(), "prefix {prefix}");
+        }
     }
 }

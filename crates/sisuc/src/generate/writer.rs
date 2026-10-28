@@ -5,7 +5,7 @@
 use std::fmt::Write as _;
 use std::ops::Range;
 
-use super::scope::Ty;
+use super::scope::{Ty, fresh_name};
 
 /// Text written into both copies.
 #[derive(Default)]
@@ -164,8 +164,7 @@ impl Writer {
     }
 
     fn fresh(&mut self, prefix: &str) -> String {
-        self.names += 1;
-        format!("{prefix}{}", self.names)
+        fresh_name(&mut self.names, prefix)
     }
 
     #[cfg_attr(

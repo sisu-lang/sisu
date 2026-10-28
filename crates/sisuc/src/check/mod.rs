@@ -1934,7 +1934,7 @@ fn own_args(params: &[Symbol]) -> TypeArgs {
 }
 
 /// The type a built-in type name names.
-fn built_in_type(name: &str) -> Option<Type> {
+pub(crate) fn built_in_type(name: &str) -> Option<Type> {
     match name {
         "i64" => Some(Type::I64),
         "u8" => Some(Type::U8),
