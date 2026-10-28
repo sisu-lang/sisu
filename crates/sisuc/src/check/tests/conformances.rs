@@ -477,7 +477,7 @@ fn comparisons(n: usize, at: fn(usize, usize) -> usize, ring: bool) -> String {
 fn failing_leaf_should_read_each_type_once() {
     /// A row: its name, the enum that the function `i` compares, and whether the chain is a ring.
     type Row = (&'static str, fn(usize, usize) -> usize, bool);
-    let rows: [Row; 4] = [
+    let rows: [Row; 5] = [
         (
             "the root of a chain, compared again and again",
             |_, _| 0,
@@ -494,6 +494,7 @@ fn failing_leaf_should_read_each_type_once() {
             |_, _| 0,
             true,
         ),
+        ("each member of a ring", |i, _| i, true),
     ];
     for (row, at, ring) in rows {
         let count = |n: usize| {
@@ -1063,10 +1064,11 @@ fn failing_leaf_should_name_the_part_that_fails_on_its_own() {
 }
 
 #[test]
-fn failing_leaf_should_not_keep_a_part_that_was_found_with_a_cycle_cut_short() {
-    // Read from `Y`, the walk of `X` skips `Y`, which it is inside of, and finds `B`. Read on its
-    // own, it goes through `Y` and finds `A`, so the first answer must not be kept for `X`.
-    let src = "class A {}\nclass B {}\nenum Y {\n    P(X)\n    Q(A)\n}\nenum X {\n    R(Y)\n    S(B)\n}\nfn other(x: X) {}\n";
+fn failing_leaf_should_not_keep_a_none_that_was_found_with_a_cycle_cut_short() {
+    // Read from `Y`, the walk of `X` skips `Y`, which it is inside of, and `X` holds through its
+    // other choice: that `None` is true only while `Y` is in progress. Read on its own, `X` goes
+    // through `Y` and finds `A`, so the first answer must not be kept for `X`.
+    let src = "class A {}\nenum Y {\n    P(X)\n    Q(A)\n}\nenum X {\n    R(Y)\n    S(i64)\n}\nfn other(x: X) {}\n";
     let leaves = with_probe(src, ("T", "Y"), "Eq", |checker, y, eq| {
         let other = (checker.signatures.iter())
             .find(|signature| signature.name == "other")
@@ -1077,7 +1079,7 @@ fn failing_leaf_should_not_keep_a_part_that_was_found_with_a_cycle_cut_short() {
             checker.type_name(leaf)
         })
     });
-    assert_eq!(leaves, ["B", "A"]);
+    assert_eq!(leaves, ["A", "A"]);
 }
 
 /// The step that passes the budget panics, so a query that blows up fails at once.

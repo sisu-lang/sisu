@@ -1343,11 +1343,11 @@ impl Checker<'_> {
         }
     }
 
-    /// The part of `ty` that makes `ty` fail `interface` with `args` on its own, the first in the
-    /// order of the generated rule: a class with no matching record, a type whose matching
-    /// written record fails its bounds, or a type parameter whose bounds lack the interface. It
-    /// walks the rule again with a visited set, so a type is read once, and is only for a type
-    /// that `conforms` has found to fail; `ty` itself if the walk finds no part.
+    /// A part of `ty` that makes `ty` fail `interface` with `args` on its own, not always the
+    /// first in the order of the generated rule: a class with no matching record, a type whose
+    /// matching written record fails its bounds, or a type parameter whose bounds lack the
+    /// interface. It walks the rule again with a visited set, so a type is read once, and is only
+    /// for a type that `conforms` has found to fail; `ty` itself if the walk finds no part.
     pub(super) fn failing_leaf(
         &mut self,
         ty: Type,
@@ -1356,7 +1356,8 @@ impl Checker<'_> {
     ) -> Type {
         // A root is asked with nothing in progress, so its answer is the one to give again for the
         // same root, whatever its walk cut short: a program that compares one type many times
-        // reads it once. Another walk may use it only when the walk cut nothing short.
+        // reads it once. Another walk may use it only when the answer is a part (`leaf` keeps
+        // those) or the walk cut nothing short; `or_insert` leaves such an entry as it is.
         let key = (ty, interface, args);
         if let Some(&(kept, _)) = self.leaves.get(&key) {
             return kept.unwrap_or(ty);
@@ -1489,9 +1490,11 @@ impl Checker<'_> {
                     self.leaf_cuts += 1;
                     return None;
                 }
-                // The answer for a type with no type parameter changes with no body, and when no
-                // part of its walk was cut short it does not depend on where the walk began: it is
-                // kept, so a type that was read before costs nothing more.
+                // The answer for a type with no type parameter changes with no body. A part that
+                // was found fails on its own, wherever the walk began, and `None` with no part cut
+                // short does not depend on where it began: both are kept, so a type that was read
+                // before costs nothing more. A `None` after a cut holds only while an ancestor is
+                // in progress, so it is not kept.
                 let key = (ty, interface, args);
                 if let Some(&(kept, true)) = self.leaves.get(&key) {
                     return kept;
@@ -1511,7 +1514,7 @@ impl Checker<'_> {
                         }
                     }
                 };
-                if !ty.has_param() && self.leaf_cuts == cuts {
+                if !ty.has_param() && (self.leaf_cuts == cuts || found.is_some()) {
                     self.leaves.insert(key, (found, true));
                 }
                 found
