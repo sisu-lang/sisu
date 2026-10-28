@@ -963,6 +963,34 @@ fn final_flush_should_panic_once_when_stdout_is_full() {
     }
 }
 
+/// GIVEN a program whose only `print` is of a value whose written `to_string` gives ""
+/// AND standard output is `/dev/full`
+/// WHEN it is built and run, with and without `-O2`
+/// THEN it exits 101 and writes only one panic line to stderr
+///
+/// The text has no piece, so the line end alone opens standard output. The newline must reach
+/// the final flush, which fails.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "writes to /dev/full, which only Linux has"
+)]
+fn printing_an_empty_text_should_panic_when_stdout_is_full() {
+    let source = "class Quiet {}\nextend Quiet: Display {\n    fn to_string(self) -> string { \"\" }\n}\nfn main() {\n    print(Quiet())\n}\n";
+    for o2 in [false, true] {
+        let full = File::options()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full exists on Linux");
+        let out = Command::new(compile_tmp("print_empty_full", source, o2))
+            .stdout(full)
+            .output()
+            .expect("the program starts");
+        assert_eq!(out.status.code(), Some(101), "{:?}", out.status);
+        assert_eq!(String::from_utf8_lossy(&out.stderr), STDOUT_WRITE_PANIC);
+    }
+}
+
 /// GIVEN a program that prints 1
 /// AND standard output is closed
 /// WHEN it is built and run, with and without `-O2`

@@ -1,0 +1,11 @@
+class Quiet {}
+
+extend Quiet: Display {
+    fn to_string(self) -> string { "" }
+}
+
+// A written `to_string` that gives "" writes no piece. This is the first and only `print`, so
+// the line end is the only thing that opens standard output: the line is still "\n".
+fn main() {
+    print(Quiet())
+}

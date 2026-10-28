@@ -714,6 +714,18 @@ mod tests {
         assert_eq!(out.buffer.capacity(), crate::RESERVED);
     }
 
+    /// A line that has no piece still opens standard output: a newline with no sink to flush
+    /// to would be lost at the end of the program.
+    #[test]
+    fn finish_line_should_open_standard_output_when_the_line_has_no_piece() {
+        let mut out = Stdout {
+            buffer: Vec::new(),
+            sink: None,
+        };
+        out.finish_line().expect("an empty line should be written");
+        assert!(out.sink.is_some(), "the line end should open the sink");
+    }
+
     /// A buffer sink ends a line with a newline.
     #[test]
     fn line_end_should_write_a_newline_on_a_buffer_sink() {

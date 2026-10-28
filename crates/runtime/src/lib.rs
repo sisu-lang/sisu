@@ -154,8 +154,10 @@ impl Stdout {
         Ok(())
     }
 
-    /// Ends the line that `append_piece` has written.
+    /// Ends the line that `append_piece` has written. A line with no piece has not opened the
+    /// sink yet, and a newline buffered with no sink would be lost at the final flush.
     fn finish_line(&mut self) -> std::io::Result<()> {
+        self.open()?;
         self.buffer.push(b'\n');
         self.end_line()
     }
