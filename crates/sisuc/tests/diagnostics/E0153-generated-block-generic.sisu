@@ -1,0 +1,9 @@
+class Node {}
+enum E<T>: Eq {
+    A(T)
+    B(Node)
+}
+extend<U> E<U>: Eq {
+    fn eq(self, other: Self) -> bool { true }
+}
+fn main() {}

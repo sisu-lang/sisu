@@ -2960,8 +2960,8 @@ fn reflexivity_should_read_linearly() {
 /// The `show` of an enum in a component with boxes is written by one loop over the component. The
 /// loop gives each member its index in the `kind` switch. It gives each link the index of the
 /// enum it enters. A search of the component for each member or link reads a ring of enums
-/// quadratically. The `show` helper of each enum does the same. So each enum of the ring links to
-/// the next, and `print` writes every enum of the ring.
+/// quadratically. A search in the `show` helper of each enum reads it quadratically too. So each
+/// enum of the ring links to the next, and `print` writes every enum of the ring.
 #[test]
 fn show_of_a_component_should_find_each_member_in_linear_steps() {
     let scans = |n: usize| {

@@ -1,0 +1,19 @@
+error[E0152]: `E<T>` does not meet `Eq`
+ --> E0153-generated-block-partial.sisu:2:12
+  |
+2 | enum E<T>: Eq {
+  |            ^^ `E<T>` gets no generated `Eq`, since `Node` has none
+  |
+  = help: fn eq(self, other: Self) -> bool
+
+error[E0153]: `E<i64>` conforms to `Eq` twice
+ --> E0153-generated-block-partial.sisu:6:16
+  |
+2 | enum E<T>: Eq {
+  |            -- first conformance here
+...
+6 | extend E<i64>: Eq {
+  |                ^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0152, E0153
