@@ -865,12 +865,12 @@ fn to_string_should_not_answer_a_call_of_a_field_of_that_name() {
 }
 
 /// A receiver that failed but kept its type leaves the call a `string`, and the call adds no
-/// error of its own: `("a" + 'c')` is a mismatch, and `.to_string()` on it reports nothing more.
+/// error of its own: the part `{m}` of the receiver is an optional, which is the one error.
 #[test]
 fn to_string_on_a_receiver_that_failed_should_report_only_the_receiver() {
     codes(
-        "fn main() {\n    print((\"a\" + 'c').to_string())\n}",
-        &[(Code::Mismatch, (2, 18))],
+        "fn f(m: i64?) {\n    print(\"{m}\".to_string())\n}\nfn main() {}",
+        &[(Code::CannotInterpolate, (2, 13))],
     );
 }
 
