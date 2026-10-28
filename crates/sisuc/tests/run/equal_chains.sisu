@@ -1,6 +1,6 @@
 // `== None` and `!= None` test only whether a chain has a head: they compare no field, so they
-// call no `eq` and walk no chain, so the fields stay unread. `last` and `first` prepend, so `last([3, 2, 1])` is the chain
-// 1 -> 2 -> 3 with head 1. The chain field is last in `Last` and first in `First`.
+// call no `eq` and walk no chain, so the fields stay unread. `last` and `first` prepend, so
+// `last([3, 2, 1])` is the chain 1 -> 2 -> 3 with head 1.
 class Last {
     _value: i64
     _next: Last?

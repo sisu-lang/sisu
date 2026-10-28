@@ -389,15 +389,16 @@ fn left_deep_enums_should_compare_in_a_small_stack() {
     assert_small_stack_prints_at_both("eqleft", "true\nfalse\nfalse\n");
 }
 
-/// GIVEN the `eqorder` program, whose two enum values differ in their first fields and hold
-/// 20 000-deep class chains in their second fields
+/// GIVEN the `eqorder` program, whose two pairs of enum values differ in their first fields and
+/// hold 20 000-deep class chains in a later field, the second of two or three
 /// WHEN it runs under a 256 KiB stack, with and without `-O2`
-/// THEN it exits 0 and prints `false`
+/// THEN it exits 0 and prints `false` twice
 ///
-/// `==` finds the first mismatch before it compares the chains, whose `==` would overflow.
+/// `==` compares the fields in order and finds the first mismatch before it compares the chains,
+/// whose `==` would overflow.
 #[test]
 fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
-    assert_small_stack_prints_at_both("eqorder", "false\n");
+    assert_small_stack_prints_at_both("eqorder", "false\nfalse\n");
 }
 
 /// GIVEN the `dropmutual` program, which builds chains of 100 000 pairs of two classes that
