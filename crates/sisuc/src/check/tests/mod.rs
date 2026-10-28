@@ -2254,7 +2254,7 @@ fn misspelled_constructor_is_one_error() {
 }
 
 #[test]
-fn print_reports_labels_and_still_checks_its_arguments() {
+fn print_should_report_labels_and_still_check_its_arguments() {
     codes(
         "fn main() { print(z: 1, 2) }",
         &[
@@ -2264,10 +2264,7 @@ fn print_reports_labels_and_still_checks_its_arguments() {
     );
     codes(
         "class E {}\nfn main() { print(z: E()) }",
-        &[
-            (Code::LabeledArgument, (2, 19)),
-            (Code::PrintArgument, (2, 22)),
-        ],
+        &[(Code::LabeledArgument, (2, 19))],
     );
 }
 
@@ -2682,11 +2679,8 @@ fn assign_bare_field() {
 }
 
 #[test]
-fn print_class() {
-    codes(
-        "class E {}\nfn main() { print(E()) }",
-        &[(Code::PrintArgument, (2, 19))],
-    );
+fn print_should_accept_a_class() {
+    clean("class E {}\nfn main() { print(E()) }");
 }
 
 #[test]
@@ -3777,18 +3771,13 @@ fn equal_should_spill_a_counted_operand_before_an_exit() {
     );
 }
 
-/// `print` of an object names the argument, not the call; a bad argument count stays on the
-/// whole call.
+/// `print` of a call that returns nothing, and a bad argument count, stay on the whole call; an
+/// object and an array print.
 #[test]
-fn print_argument_errors_sit_on_the_argument() {
+fn print_should_report_a_call_without_a_value_and_a_bad_count_on_the_call() {
     codes(
         "class P {\n    x: i64\n}\nfn nothing() {}\nfn main() {\n    print(P(x: 1))\n    print(nothing())\n    print([1])\n    print(1, 2)\n}",
-        &[
-            (Code::PrintArgument, (6, 11)),
-            (Code::PrintArgument, (7, 5)),
-            (Code::PrintArray, (8, 11)),
-            (Code::PrintArgument, (9, 5)),
-        ],
+        &[(Code::PrintArgument, (7, 5)), (Code::PrintArgument, (9, 5))],
     );
 }
 

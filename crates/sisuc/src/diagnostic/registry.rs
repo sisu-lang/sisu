@@ -683,19 +683,13 @@ pub(crate) enum DiagnosticKind {
         owner: String,
         at: Span,
     },
-    /// A call of `function` (`print` or `eprint`) at `at` with no argument, several, or one it
-    /// cannot print. `class` is the class or enum of an object or enum argument, and `at` is
-    /// then that argument.
-    PrintArgument {
-        function: &'static str,
-        at: Span,
-        class: Option<String>,
-    },
-    /// The argument at `at` of a call of `function`, of the array type `ty` or an optional of one.
+    /// A call of `function` (`print` or `eprint`) at `at` with no argument, several, one that
+    /// returns nothing, or an optional.
+    PrintArgument { function: &'static str, at: Span },
+    /// The argument at `at` of a call of `function`, of the type `ty`: an optional array.
     PrintArray {
         function: &'static str,
         ty: String,
-        optional: bool,
         at: Span,
     },
     /// The argument at `at` of a call of `function`, which never finishes.
@@ -3158,32 +3152,14 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("`{name}` is a field of `{owner}`, not a method"),
             ),
-            DiagnosticKind::PrintArgument {
-                function,
+            DiagnosticKind::PrintArgument { function, at } => Diagnostic::coded(
+                code,
                 at,
-                class,
-            } => {
-                let takes = format!("`{function}` takes one `i64`, `u8`, `f64`, `bool`, `char` or `string`");
-                match class {
-                    Some(class) => {
-                        Diagnostic::coded(code, at, format!("cannot {function} `{class}`"))
-                            .with_help(takes)
-                    }
-                    None => Diagnostic::coded(code, at, takes),
-                }
-            }
-            DiagnosticKind::PrintArray {
-                function,
-                ty,
-                optional,
-                at,
-            } => {
-                let help = if optional {
-                    format!("unwrap it with `if let`, then {function} each element in a `for` loop")
-                } else {
-                    format!("{function} each element in a `for` loop")
-                };
-                Diagnostic::coded(code, at, format!("cannot {function} `{ty}`")).with_help(help)
+                format!("`{function}` takes one value that is not an optional"),
+            ),
+            DiagnosticKind::PrintArray { function, ty, at } => {
+                Diagnostic::coded(code, at, format!("cannot {function} `{ty}`"))
+                    .with_help("unwrap it with `if let`, then print the array")
             }
             DiagnosticKind::PrintNever { function, at } => Diagnostic::coded(
                 code,

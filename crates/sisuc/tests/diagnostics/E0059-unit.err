@@ -1,8 +1,0 @@
-error[E0059]: `print` takes one `i64`, `u8`, `f64`, `bool`, `char` or `string`
- --> E0059-unit.sisu:6:5
-  |
-6 |     print(greet())
-  |     ^^^^^^^^^^^^^^
-
-sisu: 1 error
-sisu: for more on a code, run `sisu explain <code>`: E0059

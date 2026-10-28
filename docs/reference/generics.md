@@ -241,7 +241,7 @@ The rules:
 - `!`, `&&` and `||` take only a `bool`, so a `T` there is a type mismatch ([E0032](../diagnostics/E0032.md)).
 - A `T` has no method and no field ([E0063](../diagnostics/E0063.md)).
 - `is` does not apply to a `T`, because `T` can stand for a type that is not a class ([E0046](../diagnostics/E0046.md)).
-- `print` and interpolation do not take a `T` ([E0059](../diagnostics/E0059.md), [E0098](../diagnostics/E0098.md)).
+- `print` takes a `T` with no bound, because every type has a `Display` ([Display, Eq and Ord](#display-eq-and-ord)). Interpolation does not take a `T` yet ([E0098](../diagnostics/E0098.md)).
 - `[x; n]` with `x: T` is an error ([E0067](../diagnostics/E0067.md)), because `T` can be a class ([Filled arrays](arrays.md#filled-arrays)). `[None; n]` is valid.
 - `match` does not take a `T` ([E0124](../diagnostics/E0124.md)). In a payload of the type `T`, a pattern is a name or `_` ([Variant patterns](enums.md#variants)).
 
@@ -429,7 +429,7 @@ The rules:
 
 An *associated type* is a type that each conforming type chooses once. The interface declares it with `type`. A conforming type sets it with `type Name = Type`.
 
-```sisu pending
+```sisu
 interface Source {
     type Item: Display
     fn next(self) -> Item?
@@ -476,7 +476,7 @@ Use an associated type when each type has one answer, such as the item of a `Sou
 
 `Display`, `Eq` and `Ord` are interfaces of the language. `print` and interpolation use `Display`. `==` and `!=` use `Eq`. `<`, `<=`, `>` and `>=` use `Ord`.
 
-```sisu pending
+```sisu
 class Point {
     x: i64
     y: i64

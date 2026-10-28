@@ -299,6 +299,16 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
     }
 }
 
+/// Whether `print` of a value of type `ty` writes it through a helper that may reach a written
+/// `to_string`: an array, an optional, a class or an enum. A scalar and a `string` print as they
+/// always did and reach none.
+pub(crate) fn prints_by_helper(ty: Type) -> bool {
+    matches!(
+        ty.kind(),
+        TypeKind::Array(_) | TypeKind::Optional(_) | TypeKind::Class(..) | TypeKind::Enum(..)
+    )
+}
+
 /// How an interface holds for a concrete type, in the ids of the program that `mono` reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Holds {

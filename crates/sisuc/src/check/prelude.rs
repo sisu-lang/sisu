@@ -46,14 +46,7 @@ impl Checker<'_> {
     fn print(&mut self, span: Span, args: &[ast::Arg], stream: Stream) -> Checked {
         let function = stream.name();
         // Not `value()`: a `unit` argument needs this code, not "expression has no value".
-        let wrong = || {
-            DiagnosticKind::PrintArgument {
-                function,
-                at: span,
-                class: None,
-            }
-            .into()
-        };
+        let wrong = || DiagnosticKind::PrintArgument { function, at: span }.into();
         let labeled = self.labels(args);
         let [arg] = args else {
             self.diagnostics.push(wrong());
@@ -61,33 +54,22 @@ impl Checker<'_> {
             return Err(Poisoned::error());
         };
         let checked = self.expr(&arg.value, None);
+        // Every type prints through `Display`, but `unit` and `never`, and an optional, which
+        // may print `None` (the warning replaces this error in a later task).
         let error = match type_of(&checked) {
-            Some(ty) if matches!(payload(ty).kind(), TypeKind::Array(_)) => {
-                DiagnosticKind::PrintArray {
-                    function,
-                    ty: self.type_name(ty),
-                    optional: matches!(ty.kind(), TypeKind::Optional(_)),
-                    at: arg.value.span,
+            Some(ty) if matches!(ty.kind(), TypeKind::Optional(_)) => {
+                if matches!(payload(ty).kind(), TypeKind::Array(_)) {
+                    DiagnosticKind::PrintArray {
+                        function,
+                        ty: self.type_name(ty),
+                        at: arg.value.span,
+                    }
+                    .into()
+                } else {
+                    wrong()
                 }
-                .into()
             }
-            Some(ty)
-                if matches!(
-                    ty.kind(),
-                    TypeKind::Class(..)
-                        | TypeKind::Enum(..)
-                        | TypeKind::Param(..)
-                        | TypeKind::Assoc(..)
-                ) =>
-            {
-                DiagnosticKind::PrintArgument {
-                    function,
-                    at: arg.value.span,
-                    class: Some(self.type_name(ty)),
-                }
-                .into()
-            }
-            Some(ty) if ty == Type::UNIT || matches!(ty.kind(), TypeKind::Optional(_)) => wrong(),
+            Some(Type::UNIT) => wrong(),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
                 at: arg.value.span,

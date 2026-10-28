@@ -308,6 +308,9 @@ pub(crate) struct Variant {
 #[derive(Clone, Debug)]
 pub(crate) struct Payload {
     pub(crate) ty: Type,
+    /// The label the declaration gives the field (`w` in `Rect(w: i64, h: i64)`), which a
+    /// printed value writes before the field.
+    pub(crate) label: Option<String>,
     pub(crate) boxed: bool,
     pub(crate) rank: Rank,
 }
@@ -1884,7 +1887,7 @@ mod tests {
 
     /// `match s { Running(c) => c  Idle => 0  _ => 1 }` over `enum State { Idle  Running(i64) }`.
     #[test]
-    fn prints_match() {
+    fn tir_should_print_a_match_over_an_enum() {
         let state = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
         let pattern = |kind| Pattern {
             kind,
@@ -1942,6 +1945,7 @@ mod tests {
                         name: "Running".into(),
                         fields: vec![Payload {
                             ty: Type::I64,
+                            label: None,
                             boxed: false,
                             rank: Rank::Plain,
                         }],

@@ -56,7 +56,7 @@ fn assert_panics(out: &Output, stdout: &str, stderr: &str) {
 
 /// The programs the small-stack tests run. They are not `tests/run` cases: many objects
 /// under Valgrind is too slow, and `deepchain` overflows on purpose.
-const SMALL_STACK: [&str; 18] = [
+const SMALL_STACK: [&str; 22] = [
     "longlist",
     "rightskew",
     "deepchain",
@@ -75,6 +75,10 @@ const SMALL_STACK: [&str; 18] = [
     "eqtrail",
     "tailfresh",
     "tailpass",
+    "showright",
+    "showleft",
+    "showmutual",
+    "showinline",
 ];
 
 /// GIVEN the `tests/programs` directory
@@ -179,6 +183,15 @@ fn allocs_in_should_panic_when_the_summary_line_is_missing() {
     allocs_in("==1== All heap blocks were freed -- no leaks are possible");
 }
 
+/// `first`, then the numbers 0 up to `count`, each on a line.
+fn numbered_lines(first: &str, count: u32) -> String {
+    use std::fmt::Write as _;
+    (0..count).fold(format!("{first}\n"), |mut out, n| {
+        writeln!(out, "{n}").expect("writing to a `String` should succeed");
+        out
+    })
+}
+
 /// One test per row, `allocation_counts::<program>`: (program, stdout at k = 1000, stdout at
 /// k = 0, extra allocations), checked against `extra_allocs` at both optimization levels.
 macro_rules! allocation_counts {
@@ -249,6 +262,11 @@ allocation_counts! {
     (enum_alloc_chain_rewrite, "3\n", "3\n", 0),
     // `==` on right-deep values needs no buffer of pending pairs: only the 4 boxes per level.
     (enum_alloc_eq_right, "true\n", "true\n", 4000),
+    // `print` of an enum writes into the output buffer and allocates nothing of its own: the
+    // 4 boxes of the one value are built in both runs.
+    (show_print, "start\n".to_string() + &"Add(Num(1), Add(Num(2), Num(3)))\n".repeat(1000), "start\n", 0),
+    // `print` of an `i64` allocates nothing.
+    (print_int, super::numbered_lines("start", 1000), "start\n", 0),
 }
 
 /// Compiles `tests/programs/<name>.sisu` without `-O2` and runs it under a 256 KiB stack.
@@ -399,6 +417,64 @@ fn left_deep_enums_should_compare_in_a_small_stack() {
 #[test]
 fn enum_eq_should_stop_at_the_first_mismatch_in_a_small_stack() {
     assert_small_stack_prints_at_both("eqorder", "false\nfalse\n");
+}
+
+/// How deep the values of the `show` programs are.
+const SHOW_DEPTH: usize = 1_000_000;
+
+/// Runs `<name>.sisu` under the small stack at both levels and checks that it prints `text`, the
+/// value's text, and then `done`. Each text is 9 to 20 MB, and the test builds it from the depth.
+fn assert_deep_value_prints(name: &str, text: &str) {
+    assert_small_stack_prints_at_both(name, &format!("{text}\ndone\n"));
+}
+
+/// GIVEN the `showright` program, which builds a right-deep list of 1,000,000 cells
+/// WHEN it runs `print(e)` and then `print("done")` under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `Cons(7, ` 1,000,000 times, `Nil`, 1,000,000 `)` and `done`
+///
+/// The `show` helper loops on the last link and counts the `)` it owes, not in a frame each. One
+/// test for each shape of `printing_deep_values_should_fit_a_small_stack`, so that they run
+/// at once.
+#[test]
+fn printing_a_right_deep_list_should_fit_a_small_stack() {
+    let text = "Cons(7, ".repeat(SHOW_DEPTH) + "Nil" + &")".repeat(SHOW_DEPTH);
+    assert_deep_value_prints("showright", &text);
+}
+
+/// GIVEN the `showleft` program, which builds a left-deep tree of 1,000,000 nodes
+/// WHEN it runs `print(e)` and then `print("done")` under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `Node(` 1,000,000 times, `Leaf`, 1,000,000 `, Leaf)` and `done`
+///
+/// The helper keeps the places of the first fields on the heap.
+#[test]
+fn printing_a_left_deep_tree_should_fit_a_small_stack() {
+    let text = "Node(".repeat(SHOW_DEPTH) + "Leaf" + &", Leaf)".repeat(SHOW_DEPTH);
+    assert_deep_value_prints("showleft", &text);
+}
+
+/// GIVEN the `showmutual` program, which builds a chain of 1,000,000 levels of each of two enums
+/// that hold each other
+/// WHEN it runs `print(e)` and then `print("done")` under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `ToA(ToB(7, ` 1,000,000 times, `End`, 1,000,000 `))` and `done`
+///
+/// The helper steps from one enum to the other in one frame.
+#[test]
+fn printing_two_enums_that_hold_each_other_should_fit_a_small_stack() {
+    let text = "ToA(ToB(7, ".repeat(SHOW_DEPTH) + "End" + &"))".repeat(SHOW_DEPTH);
+    assert_deep_value_prints("showmutual", &text);
+}
+
+/// GIVEN the `showinline` program, which builds a chain of 1,000,000 `Pair`s, deep through the
+/// inline second field of `Both`
+/// WHEN it runs `print(e)` and then `print("done")` under a 256 KiB stack, with and without `-O2`
+/// THEN it exits 0 and prints `Pair(Both(Lit(7), ` 1,000,000 times, `Lit(7)`, 1,000,000 `))` and
+/// `done`
+///
+/// The helper walks an inline link in place.
+#[test]
+fn printing_an_inline_link_should_fit_a_small_stack() {
+    let text = "Pair(Both(Lit(7), ".repeat(SHOW_DEPTH) + "Lit(7)" + &"))".repeat(SHOW_DEPTH);
+    assert_deep_value_prints("showinline", &text);
 }
 
 /// GIVEN the `dropmutual` program, which builds chains of 100 000 pairs of two classes that

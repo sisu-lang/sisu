@@ -680,6 +680,7 @@ fn enum_of(variants: Vec<Vec<Type>>) -> tir::Enum {
             fields: (fields.into_iter())
                 .map(|ty| tir::Payload {
                     ty,
+                    label: None,
                     boxed: false,
                     rank: tir::Rank::Plain,
                 })

@@ -501,13 +501,8 @@ fn is_on_arrays() {
 }
 
 #[test]
-fn print_an_array() {
-    diagnostic(
-        "fn f(xs: [i64]) { print(xs) }\nfn main() {}",
-        Code::PrintArray,
-        (1, 25, "xs"),
-        &[],
-    );
+fn print_should_accept_an_array_and_reject_an_optional_one() {
+    clean("fn f(xs: [i64]) { print(xs) }\nfn main() {}");
     diagnostic(
         "fn f(m: [i64]?) { print(m) }\nfn main() {}",
         Code::PrintArray,

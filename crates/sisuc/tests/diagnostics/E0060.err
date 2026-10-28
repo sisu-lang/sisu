@@ -1,10 +1,10 @@
-error[E0060]: cannot print `[i64]`
+error[E0060]: cannot print `[i64]?`
  --> E0060.sisu:3:11
   |
 3 |     print(xs)
   |           ^^
   |
-  = help: print each element in a `for` loop
+  = help: unwrap it with `if let`, then print the array
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0060

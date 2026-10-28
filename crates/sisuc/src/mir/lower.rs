@@ -40,7 +40,7 @@ use super::{
     Block as MirBlock, BlockId, Const, Function, Local, Loop, Operand, Place as MirPlace,
     Projection, Rvalue, Side, Statement, Terminator,
 };
-use crate::conformance::{Written, calls_written};
+use crate::conformance::{Written, calls_written, prints_by_helper};
 use crate::tir::{
     self, Block, CompareOp, Expr, ExprKind, FuncId, LocalId, Place, Stmt, Type, TypeKind,
 };
@@ -265,11 +265,21 @@ impl<'a> Lowering<'a> {
     /// Whether comparing values of `ty` may call a written `eq`: the type, or a part of it, has
     /// a written `Eq`. The answer is kept for the program (`calls_written`).
     fn calls_eq(&mut self, ty: Type) -> bool {
+        self.calls_interface(ty, self.program.lang.eq)
+    }
+
+    /// Whether printing a value of `ty` may call a written `to_string`: the type, or a part of
+    /// it, has a written `Display`.
+    fn calls_display(&mut self, ty: Type) -> bool {
+        prints_by_helper(ty) && self.calls_interface(ty, self.program.lang.display)
+    }
+
+    fn calls_interface(&mut self, ty: Type, interface: tir::InterfaceId) -> bool {
         calls_written(
             &self.program.conformances,
             self.program.enums.as_slice(),
             ty,
-            self.program.lang.eq,
+            interface,
             self.written,
         )
     }
@@ -696,15 +706,18 @@ impl<'a> Lowering<'a> {
             ExprKind::Wrap(operand) => Rvalue::Wrap(self.operand(operand)?),
             ExprKind::Convert(operand) => Rvalue::Convert(self.operand(operand)?),
             ExprKind::Print { stream, operand } => {
+                let printed = operand.ty;
                 let (ops, temps) = self.borrowed(&[operand])?;
                 let [operand] = <[Operand; 1]>::try_from(ops)
                     .expect("`borrowed` should give one operand for each expression");
+                let calls = self.calls_display(printed);
                 self.assign(
                     e.ty,
                     None,
                     Rvalue::Print {
                         stream: *stream,
                         operand,
+                        calls,
                     },
                 );
                 for temp in temps {

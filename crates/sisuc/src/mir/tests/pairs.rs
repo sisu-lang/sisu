@@ -310,6 +310,34 @@ fn equal_without_a_written_eq_should_not_be_flagged() {
     assert!(!f.contains("[calls]"), "{f}");
 }
 
+/// A class whose written `to_string` stores into a `mut` field, as a call can: the copy `old` of
+/// `b.s` stays a copy across any `print` whose helper may run that `to_string`, the object itself
+/// or a value that holds it.
+#[test]
+fn copy_should_stay_across_a_written_to_string() {
+    let decls = "class B {\n    mut s: string\n}\nextend B: Display {\n    fn to_string(self) -> string {\n        self.s = \"new\"\n        \"B\"\n    }\n}\nenum Wrap {\n    One(B)\n}\n";
+    for printed in ["print(b)", "print([b])", "print(Wrap.One(b))"] {
+        let src = format!(
+            "{decls}fn main() {{\n    let b = B(s: \"heap {{1}}\")\n    let old = b.s\n    {printed}\n    print(old)\n    print(b.s)\n}}"
+        );
+        let f = function(&built(&src), "main");
+        let copy = f
+            .lines()
+            .find(|l| l.contains("old#") && l.contains(" = "))
+            .unwrap_or_else(|| panic!("{printed}: no binding of `old` in\n{f}"));
+        assert!(copy.contains("= copy "), "{printed}: {copy}\n{f}");
+        assert_eq!(f.matches(" [calls]").count(), 1, "{printed}: {f}");
+    }
+    // A value of an enum that holds no object with a written `to_string` prints with no flag.
+    let f = function(
+        &built(
+            "enum Expr {\n    Num(i64)\n    Add(Expr, Expr)\n}\nfn main() {\n    print(Expr.Num(1))\n}",
+        ),
+        "main",
+    );
+    assert!(!f.contains("[calls]"), "{f}");
+}
+
 /// `A` meets `B`'s `Holder` through `B`, so the cycle `A` - `B` reaches a written `eq` whichever
 /// of the two a comparison asks first.
 #[test]

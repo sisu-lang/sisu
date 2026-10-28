@@ -1513,6 +1513,46 @@ fn implicit_eq_call_should_close_an_instantiation_cycle() {
 }
 
 #[test]
+fn implicit_print_should_close_an_instantiation_cycle() {
+    let w = "class W<T> {\n    x: T\n}\n";
+    let main = "fn main() {\n    print(W(x: 1))\n}";
+    let growing = "print(W(x: [self.x]))";
+    let rows = [
+        (
+            "a print of a class that grows",
+            format!(
+                "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        {growing}\n        \"w\"\n    }}\n}}\n{main}"
+            ),
+            Some(growing),
+        ),
+        (
+            "a print of an enum payload, reached through its generated Display",
+            format!(
+                "{w}enum Pick<U> {{\n    One(U)\n}}\nextend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        print(Pick.One(W(x: [self.x])))\n        \"w\"\n    }}\n}}\n{main}"
+            ),
+            Some("print(Pick.One(W(x: [self.x])))"),
+        ),
+        (
+            "a print that does not grow",
+            format!(
+                "{w}extend<T> W<T>: Display {{\n    fn to_string(self) -> string {{\n        print([self.x])\n        \"w\"\n    }}\n}}\n{main}"
+            ),
+            None,
+        ),
+    ];
+    for (row, src, cycle) in rows {
+        match cycle {
+            Some(text) => codes_row(
+                row,
+                &src,
+                &[(Code::InstantiationCycle, where_is(&src, text))],
+            ),
+            None => clean_row(row, &src),
+        }
+    }
+}
+
+#[test]
 fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
     let same = "fn same<A: Eq>(a: A, b: A) -> bool {\n    a == b\n}\n";
     let rows = [
@@ -1523,6 +1563,10 @@ fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
         (
             "arrays under an enum's generated Eq",
             "class G2<T> {\n    x: T\n}\nenum Q<V> {\n    A(V)\n}\nextend<T: Eq> G2<T>: Eq {\n    fn eq(self, other: Self) -> bool {\n        Q.A([[self.x]]) == Q.A([[other.x]])\n    }\n}\nfn main() {\n    print(G2(x: 1) == G2(x: 2))\n}".to_string(),
+        ),
+        (
+            "arrays of the parameter, printed through a bare parameter's second node",
+            "class Grid<T> {\n    rows: [[T]]\n}\nfn show<A>(a: A) {\n    print(a)\n}\nextend<T> Grid<T>: Display {\n    fn to_string(self) -> string {\n        show(self.rows)\n        \"g\"\n    }\n}\nfn main() {\n    print(Grid(rows: [[1]]))\n}".to_string(),
         ),
         (
             "a second node that comes from the node of the element, not of the whole argument",
@@ -1536,7 +1580,7 @@ fn operand_under_arrays_of_a_parameter_should_not_close_a_cycle() {
 
 #[test]
 fn growing_declaration_should_give_one_diagnostic() {
-    let nest = "enum Nest<T> {\n    End\n    Next(Nest<[T]>)\n}\nfn f(a: Nest<i64>, b: Nest<i64>) -> bool {\n    a == b\n}\nfn main() {}";
+    let nest = "enum Nest<T> {\n    End\n    Next(Nest<[T]>)\n}\nfn f(a: Nest<i64>, b: Nest<i64>) -> bool {\n    a == b\n}\nfn p(n: Nest<i64>) {\n    print(n)\n}\nfn main() {}";
     codes(
         nest,
         &[(Code::InstantiationCycle, where_is(nest, "Nest<[T]>"))],

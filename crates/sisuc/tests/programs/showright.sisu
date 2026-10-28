@@ -1,0 +1,19 @@
+// A right-deep list of 1 000 000 cells, printed under a 256 KiB stack. The `show` helper
+// loops on the last link, the tail, in one frame and counts the `)` it still owes; a recursive
+// helper needs a frame per cell and overflows that stack. The output is `Cons(7, ` 1 000 000
+// times, `Nil` and 1 000 000 `)`.
+enum List {
+    Nil
+    Cons(i64, List)
+}
+
+fn main() {
+    let mut list = List.Nil
+    let mut i = 0
+    while i < 1_000_000 {
+        list = List.Cons(7, list)
+        i += 1
+    }
+    print(list)
+    print("done")
+}

@@ -111,7 +111,7 @@ const IDENTITY: &str = "reach: a class is compared with `is` or against `None`";
 
 /// What the code of the generated programs reaches between them, which no variant shows: without
 /// one, a capability of the generator is off.
-const REACH: [&str; 87] = [
+const REACH: [&str; 89] = [
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
@@ -199,7 +199,18 @@ const REACH: [&str; 87] = [
     "reach: an operator calls a written `eq` or `less`",
     "reach: an `==` or `print` runs a written method inside a value",
     "reach: an `==` or `print` on a compound value runs no written method",
+    "reach: `print` writes a compound value",
+    "reach: `print` runs a written `to_string` inside a value",
 ];
+
+/// Whether `ty` is an array, an optional, an enum or a class: a type whose value `print` writes
+/// through a helper.
+fn is_compound(ty: Type) -> bool {
+    matches!(
+        ty.kind(),
+        TypeKind::Array(_) | TypeKind::Optional(_) | TypeKind::Enum(..) | TypeKind::Class(..)
+    )
+}
 
 /// Whether a program's text holds a form.
 type Holds = fn(&str) -> bool;
@@ -553,9 +564,9 @@ impl Walk {
         }
     }
 
-    /// The keys that the built mir shows: an `==` or `contains` on a compound value that may run
-    /// a written method inside it, and one that cannot. The mir is that of the program `mono`
-    /// instantiates, as lowering makes it: `build` sets the same flags and costs far more.
+    /// The keys that the built mir shows: an `==`, `contains` or `print` on a compound value that
+    /// may run a written method inside it, and one that cannot. The mir is that of the program
+    /// `mono` instantiates, as lowering makes it: `build` sets the same flags and costs far more.
     fn built(&mut self, program: tir::Program) {
         let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
         let mir = crate::mir::lowered(&program);
@@ -565,9 +576,10 @@ impl Walk {
                     let crate::mir::Statement::Assign { value, .. } = stmt else {
                         continue;
                     };
-                    let (operand, calls) = match value {
-                        crate::mir::Rvalue::Equal { lhs, calls, .. } => (lhs, *calls),
-                        crate::mir::Rvalue::Contains { base, calls, .. } => (base, *calls),
+                    let (operand, calls, printed) = match value {
+                        crate::mir::Rvalue::Equal { lhs, calls, .. } => (lhs, *calls, false),
+                        crate::mir::Rvalue::Contains { base, calls, .. } => (base, *calls, false),
+                        crate::mir::Rvalue::Print { operand, calls, .. } => (operand, *calls, true),
                         _ => continue,
                     };
                     // A whole local is all that tells the type here.
@@ -578,16 +590,12 @@ impl Walk {
                         }
                         _ => continue,
                     };
-                    let ty = function.locals[local.0].ty;
-                    let compound = matches!(
-                        ty.kind(),
-                        TypeKind::Array(_)
-                            | TypeKind::Optional(_)
-                            | TypeKind::Enum(..)
-                            | TypeKind::Class(..)
-                    );
+                    let compound = is_compound(function.locals[local.0].ty);
                     if calls {
                         self.mark("reach: an `==` or `print` runs a written method inside a value");
+                        if printed {
+                            self.mark("reach: `print` runs a written `to_string` inside a value");
+                        }
                     } else if compound {
                         self.mark(
                             "reach: an `==` or `print` on a compound value runs no written method",
@@ -2203,6 +2211,9 @@ impl Walk {
                     tir::Stream::Stdout => "tir::Stream::Stdout",
                     tir::Stream::Stderr => "tir::Stream::Stderr",
                 });
+                if is_compound(operand.ty) {
+                    self.mark("reach: `print` writes a compound value");
+                }
                 self.tir_expr(operand, Parent::Other);
             }
             tir::ExprKind::Panic(message) => {
@@ -3183,7 +3194,7 @@ fn with_funcs(data: &[u8]) -> Gen<'_> {
     for (name, ret) in [
         ("f1", Ty::I64),
         ("f2", Ty::Unit),
-        ("f3", Ty::Array(Box::new(Ty::I64))),
+        ("f3", Ty::Optional(Box::new(Ty::I64))),
     ] {
         g.scope.funcs.push(Func {
             name: name.to_string(),
@@ -3212,9 +3223,9 @@ fn a_return_gives_a_value_where_its_function_returns_one() {
 }
 
 #[test]
-fn main_prints_or_discards_what_a_call_returns() {
+fn main_should_print_a_value_and_discard_an_optional_that_a_call_returns() {
     // Byte by byte: one statement in `main`, a call, of the function the third byte names, at
-    // depth 0 once the bytes run out. A value is printed, an array discarded, and a `unit`
+    // depth 0 once the bytes run out. A value is printed, an optional discarded, and a `unit`
     // call stands alone; the statement gives back the fuel it did not spend.
     for (callee, line) in [(0, "print(f1(0))"), (1, "f2(0)"), (2, "let _ = f3(0)")] {
         let data = [1, 1, callee];

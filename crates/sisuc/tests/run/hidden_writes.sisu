@@ -2,7 +2,9 @@
 // value. So an `==` or `contains` whose helper may run the `eq`, on the operand itself or on a
 // value that holds it, is a call to pair removal: the copy `xs` of `h.items` stays a copy, and
 // reading `xs` after the comparison reads live memory (Valgrind and `--rc-checks` see a mistake).
-// `h` stays live after the comparison, so the copy has nothing else that keeps it.
+// `h` stays live after the comparison, so the copy has nothing else that keeps it. A `print`
+// whose helper may run a written `to_string` is such a call too: the `to_string` of `B` stores
+// into `s`, and the copy `old` of the field stays live memory across the `print`.
 class Holder: Eq {
     mut items: [string]
     fn eq(self, _other: Self) -> bool {
@@ -85,6 +87,45 @@ fn in_nested_payload() {
     print(h.items[0])
 }
 
+class B {
+    mut s: string
+}
+
+extend B: Display {
+    fn to_string(self) -> string {
+        self.s = "new"
+        "B"
+    }
+}
+
+enum Boxed {
+    One(B)
+}
+
+fn print_object() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    print(b)
+    print(old)
+    print(b.s)
+}
+
+fn print_array() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    print([b])
+    print(old)
+    print(b.s)
+}
+
+fn print_payload() {
+    let b = B(s: "heap {1}")
+    let old = b.s
+    print(Boxed.One(b))
+    print(old)
+    print(b.s)
+}
+
 fn main() {
     in_array()
     in_contains()
@@ -92,4 +133,7 @@ fn main() {
     in_enum()
     in_optional_payload()
     in_nested_payload()
+    print_object()
+    print_array()
+    print_payload()
 }

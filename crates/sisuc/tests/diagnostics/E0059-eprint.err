@@ -1,4 +1,4 @@
-error[E0059]: `eprint` takes one `i64`, `u8`, `f64`, `bool`, `char` or `string`
+error[E0059]: `eprint` takes one value that is not an optional
  --> E0059-eprint.sisu:2:5
   |
 2 |     eprint()

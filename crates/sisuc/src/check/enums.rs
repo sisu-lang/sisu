@@ -498,8 +498,8 @@ impl Checker<'_> {
                 variants: (info.variants.iter())
                     .map(|v| tir::Variant {
                         name: v.name.name.to_string(),
-                        fields: (v.fields.iter())
-                            .map(|&ty| {
+                        fields: (v.fields.iter().zip(&v.labels))
+                            .map(|(&ty, label)| {
                                 // An `Error` field's error stops the program before codegen.
                                 let ty = ty.unwrap_or(Type::NEVER);
                                 let rank = if !ty.has_param() {
@@ -521,6 +521,7 @@ impl Checker<'_> {
                                 };
                                 tir::Payload {
                                     ty,
+                                    label: label.as_ref().map(Symbol::to_string),
                                     boxed: false,
                                     rank,
                                 }

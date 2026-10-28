@@ -36,7 +36,8 @@
 //! the enum's generated `Eq` node, a declaration of its own that has the enum's parameters and an
 //! edge for each payload type, chosen by the same rule. Any other type goes to the interface's
 //! hub, as the receiver of a call through a bound does. An enum with only conditional
-//! conformances takes both edges.
+//! conformances takes both edges. A `print` is the same for `Display`: its operand type chooses
+//! the edges, and each enum has a generated `Display` node beside its generated `Eq` node.
 //!
 //! Each parameter of a function, class, enum or generated node has a second node, for its value
 //! with its outer array and optional levels taken off, since the generated rule takes those off
@@ -147,8 +148,13 @@ struct Graph {
     enums: usize,
     /// Where the declaration of the hub of each interface starts: the interface's index added.
     interface_hubs: usize,
-    /// The declaration of the generated `Eq` node of the first enum; the others follow.
+    /// The declaration of the generated `Eq` node of the first enum; the others follow, and then
+    /// the generated `Display` nodes in the same order.
     eq_first: usize,
+    /// The declaration of the generated `Display` node of the first enum.
+    display_first: usize,
+    /// The interface whose operators go to the generated `Display` nodes.
+    display: tir::InterfaceId,
     /// By interface and enum, whether a written conformance has the enum as its target, and
     /// whether one of them has no bound on its parameters.
     records: FxHashMap<(tir::InterfaceId, tir::EnumId), (bool, bool)>,
@@ -310,7 +316,12 @@ impl Graph {
                     .copied()
                     .unwrap_or_default();
                 if !written || !unconditional {
-                    let target = self.eq_first + id.0;
+                    let first = if interface == self.display {
+                        self.display_first
+                    } else {
+                        self.eq_first
+                    };
+                    let target = first + id.0;
                     self.args(holder, args.get(), target, site, site, Instance::Type(ty));
                 }
                 if written {
@@ -642,7 +653,8 @@ impl Checker<'_> {
         let declared = graph.functions;
         // A generated node stands for its enum.
         let name = match edge.holder.checked_sub(declared) {
-            _ if edge.holder >= graph.eq_first => self.enums[edge.holder - graph.eq_first]
+            _ if edge.holder >= graph.eq_first => self.enums
+                [(edge.holder - graph.eq_first) % graph.enums]
                 .name
                 .name
                 .to_string(),
@@ -683,13 +695,15 @@ impl Checker<'_> {
             }
         }
         // The hubs of the interfaces follow, one each, and then the generated `Eq` node of each
-        // enum, which has the enum's parameters.
+        // enum, which has the enum's parameters, and its generated `Display` node.
         let interface_hubs = declarations;
         let eq_first = interface_hubs + self.interfaces.len();
+        let display_first = eq_first + self.enums.len();
         let counts = self.signatures.iter().map(|s| s.type_params.len());
         let counts = counts.chain(self.classes.iter().map(|c| c.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(std::iter::repeat_n(1, hubs.len() + self.interfaces.len()));
+        let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let counts = counts.chain(self.enums.iter().map(|e| e.type_params.len()));
         let mut first = vec![0];
         for n in counts {
@@ -703,6 +717,8 @@ impl Checker<'_> {
             enums: self.enums.len(),
             interface_hubs,
             eq_first,
+            display_first,
+            display: self.lang.display,
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
@@ -770,6 +786,9 @@ impl Checker<'_> {
                     tir::ExprKind::Compare { ref operands, .. } => {
                         graph.operator(holder, operands[0].ty, self.lang.ord, e.span);
                     }
+                    tir::ExprKind::Print { ref operand, .. } => {
+                        graph.operator(holder, operand.ty, self.lang.display, e.span);
+                    }
                     tir::ExprKind::Contains { ref base, .. } => {
                         let element =
                             (base.ty.array_element()).expect("`contains` should take an array");
@@ -801,19 +820,23 @@ impl Checker<'_> {
         records
     }
 
-    /// The edges of the generated `Eq` node of each enum: one for each payload type, chosen as an
-    /// operand is. An enum that grows, or that no value can be built of, has none, as its
-    /// declaration has none: its own error stands for its cycle.
+    /// The edges of the generated `Eq` and `Display` nodes of each enum: one for each payload
+    /// type, chosen as an operand is. An enum that grows, or that no value can be built of, has
+    /// none, as its declaration has none: its own error stands for its cycle.
     fn generated_edges(&self, graph: &mut Graph) {
         for (e, info) in self.enums.iter().enumerate() {
             if self.marked[e] {
                 continue;
             }
-            let holder = graph.eq_first + e;
-            for variant in &info.variants {
-                for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
-                    if let Some(ty) = *ty {
-                        graph.operator(holder, ty, self.lang.eq, span);
+            for (holder, interface) in [
+                (graph.eq_first + e, self.lang.eq),
+                (graph.display_first + e, self.lang.display),
+            ] {
+                for variant in &info.variants {
+                    for (ty, &span) in variant.fields.iter().zip(&variant.spans) {
+                        if let Some(ty) = *ty {
+                            graph.operator(holder, ty, interface, span);
+                        }
                     }
                 }
             }
@@ -1292,6 +1315,8 @@ mod tests {
             enums: 0,
             interface_hubs: 2,
             eq_first: 2,
+            display_first: 2,
+            display: tir::InterfaceId(usize::MAX),
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
@@ -1445,6 +1470,8 @@ mod tests {
             enums: 2,
             interface_hubs: 3,
             eq_first: 4,
+            display_first: 6,
+            display: tir::InterfaceId(usize::MAX),
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),

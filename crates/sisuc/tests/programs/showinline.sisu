@@ -1,0 +1,24 @@
+// A chain of 1 000 000 `Pair`s, deep through the second field of `Both`, printed under a
+// 256 KiB stack. `Expr` holds itself through `Two<Expr>`, so the box sits on `Expr.Pair`'s field
+// and `Both` holds its two `Expr`s inline. The helper walks an inline `Expr` in place: a helper
+// that called itself for it would need a frame per level and overflow that stack. The output
+// is `Pair(Both(Lit(7), ` 1 000 000 times, `Lit(7)` and 1 000 000 `))`.
+enum Two<T> {
+    Both(T, T)
+}
+
+enum Expr {
+    Lit(i64)
+    Pair(Two<Expr>)
+}
+
+fn main() {
+    let mut e = Expr.Lit(7)
+    let mut i = 0
+    while i < 1_000_000 {
+        e = Expr.Pair(Two.Both(Expr.Lit(7), e))
+        i += 1
+    }
+    print(e)
+    print("done")
+}

@@ -1,7 +1,0 @@
-class P {
-    x: i64
-}
-
-fn main() {
-    print(P(x: 1))
-}

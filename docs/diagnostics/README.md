@@ -71,7 +71,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0057](E0057.md) | error | method read as a field |
 | [E0058](E0058.md) | error | field called as a method |
 | [E0059](E0059.md) | error | `print` or `eprint` of something it cannot print |
-| [E0060](E0060.md) | error | `print` or `eprint` of an array |
+| [E0060](E0060.md) | error | `print` or `eprint` of an optional array |
 | [E0061](E0061.md) | error | `print` or `eprint` of an expression that never finishes |
 | [E0062](E0062.md) | error | optional used as if it were present |
 | [E0063](E0063.md) | error | field or method that does not exist |

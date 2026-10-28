@@ -16,7 +16,9 @@ use super::layout::HeapBlock;
 use super::{Codegen, POSITIONED};
 use crate::conformance::find;
 use crate::graph::components;
-use crate::tir::{ClassId, EnumId, FuncId, LocalId, Program, Type, TypeArgs, TypeKind};
+use crate::tir::{
+    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Type, TypeArgs, TypeKind,
+};
 
 /// A kind of helper that a counted type has.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,6 +43,12 @@ pub(super) enum Helper {
     /// `@sisu_rc.reuse.<F>(token) -> ptr`: a token's box, or a new block for a box of `F` when
     /// the token is `null`.
     Reuse,
+    /// `@sisu_show.<T>(sink, value)`: writes the text of a value of an array, a class or an
+    /// enum type into a sink (see `codegen/show.rs`).
+    Show,
+    /// `@sisu_show_component.<F0>(sink, kind, value)`: writes the text of a value of member
+    /// `kind` of an enum component with boxes.
+    ShowComponent,
 }
 
 /// The cycles of classes that hold each other, which `define_drop` frees in a loop. A class
@@ -179,6 +187,23 @@ impl<'ctx> Codegen<'ctx, '_> {
             ),
             Helper::Free => ("free", takes_object),
             Helper::Reuse => ("reuse", ptr_type.fn_type(&[ptr_type.into()], false)),
+            Helper::Show => (
+                "",
+                self.context
+                    .void_type()
+                    .fn_type(&[ptr_type.into(); 2], false),
+            ),
+            Helper::ShowComponent => (
+                "",
+                self.context.void_type().fn_type(
+                    &[
+                        ptr_type.into(),
+                        self.context.i32_type().into(),
+                        ptr_type.into(),
+                    ],
+                    false,
+                ),
+            ),
             Helper::EqComponent => (
                 "eq_component",
                 self.context.bool_type().fn_type(
@@ -191,11 +216,14 @@ impl<'ctx> Codegen<'ctx, '_> {
                 ),
             ),
         };
-        let function = self.module.add_function(
-            &format!("sisu_rc.{prefix}.{name}"),
-            fn_type,
-            Some(Linkage::Internal),
-        );
+        let symbol = match kind {
+            Helper::Show => format!("sisu_show.{name}"),
+            Helper::ShowComponent => format!("sisu_show_component.{name}"),
+            _ => format!("sisu_rc.{prefix}.{name}"),
+        };
+        let function = self
+            .module
+            .add_function(&symbol, fn_type, Some(Linkage::Internal));
         self.helpers.borrow_mut().insert(key, function);
         self.pending.borrow_mut().push(key);
         function
@@ -223,6 +251,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             };
             let function = self.helpers.borrow()[&(kind, ty)];
             match (kind, ty.kind()) {
+                (Helper::Show, _) => self.define_show(function, ty),
+                (Helper::ShowComponent, TypeKind::Enum(id, _)) => {
+                    self.define_show_component(id, function);
+                }
                 (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..))
                     if self.written_eq(ty).is_some() =>
                 {
@@ -245,7 +277,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 (Helper::Unique, _) => {
                     unreachable!("only an array type should be queued for a `unique` helper")
                 }
-                (Helper::Walk | Helper::EqComponent, _) => {
+                (Helper::Walk | Helper::EqComponent | Helper::ShowComponent, _) => {
                     unreachable!("only an enum type should be queued for a component helper")
                 }
                 (Helper::Unbox | Helper::Free | Helper::Reuse, _) => {
@@ -455,11 +487,20 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// The method of the written `Eq` of the class or enum `ty`, when the program has a record
     /// for it. After `mono` each record is concrete, so the lookup is exact.
     pub(super) fn written_eq(&self, ty: Type) -> Option<FuncId> {
-        let lang = self.program.lang;
-        let (k, _) = find(&self.program.conformances, lang.eq, ty, TypeArgs::NONE)?;
+        self.written_method(ty, self.program.lang.eq)
+    }
+
+    /// The method of the written `Display` of the class or enum `ty`, its `to_string`, when the
+    /// program has a record for it.
+    pub(super) fn written_display(&self, ty: Type) -> Option<FuncId> {
+        self.written_method(ty, self.program.lang.display)
+    }
+
+    fn written_method(&self, ty: Type, interface: InterfaceId) -> Option<FuncId> {
+        let (k, _) = find(&self.program.conformances, interface, ty, TypeArgs::NONE)?;
         self.program
             .conformances
-            .get(lang.eq, k)
+            .get(interface, k)
             .methods
             .first()
             .copied()
@@ -708,7 +749,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The value of type `ty` at `place`.
-    fn load_value(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
+    pub(super) fn load_value(&self, ty: Type, place: PointerValue<'ctx>) -> BasicValueEnum<'ctx> {
         let llvm_ty = self
             .llvm_type(ty)
             .expect("the checker should give every field a value type, never `unit` or `never`");

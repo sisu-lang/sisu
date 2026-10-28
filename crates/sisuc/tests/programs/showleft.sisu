@@ -1,0 +1,20 @@
+// A left-deep tree of 1 000 000 nodes, printed under a 256 KiB stack. Each `Node` holds the
+// rest of the tree in its first field and a `Leaf` in its second. The helper loops on the last
+// link only, so a first field that it wrote by a call would need a frame per level and overflow
+// that stack: it keeps those places on the heap instead. The output is `Node(` 1 000 000
+// times, `Leaf` and 1 000 000 `, Leaf)`.
+enum Tree {
+    Leaf
+    Node(Tree, Tree)
+}
+
+fn main() {
+    let mut tree = Tree.Leaf
+    let mut i = 0
+    while i < 1_000_000 {
+        tree = Tree.Node(tree, Tree.Leaf)
+        i += 1
+    }
+    print(tree)
+    print("done")
+}

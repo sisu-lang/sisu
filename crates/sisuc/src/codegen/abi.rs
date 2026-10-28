@@ -236,6 +236,93 @@ pub(super) const RUNTIME: &[RuntimeFn] = &[
         ret: Some(Abi::Ptr),
         attrs: NONE,
     },
+    // show.rs: a sink is memory that the runtime reaches through its pointer argument, and a buffer
+    // sink keeps a block of its own, so these rows say no more than that they do not unwind. None
+    // joins the allocator pair: `sisu_show_finish` hands back a block it did not just allocate.
+    RuntimeFn {
+        name: "sisu_show_bool",
+        params: &[Abi::Ptr, Abi::Bool],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_buffer",
+        params: &[Abi::Ptr, Abi::I64],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_char",
+        params: &[Abi::Ptr, Abi::I32, Abi::Bool],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_close",
+        params: &[Abi::Ptr, Abi::Ptr, Abi::I64],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_f64",
+        params: &[Abi::Ptr, Abi::F64],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_f64_fixed",
+        params: &[Abi::Ptr, Abi::F64, Abi::U8],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_finish",
+        params: &[Abi::Ptr],
+        ret: Some(Abi::Ptr),
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_int",
+        params: &[Abi::Ptr, Abi::I64],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_line_end",
+        params: &[Abi::Ptr],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_open",
+        params: &[Abi::Ptr, Abi::Ptr, Abi::I64],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_quoted",
+        params: &[Abi::Ptr, Abi::Ptr, Abi::I64],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_sep",
+        params: &[Abi::Ptr],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_stdout",
+        params: &[Abi::Ptr],
+        ret: None,
+        attrs: NOUNWIND,
+    },
+    RuntimeFn {
+        name: "sisu_show_str",
+        params: &[Abi::Ptr, Abi::Ptr, Abi::I64],
+        ret: None,
+        attrs: NOUNWIND,
+    },
     // stdin.rs
     RuntimeFn {
         name: "sisu_read_line",
@@ -350,6 +437,12 @@ pub(super) const RC_FAULT_MOVED: u64 = 2;
 pub(super) const PAD_LEFT: u64 = 0;
 pub(super) const PAD_RIGHT: u64 = 1;
 pub(super) const PAD_CENTER: u64 = 2;
+
+/// The size of the runtime's text sink, and where it keeps the length and the capacity of its
+/// text. The runtime defines them in `crates/runtime/src/show.rs`, and a test here compares them.
+pub(super) const SINK_SIZE: u64 = 40;
+pub(super) const SINK_LEN: u64 = 24;
+pub(super) const SINK_CAP: u64 = 32;
 
 /// The row of `RUNTIME` named `name`.
 pub(super) fn row(name: &str) -> &'static RuntimeFn {
@@ -548,5 +641,31 @@ mod tests {
             panic.contains("noreturn"),
             "missing \"noreturn\" in\n{panic}"
         );
+    }
+
+    /// The numbers of the sink in `SINK_SIZE`, `SINK_LEN` and `SINK_CAP` are the runtime's.
+    #[test]
+    fn sink_numbers_should_match_the_runtime() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../runtime/src/show.rs");
+        let source = std::fs::read_to_string(dir).expect("the runtime's show.rs should read");
+        let file = syn::parse_file(&source).expect("show.rs should parse");
+        let constant = |name: &str| -> u64 {
+            file.items
+                .iter()
+                .find_map(|item| match item {
+                    syn::Item::Const(item) if item.ident == name => match &*item.expr {
+                        syn::Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(number),
+                            ..
+                        }) => Some(number.base10_parse().expect("a sink number should parse")),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("show.rs should define {name} as a number"))
+        };
+        assert_eq!(constant("SINK_SIZE"), SINK_SIZE);
+        assert_eq!(constant("SINK_LEN"), SINK_LEN);
+        assert_eq!(constant("SINK_CAP"), SINK_CAP);
     }
 }

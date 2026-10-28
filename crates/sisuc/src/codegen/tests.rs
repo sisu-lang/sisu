@@ -1239,6 +1239,7 @@ fn print_after_move() -> mir::Function {
                 Rvalue::Print {
                     stream: Stream::Stdout,
                     operand: mir::Operand::Read(whole(s)),
+                    calls: false,
                 },
             ),
             Statement::ScopeRelease(s),
@@ -1636,6 +1637,79 @@ fn print_declarations_carry_attributes() {
         }
         assert!(!attributes.contains("willreturn"), "{name}: {attributes}");
     }
+}
+
+/// `print(n)` of an `i64` stays the runtime's `sisu_print_int` call: no sink, no `show` helper.
+#[test]
+fn printing_an_i64_should_call_sisu_print_int_alone() {
+    let context = Context::create();
+    let ir = compiled(&context, "fn main() {\n    let n = 5\n    print(n)\n}")
+        .print_to_string()
+        .to_string();
+    assert!(ir.contains("call void @sisu_print_int("), "{ir}");
+    assert!(!ir.contains("sisu_show"), "{ir}");
+}
+
+/// The text of the function `name` in `ir`, from its `define` line to its closing brace.
+fn definition<'a>(ir: &'a str, name: &str) -> &'a str {
+    let start = ir
+        .match_indices("define ")
+        .map(|(at, _)| at)
+        .find(|&at| {
+            let line = ir[at..].lines().next().unwrap_or_default();
+            line.contains(&format!("@{name}("))
+        })
+        .unwrap_or_else(|| panic!("no definition of {name} in\n{ir}"));
+    let end = ir[start..]
+        .find("\n}\n")
+        .expect("a definition ends with a brace");
+    &ir[start..start + end]
+}
+
+/// A right-deep enum list prints in one frame: its component helper loops on the last link, and
+/// never calls itself or another `show` helper of its own enum.
+#[test]
+fn printing_a_deep_enum_should_loop_instead_of_recursing() {
+    let context = Context::create();
+    let ir = compiled(
+        &context,
+        "enum List {\n    Nil\n    Cons(i64, List)\n}\nfn main() {\n    print(List.Cons(1, List.Nil))\n}",
+    )
+    .print_to_string()
+    .to_string();
+    let body = definition(&ir, "sisu_show_component.List");
+    let calls = |callee: &str| {
+        body.lines()
+            .any(|l| l.contains("call ") && l.contains(callee))
+    };
+    assert!(!calls("@sisu_show_component.List("), "{body}");
+    assert!(!calls("@sisu_show.List("), "{body}");
+    // The helper of the type is a call of the component helper.
+    assert!(
+        definition(&ir, "sisu_show.List").contains("@sisu_show_component.List("),
+        "{ir}"
+    );
+}
+
+/// `eprint` of a compound value builds the text in a buffer sink and writes it with one
+/// `sisu_eprint_str`; `print` writes through a sink over standard output and allocates nothing.
+#[test]
+fn printing_a_compound_value_should_use_the_sink_of_its_stream() {
+    let context = Context::create();
+    let ir = compiled(&context, "fn main() {\n    print([1])\n    eprint([1])\n}")
+        .print_to_string()
+        .to_string();
+    let main = definition(&ir, "sisu.main");
+    for wanted in [
+        "@sisu_show_stdout(",
+        "@sisu_show_line_end(",
+        "@sisu_show_buffer(",
+        "@sisu_show_finish(",
+        "@sisu_eprint_str(",
+    ] {
+        assert!(main.contains(wanted), "{wanted} in\n{main}");
+    }
+    assert_eq!(main.matches("@sisu_show_buffer(").count(), 1, "{main}");
 }
 
 /// The attribute group line of the declaration of `name` in `ir`.

@@ -1,0 +1,19 @@
+fn iterations() -> i64 { 1000 }
+
+// `print` of an enum value writes into a sink over the output buffer and allocates nothing: the
+// five nodes of `e` wait in the pending list's first slot, in the frame, one at a time (the
+// first field of the root, then the first field of the inner `Add`), so the list never uses the
+// heap. The value is built once, so the 4 boxes of the build are the same with no iteration, and
+// the first line makes the runtime open its output buffer in both runs.
+enum Expr {
+    Num(i64)
+    Add(Expr, Expr)
+}
+
+fn main() {
+    let e = Expr.Add(Expr.Num(1), Expr.Add(Expr.Num(2), Expr.Num(3)))
+    print("start")
+    for _ in 0..iterations() {
+        print(e)
+    }
+}

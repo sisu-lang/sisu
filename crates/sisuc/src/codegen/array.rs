@@ -115,7 +115,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// The element at `index`, without retaining it.
-    fn load_element(
+    pub(super) fn load_element(
         &self,
         element: Type,
         array: PointerValue<'ctx>,
@@ -368,6 +368,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Walk
             | Helper::Drain
             | Helper::EqComponent
+            | Helper::Show
+            | Helper::ShowComponent
             | Helper::Unbox
             | Helper::Free
             | Helper::Reuse => {

@@ -11,6 +11,7 @@ mod layout;
 mod matching;
 mod math;
 mod rc;
+mod show;
 mod string;
 
 use rustc_hash::FxHashMap;
@@ -770,7 +771,9 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let lhs = self.pointer(lhs);
                 self.same_object(lhs, self.pointer(rhs)).into()
             }
-            Rvalue::Print { stream, operand } => {
+            Rvalue::Print {
+                stream, operand, ..
+            } => {
                 let (value, ty) = self.operand(operand);
                 self.print(*stream, ty, value);
                 return None;
@@ -1064,6 +1067,18 @@ impl<'ctx> Codegen<'ctx, '_> {
 
     /// `print` or `eprint` of an evaluated operand of type `ty`, which it borrows.
     fn print(&self, stream: Stream, ty: Type, value: BasicValueEnum<'ctx>) {
+        if !matches!(
+            ty.kind(),
+            TypeKind::I64
+                | TypeKind::U8
+                | TypeKind::F64
+                | TypeKind::Bool
+                | TypeKind::Char
+                | TypeKind::String
+        ) {
+            self.print_compound(stream, ty, value);
+            return;
+        }
         if ty == Type::STRING {
             self.print_string(stream, value.into_pointer_value());
             return;

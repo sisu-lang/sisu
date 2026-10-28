@@ -118,7 +118,8 @@ impl Gen<'_> {
     fn call_stmt(&mut self) {
         let callee = self.pick(self.callees_any());
         let ret = &self.scope.funcs[callee].ret;
-        let print = Ty::VALUES.contains(ret);
+        // Every type prints but `unit` and an optional, which warns, then prints, in a later task.
+        let print = !matches!(ret, Ty::Unit | Ty::Optional(_));
         let discard = !print && *ret != Ty::Unit;
         if print {
             self.w.text("print(");
@@ -187,7 +188,7 @@ impl Gen<'_> {
         match rule {
             Rule::Print => {
                 self.one_of(&["print(", "eprint("]);
-                let ty = self.value_type();
+                let ty = self.print_type();
                 self.synth = true;
                 self.expr(&ty, MAX_SIZE);
                 self.w.text(")");

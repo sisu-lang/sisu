@@ -129,6 +129,10 @@ impl Printer<'_> {
             .join(", ")
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per rvalue, so the printer reads in one place"
+    )]
     fn rvalue(&self, rvalue: &Rvalue) -> String {
         match rvalue {
             Rvalue::Use(operand) => self.operand(operand),
@@ -227,9 +231,14 @@ impl Printer<'_> {
             Rvalue::Is { lhs, rhs } => {
                 format!("{} is {}", self.operand(lhs), self.operand(rhs))
             }
-            Rvalue::Print { stream, operand } => {
-                format!("call {}({})", stream.name(), self.operand(operand))
-            }
+            Rvalue::Print {
+                stream,
+                operand,
+                calls,
+            } => flagged(
+                format!("call {}({})", stream.name(), self.operand(operand)),
+                *calls,
+            ),
         }
     }
 

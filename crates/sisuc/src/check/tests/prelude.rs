@@ -155,15 +155,13 @@ fn eprint_lowers() {
 }
 
 /// `eprint`'s argument errors are `print`'s: in each row, the body, the code, and where it is
-/// reported (the call for a count, the argument otherwise).
+/// reported (the call for a count, the argument otherwise). An object and an array print.
 #[test]
-fn eprint_argument_errors() {
+fn eprint_should_report_the_argument_errors_of_print() {
     let class = "class P {\n    x: i64\n}\n";
     for (statement, code, pos) in [
         ("eprint()", Code::PrintArgument, (5, 5)),
         ("eprint(1, 2)", Code::PrintArgument, (5, 5)),
-        ("eprint(P(x: 1))", Code::PrintArgument, (5, 12)),
-        ("eprint([1])", Code::PrintArray, (5, 12)),
         ("eprint(panic(\"x\"))", Code::PrintNever, (5, 12)),
     ] {
         codes(
@@ -171,6 +169,11 @@ fn eprint_argument_errors() {
             &[(code, pos)],
         );
     }
+}
+
+#[test]
+fn eprint_should_accept_an_object_and_an_array() {
+    clean("class P {\n    x: i64\n}\nfn main() {\n    eprint(P(x: 1))\n    eprint([1])\n}");
 }
 
 #[test]

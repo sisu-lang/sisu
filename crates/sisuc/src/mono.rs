@@ -14,6 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::conformance::{
     Cause, Decide, Holds, Source, Stuck, StuckChoices, find, holds, normalize_noting, parts,
+    prints_by_helper,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
 use crate::lang::{self, Cx, Dispatch};
@@ -599,6 +600,14 @@ impl Mono {
             K::Compare { operands, ops } => {
                 let (operands, ops) = (mem::take(operands), mem::take(ops));
                 e.kind = self.compare(operands, &ops, e.span, args);
+            }
+            K::Print { operand, .. } => {
+                // The helper for a compound operand calls a written `to_string` at each part
+                // that has one.
+                let ty = self.subst(operand.ty, args);
+                if prints_by_helper(ty) {
+                    self.walk(ty, self.out.lang.display);
+                }
             }
             K::Contains { base, .. } => {
                 let array = self.subst(base.ty, args);

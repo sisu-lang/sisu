@@ -437,9 +437,9 @@ fn main() {
 
 The rules:
 
-- `unit` can be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`. This lifts the rule in [Type arguments](generics.md#type-arguments).
+- `unit` cannot be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`, as the rule in [Type arguments](generics.md#type-arguments) says.
 - `unit` has no literal. A `unit` value comes from a call, such as `print(...)`.
-- A `unit` value prints as `()`. It has `Eq` and `Ord`, and all `unit` values are equal.
+- `unit` has no `Display`, no `Eq` and no `Ord`. A `unit` value cannot be printed ([E0059](../diagnostics/E0059.md)) or compared.
 
 ## Conversions
 

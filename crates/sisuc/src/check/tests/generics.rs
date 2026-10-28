@@ -426,10 +426,6 @@ fn values_of_parameter_types_should_have_no_operators() {
             vec![(Code::SameObject, (1, 31))],
         ),
         (
-            "fn f<T>(a: T, b: T) { print(a) }",
-            vec![(Code::PrintArgument, (1, 29))],
-        ),
-        (
             "fn f<T>(a: T, b: T) -> string { \"{a}\" }",
             vec![(Code::CannotInterpolate, (1, 35))],
         ),

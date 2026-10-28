@@ -538,6 +538,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Walk
             | Helper::Drain
             | Helper::EqComponent
+            | Helper::Show
+            | Helper::ShowComponent
             | Helper::Unbox
             | Helper::Free
             | Helper::Reuse => {

@@ -134,16 +134,18 @@ fn main() {
 
 ### Text of other types
 
-`print` and interpolation also take a value of any type that can be a type argument. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)).
+`print` also takes a value of any type that can be a type argument. An array prints as `[1, 2]`. A class prints its name. A class can write its own text with a method `to_string` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). An interpolation does not take these types yet ([E0098](../diagnostics/E0098.md)).
 
-```sisu pending
+```sisu
 class Sauna {
     heat: i64
 }
 
 fn main() {
+    let sauna = Sauna(heat: 80)
     print([1, 2])                      // [1, 2]
-    print(Sauna(heat: 80))             // Sauna
+    print(sauna)                       // Sauna
+    print(sauna.heat)                  // 80
 }
 ```
 

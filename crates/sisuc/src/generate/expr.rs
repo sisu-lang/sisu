@@ -927,6 +927,17 @@ impl Gen<'_> {
         self.type_within(2, false)
     }
 
+    /// A `bare_type` for `print`, which takes every type but an optional: an array, an enum or a
+    /// class prints through `Display`, and an optional alone is still an error.
+    pub(crate) fn print_type(&mut self) -> Ty {
+        loop {
+            let ty = self.bare_type();
+            if !matches!(ty, Ty::Optional(_)) {
+                return ty;
+            }
+        }
+    }
+
     /// A `bare_type` whose values `==` compares: one with no class in it. A class compares with
     /// `is`, or against `None`, and has no `Eq`.
     pub(crate) fn eq_type(&mut self) -> Ty {

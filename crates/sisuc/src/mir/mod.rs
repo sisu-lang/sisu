@@ -323,17 +323,22 @@ pub(crate) enum Rvalue {
     Print {
         stream: Stream,
         operand: Operand,
+        /// Whether the helper for the operand's type may call a written `to_string`.
+        calls: bool,
     },
 }
 
 impl Rvalue {
     /// Whether the statement may run a written method, which can store through a `mut` field and
-    /// free what a borrow reads: a `Call`, and an `Equal` or `Contains` whose helper reaches a
-    /// written `eq`. Pair removal and the certifier both ask this, so they agree.
+    /// free what a borrow reads: a `Call`, an `Equal` or `Contains` whose helper reaches a
+    /// written `eq`, and a `Print` whose helper reaches a written `to_string`. Pair removal and
+    /// the certifier both ask this, so they agree.
     pub(crate) fn may_call_written(&self) -> bool {
         match self {
             Rvalue::Call { .. } => true,
-            Rvalue::Equal { calls, .. } | Rvalue::Contains { calls, .. } => *calls,
+            Rvalue::Equal { calls, .. }
+            | Rvalue::Contains { calls, .. }
+            | Rvalue::Print { calls, .. } => *calls,
             _ => false,
         }
     }

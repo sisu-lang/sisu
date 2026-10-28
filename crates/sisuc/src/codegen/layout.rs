@@ -58,7 +58,7 @@ pub(super) struct StringLayout<'ctx> {
     /// `{ i64 count, i64 len, i64 cap, [0 x i8] bytes }`: the bytes start where the header ends.
     header: StructType<'ctx>,
     /// The header's ABI size.
-    size: u64,
+    pub(super) size: u64,
     /// The header's ABI alignment, which is the block's.
     pub(super) align: u32,
 }
