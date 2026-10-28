@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 
 use super::*;
 use crate::check::cycle;
-use crate::check::interface::{Bound, PROBE_BUDGET};
+use crate::check::interface::{Bound, nests_within};
 use crate::conformance::CHOICE_DEPTH_LIMIT;
 
 /// The interfaces and classes the rows name, and an empty `main`, after the line a row tests,
@@ -3906,8 +3906,55 @@ fn a_probe_of_branching_growth_should_stop_at_its_budget() {
     PROBE_STEPS.set(0);
     codes(src, &[]);
     let steps = PROBE_STEPS.get();
-    assert!(steps >= PROBE_BUDGET, "{steps} steps");
-    assert!(steps <= 2 * PROBE_BUDGET, "{steps} steps");
+    // The one probe that the call starts uses the whole budget (8 associated types for each
+    // level of the limit); the other bounds of the program take a few steps.
+    let budget = 8 * CHOICE_DEPTH_LIMIT;
+    assert!((budget..budget + 64).contains(&steps), "{steps} steps");
+}
+
+/// A class, an enum, an array and an optional each add a level to the nesting of a type, and a
+/// type is within a limit when its deepest part is. The type below shares `X` between the places
+/// at two depths: its depth is measured once, and the limit left at the second place is what
+/// counts, not the one that `X` was measured with. A type with `2^n` paths and `n` distinct types
+/// is measured in `n` steps, so the check ends.
+#[test]
+fn nests_within_should_count_each_level_and_measure_a_shared_type_once() {
+    use crate::tir::{ClassId, EnumId};
+    type Wrap = fn(Type) -> Type;
+    let wraps: [(&str, Wrap); 4] = [
+        ("class", |t| {
+            Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[t])))
+        }),
+        ("enum", |t| {
+            Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::intern(&[t])))
+        }),
+        ("array", Type::array),
+        ("optional", Type::optional),
+    ];
+    let within = |ty, limit| nests_within(ty, limit, &mut FxHashMap::default());
+    for (kind, wrap) in wraps {
+        let ty = (0..4).fold(Type::I64, |t, _| wrap(t));
+        assert!(within(ty, 4), "{kind} of depth 4 within 4");
+        assert!(!within(ty, 3), "{kind} of depth 4 within 3");
+        assert!(within(Type::I64, 0), "{kind}: a leaf within 0");
+    }
+    let class = wraps[0].1;
+    let shared = (0..3).fold(Type::I64, |t, _| class(t));
+    let deep = (0..3).fold(shared, |t, _| class(t));
+    let pair = Type::intern(TypeKind::Class(
+        ClassId(1),
+        TypeArgs::intern(&[class(shared), deep]),
+    ));
+    // `shared` is 3 deep, `deep` is 6, and the pair is 7.
+    assert!(within(pair, 7), "the pair within 7");
+    assert!(!within(pair, 6), "the pair within 6");
+    let doubled = (0..100).fold(Type::I64, |t, _| {
+        Type::intern(TypeKind::Class(ClassId(2), TypeArgs::intern(&[t, t])))
+    });
+    assert!(
+        within(doubled, 100) && !within(doubled, 99),
+        "100 shared levels"
+    );
 }
 
 /// What the checker's probe does not follow, `mono` meets and reports: no panic, no program, and
@@ -3918,8 +3965,15 @@ fn a_probe_of_branching_growth_should_stop_at_its_budget() {
 fn mono_should_report_a_chain_that_the_probe_did_not_follow() {
     let direct = "fn main() {\n    get(Leaf())\n}";
     let through = "fn pass<S: Holder>(s: S) {\n    get(s)\n}\nfn main() {\n    pass(Leaf())\n}";
+    // `plain<i64>` waits on the worklist when `get<Leaf>` fails, and is not walked.
+    let queued =
+        "fn plain<T>(t: T) -> T {\n    t\n}\nfn main() {\n    get(Leaf())\n    print(plain(1))\n}";
     for levels in [CHOICE_DEPTH_LIMIT + 1, 200] {
-        for (how, uses) in [("direct", direct), ("through a generic function", through)] {
+        for (how, uses) in [
+            ("direct", direct),
+            ("through a generic function", through),
+            ("with more work queued", queued),
+        ] {
             let src = long_loop(levels, uses);
             let (program, diagnostics) = crate::front_end::front_end(&src);
             let found: Vec<_> = (diagnostics.iter())

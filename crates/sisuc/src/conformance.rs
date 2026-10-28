@@ -1317,11 +1317,8 @@ mod tests {
         };
         assert_eq!((one.index, one.cause), (2, Cause::TooDeep));
         // Each step walks the associated type, its base and the base's argument.
-        assert!(
-            NORMALIZED.get() <= 4 * (CHOICE_DEPTH_LIMIT + 2),
-            "{} visits",
-            NORMALIZED.get()
-        );
+        let visits = NORMALIZED.get();
+        assert!(visits <= 4 * (CHOICE_DEPTH_LIMIT + 2), "{visits} visits");
     }
 
     /// `t_0` is the associated type of `Circle`, and `t_{i+1}` is `Pair<t_i, t_i>`, so `t_20` has

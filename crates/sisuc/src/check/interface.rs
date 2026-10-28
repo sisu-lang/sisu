@@ -31,7 +31,7 @@ const PROBE_NESTING: usize = CHOICE_DEPTH_LIMIT;
 /// How many associated types one bound's probe may normalize. Choices that each grow the type in
 /// their own way make `2^n` types in `n` steps, so the nesting limit does not bound the work
 /// alone. A chain of `PROBE_NESTING` levels with up to eight associated types in each fits.
-pub(super) const PROBE_BUDGET: usize = 8 * PROBE_NESTING;
+const PROBE_BUDGET: usize = 8 * PROBE_NESTING;
 
 pub(super) struct InterfaceInfo {
     pub(super) name: ast::Ident,
@@ -1629,7 +1629,7 @@ pub(super) struct Names {
 /// Whether `ty` nests its arguments, arrays and optionals no deeper than `limit` levels. A type
 /// shared by many paths is measured once (`depths`), so the cost is the number of distinct types
 /// and not of paths: `Pair<T, T>` at each level has `2^n` paths and `n` types.
-fn nests_within(ty: Type, limit: usize, depths: &mut FxHashMap<Type, usize>) -> bool {
+pub(super) fn nests_within(ty: Type, limit: usize, depths: &mut FxHashMap<Type, usize>) -> bool {
     nesting(ty, limit, depths).is_some()
 }
 

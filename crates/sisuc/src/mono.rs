@@ -794,6 +794,7 @@ mod tests {
     use super::*;
     use crate::check::check_alone;
     use crate::parser::parse_ok;
+    use crate::tir::InterfaceId;
     use crate::types::NAME_LIMIT;
 
     /// The program `front_end` gives for `src`, which checks without an error.
@@ -1425,5 +1426,79 @@ mod tests {
         let names = function_names(&program);
         assert!(names.contains(&"C.Keep.keep<i64>"), "{names:?}");
         assert!(names.contains(&"C.Keep.keep<string>"), "{names:?}");
+    }
+    /// The program that checks, and then `src` with each choice of `Leaf` to `Source` (the first
+    /// conformance of interface 1, whose associated types `A` and `B` are numbers 0 and 1) changed
+    /// to name its own associated type, as no checker lets a program do. The choices of `A` and `B`
+    /// are written at the bytes 40 and 10.
+    fn looping(src: &str) -> (Program, Program) {
+        let program = || {
+            let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+            program.unwrap_or_else(|| panic!("{diagnostics:?}"))
+        };
+        let source = InterfaceId(1);
+        let mut broken = program();
+        let leaf = broken.conformances.get(source, 0).target;
+        for k in 0..2 {
+            let own = Type::intern(TypeKind::Assoc(leaf, source, TypeArgs::NONE, k));
+            broken.conformances.get_mut(source, 0).assoc[k as usize] = Some(own);
+        }
+        broken.choice_ats.insert((source, 0, 0), Span::new(40, 41));
+        broken.choice_ats.insert((source, 0, 1), Span::new(10, 11));
+        (program(), broken)
+    }
+
+    const LOOPING: &str = "interface Sized {\n    fn size(self) -> i64\n}\n\
+        interface Source {\n    type A: Sized\n    type B: Sized\n    fn first(self) -> A\n    fn second(self) -> B\n}\n\
+        class Thing: Sized {\n    fn size(self) -> i64 { 1 }\n}\n\
+        class Leaf: Source {\n    type A = Thing\n    type B = Thing\n    fn first(self) -> A { Thing() }\n    fn second(self) -> B { Thing() }\n}\n\
+        class Holder<T> {\n    value: T\n}\n\
+        enum Maybe<T> {\n    Just(T)\n    Nothing\n}\n";
+
+    /// The starts of the diagnostics that `instantiate` gives for `program`, each an E0030.
+    fn stuck_places(program: Program) -> Vec<usize> {
+        let found =
+            instantiate(program).expect_err("a choice that needs itself should be reported");
+        for d in &found {
+            assert_eq!(d.code(), crate::diagnostic::Code::UnknownType);
+        }
+        found.iter().map(|d| d.span().start()).collect()
+    }
+
+    /// Two choices that need themselves are both reported, in the order of the source: a function
+    /// whose two parameters each name one, so `mono` meets both before it stops.
+    #[test]
+    fn mono_should_report_each_choice_that_needs_itself_in_the_order_of_the_source() {
+        let src = format!(
+            "{LOOPING}fn run<S: Source>(_s: S, _a: S.A, _b: S.B) {{}}\nfn main() {{\n    run(Leaf(), Thing(), Thing())\n}}"
+        );
+        let (whole, broken) = looping(&src);
+        assert!(instantiate(whole).is_ok(), "the program without the loops");
+        assert_eq!(stuck_places(broken), [10, 40]);
+    }
+
+    /// An expression whose own type names a choice that needs itself, and an interface call whose
+    /// receiver does, stop the walk of the body: no panic on a stand-in type, and one report. Each
+    /// row is a statement that drops its value (a warning), before a `print` so that the value of
+    /// the block is no part of it. A construction and a variant read their class or enum from the
+    /// type, which a stand-in is not.
+    #[test]
+    fn mono_should_stop_a_body_whose_expression_names_a_choice_that_needs_itself() {
+        for (row, body) in [
+            ("a call statement", "s.first()"),
+            ("a call", "s.first().size()"),
+            ("a construction", "Holder(value: s.first())"),
+            ("a variant", "Maybe.Just(s.first())"),
+        ] {
+            let src = format!(
+                "{LOOPING}fn run<S: Source>(s: S) {{\n    {body}\n    print(1)\n}}\nfn main() {{\n    run(Leaf())\n}}"
+            );
+            let (whole, broken) = looping(&src);
+            assert!(
+                instantiate(whole).is_ok(),
+                "{row}: the program without the loops"
+            );
+            assert_eq!(stuck_places(broken), [40], "{row}");
+        }
     }
 }
