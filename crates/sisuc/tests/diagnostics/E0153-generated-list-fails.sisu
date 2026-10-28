@@ -1,0 +1,8 @@
+class Node {}
+
+enum Flag: Eq, Eq {
+    On(Node)
+    Off
+}
+
+fn main() {}

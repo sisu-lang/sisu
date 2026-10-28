@@ -109,7 +109,8 @@ impl Checker<'_> {
         }
         // A listing that the compiler writes is a second conformance when a body or a block
         // writes the same one. Those that a listed interface inherits are no listing.
-        for d in &added.derived {
+        let mut clashed = FxHashSet::default();
+        for (i, d) in added.derived.iter().enumerate() {
             let params = self.source_params(d.source).0.len();
             let Bound {
                 interface, args, ..
@@ -118,6 +119,7 @@ impl Checker<'_> {
             if let Some((k, common)) = clash {
                 let earlier = added.ats[&(interface, k)];
                 self.conforms_twice(d.interface, &common, (earlier, d.at));
+                clashed.insert(i);
             }
         }
         let (inherited_found, gives_display) =
@@ -132,8 +134,11 @@ impl Checker<'_> {
         // Every conformance is known now: the checks that waited for them run, and a type that
         // fails is unknown before a requirement is compared with a method.
         self.run_pending_bounds();
-        for derived in &added.derived {
-            self.check_derived(derived);
+        // A listing that clashes is reported once: its rule is not checked as well.
+        for (i, derived) in added.derived.iter().enumerate() {
+            if !clashed.contains(&i) {
+                self.check_derived(derived);
+            }
         }
         for p in &pending {
             self.meet_requirements(p);

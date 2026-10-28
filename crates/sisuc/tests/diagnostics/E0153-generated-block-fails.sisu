@@ -1,0 +1,14 @@
+class Node {}
+
+enum Flag: Eq {
+    On(Node)
+    Off
+}
+
+extend Flag: Eq {
+    fn eq(self, other: Self) -> bool {
+        true
+    }
+}
+
+fn main() {}
