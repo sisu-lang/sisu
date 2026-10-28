@@ -2295,7 +2295,9 @@ impl Walk {
                     self.mark("reach: an interpolation writes a compound part");
                 }
                 // A call of `to_string` on a type whose `Display` the compiler writes is an
-                // interpolation of one part, with the span of the call.
+                // interpolation of one part, with the span of the call. The tree has no other
+                // mark of it, so the key reads the text of the span: `generated_display` must keep
+                // the span of the call, or the key never fires and the REACH table fails.
                 if let ([_], []) = (&parts[..], &formats[..])
                     && self.source[e.span.range()].ends_with(".to_string()")
                 {
