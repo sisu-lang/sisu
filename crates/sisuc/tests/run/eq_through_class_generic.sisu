@@ -1,0 +1,29 @@
+// A class with no `Eq` compares its fields, so its `==` runs the written `eq` of a field. The
+// comparison prints `Holder.eq` whether or not the program has a generic item: `mono` takes its
+// fast path without one and its slow path with one, and both must find the record of `Holder`.
+class Holder: Eq {
+    n: i64
+    fn eq(self, _other: Self) -> bool {
+        print("Holder.eq")
+        false
+    }
+}
+
+class Outer {
+    h: Holder
+}
+
+enum Cover {
+    One(Outer)
+}
+
+fn _id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let o = Outer(h: Holder(n: 1))
+    print(o == o)
+    print([o] == [o])
+    print(Cover.One(o) == Cover.One(o))
+}

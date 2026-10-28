@@ -267,7 +267,10 @@ impl<'a> Lowering<'a> {
     fn calls_eq(&mut self, ty: Type) -> bool {
         calls_written(
             &self.program.conformances,
-            self.program.enums.as_slice(),
+            (
+                self.program.enums.as_slice(),
+                self.program.classes.as_slice(),
+            ),
             ty,
             self.program.lang.eq,
             self.written,

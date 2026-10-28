@@ -129,6 +129,8 @@ struct Mono {
     /// The payload types of the checked program's enums, in its ids: `holds` reads them, as the
     /// output's enums name the output's ids.
     input_payloads: Vec<Vec<Type>>,
+    /// The field types of the checked program's classes, in its ids: `parts` reads them.
+    input_fields: Vec<Vec<Type>>,
     /// What decides whether a written conformance holds for a type, in the checked program's ids.
     decide: Decide,
     /// The `(type, interface)` pairs the record walk has entered, in the checked program's ids.
@@ -162,6 +164,9 @@ impl Mono {
                 .enums
                 .iter()
                 .map(|e| (e.variants.iter().flat_map(|v| &v.fields).map(|p| p.ty)).collect())
+                .collect(),
+            input_fields: (program.classes.iter())
+                .map(|c| c.fields.iter().map(|f| f.ty).collect())
                 .collect(),
             decide: Decide::default(),
             walked: FxHashSet::default(),
@@ -840,14 +845,10 @@ impl Mono {
                 self.record(ty, interface, k, stands);
                 continue;
             }
-            parts(
-                &self.conformances,
-                self.input_payloads.as_slice(),
-                ty,
-                |part| {
-                    stack.push(part);
-                },
-            );
+            let types = (self.input_payloads.as_slice(), self.input_fields.as_slice());
+            parts(&self.conformances, types, ty, |part| {
+                stack.push(part);
+            });
         }
     }
 

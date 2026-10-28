@@ -15,6 +15,19 @@ enum Wrap {
     One(Holder)
 }
 
+// A class with no `Eq` compares its fields, so its `==` may run the `eq` of a field too.
+class Outer {
+    h: Holder
+}
+
+class Lone {
+    h: Holder?
+}
+
+enum Cover {
+    One(Outer)
+}
+
 fn in_array() {
     let h = Holder(items: ["{1}"])
     let xs = h.items
@@ -42,8 +55,41 @@ fn in_payload() {
     print(h.items[0])
 }
 
+fn in_class() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let o = Outer(h: h)
+    let same = o == o
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_optional_field() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let l = Lone(h: h)
+    let same = l == l
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
+fn in_class_payload() {
+    let h = Holder(items: ["{1}"])
+    let xs = h.items
+    let o = Outer(h: h)
+    let same = Cover.One(o) == Cover.One(o)
+    print(xs[0])
+    print(same)
+    print(h.items[0])
+}
+
 fn main() {
     in_array()
     in_contains()
     in_payload()
+    in_class()
+    in_optional_field()
+    in_class_payload()
 }
