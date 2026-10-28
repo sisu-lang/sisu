@@ -480,10 +480,13 @@ impl Checker<'_> {
         let Some(ty) = type_of(&receiver) else {
             return Err(receiver);
         };
-        // The lookup of `find_method`: a method that does not apply to this `ty` is no method.
-        let written = self.applicable_method(ty, method.name).is_some() || {
+        // A method counts as written when a block covers `ty`, even if its bounds fail: then
+        // `find_method` reports the failed bound, and the generated operator is no fallback (only
+        // `to_string` has one). `find_method` repeats this lookup: it needs the buffers that this
+        // one fills, and a call of any other method must not pay for them here.
+        let written = self.own_method(ty, method.name).is_some() || {
             self.conforming_methods(ty, method.name);
-            !self.candidates.is_empty()
+            !self.candidates.is_empty() || self.failed_block.is_some()
         };
         if written
             || matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))

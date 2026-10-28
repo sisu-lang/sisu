@@ -301,11 +301,13 @@ impl Checker<'_> {
                 && self.operation(element, self.lang.eq) == Operation::Missing =>
             {
                 // The report goes before the labels and the argument's own, which it waits for:
-                // a bound helps only when the argument is an element, not a `T?`.
+                // a bound helps only when the argument is an element, or the contents of an
+                // optional element (`x: T` in a `[T?]`), not a `T?` in a `[T]`.
                 let first = self.diagnostics.len();
                 self.labels(args);
                 let argument = self.expr(&args[0].value, Some(UNKNOWN));
-                let alike = type_of(&argument).is_none_or(|got| got == element);
+                let alike = type_of(&argument)
+                    .is_none_or(|got| got == element || Type::optional(got) == element);
                 let add = alike
                     .then(|| self.lacking_bound(element, self.lang.eq))
                     .flatten();

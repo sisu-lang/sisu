@@ -1,0 +1,10 @@
+error[E0139]: `T?` has no `==`
+ --> E0139-contains-optional-element.sisu:2:5
+  |
+2 |     xs.contains(x)
+  |     ^^ `contains` compares elements with `==`
+  |
+  = help: add a bound: `T: Eq`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0139

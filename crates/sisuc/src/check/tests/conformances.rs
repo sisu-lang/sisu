@@ -1562,6 +1562,60 @@ fn a_written_eq_or_less_method_should_win_over_the_generated_one() {
 }
 
 #[test]
+fn a_written_eq_or_less_whose_block_bounds_fail_should_report_the_bound() {
+    // Each row: a block that covers the receiver `P<i64>` (or `Pair<bool>`) and fails its bounds.
+    // The method counts as written, so the call reports the bound; the generated `eq` or `less`
+    // is no fallback (only `to_string` has one).
+    let flag = "interface Flag {}\ninterface Same {\n    fn eq(self, n: i64) -> bool\n    fn less(self, n: i64) -> bool\n}\n";
+    let p = "enum P<T> {\n    A(T)\n}\n";
+    let rows = [
+        (
+            "a plain block `eq` with its own signature",
+            format!("{flag}{p}extend<T: Flag> P<T> {{\n    fn eq(self, n: i64) -> bool {{ n == 0 }}\n}}\nfn f(x: P<i64>) -> bool {{ x.eq(0) }}\nfn main() {{}}"),
+            "x.eq(0)",
+        ),
+        (
+            "a plain block `eq` with the generated signature",
+            format!("{flag}{p}extend<T: Flag> P<T> {{\n    fn eq(self, other: Self) -> bool {{ true }}\n}}\nfn f(x: P<i64>) -> bool {{ x.eq(P.A(0)) }}\nfn main() {{}}"),
+            "x.eq(P.A(0))",
+        ),
+        (
+            "a plain block `less` with its own signature",
+            format!("{flag}{p}extend<T: Flag> P<T> {{\n    fn less(self, n: i64) -> bool {{ n == 0 }}\n}}\nfn f(x: P<i64>) -> bool {{ x.less(0) }}\nfn main() {{}}"),
+            "x.less(0)",
+        ),
+        (
+            "a plain block `less` with the generated signature",
+            format!("{flag}{p}extend<T: Flag> P<T> {{\n    fn less(self, other: Self) -> bool {{ true }}\n}}\nfn f(x: P<i64>) -> bool {{ x.less(P.A(0)) }}\nfn main() {{}}"),
+            "x.less(P.A(0))",
+        ),
+        (
+            "a conformance block `eq` of another interface",
+            format!("{flag}{p}extend<T: Flag> P<T>: Same {{\n    fn eq(self, n: i64) -> bool {{ n == 0 }}\n    fn less(self, n: i64) -> bool {{ n == 0 }}\n}}\nfn f(x: P<i64>) -> bool {{ x.eq(0) }}\nfn main() {{}}"),
+            "x.eq(0)",
+        ),
+        (
+            "a conformance block `less` of another interface",
+            format!("{flag}{p}extend<T: Flag> P<T>: Same {{\n    fn eq(self, n: i64) -> bool {{ n == 0 }}\n    fn less(self, n: i64) -> bool {{ n == 0 }}\n}}\nfn f(x: P<i64>) -> bool {{ x.less(0) }}\nfn main() {{}}"),
+            "x.less(0)",
+        ),
+        (
+            "a written `Eq` of a class",
+            "interface Flag {}\nclass C<T> {\n    x: T\n}\nextend<T: Flag> C<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nfn f(x: C<i64>) -> bool { x.eq(x) }\nfn main() {}".to_string(),
+            "x.eq(x)",
+        ),
+        (
+            "a written `Eq` that no fallback to the generated rule replaces",
+            "enum Pair<T> {\n    X(T)\n}\nextend<T: Ord> Pair<T>: Eq {\n    fn eq(self, other: Self) -> bool { true }\n}\nfn f(p: Pair<bool>, q: Pair<bool>) -> bool { p.eq(q) }\nfn main() {}".to_string(),
+            "p.eq(q)",
+        ),
+    ];
+    for (row, src, call) in rows {
+        codes_row(row, &src, &[(Code::NotConform, where_is(&src, call))]);
+    }
+}
+
+#[test]
 fn a_comparison_chain_with_an_exiting_operand_should_bind_its_operands_first() {
     // The second operand leaves the function, so the first, a counted class, is read after it.
     let src = format!(
