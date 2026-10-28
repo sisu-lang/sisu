@@ -52,8 +52,8 @@ done
 # a class conforms to in its declaration and another in `extend` blocks, a
 # bound with &, and a call through each bound, a bounded `largest` over
 # numbers and over a class with a written `Eq` and `Ord`, `==` on an array of
-# such classes, and the text of an array, an enum and an interpolated array,
-# which add 0;
+# such classes, `is` on a class through a bound `T: AnyObject`, and the text of an array,
+# an enum and an interpolated array, which add 0;
 # then it calls step(i-1).
 # main prints step(N-1)(0) = N-1. Not fi: f64 is a built-in type.
 large_input() {
@@ -169,6 +169,8 @@ fn largest$i<T: Ord>(xs: [T]) -> T? {
     best
 }
 
+fn same$i<T: AnyObject>(a: T, b: T) -> bool { a is b }
+
 fn step$i(x: i64) -> i64 {
     let xs = [x, K$i, 1]
     let mut sum = 0
@@ -201,8 +203,10 @@ fn step$i(x: i64) -> i64 {
     let gauge = both$i(Dial$i(n: K$i)) - both$i(Bar$i(n: K$i)) + unit_of$i(Dial$i(n: K$i)) - K$i + unit_of$i(Bar$i(n: K$i)).len() - 1
     let top = (largest$i([Disc$i(r: K$i), Disc$i(r: 0)]) ?? Disc$i(r: 0)).r - K$i + (largest$i([0, K$i, 1]) ?? 0) - K$i
     let kept = if [Disc$i(r: top)] == [Disc$i(r: 0)] { 0 } else { 1 }
+    let alias = Bar$i(n: K$i)
+    let same = if same$i(alias, alias) { 0 } else { 1 }
     let shown = shapes.to_string().len() + t.to_string().len() + "{[x, K$i]}".len()
-    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge + top + kept + (if shown > 0 { 0 } else { 1 })
+    let generic = t.size() + u.size() - 3 + q.b - K$i + parsed + peeled + gauge + top + kept + same + (if shown > 0 { 0 } else { 1 })
     step$((i - 1))(x + (c?.get() ?? 0) + zero + generic)
 }
 SISU
