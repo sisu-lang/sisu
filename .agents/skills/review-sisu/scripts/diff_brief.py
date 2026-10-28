@@ -68,10 +68,16 @@ def is_ancestor(repo, a, b):
                           capture_output=True).returncode == 0
 
 
+def summary(log):
+    """The match of the last `mutation-test:` summary line of `log`: the measured SHA, and whether the
+    tree had uncommitted changes; or None."""
+    lines = [line for line in log.read_text().splitlines() if line.startswith('mutation-test: ')]
+    return re.search(r'\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$', lines[-1]) if lines else None
+
+
 def log_mismatch(log, repo, base, head):
     """Why the summary line of `log` does not describe a commit in `base`..`head` of `repo`, or None."""
-    lines = [line for line in log.read_text().splitlines() if line.startswith('mutation-test: ')]
-    found = re.search(r'\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$', lines[-1]) if lines else None
+    found = summary(log)
     if not found:
         return f'no summary line ending "(HEAD <sha>)" in {log}'
     if found[2]:
@@ -107,7 +113,7 @@ def main():
         sys.exit('diff_brief: a round after the first needs --prior and --rulings')
     if a.kind != 'diff' and (a.mutation_log or a.coverage):
         sys.exit('diff_brief: --mutation-log and --coverage are for a diff')
-    for path in [a.mutation_log, a.coverage, *a.prior, a.rulings]:
+    for path in [a.mutation_log, a.coverage, *a.prior, a.rulings, a.target if a.kind != 'diff' else None]:
         if path and not Path(path).is_file():
             sys.exit(f'diff_brief: no file at {Path(path).resolve()}')
 
@@ -122,7 +128,7 @@ def main():
             log = Path(a.mutation_log).resolve()
             if why := log_mismatch(log, repo, shas[0], shas[1]):
                 sys.exit(f'diff_brief: {why}')
-            measured = re.findall(r'\(HEAD ([0-9a-f]{40})\)', log.read_text())[-1]
+            measured = summary(log)[1]
             later = git(repo, 'rev-list', '--reverse', f'{measured}..{shas[1]}').split()
             focus_lines.append(f'Mutation-test log: {log}' + (
                 f', measured at {measured[:8]}. Commits after it, not mutated: {" ".join(c[:8] for c in later)}'
@@ -135,9 +141,11 @@ def main():
     shown = subprocess.run(['git', '-C', str(repo), 'show', MAIN_TEMPLATE], capture_output=True, text=True)
     if shown.returncode == 0:
         t = shown.stdout
-    else:
+    elif TEMPLATE.is_file():
         print(f'diff_brief: cannot read {MAIN_TEMPLATE}; using {TEMPLATE}', file=sys.stderr)
         t = TEMPLATE.read_text()
+    else:
+        sys.exit(f'diff_brief: cannot read {MAIN_TEMPLATE}; run git fetch origin')
     t = t.replace('a <spec | plan | diff> of Sisu', f'a {a.kind} of Sisu')
     t = t.replace('Target: <path, or base..head>.', f'Target: {target}.')
     t = t.replace('<repository root>', str(repo))
@@ -164,7 +172,7 @@ def main():
         t = t.replace('<round>', str(a.round))
         t = t.replace('<prior reports>', ', '.join(str(Path(r).resolve()) for r in a.prior))
         t = t.replace('<rulings>', str(Path(a.rulings).resolve()))
-        t = t.replace('<first brief>', str(out.parent / 'brief.md'))
+        t = t.replace('<path of the first brief>', str(out.parent / 'brief.md'))
         previous = out.parent / f'target-{a.round - 1}{Path(a.target).suffix}'
         if a.kind == 'diff' or not previous.exists():
             t = drop_line(t, 'The previous version:')
@@ -173,7 +181,7 @@ def main():
     focus_slot = '<what the caller knows that the target does not say, or "none">'
     top = t.split('# Report', 1)[0].replace(focus_slot, '', 1)
     left = re.findall(r'<(?:spec|path|repository|base|the other|test-audit|codebase-design|rust-best-practices'
-                      r'|round|prior|rulings|first brief|previous|what the caller)[^>]*>', top)
+                      r'|round|prior|rulings|previous|what the caller)[^>]*>', top)
     if left or focus_slot not in t:
         sys.exit(f'diff_brief: unfilled slots: {left or [focus_slot + " missing"]}')
     focus = Path(a.focus).read_text().strip() if a.focus else ''

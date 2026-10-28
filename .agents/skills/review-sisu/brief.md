@@ -173,9 +173,10 @@ vague or generic error, or with none.
 
 # Re-review
 
-This is round <round>. The target is what the last fix round changed.
-The earlier reports are <prior reports>, and the caller's rulings on
-them are in <rulings>. The first brief, <first brief>, names the whole
+This is round <round>. For a diff, the target is the range of the last
+fix round; for a spec or a plan, it is the new version. The earlier
+reports are <prior reports>, and the caller's rulings on them are in
+<rulings>. The first brief, <path of the first brief>, names the whole
 work under review.
 
 - The previous version: <previous version>. Compare it with the target.

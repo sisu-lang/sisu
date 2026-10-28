@@ -26,7 +26,7 @@ The caller names one target. Infer its kind; ask when it is unclear.
 
 1. The repository root is `git rev-parse --show-toplevel` in the checkout that holds the target, which may be a worktree.
 2. `mktemp -d "${TMPDIR:-/tmp}/sisu-review-<name>-XXXX"` makes the run directory, `RUN`, and `mkdir RUN/opus-scratch` makes the Opus reviewer's scratch directory. `<name>` says what is under review, such as `m8p5-task3` or `attributes-final`. Prompts and reports stay there, outside the repository. Shell variables do not survive between tool calls, so write `RUN` as a literal path.
-3. Delete the build directories of runs more than one day old, because a run that never reaches step 6 keeps its builds: `find "${TMPDIR:-/tmp}" -mindepth 2 -maxdepth 2 -path '*/sisu-review-*/*' -type d -mtime +0 -exec rm -rf {} +`.
+3. Delete the build directories that have not changed for a day, because a run that never reaches step 6 keeps its builds: `find "${TMPDIR:-/tmp}"/sisu-review-*/ -mindepth 1 -maxdepth 1 -type d -mtime +0 -exec rm -rf {} +`.
 4. Run `git fetch origin` before every review: the brief and its script come from `origin/main`, so a branch that started before a change to the criteria gets the current ones.
 5. For the final diff of a branch, review what will merge. When `git merge-base --is-ancestor origin/main <head>` fails, `main` has moved: bring it in, run `make test` and `make site`, and review the range from `origin/main` to the new head. Rebase onto `origin/main` when the branch's commits replay cleanly. Merge `origin/main` instead when a rebase conflicts in commits that later fix rounds rewrote: one merge resolves the conflict against the final code. A new check on `main`, such as a warning, can fail the branch's own tests with no conflict, so `make test` is part of the merge.
 
@@ -46,9 +46,9 @@ git -C <repository root> show origin/main:.agents/skills/review-sisu/scripts/dif
   python3 - <repository root> <target> RUN/brief.md --kind <spec|plan|diff> --doc <spec or plan> --focus RUN/focus.md
 ```
 
-- `<target>` is the path of a spec or a plan, or `<base>..<head>` for a diff. The script writes a diff's range as full SHAs, and copies a spec or a plan to `RUN/target-<round>.md`, which the reviewer reads.
+- `<target>` is the path of a spec or a plan, or `<base>..<head>` for a diff. Write a branch as `origin/main..<branch>`. The script writes a diff's range as full SHAs, and copies a spec or a plan to `RUN/target-<round>.md`, which the reviewer reads.
 - Repeat `--doc` for each document the reviewer reads with the target; leave it out when there is none.
-- For a diff, pass the `LOG=` file of a `make mutation-test` run as `--mutation-log`, and the output of `make coverage` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range. A log from an earlier commit of the range is correct: a task runs mutation tests once, and the brief lists the commits after it.
+- For a diff, pass the `LOG=` file of a `make mutation-test` run as `--mutation-log`, and the output of `make coverage BASE=<base> > RUN/coverage.txt` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range. A log from an earlier commit of the range is correct: a task runs mutation tests once, and the brief lists the commits after it.
 - The script drops a skill line it cannot find. Tell the user in the report.
 
 ### 3. Launch the reviewers
@@ -64,7 +64,7 @@ Launch the reviewers together. Each launcher must let its reviewer read
 `RUN` and the skill paths in the brief.
 
 - **Sol:** `sol-review <effort> RUN/brief.md RUN/sol.md <repository root>`, through Bash with `run_in_background` and the sandbox off: codex needs the network and writes under `~/.codex`. The completion notification ends the wait; do not poll. When it exits 1, show the user the error it prints and ask how to go on. Do not put another model in Sol's place without asking.
-- **Opus:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Write your report to RUN/opus.md; your final reply is that report.` with `RUN` written out. Pass no `model` or `effort`.
+- **Opus:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Write your report to RUN/opus.md; your final reply is that report.` with `RUN` written out, and `opus-<round>.md` in a later round. Pass no `model` or `effort`.
 
 ### 4. Rule on each finding
 
@@ -101,13 +101,14 @@ it.
 When you fixed a blocking finding, review again. Write `RUN/focus-<round>.md`
 with the fixes and what you probed, and run the script with
 `RUN/brief-<round>.md`, the round's target (for a diff, the fix range),
-`--round <round> --prior <each earlier report> --rulings RUN/rulings-<round - 1>.md`.
+`--round <round> --rulings RUN/rulings-<round - 1>.md`, and `--prior <report>` once for each earlier report.
 Its "Re-review" section asks for a verdict on each accepted finding, the
 neighbours of each fix, and regressions against the base of the whole
 work. Send it to the later-round reviewers in the table; their reports
 go to `RUN/sol-<round>.md` and `RUN/opus-<round>.md`. Allow at most two
-fix rounds. After the second, ask the user about each blocking finding
-that is still open: a third round, or a deferral. Defer the nits.
+fix rounds. After the review of the second fix round, ask the user about
+each blocking finding that is still open: a third round, or a deferral.
+Defer the nits.
 
 ### 6. Report
 

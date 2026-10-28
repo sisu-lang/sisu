@@ -93,6 +93,40 @@ class Brief(Repo):
         text = self.brief('HEAD~2..HEAD', '--mutation-log', str(log))
         self.assertIn(f'measured at {self.mid[:8]}. Commits after it, not mutated: {self.head[:8]}', text)
 
+    def test_a_coverage_result_should_be_named_in_focus(self):
+        coverage = Path(self.repo) / 'coverage.txt'
+        coverage.write_text('uncovered: none\n')
+        self.assertIn(f'Coverage result: {coverage}', self.brief('HEAD~2..HEAD', '--coverage', str(coverage)))
+
+    def test_a_missing_plan_should_fail_before_writing(self):
+        with self.assertRaises(SystemExit):
+            self.brief(str(Path(self.repo) / 'no-plan.md'), '--kind', 'plan')
+        self.assertEqual(list(self.run_dir.iterdir()), [])
+
+    def test_a_second_plan_round_should_name_the_previous_version(self):
+        plan, prior = Path(self.repo) / 'plan.md', Path(self.repo) / 'sol.md'
+        plan.write_text('# Plan v1\n')
+        prior.write_text('Verdict: changes needed\n')
+        run_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, run_dir)
+        for args in ([], ['--round', '2', '--prior', str(prior), '--rulings', str(prior)]):
+            out = run_dir / ('brief-2.md' if args else 'brief.md')
+            with mock.patch.dict(os.environ, ENV, clear=True), \
+                 mock.patch.object(sys, 'argv', ['diff_brief.py', self.repo, str(plan), str(out), '--kind', 'plan', *args]), \
+                 mock.patch('sys.stderr'), mock.patch('sys.stdout'):
+                diff_brief.main()
+            plan.write_text('# Plan v2\n')
+        text = (run_dir / 'brief-2.md').read_text()
+        self.assertIn(f'- The previous version: {run_dir / "target-1.md"}.', text)
+        self.assertIn(f'The first brief, {run_dir / "brief.md"}, names', ' '.join(text.split()))
+        self.assertEqual((run_dir / 'target-2.md').read_text(), '# Plan v2\n')
+
+    def test_a_second_plan_round_without_a_first_snapshot_should_drop_the_previous_version(self):
+        plan = Path(self.repo) / 'plan.md'
+        plan.write_text('# Plan\n')
+        text = self.brief(str(plan), '--kind', 'plan', '--round', '2', '--prior', str(plan), '--rulings', str(plan))
+        self.assertNotIn('The previous version', text)
+
     def test_a_plan_brief_should_read_a_snapshot_and_drop_the_diff_lines(self):
         plan = Path(self.repo) / 'plan.md'
         plan.write_text('# Plan\n')
