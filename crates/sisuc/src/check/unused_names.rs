@@ -241,6 +241,16 @@ impl Checker<'_> {
                 ),
             ),
         };
+        let describe = |sites: &[usize]| -> Vec<(Span, UsedBy, String)> {
+            sites
+                .iter()
+                .map(|&i| {
+                    let u = &self.uses[i];
+                    let (by, name) = named(u.from);
+                    (u.at, by, name.to_string())
+                })
+                .collect()
+        };
         let mut found = Vec::new();
         let mut report = |kind: Definition, at: Span, item: usize| {
             // The prelude is out of the user's sight, so nothing in it is unused.
@@ -251,13 +261,8 @@ impl Checker<'_> {
             if name.starts_with('_') {
                 return;
             }
-            let sites = std::mem::take(&mut cited[item]);
-            let sites = sites.iter().map(|&i| {
-                let u = &self.uses[i];
-                let (by, name) = named(u.from);
-                (u.at, by, name.to_string())
-            });
-            let (name, uses) = (name.to_string(), sites.collect());
+            let uses = describe(&std::mem::take(&mut cited[item]));
+            let name = name.to_string();
             let d = match kind {
                 Definition::Field | Definition::Variant => DiagnosticKind::UnusedMember {
                     kind,
@@ -277,8 +282,8 @@ impl Checker<'_> {
         for f in (0..functions).filter(|&f| !reached.live[f]) {
             let held = holders[f].is_none_or(built);
             // A dead block is reported itself, or its type is.
-            let dead_block =
-                (self.signatures[f].extension).is_some_and(|b| !reached.live[functions + b]);
+            let dead_block = (self.signatures[f].extension)
+                .is_some_and(|b| !reached.live[self.owner_index(Owner::Block(b))]);
             if held && !dead_block {
                 report(function_kind(f), self.signatures[f].span, f);
             }
@@ -323,10 +328,12 @@ impl Checker<'_> {
             }
         }
         for (b, block) in self.extensions.iter().enumerate() {
-            if !reached.live[functions + b] && built(block.holder) && !block.header.in_prelude() {
+            let owner = self.owner_index(Owner::Block(b));
+            if !reached.live[owner] && built(block.holder) && !block.header.in_prelude() {
                 let name = self.text(block.written).to_string();
                 let at = block.header;
-                found.push(DiagnosticKind::UnusedBlock { name, at }.into());
+                let uses = describe(&std::mem::take(&mut cited[owner]));
+                found.push(DiagnosticKind::UnusedBlock { name, at, uses }.into());
             }
         }
         found.extend(pending.into_iter().filter_map(|p| {
@@ -394,6 +401,14 @@ impl Checker<'_> {
             if let Some(owner) = u.to.owner() {
                 self.cite(&mut cited[self.owner_index(owner)], i);
             }
+            // A call of a method of a block is a use of the block, unless a method of the block
+            // makes it.
+            if let Used::Func(f) = u.to
+                && let Some(block) = self.signatures[f.0].extension
+                && !self.in_block(u.from, block)
+            {
+                self.cite(&mut cited[self.owner_index(Owner::Block(block))], i);
+            }
         }
         for (c, first) in self.dead_comparisons(reached).into_iter().enumerate() {
             let Some(i) = first else { continue };
@@ -405,6 +420,11 @@ impl Checker<'_> {
             }
         }
         cited
+    }
+
+    /// Whether `owner` is a method of the `extend` block `block`.
+    fn in_block(&self, owner: Owner, block: usize) -> bool {
+        matches!(owner, Owner::Func(g) if self.signatures[g.0].extension == Some(block))
     }
 
     /// Puts the use `i` into `first`, a list of at most three uses in source order, and keeps
@@ -617,7 +637,7 @@ impl Checker<'_> {
             if o < functions
                 && let Some(b) = self.signatures[o].extension
             {
-                make_live(&mut live, &mut stack, functions + b);
+                make_live(&mut live, &mut stack, self.owner_index(Owner::Block(b)));
             }
             for &i in &edges[o] {
                 let to = self.uses[i].to;
@@ -637,7 +657,7 @@ impl Checker<'_> {
                     }
                     // The blocks that conform it are live, as their methods are.
                     for &b in conforming_blocks.get(&holder).into_iter().flatten() {
-                        make_live(&mut live, &mut stack, functions + b);
+                        make_live(&mut live, &mut stack, self.owner_index(Owner::Block(b)));
                     }
                     // A class or an enum that is built names the interfaces of its bounds.
                     let bounds = match holder {

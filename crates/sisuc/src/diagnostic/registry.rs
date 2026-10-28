@@ -1075,8 +1075,12 @@ pub(crate) enum DiagnosticKind {
         uses: Vec<(Span, UsedBy, String)>,
     },
     /// The `extend` block of the type written `name`, whose header is at `at`, which no live code
-    /// uses, while live code builds its type.
-    UnusedBlock { name: String, at: Span },
+    /// uses, while live code builds its type; `uses` are as `UnusedItem`'s.
+    UnusedBlock {
+        name: String,
+        at: Span,
+        uses: Vec<(Span, UsedBy, String)>,
+    },
     /// The field or variant `name` (its `kind`), whose name in its declaration is at `at`, which
     /// no live code reads or builds; `uses` are as `UnusedItem`'s.
     UnusedMember {
@@ -1425,6 +1429,13 @@ impl Definition {
             | Definition::Interface => "used",
         }
     }
+}
+
+/// `d` with a secondary label for each of `uses`, a use in dead code.
+fn cite_uses(d: Diagnostic, uses: Vec<(Span, UsedBy, String)>) -> Diagnostic {
+    uses.into_iter().fold(d, |d, (at, user, name)| {
+        d.with_secondary(at, format!("used here, {}", user.described(&name)))
+    })
 }
 
 /// The dead code that holds a use which a warning cites.
@@ -4131,17 +4142,18 @@ impl From<DiagnosticKind> for Diagnostic {
                 )
                 .with_label(format!("never {verb}"))
                 .with_help(help);
-                uses.into_iter().fold(d, |d, (at, user, name)| {
-                    d.with_secondary(at, format!("used here, {}", user.described(&name)))
-                })
+                cite_uses(d, uses)
             }
-            DiagnosticKind::UnusedBlock { name, at } => Diagnostic::coded(
-                code,
-                at,
-                format!("the `extend` block of `{name}` is never used"),
-            )
-            .with_label("never used")
-            .with_help("delete it"),
+            DiagnosticKind::UnusedBlock { name, at, uses } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("the `extend` block of `{name}` is never used"),
+                )
+                .with_label("never used")
+                .with_help("delete it");
+                cite_uses(d, uses)
+            }
             DiagnosticKind::UnusedVariable {
                 param,
                 name,

@@ -872,34 +872,91 @@ fn extend_block_should_warn_only_when_its_type_is_built() {
     ));
 }
 
-/// A block with a live method is live, so a dead method of it is reported by itself. Two blocks
-/// of one type are judged one by one. An enum is judged as a class is.
+/// A generic class `Crate`, and a block of it with a bound, a live method `live` and a dead method
+/// `spare`, and a `main` that calls `live` on a `Circle`.
+const CRATE_T: &str = "class Crate<T> {\n    inner: T\n}\n";
+const LIVE_BLOCK: &str = "extend<T: Shape> Crate<T> {\n    fn live(self) -> f64 { self.inner.area() }\n    fn spare(self) -> f64 { 1.0 }\n}\n";
+const CALLS_LIVE: &str = "fn main() {\n    print(Crate(inner: Circle(r: 1.0)).live())\n}";
+
+/// A block with a live method is live, so a dead method of it is reported by itself.
 #[test]
 fn extend_block_should_be_live_when_one_of_its_methods_is_live() {
     judge_unused();
-    let crate_ = "class Crate<T> {\n    inner: T\n}\n";
-    let live = "extend<T: Shape> Crate<T> {\n    fn live(self) -> f64 { self.inner.area() }\n    fn spare(self) -> f64 { 1.0 }\n}\n";
-    let main = "fn main() {\n    print(Crate(inner: Circle(r: 1.0)).live())\n}";
     diagnostic(
-        &format!("{SHAPE}{CIRCLE}{crate_}{live}{main}"),
+        &format!("{SHAPE}{CIRCLE}{CRATE_T}{LIVE_BLOCK}{CALLS_LIVE}"),
         W0012,
         (15, 8, "spare"),
         &[],
     );
-    // The second block is dead and the first is live: only the second is reported, beside the
-    // dead method of the first.
+}
+
+/// The second block is dead and the first is live: only the second is reported, beside the dead
+/// method of the first.
+#[test]
+fn extend_blocks_of_one_type_should_be_judged_one_by_one() {
+    judge_unused();
     assert_eq!(
         found(&format!(
-            "{SHAPE}{CIRCLE}{crate_}{live}extend<T> Crate<T> {{\n    fn other(self) -> i64 {{ 1 }}\n}}\n{main}"
+            "{SHAPE}{CIRCLE}{CRATE_T}{LIVE_BLOCK}extend<T> Crate<T> {{\n    fn other(self) -> i64 {{ 1 }}\n}}\n{CALLS_LIVE}"
         )),
         [(W0012, (15, 8), vec![]), (W0012, (17, 1), vec![])]
     );
+}
+
+/// An enum with a dead block is judged as a class is: the block is reported, and the interface
+/// that only it names.
+#[test]
+fn extend_block_of_an_enum_should_be_judged_as_one_of_a_class_is() {
+    judge_unused();
     let maybe = "enum Maybe<T> {\n    Has(T)\n    No\n}\nextend<T: Shape> Maybe<T> {\n    fn spare(self) -> f64 { 1.0 }\n}\n";
     assert_eq!(
         found(&format!(
             "{SHAPE}{maybe}fn main() {{\n    let m: Maybe<i64> = Maybe.Has(1)\n    print(m == Maybe.No)\n}}"
         )),
         [(W0012, (1, 11), vec![(8, 11)]), (W0012, (8, 1), vec![])]
+    );
+}
+
+/// A name that starts with `_` keeps its block live, so only the dead method beside it is reported.
+#[test]
+fn extend_block_should_be_live_when_one_of_its_methods_starts_with_underscore() {
+    judge_unused();
+    diagnostic(
+        "class Crate {\n    n: i64\n}\nextend Crate {\n    fn _keep(self) -> i64 { 1 }\n    fn spare(self) -> i64 { 2 }\n}\nfn main() {\n    print(Crate(n: 1).n)\n}",
+        W0012,
+        (6, 8, "spare"),
+        &[],
+    );
+}
+
+/// A call of a method of a dead block in dead code is a use of the block: the warning cites it,
+/// whether the caller is a function or a method of another dead block. A call from inside the
+/// block itself is not cited.
+#[test]
+fn extend_block_should_cite_the_calls_of_its_methods_in_dead_code() {
+    judge_unused();
+    let class = "class Crate {\n    n: i64\n}\n";
+    let main = "fn main() {\n    print(Crate(n: 1).n)\n}";
+    assert_eq!(
+        found(&format!(
+            "{class}extend Crate {{\n    fn grow(self) -> i64 {{ self.n + 1 }}\n}}\nfn unused(c: Crate) -> i64 {{\n    c.grow()\n}}\n{main}"
+        )),
+        [(W0012, (4, 1), vec![(8, 5)]), (W0012, (7, 4), vec![])]
+    );
+    assert_eq!(
+        found(&format!(
+            "{class}extend Crate {{\n    fn a(self) -> i64 {{ self.b() }}\n}}\nextend Crate {{\n    fn b(self) -> i64 {{ self.a() }}\n}}\n{main}"
+        )),
+        [
+            (W0012, (4, 1), vec![(8, 25)]),
+            (W0012, (7, 1), vec![(5, 25)])
+        ]
+    );
+    assert_eq!(
+        found(&format!(
+            "{class}extend Crate {{\n    fn a(self, n: i64) -> i64 {{ if n == 0 {{ 0 }} else {{ self.a(n - 1) }} }}\n}}\n{main}"
+        )),
+        [(W0012, (4, 1), vec![])]
     );
 }
 

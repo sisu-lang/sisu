@@ -26,7 +26,22 @@ extend<T: Shape> Spare<T> {
     }
 }
 
+class Plain {
+    n: i64
+}
+
+extend Plain {
+    fn grow(self) -> i64 {
+        self.n + 1
+    }
+}
+
+fn stale(p: Plain) -> i64 {
+    p.grow()
+}
+
 fn main() {
     let c = Crate(item: 1)
     print("{c.item}")
+    print("{Plain(n: 1).n}")
 }

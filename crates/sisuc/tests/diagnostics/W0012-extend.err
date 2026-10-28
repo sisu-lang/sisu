@@ -28,5 +28,24 @@ warning[W0012]: class `Spare` is never built
    |
    = help: delete it, or name it `_Spare` if it is kept on purpose
 
-sisu: 3 warnings
+warning[W0012]: the `extend` block of `Plain` is never used
+  --> W0012-extend.sisu:33:1
+   |
+33 | extend Plain {
+   | ^^^^^^^^^^^^ never used
+...
+40 |     p.grow()
+   |     -------- used here, in `stale`, which is never called
+   |
+   = help: delete it
+
+warning[W0012]: function `stale` is never called
+  --> W0012-extend.sisu:39:4
+   |
+39 | fn stale(p: Plain) -> i64 {
+   |    ^^^^^ never called
+   |
+   = help: delete it, or name it `_stale` if it is kept on purpose
+
+sisu: 5 warnings
 sisu: for more on a code, run `sisu explain <code>`: W0012
