@@ -882,6 +882,41 @@ fn extend_block_should_be_live_when_one_of_its_methods_is_live() {
     );
 }
 
+/// Each block is judged by its own place among the blocks: the third of three is live, and the
+/// two before it are not, and the bounds of two dead blocks are two uses of one interface.
+#[test]
+fn extend_block_should_be_judged_by_its_own_place_among_blocks() {
+    judge_unused();
+    let crate_ = "class Crate<T> {\n    inner: T\n}\n";
+    let dead =
+        |name: &str| format!("extend<T> Crate<T> {{\n    fn {name}(self) -> i64 {{ 1 }}\n}}\n");
+    let live = "extend<T: Shape> Crate<T> {\n    fn live(self) -> f64 { self.inner.area() }\n}\n";
+    let main = "fn main() {\n    print(Crate(inner: Circle(r: 1.0)).live())\n}";
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}{CIRCLE}{crate_}{}{}{live}{main}",
+            dead("first"),
+            dead("second")
+        )),
+        [(W0012, (13, 1), vec![]), (W0012, (16, 1), vec![])]
+    );
+    let bound = |name: &str| {
+        format!("extend<T: Shape> Crate<T> {{\n    fn {name}(self) -> i64 {{ 1 }}\n}}\n")
+    };
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}{crate_}{}{}fn main() {{\n    print(Crate(inner: 1).inner)\n}}",
+            bound("first"),
+            bound("second")
+        )),
+        [
+            (W0012, (1, 11), vec![(7, 11), (10, 11)]),
+            (W0012, (7, 1), vec![]),
+            (W0012, (10, 1), vec![])
+        ]
+    );
+}
+
 /// A class that conforms to `Shape` with an `area` that nothing calls, and `main` that builds it.
 const CIRCLE: &str = "class Circle {\n    r: f64\n}\nextend Circle: Shape {\n    fn area(self) -> f64 { self.r }\n}\n";
 
