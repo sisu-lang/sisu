@@ -1408,6 +1408,31 @@ fn require_mimalloc_should_accept_a_default_build_and_refuse_a_system_build() {
     assert!(message.contains("does not link mimalloc"), "{message}");
 }
 
+/// GIVEN a `run` case that passes
+/// WHEN the harness runs it
+/// THEN the case directory holds the `-O2` executable on mimalloc, and it links mimalloc
+///
+/// Without the build, the harness runs no `-O2` code on the allocator that users get. The harness
+/// also runs the executable and compares its output, but the program cannot see which build runs
+/// it, so only the executable's existence and allocator are checked, with no test-only seam in
+/// `run`.
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "macOS symbol names have a leading `_`, so the check runs on Linux only"
+)]
+fn run_should_build_the_o2_executable_on_mimalloc() {
+    let dir = fixture(
+        "run_builds_o2_mimalloc",
+        &[("a.sisu", PRINTS_1), ("a.out", "1\n")],
+    );
+    let source = dir.join("a.sisu");
+    support::run(&source, false);
+    let exe = support::case_path(&source).join(support::MIMALLOC_O2.0);
+    assert!(exe.exists(), "{} should exist", exe.display());
+    support::require_mimalloc(&exe);
+}
+
 /// Writes `source` to `<CARGO_TARGET_TMPDIR>/<name>.sisu`, builds it with `--rc-checks`, at
 /// `-O2` if `o2`, into `<name>-rc` or `<name>-rc-O2`, and runs it.
 fn run_rc_checked(name: &str, source: &str, o2: bool) -> Output {
@@ -2138,13 +2163,9 @@ const PRINTS_1_EPRINTS_2: &str = "fn main() {\n    print(1)\n    eprint(2)\n}\n"
 /// THEN the first run panics and leaves the file, then bless writes the right text and the next run
 /// passes
 /// AND the second case panics and says that it has no `.err` file
-/// AND on Linux, the passing run leaves the `-O2` executable on mimalloc in the case directory
 ///
 /// A `run` case that writes to standard error needs its `.err`: a wrong one fails and stays as it
-/// was, bless rewrites it, and the run then passes. Without one the stderr must be empty. The
-/// harness runs the mimalloc executable and compares its output, but the program cannot see which
-/// build runs it, so only the executable's existence and allocator are checked, with no test-only
-/// seam in `run`.
+/// was, bless rewrites it, and the run then passes. Without one the stderr must be empty.
 #[test]
 fn run_case_should_check_and_bless_its_err_file() {
     let dir = fixture(
@@ -2170,11 +2191,6 @@ fn run_case_should_check_and_bless_its_err_file() {
         "2\n"
     );
     support::run(&source, false);
-    if cfg!(target_os = "linux") {
-        let exe = support::case_path(&source).join(support::MIMALLOC_O2.0);
-        assert!(exe.exists(), "{} should exist", exe.display());
-        support::require_mimalloc(&exe);
-    }
     let message = panic_message(|| support::run(&dir.join("b.sisu"), false));
     assert!(message.contains("has no `.err` file"), "{message}");
 }
