@@ -1,7 +1,10 @@
 //! The prelude's language interfaces (`Display`, `Eq`, `Ord`, `AnyObject`) and the conformances
 //! that the compiler writes for the types: the rules in `Checker::conforms`.
 
+use std::fmt::Write as _;
+
 use super::*;
+use crate::check::cycle;
 use crate::check::interface::LangPath;
 
 /// The functions that ask for each language interface, with bodies that call nothing.
@@ -662,6 +665,53 @@ fn conformance_lists_should_report_what_is_not_generated() {
             "interface Observer: AnyObject {}\nenum E {\n    A\n}\nextend E: Observer {}\nfn main() {}",
             vec![(Code::ClassOnly, (5, 11))],
         ),
+        // A listed `Display` has no method of its own: a method in a plain block meets it, with the
+        // signature of the requirement, as it does for a type that lists nothing.
+        (
+            "a listed Display and a plain block with a to_string of the wrong type",
+            "class C: Display {}\nextend C {\n    fn to_string(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (3, 8))],
+        ),
+        (
+            "a listed Display of an enum and a plain block with a to_string of the wrong type",
+            "enum E: Display {\n    A\n}\nextend E {\n    fn to_string(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (5, 8))],
+        ),
+        (
+            "a listed Display of a generic class and a plain block with a to_string of the wrong type",
+            "class Box<T>: Display {\n    v: T\n}\nextend<T> Box<T> {\n    fn to_string(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (5, 8))],
+        ),
+        (
+            "a Display of an interface that inherits it and a plain block with a to_string of the wrong type",
+            "interface Shape: Display {}\nclass C: Shape {}\nextend C {\n    fn to_string(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![(Code::ConformanceBody, (4, 8))],
+        ),
+        // The fixture `E0152-generated-eq-block` pins the note, which names only a part that fails.
+        (
+            "a block of Eq with a method of another name, for an enum that gets an Eq",
+            "enum E {\n    A\n}\nextend E: Eq {\n    fn helper(self) -> i64 { 1 }\n}\nfn main() {}",
+            vec![
+                (Code::ConformanceBody, (4, 11)),
+                (Code::ConformanceBody, (5, 8)),
+            ],
+        ),
+        // A method of one name twice has the one error, whatever holds the methods.
+        (
+            "a to_string in the body and in a plain block",
+            "class C {\n    fn to_string(self) -> string { \"c\" }\n}\nextend C {\n    fn to_string(self) -> string { \"d\" }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (5, 8))],
+        ),
+        (
+            "a to_string in two plain blocks",
+            "class C {}\nextend C {\n    fn to_string(self) -> string { \"c\" }\n}\nextend C {\n    fn to_string(self) -> string { \"d\" }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (6, 8))],
+        ),
+        (
+            "a listed Display, a to_string in the body and in a plain block",
+            "class C: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nextend C {\n    fn to_string(self) -> string { \"d\" }\n}\nfn main() {}",
+            vec![(Code::DefinedTwice, (5, 8))],
+        ),
         (
             "a block of Display beside a method named to_string",
             "class Circle {\n    fn to_string(self) -> string { \"c\" }\n}\nextend Circle: Display {\n    fn to_string(self) -> string { \"c\" }\n}\nfn main() {}",
@@ -830,6 +880,46 @@ fn lang_path_should_choose_the_path_of_each_language_interface() {
     }
 }
 
+#[test]
+fn lang_path_should_find_the_to_string_of_a_plain_block_as_the_display() {
+    let rows = [
+        // A `to_string` in a plain block replaces the generated `Display`, listed or not.
+        (
+            "listed Display and a plain block with to_string",
+            "class C: Display {}\nextend C {\n    fn to_string(self) -> string { \"c\" }\n}\n"
+                .to_string(),
+            "C",
+            "Display",
+            LangPath::Written(0),
+        ),
+        (
+            "plain block with to_string",
+            "class C {}\nextend C {\n    fn to_string(self) -> string { \"c\" }\n}\n".to_string(),
+            "C",
+            "Display",
+            LangPath::Written(0),
+        ),
+        (
+            "listed Display of an enum and a plain block with to_string",
+            "enum E: Display {\n    A\n}\nextend E {\n    fn to_string(self) -> string { \"e\" }\n}\n"
+                .to_string(),
+            "E",
+            "Display",
+            LangPath::Written(0),
+        ),
+        (
+            "listed Display with no method",
+            "class C: Display {}\n".to_string(),
+            "C",
+            "Display",
+            LangPath::Generated,
+        ),
+    ];
+    for (row, src, ty, interface, expected) in rows {
+        assert_eq!(path_of(&src, ty, interface), expected, "{row}");
+    }
+}
+
 /// The part that makes `ty` fail `interface`, as `failing_leaf` finds it, written as the program
 /// does. A type that holds, or one with no part to find, is itself.
 fn leaf_of(src: &str, (params, ty): (&str, &str), interface: &str) -> String {
@@ -944,4 +1034,125 @@ fn generated_eq_of_an_enum_with_a_payload_that_has_no_choice_should_hold() {
     let decls = "interface Plain {\n    type Item\n}\nclass Bare: Plain {}\nenum W<S: Plain> {\n    A(S.Item)\n}";
     let src = asking(decls, "eq", "W<Bare>");
     codes(&src, &[(Code::ConformanceBody, (8, 13))]);
+}
+
+#[test]
+fn a_top_level_item_should_not_take_the_name_of_a_language_interface() {
+    // Each row: the declaration, and the column of its name. A kind of item per row, so that
+    // each place that declares a name is checked.
+    let kinds: [(&str, &str, usize); 6] = [
+        ("class", "class NAME {}", 7),
+        ("enum", "enum NAME {\n    A\n}", 6),
+        ("interface", "interface NAME {}", 11),
+        ("function", "fn NAME() {}", 4),
+        ("constant", "const NAME = 1", 7),
+        ("type parameter", "fn g<NAME>() {}", 6),
+    ];
+    for name in ["Display", "Eq", "Ord", "AnyObject"] {
+        for (kind, form, column) in kinds {
+            let src = format!("{}\nfn main() {{}}", form.replace("NAME", name));
+            codes_row(
+                &format!("{kind} {name}"),
+                &src,
+                &[(Code::BuiltInName, (1, column))],
+            );
+        }
+    }
+    // The interface a user item meant to replace stays the language's: `Ord` still needs `eq`.
+    let src = "interface Eq {}\nclass C: Ord {\n    fn less(self, other: Self) -> bool { true }\n}\nfn main() {}";
+    codes(
+        src,
+        &[
+            (Code::BuiltInName, (1, 11)),
+            (Code::ConformanceBody, (2, 10)),
+        ],
+    );
+}
+
+#[test]
+fn a_binding_member_or_variant_should_still_take_the_name_of_a_language_interface() {
+    // ADR 0015 lets a local, a parameter, a method and a field take a prelude name.
+    let src = "class C {\n    Eq: i64\n    fn Ord(self) {}\n}\nenum E {\n    Display\n    AnyObject\n}\nfn f(Display: i64) {\n    let AnyObject = Display\n    print(AnyObject)\n}\nfn main() {}";
+    clean(src);
+}
+
+#[test]
+fn a_payload_that_fails_its_bound_should_be_unknown_to_every_query_in_any_order() {
+    // Each row: the declarations that ask for `Eq` of an enum, in two orders; the enum of the
+    // payload `NeedOrd<bool>`, which fails its bound, is the only mistake. A query that reads
+    // the payload before its check runs would fail on the class `NeedOrd` and add errors.
+    let head =
+        "class NeedEq<T: Eq> {}\nclass NeedOrd<T: Ord> {}\nenum Wrap<T: Eq> {\n    W(T)\n}\n";
+    let rows: [(&str, [&str; 2]); 5] = [
+        (
+            "a signature asks",
+            [
+                "fn user(x: NeedEq<E>) {}\nenum E: Eq {\n    A(NeedOrd<bool>)\n}",
+                "enum E: Eq {\n    A(NeedOrd<bool>)\n}\nfn user(x: NeedEq<E>) {}",
+            ],
+        ),
+        (
+            "a payload of another enum asks",
+            [
+                "enum E1 {\n    A(Wrap<E2>)\n}\nenum E2 {\n    B(NeedOrd<bool>)\n}",
+                "enum E2 {\n    B(NeedOrd<bool>)\n}\nenum E1 {\n    A(Wrap<E2>)\n}",
+            ],
+        ),
+        (
+            "enums that ask each other, the mistake in the second payload",
+            [
+                "enum E1 {\n    A(Wrap<E2>)\n}\nenum E2 {\n    B(Wrap<E1>)\n    C(NeedOrd<bool>)\n}",
+                "enum E2 {\n    B(Wrap<E1>)\n    C(NeedOrd<bool>)\n}\nenum E1 {\n    A(Wrap<E2>)\n}",
+            ],
+        ),
+        (
+            "a field asks",
+            [
+                "class K {\n    f: NeedEq<E>\n}\nenum E {\n    A(NeedOrd<bool>)\n}",
+                "enum E {\n    A(NeedOrd<bool>)\n}\nclass K {\n    f: NeedEq<E>\n}",
+            ],
+        ),
+        (
+            "an interface requirement asks",
+            [
+                "interface I {\n    fn m(self, x: NeedEq<E>)\n}\nenum E {\n    A(NeedOrd<bool>)\n}",
+                "enum E {\n    A(NeedOrd<bool>)\n}\ninterface I {\n    fn m(self, x: NeedEq<E>)\n}",
+            ],
+        ),
+    ];
+    for (name, orders) in rows {
+        for (i, decls) in orders.iter().enumerate() {
+            let src = format!("{head}{decls}\nfn main() {{}}");
+            let at = src.find("NeedOrd<bool>").expect("the row has the payload") + "NeedOrd<".len();
+            let row = format!("{name}, order {i}");
+            codes_row(&row, &src, &[(Code::NotConform, line_col(&src, at))]);
+        }
+    }
+}
+
+#[test]
+fn growing_marks_should_search_each_component_once_for_a_shrinking_ring() {
+    // `n` enums that each hold the next, and the last the first, with the argument `S.Item`,
+    // which is one level less than `S`: the ring has a negative weight and no positive cycle.
+    // One search of the ring reads its edges a few times; a search for each of the `n`
+    // enums would read them `n` times each.
+    let ring = |n: usize| {
+        let mut src = String::from(
+            "interface Seq {\n    type Item: Seq\n}\nclass Wrap<T> {\n    v: T\n}\nextend<T: Seq> Wrap<T>: Seq {\n    type Item = T\n}\nclass Stop {}\nextend Stop: Seq {\n    type Item = Stop\n}\n",
+        );
+        for i in 0..n {
+            let next = (i + 1) % n;
+            writeln!(
+                src,
+                "enum E{i}<S: Seq> {{\n    End\n    Next(E{next}<S.Item>)\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        src += "fn main() {}";
+        cycle::BELLMAN_FORD_STEPS.set(0);
+        clean(&src);
+        cycle::BELLMAN_FORD_STEPS.get()
+    };
+    // 20, 40 and 60 enums: ten times the smallest size that a quadratic search shows.
+    assert_near_linear(ring(20), ring(40), ring(60));
 }

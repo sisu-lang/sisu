@@ -621,11 +621,15 @@ impl Checker<'_> {
         let unbuilt = vec![false; self.classes.len() + self.enums.len()];
         self.declaration_edges(&mut graph, &unbuilt);
         let strands = Strands::of(&graph);
+        // Each component is searched once, whatever number of enums its nodes belong to.
+        let mut decided: FxHashMap<usize, bool> = FxHashMap::default();
         (self.enums.iter().enumerate())
             .map(|(e, info)| {
                 let first = graph.first[graph.functions + graph.classes + e];
-                (first..first + info.type_params.len())
-                    .any(|node| strands.grows(&graph, strands.component[node]))
+                (first..first + info.type_params.len()).any(|node| {
+                    let k = strands.component[node];
+                    *decided.entry(k).or_insert_with(|| strands.grows(&graph, k))
+                })
             })
             .collect()
     }

@@ -431,10 +431,13 @@ impl Checker<'_> {
         }
     }
 
-    /// Records the `Display` of each type whose method `to_string` makes it: a method of that name
-    /// in the body of a class or an enum, or in a plain `extend` block, unless the type's list
-    /// gives it `Display` (`gives`), where the method meets that conformance. The method must have
-    /// `Display`'s signature, as `meet_requirements` checks.
+    /// Records the `Display` of each type whose method `to_string` makes it: the first method of
+    /// that name in the body of a class or an enum, or else in a plain `extend` block. A type
+    /// whose list gives it `Display` (`gives`) and whose body has the method has the conformance
+    /// already: the method meets it. A list that no method meets adds no record, so the method of
+    /// a plain block makes the `Display` then. The method must have `Display`'s signature, as
+    /// `meet_requirements` checks. A second method of the name has its own error, so it adds no
+    /// second conformance.
     fn name_displays(&mut self, gives: &FxHashSet<Holder>, added: &mut Added) -> Vec<Pending> {
         let name = Symbol::intern("to_string");
         let mut named: Vec<(Holder, Type, Source, tir::FuncId)> = Vec::new();
@@ -460,8 +463,11 @@ impl Checker<'_> {
             }
         }
         let mut pending = Vec::new();
+        // The holders with a conformance from a method already.
+        let mut done = FxHashSet::default();
         for (holder, target, source, func) in named {
-            if gives.contains(&holder) {
+            let met_by_list = matches!(source, Source::Body(_)) && gives.contains(&holder);
+            if !done.insert(holder) || met_by_list {
                 continue;
             }
             let at = self.signatures[func.0].span;
@@ -492,24 +498,9 @@ impl Checker<'_> {
         if interface.interface != self.lang.eq {
             return;
         }
-        let (params, declared) = self.source_params(source);
-        let bounds: Vec<Vec<Bound>> = (0..params.len())
-            .map(|i| {
-                let mut list = declared.get(i).cloned().unwrap_or_default();
-                list.push(interface);
-                list
-            })
-            .collect();
-        let (leaf, _) = self.with_body(Body::default(), |checker| {
-            checker.body.set_type_params(&params);
-            checker.body.set_bounds(0, bounds);
-            let args = interface.args;
-            if checker.conforms(target, interface.interface, args) {
-                return None;
-            }
-            Some(checker.failing_leaf(target, interface.interface, args))
-        });
-        let Some(leaf) = leaf else { return };
+        let Some(leaf) = self.derive_failure(interface, target, source) else {
+            return;
+        };
         let info = &self.interfaces[interface.interface.0];
         let requirement = &info.requirements[0];
         let signature = self.required_text(source, interface, requirement);
@@ -522,6 +513,26 @@ impl Checker<'_> {
                 generated: Some(Ungenerated::Since(self.type_name(leaf))),
             },
         });
+    }
+
+    /// The part that makes the rule that the compiler writes for `interface` fail for `target`, as
+    /// Rust's `derive` is checked: each parameter of `source` is taken to conform, besides its own
+    /// bounds. `None` when the rule holds.
+    fn derive_failure(&mut self, interface: Bound, target: Type, source: Source) -> Option<Type> {
+        let (params, declared) = self.source_params(source);
+        let bounds: Vec<Vec<Bound>> = (0..params.len())
+            .map(|i| {
+                let mut list = declared.get(i).cloned().unwrap_or_default();
+                list.push(interface);
+                list
+            })
+            .collect();
+        let (leaf, _) = self.with_body(Body::default(), |checker| {
+            checker.body.set_type_params(&params);
+            checker.body.set_bounds(0, bounds);
+            checker.rule_failure(target, interface.interface)
+        });
+        leaf
     }
 
     /// Reports what the conformance `p` lacks of its interface's requirements, and records the
@@ -577,10 +588,7 @@ impl Checker<'_> {
             }
         }
         if !missing.is_empty() {
-            // Nothing generates `Eq` for a class, or `Ord` for anything that is not built in.
-            let language = p.interface.interface;
-            let generated = (language == self.lang.eq || language == self.lang.ord)
-                .then_some(Ungenerated::Never);
+            let generated = self.ungenerated(p);
             reports.push(DiagnosticKind::ConformanceBody {
                 ty: ty.clone(),
                 interface: interface.clone(),
@@ -592,6 +600,7 @@ impl Checker<'_> {
             });
         }
         if let (Source::Block(b), false) = (p.source, p.by_name) {
+            let info = &self.interfaces[p.interface.interface.0];
             let required: FxHashSet<Symbol> = (info.requirements.iter())
                 .map(|requirement| requirement.name.name)
                 .collect();
@@ -615,6 +624,25 @@ impl Checker<'_> {
         for report in reports {
             self.report(report);
         }
+    }
+
+    /// Why the compiler writes no conformance in place of `p`, when `p` is one of `Eq` and `Ord`:
+    /// nothing generates `Eq` for a class, or `Ord` for anything that is not built in, and an enum
+    /// gets `Eq` unless a part of it has none, which is the part to name. `None` when it would
+    /// write one, as it does for an `Eq` block that holds a method of another name.
+    fn ungenerated(&mut self, p: &Pending) -> Option<Ungenerated> {
+        let language = p.interface.interface;
+        if language == self.lang.ord {
+            return Some(Ungenerated::Never);
+        }
+        if language != self.lang.eq {
+            return None;
+        }
+        if !matches!(p.target.kind(), TypeKind::Enum(..)) {
+            return Some(Ungenerated::Never);
+        }
+        let leaf = self.derive_failure(p.interface, p.target, p.source)?;
+        Some(Ungenerated::Since(self.type_name(leaf)))
     }
 
     /// Whether `source` writes a choice for the associated type `name`, whether or not its type

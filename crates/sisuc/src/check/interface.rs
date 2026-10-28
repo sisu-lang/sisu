@@ -133,10 +133,26 @@ pub(super) enum Slot {
 }
 
 /// The type parameters in scope where a pending check was queued, and their bounds.
+#[derive(Clone)]
 pub(super) struct Scope {
     params: Vec<Symbol>,
     bounds: Vec<Vec<Bound>>,
     self_type: Option<Type>,
+}
+
+/// The pending bound checks while `run_pending_bounds` runs them. A query for a generated
+/// conformance reads the payload types of an enum, and a payload that fails its check is unknown,
+/// so the checks that keep a payload run when a query first reads it (`settle_payload`), or in
+/// queue order, whichever comes first: the answer of a query does not depend on the order of the
+/// declarations.
+pub(super) struct Waiting {
+    /// Each check not run yet; a check that runs is taken out.
+    checks: Vec<Option<PendingBound>>,
+    /// The scope of each check.
+    scope_of: Vec<usize>,
+    scopes: Vec<Scope>,
+    /// The checks that keep each payload type, by their place in `checks`, until a query reads it.
+    payloads: FxHashMap<(EnumId, usize, usize), Vec<usize>>,
 }
 
 /// How a language interface holds for a type (`Checker::lang_path`).
@@ -1239,10 +1255,10 @@ impl Checker<'_> {
         if self.marked[id.0] {
             return true;
         }
-        let payloads: Vec<Type> = (self.enums[id.0].variants.iter())
-            .flat_map(|variant| variant.fields.iter().flatten().copied())
-            .collect();
-        for payload in payloads {
+        for slot in self.payload_slots(id) {
+            let Some(payload) = self.payload_type(id, slot) else {
+                continue;
+            };
             let Some(part) = self.subst(payload, own.get()) else {
                 continue;
             };
@@ -1299,6 +1315,13 @@ impl Checker<'_> {
     /// written record fails its bounds, or a type parameter whose bounds lack the interface. It
     /// walks the rule again with a visited set, so a type is read once, and is only for a type
     /// that `conforms` has found to fail; `ty` itself if the walk finds no part.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Task 2's errors name the failing part of a type that lacks an interface"
+        )
+    )]
     pub(super) fn failing_leaf(
         &mut self,
         ty: Type,
@@ -1307,6 +1330,44 @@ impl Checker<'_> {
     ) -> Type {
         let mut seen = FxHashSet::default();
         self.leaf(ty, interface, args, &mut seen).unwrap_or(ty)
+    }
+
+    /// The part that makes the generated rule of `interface` fail for `ty`, whatever record `ty`
+    /// has itself: as `failing_leaf` finds it, `ty` if the walk finds none. `None` when the rule
+    /// holds. It is for a conformance that the compiler would write, to say why it does not.
+    pub(super) fn rule_failure(&mut self, ty: Type, interface: InterfaceId) -> Option<Type> {
+        match generated(self.lang, ty, interface) {
+            Generated::Holds => None,
+            Generated::Fails | Generated::Element(_) => Some(ty),
+            Generated::Payloads(id, own) => {
+                if self.payloads_conform(id, own, interface) {
+                    return None;
+                }
+                let mut seen = FxHashSet::default();
+                seen.insert((ty, interface, TypeArgs::NONE));
+                let leaf = self.payloads_leaf(id, own, interface, &mut seen);
+                Some(leaf.unwrap_or(ty))
+            }
+        }
+    }
+
+    /// The first payload part of the enum `id`, with `own` for its parameters, that fails
+    /// `interface` on its own; `None` when each holds.
+    fn payloads_leaf(
+        &mut self,
+        id: EnumId,
+        own: TypeArgs,
+        interface: InterfaceId,
+        seen: &mut FxHashSet<(Type, InterfaceId, TypeArgs)>,
+    ) -> Option<Type> {
+        if self.marked[id.0] {
+            return None;
+        }
+        self.payload_slots(id).into_iter().find_map(|slot| {
+            let payload = self.payload_type(id, slot)?;
+            let part = self.subst(payload, own.get())?;
+            self.leaf(part, interface, TypeArgs::NONE, seen)
+        })
     }
 
     /// `failing_leaf` for one type; `None` when it holds, or is already being read.
@@ -1334,18 +1395,7 @@ impl Checker<'_> {
                 match generated(self.lang, ty, interface) {
                     Generated::Holds => None,
                     Generated::Fails | Generated::Element(_) => Some(ty),
-                    Generated::Payloads(id, own) => {
-                        if self.marked[id.0] {
-                            return None;
-                        }
-                        let payloads: Vec<Type> = (self.enums[id.0].variants.iter())
-                            .flat_map(|variant| variant.fields.iter().flatten().copied())
-                            .collect();
-                        payloads.into_iter().find_map(|payload| {
-                            let part = self.subst(payload, own.get())?;
-                            self.leaf(part, interface, TypeArgs::NONE, seen)
-                        })
-                    }
+                    Generated::Payloads(id, own) => self.payloads_leaf(id, own, interface, seen),
                 }
             }
             _ => match generated(self.lang, ty, interface) {
@@ -1587,25 +1637,96 @@ impl Checker<'_> {
     /// changes, so each scope is set up once for all its checks.
     pub(super) fn run_pending_bounds(&mut self) {
         let pending = self.pending_bounds.take().unwrap_or_default();
-        let scopes = std::mem::take(&mut self.scopes);
-        for group in pending.chunk_by(|a, b| a.scope == b.scope) {
-            let scope = &scopes[group[0].scope];
-            let (failed, _) = self.with_body(Body::default(), |checker| {
-                checker.body.set_type_params(&scope.params);
-                checker.body.set_bounds(0, scope.bounds.clone());
-                checker.body.self_type = scope.self_type;
-                let mut failed = Vec::new();
-                for p in group {
-                    if !checker.check_now(&p.check) {
-                        failed.extend(p.place);
-                    }
-                }
-                failed
-            });
-            for place in failed {
-                self.make_unknown(place);
+        let mut payloads: FxHashMap<(EnumId, usize, usize), Vec<usize>> = FxHashMap::default();
+        for (i, check) in pending.iter().enumerate() {
+            if let Some(Slot::Payload(e, v, f)) = check.place {
+                payloads.entry((e, v, f)).or_default().push(i);
             }
         }
+        self.waiting = Some(Waiting {
+            scope_of: pending.iter().map(|check| check.scope).collect(),
+            checks: pending.into_iter().map(Some).collect(),
+            scopes: std::mem::take(&mut self.scopes),
+            payloads,
+        });
+        let all = self
+            .waiting
+            .as_ref()
+            .map_or(0, |waiting| waiting.checks.len());
+        self.run_waiting(&(0..all).collect::<Vec<_>>());
+        self.waiting = None;
+    }
+
+    /// Runs the waiting checks `indices` that no query ran yet, in order, each in the scope it was
+    /// queued in, and makes unknown the type kept at the place of each that fails. A scope is set
+    /// up once for the checks that follow each other in it.
+    fn run_waiting(&mut self, indices: &[usize]) {
+        let Some(waiting) = &self.waiting else {
+            return;
+        };
+        let groups: Vec<&[usize]> = indices
+            .chunk_by(|a, b| waiting.scope_of[*a] == waiting.scope_of[*b])
+            .collect();
+        for group in groups {
+            let Some(waiting) = &self.waiting else {
+                return;
+            };
+            if group.iter().all(|&i| waiting.checks[i].is_none()) {
+                continue;
+            }
+            let scope = waiting.scopes[waiting.scope_of[group[0]]].clone();
+            self.with_body(Body::default(), |checker| {
+                checker.body.set_type_params(&scope.params);
+                checker.body.set_bounds(0, scope.bounds);
+                checker.body.self_type = scope.self_type;
+                for &i in group {
+                    // A query that an earlier check made may have run this one.
+                    let taken = (checker.waiting.as_mut()).and_then(|w| w.checks[i].take());
+                    let Some(check) = taken else {
+                        continue;
+                    };
+                    if !checker.check_now(&check.check)
+                        && let Some(place) = check.place
+                    {
+                        checker.make_unknown(place);
+                    }
+                }
+            });
+        }
+    }
+
+    /// The places of the payloads of the enum `id`: its variant and its field.
+    fn payload_slots(&self, id: EnumId) -> Vec<(usize, usize)> {
+        let variants = self.enums[id.0].variants.iter().enumerate();
+        variants
+            .flat_map(|(v, variant)| (0..variant.fields.len()).map(move |f| (v, f)))
+            .collect()
+    }
+
+    /// The type of the payload at `slot` of the enum `id`, `None` if it is an error. The checks
+    /// that keep it run first, so a type that fails its bound is unknown.
+    ///
+    /// shortcut: a payload whose own checks are running (a check that needs an enum that has the
+    /// payload) is read as it is written, so such a loop of checks can answer by the order of its
+    /// declarations; upgrade when a program needs the answer of a loop of failing checks.
+    fn payload_type(&mut self, id: EnumId, (variant, field): (usize, usize)) -> Option<Type> {
+        self.settle_payload((id, variant, field));
+        self.enums[id.0].variants[variant].fields[field]
+    }
+
+    /// Runs the waiting checks that keep the payload `slot`. They run as roots of their own
+    /// queries: they are no part of the query that reads the payload, whose answer they do not
+    /// give.
+    fn settle_payload(&mut self, slot: (EnumId, usize, usize)) {
+        let Some(waiting) = &mut self.waiting else {
+            return;
+        };
+        let Some(indices) = waiting.payloads.remove(&slot) else {
+            return;
+        };
+        let outer = std::mem::take(&mut self.open);
+        self.run_waiting(&indices);
+        self.open = outer;
     }
 
     /// Makes the type kept at `place` unknown, as a type that fails its bound is where it is

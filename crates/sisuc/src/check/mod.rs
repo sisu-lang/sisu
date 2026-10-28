@@ -45,7 +45,7 @@ use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
-use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot};
+use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use prelude::PRELUDE;
 pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
@@ -394,6 +394,8 @@ struct Checker<'src> {
     pending_bounds: Option<Vec<PendingBound>>,
     /// The type parameters in scope where a pending check was queued.
     scopes: Vec<Scope>,
+    /// The pending checks while `run_pending_bounds` runs them.
+    waiting: Option<Waiting>,
     /// Where each bound is written whose closure went past the limit and was reported.
     wide_reported: FxHashSet<Span>,
     /// A buffer for the walk of an interface closure, kept from one closure to the next.
@@ -921,6 +923,7 @@ impl<'src> Checker<'src> {
             assoc_at: FxHashMap::default(),
             pending_bounds: Some(Vec::new()),
             scopes: Vec::new(),
+            waiting: None,
             wide_reported: FxHashSet::default(),
             closure_seen: FxHashSet::default(),
             interface_ids: FxHashMap::default(),
@@ -1185,21 +1188,28 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `name` is a built-in type's, which no class, function, enum or constant may
-    /// take; reports it when it is. A name milestone 8's prelude takes is reported too, but the
-    /// item still takes it, so that its uses do not cascade.
+    /// Whether `name` is a built-in type's or a language interface's, which no class, function,
+    /// enum, constant or interface may take; reports it when it is. A name milestone 8's prelude
+    /// takes without declaring it is reported too, but the item still takes it, so that its uses
+    /// do not cascade. The prelude's own declarations take the language interfaces' names.
     fn built_in(&mut self, name: &ast::Ident) -> bool {
-        let found = built_in_type(name.name.as_str()).is_some();
-        if found {
+        let kind = if built_in_type(name.name.as_str()).is_some() {
+            Some(BuiltIn::Type)
+        } else if !name.span.in_prelude() && is_language_interface(name.name.as_str()) {
+            Some(BuiltIn::Interface)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
             self.report(DiagnosticKind::BuiltInName {
                 name: name.name.to_string(),
                 at: name.span,
-                kind: BuiltIn::Type,
+                kind,
             });
         } else {
             self.reserved(name);
         }
-        found
+        kind.is_some()
     }
 
     /// Whether `name` is the first function, class, enum or constant of its name; reports it when
@@ -2005,6 +2015,12 @@ pub(crate) fn built_in_type(name: &str) -> Option<Type> {
         "string" => Some(Type::STRING),
         _ => None,
     }
+}
+
+/// Whether `name` is one of `lang.sisu`'s interfaces, which `Checker::language_interfaces` finds
+/// by name.
+fn is_language_interface(name: &str) -> bool {
+    matches!(name, "Display" | "Eq" | "Ord" | "AnyObject")
 }
 
 /// `T` for a `T?`, else `ty`.

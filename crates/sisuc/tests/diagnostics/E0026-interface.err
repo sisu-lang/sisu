@@ -1,0 +1,8 @@
+error[E0026]: `Eq` is a built-in interface
+ --> E0026-interface.sisu:1:11
+  |
+1 | interface Eq {}
+  |           ^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0026

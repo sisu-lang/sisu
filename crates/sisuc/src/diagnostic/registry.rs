@@ -1826,6 +1826,8 @@ pub(crate) enum InterfaceBodyForm {
 pub(crate) enum BuiltIn {
     /// The name of a built-in type.
     Type,
+    /// The name of an interface the language declares: `Display`, `Eq`, `Ord` or `AnyObject`.
+    Interface,
     /// A keyword.
     Keyword,
     /// A constructor milestone 8's prelude takes: `Some`, `Ok` or `Err`.
@@ -2503,6 +2505,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 match kind {
                     BuiltIn::Type => format!("`{name}` is a built-in type"),
+                    BuiltIn::Interface => format!("`{name}` is a built-in interface"),
                     BuiltIn::Constructor => format!("`{name}` is a built-in name"),
                     BuiltIn::Keyword => {
                         format!("`{name}` is a keyword; a variant cannot take its name")
