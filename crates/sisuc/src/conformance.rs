@@ -145,28 +145,33 @@ struct Frame {
 }
 
 /// The state of one root query for a generated conformance. The query for an enum can reach
-/// itself (`enum Expr { Num(i64)\n Add(Expr, Expr) }`), so it is decided assuming that it holds,
-/// and then each part is checked: a coinductive check, as Rust's. The state follows Tarjan's
-/// algorithm for strongly connected components. It holds the stack of the keys in progress, each
-/// with its entry number and its `low`; the pending answers, each with its key and its entry
-/// number; and the counter that gives the numbers, which starts again only when the stack is
-/// empty, so one number never names two keys in one root query.
+/// itself (`enum Expr { Num(i64)\n Add(Expr, Expr) }`). So the query is decided as if it holds,
+/// and then each part is checked. This is a coinductive check, as Rust's is. The state follows
+/// Tarjan's algorithm for strongly connected components. It holds these parts:
 ///
-/// Every query nested in a query is a conjunction (a written conformance decides, and a bound on
-/// `Display` always holds, so the key of a `Display` is never on the stack: its choice of a
-/// written conformance or the generated one is a disjunction), so the rule is exact. A key that
-/// leaves with `false` holds under assumptions that are all `true`, so its answer is never wrong,
-/// and every caller then fails too. A key that leaves with `true` and a `low` equal to its own
-/// number is a head: it and every pending answer entered after it are final. A `true` with a lower
-/// `low` rests on a key that is still open, so it waits as a pending answer, which a later part
-/// query finds by its key: no key is expanded twice in one root query. When the root query returns,
-/// the pending answers that are left rest, through conjunctions, on a key that failed, so each is
-/// `false`.
+/// - the stack of the keys in progress, each with its entry number and its `low`;
+/// - the pending answers, each with its key and its entry number;
+/// - the counter that gives the numbers.
 ///
-/// The fourth recorded exception to "A pass is linear in the program" (user, 2026-10-27; ruling
-/// F9): a query costs one step for each class or enum type that it forms (see
-/// `CODING_STANDARDS.md`, Performance), and the types that a query forms from a concrete type
-/// are the types that `mono` instantiates when the program uses them.
+/// The counter starts again only when the stack is empty. So one number never names two keys in
+/// one root query.
+///
+/// Every query nested in a query is a conjunction, so the rule is exact. A written conformance
+/// decides, and a bound on `Display` always holds. So the key of a `Display` is never on the
+/// stack. Its choice of a written conformance or the generated one is a disjunction.
+///
+/// A key that leaves with `false` holds under assumptions that are all `true`. So its answer is
+/// never wrong, and every caller then fails too. A key that leaves with `true` and a `low` equal
+/// to its own number is a head. It and every pending answer entered after it are final. A `true`
+/// with a lower `low` rests on a key that is still open. So it waits as a pending answer, which
+/// a later part query finds by its key. No key is expanded twice in one root query. When the root
+/// query returns, the pending answers that are left rest on a key that failed, through
+/// conjunctions. So each of them is `false`.
+///
+/// This is the fourth recorded exception to "A pass is linear in the program" (user,
+/// 2026-10-27; ruling F9). A query costs one step for each class or enum type that it forms (see
+/// `CODING_STANDARDS.md`, Performance). The types that a query forms from a concrete type are the
+/// types that `mono` instantiates when the program uses them.
 #[derive(Debug, Default)]
 pub(crate) struct Open {
     stack: Vec<Frame>,
