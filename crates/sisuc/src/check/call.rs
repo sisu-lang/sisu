@@ -449,7 +449,7 @@ impl Checker<'_> {
             // A built-in type, an array and an optional have a `Display` that the compiler writes,
             // and no method of their own named `to_string`.
             Some(ty) if method.name.as_str() == "to_string" && generated_display_only(ty) => {
-                return self.generated_display(span, receiver, site, args);
+                return self.generated_display(span, receiver, site, args, false);
             }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
                 return self.array_method(span, (receiver, receiver_expr.span), ty, method, args);
@@ -466,7 +466,9 @@ impl Checker<'_> {
         let ty = type_of(&receiver);
         match self.find_method(ty, receiver_expr, site, target, (span, args.is_empty())) {
             Some(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
-            Some(Found::GeneratedDisplay) => self.generated_display(span, receiver, site, args),
+            Some(Found::GeneratedDisplay { listed }) => {
+                self.generated_display(span, receiver, site, args, listed)
+            }
             None => {
                 self.labels(args);
                 self.stray(args);
@@ -478,14 +480,16 @@ impl Checker<'_> {
     /// `receiver.to_string()` on a value whose `Display` the compiler writes: the text that
     /// `print` writes, as a one-part interpolation (`lang::to_string`). The call takes no
     /// argument and no type argument, as a written method with no type parameter of its own.
+    /// With `listed`, the list of type arguments is already reported.
     fn generated_display(
         &mut self,
         span: Span,
         receiver: Checked,
         site: Site<'_>,
         args: &[ast::Arg],
+        listed: bool,
     ) -> Checked {
-        if !site.written.is_empty() {
+        if !listed && !site.written.is_empty() {
             self.not_generic(site.name.name, site.angles);
         }
         if !args.is_empty() {

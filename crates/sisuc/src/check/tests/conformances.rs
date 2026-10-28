@@ -844,9 +844,9 @@ fn to_string_with_an_argument_should_report_the_count() {
     }
 }
 
-/// A call of a generated `to_string` asks whether its class has a field of that name. A class
-/// answers once, not once for each call: n fields and many calls read n fields, and n fields with
-/// n calls read in proportion to n (ruling F7).
+/// A call of a generated `to_string` asks whether its class has a field of that name. The
+/// collection of the fields answers once, and a call reads no field: n fields and many calls read
+/// n fields, and n fields with n calls read in proportion to n (ruling F7).
 #[test]
 fn generated_to_string_lookup_should_read_the_fields_of_a_class_once() {
     let reads = |fields: usize, calls: usize| {
@@ -876,7 +876,7 @@ fn generated_to_string_lookup_should_read_the_fields_of_a_class_once() {
 /// have the same code at the same place.
 #[test]
 fn to_string_with_type_arguments_should_report_the_list() {
-    let decls = "class C {}\nclass W {}\nextend W {\n    fn to_string(self) -> string { \"w\" }\n}\nclass B {}\nextend B: Display {\n    fn to_string(self) -> string { \"b\" }\n}\nenum E {\n    A\n}\n";
+    let decls = "class C {}\nclass W {}\nextend W {\n    fn to_string(self) -> string { \"w\" }\n}\nclass B {}\nextend B: Display {\n    fn to_string(self) -> string { \"b\" }\n}\nenum E {\n    A\n}\nclass Node {}\nclass Plain<T> {\n    _value: T\n}\nextend<T: Eq> Plain<T> {\n    fn to_string(self) -> string { \"plain\" }\n}\nclass Boxed<T> {\n    _value: T\n}\nextend<T: Eq> Boxed<T>: Display {\n    fn to_string(self) -> string { \"boxed\" }\n}\n";
     for (row, param) in [
         ("a bool", "bool"),
         ("a char", "char"),
@@ -891,8 +891,18 @@ fn to_string_with_type_arguments_should_report_the_list() {
         ("an unbounded type parameter", "T"),
         ("a class with a written to_string", "W"),
         ("a class with a Display block", "B"),
+        ("a class whose plain block's bounds fail", "Plain<Node>"),
+        (
+            "a type parameter whose plain block's bounds fail",
+            "Plain<T>",
+        ),
+        ("a class whose Display block's bounds fail", "Boxed<Node>"),
     ] {
-        let generic = if param == "T" { "<T>" } else { "" };
+        let generic = if param.ends_with("<T>") || param == "T" {
+            "<T>"
+        } else {
+            ""
+        };
         for list in ["<Missing>", "<i64>"] {
             let src = format!(
                 "{decls}fn f{generic}(x: {param}) -> string {{\n    x.to_string{list}()\n}}\nfn main() {{}}"
@@ -905,6 +915,19 @@ fn to_string_with_type_arguments_should_report_the_list() {
             );
         }
     }
+}
+
+/// A masked method with a type parameter of its own does not take the list in the check of the
+/// type arguments, so the generated `to_string` reports it: the list is reported once. (The method
+/// does not match `Display`, which is its own error.)
+#[test]
+fn to_string_with_type_arguments_should_report_the_list_of_a_masked_generic_method() {
+    let src = "class Node {}\nclass Own<T> {\n    _value: T\n}\nextend<T: Eq> Own<T> {\n    fn to_string<U>(self) -> string { \"own\" }\n}\nfn main() {\n    print(Own(_value: Node()).to_string<i64>())\n}";
+    let at = where_is(src, "<i64>");
+    codes(
+        src,
+        &[(Code::ConformanceBody, (6, 8)), (Code::TypeArguments, at)],
+    );
 }
 
 /// The text of a `to_string` is the one of the type's `Display`: a written method whose bounds

@@ -2,8 +2,6 @@
 
 use rustc_hash::FxHashMap;
 
-#[cfg(test)]
-use super::DISPLAY_FIELD_READS;
 use super::expr::{if_some, local, no_member, path};
 use super::extend::holder_of;
 use super::generic::{Site, named_params};
@@ -21,7 +19,8 @@ pub(super) enum Found {
     /// A method that the program writes.
     Func(tir::FuncId),
     /// No written `to_string` answers the call, so the `Display` that the compiler writes does.
-    GeneratedDisplay,
+    /// `listed` is true when the check of the type arguments has reported the call's list of them.
+    GeneratedDisplay { listed: bool },
 }
 
 impl Checker<'_> {
@@ -296,7 +295,9 @@ impl Checker<'_> {
                     && !self.has_broken_block(ty)
                     && !self.names_to_string_field(ty)
                 {
-                    return Some(Found::GeneratedDisplay);
+                    // A masked method with no type parameter took the list in `method_args`.
+                    let listed = masked.is_some_and(|func| self.signatures[func.0].own == 0);
+                    return Some(Found::GeneratedDisplay { listed });
                 }
                 // No conformance answers, and the bounds of the plain block fail for the receiver.
                 if let Some(func) = masked {
@@ -362,19 +363,9 @@ impl Checker<'_> {
     }
 
     /// Whether `ty` is a class with a field `to_string`, which a call of that name does not
-    /// reach. A class answers once: the first call reads its fields, and the rest read the answer.
-    fn names_to_string_field(&mut self, ty: Type) -> bool {
-        let TypeKind::Class(class, _) = ty.kind() else {
-            return false;
-        };
-        let info = &mut self.classes[class.0];
-        *info.names_to_string.get_or_insert_with(|| {
-            info.fields.iter().any(|f| {
-                #[cfg(test)]
-                DISPLAY_FIELD_READS.set(DISPLAY_FIELD_READS.get() + 1);
-                f.name.name.as_str() == "to_string"
-            })
-        })
+    /// reach. The collection of the fields found the answer, so a call reads no field.
+    fn names_to_string_field(&self, ty: Type) -> bool {
+        matches!(ty.kind(), TypeKind::Class(class, _) if self.classes[class.0].names_to_string)
     }
 
     /// Whether an `extend` block of the class or enum `ty` is broken: it may have given `ty`
