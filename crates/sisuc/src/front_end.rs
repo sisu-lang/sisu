@@ -354,6 +354,21 @@ fn main() {
         );
     }
 
+    /// A program that `mono` stops after the check gets no warning that judges liveness, as a
+    /// program with an error gets none (W0012). `Outer` and `W` are never built in the program, so
+    /// the check warns of them until `mono` fails.
+    #[test]
+    fn front_end_should_drop_the_liveness_warnings_when_mono_stops_the_program() {
+        let src = check::tests::interfaces::long_loop(200, "fn main() {\n    get(Leaf())\n}");
+        let (program, diagnostics) = front_end(&src);
+        let found: Vec<_> = diagnostics.iter().map(Diagnostic::code).collect();
+        assert_eq!(found, [Code::UnknownType], "{diagnostics:?}");
+        assert!(program.is_none());
+        // The check alone passes the program, and warns.
+        let checked = checked(&src).1;
+        assert!(checked.iter().any(check::is_judged), "{checked:?}");
+    }
+
     /// The unnamed `const enum` starts where its line does, inside the unnamed `1` before it;
     /// the `$` between them is reported once.
     #[test]

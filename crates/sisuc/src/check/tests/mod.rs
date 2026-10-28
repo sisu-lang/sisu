@@ -13,7 +13,7 @@ mod enums;
 mod floats;
 mod for_loops;
 mod generics;
-mod interfaces;
+pub(crate) mod interfaces;
 mod loop_condition;
 mod optionals;
 mod patterns;

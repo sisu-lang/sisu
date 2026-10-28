@@ -3824,7 +3824,7 @@ fn an_associated_type_that_needs_itself_should_be_reported_once() {
 /// `Outer<..Outer<Leaf>..>`, `Outer<T>.B` is `W<T>`, and `W<T>.B` is `T.B.B.B`, which closes a
 /// loop that is `levels` choices long. The choice of `W` is on line 17, column 14. `uses` is the
 /// rest of the program after `get`, which writes `S.B.B.B`.
-fn long_loop(levels: usize, uses: &str) -> String {
+pub(crate) fn long_loop(levels: usize, uses: &str) -> String {
     let nested = format!("{}Leaf{}", "Outer<".repeat(levels), ">".repeat(levels));
     format!(
         "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Leaf {{}}\nextend Leaf: Base {{\n    type B = {nested}\n}}\nextend Leaf: Holder {{}}\nclass Outer<T> {{}}\nextend<T: Holder> Outer<T>: Base {{\n    type B = W<T>\n}}\nextend<T: Holder> Outer<T>: Holder {{}}\nclass W<T> {{}}\nextend<T: Holder> W<T>: Base {{\n    type B = T.B.B.B\n}}\nextend<T: Holder> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B.B.B] = []\n}}\n{uses}"
@@ -3954,7 +3954,7 @@ fn nests_within_should_count_each_level_and_measure_a_shared_type_once() {
         })
     };
     // Two shared arguments per level show the property from two levels on. The sizes 8, 16 and 24
-    // are 4x to 12x that, and the largest still ends at once if the memo fails: `2^24` visits.
+    // are 4x to 12x that, and the largest ends in seconds if the memo fails: `2^25` visits.
     let visits = |levels| {
         NESTING_STEPS.set(0);
         assert!(within(doubled(levels), levels));
@@ -3996,21 +3996,6 @@ fn mono_should_report_a_chain_that_the_probe_did_not_follow() {
             assert!(program.is_none(), "{row}: no program after an error");
         }
     }
-}
-
-/// A program that `mono` stops after the check gets no warning that judges liveness, as a
-/// program with an error gets none (W0012). `Outer` and `W` are never built in the program, so
-/// the check warns of them until `mono` fails.
-#[test]
-fn mono_should_keep_back_the_liveness_warnings_of_a_program_it_stops() {
-    let src = long_loop(200, "fn main() {\n    get(Leaf())\n}");
-    let (program, diagnostics) = crate::front_end::front_end(&src);
-    let found: Vec<_> = diagnostics.iter().map(Diagnostic::code).collect();
-    assert_eq!(found, [Code::UnknownType], "{diagnostics:?}");
-    assert!(program.is_none());
-    // The check alone passes the program, and warns.
-    let checked = crate::front_end::checked(&src).1;
-    assert!(checked.iter().any(is_judged), "{checked:?}");
 }
 
 /// A bound whose argument names an associated type of a sibling parameter finds that parameter's

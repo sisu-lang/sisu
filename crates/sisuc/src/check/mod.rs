@@ -2046,4 +2046,4 @@ fn defined_twice(kind: Definition, name: &ast::Ident, first: Earlier) -> Diagnos
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

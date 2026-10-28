@@ -18,7 +18,9 @@ use crate::tir::{self, Type, TypeKind};
 
 /// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
 /// that judges whether code is live. A program with an error gets none, because a use in code
-/// that fails may be missed. A program that `mono` stops after the check gets none either.
+/// that fails may be missed. A program that `mono` stops after the check gets none either. There
+/// a pending variable of a live function gets no warning, where the checker's own error path gives
+/// it W0002.
 pub(crate) fn is_judged(d: &Diagnostic) -> bool {
     matches!(
         d.code(),
