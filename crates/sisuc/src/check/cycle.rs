@@ -653,8 +653,12 @@ impl Checker<'_> {
         let declared = graph.functions;
         // A generated node stands for its enum.
         let name = match edge.holder.checked_sub(declared) {
-            _ if edge.holder >= graph.eq_first => self.enums
-                [(edge.holder - graph.eq_first) % graph.enums]
+            _ if edge.holder >= graph.display_first => self.enums
+                [edge.holder - graph.display_first]
+                .name
+                .name
+                .to_string(),
+            _ if edge.holder >= graph.eq_first => self.enums[edge.holder - graph.eq_first]
                 .name
                 .name
                 .to_string(),

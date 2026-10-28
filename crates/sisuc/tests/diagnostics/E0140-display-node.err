@@ -1,0 +1,13 @@
+error[E0140]: `E` instantiates itself without end
+  --> E0140-display-node.sisu:10:9
+   |
+10 |     One(W<[U]>)
+   |         ^^^^^^ `Display.to_string` here
+...
+15 |         print(E.One(W(x: [self.x])))
+   |         ---------------------------- which instantiates `E<T>`
+   |
+   = help: a call through `Display` counts as reaching every conformance to `Display`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0140

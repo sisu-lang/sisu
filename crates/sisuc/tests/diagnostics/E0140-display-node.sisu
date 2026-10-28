@@ -1,0 +1,22 @@
+class W<T> {
+    x: T
+}
+
+enum Other<V> {
+    Plain(V)
+}
+
+enum E<U> {
+    One(W<[U]>)
+}
+
+extend<T> W<T>: Display {
+    fn to_string(self) -> string {
+        print(E.One(W(x: [self.x])))
+        "w"
+    }
+}
+
+fn main() {
+    print(W(x: 1))
+}

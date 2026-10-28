@@ -1710,6 +1710,9 @@ fn printing_a_compound_value_should_use_the_sink_of_its_stream() {
         assert!(main.contains(wanted), "{wanted} in\n{main}");
     }
     assert_eq!(main.matches("@sisu_show_buffer(").count(), 1, "{main}");
+    // The sink slot is the runtime's `SINK_SIZE` bytes, as five words.
+    let words = abi::SINK_SIZE / 8;
+    assert!(main.contains(&format!("alloca [{words} x i64]")), "{main}");
 }
 
 /// The attribute group line of the declaration of `name` in `ir`.
