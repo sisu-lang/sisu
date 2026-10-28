@@ -1743,6 +1743,102 @@ fn operators_should_report_an_optional_class_with_no_operator() {
 }
 
 #[test]
+fn operators_should_report_a_failed_operand_alone() {
+    // The other side has no type, so nothing says that the comparison needs `Eq`: only the
+    // operand's own error stands. A type parameter keeps its report, as it always had.
+    let node = "class Node {\n    next: Node?\n}\n";
+    let rows = [
+        (
+            "a misspelt `None` on the right",
+            format!("{node}fn f(n: Node) -> bool {{ n.next == Non }}"),
+            vec![(Code::BindingNotFound, "Non")],
+        ),
+        (
+            "an unknown name on the left",
+            format!("{node}fn f(n: Node) -> bool {{ missing == n }}"),
+            vec![(Code::BindingNotFound, "missing")],
+        ),
+        (
+            "inequality with an unknown name",
+            format!("{node}fn f(a: Node) -> bool {{ a != bad }}"),
+            vec![(Code::BindingNotFound, "bad")],
+        ),
+        (
+            "an optional class and an unknown name",
+            format!("{node}fn f(a: Node?) -> bool {{ a == bad }}"),
+            vec![(Code::BindingNotFound, "bad")],
+        ),
+        (
+            "an array of classes and an unknown name",
+            format!("{node}fn f(a: [Node]) -> bool {{ a == bad }}"),
+            vec![(Code::BindingNotFound, "bad")],
+        ),
+        (
+            "an enum that holds a class and an unknown name",
+            format!("{node}enum H {{\n    N(Node)\n}}\nfn f(a: H) -> bool {{ a == bad }}"),
+            vec![(Code::BindingNotFound, "bad")],
+        ),
+        (
+            "contains of an unknown name",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains(bad) }}"),
+            vec![(Code::BindingNotFound, "bad")],
+        ),
+        (
+            "a type parameter and an unknown name",
+            "fn f<T>(a: T) -> bool { a == bad }".to_string(),
+            vec![(Code::ParamLacks, "a =="), (Code::BindingNotFound, "bad")],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let expected: Vec<_> = expected
+            .into_iter()
+            .map(|(code, text)| (code, where_is(&src, text)))
+            .collect();
+        codes_row(row, &src, &expected);
+    }
+}
+
+#[test]
+fn contains_should_report_an_argument_that_is_not_an_element_first() {
+    // An argument of another type is the first mistake, as it is for `==`: a conformance to `Eq`
+    // would not make the program right. Only an element and the contents of an optional element
+    // are searched for.
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "a number for classes",
+            format!("{node}fn f(xs: [Node]) -> bool {{ xs.contains(5) }}"),
+            (Code::Mismatch, "5"),
+        ),
+        (
+            "a number for optional classes",
+            format!("{node}fn f(xs: [Node?]) -> bool {{ xs.contains(5) }}"),
+            (Code::Mismatch, "5"),
+        ),
+        (
+            "a class for optional classes",
+            format!("{node}fn f(xs: [Node?], n: Node) -> bool {{ xs.contains(n) }}"),
+            (Code::NoOperator, "xs.contains(n)"),
+        ),
+        (
+            "`None` for optional classes",
+            format!("{node}fn f(xs: [Node?]) -> bool {{ xs.contains(None) }}"),
+            (Code::NoOperator, "xs.contains(None)"),
+        ),
+        (
+            "a number for a type parameter",
+            "fn f<T>(xs: [T]) -> bool { xs.contains(5) }".to_string(),
+            (Code::ParamLacks, "xs.contains(5)"),
+        ),
+    ];
+    for (row, src, (code, text)) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        codes_row(row, &src, &[(code, where_is(&src, text))]);
+    }
+}
+
+#[test]
 fn operators_should_check_without_eq_where_none_is_needed() {
     let rows = [
         (

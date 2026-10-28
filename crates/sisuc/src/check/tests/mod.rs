@@ -477,7 +477,7 @@ fn if_with_failed_and_never_branches_is_error() {
 fn failed_rule_should_make_its_expression_error() {
     const MISMATCH: Code = Code::Mismatch;
     const F: &str = "fn f(a: i64) -> i64 { a }\n";
-    let rows: [(&str, String, Code, (usize, usize)); 12] = [
+    let rows: [(&str, String, Code, (usize, usize)); 15] = [
         (
             "unary",
             "fn main() {\n    let x = -true\n    print(x == false)\n}".into(),
@@ -507,6 +507,24 @@ fn failed_rule_should_make_its_expression_error() {
             "fn main() {\n    let x = 1 == true\n    print(x + 1)\n}".into(),
             Code::CannotCompare,
             (2, 13),
+        ),
+        (
+            "equal of a class",
+            "class C {}\nfn main() {\n    let x = C() == C()\n    print(x + 1)\n}".into(),
+            Code::NoOperator,
+            (3, 13),
+        ),
+        (
+            "not equal of a class",
+            "class C {}\nfn main() {\n    let x = C() != C()\n    print(x + 1)\n}".into(),
+            Code::NoOperator,
+            (3, 13),
+        ),
+        (
+            "contains of a class",
+            "class C {}\nfn main() {\n    let x = [C()].contains(C())\n    print(x + 1)\n}".into(),
+            Code::NoOperator,
+            (3, 13),
         ),
         (
             "call arity",

@@ -600,17 +600,29 @@ impl Checker<'_> {
         };
         // `x == None` tests an optional, which any `T?` is, and needs no `Eq`. Else a side whose
         // type has no `Eq` has no `==`, unless the two types differ for good: E0047 reports that.
+        // A side with no type (its error is reported) does not say that the other needs `Eq`,
+        // except a type parameter, which always did.
         let eq = self.lang.eq;
+        // When the two sides have one type, its operation is asked once, for the check and the
+        // call.
+        let both = match (type_of(&l), type_of(&r)) {
+            (Some(lt), Some(rt)) if lt == rt => Some((lt, self.operation(lt, eq))),
+            _ => None,
+        };
         if !none_literal(second) {
             let same = match (type_of(&l), type_of(&r)) {
                 (Some(lt), Some(rt)) => lt == rt || fits(lt, rt) || fits(rt, lt),
-                _ => true,
+                _ => false,
             };
             for (side, checked) in [(lhs, &l), (rhs, &r)] {
                 let Some(ty) = type_of(checked).filter(|ty| same || ty.has_param()) else {
                     continue;
                 };
-                if self.operation(ty, eq) != Operation::Missing {
+                let operation = match both {
+                    Some((lt, operation)) if lt == ty => operation,
+                    _ => self.operation(ty, eq),
+                };
+                if operation != Operation::Missing {
                     continue;
                 }
                 let op = if negated { "!=" } else { "==" };
@@ -620,18 +632,15 @@ impl Checker<'_> {
                     .is_none_or(|(a, b)| payload(a) == payload(b));
                 let d = self.missing_operator(side.span, ty, op, eq, false, alike);
                 self.report(d);
-                return Err(Poisoned::typed(Type::BOOL));
+                return Err(Poisoned::error());
             }
         }
         // A class or an enum with a written `Eq` is compared by a call of its `eq`. Any other
         // type keeps the node that `==` has always had. A type with no `Eq` reaches here only
         // in a comparison with `None`, which tests presence.
-        let dispatch = match (type_of(&l), type_of(&r)) {
-            (Some(lt), Some(rt)) if lt == rt => match self.operation(lt, eq) {
-                Operation::Run(dispatch) => dispatch,
-                Operation::Poison => return Err(Poisoned::error()),
-                Operation::Missing => Dispatch::Generated,
-            },
+        let dispatch = match both {
+            Some((_, Operation::Run(dispatch))) => dispatch,
+            Some((_, Operation::Poison)) => return Err(Poisoned::error()),
             _ => Dispatch::Generated,
         };
         self.nan_comparison(negated, (lhs, &l), (rhs, &r));

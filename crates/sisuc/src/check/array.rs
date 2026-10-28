@@ -297,14 +297,24 @@ impl Checker<'_> {
                 typed(span, element, false, kind)
             }
             _ if self.operation(element, self.lang.eq) == Operation::Missing => {
-                // The report goes before the labels and the argument's own, which it waits for:
-                // a bound helps only when the argument is an element, or the contents of an
-                // optional element (`x: T` in a `[T?]`), not a `T?` in a `[T]`.
+                // The report goes before the labels and the argument's own, which it waits for.
+                // For a concrete element, the argument comes first: when it failed, its own error
+                // stands alone, and when its type is not the element, or the contents of an
+                // optional element, that mismatch is the mistake, as it is for `==`. A bound helps
+                // only when the argument is an element (`x: T` in a `[T?]`), not a `T?` in a `[T]`.
                 let first = self.diagnostics.len();
                 self.labels(args);
                 let argument = self.expr(&args[0].value, Some(UNKNOWN));
-                let alike = type_of(&argument)
-                    .is_none_or(|got| got == element || Type::optional(got) == element);
+                let got = type_of(&argument);
+                let alike = got.is_none_or(|got| got == element || Type::optional(got) == element);
+                if !element.has_param() && !alike {
+                    return self
+                        .against(&args[0].value, argument, Some(element), None)
+                        .0;
+                }
+                if !element.has_param() && got.is_none() && self.diagnostics.len() > first {
+                    return Err(Poisoned::error());
+                }
                 let d = self.missing_operator(at, element, "==", self.lang.eq, true, alike);
                 self.diagnostics.insert(first, d.into());
                 Err(Poisoned::error())
