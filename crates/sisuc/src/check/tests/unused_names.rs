@@ -186,6 +186,27 @@ fn constant_should_warn_when_only_a_dead_function_names_it() {
     );
 }
 
+/// The second constant is dead beside a live first one, with no `extend` block and with one: each
+/// constant is judged at its own place among the owners of uses.
+#[test]
+fn constant_should_warn_when_a_later_constant_is_unused_beside_a_live_one() {
+    judge_unused();
+    diagnostic(
+        "const A = 1\nconst B = 2\nfn main() {\n    print(A)\n}",
+        W0012,
+        (2, 7, "B"),
+        &[],
+    );
+    diagnostic(
+        &format!(
+            "{SHAPE}{CIRCLE}const A = 1.0\nconst B = 2.0\nfn main() {{\n    print(Circle(r: A).area())\n}}"
+        ),
+        W0012,
+        (11, 7, "B"),
+        &[],
+    );
+}
+
 #[test]
 fn constant_should_cite_its_first_three_dead_uses_in_source_order() {
     judge_unused();
