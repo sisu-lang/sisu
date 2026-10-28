@@ -2616,6 +2616,44 @@ fn is_should_check_on_an_any_object_parameter() {
     }
 }
 
+/// `is` on a type parameter that has the bound is still E0046 when its type is no object. An
+/// array of `T` is no object whatever `T` is. `T??` can hold a `None` of `T?`, so one layer comes
+/// off first.
+#[test]
+fn is_should_report_a_bound_parameter_that_is_no_object() {
+    for (row, signature) in [
+        (
+            "an array of the parameter",
+            "same<T: AnyObject>(a: [T], b: [T])",
+        ),
+        ("a double optional", "same<T: AnyObject>(a: T??, b: T??)"),
+    ] {
+        let src = format!("fn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
+        codes_row(row, &src, &[(Code::IsNeedsObjects, (2, 5))]);
+    }
+}
+
+/// E0046 on a type that names a parameter has no help when no bound alone fixes it: `T` has no
+/// `==`, and `T??` also needs a layer peeled. The fixture `E0046-param` pins the
+/// help where a bound does fix it.
+#[test]
+fn is_should_give_no_help_when_no_bound_alone_fixes_the_type() {
+    for (row, signature) in [
+        ("an array of the parameter", "same<T>(a: [T], b: [T])"),
+        ("an array of optionals", "same<T>(a: [T?], b: [T?])"),
+        ("a double optional", "same<T>(a: T??, b: T??)"),
+        ("a triple optional", "same<T>(a: T???, b: T???)"),
+        (
+            "a double optional with a bound",
+            "same<T: Display>(a: T??, b: T??)",
+        ),
+    ] {
+        let src = format!("fn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
+        let d = diagnostic_row(row, &src, Code::IsNeedsObjects, (2, 5, "a"), &[]);
+        assert!(d.help().is_none(), "row `{row}`");
+    }
+}
+
 /// `is` on a type parameter with no `AnyObject` bound is E0046, and a call that gives the bound
 /// something that is no class is `NotConform`. The fixture `E0046-param` pins the help.
 #[test]
@@ -2625,18 +2663,6 @@ fn is_should_report_a_parameter_with_no_object_bound() {
         ("no bound", "same<T>(a: T, b: T)", at_a),
         ("another bound", "same<T: Display>(a: T, b: T)", at_a),
         ("an optional with no bound", "same<T>(a: T?, b: T?)", at_a),
-        // An array of `T` is no object whatever `T` is, and no bound of `T` would help.
-        (
-            "an array of the parameter",
-            "same<T: AnyObject>(a: [T], b: [T])",
-            at_a,
-        ),
-        // `T??` can hold a `None` of `T?`, so it is no object: one layer comes off first.
-        (
-            "a double optional",
-            "same<T: AnyObject>(a: T??, b: T??)",
-            at_a,
-        ),
     ] {
         let src = format!("fn {signature} -> bool {{\n    a is b\n}}\nfn main() {{}}");
         codes_row(row, &src, &[(Code::IsNeedsObjects, expected)]);

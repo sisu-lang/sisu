@@ -679,11 +679,9 @@ impl Checker<'_> {
             // A type parameter is an object when its bounds say so: `mono` then makes it a class.
             let object_param = matches!(base.kind(), TypeKind::Param(..))
                 && self.conforms(base, self.lang.any_object, TypeArgs::NONE);
+            let nested = matches!(ty.kind(), TypeKind::Optional(p) if matches!(p.kind(), TypeKind::Optional(_)));
             // Peeling a layer helps only when an object is under the rest.
-            if let TypeKind::Optional(payload) = ty.kind()
-                && matches!(payload.kind(), TypeKind::Optional(_))
-                && (matches!(base.kind(), TypeKind::Class(..)) || object_param)
-            {
+            if nested && (matches!(base.kind(), TypeKind::Class(..)) || object_param) {
                 let text = |e: &ast::Expr| self.source.file.text(e.span).to_string();
                 let peeled = |e: &ast::Expr| {
                     if std::ptr::eq(e, side) {
@@ -711,7 +709,10 @@ impl Checker<'_> {
                     found: self.type_name(ty),
                     at: side.span,
                     help: !ty.has_param(),
-                    add: self.add_bound(base, self.lang.any_object),
+                    // The bound alone fixes `T` and `T?`; `T??` would still need a layer peeled.
+                    add: self
+                        .add_bound(base, self.lang.any_object)
+                        .filter(|_| !nested),
                     peel: None,
                 };
                 self.diagnostics.push(kind.into());
