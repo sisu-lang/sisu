@@ -450,9 +450,9 @@ fn roots(n: usize) -> String {
 }
 
 /// `enum C0 { A(C1) }` … `enum C(n-1) { End(Node) }` and a class `Node` with no `Eq`, and `n`
-/// functions that each compare two values of `C(k)`, where `k` is `at(i)` for the function `i`. In
-/// a ring, the last enum also has `A(C0)`.
-fn comparisons(n: usize, at: fn(usize) -> usize, ring: bool) -> String {
+/// functions that each compare two values of `C(k)`, where `k` is `at(i, n)` for the function `i`.
+/// In a ring, the last enum also has `A(C0)`.
+fn comparisons(n: usize, at: fn(usize, usize) -> usize, ring: bool) -> String {
     let mut enums: Vec<String> = (0..n - 1)
         .map(|k| format!("enum C{k} {{\n    A(C{})\n}}\n", k + 1))
         .collect();
@@ -460,7 +460,7 @@ fn comparisons(n: usize, at: fn(usize) -> usize, ring: bool) -> String {
     enums.push(format!("enum C{} {{\n{back}    End(Node)\n}}\n", n - 1));
     let fns: Vec<String> = (0..n)
         .map(|i| {
-            let ty = format!("C{}", at(i));
+            let ty = format!("C{}", at(i, n));
             format!("fn f{i}(a: {ty}, b: {ty}) -> bool {{ a == b }}\n")
         })
         .collect();
@@ -476,15 +476,24 @@ fn comparisons(n: usize, at: fn(usize) -> usize, ring: bool) -> String {
 #[test]
 fn failing_leaf_should_read_each_type_once() {
     /// A row: its name, the enum that the function `i` compares, and whether the chain is a ring.
-    type Row = (&'static str, fn(usize) -> usize, bool);
-    let rows: [Row; 3] = [
+    type Row = (&'static str, fn(usize, usize) -> usize, bool);
+    let rows: [Row; 4] = [
         (
             "the root of a chain, compared again and again",
-            |_| 0,
+            |_, _| 0,
             false,
         ),
-        ("each enum of a chain, compared once", |i| i, false),
-        ("the root of a ring, compared again and again", |_| 0, true),
+        ("each enum of a chain, from the first", |i, _| i, false),
+        (
+            "each enum of a chain, from the last",
+            |i, n| n - 1 - i,
+            false,
+        ),
+        (
+            "the root of a ring, compared again and again",
+            |_, _| 0,
+            true,
+        ),
     ];
     for (row, at, ring) in rows {
         let count = |n: usize| {
