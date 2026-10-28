@@ -314,6 +314,9 @@ impl Checker<'_> {
         // by the second operand, if that is a `string`.
         let mut unlabelled = None;
         let mut lacks = false;
+        // The types of the operands, and where the report of a lacking `Ord` stands.
+        let mut seen: Vec<Type> = Vec::new();
+        let mut helped = None;
         for (i, e) in operands.iter().enumerate() {
             if held && leader == Some(i) {
                 want = ty;
@@ -328,10 +331,13 @@ impl Checker<'_> {
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
             let got = type_of(&value);
+            seen.extend(got);
             if let Some(param) = got.filter(|ty| ty.has_param() && by_ord != Some(*ty)) {
                 if !std::mem::replace(&mut lacks, true) {
-                    let needs = (!arithmetic).then_some(self.lang.ord);
-                    self.param_lacks(e.span, param, op(i), needs);
+                    // Reported with no help here, where the operands after it have not been
+                    // checked; the help comes below, once they are known to be one type.
+                    helped = (!arithmetic).then_some((self.diagnostics.len(), e.span, param, i));
+                    self.param_lacks(e.span, param, op(i), None);
                 }
                 checked.push(Err(Poisoned::error()));
                 (want, ty, before) = (None, None, None);
@@ -400,6 +406,14 @@ impl Checker<'_> {
             failed |= got.is_none() && rank(e) == 0;
             checked.push(operand);
             before = got;
+        }
+        // A bound helps only when the operands are one type: else the mistake is the operands.
+        if let Some((report, at, param, i)) = helped
+            && seen
+                .windows(2)
+                .all(|pair| payload(pair[0]) == payload(pair[1]))
+        {
+            self.diagnostics[report] = self.lacks(at, param, op(i), Some(self.lang.ord));
         }
         // The operator is rejected whatever stands beside the `char`, unless that is an `Error`:
         // then the operator may be the mistake, as for any other type, and the sum is `Error`.
@@ -562,7 +576,11 @@ impl Checker<'_> {
             && self.operation(ty, eq) == Operation::Missing
         {
             let op = if negated { "!=" } else { "==" };
-            self.param_lacks(side.span, ty, op, Some(eq));
+            // A bound helps only when the sides are one type: else the mistake is the operands.
+            let alike = type_of(&l)
+                .zip(type_of(&r))
+                .is_none_or(|(a, b)| payload(a) == payload(b));
+            self.param_lacks(side.span, ty, op, alike.then_some(eq));
             return Err(Poisoned::typed(Type::BOOL));
         }
         // A class or an enum with a written `Eq` is compared by a call of its `eq`. Any other

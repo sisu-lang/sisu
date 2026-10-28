@@ -1310,6 +1310,24 @@ fn operators_should_report_a_missing_bound() {
             Code::ParamLacks,
         ),
         (
+            "equality of two parameters",
+            "fn f<T, U>(a: T, b: U) -> bool { a == b }",
+            "a == b",
+            Code::ParamLacks,
+        ),
+        (
+            "order of two parameters",
+            "fn f<T, U>(a: T, b: U) -> bool { a < b < a }",
+            "a < b",
+            Code::ParamLacks,
+        ),
+        (
+            "contains of another parameter",
+            "fn f<T, U>(a: [T], b: U) -> bool { a.contains(b) }",
+            "a.contains(b)",
+            Code::ParamLacks,
+        ),
+        (
             "equality of arrays of a parameter",
             "fn f<T>(a: [T], b: [T]) -> bool { a == b }",
             "a == b",

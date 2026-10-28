@@ -17,7 +17,7 @@ use super::{
     as_optional, built_in_type, optional_of, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{AddBound, ArgumentsForm, MainForm, Unwrap};
+use crate::diagnostic::{AddBound, ArgumentsForm, Diagnostic, MainForm, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -1965,14 +1965,27 @@ impl Checker<'_> {
         op: impl fmt::Display,
         needs: Option<InterfaceId>,
     ) {
+        let d = self.lacks(at, ty, op, needs);
+        self.diagnostics.push(d);
+    }
+
+    /// The report that `param_lacks` makes.
+    pub(super) fn lacks(
+        &mut self,
+        at: Span,
+        ty: Type,
+        op: impl fmt::Display,
+        needs: Option<InterfaceId>,
+    ) -> Diagnostic {
         let add = needs.and_then(|interface| self.lacking_bound(ty, interface));
-        self.report(DiagnosticKind::ParamLacks {
+        DiagnosticKind::ParamLacks {
             ty: self.type_name(ty),
             op: op.to_string(),
             at,
             contains: false,
             add,
-        });
+        }
+        .into()
     }
 
     /// The bound that gives `ty` the language interface `interface`: it names the type parameter

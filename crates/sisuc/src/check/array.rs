@@ -300,7 +300,15 @@ impl Checker<'_> {
             _ if element.has_param()
                 && self.operation(element, self.lang.eq) == Operation::Missing =>
             {
-                let add = self.lacking_bound(element, self.lang.eq);
+                // The report goes before the labels and the argument's own, which it waits for:
+                // a bound helps only when the argument is an element.
+                let first = self.diagnostics.len();
+                self.labels(args);
+                let argument = self.expr(&args[0].value, Some(UNKNOWN));
+                let alike = type_of(&argument).is_none_or(|got| payload(got) == payload(element));
+                let add = alike
+                    .then(|| self.lacking_bound(element, self.lang.eq))
+                    .flatten();
                 let d = DiagnosticKind::ParamLacks {
                     ty: self.type_name(element),
                     op: "==".to_string(),
@@ -308,7 +316,8 @@ impl Checker<'_> {
                     contains: true,
                     add,
                 };
-                self.rejected(d.into(), args)
+                self.diagnostics.insert(first, d.into());
+                Err(Poisoned::error())
             }
             _ => {
                 let labeled = self.labels(args);
