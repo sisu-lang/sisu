@@ -1,0 +1,27 @@
+// A type that writes a method named `eq` and has no `: Eq` keeps its own method: `x.eq(y)` calls
+// it, not the generated `Eq` that `==` uses. Here the two disagree on equal values, and the
+// method may take another parameter type than `==` does.
+enum Dir {
+    North
+    fn eq(self, _other: Dir) -> bool {
+        print("mine")
+        false
+    }
+}
+
+enum Level {
+    Low
+}
+
+extend Level {
+    fn eq(self, n: i64) -> bool {
+        n == 0
+    }
+}
+
+fn main() {
+    print(Dir.North.eq(Dir.North))
+    print(Dir.North == Dir.North)
+    print(Level.Low.eq(0))
+    print(Level.Low == Level.Low)
+}

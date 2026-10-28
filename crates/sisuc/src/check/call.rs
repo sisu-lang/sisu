@@ -4,6 +4,7 @@
 use std::fmt;
 
 use super::expr::{fits, no_member, option_written, path, postfix};
+use super::extend::holder_of;
 use super::generic::{GenericSig, Site, mark, mismatched};
 use super::interface::LangPath;
 use super::prelude::PRELUDE;
@@ -463,7 +464,8 @@ impl Checker<'_> {
 
     /// `receiver.eq(other)` or `receiver.less(other)` on a type whose `Eq` or `Ord` the compiler
     /// writes: the operator itself, as `==` and `<` make it. `Err` gives the receiver back when
-    /// the call is something else: a written method, or a method of another name.
+    /// the call is something else: a method that the type writes, which wins (ADR 0023), or a
+    /// method of another name. The arguments are checked as for any method: one count, no label.
     fn generated_operator(
         &mut self,
         span: Span,
@@ -479,16 +481,29 @@ impl Checker<'_> {
         let Some(ty) = type_of(&receiver) else {
             return Err(receiver);
         };
-        let plain = matches!(args, [arg] if arg.label.is_none());
-        if !plain
+        let written = holder_of(ty).is_some_and(|holder| {
+            self.own_method(ty, method.name).is_some()
+                || self.extension_methods.contains_key(&(holder, method.name))
+        });
+        if written
             || matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..))
             || self.lang_path(ty, interface) != LangPath::Generated
         {
             return Err(receiver);
         }
+        if args.len() != 1 {
+            let d = DiagnosticKind::ArgumentCount {
+                name: method.name.to_string(),
+                want: 1,
+                found: args.len(),
+                at: span,
+            };
+            return Ok(self.rejected(d.into(), args));
+        }
+        let labeled = self.labels(args);
         let (other, mismatched) = self.operand(&args[0].value, Some(ty));
         Ok(match (receiver, other) {
-            (Ok(lhs), Ok(rhs)) => {
+            (Ok(lhs), Ok(rhs)) if !labeled => {
                 let eq = interface == self.lang.eq;
                 Ok(self.spilled(span, Type::BOOL, vec![lhs, rhs], |operands| {
                     let [lhs, rhs]: [tir::Expr; 2] = operands
@@ -510,7 +525,9 @@ impl Checker<'_> {
                     }
                 }))
             }
-            _ => Err(Poisoned::of((!mismatched).then_some(Type::BOOL))),
+            _ => Err(Poisoned::of(
+                (!mismatched && !labeled).then_some(Type::BOOL),
+            )),
         })
     }
 

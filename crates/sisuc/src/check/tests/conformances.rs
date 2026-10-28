@@ -1471,24 +1471,64 @@ fn eq_and_less_calls_should_check_their_receiver_and_argument() {
             Code::BindingNotFound,
         ),
         (
-            "two arguments are no `eq`",
+            "two arguments are too many",
             "fn f() -> bool { 5.eq(5, 6) }\nfn main() {}",
-            "eq",
-            Code::NoMember,
+            "5.eq",
+            Code::ArgumentCount,
+        ),
+        (
+            "no argument is too few",
+            "fn f() -> bool { 5.less() }\nfn main() {}",
+            "5.less",
+            Code::ArgumentCount,
+        ),
+        (
+            "a label is no label of a method",
+            "fn f() -> bool { 5.eq(other: 5) }\nfn main() {}",
+            "other",
+            Code::LabeledArgument,
+        ),
+        (
+            "a label on an enum's generated `eq`",
+            "enum E {\n    A\n}\nfn f(a: E) -> bool { a.eq(other: a) }\nfn main() {}",
+            "other",
+            Code::LabeledArgument,
         ),
     ];
     for (row, src, at, code) in rows {
         codes_row(row, src, &[(code, where_is(src, at))]);
     }
-    // A label also has its own report, beside the method that is not there.
-    let src = "fn f() -> bool { 5.eq(other: 5) }\nfn main() {}";
-    codes(
-        src,
-        &[
-            (Code::NoMember, where_is(src, "eq")),
-            (Code::LabeledArgument, where_is(src, "other")),
-        ],
-    );
+}
+
+#[test]
+fn a_written_eq_or_less_method_should_win_over_the_generated_one() {
+    // Each row: a type that writes a method of the name and has no `: Eq` or `: Ord`, so the
+    // method takes a call of that name, whatever its signature (ADR 0023).
+    let rows = [
+        (
+            "an inherent `eq` of an enum",
+            "enum E {\n    A\n    fn eq(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: E) -> bool { x.eq(0) }\nfn main() {}",
+        ),
+        (
+            "an `eq` of a plain `extend` of an enum",
+            "enum E {\n    A\n}\nextend E {\n    fn eq(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: E) -> bool { x.eq(0) }\nfn main() {}",
+        ),
+        (
+            "an `eq` of a generic enum",
+            "enum P<T> {\n    A(T)\n    fn eq(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: P<i64>) -> bool { x.eq(0) }\nfn main() {}",
+        ),
+        (
+            "an `eq` that a conformance of another interface writes",
+            "interface Same {\n    fn eq(self, n: i64) -> bool\n}\nenum E {\n    A\n}\nextend E: Same {\n    fn eq(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: E) -> bool { x.eq(0) }\nfn main() {}",
+        ),
+        (
+            "a `less` of an enum",
+            "enum E {\n    A\n    fn less(self, n: i64) -> bool { n == 0 }\n}\nfn f(x: E) -> bool { x.less(0) }\nfn main() {}",
+        ),
+    ];
+    for (row, src) in rows {
+        clean_row(row, src);
+    }
 }
 
 #[test]
