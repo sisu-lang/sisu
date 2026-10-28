@@ -2138,9 +2138,13 @@ const PRINTS_1_EPRINTS_2: &str = "fn main() {\n    print(1)\n    eprint(2)\n}\n"
 /// THEN the first run panics and leaves the file, then bless writes the right text and the next run
 /// passes
 /// AND the second case panics and says that it has no `.err` file
+/// AND on Linux, the passing run leaves the `-O2` executable on mimalloc in the case directory
 ///
 /// A `run` case that writes to standard error needs its `.err`: a wrong one fails and stays as it
-/// was, bless rewrites it, and the run then passes. Without one the stderr must be empty.
+/// was, bless rewrites it, and the run then passes. Without one the stderr must be empty. The
+/// harness runs the mimalloc executable and compares its output, but the program cannot see which
+/// build runs it, so only the executable's existence and allocator are checked, with no test-only
+/// seam in `run`.
 #[test]
 fn run_case_should_check_and_bless_its_err_file() {
     let dir = fixture(
@@ -2166,6 +2170,11 @@ fn run_case_should_check_and_bless_its_err_file() {
         "2\n"
     );
     support::run(&source, false);
+    if cfg!(target_os = "linux") {
+        let exe = support::case_path(&source).join(support::MIMALLOC_O2.0);
+        assert!(exe.exists(), "{} should exist", exe.display());
+        support::require_mimalloc(&exe);
+    }
     let message = panic_message(|| support::run(&dir.join("b.sisu"), false));
     assert!(message.contains("has no `.err` file"), "{message}");
 }

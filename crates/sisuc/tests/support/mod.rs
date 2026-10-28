@@ -526,7 +526,7 @@ const RC_CHECKS: Build = ("rc", &["--rc-checks"]);
 /// `-O2` on the default allocator, mimalloc, for `run` on Linux, where `VALGRIND_O2` is a System
 /// build: without it, no Linux case runs `-O2` code on mimalloc, the allocator that users get.
 /// On macOS `VALGRIND_O2` is this build already.
-const MIMALLOC_O2: Build = ("O2-mimalloc", &["-O2"]);
+pub(crate) const MIMALLOC_O2: Build = ("O2-mimalloc", &["-O2"]);
 /// `O0` and `O2` for `run`, whose plain builds also run under Valgrind.
 const VALGRIND_O0: Build = ("O0", VALGRIND_FLAGS);
 // Repeats `VALGRIND_FLAGS`' values after `-O2`, and must stay in step with them: a const cannot
@@ -566,18 +566,23 @@ fn build_into<const N: usize>(path: &Path, out: &Path, builds: [Build; N]) -> [P
     })
 }
 
-/// A fresh, empty `<CARGO_TARGET_TMPDIR>/cases/<source path>/`. The whole path, nested, keeps
-/// same-named cases in different directories apart.
-pub(crate) fn case_dir(source: &Path) -> PathBuf {
+/// `<CARGO_TARGET_TMPDIR>/cases/<source path>/`, where `case_dir` puts the builds of `source`. The
+/// whole path, nested, keeps same-named cases in different directories apart.
+pub(crate) fn case_path(source: &Path) -> PathBuf {
     // An absolute path would replace the base in `join`, and a leading `..`, as a case outside
     // the crate has, would climb out of `cases/`, so both go in without those components.
     let inside: PathBuf = source
         .components()
         .skip_while(|c| matches!(c, Component::RootDir | Component::ParentDir))
         .collect();
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+    Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("cases")
-        .join(inside);
+        .join(inside)
+}
+
+/// A fresh, empty `case_path`.
+pub(crate) fn case_dir(source: &Path) -> PathBuf {
+    let dir = case_path(source);
     // It is absent on the first run, so a failure here is expected and harmless.
     drop(fs::remove_dir_all(&dir));
     fs::create_dir_all(&dir).expect("creates the case directory");
