@@ -6451,6 +6451,23 @@ fn declarations_should_name_the_conformances_the_compiler_writes() {
     );
 }
 
+/// `eq_type` gives a type with no class in it: a draw that holds one is dropped and drawn again.
+/// The one byte of data first draws the class, then runs out and draws `i64`.
+#[test]
+fn eq_type_should_pick_no_type_with_a_class() {
+    let mut g = Gen::new(&[6]);
+    g.scope.types.push(Ty::class(0, 1));
+    let drawn = g.bare_type();
+    assert!(
+        g.scope.contains_class(&drawn),
+        "the first draw should hold a class: {drawn}"
+    );
+    let mut g = Gen::new(&[6]);
+    g.scope.types.push(Ty::class(0, 1));
+    let ty = g.eq_type();
+    assert!(!g.scope.contains_class(&ty), "{ty}");
+}
+
 /// The keys of the operators: one on a bounded type parameter (but not `x == None`, which needs
 /// no bound), one that calls a written `eq` or `less`, and the two that the built mir shows, for
 /// an `==` on a compound value that may run a written method and one that cannot.

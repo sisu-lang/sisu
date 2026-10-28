@@ -1715,6 +1715,34 @@ fn operators_should_report_a_type_with_no_operator() {
 }
 
 #[test]
+fn operators_should_report_an_optional_class_with_no_operator() {
+    // Each row: the function, and the text where the single error stands. A class beside its
+    // optional is one type once the class is wrapped, so it has no `==` either.
+    let node = "class Node {}\n";
+    let rows = [
+        (
+            "equality of two optional classes",
+            format!("{node}fn f(a: Node?, b: Node?) -> bool {{ a == b }}"),
+            "a == b",
+        ),
+        (
+            "equality of a class and its optional",
+            format!("{node}fn f(a: Node, b: Node?) -> bool {{ a == b }}"),
+            "a == b",
+        ),
+        (
+            "equality of an optional class and the class",
+            format!("{node}fn f(a: Node?, b: Node) -> bool {{ a == b }}"),
+            "a == b",
+        ),
+    ];
+    for (row, src, at) in rows {
+        let src = format!("{src}\nfn main() {{}}");
+        codes_row(row, &src, &[(Code::NoOperator, where_is(&src, at))]);
+    }
+}
+
+#[test]
 fn operators_should_check_without_eq_where_none_is_needed() {
     let rows = [
         (
