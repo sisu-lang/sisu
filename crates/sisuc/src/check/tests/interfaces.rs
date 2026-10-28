@@ -5,7 +5,8 @@ use std::fmt::Write as _;
 
 use super::*;
 use crate::check::cycle;
-use crate::check::interface::Bound;
+use crate::check::interface::{Bound, nests_within};
+use crate::conformance::CHOICE_DEPTH_LIMIT;
 
 /// The interfaces and classes the rows name, and an empty `main`, after the line a row tests,
 /// which is line 1 (a row of several lines moves them down).
@@ -3816,6 +3817,184 @@ fn an_associated_type_that_needs_itself_should_be_reported_once() {
             "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Leaf {{}}\nextend Leaf: Base {{\n    type B = W<Leaf>\n}}\nextend Leaf: Holder {{}}\nclass W<T> {{}}\nextend<T> W<T>: Base {{\n    type B = {grown}\n}}\nextend<T> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B] = []\n}}\nfn main() {{\n    get(Leaf())\n}}"
         );
         codes(&growing, &[]);
+    }
+}
+
+/// The program of issue 226 with `levels` levels in the type that `Leaf` chooses: `Leaf.B` is
+/// `Outer<..Outer<Leaf>..>`, `Outer<T>.B` is `W<T>`, and `W<T>.B` is `T.B.B.B`, which closes a
+/// loop that is `levels` choices long. The choice of `W` is on line 17, column 14. `uses` is the
+/// rest of the program after `get`, which writes `S.B.B.B`.
+pub(crate) fn long_loop(levels: usize, uses: &str) -> String {
+    let nested = format!("{}Leaf{}", "Outer<".repeat(levels), ">".repeat(levels));
+    format!(
+        "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Leaf {{}}\nextend Leaf: Base {{\n    type B = {nested}\n}}\nextend Leaf: Holder {{}}\nclass Outer<T> {{}}\nextend<T: Holder> Outer<T>: Base {{\n    type B = W<T>\n}}\nextend<T: Holder> Outer<T>: Holder {{}}\nclass W<T> {{}}\nextend<T: Holder> W<T>: Base {{\n    type B = T.B.B.B\n}}\nextend<T: Holder> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B.B.B] = []\n}}\n{uses}"
+    )
+}
+
+/// A loop that closes after more choices than the probe once followed (16) is reported where the
+/// type meets its bound, once, at the choice that closes it: `mono` never meets it. The probe
+/// follows as many as the walk does (`CHOICE_DEPTH_LIMIT`), so a loop of 17 and one of 40
+/// choices are found as the one of 15 is, however the call that meets the bound is written.
+#[test]
+fn a_loop_that_closes_after_many_choices_should_be_reported_at_the_bound() {
+    let direct = "fn main() {\n    get(Leaf())\n}";
+    let through = "fn pass<S: Holder>(s: S) {\n    get(s)\n}\nfn main() {\n    pass(Leaf())\n}";
+    let report = [(Code::UnknownType, (17, 14))];
+    for levels in [15, 17, 40, 100] {
+        for (how, uses) in [("direct", direct), ("through a generic function", through)] {
+            codes_row(
+                &format!("{levels} levels, {how}"),
+                &long_loop(levels, uses),
+                &report,
+            );
+        }
+    }
+}
+
+/// A loop that the probe does not follow, because the type that closes it nests deeper than the
+/// probe goes, is not found by `check`. `mono` meets it and reports it (see `front_end`).
+#[test]
+fn a_type_nested_past_the_probe_should_pass_the_check() {
+    let past = CHOICE_DEPTH_LIMIT + 1;
+    codes(&long_loop(past, "fn main() {\n    get(Leaf())\n}"), &[]);
+}
+
+/// A choice that gives a larger type at each step, and names the associated type of that type,
+/// never meets the same associated type, so only the limit ends it. It is reported once, at the
+/// choice, with no crash, whatever type of the chain the call names.
+#[test]
+fn a_chain_of_growing_types_should_be_reported_at_the_choice_once_the_limit_ends_it() {
+    let growing = |uses: &str| {
+        format!(
+            "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Leaf {{}}\nextend Leaf: Base {{\n    type B = Leaf\n}}\nextend Leaf: Holder {{}}\nclass Outer<T> {{}}\nextend<T: Holder> Outer<T>: Base {{\n    type B = W<Outer<Outer<T>>>\n}}\nextend<T: Holder> Outer<T>: Holder {{}}\nclass W<T> {{}}\nextend<T: Holder> W<T>: Base {{\n    type B = T.B.B\n}}\nextend<T: Holder> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B.B] = []\n}}\n{uses}"
+        )
+    };
+    let report = [(Code::UnknownType, (17, 14))];
+    codes(&growing("fn main() {\n    get(Outer<Leaf>())\n}"), &report);
+    codes(
+        &growing("fn main() {\n    get(Outer<Outer<Leaf>>())\n}"),
+        &report,
+    );
+    // The same types with a choice that names no associated type are clean: a loop or a growth
+    // of the walk is found at the bound, wherever the type is used.
+    let ends = growing("fn main() {\n    get(Outer<Leaf>())\n}");
+    codes(&ends.replace("type B = T.B.B", "type B = T"), &[]);
+}
+
+/// A chain of choices that ends, nested as deep as the limit allows, is clean: `W<T>` chooses the
+/// associated type of `T`, so the associated type of `W<..W<Done>..>` with `levels` levels needs
+/// `levels` choices, one after the other. `Start` chooses that type, and `get` writes its
+/// associated type.
+#[test]
+fn a_chain_of_choices_that_ends_within_the_limit_should_pass_the_check() {
+    for levels in [100, CHOICE_DEPTH_LIMIT] {
+        let nested = format!("{}Done{}", "W<".repeat(levels), ">".repeat(levels));
+        let src = format!(
+            "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Done {{}}\nextend Done: Base {{\n    type B = Done\n}}\nextend Done: Holder {{}}\nclass Start {{}}\nextend Start: Base {{\n    type B = {nested}\n}}\nextend Start: Holder {{}}\nclass W<T> {{}}\nextend<T: Holder> W<T>: Base {{\n    type B = T.B\n}}\nextend<T: Holder> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B.B] = []\n}}\nfn main() {{\n    get(Start())\n}}"
+        );
+        codes_row(&format!("{levels} levels"), &src, &[]);
+    }
+}
+
+/// Two associated types that each grow the type in their own way make `2^n` types in `n` steps. A
+/// probe stops after `PROBE_BUDGET` declarations for each bound it meets, so the check does a
+/// bounded amount of work and finds no error: the program is valid, and `mono` meets only the
+/// types that its calls name.
+#[test]
+fn a_probe_of_branching_growth_should_stop_at_its_budget() {
+    let src = "interface Base {\n    type A: Holder\n    type B: Holder\n}\ninterface Holder: Base {}\nclass Leaf {}\nextend Leaf: Base {\n    type A = W<Leaf>\n    type B = W<Leaf>\n}\nextend Leaf: Holder {}\nclass W<T> {}\nextend<T> W<T>: Base {\n    type A = W<W<T>>\n    type B = W<[T]>\n}\nextend<T> W<T>: Holder {}\nfn get<S: Holder>(_s: S) {\n    let _x: [S.A] = []\n}\nfn main() {\n    get(Leaf())\n}";
+    PROBE_STEPS.set(0);
+    codes(src, &[]);
+    let steps = PROBE_STEPS.get();
+    // The one probe that the call starts uses the whole budget (8 associated types for each
+    // level of the limit); the other bounds of the program take a few steps.
+    let budget = 8 * CHOICE_DEPTH_LIMIT;
+    assert!((budget..budget + 64).contains(&steps), "{steps} steps");
+}
+
+/// A class, an enum, an array and an optional each add a level to the nesting of a type, and a
+/// type is within a limit when its deepest part is. The type below shares `X` between the places
+/// at two depths: its depth is measured once, and the limit left at the second place is what
+/// counts, not the one that `X` was measured with. A type with `2^n` paths and `n` distinct types
+/// is measured in `n` steps, so the check ends.
+#[test]
+fn nests_within_should_count_each_level_and_measure_a_shared_type_once() {
+    use crate::tir::{ClassId, EnumId};
+    type Wrap = fn(Type) -> Type;
+    let wraps: [(&str, Wrap); 4] = [
+        ("class", |t| {
+            Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[t])))
+        }),
+        ("enum", |t| {
+            Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::intern(&[t])))
+        }),
+        ("array", Type::array),
+        ("optional", Type::optional),
+    ];
+    let within = |ty, limit| nests_within(ty, limit, &mut FxHashMap::default());
+    for (kind, wrap) in wraps {
+        let ty = (0..4).fold(Type::I64, |t, _| wrap(t));
+        assert!(within(ty, 4), "{kind} of depth 4 within 4");
+        assert!(!within(ty, 3), "{kind} of depth 4 within 3");
+        assert!(within(Type::I64, 0), "{kind}: a leaf within 0");
+    }
+    let class = wraps[0].1;
+    let shared = (0..3).fold(Type::I64, |t, _| class(t));
+    let deep = (0..3).fold(shared, |t, _| class(t));
+    let pair = Type::intern(TypeKind::Class(
+        ClassId(1),
+        TypeArgs::intern(&[class(shared), deep]),
+    ));
+    // `shared` is 3 deep, `deep` is 6, and the pair is 7.
+    assert!(within(pair, 7), "the pair within 7");
+    assert!(!within(pair, 6), "the pair within 6");
+    let doubled = |levels| {
+        (0..levels).fold(Type::I64, |t, _| {
+            Type::intern(TypeKind::Class(ClassId(2), TypeArgs::intern(&[t, t])))
+        })
+    };
+    // Two shared arguments per level show the property from two levels on. The sizes 8, 16 and 24
+    // are 4x to 12x that, and the largest ends in seconds if the memo fails: `2^25` visits.
+    let visits = |levels| {
+        NESTING_STEPS.set(0);
+        assert!(within(doubled(levels), levels));
+        NESTING_STEPS.get()
+    };
+    assert_near_linear(visits(8), visits(16), visits(24));
+    let doubled = doubled(100);
+    assert!(
+        within(doubled, 100) && !within(doubled, 99),
+        "100 shared levels"
+    );
+}
+
+/// What the checker's probe does not follow, `mono` meets and reports: no panic, no program, and
+/// the E0030 of the choice, at the type it writes, once, however the call that needs it is
+/// written. The type that closes the loop nests deeper than the probe goes (a loop of 200
+/// choices), or the chain that ends needs more steps than the limit (`W<Leaf>.B` is the 129th).
+#[test]
+fn mono_should_report_a_chain_that_the_probe_did_not_follow() {
+    let direct = "fn main() {\n    get(Leaf())\n}";
+    let through = "fn pass<S: Holder>(s: S) {\n    get(s)\n}\nfn main() {\n    pass(Leaf())\n}";
+    // `plain<i64>` waits on the worklist when `get<Leaf>` fails, and is not walked.
+    let queued =
+        "fn plain<T>(t: T) -> T {\n    t\n}\nfn main() {\n    get(Leaf())\n    print(plain(1))\n}";
+    for levels in [CHOICE_DEPTH_LIMIT + 1, 200] {
+        for (how, uses) in [
+            ("direct", direct),
+            ("through a generic function", through),
+            ("with more work queued", queued),
+        ] {
+            let src = long_loop(levels, uses);
+            let (program, diagnostics) = crate::front_end::front_end(&src);
+            let found: Vec<_> = (diagnostics.iter())
+                .filter(|d| d.severity() == Severity::Error)
+                .map(|d| (d.code(), at(&src, d.span())))
+                .collect();
+            let row = format!("{levels} levels, {how}");
+            assert_eq!(found, [(Code::UnknownType, (17, 14))], "{row}");
+            assert!(program.is_none(), "{row}: no program after an error");
+        }
     }
 }
 

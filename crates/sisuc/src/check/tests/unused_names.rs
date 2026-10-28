@@ -186,6 +186,27 @@ fn constant_should_warn_when_only_a_dead_function_names_it() {
     );
 }
 
+/// The second constant is dead beside a live first one, with no `extend` block and with one: each
+/// constant is judged at its own place among the owners of uses.
+#[test]
+fn constant_should_warn_when_a_later_constant_is_unused_beside_a_live_one() {
+    judge_unused();
+    diagnostic(
+        "const A = 1\nconst B = 2\nfn main() {\n    print(A)\n}",
+        W0012,
+        (2, 7, "B"),
+        &[],
+    );
+    diagnostic(
+        &format!(
+            "{SHAPE}{CIRCLE}const A = 1.0\nconst B = 2.0\nfn main() {{\n    print(Circle(r: A).area())\n}}"
+        ),
+        W0012,
+        (11, 7, "B"),
+        &[],
+    );
+}
+
 #[test]
 fn constant_should_cite_its_first_three_dead_uses_in_source_order() {
     judge_unused();
@@ -231,6 +252,22 @@ fn dead_function_should_not_warn_when_the_program_has_an_error() {
     codes(
         "fn helper() {\n    print(1)\n}\nfn main() {\n    let t = 1\n    let u: i64 = \"a\"\n}",
         &[(Code::Mismatch, (6, 18))],
+    );
+}
+
+/// `is_judged` names the warnings that the checker keeps back when a program has an error. The
+/// program has a dead function, a field that nothing reads and an unused variable.
+#[test]
+fn is_judged_should_name_the_warnings_that_an_error_stops() {
+    judge_unused();
+    let src = "class P {\n    x: i64\n}\nfn dead() {}\nfn main() {\n    let _p = P(x: 1)\n    let u = 1\n}";
+    // In order of position: the field, the function, the variable.
+    let found: Vec<Code> = diags(src).iter().map(Diagnostic::code).collect();
+    assert_eq!(found, [W0013, W0012, W0014], "no error");
+    let found = diags(&src.replace("let u = 1", "let u: i64 = \"a\""));
+    assert!(
+        !found.is_empty() && !found.iter().any(is_judged),
+        "{found:?}"
     );
 }
 
@@ -826,17 +863,18 @@ fn helper_should_warn_when_only_the_conformance_method_of_an_unbuilt_class_calls
     );
 }
 
-/// A method of an `extend` block is unused when nothing calls it and its class is built; an
-/// unbuilt class is the one reported.
+/// A block with no live method is unused when its type is built: the block is reported, and its
+/// methods are not. An unbuilt type is the one reported. A call is a use, whichever block holds
+/// the method.
 #[test]
-fn extend_method_should_warn_only_when_its_type_is_built() {
+fn extend_block_should_warn_only_when_its_type_is_built() {
     judge_unused();
     let block = "extend Circle {\n    fn grow(self) -> f64 { 1.0 }\n}\n";
     let class = "class Circle {\n    r: f64\n}\n";
     diagnostic(
         &format!("{class}{block}fn main() {{\n    print(Circle(r: 1.0).r)\n}}"),
         W0012,
-        (5, 8, "grow"),
+        (4, 1, "extend Circle"),
         &[],
     );
     diagnostic(
@@ -845,10 +883,132 @@ fn extend_method_should_warn_only_when_its_type_is_built() {
         (1, 7, "Circle"),
         &[],
     );
-    // A call is a use, whichever block holds the method.
     clean(&format!(
         "{class}{block}fn main() {{\n    let c = Circle(r: 1.0)\n    print(c.grow() + c.r)\n}}"
     ));
+}
+
+/// A generic class `Crate`, and a block of it with a bound, a live method `live` and a dead method
+/// `spare`, and a `main` that calls `live` on a `Circle`.
+const CRATE_T: &str = "class Crate<T> {\n    inner: T\n}\n";
+const LIVE_BLOCK: &str = "extend<T: Shape> Crate<T> {\n    fn live(self) -> f64 { self.inner.area() }\n    fn spare(self) -> f64 { 1.0 }\n}\n";
+const CALLS_LIVE: &str = "fn main() {\n    print(Crate(inner: Circle(r: 1.0)).live())\n}";
+
+/// A block with a live method is live, so a dead method of it is reported by itself.
+#[test]
+fn extend_block_should_be_live_when_one_of_its_methods_is_live() {
+    judge_unused();
+    diagnostic(
+        &format!("{SHAPE}{CIRCLE}{CRATE_T}{LIVE_BLOCK}{CALLS_LIVE}"),
+        W0012,
+        (15, 8, "spare"),
+        &[],
+    );
+}
+
+/// The second block is dead and the first is live: only the second is reported, beside the dead
+/// method of the first.
+#[test]
+fn extend_blocks_of_one_type_should_be_judged_one_by_one() {
+    judge_unused();
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}{CIRCLE}{CRATE_T}{LIVE_BLOCK}extend<T> Crate<T> {{\n    fn other(self) -> i64 {{ 1 }}\n}}\n{CALLS_LIVE}"
+        )),
+        [(W0012, (15, 8), vec![]), (W0012, (17, 1), vec![])]
+    );
+}
+
+/// An enum with a dead block is judged as a class is: the block is reported, and the interface
+/// that only it names.
+#[test]
+fn extend_block_of_an_enum_should_be_judged_as_one_of_a_class_is() {
+    judge_unused();
+    let maybe = "enum Maybe<T> {\n    Has(T)\n    No\n}\nextend<T: Shape> Maybe<T> {\n    fn spare(self) -> f64 { 1.0 }\n}\n";
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}{maybe}fn main() {{\n    let m: Maybe<i64> = Maybe.Has(1)\n    print(m == Maybe.No)\n}}"
+        )),
+        [(W0012, (1, 11), vec![(8, 11)]), (W0012, (8, 1), vec![])]
+    );
+}
+
+/// A name that starts with `_` keeps its block live, so only the dead method beside it is reported.
+#[test]
+fn extend_block_should_be_live_when_one_of_its_methods_starts_with_underscore() {
+    judge_unused();
+    diagnostic(
+        "class Crate {\n    n: i64\n}\nextend Crate {\n    fn _keep(self) -> i64 { 1 }\n    fn spare(self) -> i64 { 2 }\n}\nfn main() {\n    print(Crate(n: 1).n)\n}",
+        W0012,
+        (6, 8, "spare"),
+        &[],
+    );
+}
+
+/// A call of a method of a dead block in dead code is a use of the block: the warning cites it,
+/// whether the caller is a function or a method of another dead block. A call from inside the
+/// block itself is not cited.
+#[test]
+fn extend_block_should_cite_the_calls_of_its_methods_in_dead_code() {
+    judge_unused();
+    let class = "class Crate {\n    n: i64\n}\n";
+    let main = "fn main() {\n    print(Crate(n: 1).n)\n}";
+    assert_eq!(
+        found(&format!(
+            "{class}extend Crate {{\n    fn grow(self) -> i64 {{ self.n + 1 }}\n}}\nfn unused(c: Crate) -> i64 {{\n    c.grow()\n}}\n{main}"
+        )),
+        [(W0012, (4, 1), vec![(8, 5)]), (W0012, (7, 4), vec![])]
+    );
+    assert_eq!(
+        found(&format!(
+            "{class}extend Crate {{\n    fn a(self) -> i64 {{ self.b() }}\n}}\nextend Crate {{\n    fn b(self) -> i64 {{ self.a() }}\n}}\n{main}"
+        )),
+        [
+            (W0012, (4, 1), vec![(8, 25)]),
+            (W0012, (7, 1), vec![(5, 25)])
+        ]
+    );
+    assert_eq!(
+        found(&format!(
+            "{class}extend Crate {{\n    fn a(self) -> i64 {{ self.b() }}\n    fn b(self) -> i64 {{ 1 }}\n}}\n{main}"
+        )),
+        [(W0012, (4, 1), vec![])]
+    );
+}
+
+/// Each block is judged by its own place among the blocks: the third of three is live, and the
+/// two before it are not, and the bounds of two dead blocks are two uses of one interface.
+#[test]
+fn extend_block_should_be_judged_by_its_own_place_among_blocks() {
+    judge_unused();
+    let crate_ = "class Crate<T> {\n    inner: T\n}\n";
+    let dead =
+        |name: &str| format!("extend<T> Crate<T> {{\n    fn {name}(self) -> i64 {{ 1 }}\n}}\n");
+    let live = "extend<T: Shape> Crate<T> {\n    fn live(self) -> f64 { self.inner.area() }\n}\n";
+    let main = "fn main() {\n    print(Crate(inner: Circle(r: 1.0)).live())\n}";
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}{CIRCLE}{crate_}{}{}{live}{main}",
+            dead("first"),
+            dead("second")
+        )),
+        [(W0012, (13, 1), vec![]), (W0012, (16, 1), vec![])]
+    );
+    let bound = |name: &str| {
+        format!("extend<T: Shape> Crate<T> {{\n    fn {name}(self) -> i64 {{ 1 }}\n}}\n")
+    };
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}{crate_}{}{}fn main() {{\n    print(Crate(inner: 1).inner)\n}}",
+            bound("first"),
+            bound("second")
+        )),
+        [
+            (W0012, (1, 11), vec![(7, 11), (10, 11)]),
+            (W0012, (7, 1), vec![]),
+            (W0012, (10, 1), vec![])
+        ]
+    );
 }
 
 /// A class that conforms to `Shape` with an `area` that nothing calls, and `main` that builds it.
@@ -881,19 +1041,45 @@ fn interface_should_warn_when_no_live_code_names_or_calls_it() {
         )),
         [(W0012, (1, 11), vec![(4, 12)]), (W0012, (4, 4), vec![])]
     );
-    // Only the bound of a block whose methods are all dead names it: the warning cites the bound.
+    // The block of a type that is built and whose methods are all dead is reported. The bound
+    // is one use of the interface, not one for each method.
     assert_eq!(
         found(&format!(
-            "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n    fn spelled(self) -> i64 {{ 1 }}\n}}\nfn main() {{\n    print(Crate(inner: 1).inner)\n}}"
+            "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n    fn spelled(self) -> i64 {{ 1 }}\n    fn second(self) -> i64 {{ 2 }}\n}}\nfn main() {{\n    print(Crate(inner: 1).inner)\n}}"
         )),
-        [(W0012, (1, 11), vec![(7, 11)]), (W0012, (8, 8), vec![])]
+        [(W0012, (1, 11), vec![(7, 11)]), (W0012, (7, 1), vec![])]
     );
-    // Only the bound of a block with no method names it, and its class is never built.
+    // The same for a block with no method.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n}}\nfn main() {{\n    print(Crate(inner: 1).inner)\n}}"
+        )),
+        [(W0012, (1, 11), vec![(7, 11)]), (W0012, (7, 1), vec![])]
+    );
+    // The class is never built, so it is the one reported, and the bound is one use.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n    fn one(self) -> i64 {{ 1 }}\n    fn two(self) -> i64 {{ 2 }}\n}}\nfn main() {{}}"
+        )),
+        [(W0012, (1, 11), vec![(7, 11)]), (W0012, (4, 7), vec![])]
+    );
     assert_eq!(
         found(&format!(
             "{SHAPE}class Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T> {{\n}}\nfn main() {{}}"
         )),
-        [(W0012, (1, 11), vec![]), (W0012, (4, 7), vec![])]
+        [(W0012, (1, 11), vec![(7, 11)]), (W0012, (4, 7), vec![])]
+    );
+    // A conformance block names the interface in dead code only: its class is built in dead code.
+    assert_eq!(
+        found(&format!(
+            "{SHAPE}interface Marker {{\n}}\nclass Crate<T> {{\n    inner: T\n}}\nextend<T: Shape> Crate<T>: Marker {{\n}}\nfn unused() {{\n    let c = Crate(inner: 1)\n    print(c.inner)\n}}\nfn main() {{}}"
+        )),
+        [
+            (W0012, (1, 11), vec![(9, 11)]),
+            (W0012, (4, 11), vec![]),
+            (W0012, (6, 7), vec![(12, 13)]),
+            (W0012, (11, 4), vec![])
+        ]
     );
 }
 
@@ -914,10 +1100,9 @@ fn interface_should_not_warn_when_live_code_uses_it() {
         circle("interface Other {\n    fn other(self) -> f64\n}\nclass Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T>: Other {\n    fn other(self) -> f64 { self.inner.area() }\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).other())\n}"),
         circle("class Crate<T> {\n    inner: T\n}\nextend<T> Crate<T> {\n    fn spelled<U: Shape>(self, _u: U) -> i64 { 3 }\n}\nfn main() {\n    let c = Crate(inner: 1)\n    print(c.inner)\n    print(c.spelled(Circle(r: 1.0)))\n}"),
         // (a) The bound of a block with no live method names it when the block conforms a built
-        // class or enum, or has no method at all: no method names the bound.
+        // class or enum: no method names the bound.
         circle("interface Marker {\n}\nclass Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T>: Marker {\n}\nfn want<X: Marker>(_x: X) -> i64 {\n    2\n}\nfn main() {\n    let c = Crate(inner: Circle(r: 1.0))\n    print(c.inner.r)\n    print(want(c))\n}"),
         circle("interface Marker {\n}\nenum Maybe<T> {\n    Has(T)\n    No\n}\nextend<T: Shape> Maybe<T>: Marker {\n}\nfn want<X: Marker>(_x: X) -> i64 {\n    2\n}\nfn main() {\n    let m: Maybe<Circle> = Maybe.No\n    print(want(m))\n    print(want(Maybe.Has(Circle(r: 1.0))))\n}"),
-        circle("class Crate<T> {\n    inner: T\n}\nextend<T: Shape> Crate<T> {\n}\nfn main() {\n    print(Crate(inner: Circle(r: 1.0)).inner.r)\n}"),
         // (b) A method of a conformance, with no bound: the call selects it.
         circle("fn main() {\n    print(Circle(r: 1.0).area())\n}"),
         // A method of the body that meets a requirement of a listed interface.

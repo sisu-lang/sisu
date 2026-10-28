@@ -27,7 +27,8 @@ fn compiled_from<'ctx>(
 ) -> Module<'ctx> {
     let program = parse_ok(src);
     let (program, diagnostics) = check_alone(&program, src, &[]);
-    let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let mut mir = mir::build(&program);
     edit(&mut mir);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
@@ -927,7 +928,8 @@ fn niche_should_run_out_past_its_storage() {
         .concat();
     let src = format!("enum E {{\n{variants}}}\nfn main() {{\n    let _ = E.V0\n}}\n");
     let (program, diagnostics) = check_alone(&parse_ok(&src), &src, &[]);
-    let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let mut codegen = Codegen::new(&context, &program, "test.sisu", &src, &machine, false);
     codegen.lay_out_types();
@@ -1976,11 +1978,12 @@ fn address_of(instruction: InstructionValue<'_>, n: u32) -> InstructionValue<'_>
 /// `binary` takes `&&` and `||` as the eager `and` and `or` of two computed `bool`s, which
 /// is what a range pattern's test is in mir: no branch, no second block.
 #[test]
-fn binary_takes_and_and_or_of_two_computed_bools() {
+fn binary_should_take_and_and_or_as_the_eager_operations_of_two_computed_bools() {
     let context = Context::create();
     let src = "fn main() {}";
     let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
-    let program = crate::mono::instantiate(program.unwrap_or_else(|| panic!("{diagnostics:?}")));
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let codegen = Codegen::new(&context, &program, "test.sisu", src, &machine, false);
     let bool_type = context.bool_type();

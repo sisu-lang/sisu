@@ -1,0 +1,10 @@
+error[E0030]: the associated type `W<Outer<Outer<T>>>.B` needs more than 128 steps to find its type
+  --> E0030-choice-steps.sisu:17:14
+   |
+17 |     type B = T.B.B
+   |              ^^^^^
+   |
+   = help: write a choice that gives its type in fewer steps, or that does not grow its types
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0030

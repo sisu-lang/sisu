@@ -1,0 +1,25 @@
+interface Base {
+    type B: Holder
+}
+interface Holder: Base {}
+class Leaf {}
+extend Leaf: Base {
+    type B = Leaf
+}
+extend Leaf: Holder {}
+class Outer<T> {}
+extend<T: Holder> Outer<T>: Base {
+    type B = W<Outer<Outer<T>>>
+}
+extend<T: Holder> Outer<T>: Holder {}
+class W<T> {}
+extend<T: Holder> W<T>: Base {
+    type B = T.B.B
+}
+extend<T: Holder> W<T>: Holder {}
+fn get<S: Holder>(_s: S) {
+    let _x: [S.B.B] = []
+}
+fn main() {
+    get(Outer<Leaf>())
+}

@@ -6,17 +6,20 @@
 //! ordinary function, class or enum to them. The enums are then laid out again on their
 //! concrete payloads, since an instantiation can close a cycle that no declaration has.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::mem;
 
 use rustc_hash::FxHashMap;
 
-use crate::conformance::{find, normalize};
+use crate::conformance::{Cause, Stuck, StuckChoices, find, normalize_noting};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, UnknownForm};
+use crate::source::Span;
 use crate::tir::{
-    Arm, Block, Class, ClassId, Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId,
-    Function, Place, Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
+    Arm, Block, ChoicePlace, Class, ClassId, Conformances, Enum, EnumId, Expr, ExprKind, Field,
+    FuncId, Function, Place, Program, Stmt, Type, TypeArgs, TypeKind, layout_enums,
 };
-use crate::types::{Head, write_args, write_method};
+use crate::types::{Head, write_args, write_method, write_type};
 
 #[cfg(test)]
 thread_local! {
@@ -29,9 +32,12 @@ thread_local! {
 /// The non-generic declarations come first, in their order; the instantiations follow, in the
 /// order a worklist first reaches them: the non-generic classes' fields and enums' payloads, then
 /// the non-generic functions' bodies, then each instantiation's in turn. A method is reached only
-/// by a call, never with its class. The checker has accepted the program, so nothing here can
-/// fail.
-pub(crate) fn instantiate(mut program: Program) -> Program {
+/// by a call, never with its class.
+///
+/// The checker has accepted the program, but its probe does not follow every associated type
+/// that an instance meets (`probe_associated`): the diagnostics are the E0030 of each choice that
+/// an instance needs itself, or needs more steps than the limit, and then there is no program.
+pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnostic>> {
     let prelude = program.prelude;
     let generic = program.functions[..prelude.funcs]
         .iter()
@@ -58,13 +64,13 @@ pub(crate) fn instantiate(mut program: Program) -> Program {
                 f.method = None;
             }
         }
-        return program;
+        return Ok(program);
     }
-    let program = Mono::new(program).run();
+    let program = Mono::new(program).run()?;
     if cfg!(debug_assertions) {
         assert_concrete(&program);
     }
-    program
+    Ok(program)
 }
 
 /// An instantiation reached and given its id, whose body waits on the worklist.
@@ -108,6 +114,12 @@ struct Mono {
     out: Program,
     /// The checked program's conformances, which resolve each interface call.
     conformances: Conformances,
+    /// Where the choices that write an associated type are written (`Program::choice_ats`).
+    choice_ats: FxHashMap<ChoicePlace, Span>,
+    /// The loops and the chains that are too long that `subst` has met, with the first type found
+    /// for each place. `subst` then gives a stand-in type, and no instance after the first is
+    /// walked: `run` reports them.
+    stuck: RefCell<StuckChoices>,
     work: VecDeque<Work>,
 }
 
@@ -127,6 +139,8 @@ impl Mono {
                 ..Program::default()
             },
             conformances: program.conformances,
+            choice_ats: program.choice_ats,
+            stuck: RefCell::default(),
             work: VecDeque::new(),
         };
         for (i, f) in program.functions.into_iter().enumerate() {
@@ -162,7 +176,7 @@ impl Mono {
         mono
     }
 
-    fn run(mut self) -> Program {
+    fn run(mut self) -> Result<Program, Vec<Diagnostic>> {
         for i in 0..self.out.classes.len() {
             let mut fields = mem::take(&mut self.out.classes[i].fields);
             for field in &mut fields {
@@ -188,6 +202,9 @@ impl Mono {
             self.functions[i] = Some(f);
         }
         while let Some(work) = self.work.pop_front() {
+            if self.failed() {
+                break;
+            }
             match work {
                 Work::Function {
                     id,
@@ -235,13 +252,48 @@ impl Mono {
                 }
             }
         }
+        if self.failed() {
+            return Err(self.stuck_diagnostics());
+        }
         layout_enums(&mut self.out.enums);
         self.out.functions = self
             .functions
             .into_iter()
             .map(|f| f.expect("the worklist should instantiate every function it reaches"))
             .collect();
-        self.out
+        Ok(self.out)
+    }
+
+    /// Whether `subst` has met a type that it cannot normalize.
+    fn failed(&self) -> bool {
+        !self.stuck.borrow().is_empty()
+    }
+
+    /// The E0030 of each choice that `subst` met, ordered by place in the source, each at the
+    /// type that the choice writes: the span of the choice is the best place `mono` has, and the
+    /// same one the checker uses. A call may need the choice in many instances, so a use is no
+    /// better place.
+    fn stuck_diagnostics(&self) -> Vec<Diagnostic> {
+        let head = |head| match head {
+            Head::Assoc(interface, k) => {
+                self.out.interfaces[interface.0].assoc[k as usize].as_str()
+            }
+            other => self.head(other),
+        };
+        let mut found: Vec<_> = (self.stuck.borrow().iter())
+            .map(|(place, &(assoc, cause))| {
+                let mut name = String::new();
+                write_type(&mut name, assoc, head);
+                let form = match cause {
+                    Cause::Loops => UnknownForm::ChoiceLoops,
+                    Cause::TooDeep => UnknownForm::ChoiceTooDeep,
+                };
+                let at = self.choice_ats[place];
+                DiagnosticKind::UnknownType { name, at, form }.into()
+            })
+            .collect();
+        found.sort_by_key(|d: &Diagnostic| d.span().start());
+        found
     }
 
     /// `ty` of a body instantiated with `args`, as the output names it.
@@ -253,9 +305,30 @@ impl Mono {
     /// `ty` with `args` for its type parameters and each associated type replaced by the type its
     /// conformance chose. The checker has accepted the program, and checked the bound that gives
     /// each base its conformance.
+    ///
+    /// A loop, or a chain of more steps than the limit, that the checker's probe did not follow
+    /// is noted in `stuck`, and the type is the stand-in `i64`.
     fn subst(&self, ty: Type, args: &[Type]) -> Type {
-        normalize(&self.conformances, ty.subst(args))
-            .expect("a call that checks should find the conformance of every associated type")
+        let mut stuck = Vec::new();
+        let done = normalize_noting(&self.conformances, ty.subst(args), &mut stuck);
+        done.unwrap_or_else(|| {
+            assert!(
+                !stuck.is_empty(),
+                "a call that checks should find the conformance of every associated type"
+            );
+            let mut known = self.stuck.borrow_mut();
+            for Stuck {
+                assoc,
+                interface,
+                index,
+                k,
+                cause,
+            } in stuck
+            {
+                known.entry((interface, index, k)).or_insert((assoc, cause));
+            }
+            Type::I64
+        })
     }
 
     /// `subst` for a list of arguments.
@@ -479,7 +552,14 @@ impl Mono {
     )]
     fn expr(&mut self, e: &mut Expr, args: &[Type]) {
         use ExprKind as K;
+        // A stand-in type may not fit its node, so no node is walked after the first failure.
+        if self.failed() {
+            return;
+        }
         e.ty = self.ty(e.ty, args);
+        if self.failed() {
+            return;
+        }
         let ty = e.ty;
         match &mut e.kind {
             K::Int(_)
@@ -513,6 +593,9 @@ impl Mono {
                 let (receiver, rest) = (self.subst_args(*iargs, args).get().split_first())
                     .map(|(&receiver, rest)| (receiver, TypeArgs::intern(rest)))
                     .expect("an interface call should name its receiver's type");
+                if self.failed() {
+                    return;
+                }
                 let (index, bindings) = find(&self.conformances, *interface, receiver, rest)
                     .expect("a call that checks should find the conformance of its receiver");
                 let found = self.conformances.get(*interface, index).methods[*method as usize];
@@ -711,6 +794,7 @@ mod tests {
     use super::*;
     use crate::check::check_alone;
     use crate::parser::parse_ok;
+    use crate::tir::InterfaceId;
     use crate::types::NAME_LIMIT;
 
     /// The program `front_end` gives for `src`, which checks without an error.
@@ -1125,7 +1209,7 @@ mod tests {
         let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
         let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
         let (text, count) = (program.to_string(), program.functions.len());
-        let program = instantiate(program);
+        let program = instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
         assert_eq!(program.to_string(), text);
         assert_eq!(program.functions.len(), count);
     }
@@ -1255,7 +1339,7 @@ mod tests {
             .expect("the method should be declared");
         let (interface, _) = method.conformance.expect("a conformance's method");
         method.conformance = Some((interface, TypeArgs::intern(&[deep])));
-        let program = instantiate(program);
+        let program = instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
         let method = (program.functions.iter())
             .find(|f| f.name.starts_with("C.Label<"))
             .expect("the method should be named");
@@ -1342,5 +1426,79 @@ mod tests {
         let names = function_names(&program);
         assert!(names.contains(&"C.Keep.keep<i64>"), "{names:?}");
         assert!(names.contains(&"C.Keep.keep<string>"), "{names:?}");
+    }
+    /// The program that checks, and then `src` with each choice of `Leaf` to `Source` (the first
+    /// conformance of interface 1, whose associated types `A` and `B` are numbers 0 and 1) changed
+    /// to name its own associated type, as no checker lets a program do. The choices of `A` and `B`
+    /// are written at the bytes 40 and 10.
+    fn looping(src: &str) -> (Program, Program) {
+        let program = || {
+            let (program, diagnostics) = check_alone(&parse_ok(src), src, &[]);
+            program.unwrap_or_else(|| panic!("{diagnostics:?}"))
+        };
+        let source = InterfaceId(1);
+        let mut broken = program();
+        let leaf = broken.conformances.get(source, 0).target;
+        for k in 0..2 {
+            let own = Type::intern(TypeKind::Assoc(leaf, source, TypeArgs::NONE, k));
+            broken.conformances.get_mut(source, 0).assoc[k as usize] = Some(own);
+        }
+        broken.choice_ats.insert((source, 0, 0), Span::new(40, 41));
+        broken.choice_ats.insert((source, 0, 1), Span::new(10, 11));
+        (program(), broken)
+    }
+
+    const LOOPING: &str = "interface Sized {\n    fn size(self) -> i64\n}\n\
+        interface Source {\n    type A: Sized\n    type B: Sized\n    fn first(self) -> A\n    fn second(self) -> B\n}\n\
+        class Thing: Sized {\n    fn size(self) -> i64 { 1 }\n}\n\
+        class Leaf: Source {\n    type A = Thing\n    type B = Thing\n    fn first(self) -> A { Thing() }\n    fn second(self) -> B { Thing() }\n}\n\
+        class Holder<T> {\n    value: T\n}\n\
+        enum Maybe<T> {\n    Just(T)\n    Nothing\n}\n";
+
+    /// The starts of the diagnostics that `instantiate` gives for `program`, each an E0030.
+    fn stuck_places(program: Program) -> Vec<usize> {
+        let found =
+            instantiate(program).expect_err("a choice that needs itself should be reported");
+        for d in &found {
+            assert_eq!(d.code(), crate::diagnostic::Code::UnknownType);
+        }
+        found.iter().map(|d| d.span().start()).collect()
+    }
+
+    /// Two choices that need themselves are both reported, in the order of the source: a function
+    /// whose two parameters each name one, so `mono` meets both before it stops.
+    #[test]
+    fn mono_should_report_each_choice_that_needs_itself_in_the_order_of_the_source() {
+        let src = format!(
+            "{LOOPING}fn run<S: Source>(_s: S, _a: S.A, _b: S.B) {{}}\nfn main() {{\n    run(Leaf(), Thing(), Thing())\n}}"
+        );
+        let (whole, broken) = looping(&src);
+        assert!(instantiate(whole).is_ok(), "the program without the loops");
+        assert_eq!(stuck_places(broken), [10, 40]);
+    }
+
+    /// An expression whose own type names a choice that needs itself, and an interface call whose
+    /// receiver does, stop the walk of the body: no panic on a stand-in type, and one report. Each
+    /// row is a statement that drops its value (a warning), before a `print` so that the value of
+    /// the block is no part of it. A construction and a variant read their class or enum from the
+    /// type, which a stand-in is not.
+    #[test]
+    fn mono_should_stop_a_body_whose_expression_names_a_choice_that_needs_itself() {
+        for (row, body) in [
+            ("a call statement", "s.first()"),
+            ("a call", "s.first().size()"),
+            ("a construction", "Holder(value: s.first())"),
+            ("a variant", "Maybe.Just(s.first())"),
+        ] {
+            let src = format!(
+                "{LOOPING}fn run<S: Source>(s: S) {{\n    {body}\n    print(1)\n}}\nfn main() {{\n    run(Leaf())\n}}"
+            );
+            let (whole, broken) = looping(&src);
+            assert!(
+                instantiate(whole).is_ok(),
+                "{row}: the program without the loops"
+            );
+            assert_eq!(stuck_places(broken), [40], "{row}");
+        }
     }
 }

@@ -4,7 +4,7 @@ How to help with Sisu, a one-person learning project at an early stage.
   <section class="ph"><div class="w">
     <h1>Contribute to Sisu</h1>
     <p class="lede">One person builds Sisu, in the open. It is a learning project at an early stage, so there is no team to hand work to yet. This page says what help fits, how to build the compiler, and which checks a change must pass.</p>
-    <p class="meta">Checked against the repository at commit df02ba144aa0a6feb46b5bc09c615ed297babde5.</p>
+    <p class="meta">Checked against the repository at commit 1d1f4731289f4fcc0582e030905acd2bb0de1abc.</p>
   </div></section>
   <!-- source: CONTRIBUTING.md ("Sisu is a solo learning project"), README.md ("a passion project at an early stage") -->
 
@@ -79,12 +79,12 @@ $ make miri      # only when you change crates/runtime
 $ make coverage  # coverage of your diff
 </pre></figure>
       <ul>
-        <li><code>make test</code> runs the tests with nextest, not <code>cargo test</code>. Its setup script builds the two runtime archives that the end-to-end tests link against. On Linux, the end-to-end tests run each program under Valgrind. On a pull request, CI fails a test that the pull request changes when it takes more than twice its time budget.</li>
+        <li><code>make test</code> runs the tests with nextest, not <code>cargo test</code>. Its setup script builds the two runtime archives that the end-to-end tests link against. On Linux, the end-to-end tests run each program under Valgrind. CI warns about each test over its time budget.</li>
         <li>Clippy and the compiler run with <code>-D warnings</code>, so one warning fails CI. Silence a single site with <code>#[expect(lint, reason = "...")]</code>, never a bare <code>#[allow]</code>.</li>
         <li><code>make miri</code> runs the runtime's unit tests under Miri on nightly, which stops at undefined behaviour. CI runs it too.</li>
         <li><code>make coverage</code> lists the uncovered regions that touch your change. Cover or explain each one.</li>
       </ul>
-      <!-- source: CONTRIBUTING.md (steps 1 and 5), Makefile (check, test, miri, coverage), Cargo.toml (lint comments: CI and the pre-commit hook run clippy with -D warnings; #[expect] with a reason), .github/workflows/ci.yml (RUSTFLAGS="-D warnings"; slow_tests.py --fail-changed; jobs Lint, Test, Miri, Dependencies, Site), docs/development.md ("Prerequisites": Valgrind; "Coverage and performance"), AGENTS.md -->
+      <!-- source: CONTRIBUTING.md (steps 1 and 5), Makefile (check, test, miri, coverage), Cargo.toml (lint comments: CI and the pre-commit hook run clippy with -D warnings; #[expect] with a reason), .github/workflows/ci.yml (RUSTFLAGS="-D warnings"; slow_tests.py warns only; jobs Lint, Test, Miri, Dependencies, Site), docs/development.md ("Prerequisites": Valgrind; "Coverage and performance"), AGENTS.md -->
 
       <h2 id="standards">Code standards</h2>
       <p>Clippy, rustfmt and the hooks enforce the mechanical rules. <a href="https://github.com/sisu-lang/sisu/blob/main/CODING_STANDARDS.md">CODING_STANDARDS.md</a> holds the judgement calls that no check can make. Four of them:</p>

@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use rustc_hash::FxHashMap;
 
 use crate::symbol::Symbol;
-use crate::tir::{Conformances, InterfaceId, Type, TypeArgs, TypeKind, head_of};
+use crate::tir::{ChoicePlace, Conformances, InterfaceId, Type, TypeArgs, TypeKind, head_of};
 
 #[cfg(test)]
 thread_local! {
@@ -64,26 +64,59 @@ pub(crate) fn find(
 /// type of one, stays: a body is checked once for every type argument, and `mono` normalizes the
 /// instance. `None` when a base has no conformance to the interface, or the conformance chooses no
 /// type: the type does not exist, and the checker reported why. Also `None` when the choice of an
-/// associated type needs the associated type itself (see `Loop`).
+/// associated type needs the associated type itself, or more than `CHOICE_DEPTH_LIMIT` choices
+/// are in progress (see `Stuck`).
 ///
 /// A choice names an associated type only through a parameter of its own conformance, so a
 /// choice that grows its types does not end the walk by itself: the walk keeps the associated
-/// types it is in the middle of, and meeting one again ends it. Each distinct type is normalized
-/// once, whatever number of paths lead to it.
+/// types it is in the middle of, and meeting one again ends it, as does the limit on how many are
+/// in progress. Each distinct type is normalized once, whatever number of paths lead to it.
 pub(crate) fn normalize(conformances: &Conformances, ty: Type) -> Option<Type> {
     normalize_noting(conformances, ty, &mut Vec::new())
 }
 
-/// An associated type whose choice needs the associated type itself: the type, and the place of
-/// the choice that closes the loop, as the interface, the index of the conformance among those of
-/// the interface and the index of the associated type among the interface's.
-pub(crate) type Loop = (Type, InterfaceId, usize, usize);
+/// How many associated types a walk may be in the middle of at once, each with a choice that names
+/// one more. A choice that grows its types never meets the same associated type again, so this
+/// limit, and not a loop, ends such a walk. It is the recursion limit of Rust, and it bounds the
+/// depth of the walk, and so its stack.
+///
+/// The count is of the choices in progress, not of the steps that a type needs in all: a type that
+/// the walk has done already (`memo`) ends a chain at once, so the same type can be within the
+/// limit after another type of the same walk and past it alone.
+pub(crate) const CHOICE_DEPTH_LIMIT: usize = 128;
 
-/// `normalize`, adding to `loops` each loop it meets, which its caller reports.
+/// The first type found for each choice that a walk stopped at, with why.
+pub(crate) type StuckChoices = FxHashMap<ChoicePlace, (Type, Cause)>;
+
+/// Why a walk stopped at an associated type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Cause {
+    /// The choice of the associated type needs the associated type itself.
+    Loops,
+    /// The associated type is more than `CHOICE_DEPTH_LIMIT` choices deep.
+    TooDeep,
+}
+
+/// An associated type that the walk did not follow: the type, the place of the choice that it
+/// stopped at, and why. The type is the one the walk was asked for: for a loop, the type that met
+/// itself, and for a chain that is too deep, the first of the chain, which needs the steps. The
+/// place is the interface, the index of the conformance among those of the interface and the
+/// index of the associated type among the interface's: the choice where the walk stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stuck {
+    pub(crate) assoc: Type,
+    pub(crate) interface: InterfaceId,
+    pub(crate) index: usize,
+    pub(crate) k: usize,
+    pub(crate) cause: Cause,
+}
+
+/// `normalize`, adding to `stuck` each loop and each chain that is too deep that it meets, which
+/// its caller reports.
 pub(crate) fn normalize_noting(
     conformances: &Conformances,
     ty: Type,
-    loops: &mut Vec<Loop>,
+    stuck: &mut Vec<Stuck>,
 ) -> Option<Type> {
     if !ty.has_assoc() {
         return Some(ty);
@@ -92,7 +125,8 @@ pub(crate) fn normalize_noting(
         conformances,
         memo: FxHashMap::default(),
         active: FxHashMap::default(),
-        loops,
+        start: None,
+        stuck,
     }
     .walk(ty)
 }
@@ -104,7 +138,9 @@ struct Normalizer<'a> {
     memo: FxHashMap<Type, Type>,
     /// The associated types whose choice the walk is in, each with the place of that choice.
     active: FxHashMap<Type, (InterfaceId, usize, usize)>,
-    loops: &'a mut Vec<Loop>,
+    /// The first of the associated types in `active`: the one that the chain in progress began at.
+    start: Option<Type>,
+    stuck: &'a mut Vec<Stuck>,
 }
 
 impl Normalizer<'_> {
@@ -149,13 +185,21 @@ impl Normalizer<'_> {
     }
 
     /// The type that the conformance of `assoc`'s base chooses for it, normalized. `assoc` is in
-    /// progress while its choice is walked: meeting it there is a loop.
+    /// progress while its choice is walked: meeting it there is a loop, and one that would be the
+    /// `CHOICE_DEPTH_LIMIT + 1`th is too deep.
     fn choice(&mut self, assoc: Type) -> Option<Type> {
         let TypeKind::Assoc(base, interface, args, k) = assoc.kind() else {
             unreachable!("only an associated type should have a choice");
         };
         if let Some(&(interface, index, k)) = self.active.get(&assoc) {
-            self.loops.push((assoc, interface, index, k));
+            let cause = Cause::Loops;
+            self.stuck.push(Stuck {
+                assoc,
+                interface,
+                index,
+                k,
+                cause,
+            });
             return None;
         }
         let (index, stands) = find(self.conformances, interface, base, args)?;
@@ -164,8 +208,30 @@ impl Normalizer<'_> {
             .get(interface, index)
             .assoc
             .get(k as usize)?)?;
-        self.active.insert(assoc, (interface, index, k as usize));
-        let done = self.walk(chosen.subst(stands.get()));
+        let chosen = chosen.subst(stands.get());
+        let k = k as usize;
+        if chosen.has_assoc() && self.active.len() >= CHOICE_DEPTH_LIMIT {
+            let cause = Cause::TooDeep;
+            // The chain began at `start`, and needs the steps; the choice here is where it stops.
+            // `active` holds `CHOICE_DEPTH_LIMIT` choices, so `start` is set: it was set when
+            // `active` was empty, and each top-level choice sets it again before any push. A type
+            // parameter in its name belongs to the block of the start choice, which can be another
+            // block than the one of the choice that gives the span.
+            let assoc = self.start.unwrap_or(assoc);
+            self.stuck.push(Stuck {
+                assoc,
+                interface,
+                index,
+                k,
+                cause,
+            });
+            return None;
+        }
+        if self.active.is_empty() {
+            self.start = Some(assoc);
+        }
+        self.active.insert(assoc, (interface, index, k));
+        let done = self.walk(chosen);
         self.active.remove(&assoc);
         done
     }
@@ -1179,7 +1245,16 @@ mod tests {
         let mut loops = Vec::new();
         NORMALIZED.set(0);
         assert_eq!(normalize_noting(&all, item(looper(leaf)), &mut loops), None);
-        assert_eq!(loops, vec![(item(looper(leaf)), InterfaceId(0), 1, 0)]);
+        assert_eq!(
+            loops,
+            vec![Stuck {
+                assoc: item(looper(leaf)),
+                interface: InterfaceId(0),
+                index: 1,
+                k: 0,
+                cause: Cause::Loops,
+            }]
+        );
         assert!(NORMALIZED.get() <= 8, "{} visits", NORMALIZED.get());
         // The associated type of the leaf alone is no loop.
         loops.clear();
@@ -1188,6 +1263,81 @@ mod tests {
             Some(looper(leaf))
         );
         assert_eq!(loops, vec![]);
+    }
+
+    /// Interface 0 has one associated type. `Leaf` chooses `i64`, `Wrap<T>` chooses the associated
+    /// type of `T` (the second conformance), and `Grow<T>` chooses the associated type of
+    /// `Grow<Grow<T>>`, which is never the same type twice (the third). Returns them with the
+    /// `item` of a base and `Wrap<..Wrap<Leaf>..>` with `n` wraps.
+    fn with_chains() -> (Conformances, impl Fn(Type) -> Type, impl Fn(usize) -> Type) {
+        let item = |base| Type::intern(TypeKind::Assoc(base, InterfaceId(0), TypeArgs::NONE, 0));
+        let grow = |t| class(PILE + 31, &[t]);
+        let mut all = Conformances::default();
+        let rows = [
+            (class(PILE + 29, &[]), 0, vec![Some(Type::I64)]),
+            (class(PILE + 30, &[param(0)]), 1, vec![Some(item(param(0)))]),
+            (grow(param(0)), 1, vec![Some(item(grow(grow(param(0)))))]),
+        ];
+        for (target, type_params, assoc) in rows {
+            all.add(
+                InterfaceId(0),
+                Conformance {
+                    type_params,
+                    target,
+                    args: TypeArgs::NONE,
+                    methods: Vec::<FuncId>::new(),
+                    assoc,
+                },
+            );
+        }
+        let wrapped = |n: usize| (0..n).fold(class(PILE + 29, &[]), |t, _| class(PILE + 30, &[t]));
+        (all, item, wrapped)
+    }
+
+    /// The `n`th associated type in progress that names one more is the first past the limit: a
+    /// chain of `CHOICE_DEPTH_LIMIT` such choices ends, and one more does not. The walk gives no
+    /// type, says which choice it would not enter (the `Wrap` conformance, the second), and names
+    /// the associated type that it began at, which needs the steps, and not the one it stopped at.
+    #[test]
+    fn normalize_should_stop_a_chain_of_more_choices_than_the_limit() {
+        let (all, item, wrapped) = with_chains();
+        assert_eq!(
+            normalize(&all, item(wrapped(CHOICE_DEPTH_LIMIT))),
+            Some(Type::I64)
+        );
+        let mut stuck = Vec::new();
+        let past = item(wrapped(CHOICE_DEPTH_LIMIT + 1));
+        assert_eq!(normalize_noting(&all, past, &mut stuck), None);
+        assert_eq!(
+            stuck,
+            vec![Stuck {
+                assoc: past,
+                interface: InterfaceId(0),
+                index: 1,
+                k: 0,
+                cause: Cause::TooDeep,
+            }]
+        );
+    }
+
+    /// `Grow<T>` chooses the associated type of `Grow<Grow<T>>`: no type comes twice, so no loop
+    /// closes, and only the limit ends the walk, after about one visit for each step.
+    #[test]
+    fn normalize_should_stop_a_chain_whose_types_never_repeat() {
+        let (all, item, _) = with_chains();
+        let leaf = class(PILE + 29, &[]);
+        let mut stuck = Vec::new();
+        NORMALIZED.set(0);
+        let start = item(class(PILE + 31, &[leaf]));
+        assert_eq!(normalize_noting(&all, start, &mut stuck), None);
+        let [one] = stuck.as_slice() else {
+            panic!("one stop should be noted: {stuck:?}");
+        };
+        assert_eq!((one.index, one.cause), (2, Cause::TooDeep));
+        assert_eq!(one.assoc, start, "the type that the walk began at");
+        // Each step walks the associated type, its base and the base's argument.
+        let visits = NORMALIZED.get();
+        assert!(visits <= 4 * (CHOICE_DEPTH_LIMIT + 2), "{visits} visits");
     }
 
     /// `t_0` is the associated type of `Circle`, and `t_{i+1}` is `Pair<t_i, t_i>`, so `t_20` has

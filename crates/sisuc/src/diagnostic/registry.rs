@@ -1,6 +1,7 @@
 //! The registry: every diagnostic code, and the message, labels, help and fixes of each.
 
 use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
+use crate::conformance::CHOICE_DEPTH_LIMIT;
 use crate::source::Span;
 
 /// The code table: each code's variant and number. A number is never reused or changed.
@@ -65,7 +66,7 @@ codes! {
     UnexpectedClosingBracket = "E0007",
     DigitSeparator = "E0008",
     IntegerTooLarge = "E0009",
-    UnexpectedCharacter = "E0010",
+    UnexpectedCharacter | LogicalOperatorWritten = "E0010",
     Expected = "E0011",
     Var = "E0013",
     FieldComma = "E0015",
@@ -218,7 +219,7 @@ codes! {
     WhileTrue = "W0009",
     UnconditionalRecursion = "W0010",
     UnchangedLoopCondition = "W0011",
-    UnusedItem = "W0012",
+    UnusedItem | UnusedBlock = "W0012",
     UnusedMember = "W0013",
     UnusedVariable = "W0014",
 }
@@ -308,6 +309,9 @@ pub(crate) enum DiagnosticKind {
     DigitOutsideBase { digit: char, radix: u32, at: Span },
     /// The character `c` at `at`, which Sisu does not use.
     UnexpectedCharacter { c: char, at: Span },
+    /// The `&` or `|` `c` at `at`, between two operands: logical and and logical or are `&&` and
+    /// `||`.
+    LogicalOperatorWritten { c: char, at: Span },
     /// The token `found` at `at`, where `what` should stand.
     Expected {
         what: String,
@@ -1069,7 +1073,14 @@ pub(crate) enum DiagnosticKind {
         kind: Definition,
         name: String,
         at: Span,
-        uses: Vec<(Span, Definition, String)>,
+        uses: Vec<(Span, UsedBy, String)>,
+    },
+    /// The `extend` block of the type written `name`, whose header is at `at`, which no live code
+    /// uses, while live code builds its type; `uses` are as `UnusedItem`'s.
+    UnusedBlock {
+        name: String,
+        at: Span,
+        uses: Vec<(Span, UsedBy, String)>,
     },
     /// The field or variant `name` (its `kind`), whose name in its declaration is at `at`, which
     /// no live code reads or builds; `uses` are as `UnusedItem`'s.
@@ -1077,7 +1088,7 @@ pub(crate) enum DiagnosticKind {
         kind: Definition,
         name: String,
         at: Span,
-        uses: Vec<(Span, Definition, String)>,
+        uses: Vec<(Span, UsedBy, String)>,
     },
     /// The local `name`, or the parameter when `param`, declared at `at`, which nothing reads;
     /// `fix` holds, for a `for` or pattern name, each place that binds it, which `_` can replace.
@@ -1421,6 +1432,38 @@ impl Definition {
     }
 }
 
+/// `d` with a secondary label for each of `uses`, a use in dead code.
+fn cite_uses(d: Diagnostic, uses: Vec<(Span, UsedBy, String)>) -> Diagnostic {
+    uses.into_iter().fold(d, |d, (at, user, name)| {
+        d.with_secondary(at, format!("used here, {}", user.described(&name)))
+    })
+}
+
+/// The dead code that holds a use which a warning cites.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UsedBy {
+    /// A function, a method or a constant.
+    Item(Definition),
+    /// An `extend` block of a type; `built` is whether live code builds the type.
+    Block { built: bool },
+}
+
+impl UsedBy {
+    /// What the label of a use says of its holder, which is written `name`: `in `f`, which is
+    /// never called`.
+    fn described(self, name: &str) -> String {
+        match self {
+            UsedBy::Item(kind) => format!("in `{name}`, which is never {}", kind.unused_verb()),
+            UsedBy::Block { built: true } => {
+                format!("in the `extend` block of `{name}`, which is never used")
+            }
+            UsedBy::Block { built: false } => {
+                format!("in the `extend` block of `{name}`, whose type is never built")
+            }
+        }
+    }
+}
+
 /// What gives more inherited interfaces than the limit.
 #[derive(Clone, Copy)]
 pub(crate) enum WideKind {
@@ -1482,6 +1525,10 @@ pub(crate) enum UnknownForm {
     /// The choice of an associated type needs the associated type itself, which the diagnostic's
     /// name gives with its base, as `W<Leaf>.A`: the types the choice names lead back to it.
     ChoiceLoops,
+    /// The choice of an associated type leads through more than `CHOICE_DEPTH_LIMIT` other
+    /// associated types, one after the other, before it gives a type. The diagnostic's name gives
+    /// the associated type that starts the chain.
+    ChoiceTooDeep,
     /// The associated type of the type parameter `base` is written in a bound that the bounds of
     /// `base` wait for, so the bounds of `base` are not known yet.
     BoundsLoop { base: String },
@@ -1978,8 +2025,6 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnexpectedCharacter { c, at } => {
                 let d = Diagnostic::coded(code, at, format!("unexpected character {}", shown(c)));
                 match c {
-                    '&' => d.with_fix(unsafe_fix("if you meant logical and, use `&&`", at, "&&")),
-                    '|' => d.with_fix(unsafe_fix("if you meant logical or, use `||`", at, "||")),
                     '\u{FEFF}' if at.start() == 0 => d.with_fix(Fix {
                         message: "remove the byte order mark at the start of the file".to_string(),
                         safe: true,
@@ -1990,6 +2035,14 @@ impl From<DiagnosticKind> for Diagnostic {
                     }),
                     _ => d,
                 }
+            }
+            DiagnosticKind::LogicalOperatorWritten { c, at } => {
+                let d = Diagnostic::coded(code, at, format!("unexpected character {}", shown(c)));
+                d.with_fix(match c {
+                    '&' => unsafe_fix("if you meant logical and, use `&&`", at, "&&"),
+                    '|' => unsafe_fix("if you meant logical or, use `||`", at, "||"),
+                    _ => unreachable!("a logical operator should be `&` or `|`"),
+                })
             }
             DiagnosticKind::Expected { what, found, at } => {
                 Diagnostic::coded(code, at, format!("expected {what}, found {found}"))
@@ -2495,6 +2548,12 @@ impl From<DiagnosticKind> for Diagnostic {
                     format!("the associated type `{name}` needs itself to find its type"),
                 )
                 .with_help("write a choice that does not lead back to the same associated type"),
+                UnknownForm::ChoiceTooDeep => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("the associated type `{name}` needs more than {CHOICE_DEPTH_LIMIT} steps to find its type"),
+                )
+                .with_help("write a choice that gives its type in fewer steps, or that does not grow its types"),
                 UnknownForm::BoundsLoop { base } => Diagnostic::coded(
                     code,
                     at,
@@ -4094,12 +4153,17 @@ impl From<DiagnosticKind> for Diagnostic {
                 )
                 .with_label(format!("never {verb}"))
                 .with_help(help);
-                uses.into_iter().fold(d, |d, (at, user, name)| {
-                    d.with_secondary(
-                        at,
-                        format!("used here, in `{name}`, which is never {}", user.unused_verb()),
-                    )
-                })
+                cite_uses(d, uses)
+            }
+            DiagnosticKind::UnusedBlock { name, at, uses } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("the `extend` block of `{name}` is never used"),
+                )
+                .with_label("never used")
+                .with_help("delete it");
+                cite_uses(d, uses)
             }
             DiagnosticKind::UnusedVariable {
                 param,

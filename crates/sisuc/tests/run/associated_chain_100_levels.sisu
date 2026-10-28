@@ -1,0 +1,52 @@
+// GIVEN `Start`, which chooses `W<..W<Done>..>` with 100 levels for `B`; `W<T>`, which chooses the
+// `B` of `T`; and `Done`, which chooses itself, so the chain of choices ends
+// WHEN a generic function writes `S.B.B` for `S` = `Start` and builds a local array of that type
+// THEN `mono` finds the 100 choices, one inside the next, the array is an empty `[Done]`, and the
+// program prints its length
+interface Base {
+    type B: Holder
+}
+
+interface Holder: Base {}
+
+class Done {
+    n: i64
+}
+
+extend Done: Base {
+    type B = Done
+}
+
+extend Done: Holder {}
+
+class Start {}
+
+extend Start: Base {
+    type B = W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<W<Done>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+}
+
+extend Start: Holder {}
+
+class W<T> {
+    inner: T
+}
+
+extend<T: Holder> W<T>: Base {
+    type B = T.B
+}
+
+extend<T: Holder> W<T>: Holder {}
+
+fn wrap<T: Holder>(t: T) -> W<T> {
+    W(inner: t)
+}
+
+fn count<S: Holder>(_s: S) -> i64 {
+    let xs: [S.B.B] = []
+    xs.len()
+}
+
+fn main() {
+    print(count(Start()))         // 0: the array is empty
+    print(wrap(Done(n: 4)).inner.n)   // 4: `W` is built too
+}

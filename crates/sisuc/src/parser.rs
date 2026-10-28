@@ -246,6 +246,37 @@ fn starts_postfix(kind: &TokenKind) -> bool {
     )
 }
 
+/// Whether `kind` begins an operand that `unary` and `primary` take. A `_`, a leading `.` and
+/// the magnitude of `i64::MIN` start no operand: they are errors there. A `{` does not count:
+/// after an operator it opens the body of an `if`, `while`, `for` or `match` more often than a
+/// block operand. A fix that writes an operator before such a token would swap one error for
+/// another.
+fn starts_operand(kind: &TokenKind) -> bool {
+    match kind {
+        TokenKind::Int(magnitude) => i64::try_from(*magnitude).is_ok(),
+        _ => matches!(
+            kind,
+            TokenKind::Float(_)
+                | TokenKind::Char(_)
+                | TokenKind::Str(_)
+                | TokenKind::StrHead(_)
+                | TokenKind::Ident(_)
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::SelfKw
+                | TokenKind::NoneKw
+                | TokenKind::Todo
+                | TokenKind::LParen
+                | TokenKind::LBracket
+                | TokenKind::If
+                | TokenKind::Loop
+                | TokenKind::Match
+                | TokenKind::Minus
+                | TokenKind::Bang
+        ),
+    }
+}
+
 fn compare_op(kind: &TokenKind) -> Option<CompareOp> {
     Some(match kind {
         TokenKind::Lt => CompareOp::Lt,
@@ -2488,10 +2519,28 @@ impl<'a> Parser<'a> {
         DiagnosticKind::ForeignRange { form, at }.into()
     }
 
-    /// A lone `|` where an expression stands: logical or is `||`.
-    fn lone_pipe(&self) -> Diagnostic {
+    /// A lone `|` where an operand should stand: `||` is no prefix operator, so it has no fix.
+    fn prefix_pipe(&self) -> Diagnostic {
         let at = self.peek().span;
         DiagnosticKind::UnexpectedCharacter { c: '|', at }.into()
+    }
+
+    /// A lone `&` or `|` after a complete operand. Logical and and logical or are `&&` and
+    /// `||`, so the report offers them, but only when an operand follows: `a & )` is no `a && )`,
+    /// and `if a & {` is no `if a && {`, because that `{` opens the body.
+    fn lone_infix(&self) -> Diagnostic {
+        let at = self.peek().span;
+        let c = if self.peek().kind == TokenKind::Amp {
+            '&'
+        } else {
+            '|'
+        };
+        // The `&` or `|` is not `Eof`, so the token after it exists.
+        if starts_operand(&self.tokens[self.pos + 1].kind) {
+            DiagnosticKind::LogicalOperatorWritten { c, at }.into()
+        } else {
+            DiagnosticKind::UnexpectedCharacter { c, at }.into()
+        }
     }
 
     /// The sub-patterns after the `(` or `{` at the next token, through `close`; the label
@@ -2964,8 +3013,8 @@ impl<'a> Parser<'a> {
                     }
                     .into());
                 }
-            } else if *kind == TokenKind::Pipe {
-                return Err(self.lone_pipe());
+            } else if matches!(kind, TokenKind::Amp | TokenKind::Pipe) {
+                return Err(self.lone_infix());
             } else {
                 return Ok(lhs);
             }
@@ -3332,8 +3381,14 @@ impl<'a> Parser<'a> {
                 }
                 .into());
             }
-            TokenKind::Pipe => return Err(self.lone_pipe()),
-            _ => return Err(self.expected("an expression")),
+            TokenKind::Pipe => return Err(self.prefix_pipe()),
+            _ => {
+                debug_assert!(
+                    !starts_operand(&token.kind),
+                    "`starts_operand` should list only tokens that `primary` takes"
+                );
+                return Err(self.expected("an expression"));
+            }
         };
         Ok(Expr {
             kind,
@@ -5020,26 +5075,118 @@ mod tests {
         }
     }
 
-    /// A lone `&` is a token for a bound's list only: anywhere else it is the lexer's old E0010,
-    /// with the unsafe fix to `&&`. The rows are an operator, an operand, an item, a binding and
-    /// a type, each a different "expected" path.
+    /// A lone `&` is a token for a bound's list only: anywhere else it is E0010 at the `&`. Only
+    /// an operator position can mean `&&`, so none of these rows offers a fix. The rows are an
+    /// operand, an item, a binding, a pattern, a loop, a type, a bound and an assignment, each a
+    /// different "expected" path.
     #[test]
-    fn a_lone_amp_outside_a_bound_should_be_an_unexpected_character() {
-        for (src, at, edit) in [
-            ("fn main() {\n    print(a & b)\n}", (2, 13), (24, 25)),
-            ("fn main() {\n    print(&a)\n}", (2, 11), (22, 23)),
-            ("&\nfn main() {}", (1, 1), (0, 1)),
-            ("fn main() {\n    let & = 1\n}", (2, 9), (20, 21)),
-            ("fn f(x: A & B) {}\nfn main() {}", (1, 11), (10, 11)),
+    fn a_lone_amp_outside_an_operator_position_should_be_an_unexpected_character() {
+        for (src, at) in [
+            ("fn main() {\n    print(&a)\n}", (2, 11)),
+            ("&\nfn main() {}", (1, 1)),
+            ("fn main() {\n    let & = 1\n}", (2, 9)),
+            ("fn main() {\n    let x & = 1\n}", (2, 11)),
+            ("fn f(x: A & B) {}\nfn main() {}", (1, 11)),
+            ("fn main() {\n    for & in [1] {}\n}", (2, 9)),
+            ("fn main() {\n    match 1 { & => 1 }\n}", (2, 15)),
+            ("fn main() {\n    let a = 1\n    a &= 2\n}", (3, 7)),
+            // A line start is no operator position: the line break ends the statement.
+            ("fn main() {\n    let a = 1\n    & 2\n}", (3, 5)),
+            // The `{` after the `&` opens the body, so no operand follows the `&`.
+            (
+                "fn main() {\n    if a & {\n        print(1)\n    }\n}",
+                (2, 10),
+            ),
+            (
+                "fn main() {\n    while a & {\n        print(1)\n    }\n}",
+                (2, 13),
+            ),
+            (
+                "fn main() {\n    for x in [1] & {\n        print(x)\n    }\n}",
+                (2, 18),
+            ),
+            (
+                "fn main() {\n    match a & {\n        _ => 1\n    }\n}",
+                (2, 13),
+            ),
+            (
+                "fn main() {\n    if let x = a & {\n        print(x)\n    }\n}",
+                (2, 18),
+            ),
+            (
+                "fn main() {\n    if a {\n    } else if b & {\n    }\n}",
+                (3, 17),
+            ),
+            // No operand follows the `&`.
+            ("fn main() {\n    print(1 & )\n}", (2, 13)),
+            ("fn main() {\n    let a = 1 &\n}", (2, 15)),
+            ("fn main() {\n    print(1 & _)\n}", (2, 13)),
+            // A literal that `&&` would not take either.
+            (
+                "fn main() {\n    print(1 & 9223372036854775808)\n}",
+                (2, 13),
+            ),
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::UnexpectedCharacter, "{src}");
+            assert_eq!(line_col(src, d.span().start()), at, "{src}");
+            assert_eq!(fix_edits(&d), None, "{src}");
+        }
+    }
+
+    /// A lone `|` outside an operator position is E0010 with no fix, as a lone `&` is.
+    #[test]
+    fn a_lone_pipe_outside_an_operator_position_should_be_an_unexpected_character() {
+        for (src, at) in [
+            ("fn main() {\n    print(|a)\n}", (2, 11)),
+            ("fn main() {\n    let a = |1\n}", (2, 13)),
+            ("fn main() {\n    print(1 | )\n}", (2, 13)),
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::UnexpectedCharacter, "{src}");
+            assert_eq!(line_col(src, d.span().start()), at, "{src}");
+            assert_eq!(fix_edits(&d), None, "{src}");
+        }
+    }
+
+    /// A lone `&` or `|` after a complete operand, with an operand after it, is most likely `&&`
+    /// or `||`. The fix is unsafe, and with it applied the source parses.
+    #[test]
+    fn a_lone_amp_or_pipe_between_operands_should_offer_the_logical_operator() {
+        for (src, at, edit, with) in [
+            ("fn main() {\n    print(a & b)\n}", (2, 13), (24, 25), "&&"),
+            ("fn main() {\n    print(a | b)\n}", (2, 13), (24, 25), "||"),
+            ("fn main() {\n    if a & b {}\n}", (2, 10), (21, 22), "&&"),
+            ("fn main() {\n    return a | b\n}", (2, 14), (25, 26), "||"),
+            (
+                "fn main() {\n    let c = a < b & !c\n}",
+                (2, 19),
+                (30, 31),
+                "&&",
+            ),
+            (
+                "fn main() {\n    let c = a + b | -c\n}",
+                (2, 19),
+                (30, 31),
+                "||",
+            ),
+            // The operand is on the next line: the `&` ends no statement.
+            (
+                "fn main() {\n    let c = a &\n        b\n}",
+                (2, 15),
+                (26, 27),
+                "&&",
+            ),
         ] {
             let d = parse_diagnostic(src);
             assert_eq!(d.code(), Code::UnexpectedCharacter, "{src}");
             assert_eq!(line_col(src, d.span().start()), at, "{src}");
             assert_eq!(
                 fix_edits(&d),
-                Some((false, vec![(edit.0, edit.1, "&&".to_string())])),
+                Some((false, vec![(edit.0, edit.1, with.to_string())])),
                 "{src}"
             );
+            assert!(parsed(&apply_fix(src, &d)).diagnostics.is_empty(), "{src}");
         }
     }
 
@@ -6174,11 +6321,12 @@ mod tests {
                 (2, 15),
                 Some((false, main("let y = a || b"))),
             ),
+            // `||` is no prefix operator, so a `|` that starts an operand has no fix.
             (
                 main("let y = |true"),
                 Code::UnexpectedCharacter,
                 (2, 13),
-                Some((false, main("let y = ||true"))),
+                None,
             ),
             (main("let r = 0..=3"), Code::RangeOutsideFor, (2, 14), None),
             // A line that starts with `|`, `=>` or a guard's `if` continues the arm above, and

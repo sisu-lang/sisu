@@ -20,6 +20,10 @@ type Def = (Span, Definition, Option<(Type, usize)>);
 /// An `extend` block whose target is a class or an enum.
 pub(super) struct Extension {
     pub(super) holder: Holder,
+    /// The `extend` keyword through the target, as written: where W0012 reports an unused block.
+    pub(super) header: Span,
+    /// The target, as written.
+    pub(super) written: Span,
     pub(super) target: Type,
     /// The block's type parameters, which are the `Param`s of `target`, numbered from 0.
     pub(super) type_params: Vec<Symbol>,
@@ -137,6 +141,8 @@ impl<'a> Checker<'_> {
             }
             self.extensions.push(Extension {
                 holder,
+                header: extend.keyword.to(extend.target.bare),
+                written: extend.target.bare,
                 target,
                 type_params: params,
                 bounds,
@@ -145,6 +151,7 @@ impl<'a> Checker<'_> {
                 methods,
                 duplicate: false,
             });
+            self.record_block_bounds(at);
         } else if let Some(holder) = target.and_then(holder_of) {
             // The methods of a failed block may have given the target methods.
             let name = self.holder_name(holder);

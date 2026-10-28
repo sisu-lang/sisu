@@ -1626,6 +1626,89 @@ fn build_should_exit_0_and_print_a_warning_summary_when_the_program_has_only_a_w
     assert_eq!(String::from_utf8_lossy(&run.stdout), "3\n");
 }
 
+/// The program of issue 226: `Leaf` chooses `Outer<..Outer<Leaf>..>` with `levels` levels, and
+/// `W<T>` chooses `T.B.B.B`, which closes a loop that is `levels` choices long. The choice of `W`
+/// is on line 17, column 14.
+fn long_choice_loop(levels: usize) -> String {
+    let nested = format!("{}Leaf{}", "Outer<".repeat(levels), ">".repeat(levels));
+    format!(
+        "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Leaf {{}}\nextend Leaf: Base {{\n    type B = {nested}\n}}\nextend Leaf: Holder {{}}\nclass Outer<T> {{}}\nextend<T: Holder> Outer<T>: Base {{\n    type B = W<T>\n}}\nextend<T: Holder> Outer<T>: Holder {{}}\nclass W<T> {{}}\nextend<T: Holder> W<T>: Base {{\n    type B = T.B.B.B\n}}\nextend<T: Holder> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B.B.B] = []\n}}\nfn main() {{\n    get(Leaf())\n}}\n"
+    )
+}
+
+/// GIVEN the program of issue 226, whose choices close a loop after 17 choices
+/// WHEN it is built
+/// THEN it exits 1 with E0030 at 17:14, and the compiler does not panic
+#[test]
+fn build_should_report_e0030_for_a_loop_of_17_choices_and_not_panic() {
+    let out = run_on("loop_of_17_choices", &long_choice_loop(17), &["build"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("error[E0030]"), "{stderr}");
+    assert!(stderr.contains("loop_of_17_choices.sisu:17:14"), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}
+
+/// GIVEN the program of issue 226 with 200 levels, so that the loop closes at a type that the
+/// checker does not follow
+/// WHEN it is checked and then built
+/// THEN the check exits 0, and the build exits 1 with E0030 at 17:14 and does not panic
+#[test]
+fn build_should_report_e0030_for_a_loop_that_only_the_instance_meets_and_not_panic() {
+    let source = long_choice_loop(200);
+    let checked = check("loop_of_200_choices_check", &source);
+    assert_eq!(checked.status.code(), Some(0), "{checked:?}");
+    let out = run_on("loop_of_200_choices", &source, &["build"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("error[E0030]"), "{stderr}");
+    assert!(
+        stderr.contains("loop_of_200_choices.sisu:17:14"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "{stderr}");
+}
+
+/// GIVEN the program of issue 226 with 40 levels, whose type for the loop is 287 bytes long
+/// WHEN `sisu check` runs on it
+/// THEN it exits 1 with E0030 at 17:14, and the name of the associated type ends with `.B`
+#[test]
+fn check_should_end_the_name_of_a_long_associated_type_with_its_own_name() {
+    let out = check("loop_of_40_choices", &long_choice_loop(40));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("loop_of_40_choices.sisu:17:14"), "{stderr}");
+    let first = stderr.lines().next().expect("an error line");
+    let name = first.split('`').nth(1).expect("a type name in backticks");
+    assert!(name.starts_with("W<Outer<Outer<"), "{first}");
+    assert_eq!(name.rsplit('.').next(), Some("B"), "{first}");
+}
+
+/// GIVEN a chain that ends but is 129 steps long: `W<T>` chooses the `B` of `T`, `Done` chooses
+/// itself, and `main` calls a generic function with `W<..W<Done>..>` of 129 levels
+/// WHEN it is built
+/// THEN it exits 1 with E0030 at 12:14, and the message names the type that the walk began at,
+/// which needs the steps, and the name is cut but still ends in the name `.B` of the type
+#[test]
+fn build_should_name_the_start_of_a_chain_that_needs_more_than_128_steps() {
+    let nested = format!("{}Done{}", "W<".repeat(129), ">".repeat(129));
+    let source = format!(
+        "interface Base {{\n    type B: Holder\n}}\ninterface Holder: Base {{}}\nclass Done {{}}\nextend Done: Base {{\n    type B = Done\n}}\nextend Done: Holder {{}}\nclass W<T> {{}}\nextend<T: Holder> W<T>: Base {{\n    type B = T.B\n}}\nextend<T: Holder> W<T>: Holder {{}}\nfn get<S: Holder>(_s: S) {{\n    let _x: [S.B] = []\n}}\nfn main() {{\n    get({nested}())\n}}\n"
+    );
+    let out = run_on("chain_of_129_steps", &source, &["build"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("chain_of_129_steps.sisu:12:14"), "{stderr}");
+    let first = stderr.lines().next().expect("an error line");
+    assert!(first.starts_with("error[E0030]: "), "{first}");
+    // The name is the first text in backticks. It is the type that the walk began at: not the one
+    // it stopped at (`W<Done>.B`), and it ends with the name of the associated type.
+    let name = first.split('`').nth(1).expect("a type name in backticks");
+    assert!(name.starts_with("W<W<W<W<"), "{first}");
+    assert_eq!(name.rsplit('.').next(), Some("B"), "{first}");
+    assert_ne!(name, "W<Done>.B", "{first}");
+}
+
 /// GIVEN a file with an error
 /// WHEN `sisu check` runs with and without `--format text`
 /// THEN both runs exit 1, print the same stderr, and it starts with the text error E0001

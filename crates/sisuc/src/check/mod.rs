@@ -32,6 +32,7 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ast;
+use crate::conformance::StuckChoices;
 use crate::diagnostic::{
     BuiltIn, Conversion, Definition, Diagnostic, DiagnosticKind, Earlier, MainForm, MismatchFix,
     MismatchSource, Severity, Unbuilt, UnknownForm, suggestion,
@@ -46,6 +47,7 @@ use enums::{EnumInfo, HoldsTable};
 use extend::Extension;
 use interface::{Bound, InterfaceInfo, PendingBound, Required, Scope, Slot};
 use prelude::PRELUDE;
+pub(crate) use unused_names::is_judged;
 use unused_names::{Owner, Pending, Use, Used};
 
 /// An expression whose rule failed; its diagnostic is recorded. `ty` is its type when
@@ -349,6 +351,8 @@ thread_local! {
     pub(super) static DECLARED_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many declarations of an interface `probe_associated` has read, on this thread.
     pub(super) static PROBE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `nesting` has visited on this thread, including those it took from its memo.
+    pub(super) static NESTING_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many scopes (type parameters with their bounds) have been kept on this thread.
     pub(super) static SCOPES_KEPT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many closure entries have been indexed, and how many entries of an interface have been
@@ -414,10 +418,11 @@ struct Checker<'src> {
     conformance_bounds: FxHashMap<(tir::InterfaceId, usize), ParamBounds>,
     /// Where each choice that writes an associated type is written, by conformance (interface and
     /// place among the interface's) and place of the associated type among the interface's.
-    choice_ats: FxHashMap<(tir::InterfaceId, usize, usize), Span>,
-    /// The choices that `normalize` found to need their own associated type, each with the first
-    /// type found for it; reported once all bodies are checked (see `report_loops`).
-    loops: std::cell::RefCell<FxHashMap<(tir::InterfaceId, usize, usize), Type>>,
+    choice_ats: FxHashMap<tir::ChoicePlace, Span>,
+    /// The choices that `normalize` found to need their own associated type, or too many steps,
+    /// each with the first type found for it and why; reported once all bodies are checked (see
+    /// `report_loops`).
+    loops: std::cell::RefCell<StuckChoices>,
     /// The associated types that a bound of each interface gives its type, with the ones that the
     /// interfaces it inherits declare, indexed by name: built when first asked for, once every
     /// interface has its inheritance (`interfaces_resolved`), and kept for the program.
@@ -431,6 +436,8 @@ struct Checker<'src> {
     /// The associated types that `probe_associated` has normalized: two bounds that inherit one
     /// interface give it once.
     probed_assoc: FxHashSet<Type>,
+    /// How many associated types the probe of the bound being checked may still normalize.
+    probe_budget: usize,
     /// The answers of `conforms` for a type with no type parameter, which no body changes.
     conformed: FxHashMap<(Type, tir::InterfaceId, TypeArgs), bool>,
     /// The place among `extensions` of the first block that covers the receiver of the call being
@@ -789,7 +796,7 @@ pub(crate) fn check<'src>(
     let interfaces = checker.lowered_interfaces();
     let enums = checker.lowered_enums;
     let (instantiates, prelude) = (checker.instantiates, checker.prelude);
-    let conformances = checker.conformances;
+    let (conformances, choice_ats) = (checker.conformances, checker.choice_ats);
     let program = functions
         .into_iter()
         .collect::<Option<_>>()
@@ -803,6 +810,7 @@ pub(crate) fn check<'src>(
             prelude,
             interfaces,
             conformances,
+            choice_ats,
         });
     // A use of a broken item poisons without a diagnostic of its own.
     debug_assert!(
@@ -914,6 +922,7 @@ impl<'src> Checker<'src> {
             interfaces_resolved: false,
             probed_types: FxHashSet::default(),
             probed_assoc: FxHashSet::default(),
+            probe_budget: 0,
             conformed: FxHashMap::default(),
             failed_block: None,
             lowered_enums: Vec::new(),
@@ -1594,7 +1603,6 @@ impl Checker<'_> {
         let conformance = sig.conformance;
         // The parameters of a method's owner: its class's, or its `extend` block's.
         let owner_params = sig.type_params.len() - sig.own;
-        let extension = sig.extension.is_some();
         let mut fresh = Body {
             owner: Some(Owner::Func(id)),
             ret,
@@ -1613,10 +1621,9 @@ impl Checker<'_> {
         bounds.extend(sig.bounds.iter().cloned());
         fresh.set_bounds(0, bounds);
         let ((params, body), state) = self.with_body(fresh, |c| {
-            // The signature's bounds name interfaces for this function, and a method of an
-            // `extend` block also names those of the block's parameters.
-            let first = if extension { 0 } else { owner_params };
-            for place in first..c.body.bounds.len() {
+            // The signature's bounds name interfaces for this function. The bounds of a block's
+            // parameters are named once, by the block (`record_block_bounds`).
+            for place in owner_params..c.body.bounds.len() {
                 for bound in c.body.bounds[place].clone() {
                     c.record(Used::Interface(bound.interface), bound.at);
                 }
@@ -2039,4 +2046,4 @@ fn defined_twice(kind: Definition, name: &ast::Ident, first: Earlier) -> Diagnos
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

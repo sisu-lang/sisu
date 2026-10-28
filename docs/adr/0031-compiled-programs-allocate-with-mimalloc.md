@@ -120,8 +120,8 @@ they touch memory the machine cannot back.
   which [ADR 0009](0009-runtime-owns-io.md) otherwise reserves for the runtime.
 - **A double free no longer aborts a default build,** as glibc's tcache check
   made it do. The Linux harness's plain runs at `-O0` and `-O2` are system
-  builds and still abort on one; the `--rc-checks` runs and every run on macOS
-  use mimalloc and do not.
+  builds and still abort on one; the `--rc-checks` runs, the Linux `-O2` run on
+  mimalloc and every run on macOS use mimalloc and do not.
 - **Valgrind on a default build fails.** mimalloc v3 runs `mi_process_init`
   from an ELF constructor before `main`. In libmimalloc-sys 0.1.49 (mimalloc
   v3.3.2), `unix_detect_thp` reads `/sys/kernel/mm/transparent_hugepage/enabled`

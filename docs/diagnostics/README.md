@@ -7,6 +7,11 @@ explanation in this directory, which `sisu explain <code>` prints as it
 stands. The code may be in any case. Links in an explanation are relative to
 `docs/diagnostics/`.
 
+The tests keep copies of each explanation: the `.json` file of each case in
+`crates/sisuc/tests/diagnostics/` and `site/programs/diagnostics/` that
+reports the code, and `site/programs/explanations/<code>.json`. After you edit an explanation, run
+`make bless` and commit the changed copies with it.
+
 | Code | Severity | Title |
 | --- | --- | --- |
 | [E0001](E0001.md) | error | assignment to something that cannot change |
@@ -175,7 +180,7 @@ stands. The code may be in any case. Links in an explanation are relative to
 | [W0009](W0009.md) | warning | `while` with the condition `true` |
 | [W0010](W0010.md) | warning | function that calls itself on every path |
 | [W0011](W0011.md) | warning | `while` condition that nothing in the loop changes |
-| [W0012](W0012.md) | warning | function, method, class, enum, interface or constant that no live code uses |
+| [W0012](W0012.md) | warning | function, method, class, enum, interface, `extend` block or constant that no live code uses |
 | [W0013](W0013.md) | warning | field that no live code reads, or variant that no live code builds |
 | [W0014](W0014.md) | warning | local or parameter that nothing reads |
 

@@ -13,7 +13,7 @@ mod enums;
 mod floats;
 mod for_loops;
 mod generics;
-mod interfaces;
+pub(crate) mod interfaces;
 mod loop_condition;
 mod optionals;
 mod patterns;
@@ -56,12 +56,7 @@ pub(super) fn checked(src: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     };
     let (program, mut ds) = check(&parse_ok(src), &prelude, src, &[]);
     if !UNUSED.get() {
-        ds.retain(|d| {
-            !matches!(
-                d.code(),
-                Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable
-            )
-        });
+        ds.retain(|d| !is_judged(d));
     }
     (program, ds)
 }
