@@ -812,7 +812,6 @@ crates/sisuc/src/fuzz.rs::reports_in_color_text_then_json
 crates/sisuc/src/fuzz_program.rs::a_clean_program_passes
 crates/sisuc/src/fuzz_program.rs::a_compiler_panic_leaves_the_dump
 crates/sisuc/src/fuzz_program.rs::a_dump_it_cannot_write_is_reported
-crates/sisuc/src/fuzz_program.rs::a_failure_prints_the_program
 crates/sisuc/src/fuzz_program.rs::a_hang_fails_property_3
 crates/sisuc/src/fuzz_program.rs::a_panic_passes_when_every_build_agrees
 crates/sisuc/src/fuzz_program.rs::a_rejected_program_fails_property_1

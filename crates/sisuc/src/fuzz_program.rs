@@ -1086,8 +1086,12 @@ mod tests {
         ]);
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
-        // One line from each pass of the innermost loop: every loop ran to its bound.
-        assert_eq!(String::from_utf8_lossy(&stdout).lines().count(), 8 * 8 * 8);
+        // One line from each pass of the innermost loop: every loop ran to its bound. The two
+        // more lines are the ones that `lang_both` prints.
+        assert_eq!(
+            String::from_utf8_lossy(&stdout).lines().count(),
+            8 * 8 * 8 + 2
+        );
     }
 
     /// Set in a child process that one of the tests below starts from this binary.
@@ -1133,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_prints_the_program() {
+    fn a_failure_should_print_the_program() {
         if env::var_os(CHILD).is_some() {
             on_stack(|| {
                 FORCE.set(Some(Force::Stdout));
@@ -1142,17 +1146,19 @@ mod tests {
             return;
         }
         let scratch = Scratch::new();
-        let out = child("a_failure_prints_the_program", &scratch.0);
+        let out = child("a_failure_should_print_the_program", &scratch.0);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{stderr}");
         let g = generate(&[]);
         assert_record(&stderr, "property 3: ", &g, &scratch.0);
         let builds = [
             stderr.find("==> stdin\n"),
-            // Output without a final line break gets one; the empty input's program, an empty
-            // `main`, prints nothing, which gets none.
+            // Output without a final line break gets one. The empty input's program prints the
+            // two lines of `lang_both`.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
-            stderr.find("==> program --rc-checks stdout\n==> program --rc-checks stderr\n"),
+            stderr.find(
+                "==> program --rc-checks stdout\nRanked\n[1, 2]\n==> program --rc-checks stderr\n",
+            ),
             stderr.find("program fuzzer: property 3 failed"),
         ];
         assert!(
