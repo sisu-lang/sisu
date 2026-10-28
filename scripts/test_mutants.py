@@ -12,12 +12,22 @@ import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mutants.sh')
 # A pre-commit hook runs these tests with GIT_DIR and its kin set to the outer repository.
-ENV = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
-# The fake cargo mutants records its jobs and niceness, then writes the result files that
-# the test names in FAKE_CAUGHT, FAKE_MISSED and FAKE_TIMEOUT, and exits with FAKE_EXIT.
+# A caller's LOG, CARGO_MUTANTS_JOBS and CARGO_MUTANTS_OUTPUT would change what the script does.
+ENV = {k: v for k, v in os.environ.items()
+       if not k.startswith('GIT_') and k not in ('LOG', 'CARGO_MUTANTS_JOBS', 'CARGO_MUTANTS_OUTPUT')}
+# The fake cargo mutants records its jobs, niceness and arguments, and whether an old
+# mutants.out was there. Unless FAKE_WRITE is 0, it then writes a new mutants.out with the
+# result files that the test names in FAKE_CAUGHT, FAKE_MISSED and FAKE_TIMEOUT. It exits
+# with FAKE_EXIT. The sleep keeps lock.json strictly newer than the script's start mark.
 FAKE_CARGO = """#!/usr/bin/env bash
 echo "$CARGO_MUTANTS_JOBS $(nice)" >seen
+echo "$*" >args
+[[ -e mutants.out/missed.txt ]] && touch saw_old_out
+sleep 0.05
+[[ ${FAKE_WRITE:-1} == 0 ]] && exit "${FAKE_EXIT:-0}"
+rm -rf mutants.out
 mkdir -p mutants.out
+touch mutants.out/lock.json
 for kind in caught missed timeout; do
   var=FAKE_${kind^^}
   for ((i = 0; i < ${!var:-0}; i++)); do echo "mutant $i" >>mutants.out/$kind.txt; done
@@ -56,15 +66,18 @@ class Mutants(unittest.TestCase):
         with open(os.path.join(self.repo, 'a.rs'), 'w', encoding='utf-8') as f:
             f.write(text)
 
-    def mutate(self, log=True, **fake):
-        env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', TMPDIR=self.repo,
+    def mutate(self, *args, log=True, env=None, **fake):
+        env = dict(ENV, PATH=f'{self.bin}:{ENV["PATH"]}', TMPDIR=self.repo, **(env or {}),
                    **{f'FAKE_{k.upper()}': str(v) for k, v in fake.items()})
         if log:
             env['LOG'] = self.log
-        return subprocess.run(['bash', 'scripts/mutants.sh', 'HEAD~1'], cwd=self.repo,
+        return subprocess.run(['bash', 'scripts/mutants.sh', 'HEAD~1', *args], cwd=self.repo,
                               capture_output=True, text=True, env=env)
 
-    def last_line(self, run):
+    def seen(self, name):
+        return os.path.exists(os.path.join(self.repo, name))
+
+    def last_line(self):
         with open(self.log, encoding='utf-8') as f:
             return f.read().splitlines()[-1]
 
@@ -77,8 +90,8 @@ class Mutants(unittest.TestCase):
         run = self.mutate()
         self.assertEqual(run.returncode, 0)
         self.assertEqual(run.stdout, '')
-        self.assertEqual(self.last_line(run), f'mutation-test: PASS: no Rust changes since HEAD~1 (HEAD {self.head()})')
-        self.assertFalse(os.path.exists(os.path.join(self.repo, 'seen')))
+        self.assertEqual(self.last_line(), f'mutation-test: PASS: no Rust changes since HEAD~1 (HEAD {self.head()})')
+        self.assertFalse(self.seen('seen'))
 
     def test_a_second_run_should_fail_and_leave_the_first_runs_log_alone(self):
         with open(self.log, 'w', encoding='utf-8') as f:
@@ -96,27 +109,27 @@ class Mutants(unittest.TestCase):
         self.rust_commit()
         run = self.mutate(caught=3, timeout=1, exit=3)
         self.assertEqual(run.returncode, 0)
-        self.assertEqual(self.last_line(run),
+        self.assertEqual(self.last_line(),
                          f'mutation-test: PASS: 3 caught, 0 unviable, 0 missed, 1 timeouts (HEAD {self.head()})')
 
     def test_a_missed_mutant_should_fail_even_with_a_timeout(self):
         self.rust_commit()
         run = self.mutate(caught=1, missed=2, timeout=1, exit=3)
         self.assertEqual(run.returncode, 1)
-        self.assertEqual(self.last_line(run),
+        self.assertEqual(self.last_line(),
                          f'mutation-test: FAIL: 1 caught, 0 unviable, 2 missed, 1 timeouts (HEAD {self.head()})')
 
     def test_a_failed_cargo_run_should_fail_and_name_its_exit_code(self):
         self.rust_commit()
         run = self.mutate(exit=4)
         self.assertEqual(run.returncode, 1)
-        self.assertIn('(cargo mutants exit 4, see mutants.out/)', self.last_line(run))
+        self.assertIn('(cargo mutants exit 4, see the output above)', self.last_line())
 
     def test_uncommitted_rust_should_show_in_the_summary(self):
         self.rust_commit()
         self.write_rust('fn main() { let _x = 1; }\n')
         run = self.mutate(caught=1)
-        self.assertTrue(self.last_line(run).endswith(f'(HEAD {self.head()} with uncommitted changes)'))
+        self.assertTrue(self.last_line().endswith(f'(HEAD {self.head()} with uncommitted changes)'))
 
     def test_cargo_should_run_niced_with_two_jobs_by_default(self):
         self.rust_commit()
@@ -124,12 +137,53 @@ class Mutants(unittest.TestCase):
         with open(os.path.join(self.repo, 'seen'), encoding='utf-8') as f:
             self.assertEqual(f.read().strip(), '2 19')
 
-    def test_a_stale_mutants_out_should_not_count_toward_the_next_run(self):
+    def test_a_run_without_new_output_should_pass_and_leave_the_old_mutants_out_alone(self):
         self.rust_commit()
         self.mutate(missed=5, exit=2)
-        run = self.mutate(caught=1)
+        run = self.mutate('--iterate', write=0)
         self.assertEqual(run.returncode, 0)
-        self.assertIn('1 caught, 0 unviable, 0 missed', self.last_line(run))
+        self.assertEqual(self.last_line(), f'mutation-test: PASS: no mutant tested (HEAD {self.head()})')
+        self.assertTrue(self.seen('saw_old_out'))
+        self.assertTrue(self.seen('mutants.out/missed.txt'))
+
+    def test_a_failed_run_without_new_output_should_fail_and_name_its_exit_code(self):
+        self.rust_commit()
+        run = self.mutate(write=0, exit=2)
+        self.assertEqual(run.returncode, 1)
+        self.assertEqual(self.last_line(), 'mutation-test: FAIL: no mutant tested (cargo mutants exit 2, '
+                                           f'see the output above) (HEAD {self.head()})')
+
+    def test_an_argument_that_tests_nothing_should_end_with_not_run_and_keep_the_exit_code(self):
+        self.rust_commit()
+        for arg in ('--list', '--list-files', '--check'):
+            with self.subTest(arg):
+                run = self.mutate(arg, write=0, exit=0)
+                self.assertEqual(run.returncode, 0)
+                self.assertEqual(self.last_line(), f'mutation-test: NOT RUN: {arg} tests no mutant')
+                self.assertEqual(self.mutate(arg, write=0, exit=2).returncode, 2)
+
+    def test_check_should_not_count_its_output_as_a_pass(self):
+        self.rust_commit()
+        run = self.mutate('--check', exit=0)
+        self.assertEqual(run.returncode, 0)
+        self.assertIn('NOT RUN', self.last_line())
+
+    def test_an_argument_that_moves_the_output_should_fail_without_running_cargo(self):
+        self.rust_commit()
+        for args, env in ((('-o', 'x'), {}), (('--output=x',), {}), (('-d', 'x'), {}), (('--dir', 'x'), {}),
+                          (('--manifest-path=x',), {}), ((), {'CARGO_MUTANTS_OUTPUT': 'x'})):
+            with self.subTest(args=args, env=env):
+                run = self.mutate(*args, env=env)
+                self.assertEqual(run.returncode, 1)
+                self.assertIn('mutation-test: FAIL:', self.last_line())
+                self.assertNotIn('(HEAD', self.last_line())
+                self.assertFalse(self.seen('seen'))
+
+    def test_an_argument_after_double_dash_should_go_to_cargo_test(self):
+        self.rust_commit()
+        run = self.mutate('--', '-o', 'x', caught=1)
+        self.assertEqual(run.returncode, 0)
+        self.assertTrue(self.seen('seen'))
 
 
 if __name__ == '__main__':

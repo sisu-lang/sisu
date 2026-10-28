@@ -16,8 +16,8 @@ spec.loader.exec_module(diff_brief)
 ENV = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
 
 
-class VerifyMismatch(unittest.TestCase):
-    """verify_mismatch on logs of a two-commit repository, whose range ends at HEAD."""
+class LogMismatch(unittest.TestCase):
+    """log_mismatch on logs of a two-commit repository, whose range ends at HEAD."""
 
     def setUp(self):
         self.repo = tempfile.mkdtemp()
@@ -34,20 +34,20 @@ class VerifyMismatch(unittest.TestCase):
         log = Path(self.repo) / 'mutation.log'
         log.write_text(text)
         with mock.patch.dict(os.environ, ENV, clear=True):
-            return diff_brief.verify_mismatch(log, self.repo, 'HEAD')
+            return diff_brief.log_mismatch(log, self.repo, 'HEAD')
 
-    def test_a_verdict_on_the_head_should_pass(self):
+    def test_a_summary_on_the_head_should_pass(self):
         self.assertIsNone(self.mismatch(f'mutants\nmutation-test: FAIL: 0 caught, 0 unviable, 2 missed, 0 timeouts (HEAD {self.head})\n'))
 
-    def test_a_verdict_on_an_earlier_commit_should_fail(self):
+    def test_a_summary_on_an_earlier_commit_should_fail(self):
         why = self.mismatch(f'mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.base})\n')
         self.assertIn(f'measured {self.base[:8]}, not HEAD', why)
 
-    def test_a_verdict_on_uncommitted_changes_should_fail(self):
+    def test_a_summary_on_uncommitted_changes_should_fail(self):
         why = self.mismatch(f'mutation-test: PASS: 2 caught, 0 unviable, 0 missed, 0 timeouts (HEAD {self.head} with uncommitted changes)\n')
         self.assertIn('measured uncommitted changes', why)
 
-    def test_a_log_without_a_verdict_should_fail(self):
+    def test_a_log_without_a_summary_should_fail(self):
         self.assertIn('no summary line', self.mismatch('coverage\nmutants still running\n'))
 
 

@@ -192,7 +192,7 @@ the base go to `cargo mutants`:
 ```console
 $ make mutation-test                        # changes since main
 $ make mutation-test BASE=feat/m3-writes    # changes since the stage below
-$ scripts/mutants.sh HEAD~1 --list          # list the mutants, run nothing
+$ scripts/mutants.sh HEAD~1 --list          # list the mutants, test none
 ```
 
 The diff includes uncommitted edits. A new file counts once `git add` tracks
@@ -210,7 +210,13 @@ Rust changes. PASS needs no missed mutant; a mutant that hangs the tests until
 cargo-mutants' timeout counts as caught. A mutant proven equivalent goes into
 `exclude_re` in `.cargo/mutants.toml`, with the proof in a comment, so later
 runs skip it. A diff that changes no `.rs` file passes at once, with nothing
-run.
+run. A run that writes no new `mutants.out` (for example, `--in-diff` finds no
+mutant) passes with `no mutant tested`; cargo-mutants leaves the old
+`mutants.out` alone, and the script does not read it.
+An argument that tests no mutant (`--list`, `--list-files`, `--check`) ends
+with `mutation-test: NOT RUN` and the exit status of cargo-mutants. The summary
+reads `./mutants.out`, so the script refuses `-o`, `--output`, `-d`, `--dir`,
+`--manifest-path` and the variable `CARGO_MUTANTS_OUTPUT`, which move it.
 
 One `make mutation-test` runs at a time in a worktree; a second one prints
 `mutation-test: FAIL: another make mutation-test is running in this worktree`

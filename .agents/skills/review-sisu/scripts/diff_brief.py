@@ -42,7 +42,7 @@ SKILLS = {
 }
 
 
-def verify_mismatch(log, repo, head):
+def log_mismatch(log, repo, head):
     """Why the summary line of `log` does not describe commit `head` of `repo`, or None."""
     lines = [line for line in log.read_text().splitlines() if line.startswith('mutation-test: ')]
     found = re.search(r'\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$', lines[-1]) if lines else None
@@ -69,7 +69,7 @@ def main():
     log = Path(a.mutation_log).resolve() if a.mutation_log else None
     if log and not log.is_file():
         sys.exit(f'diff_brief: no mutation-test log at {log}')
-    if log and (why := verify_mismatch(log, a.repo, a.range.split('..')[-1])):
+    if log and (why := log_mismatch(log, a.repo, a.range.split('..')[-1])):
         sys.exit(f'diff_brief: {why}')
 
     shown = subprocess.run(['git', '-C', str(TEMPLATE.parent), 'show', MAIN_TEMPLATE],
