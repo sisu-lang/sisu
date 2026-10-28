@@ -382,8 +382,8 @@ impl Checker<'_> {
                         c.stray(args);
                         return Err(value);
                     }
-                    // A built-in's generated `to_string` reports its own list.
-                    deferred = method.name.as_str() != "to_string"
+                    // A built-in's generated `to_string`, `eq` and `less` report their own list.
+                    deferred = !matches!(method.name.as_str(), "to_string" | "eq" | "less")
                         && type_of(&checked).is_some_and(|ty| {
                             matches!(
                                 ty.kind(),
@@ -441,7 +441,7 @@ impl Checker<'_> {
         let method = site.name;
         // The arguments are not part of an assignment target's chain; `expr` restores the flag.
         let target = std::mem::take(&mut self.body.in_target);
-        let receiver = match self.generated_operator(span, receiver, method, args) {
+        let receiver = match self.generated_operator(span, receiver, site, args) {
             Ok(checked) => return checked,
             Err(receiver) => receiver,
         };
@@ -515,14 +515,16 @@ impl Checker<'_> {
     /// `receiver.eq(other)` or `receiver.less(other)` on a type whose `Eq` or `Ord` the compiler
     /// writes: the operator itself, as `==` and `<` make it. `Err` gives the receiver back when
     /// the call is something else: a method that the type writes, which wins (ADR 0023), or a
-    /// method of another name. The arguments are checked as for any method: one count, no label.
+    /// method of another name. The arguments are checked as for any method: one count, no label,
+    /// and the call takes no type argument.
     fn generated_operator(
         &mut self,
         span: Span,
         receiver: Checked,
-        method: &ast::Ident,
+        site: Site<'_>,
         args: &[ast::Arg],
     ) -> Result<Checked, Checked> {
+        let method = site.name;
         let interface = match method.name.as_str() {
             "eq" => self.lang.eq,
             "less" => self.lang.ord,
@@ -544,6 +546,9 @@ impl Checker<'_> {
             || self.lang_path(ty, interface) != LangPath::Generated
         {
             return Err(receiver);
+        }
+        if !site.written.is_empty() {
+            self.not_generic(method.name, site.angles);
         }
         if args.len() != 1 {
             let d = DiagnosticKind::ArgumentCount {

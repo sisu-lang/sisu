@@ -1,0 +1,86 @@
+error[E0137]: `eq` takes no type arguments
+ --> E0137-generated-operator.sisu:8:18
+  |
+8 |     print(true.eq<Missing>(false))
+  |                  ^^^^^^^^^
+  |
+help: remove the type arguments
+  |
+8 -     print(true.eq<Missing>(false))
+8 +     print(true.eq(false))
+  |
+
+error[E0137]: `eq` takes no type arguments
+ --> E0137-generated-operator.sisu:9:17
+  |
+9 |     print('a'.eq<i64>('b'))
+  |                 ^^^^^
+  |
+help: remove the type arguments
+  |
+9 -     print('a'.eq<i64>('b'))
+9 +     print('a'.eq('b'))
+  |
+
+error[E0137]: `less` takes no type arguments
+  --> E0137-generated-operator.sisu:10:19
+   |
+10 |     print('a'.less<i64>('b'))
+   |                   ^^^^^
+   |
+help: remove the type arguments
+   |
+10 -     print('a'.less<i64>('b'))
+10 +     print('a'.less('b'))
+   |
+
+error[E0137]: `eq` takes no type arguments
+  --> E0137-generated-operator.sisu:11:18
+   |
+11 |     print(byte.eq<Missing>(byte))
+   |                  ^^^^^^^^^
+   |
+help: remove the type arguments
+   |
+11 -     print(byte.eq<Missing>(byte))
+11 +     print(byte.eq(byte))
+   |
+
+error[E0137]: `less` takes no type arguments
+  --> E0137-generated-operator.sisu:12:20
+   |
+12 |     print(byte.less<i64>(byte))
+   |                    ^^^^^
+   |
+help: remove the type arguments
+   |
+12 -     print(byte.less<i64>(byte))
+12 +     print(byte.less(byte))
+   |
+
+error[E0137]: `eq` takes no type arguments
+  --> E0137-generated-operator.sisu:13:23
+   |
+13 |     print(Light.Red.eq<i64>(Light.Red))
+   |                       ^^^^^
+   |
+help: remove the type arguments
+   |
+13 -     print(Light.Red.eq<i64>(Light.Red))
+13 +     print(Light.Red.eq(Light.Red))
+   |
+
+error[E0137]: `eq` takes no type arguments
+  --> E0137-generated-operator.sisu:14:19
+   |
+14 |     print(maybe.eq<Missing>(1))
+   |                   ^^^^^^^^^
+   |
+help: remove the type arguments
+   |
+14 -     print(maybe.eq<Missing>(1))
+14 +     print(maybe.eq(1))
+   |
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0137
