@@ -92,6 +92,8 @@ thread_local! {
     pub(super) static BELLMAN_FORD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nodes the search for a cycle has read to gather the nodes of the components.
     pub(super) static GATHER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many array and optional levels `Graph::core` has taken off a type on this thread.
+    pub(super) static CORE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The nodes and the edges of the component that the last search for a cycle read.
     pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
@@ -156,6 +158,8 @@ struct Graph {
     /// parameter reaches the node of each type that mentions it, so an argument needs one edge
     /// however many parameters it mentions, and each type of a declaration is looked at once.
     typed: FxHashMap<(usize, Type), usize>,
+    /// By array or optional type, the type with its outer levels taken off (`core`).
+    cores: FxHashMap<Type, Type>,
     /// The types `types` has walked, with the site each was written at.
     walked: FxHashSet<(Span, Type)>,
     /// By interface, where its associated types start in `growth`.
@@ -209,10 +213,7 @@ impl Graph {
                 continue;
             }
             // The second node takes the argument with its outer levels off.
-            let mut core = arg;
-            while let TypeKind::Array(inner) | TypeKind::Optional(inner) = core.kind() {
-                core = inner;
-            }
+            let core = self.core(arg);
             let from = match core.kind() {
                 TypeKind::Param(_, i) => self.second(holder, i as usize),
                 _ => self.node(holder, core),
@@ -230,6 +231,28 @@ impl Graph {
                 instance: Some(instance),
             });
         }
+    }
+
+    /// `ty` with every outer array and optional level taken off. Each level is read once for the
+    /// program, however many sites share the type: the levels read are kept with their core, so
+    /// a type that holds a type read before stops at it.
+    fn core(&mut self, ty: Type) -> Type {
+        let mut levels = Vec::new();
+        let mut core = ty;
+        while let TypeKind::Array(inner) | TypeKind::Optional(inner) = core.kind() {
+            if let Some(&known) = self.cores.get(&core) {
+                core = known;
+                break;
+            }
+            #[cfg(test)]
+            CORE_STEPS.set(CORE_STEPS.get() + 1);
+            levels.push(core);
+            core = inner;
+        }
+        for level in levels {
+            self.cores.insert(level, core);
+        }
+        core
     }
 
     /// An edge into the hub declaration `hub` from the node `from`, for the operator or call at
@@ -269,10 +292,7 @@ impl Graph {
     /// inside `holder`, at `site`: see the module doc. An operand that names no parameter adds
     /// none.
     fn operator(&mut self, holder: usize, ty: Type, interface: tir::InterfaceId, site: Span) {
-        let mut ty = ty;
-        while let TypeKind::Array(inner) | TypeKind::Optional(inner) = ty.kind() {
-            ty = inner;
-        }
+        let ty = self.core(ty);
         if !ty.has_param() {
             return;
         }
@@ -686,6 +706,7 @@ impl Checker<'_> {
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
+            cores: FxHashMap::default(),
             walked: FxHashSet::default(),
             assoc_first: Vec::new(),
             growth: Vec::new(),
@@ -1274,6 +1295,7 @@ mod tests {
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
+            cores: FxHashMap::default(),
             walked: FxHashSet::default(),
             assoc_first: Vec::new(),
             growth: Vec::new(),
@@ -1358,6 +1380,39 @@ mod tests {
             .expect("the walk should not overflow the stack");
     }
 
+    /// The outer levels of a type that many sites share are taken off once for the type, however
+    /// many argument edges and operators read it: `n` sites on a type nested `n` deep read `n`
+    /// levels, not `n * n`. A type that holds a shorter one reads only the levels it adds.
+    #[test]
+    fn the_outer_levels_of_a_shared_type_should_be_taken_off_once() {
+        let steps = |n: usize| {
+            let mut ty = param(0);
+            for _ in 0..n {
+                ty = Type::intern(TypeKind::Array(ty));
+            }
+            let mut g = graph(1);
+            CORE_STEPS.set(0);
+            for site in 0..n {
+                let at = Span::new(site, site + 1);
+                g.args(0, &[ty], 0, at, at, Instance::Type(ty));
+                g.operator(0, ty, tir::InterfaceId(0), at);
+            }
+            CORE_STEPS.get()
+        };
+        assert_eq!(steps(20), 20);
+        crate::mir::tests::assert_near_linear(steps(20), steps(40), steps(60));
+        // Each type of a ladder holds the one before it.
+        let mut g = graph(1);
+        let mut ty = param(0);
+        CORE_STEPS.set(0);
+        for site in 0..30 {
+            ty = Type::intern(TypeKind::Array(ty));
+            let at = Span::new(site, site + 1);
+            g.operator(0, ty, tir::InterfaceId(0), at);
+        }
+        assert_eq!(CORE_STEPS.get(), 30);
+    }
+
     /// A growth that doubles in each pass, with as many passes as 100 associated types need, passes
     /// `UNBOUNDED` long before they end: it is unbounded, and no sum overflows.
     #[test]
@@ -1393,6 +1448,7 @@ mod tests {
             records: FxHashMap::default(),
             edges: Vec::new(),
             typed: FxHashMap::default(),
+            cores: FxHashMap::default(),
             walked: FxHashSet::default(),
             assoc_first: Vec::new(),
             growth: Vec::new(),
