@@ -63,8 +63,8 @@ The user or the caller's plan may change an effort or add a reviewer.
 Launch the reviewers together. Each launcher must let its reviewer read
 `RUN` and the skill paths in the brief.
 
-- **Sol:** `sol-review <effort> RUN/brief.md RUN/sol.md <repository root>`, through Bash with `run_in_background` and the sandbox off: codex needs the network and writes under `~/.codex`. The completion notification ends the wait; do not poll. When it exits 1, show the user the error it prints and ask how to go on. Do not put another model in Sol's place without asking.
-- **Opus:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Write your report to RUN/opus.md; your final reply is that report.` with `RUN` written out, and `opus-<round>.md` in a later round. Pass no `model` or `effort`.
+- **Sol:** `sol-review <effort> RUN/brief.md RUN/sol.md <repository root>`, with `brief-<round>.md` and `sol-<round>.md` in a later round, through Bash with `run_in_background` and the sandbox off: codex needs the network and writes under `~/.codex`. The completion notification ends the wait; do not poll. When it exits 1, show the user the error it prints and ask how to go on. Do not put another model in Sol's place without asking.
+- **Opus:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Write your report to RUN/opus.md; your final reply is that report.` with `RUN` written out, and `brief-<round>.md` and `opus-<round>.md` in a later round. Pass no `model` or `effort`.
 
 ### 4. Rule on each finding
 
