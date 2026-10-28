@@ -332,8 +332,9 @@ impl Checker<'_> {
         // by the second operand, if that is a `string`.
         let mut unlabelled = None;
         let mut lacks = false;
-        // The types of the operands, and where the report of a lacking `Ord` stands.
-        let mut seen: Vec<Type> = Vec::new();
+        // The type under every `?` of the first operand that has one, whether each later one has
+        // it too, and where the report of a lacking `Ord` stands.
+        let (mut shared, mut one_type) = (None, true);
         let mut helped = None;
         for (i, e) in operands.iter().enumerate() {
             if held && leader == Some(i) {
@@ -349,7 +350,9 @@ impl Checker<'_> {
             }
             let char_value = type_of(&value) == Some(Type::CHAR);
             let got = type_of(&value);
-            seen.extend(got);
+            if let Some(ty) = got.map(payload) {
+                one_type &= *shared.get_or_insert(ty) == ty;
+            }
             // The leader of a comparison that no `Ord` orders has no `<`, though it is a concrete
             // type: an array, an enum, a class or a `bool`. A later operand of another type is
             // a mismatch, which `settled_by` reports.
@@ -443,9 +446,7 @@ impl Checker<'_> {
         }
         // A bound helps only when the operands are one type: else the mistake is the operands.
         if let Some((report, at, param, i)) = helped
-            && seen
-                .windows(2)
-                .all(|pair| payload(pair[0]) == payload(pair[1]))
+            && one_type
         {
             let ord = self.lang.ord;
             self.diagnostics[report] = self
