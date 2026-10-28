@@ -4,7 +4,7 @@ This guide covers building `sisu`, compiling a Sisu program with it, and
 running the same checks as CI. Sisu builds and runs on x86-64 and ARM64 Linux and
 on ARM64 macOS. CI runs the tests on ARM64 Linux and ARM64 macOS on each push
 to `main`. On macOS the tests that need Valgrind, `/dev/full`, GNU ld or gcc
-are skipped, and `make coverage`, `make mutants`, `make verify`, `make fuzz`,
+are skipped, and `make coverage`, `make mutation-test`, `make fuzz`,
 `make bench` and `make callgrind` do not work.
 
 ## Prerequisites
@@ -187,19 +187,49 @@ fix; see `handover.sisu`.
 tests in `programs.rs` run.
 
 Mutation testing changes the code that a branch touched, one mutant at a
-time, and reports each mutant the tests still pass. The script mutates the
+time, and reports each mutant the tests still pass. Each mutant costs one
+build and one run of the whole test suite, so a run can take an hour or more.
+The script mutates the
 diff from where the branch left `main`. On a branch stacked on another stage,
 pass that stage's tip as the base, so earlier stages stay out. Arguments after
 the base go to `cargo mutants`:
 
 ```console
-$ make mutants                        # changes since main
-$ make mutants BASE=feat/m3-writes    # changes since the stage below
-$ scripts/mutants.sh HEAD~1 --list    # list the mutants, run nothing
+$ make mutation-test                        # changes since main
+$ make mutation-test BASE=feat/m3-writes    # changes since the stage below
+$ scripts/mutants.sh HEAD~1 --list          # list the mutants, test none
 ```
 
 The diff includes uncommitted edits. A new file counts once `git add` tracks
 it.
+
+The script runs `cargo mutants` under `nice -n 19`, 2 mutants at a time.
+`-j` or `CARGO_MUTANTS_JOBS` sets another number. `.cargo/mutants.toml` sets
+`timeout_multiplier = 2.0`: a timeout counts as caught, so a longer wait only
+costs time.
+
+The last line is the summary: `mutation-test: PASS` or `mutation-test: FAIL`,
+then `N caught, N unviable, N missed, N timeouts`, then `(HEAD <sha>)`, or
+`(HEAD <sha> with uncommitted changes)` when the working tree has uncommitted
+Rust changes. PASS needs no missed mutant; a mutant that hangs the tests until
+cargo-mutants' timeout counts as caught. A mutant proven equivalent goes into
+`exclude_re` in `.cargo/mutants.toml`, with the proof in a comment, so later
+runs skip it. A diff that changes no `.rs` file passes at once, with nothing
+run. A run that writes no new `mutants.out` (for example, `--in-diff` finds no
+mutant) passes with `no mutant tested`; cargo-mutants leaves the old
+`mutants.out` alone, and the script does not read it.
+An argument that tests no mutant (`--list`, `--list-files`, `--check`) ends
+with `mutation-test: NOT RUN` and the exit status of cargo-mutants. The summary
+reads `./mutants.out`, so the script passes `--output .`, which beats the
+variable `CARGO_MUTANTS_OUTPUT` and the `output` key of a config file. It
+refuses `-o`, `--output`, `-d`, `--dir` and `--manifest-path`, which move the
+output or the tree.
+
+One `make mutation-test` runs at a time in a worktree; a second one prints
+`mutation-test: FAIL: another make mutation-test is running in this worktree`
+and stops. `LOG=<file>` writes the whole output to that file, opened only once
+the run holds the lock. Use it instead of a shell redirect, which would empty a
+running log before the second run could refuse.
 
 ## Coverage and performance
 
@@ -213,26 +243,8 @@ should reach. It also names a region on an `assert!`, `assert_eq!` or
 which runs only when the assert fails. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
 or under `src/**/tests/`. It never fails on low
-coverage. Agents run it before the mutants. Commit new files, or
+coverage. Commit new files, or
 `git add -N` them, so the diff sees them.
-
-`make verify [BASE=<base>]` runs coverage, then mutants, and always ends with
-one line: `verify: PASS`, or `verify: FAIL` and why, ending
-`(HEAD <sha>)`, or `(HEAD <sha> with uncommitted changes)` when the working tree
-has uncommitted Rust changes. PASS needs no uncovered
-region touching the changes and no missed mutant; a mutant that hangs the
-tests until cargo-mutants' timeout counts as caught. A mutant proven
-equivalent goes into `exclude_re` in `.cargo/mutants.toml`, with the proof in
-a comment, so later runs skip it. The touching regions also go to
-`target/verify-uncovered.txt`, which the FAIL line names. A region you explain
-rather than cover still fails it, so read the reasons, not only the word. A
-diff that changes no `.rs` file passes at once, with nothing run.
-
-One `make verify` runs at a time in a worktree; a second one prints
-`verify: FAIL: another make verify is running in this worktree` and stops.
-`LOG=<file>` writes the whole output to that file, opened only once the run
-holds the lock. Use it instead of a shell redirect, which would empty a running
-verify's log before the second run could refuse.
 
 Programs that the tests compile link an uninstrumented runtime, whose two
 archives are built in `target/llvm-cov-runtime` and copied next to the
@@ -733,6 +745,6 @@ must accept any syntax those programs use.
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |
-| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `verify.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
+| `scripts` | `install-llvm.sh`, `mutants.sh`, `coverage.sh`, `codspeed-prep.sh`, `fuzz.sh`, `fuzz_program_plan.py`, which plans each run of the program fuzz workflow, `diag_diff.py`, which compares the diagnostics of two `sisu` builds for a review, `golden_diff.py`, which checks that a re-bless only reworded expected files, and the scripts prek hooks run, such as `check-expect-messages.sh` and `slow_tests.py`. |
 | `site` | The website's pages, data and build script (`make site`). |
 | `docs` | Architecture, roadmap, decisions (`adr/`) and agent guides (`agents/`). |

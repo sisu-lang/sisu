@@ -138,7 +138,7 @@ $ LLVM_SYS_231_PREFIX=$PWD/.llvm/23 cargo mutants -f crates/sisuc/src/mir/owners
 ```
 
 Each mutant runs the whole test suite, Valgrind cases included, so a file
-takes a long time. `scripts/mutants.sh` mutates a branch's diff from `main`;
+takes a long time. `scripts/mutants.sh` (`make mutation-test`) mutates a branch's diff from `main`;
 on `main` itself it has nothing to mutate. A killed run leaves
 `$TMPDIR/cargo-mutants-*.tmp` behind; delete those when you stop one.
 

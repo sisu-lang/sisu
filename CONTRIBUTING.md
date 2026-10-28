@@ -14,9 +14,8 @@ people and agents alike. This page is the route through them.
    [docs/adr](docs/adr) that touch your change.
 5. Finish with `make check` passing, as CI requires, and `make miri` too
    when you change `crates/runtime`. Then run
-   `make verify` on your diff, as [AGENTS.md](AGENTS.md) shows, and cover
-   or explain each uncovered region and kill or explain each surviving
-   mutant.
+   `make coverage` on your diff, as [AGENTS.md](AGENTS.md) shows, and cover
+   or explain each uncovered region.
 
 Work is tracked as [GitHub issues](https://github.com/sisu-lang/sisu/issues),
 as [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) describes.

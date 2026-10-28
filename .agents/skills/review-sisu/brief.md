@@ -153,10 +153,9 @@ vague or generic error, or with none.
   `python3 scripts/golden_diff.py <base>..<head> OLD NEW [OLD NEW]...`
   and sample a few files rather than read them all. It fails on any
   changed line that is not the old line with those substitutions.
-- When "Focus" names a verify log, check that its last line names the
-  target's head commit, then check the note on each surviving mutant and
-  uncovered region. Otherwise, name the riskiest changed path that no
-  test runs.
+- When "Focus" names a mutation-test log, check that its last line names
+  the target's head commit, then check the note on each surviving mutant.
+  Otherwise, name the riskiest changed path that no test runs.
 
 # Focus
 
