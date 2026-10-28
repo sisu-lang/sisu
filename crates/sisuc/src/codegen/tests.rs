@@ -1715,6 +1715,36 @@ fn printing_a_compound_value_should_use_the_sink_of_its_stream() {
     assert!(main.contains(&format!("alloca [{words} x i64]")), "{main}");
 }
 
+/// The number of calls of `sisu_show_*` functions that printing `[x]` emits, for an `x` of a
+/// `char` under `layers` optionals that holds `None` in the outermost.
+fn show_calls_of_nested_optionals(layers: usize) -> usize {
+    let src = format!(
+        "fn f(x: char{}) {{\n    print([x])\n}}\nfn main() {{\n    f(None)\n}}\n",
+        "?".repeat(layers)
+    );
+    let context = Context::create();
+    let ir = compiled(&context, &src).print_to_string().to_string();
+    ir.lines()
+        .filter(|line| line.contains(" call ") && line.contains("@sisu_show_"))
+        .count()
+}
+
+/// Printing an optional of `n` layers writes the `Some(` and `)` of a `None` under `k` `Some`s
+/// with one rendering for every `k`, so the calls emitted grow with `n` and not with its square.
+#[test]
+fn printing_nested_optionals_should_emit_calls_in_linear_number() {
+    let calls = show_calls_of_nested_optionals;
+    assert_near_linear(calls(20), calls(40), calls(60));
+}
+
+/// The calls that printing `[x]` emits for a `char` under 20 optionals: three for each layer (the
+/// loop of `Some(`, `None` and the loop of `)`) and four others, so that a change in the
+/// rendering of a `None` shows as a different count.
+#[test]
+fn printing_twenty_nested_optionals_should_emit_three_calls_for_each_layer() {
+    assert_eq!(show_calls_of_nested_optionals(20), 3 * 20 + 4);
+}
+
 /// The attribute group line of the declaration of `name` in `ir`.
 fn attributes<'a>(ir: &'a str, name: &str) -> &'a str {
     let declaration = ir

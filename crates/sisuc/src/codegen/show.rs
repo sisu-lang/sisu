@@ -173,13 +173,21 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// Writes `None` inside `depth` `Some(` … `)`: the text of an optional of `depth + 1`
     /// layers that holds a value in the first `depth` and `None` in the next.
     fn show_none(&self, sink: PointerValue<'ctx>, depth: usize) {
-        for _ in 0..depth {
-            self.show_text("sisu_show_open", sink, "Some(");
-        }
+        self.show_repeated("sisu_show_open", sink, "Some(", depth);
         self.show_text("sisu_show_str", sink, "None");
-        for _ in 0..depth {
-            self.show_text("sisu_show_close", sink, ")");
+        self.show_repeated("sisu_show_close", sink, ")", depth);
+    }
+
+    /// Calls `name` with `text` `times` times, in a loop, so that the code does not grow with
+    /// `times`: the `Some(` and `)` of every layer of a deep optional would otherwise take a
+    /// number of calls that grows with the square of the layers.
+    fn show_repeated(&self, name: &str, sink: PointerValue<'ctx>, text: &str, times: usize) {
+        if times == 0 {
+            return;
         }
+        let times = u64::try_from(times).expect("the layers of a type should fit in a `u64`");
+        let len = self.context.i64_type().const_int(times, false);
+        self.count_loop(len, |_| self.show_text(name, sink, text));
     }
 
     /// Writes the text of `value`, of type `ty`, which it borrows. A `string` or a `char` is
