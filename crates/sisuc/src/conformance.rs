@@ -2156,13 +2156,15 @@ mod tests {
         };
         let mut cx = Decide::default();
         let enum_type = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
-        // One collector for both calls: the array has a part, the enum's payload has none.
+        // One collector for the calls: the array has a part; the payload and the field have none.
         let mut listed = Vec::new();
         let mut collect = |part| listed.push(part);
-        let no_classes: &[Vec<Type>] = &[];
-        let types = (payloads.as_slice(), no_classes);
+        // The class `C` has the same field, so it has no part either.
+        let fields: Vec<Vec<Type>> = vec![vec![item]];
+        let types = (payloads.as_slice(), fields.as_slice());
         parts(&conformances, types, Type::array(Type::I64), &mut collect);
         parts(&conformances, types, enum_type, &mut collect);
+        parts(&conformances, types, class, &mut collect);
         assert_eq!(listed, [Type::I64], "a payload with no choice has no part");
         assert_eq!(
             holds(&mut cx, &source, enum_type, interface, TypeArgs::NONE),
