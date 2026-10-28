@@ -39,16 +39,19 @@ print of a value that can be `None`.
   rejected. The rule gave a different error for each place: a plain optional,
   an optional array and an interpolated part. It also made one type refuse the
   text that every other type prints.
-- **Print an optional with no diagnostic (Kotlin)**: rejected. Printing `null`
-  by accident is a known Kotlin bug.
+- **Print an optional with no diagnostic (Kotlin)**: rejected. Kotlin gives a
+  null the text "null" with no diagnostic. The doc of
+  [`Any?.toString()`](https://kotlinlang.org/api/core/kotlin-stdlib/kotlin/to-string.html)
+  says that a null receiver gives `the string "null"`. A program that prints a
+  missing value by accident then writes that word and shows no error.
 - **Warn for an optional at any depth**: rejected. `[1, None]` is a value that
   the program may want to see, and the author wrote its optionals on purpose.
 - **Warn, and also warn for a precision on an optional**: rejected. A precision
   on an `f64?` is already an error, so a second report for the same part adds
   nothing and its help leads to the error again.
-- **Apply a precision to the value inside an `f64?`**: rejected. It would make
-  `{f:.2}` print `None` for a missing value, which is the bug that the warning
-  catches, and it gives no way to choose a default.
+- **Apply a precision to the value inside an `f64?`**: rejected. A precision has
+  no meaning for `None`, and the author must choose the text for a missing
+  value.
 
 ## Consequences
 
