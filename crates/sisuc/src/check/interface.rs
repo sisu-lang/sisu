@@ -1638,6 +1638,8 @@ pub(super) fn nests_within(ty: Type, limit: usize, depths: &mut FxHashMap<Type, 
 /// How deep `ty` nests, or `None` when that is more than `limit`. The recursion goes no deeper
 /// than `limit`.
 fn nesting(ty: Type, limit: usize, depths: &mut FxHashMap<Type, usize>) -> Option<usize> {
+    #[cfg(test)]
+    super::NESTING_STEPS.set(super::NESTING_STEPS.get() + 1);
     let one;
     let inner: &[Type] = match ty.kind() {
         TypeKind::Array(t) | TypeKind::Optional(t) => {

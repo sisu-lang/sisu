@@ -350,6 +350,8 @@ thread_local! {
     pub(super) static DECLARED_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many declarations of an interface `probe_associated` has read, on this thread.
     pub(super) static PROBE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many types `nesting` has visited on this thread, including those it took from its memo.
+    pub(super) static NESTING_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many scopes (type parameters with their bounds) have been kept on this thread.
     pub(super) static SCOPES_KEPT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many closure entries have been indexed, and how many entries of an interface have been

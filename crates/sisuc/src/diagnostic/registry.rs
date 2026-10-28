@@ -1527,7 +1527,7 @@ pub(crate) enum UnknownForm {
     ChoiceLoops,
     /// The choice of an associated type leads through more than `CHOICE_DEPTH_LIMIT` other
     /// associated types, one after the other, before it gives a type. The diagnostic's name gives
-    /// the associated type where the walk stopped.
+    /// the associated type that starts the chain.
     ChoiceTooDeep,
     /// The associated type of the type parameter `base` is written in a bound that the bounds of
     /// `base` wait for, so the bounds of `base` are not known yet.

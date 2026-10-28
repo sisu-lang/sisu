@@ -3948,9 +3948,20 @@ fn nests_within_should_count_each_level_and_measure_a_shared_type_once() {
     // `shared` is 3 deep, `deep` is 6, and the pair is 7.
     assert!(within(pair, 7), "the pair within 7");
     assert!(!within(pair, 6), "the pair within 6");
-    let doubled = (0..100).fold(Type::I64, |t, _| {
-        Type::intern(TypeKind::Class(ClassId(2), TypeArgs::intern(&[t, t])))
-    });
+    let doubled = |levels| {
+        (0..levels).fold(Type::I64, |t, _| {
+            Type::intern(TypeKind::Class(ClassId(2), TypeArgs::intern(&[t, t])))
+        })
+    };
+    // Two shared arguments per level show the property from two levels on. The sizes 8, 16 and 24
+    // are 4x to 12x that, and the largest still ends at once if the memo fails: `2^24` visits.
+    let visits = |levels| {
+        NESTING_STEPS.set(0);
+        assert!(within(doubled(levels), levels));
+        NESTING_STEPS.get()
+    };
+    assert_near_linear(visits(8), visits(16), visits(24));
+    let doubled = doubled(100);
     assert!(
         within(doubled, 100) && !within(doubled, 99),
         "100 shared levels"
