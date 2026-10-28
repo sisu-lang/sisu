@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use super::DEPTHS;
 use super::generic::{GFunc, Generic};
+use crate::check::built_in_type;
 
 /// The generic that is the prelude's `Result<T, U>`, which no `Scope::generics` entry holds and
 /// no declaration writes.
@@ -372,10 +373,16 @@ impl Scope {
         }
     }
 
-    /// A name that no other name of the program has: `prefix` and a number.
+    /// A name that no other name of the program has, and that names no built-in type:
+    /// `prefix` and a number. A number that would make `f64` is skipped.
     pub(crate) fn fresh(&mut self, prefix: &str) -> String {
-        self.names += 1;
-        format!("{prefix}{}", self.names)
+        loop {
+            self.names += 1;
+            let name = format!("{prefix}{}", self.names);
+            if built_in_type(&name).is_none() {
+                return name;
+            }
+        }
     }
 
     /// Whether a value of `ty` may hold a class object, which no field or element assignment
@@ -419,5 +426,24 @@ impl Scope {
             .pop()
             .expect("each closed block should have been opened");
         self.vars.truncate(start);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::Scope;
+    use crate::check::built_in_type;
+
+    #[test]
+    fn fresh_names_should_be_unique_and_name_no_built_in_type() {
+        let mut scope = Scope::default();
+        // `f` and 64 make `f64`.
+        let names: Vec<String> = (0..100).map(|_| scope.fresh("f")).collect();
+        for name in &names {
+            assert!(built_in_type(name).is_none(), "{name} is a built-in type");
+        }
+        assert_eq!(names.iter().collect::<HashSet<_>>().len(), names.len());
     }
 }
