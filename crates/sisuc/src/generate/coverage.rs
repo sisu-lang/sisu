@@ -2584,13 +2584,56 @@ fn walk() -> Walk {
     walk
 }
 
-#[test]
-fn every_generated_program_should_check_clean_and_instantiate() {
-    for data in seeds() {
+/// Checks the programs of the seeds `from..from + 8` and instantiates them. One test for each
+/// range, so that nextest runs the ranges in parallel and each fits its time budget; the eight
+/// tests together take the `SEEDS` seeds that `seeds` gives.
+fn check_and_instantiate(from: u64) {
+    const _: () = assert!(SEEDS == 64, "add or drop a test of eight seeds");
+    for data in (from..from + 8).map(seed) {
         let (_, program) = checked(&generate(&data).program);
         // In a debug build, `mono` asserts that no type parameter is left in what it gives.
         crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
     }
+}
+
+#[test]
+fn the_programs_of_seeds_0_to_7_should_check_clean_and_instantiate() {
+    check_and_instantiate(0);
+}
+
+#[test]
+fn the_programs_of_seeds_8_to_15_should_check_clean_and_instantiate() {
+    check_and_instantiate(8);
+}
+
+#[test]
+fn the_programs_of_seeds_16_to_23_should_check_clean_and_instantiate() {
+    check_and_instantiate(16);
+}
+
+#[test]
+fn the_programs_of_seeds_24_to_31_should_check_clean_and_instantiate() {
+    check_and_instantiate(24);
+}
+
+#[test]
+fn the_programs_of_seeds_32_to_39_should_check_clean_and_instantiate() {
+    check_and_instantiate(32);
+}
+
+#[test]
+fn the_programs_of_seeds_40_to_47_should_check_clean_and_instantiate() {
+    check_and_instantiate(40);
+}
+
+#[test]
+fn the_programs_of_seeds_48_to_55_should_check_clean_and_instantiate() {
+    check_and_instantiate(48);
+}
+
+#[test]
+fn the_programs_of_seeds_56_to_63_should_check_clean_and_instantiate() {
+    check_and_instantiate(56);
 }
 
 #[test]
