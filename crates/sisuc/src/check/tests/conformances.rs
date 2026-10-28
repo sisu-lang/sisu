@@ -1451,6 +1451,54 @@ fn growing_marks_should_search_each_component_once_for_a_shrinking_ring() {
     assert_near_linear(ring(20), ring(40), ring(60));
 }
 
+#[test]
+fn growing_marks_should_read_only_the_declarations_that_can_grow() {
+    // `n` generic enums that name a generic class and no other declaration, and `rest` besides.
+    // The graph of the marks holds the edges of the declarations on a cycle that can grow: none
+    // for the `n`, whatever their number.
+    let edges = |n: usize, rest: &str| {
+        let mut src = String::from("class Wrap<T> {\n    v: T\n}\n");
+        for i in 0..n {
+            writeln!(src, "enum E{i}<T> {{\n    A(Wrap<T>)\n    B([Wrap<T>])\n}}")
+                .expect("writing to a `String` should succeed");
+        }
+        src += rest;
+        src += "fn main() {}";
+        cycle::MARK_EDGES.set(0);
+        // A cycle that grows is E0140, which the marks do not need to see.
+        diags(&src);
+        cycle::MARK_EDGES.get()
+    };
+    // Cycles that pass each parameter on as it is, or that have no parameter, cannot grow.
+    let steady = [
+        "enum List<T> {\n    Nil\n    Cons(T, List<T>)\n}\n",
+        "enum P<A, B> {\n    X(Q<B, A>)\n}\nenum Q<A, B> {\n    Y([P<A, B>])\n}\n",
+        "class Node {\n    next: Node?\n}\nenum Tree {\n    Leaf\n    Fork(Tree, Tree)\n}\n",
+        // The argument `[T]` is outside the cycle: `Wrap` does not name `List`.
+        "enum List<T> {\n    Nil\n    Cons(Wrap<[T]>, List<T>)\n}\n",
+        // The argument `[T]` comes from outside the cycle: `List` does not name `Outer`.
+        "enum Outer<T> {\n    A(List<[T]>)\n}\nenum List<T> {\n    Nil\n    Cons(T, List<T>)\n}\n",
+    ];
+    for rest in steady {
+        clean(&format!(
+            "class Wrap<T> {{\n    v: T\n}}\n{rest}fn main() {{}}"
+        ));
+        assert_eq!(edges(0, rest), 0, "{rest}");
+        assert_eq!(edges(60, rest), 0, "60 more enums: {rest}");
+    }
+    // A cycle with an argument that is not a parameter alone can grow, and gives its edges.
+    let growable = [
+        "enum G<T> {\n    End\n    A(G<[T]>)\n}\n",
+        "enum P<T> {\n    End\n    X(Q<T>)\n}\nenum Q<T> {\n    Y(P<Wrap<T>>)\n}\n",
+        "class K<T> {\n    next: List<T>?\n}\nenum List<T> {\n    Nil\n    Cons(K<[T]>)\n}\n",
+    ];
+    for rest in growable {
+        let alone = edges(0, rest);
+        assert!(alone > 0, "the cycle gives edges: {rest}");
+        assert_eq!(edges(60, rest), alone, "60 more enums, same edges: {rest}");
+    }
+}
+
 /// A class with a written `Eq` and `Ord`, which the operator rows compare.
 const CIRCLE: &str = "class Circle: Eq, Ord {\n    r: i64\n    fn eq(self, other: Self) -> bool { self.r == other.r }\n    fn less(self, other: Self) -> bool { self.r < other.r }\n}\n";
 

@@ -96,6 +96,9 @@ thread_local! {
     pub(super) static GATHER_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many array and optional levels `Graph::core` has taken off a type on this thread.
     pub(super) static CORE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many edges the graph of the marks of growing enums held on this thread, 0 when it was
+    /// not built.
+    pub(super) static MARK_EDGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The nodes and the edges of the component that the last search for a cycle read.
     pub(super) static SEARCHED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
@@ -513,6 +516,43 @@ impl Strands {
     }
 }
 
+/// The declarations that the types `fields` name, as nodes (the classes, then the enums), and
+/// among them those that a type gives an argument which mentions a parameter and is not one.
+fn named(
+    stack: &mut Vec<Type>,
+    classes: usize,
+    fields: impl Iterator<Item = Type>,
+) -> (Vec<usize>, Vec<usize>) {
+    let (mut names, mut changed) = (Vec::new(), Vec::new());
+    stack.extend(fields);
+    while let Some(ty) = stack.pop() {
+        let (node, args) = match ty.kind() {
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => {
+                stack.push(inner);
+                continue;
+            }
+            TypeKind::Class(id, args) => (id.0, args),
+            TypeKind::Enum(id, args) => (classes + id.0, args),
+            TypeKind::Assoc(base, _, args, _) => {
+                stack.push(base);
+                stack.extend(args.get());
+                continue;
+            }
+            _ => continue,
+        };
+        names.push(node);
+        let args = args.get();
+        if args
+            .iter()
+            .any(|arg| arg.has_param() && !matches!(arg.kind(), TypeKind::Param(..)))
+        {
+            changed.push(node);
+        }
+        stack.extend(args);
+    }
+    (names, changed)
+}
+
 impl Checker<'_> {
     /// Reports each strongly connected component of the instantiation graph (see the module
     /// doc) that holds a cycle of positive weight, once, at the first edge of positive weight of
@@ -736,6 +776,37 @@ impl Checker<'_> {
         (graph, hubs, interface_hubs)
     }
 
+    /// A graph of the classes and the enums alone: no function, hub or generated node, so its
+    /// size follows the declarations that `declaration_edges` reads.
+    fn declaration_frame(&self) -> Graph {
+        let counts = (self.classes.iter().map(|c| c.type_params.len()))
+            .chain(self.enums.iter().map(|e| e.type_params.len()));
+        let mut first = vec![0];
+        for n in counts {
+            first.push(first[first.len() - 1] + n);
+        }
+        let end = self.classes.len() + self.enums.len();
+        let mut graph = Graph {
+            first,
+            functions: 0,
+            classes: self.classes.len(),
+            enums: self.enums.len(),
+            interface_hubs: end,
+            eq_first: end,
+            display_first: end,
+            display: self.lang.display,
+            records: FxHashMap::default(),
+            edges: Vec::new(),
+            typed: FxHashMap::default(),
+            cores: FxHashMap::default(),
+            walked: FxHashSet::default(),
+            assoc_first: Vec::new(),
+            growth: Vec::new(),
+        };
+        (graph.assoc_first, graph.growth) = self.growths();
+        graph
+    }
+
     /// The instantiation graph of the program: see `instantiation_cycles`.
     fn instantiation_graph(&self, functions: &[Option<tir::Function>], unbuilt: &[bool]) -> Graph {
         let (mut graph, hubs, interface_hubs) = self.graph_frame();
@@ -858,14 +929,19 @@ impl Checker<'_> {
     /// weight (`Strands::grows`). The graph is the declarations' alone, `declaration_edges` over
     /// `Strands`, with no hub. It needs the choices of the conformances for the growth of an
     /// associated type, so it runs once they are recorded, before any query. With no associated
-    /// type, no weight is negative.
+    /// type, no weight is negative. Only the declarations that `growable_declarations` names
+    /// give edges, and the graph is not built when no enum with a parameter is one of them.
     pub(super) fn growing_enums(&self) -> Vec<bool> {
-        if self.enums.iter().all(|info| info.type_params.is_empty()) {
+        let growable = self.growable_declarations();
+        let enums = &growable[self.classes.len()..];
+        if !(self.enums.iter().zip(enums)).any(|(info, &on)| on && !info.type_params.is_empty()) {
             return vec![false; self.enums.len()];
         }
-        let (mut graph, _, _) = self.graph_frame();
-        let unbuilt = vec![false; self.classes.len() + self.enums.len()];
-        self.declaration_edges(&mut graph, &unbuilt);
+        let mut graph = self.declaration_frame();
+        let off: Vec<bool> = growable.iter().map(|&on| !on).collect();
+        self.declaration_edges(&mut graph, &off);
+        #[cfg(test)]
+        MARK_EDGES.set(graph.edges.len());
         let strands = Strands::of(&graph);
         // Each component is searched once, whatever number of enums its nodes belong to.
         let mut decided: FxHashMap<usize, bool> = FxHashMap::default();
@@ -880,10 +956,48 @@ impl Checker<'_> {
             .collect()
     }
 
+    /// By class and then enum, whether the declaration is on a cycle of declarations that name
+    /// each other in a field or a payload type (at any depth of an argument, array or optional)
+    /// in which a type gives an argument that mentions a parameter and is not one: a type
+    /// argument can grow along such a cycle only. A cycle that passes each parameter on as it is
+    /// has weight 0. Each type is read once.
+    fn growable_declarations(&self) -> Vec<bool> {
+        let classes = self.classes.len();
+        let mut stack = Vec::new();
+        let mut names: Vec<Vec<usize>> = Vec::with_capacity(classes + self.enums.len());
+        let mut changed: Vec<Vec<usize>> = Vec::with_capacity(classes + self.enums.len());
+        let mut read = |(named, passed): (Vec<usize>, Vec<usize>)| {
+            names.push(named);
+            changed.push(passed);
+        };
+        for class in &self.classes {
+            read(named(
+                &mut stack,
+                classes,
+                class.fields.iter().filter_map(|f| f.ty),
+            ));
+        }
+        for info in &self.enums {
+            let payloads = (info.variants.iter()).flat_map(|v| v.fields.iter().copied().flatten());
+            read(named(&mut stack, classes, payloads));
+        }
+        let component = components(&names);
+        let mut growable = vec![false; names.len()];
+        for (from, passed) in changed.iter().enumerate() {
+            for &to in passed
+                .iter()
+                .filter(|&&to| component[to] == component[from])
+            {
+                growable[component[to]] = true;
+            }
+        }
+        component.iter().map(|&k| growable[k]).collect()
+    }
+
     /// The edges that the field types of each class and the payload types of each enum give,
     /// except for a declaration in `unbuilt`, by class and then enum, whose own error stands for
-    /// its cycle. They read the declarations alone, so the marks of growing enums use them with
-    /// no function (`growing_enums`).
+    /// its cycle, or that `growable_declarations` leaves out (`growing_enums`). They read the
+    /// declarations alone, so the marks of growing enums use them with no function.
     fn declaration_edges(&self, graph: &mut Graph, unbuilt: &[bool]) {
         let declared = graph.functions;
         for (c, class) in self.classes.iter().enumerate() {
